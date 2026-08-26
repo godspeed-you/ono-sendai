@@ -1,3 +1,9 @@
 # Keep the bar where the spec puts it: an interactive shell must stay fast and legible.
 too-many-arguments-threshold = 8
 type-complexity-threshold = 500
+
+# AGENTS.md section 16: `unwrap`/`expect`/`panic` are how a test states a precondition it does
+# not intend to survive. The bans above exist for library code reachable from user input.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

@@ -1,8 +1,22 @@
-//! Core types shared across the Ono-Sendai workspace.
+//! Vocabulary shared by every crate in the Ono-Sendai workspace.
 //!
-//! This crate is intentionally almost empty. It exists so the workspace, the quality gate and
-//! the containerised acceptance harness are in place and green before phase A of the
-//! specification starts. Everything else is built test-first on top of it.
+//! `ono-core` is deliberately dependency-free (ADR-0005): the parser, the value model and the
+//! process layer are developed against it in parallel, so it holds only what all of them need
+//! and nothing that any of them owns.
+//!
+//! - [`Span`] — byte ranges into a source line, carried by every diagnostic (spec §16.3);
+//! - [`ErrorCode`] and [`ErrorKind`] — the stable error taxonomy of spec §43 and §16.1;
+//! - [`ExitStatus`] — the exit-status contract of ADR-0008.
+
+#![forbid(unsafe_code)]
+
+mod error;
+mod exit;
+mod span;
+
+pub use error::{ErrorCode, ErrorKind};
+pub use exit::ExitStatus;
+pub use span::Span;
 
 /// Version of the running shell, taken from the workspace manifest at compile time.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
