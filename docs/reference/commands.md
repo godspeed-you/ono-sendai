@@ -535,7 +535,7 @@ Fold a stream into a single value.
 **Examples**
 
 ```text
-get process | select memory | reduce @acc + @
+get process | select memory | reduce $acc + @ --initial 0
 ```
 
 ### `count`

@@ -101,6 +101,14 @@ impl CommandImpl for TransformCommand {
             }
             Kind::Reduce => {
                 let body = expression(arguments, "body", &spelling)?;
+                // The initial accumulator may arrive as a word (`--initial=0`) or, in expression
+                // mode, as an unevaluated expression (`--initial 10`). The expression is
+                // evaluated against no current value: it seeds the fold before anything flows.
+                let initial = arguments.option("initial").cloned().or_else(|| {
+                    arguments
+                        .option_expression("initial")
+                        .map(|expr| crate::expr::evaluate_to_value(expr, &Value::Null, &scope))
+                });
                 let scope = Arc::clone(&scope);
                 let fold = move |accumulator: &Value, value: &Value| {
                     // The accumulator is `$acc`; the value in hand is the record, so its fields
@@ -109,8 +117,8 @@ impl CommandImpl for TransformCommand {
                     evaluate(&body, value, &scope)
                 };
                 let reduce = Reduce::new(fold);
-                let reduce = match arguments.option("initial") {
-                    Some(initial) => reduce.with_initial(initial.clone()),
+                let reduce = match initial {
+                    Some(initial) => reduce.with_initial(initial),
                     None => reduce,
                 };
                 input.transform(reduce)?

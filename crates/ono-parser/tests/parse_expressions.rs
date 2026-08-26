@@ -269,3 +269,26 @@ fn should_span_the_whole_expression_when_a_comparison_is_parsed() {
     let expression = only_expression(source);
     assert_eq!(expression.span().of(source), "cpu > 20");
 }
+
+#[test]
+fn should_read_a_long_option_between_expressions_when_the_mode_is_expression() {
+    // `reduce $acc + @ --initial 10`: the option is an argument boundary, not a double unary
+    // minus applied to a field named `initial` (ADR-0032). The value pairs with the option at
+    // binding, exactly as in words mode.
+    let stage = stages("reduce $acc + @ --initial 10").remove(0);
+    assert_eq!(stage.arguments.len(), 3, "got {:?}", stage.arguments);
+    assert!(matches!(stage.arguments[0], Argument::Value(_)));
+    let Argument::Option(option) = &stage.arguments[1] else {
+        panic!("expected an option, got {:?}", stage.arguments[1]);
+    };
+    assert_eq!(option.name, "initial");
+    assert!(option.value.is_none());
+    assert!(matches!(stage.arguments[2], Argument::Value(_)));
+}
+
+#[test]
+fn should_keep_a_spaced_double_negation_meaning_negation() {
+    // `- -x` is still double negation; only the adjacent `--name` spelling is an option.
+    let expression = only_expression("where - -cpu");
+    assert!(matches!(expression, Expr::Unary(_)), "got {expression:?}");
+}

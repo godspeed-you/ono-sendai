@@ -1053,6 +1053,18 @@ impl Parser<'_> {
                     end = argument.span();
                     arguments.push(argument);
                 }
+                (ArgMode::Expression, TokenKind::Word) => {
+                    // The lexer only produces a word here for an adjacent `--name` (ADR-0032).
+                    self.bump(lex_mode);
+                    let text = token.text(self.source);
+                    let name = text.strip_prefix("--").unwrap_or(text).to_owned();
+                    end = token.span;
+                    arguments.push(Argument::Option(OptionArg {
+                        name,
+                        value: None,
+                        span: token.span,
+                    }));
+                }
                 (ArgMode::Expression, _) => {
                     let argument = Argument::Value(self.parse_expression());
                     end = argument.span();

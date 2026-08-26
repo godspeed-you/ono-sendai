@@ -62,10 +62,8 @@ the expensive kind of shortcut.
 
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase B/C/D follow-ups: `reduce` option parsing in expression mode
-  (`--initial` reads as double unary minus; contract example `@acc + @` is grammar-invalid and
-  must become `$acc + @`) — files: `crates/ono-parser/src/parser.rs`,
-  `docs/spec/commands/data.yaml`
+- [orchestrator | 2026-08-26] Phase E — context stack, `enter`/`leave`, implicit selectors,
+  prompt/HUD (ADR-0023 already decides the shape) — files: `crates/ono-cli/**`
 
 _No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
 KUANG/11 contracts, adversarial review, security review) have all reported and landed._
@@ -73,6 +71,19 @@ KUANG/11 contracts, adversarial review, security review) have all reported and l
 ---
 
 ## Next up (ordered)
+
+- [ ] `--name=value` in expression mode — ADR-0032 pairs an option with the following
+  expression; the `=` spelling stays words-only until an increment adds it — exit test:
+  a parse_expressions case for `reduce $acc + @ --initial=10`
+- [ ] JSON object key order is alphabetical, not schema order (ADR-0030) — enabling
+  serde_json `preserve_order` reorders the protocol too; decide and pin — exit test:
+  data_codecs asserting §33.5 field order
+- [ ] Surface `ono-pipeline` `Diagnostics` counters (`excluded_unknown`, `skipped_null`) to the
+  user; ADR-0029 chose silence over an unread field — exit test: a case showing the count
+- [ ] Streaming the byte carry across a native/external join (ADR-0028 buffers it) — exit test:
+  `find / | from text | take 1` answers before the walk finishes
+- [ ] Backgrounding a pipeline with native stages (ADR-0028 defers it) — exit test: `get process |
+  count &` becomes a job `fg` can resume
 
 Phase A is decomposed to increment level. Later phases are listed at their coarse shape and are
 decomposed by the agent that starts them — decomposing early would invent detail the spec does

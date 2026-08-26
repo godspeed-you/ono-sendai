@@ -296,6 +296,36 @@ async fn should_report_an_empty_fold_rather_than_answering_with_a_zero() {
     assert_eq!(error.code(), ErrorCode::TypeMismatch);
 }
 
+#[tokio::test]
+async fn should_seed_the_fold_with_the_written_initial_value() {
+    // `--initial` between expressions is an option, not a double unary minus (ADR-0032), and
+    // its expression seeds the accumulator before anything flows.
+    let ran = run(
+        "get process | each size | take 2 | reduce $acc + @ --initial 1B",
+        &providers(FixtureProvider::new()),
+    )
+    .await
+    .expect("the pipeline runs");
+
+    assert_eq!(ran.only(), &Value::ByteSize(ByteSize::from_bytes(2561)));
+}
+
+#[tokio::test]
+async fn should_answer_the_initial_value_for_an_empty_stream_when_one_is_given() {
+    let ran = run(
+        "get process 99 | reduce $acc + @ --initial 0",
+        &providers(FixtureProvider::new()),
+    )
+    .await
+    .expect("the pipeline runs");
+
+    assert_eq!(
+        ran.only(),
+        &Value::Int(0),
+        "a seeded fold over nothing is its seed, not an error"
+    );
+}
+
 // --- count -----------------------------------------------------------------------------------
 
 #[tokio::test]

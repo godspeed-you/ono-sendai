@@ -518,6 +518,22 @@ fn expression_token(source: &str, bytes: &[u8], start: usize, mode: LexMode) -> 
     if first.is_ascii_digit() {
         return number_token(source, bytes, start);
     }
+    // `--name`, written adjacently, is a long option even between expressions: `reduce $acc + @
+    // --initial 10` names an option, never a double unary minus applied to a field called
+    // `initial` (ADR-0032). A spaced `- -x` still negates twice.
+    if first == b'-'
+        && bytes.get(start + 1) == Some(&b'-')
+        && bytes
+            .get(start + 2)
+            .copied()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+    {
+        let mut index = start + 3;
+        while bytes.get(index).copied().is_some_and(is_ident_continue) {
+            index += 1;
+        }
+        return token(TokenKind::Word, start, index);
+    }
     if is_ident_start(first) {
         let mut index = start + 1;
         while bytes.get(index).copied().is_some_and(is_ident_continue) {

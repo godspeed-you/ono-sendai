@@ -170,7 +170,7 @@ commands:
     streaming: false
     phase: B
     examples:
-      - get process | select memory | reduce @acc + @
+      - get process | select memory | reduce $acc + @ --initial 0
 
   - id: ono.data.count
     verb: count
