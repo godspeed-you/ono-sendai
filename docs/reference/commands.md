@@ -370,6 +370,7 @@ Project fields and expressions into records.
 
 ```text
 get process | select pid name memory
+get process | select pid name {mem_mb: memory / 1MiB}
 ```
 
 ### `sort`
@@ -4742,7 +4743,7 @@ Query the structured system journal directly.
 **Examples**
 
 ```text
-get journal --since now()-1h
+get journal --since (now() - 1h)
 ```
 
 ### `tail journal`

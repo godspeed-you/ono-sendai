@@ -134,6 +134,7 @@ fn spec_check() -> ExitCode {
         problems.extend(
             contracts::check_contracts(&root)
                 .into_iter()
+                .chain(contracts::check_examples(&root))
                 .chain(reference::check_committed(&root))
                 .map(|problem| format!("{} — {}", problem.location, problem.detail)),
         );

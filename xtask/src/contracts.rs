@@ -592,3 +592,44 @@ fn relative(root: &Path, path: &Path) -> String {
         .to_string_lossy()
         .replace('\\', "/")
 }
+
+/// Checks that every example a command advertises actually parses.
+///
+/// Spec §36.5 lists "docs examples stop parsing" as a contract-drift failure, and spec §50 makes
+/// executable examples a release requirement for every advertised capability. An example nobody
+/// runs is documentation that has quietly become fiction, and this is the cheapest moment to
+/// catch it — before anyone has typed it.
+#[must_use]
+pub fn check_examples(root: &Path) -> Vec<Problem> {
+    let directory = root.join("docs").join("spec").join("commands");
+    let mut problems = Vec::new();
+
+    for path in yaml_files(&directory) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        let location = relative(root, &path);
+
+        for command in sequence(&document, "commands") {
+            let id = string_at(command, "id").unwrap_or_default();
+            for example in string_sequence(command, "examples") {
+                let parsed = ono_parser::parse(&example);
+                if !parsed.has_errors() && parsed.is_complete() {
+                    continue;
+                }
+                let complaint = parsed.diagnostics().first().map_or_else(
+                    || "the line is unfinished".to_owned(),
+                    |diagnostic| format!("{}: {}", diagnostic.code().code(), diagnostic.message()),
+                );
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!("`{id}` documents an example that does not parse — `{example}` — {complaint}"),
+                });
+            }
+        }
+    }
+    problems
+}

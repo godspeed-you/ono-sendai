@@ -44,7 +44,7 @@ fn token_colour(kind: ono_parser::TokenKind) -> Token {
         | TokenKind::UnterminatedRegex => Token::Warning,
         TokenKind::Int | TokenKind::Float | TokenKind::Unit => Token::ValueNumber,
         TokenKind::Variable | TokenKind::CurrentValue => Token::PromptContext,
-        TokenKind::Regex => Token::ValueUnit,
+        TokenKind::Regex | TokenKind::Ip => Token::ValueUnit,
         TokenKind::Pipe | TokenKind::AndAnd | TokenKind::OrOr | TokenKind::Amp => Token::Accent,
         TokenKind::Gt | TokenKind::GtGt | TokenKind::Lt | TokenKind::GtAmp | TokenKind::LtAmp => {
             Token::Dim

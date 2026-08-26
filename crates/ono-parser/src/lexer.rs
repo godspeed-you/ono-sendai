@@ -33,6 +33,8 @@ pub enum TokenKind {
     UnterminatedStr,
     /// A single-quoted string whose closing quote is missing.
     UnterminatedRawStr,
+    /// An IP address literal, in either family (spec §10.2).
+    Ip,
     /// A regex literal, `/pattern/flags`.
     Regex,
     /// A regex literal whose closing delimiter is missing.
@@ -297,8 +299,101 @@ pub(crate) fn next_token(source: &str, at: u32, mode: LexMode) -> Token {
             token(TokenKind::CurrentValue, start, index)
         }
         _ if mode.is_words() => words_token(bytes, start),
+        // Spec §10.2 makes an IP address a value of its own, and §41.2 writes
+        // `where local.address not in [127.0.0.1, ::1]` verbatim. Without this the lexer reads
+        // `127.0.0.1` as a float followed by field accesses and the specification's own example
+        // does not run. Only in operand position, so `a:b` stays a namespace and `1.2` stays a
+        // number wherever a value is not being started.
+        _ if matches!(mode, LexMode::ExprOperand) && address_end(bytes, start).is_some() => {
+            let end = address_end(bytes, start).unwrap_or(start + 1);
+            token(TokenKind::Ip, start, end)
+        }
         _ => expression_token(source, bytes, start, mode),
     }
+}
+
+/// Where the IP address literal starting at `start` ends, if one starts there.
+///
+/// Both families are recognised. An IPv4 literal needs four dotted decimal groups, so `1.2` and
+/// `1.2.3` stay numbers and field paths; an IPv6 literal needs a `::` or at least two `:`
+/// separators, so a namespaced name such as `ono:get` is never mistaken for one. A zone suffix
+/// (`fe80::1%eth0`) is part of the literal, because an address without its zone is a different
+/// address.
+fn address_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if let Some(end) = ipv4_end(bytes, start) {
+        return Some(end);
+    }
+    ipv6_end(bytes, start)
+}
+
+fn ipv4_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut index = start;
+    for group in 0..4 {
+        if group > 0 {
+            if bytes.get(index) != Some(&b'.') {
+                return None;
+            }
+            index += 1;
+        }
+        let digits_from = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        // One to three digits per group, so `1.2.3.4567` is not an address.
+        if index == digits_from || index - digits_from > 3 {
+            return None;
+        }
+    }
+    // A fifth group means it was never an address: `1.2.3.4.5` is something else.
+    if bytes.get(index) == Some(&b'.') {
+        return None;
+    }
+    Some(index)
+}
+
+fn ipv6_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut index = start;
+    let mut colons = 0usize;
+    let mut saw_double = false;
+
+    while let Some(&byte) = bytes.get(index) {
+        if byte == b':' {
+            if bytes.get(index + 1) == Some(&b':') {
+                saw_double = true;
+                colons += 2;
+                index += 2;
+                continue;
+            }
+            colons += 1;
+            index += 1;
+            continue;
+        }
+        if byte.is_ascii_hexdigit() || byte == b'.' {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+
+    // `::` alone, or at least two separators, is an address; one is a namespace or a record key.
+    if !saw_double && colons < 2 {
+        return None;
+    }
+    if index == start {
+        return None;
+    }
+
+    // A zone identifier belongs to the address it qualifies.
+    if bytes.get(index) == Some(&b'%') {
+        index += 1;
+        while bytes
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'-')
+        {
+            index += 1;
+        }
+    }
+    Some(index)
 }
 
 /// Whether `@` at `index` begins a current-value reference rather than an ordinary word.

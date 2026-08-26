@@ -1606,6 +1606,13 @@ impl Parser<'_> {
             | TokenKind::RawStr
             | TokenKind::UnterminatedStr
             | TokenKind::UnterminatedRawStr => self.parse_string(token),
+            TokenKind::Ip => {
+                self.bump(LexMode::ExprOperand);
+                Expr::Ip(crate::ast::IpLit {
+                    text: token.text(self.source).to_owned(),
+                    span: token.span,
+                })
+            }
             TokenKind::Regex | TokenKind::UnterminatedRegex => {
                 self.bump(LexMode::ExprOperand);
                 if token.kind == TokenKind::UnterminatedRegex {

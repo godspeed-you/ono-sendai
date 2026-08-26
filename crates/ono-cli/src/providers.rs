@@ -37,5 +37,7 @@ pub fn registry(environment: impl IntoIterator<Item = (String, String)>) -> Prov
 /// rather than being made synchronous, because pretending an I/O-bound constructor is not one is
 /// how a shell acquires a hang at startup.
 pub async fn register_async(registry: &mut ProviderRegistry) {
-    registry.register(Arc::new(ono_provider_systemd::SystemdProvider::connect().await));
+    registry.register(Arc::new(
+        ono_provider_systemd::SystemdProvider::connect().await,
+    ));
 }

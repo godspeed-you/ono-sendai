@@ -1269,6 +1269,7 @@ name = "xtask"
 version = "0.0.1"
 dependencies = [
  "ono-core",
+ "ono-parser",
  "ono-testkit",
  "serde",
  "serde_yaml_ng",

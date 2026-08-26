@@ -238,3 +238,44 @@ fn should_report_this_repositorys_own_registries_as_consistent_when_checked() {
             .join("\n")
     );
 }
+
+#[test]
+fn should_report_a_documented_example_that_no_longer_parses() {
+    // Spec §36.5's third drift case, and spec §50's requirement that documented examples be
+    // executable. An example nobody runs is documentation that has quietly become fiction.
+    let repo = consistent();
+    repo.write(
+        "docs/spec/commands/process.yaml",
+        "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get process | where )\"]\n",
+    );
+    let found = xtask::contracts::check_examples(repo.path());
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.detail.contains("does not parse")),
+        "got {found:?}"
+    );
+}
+
+#[test]
+fn should_accept_an_example_that_parses_cleanly() {
+    let repo = consistent();
+    assert_eq!(xtask::contracts::check_examples(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_find_every_documented_example_in_this_repository_parseable() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let found = xtask::contracts::check_examples(root);
+    assert!(
+        found.is_empty(),
+        "documented examples that do not parse:\n{}",
+        found
+            .iter()
+            .map(|problem| format!("  {} — {}", problem.location, problem.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}

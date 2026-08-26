@@ -357,6 +357,8 @@ pub enum Expr {
     Str(StrLit),
     /// A regex literal, `/…/flags`.
     Regex(RegexLit),
+    /// An IP address literal, in either family (spec §10.2).
+    Ip(IpLit),
     /// `true` or `false`, with the span of the keyword.
     Bool(bool, Span),
     /// `null`, with the span of the keyword.
@@ -398,6 +400,7 @@ impl Expr {
             Expr::Unit(node) => node.span,
             Expr::Str(node) => node.span,
             Expr::Regex(node) => node.span,
+            Expr::Ip(node) => node.span,
             Expr::Bool(_, span) | Expr::Null(span) | Expr::Error(span) => *span,
             Expr::Variable(node) => node.span,
             Expr::CurrentValue(node) => node.span,
@@ -582,6 +585,15 @@ pub enum StrPart {
     },
     /// An interpolated `$name`, `$name.field` or `$( pipeline )`.
     Expr(Expr),
+}
+
+/// An IP address literal, kept as written so the value model parses it (spec §10.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IpLit {
+    /// The address exactly as it was written, including any zone identifier.
+    pub text: String,
+    /// The source range the literal covers.
+    pub span: Span,
 }
 
 /// A regex literal, `/pattern/flags`.

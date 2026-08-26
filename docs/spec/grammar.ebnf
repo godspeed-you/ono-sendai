@@ -91,7 +91,7 @@ block          = "{" { statement } "}" ;
 
 (* --- literals ---------------------------------------------------------------------------- *)
 
-literal        = number | string | regex | "true" | "false" | "null" ;
+literal        = number | string | regex | address | "true" | "false" | "null" ;
 number         = int | float | bytesize | duration | percent ;
 int            = DEC | "0x" HEX { HEX } | "0b" BIN { BIN } ;
 float          = DEC "." DEC [ ( "e" | "E" ) [ "+" | "-" ] DEC ] ;
@@ -107,6 +107,16 @@ interpolation  = "$" IDENT { "." IDENT } | "$(" pipeline ")" ;
 escape         = "\\" ( "\\" | '"' | "'" | "$" | "n" | "r" | "t" | "0" | "e"
                       | "x" HEX HEX | "u{" HEX { HEX } "}" ) ;
 regex          = "/" { regex_char } "/" { "i" | "m" | "s" | "x" } ;
+
+(* An IP address is a value of its own (spec section 10.2), recognised only where an operand is
+ * expected: `127.0.0.1` is an address in `where local.address == 127.0.0.1` and a filename in
+ * `cat 127.0.0.1`. IPv4 needs four dotted groups, so `1.2` and `1.2.3` stay numbers and field
+ * paths; IPv6 needs `::` or two separators, so `ono:get` is never mistaken for one. A zone
+ * identifier is part of the address, because an address without its zone is a different address.
+ *)
+address        = ipv4 | ipv6 ;
+ipv4           = DEC "." DEC "." DEC "." DEC ;
+ipv6           = { HEX | ":" | "." } [ "%" IDENT ] ;
 
 (* --- statements -------------------------------------------------------------------------- *)
 

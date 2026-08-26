@@ -207,7 +207,7 @@ commands:
     streaming: true
     phase: planned
     examples:
-      - get journal --since now()-1h
+      - get journal --since (now() - 1h)
 
   - id: ono.journal.tail
     verb: tail

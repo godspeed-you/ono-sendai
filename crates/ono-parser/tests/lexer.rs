@@ -438,3 +438,69 @@ fn should_read_the_last_status_as_a_variable_in_every_position() {
         );
     }
 }
+
+#[test]
+fn should_read_an_address_as_an_address_where_a_value_is_expected() {
+    // Spec §10.2 makes `IpAddress` a core value type and §41.2 writes this line verbatim:
+    // "get socket | where local.address not in [127.0.0.1, ::1]". Without an address literal the
+    // lexer reads `127.0.0.1` as a float followed by field accesses, and the spec's own example
+    // does not run — which spec §50 makes a release blocker.
+    for source in [
+        "where local.address == 127.0.0.1",
+        "where remote.address == 10.4.2.11",
+        "where local.address in [127.0.0.1, ::1]",
+        "where peer == ::1",
+        "where peer == 2001:db8::1",
+        "where peer == fe80::1%eth0",
+    ] {
+        let parsed = ono_parser::parse(source);
+        assert!(
+            !parsed.has_errors(),
+            "{source:?} must parse: {:?}",
+            parsed.diagnostics()
+        );
+        assert!(
+            format!("{:?}", parsed.program()).contains("Ip"),
+            "{source:?} did not produce an address literal"
+        );
+    }
+}
+
+#[test]
+fn should_still_read_a_dotted_path_as_a_path_in_words_mode() {
+    // An address literal must not swallow ordinary words: `1.2.3.4` is an address in an
+    // expression and a filename in a command.
+    let parsed = ono_parser::parse("cat 127.0.0.1");
+    let stage = &parsed.program().statements[0]
+        .as_pipeline()
+        .expect("a pipeline")
+        .head
+        .stages[0];
+    assert_eq!(
+        stage
+            .arguments
+            .first()
+            .and_then(ono_parser::Argument::as_word),
+        Some("127.0.0.1")
+    );
+}
+
+#[test]
+fn should_not_read_an_ordinary_number_as_an_address_when_it_is_only_a_number() {
+    for source in [
+        "where cpu > 20",
+        "where ratio > 1.5",
+        "where version == 1.2",
+    ] {
+        let parsed = ono_parser::parse(source);
+        assert!(
+            !parsed.has_errors(),
+            "{source:?}: {:?}",
+            parsed.diagnostics()
+        );
+        assert!(
+            !format!("{:?}", parsed.program()).contains("Ip("),
+            "{source:?} was read as an address"
+        );
+    }
+}

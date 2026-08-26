@@ -90,13 +90,8 @@ impl Sink {
             layout = layout.max_rows(max_rows);
         }
 
-        let lines = layout.render_view_styled(
-            &renderer,
-            values,
-            self.view,
-            &self.theme,
-            self.presentation,
-        );
+        let lines =
+            layout.render_view_styled(&renderer, values, self.view, &self.theme, self.presentation);
 
         let mut out = std::io::stdout().lock();
         for line in lines {

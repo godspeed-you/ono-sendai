@@ -57,7 +57,7 @@ mod parser;
 pub use ast::{
     ArgMode, Argument, BinaryExpr, BinaryOp, Block, CallExpr, CatchClause, ChainOp, ChainedList,
     CurrentSelector, CurrentValue, Expr, FieldAccess, FieldPath, FnDecl, ForStmt, IfBranch, IfStmt,
-    IndexExpr, LetStmt, ListExpr, MatchArm, MatchArmBody, MatchStmt, NumberLit, NumberValue,
+    IndexExpr, IpLit, LetStmt, ListExpr, MatchArm, MatchArmBody, MatchStmt, NumberLit, NumberValue,
     OptionArg, Param, ParenInner, ParenValue, Pattern, Pipeline, Program, QualifiedName,
     RecordExpr, RecordField, RecordKey, RedirectOp, RedirectTarget, Redirection, RegexLit,
     ReturnStmt, Stage, StageHead, StageList, Statement, StrLit, StrPart, TryStmt, TypeRef,

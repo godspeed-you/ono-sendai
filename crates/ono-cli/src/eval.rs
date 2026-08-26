@@ -623,6 +623,23 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
             }
             Ok(Value::String(text.into()))
         }
+        Expr::Ip(literal) => {
+            // The lexer keeps the address as written; the value model is what knows how to read
+            // one, so a malformed address is a `type.mismatch` here rather than a lexer rule.
+            let address: std::net::IpAddr = literal
+                .text
+                .split('%')
+                .next()
+                .unwrap_or(&literal.text)
+                .parse()
+                .map_err(|_| {
+                    Flow::Failed(ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!("`{}` is not an IP address", literal.text),
+                    ))
+                })?;
+            Ok(Value::Ip(address))
+        }
         Expr::Regex(literal) => {
             // Flags become an inline group, which is how the regex engine spells them and keeps
             // the pattern one thing rather than a pattern plus a side channel.

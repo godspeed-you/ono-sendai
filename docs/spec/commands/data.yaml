@@ -50,7 +50,7 @@ commands:
     phase: B
     examples:
       - get process | select pid name memory
-      - get process | select pid name {mem_mb: memory / 1MiB}
+      - "get process | select pid name {mem_mb: memory / 1MiB}"
 
   - id: ono.data.sort
     verb: sort

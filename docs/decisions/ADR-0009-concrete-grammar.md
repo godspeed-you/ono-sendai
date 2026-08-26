@@ -69,6 +69,13 @@ above is the parser's built-in default and the only thing it needs at keystroke 
   immediately followed by a unit suffix is a semantic scalar (§10.6): byte sizes
   `B KiB MiB GiB TiB PiB KB MB GB TB PB`, durations `ns us ms s m h d w`, and `%`. Adjacency is
   required: `512 MiB` is two tokens, `512MiB` is one `ByteSize`.
+- **Addresses** — an IP address of either family is a literal at operand position in Expression
+  mode. Spec §10.2 makes `IpAddress` a value, and §41.2 writes
+  `where local.address not in [127.0.0.1, ::1]` verbatim; without the literal the lexer reads
+  `127.0.0.1` as a float followed by two field accesses and the specification's own example does
+  not run. IPv4 requires four dotted groups so `1.2` and `1.2.3` stay numbers and paths; IPv6
+  requires `::` or two separators so `ono:get` cannot be mistaken for one; a zone identifier
+  belongs to the address it qualifies.
 - **Regex** — `/…/flags` is a regex literal only in Expression mode at operand position (start of
   an operand, or directly after an operator, `(`, `[` or `,`). In Words mode `/etc/passwd` is a
   path word. Flags: `i m s x`.
