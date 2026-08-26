@@ -1,0 +1,44 @@
+# Canonical ActionResult schema. Source: spec §11.5, field-for-field. §28.8 requires it to be
+# used consistently for every mutation. Spec §16.5 forbids collapsing a bulk operation into one
+# error: a mutating consumer emits one ActionResult per target, and the aggregate exit status is
+# derived from them (ADR-0006).
+id: ono.action-result/1
+name: ActionResult
+summary: The outcome of one mutation against one target.
+identity: [target, operation]
+fields:
+  target:
+    type: value
+    required: true
+    doc: >-
+      A reference to the object the operation acted on. Typed as a value because a mutation can
+      act on any object kind; `inspect` resolves it back to the full record.
+  operation:
+    type: string
+    required: true
+    doc: The command id of the operation, e.g. `ono.service.restart`.
+  status:
+    type: enum
+    required: true
+    values: [success, skipped, failed]
+    doc: >-
+      The outcome. `skipped` is not a failure — it is the honest answer when the target was
+      already in the requested state and nothing was done.
+  changed:
+    type: bool
+    required: true
+    doc: Whether the system state actually changed. A successful no-op is `success` and `false`.
+  message:
+    type: string
+    nullable: true
+    doc: A one-line human summary; null when the status says everything there is to say.
+  error:
+    type: ono.error/1
+    nullable: true
+    doc: The structured error for a failed result; null for `success` and `skipped`.
+  duration:
+    type: duration
+    required: true
+    doc: How long the operation took, so that a slow success is visible as such.
+default_view:
+  columns: [target, operation, status, changed, duration]

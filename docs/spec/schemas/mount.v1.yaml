@@ -1,0 +1,36 @@
+# Canonical Mount schema. Source: spec §28.6, field-for-field; the structured `options` list is
+# what §23.5 means by "preserve structured mount options". §28.6 gives no identity line; the
+# mount point is the identity, with the caveat that mounts can stack on one target (ADR-0012).
+id: ono.mount/1
+name: Mount
+summary: A mounted filesystem, with its options kept as data rather than as one option string.
+identity: [target]
+fields:
+  source:
+    type: string
+    required: true
+    doc: >-
+      What is mounted — a device path, a network location, or a pseudo-filesystem name. A
+      string, not a path, because it is not always one.
+  target:
+    type: path
+    required: true
+    doc: The mount point.
+  filesystem:
+    type: string
+    required: true
+    doc: The filesystem type as the kernel names it.
+  options:
+    type: list<string>
+    required: true
+    doc: The mount options, one element per option, never a single joined string.
+  read_only:
+    type: bool
+    required: true
+    doc: Whether the mount is read-only. Extracted from the options because users filter on it.
+  device:
+    type: ref<ono.device/1>
+    nullable: true
+    doc: The backing device; null for pseudo- and network filesystems.
+default_view:
+  columns: [target, source, filesystem, read_only]

@@ -1,0 +1,266 @@
+# Command family: Storage. Sources: spec §9.1 Storage and the `mount` row of the §52 matrix.
+# Schemas: `ono.mount/1`, `ono.filesystem/1`. §23.5 requires mount information to come from
+# `/proc/self/mountinfo` or an equivalent API with the options preserved as structure.
+# Conventions as documented at the head of process.yaml.
+
+version: 1
+family: storage
+
+commands:
+  - id: ono.mount.get
+    verb: get
+    target: mount
+    summary: Enumerate mounted filesystems.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.mount/1>
+    provider_capability: mount.list
+    selectors:
+      - {name: target, type: path, doc: "Resolve the mount at this mount point."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get mount
+      - get mount | where read_only
+
+  - id: ono.filesystem.get
+    verb: get
+    target: filesystem
+    summary: Enumerate filesystems and their capacity, mounted or not.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.filesystem/1>
+    provider_capability: filesystem.list
+    selectors: []
+    options:
+      - {name: mounted, type: bool, doc: "Restrict to filesystems that are or are not currently mounted."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - get filesystem
+      - get filesystem | where available < 1GiB
+
+  - id: ono.device.get
+    verb: get
+    target: device
+    summary: Enumerate block and character devices.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.device/1>
+    provider_capability: device.list
+    selectors: []
+    options:
+      - {name: kind, type: string, doc: "Restrict to block or character devices."}
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get device
+
+  - id: ono.filesystem.mount
+    verb: mount
+    target: filesystem
+    summary: Mount a filesystem with validated options.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: mount.manage
+    selectors:
+      - {name: source, type: string, doc: "What to mount — a device, a network location or a pseudo-filesystem name."}
+      - {name: target, type: path, doc: "Where to mount it."}
+    options:
+      - {name: type, type: string, doc: "Filesystem type; detected when omitted."}
+      - {name: option, type: string, repeatable: true, doc: "One mount option per occurrence, never one joined string (spec §23.5)."}
+      - {name: read-only, type: bool, doc: "Mount read-only."}
+    privilege: elevated
+    streaming: false
+    phase: C
+    examples:
+      - mount filesystem /dev/sdb1 /mnt/data --read-only
+
+  - id: ono.filesystem.unmount
+    verb: unmount
+    target: filesystem
+    summary: Unmount or detach a filesystem.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.mount/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: mount.manage
+    selectors:
+      - {name: target, type: path, doc: "The mount point to detach."}
+    options:
+      - {name: lazy, type: bool, doc: "Detach now and clean up when the last reference goes away."}
+      - {name: force, type: bool, doc: "Detach even with open references. Destructive for whatever holds them."}
+    privilege: elevated
+    streaming: true
+    phase: C
+    examples:
+      - unmount filesystem /mnt/data
+
+  - id: ono.mount.set
+    verb: set
+    target: mount
+    summary: Remount a filesystem with different options.
+    stability: experimental               # spec §52, mount/set = "M"
+    argument_mode: words
+    input: "null | stream<ono.mount/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: mount.manage
+    selectors:
+      - {name: target, type: path, doc: "The mount point to remount."}
+    options:
+      - {name: option, type: string, repeatable: true, doc: "One mount option per occurrence."}
+      - {name: read-only, type: bool, doc: "Switch the mount between read-only and read-write."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - set mount /mnt/data --read-only false
+
+  - id: ono.mount.add
+    verb: add
+    target: mount
+    summary: Add a persistent mount definition.
+    stability: experimental               # spec §52, mount/add = "M"
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: mount.manage
+    selectors:
+      - {name: source, type: string, doc: "What the definition mounts."}
+      - {name: target, type: path, doc: "Where the definition mounts it."}
+    options:
+      - {name: type, type: string, doc: "Filesystem type."}
+      - {name: option, type: string, repeatable: true, doc: "One mount option per occurrence."}
+    privilege: elevated
+    streaming: false
+    phase: planned
+    examples:
+      - add mount /dev/sdb1 /mnt/data --type ext4
+
+  - id: ono.mount.remove
+    verb: remove
+    target: mount
+    summary: Remove a persistent mount definition.
+    stability: experimental               # spec §52, mount/remove = "M"
+    argument_mode: words
+    input: "null | stream<ono.mount/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: mount.manage
+    selectors:
+      - {name: target, type: path, doc: "The mount point whose definition is removed."}
+    options: []
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - remove mount /mnt/data
+
+  # --- §52 matrix cells whose usefulness the spec asks to validate first --------------------
+  - id: ono.mount.start
+    verb: start
+    target: mount
+    summary: Activate a mount definition.
+    stability: planned                    # spec §52, mount/start = "M"
+    validation_required: true
+    note: >-
+      Duplicates `mount filesystem`. §7.1 assigns this operation to the `mount` verb, so one of
+      the two spellings should be withdrawn before either is stable — the mechanical symmetry
+      §52 itself warns against.
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: mount.manage
+    selectors:
+      - {name: target, type: path, doc: "The mount point to activate."}
+    options: []
+    privilege: elevated
+    streaming: false
+    phase: planned
+    examples:
+      - start mount /mnt/data
+
+  - id: ono.mount.stop
+    verb: stop
+    target: mount
+    summary: Deactivate a mount.
+    stability: planned                    # spec §52, mount/stop = "M"
+    validation_required: true
+    note: Duplicates `unmount filesystem`; see `ono.mount.start`.
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: mount.manage
+    selectors:
+      - {name: target, type: path, doc: "The mount point to deactivate."}
+    options: []
+    privilege: elevated
+    streaming: false
+    phase: planned
+    examples:
+      - stop mount /mnt/data
+
+  - id: ono.mount.watch
+    verb: watch
+    target: mount
+    summary: Emit mount and unmount events as a live stream.
+    stability: planned                    # spec §52, mount/watch = "L?"
+    validation_required: true
+    argument_mode: words
+    input: "null"
+    output: stream<ono.mount-event/1>
+    provider_capability: mount.watch
+    selectors: []
+    options: []
+    privilege: none
+    streaming: true
+    phase: F
+    examples:
+      - watch mount
+
+  - id: ono.mount.trace
+    verb: trace
+    target: mount
+    summary: Show a mount's device, filesystem, propagation peers and the processes using it.
+    stability: planned                    # spec §52, mount/trace = "R?"
+    validation_required: true
+    argument_mode: words
+    input: "null | ono.mount/1"
+    output: ono.graph/1
+    provider_capability: mount.list
+    selectors:
+      - {name: target, type: path, doc: "The mount point to trace."}
+    options: []
+    privilege: conditional
+    streaming: false
+    phase: G
+    examples:
+      - trace mount /mnt/data
+
+  - id: ono.mount.enter
+    verb: enter
+    target: mount
+    summary: Push a mount onto the context stack.
+    stability: planned                    # spec §52, mount/enter = "C?"
+    validation_required: true
+    note: Overlaps `enter dir <mount point>`, which changes the working directory instead.
+    argument_mode: words
+    input: "null | ono.mount/1"
+    output: ono.context/1
+    provider_capability: mount.list
+    selectors:
+      - {name: target, type: path, doc: "The mount point to enter."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: E
+    examples:
+      - enter mount /mnt/data

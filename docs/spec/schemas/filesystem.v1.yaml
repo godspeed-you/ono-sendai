@@ -1,0 +1,53 @@
+# Filesystem. Derived from spec §9.1 Storage — `get filesystem` yields `Stream<Filesystem>`,
+# "enumerate filesystems/devices where provider supports it" — and from §37 Phase C, which pairs
+# `mount/filesystem`. A Filesystem exists whether or not it is mounted, which is what separates
+# it from `ono.mount/1`. Field set decided here (ADR-0012).
+id: ono.filesystem/1
+name: Filesystem
+summary: A filesystem and its capacity, mounted or not.
+identity: [uuid, source]
+fields:
+  source:
+    type: string
+    required: true
+    doc: The backing device or source. A string, because a network filesystem's source is not a path.
+  type:
+    type: string
+    required: true
+    doc: The filesystem type as the system names it.
+  uuid:
+    type: uuid
+    nullable: true
+    doc: The filesystem UUID; null for types that carry none. The stable half of the identity.
+  label:
+    type: string
+    nullable: true
+    doc: The filesystem label; null when unlabelled.
+  target:
+    type: path
+    nullable: true
+    doc: The mount point, or null when the filesystem is not currently mounted.
+  size:
+    type: bytesize
+    nullable: true
+    doc: Total capacity; null when the filesystem is not mounted or reports none.
+  used:
+    type: bytesize
+    nullable: true
+    doc: Space in use.
+  available:
+    type: bytesize
+    nullable: true
+    doc: >-
+      Space available to this user. Distinct from `size - used`, because reserved blocks are
+      counted as used space nobody unprivileged can have.
+  read_only:
+    type: bool
+    nullable: true
+    doc: Whether the filesystem is currently mounted read-only; null when not mounted.
+  device:
+    type: ref<ono.device/1>
+    nullable: true
+    doc: The backing device; null for network and pseudo-filesystems.
+default_view:
+  columns: [source, type, size, used, available, target]

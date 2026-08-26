@@ -1,0 +1,24 @@
+# Graph. Source: spec §22.1, which gives the Node and Edge records; §47 names graph.v1.yaml as
+# an initial contract. `trace` produces a Graph (§9.1), and §22.4 requires a text renderer to
+# make it useful everywhere, which is possible only because the graph is data, not drawing.
+id: ono.graph/1
+name: Graph
+summary: A relationship graph over system objects, as produced by `trace`.
+identity: []
+fields:
+  root:
+    type: value
+    nullable: true
+    doc: >-
+      The object the trace started from, so a renderer can lay the graph out from it. Null for a
+      graph with no distinguished origin.
+  nodes:
+    type: list<ono.graph-node/1>
+    required: true
+    doc: Every object in the graph, each appearing exactly once.
+  edges:
+    type: list<ono.graph-edge/1>
+    required: true
+    doc: The relationships between the nodes.
+default_view:
+  columns: [root, nodes, edges]

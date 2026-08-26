@@ -1,0 +1,53 @@
+# Job. Derived from spec §18.4 — "`get job` returns structured job objects" — together with
+# §18.1 (traditional job control: process groups and signals) and §18.4's detached native live
+# views. A job is therefore either an external pipeline or a native stream, and the schema says
+# which. Field set decided here (ADR-0012).
+id: ono.job/1
+name: Job
+summary: A backgrounded pipeline — an external process group, or a detached native live view.
+identity: [id]
+fields:
+  id:
+    type: int
+    required: true
+    doc: The job number, the `+1` the prompt shows (§18.4). Unique within the session.
+  kind:
+    type: enum
+    required: true
+    values: [external, native]
+    doc: >-
+      Whether the job is an external process group under classic job control (§18.1) or a
+      detached native live stream (§18.4). They are cancelled by different mechanisms (§18.5).
+  state:
+    type: enum
+    required: true
+    values: [running, stopped, done, failed, cancelled]
+    doc: The job's current state.
+  command:
+    type: string
+    required: true
+    doc: The source text of the pipeline, as typed, so the job list is readable.
+  current:
+    type: bool
+    required: true
+    doc: Whether this is the job an unqualified job reference resolves to.
+  process_group:
+    type: int
+    nullable: true
+    doc: The process group id; null for a native job, which owns no process group.
+  pids:
+    type: list<int>
+    nullable: true
+    doc: The process ids in the job; null for a native job.
+  started:
+    type: timestamp
+    required: true
+    doc: When the job was detached.
+  exit_status:
+    type: int
+    nullable: true
+    doc: >-
+      The exit status once the job finished; null while it is still running. A job terminated by
+      a signal reports its status through the `external.signal` error, not as a fabricated number.
+default_view:
+  columns: [id, state, kind, command, started]

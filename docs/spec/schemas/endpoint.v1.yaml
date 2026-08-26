@@ -1,0 +1,29 @@
+# Endpoint — the address half of a socket. Derived from the `local`/`remote` Endpoint fields of
+# spec §28.4 and from the pipeline examples that reach into it: `where local.address not in
+# [127.0.0.1, ::1]` (§41.2) and `group remote.host` (§6.2). It is a structural sub-record, not
+# an addressable object, so it has no identity (ADR-0012).
+id: ono.endpoint/1
+name: Endpoint
+summary: "One end of a socket: an address and port, or a filesystem path for a Unix socket."
+identity: []
+fields:
+  address:
+    type: ip
+    nullable: true
+    doc: The IP address; null for a Unix-domain or unbound endpoint.
+  port:
+    type: port
+    nullable: true
+    doc: The transport port; null where the protocol has none.
+  path:
+    type: path
+    nullable: true
+    doc: The filesystem path of a Unix-domain socket; null for every other family.
+  host:
+    type: string
+    nullable: true
+    doc: >-
+      The reverse-resolved host name. Null unless resolution was requested and succeeded;
+      §22.2 classes it as derived, so it is never substituted for `address`.
+default_view:
+  columns: [address, port]

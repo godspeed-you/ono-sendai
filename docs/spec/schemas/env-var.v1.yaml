@@ -1,0 +1,31 @@
+# EnvVar. Derived from spec §9.1 Identity — `get env [name]` yields `Stream<EnvVar>`, "return
+# environment values as records" — and from §37 Phase C, which delivers `env` as a core provider
+# target. ADR-0009 makes `$env.PATH` the expression form of the same data.
+id: ono.env-var/1
+name: EnvVar
+summary: One environment or shell variable, as a record rather than a line of `NAME=value`.
+identity: [name]
+fields:
+  name:
+    type: string
+    required: true
+    doc: The variable name.
+  value:
+    type: string
+    required: true
+    doc: >-
+      The value, verbatim and unsplit. Never null: a variable that is not set does not produce
+      a record at all, which is the distinction spec §10.5 insists on.
+  exported:
+    type: bool
+    required: true
+    doc: >-
+      Whether the variable is part of the environment passed to child processes, as opposed to
+      a shell-local binding (ADR-0009 `let`).
+  source:
+    type: enum
+    required: true
+    values: [inherited, config, invocation, shell]
+    doc: Where the current value came from, so `get env` answers "who set this" the way `get config` does.
+default_view:
+  columns: [name, value, exported]

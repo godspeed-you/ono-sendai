@@ -1,0 +1,344 @@
+# Command family: Data. Sources: spec §9.1 Data, §53 Appendix B (the transform reference) and
+# §37 Phase B, which delivers `where select sort take skip each count measure` together with the
+# JSON/YAML/CSV/text conversions. `group` and `reduce` join them in Phase B: §9.1 lists all ten
+# in one family and they are the same stream machinery (ADR-0012). `join` and `diff` stay
+# `experimental` and unscheduled because §53 explicitly declines to freeze their syntax.
+#
+# Argument mode follows ADR-0009 exactly: the transforms below are expression mode; `to`, `from`
+# and `format` are words mode, because their arguments are format names and options, never
+# expressions. That split is what makes `get process | to json > out.json` parse.
+# Conventions as documented at the head of process.yaml.
+
+version: 1
+family: data
+
+commands:
+  - id: ono.data.where
+    verb: where
+    target: null
+    summary: Filter a stream by a predicate.
+    stability: stable
+    argument_mode: expression
+    input: "stream<any>"
+    output: "stream<any>"
+    provider_capability: null
+    selectors:
+      - {name: predicate, type: bool, doc: "The predicate, evaluated with the current value's fields in scope (spec §10.3)."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: B
+    examples:
+      - get process | where cpu > 20
+      - get process | where cpu > 20 and user.name != "root"
+      - get socket | where state == established
+
+  - id: ono.data.select
+    verb: select
+    target: null
+    summary: Project fields and expressions into records.
+    stability: stable
+    argument_mode: expression
+    input: "stream<any>"
+    output: stream<record>
+    provider_capability: null
+    selectors:
+      - {name: fields, type: list<string>, doc: "The field paths to keep, in the order given. A record literal adds a computed field."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: B
+    examples:
+      - get process | select pid name memory
+      - get process | select pid name {mem_mb: memory / 1MiB}
+
+  - id: ono.data.sort
+    verb: sort
+    target: null
+    summary: Order a finite input by an expression.
+    stability: stable
+    argument_mode: expression
+    input: "stream<any>"
+    output: "stream<any>"
+    provider_capability: null
+    selectors:
+      - {name: key, type: value, doc: "The expression to order by."}
+      - {name: direction, type: string, default: asc, doc: "`asc` or `desc`."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: B
+    note: >-
+      Finite input by default. A truly unbounded stream without a window is rejected with
+      `stream.unbounded_operation` (Ono-Sendai-E0801), as §53 requires.
+    examples:
+      - get process | sort memory desc
+      - get process | sort cpu desc | take 10
+
+  - id: ono.data.group
+    verb: group
+    target: null
+    summary: Group a finite or windowed stream by an expression.
+    stability: stable
+    argument_mode: expression
+    input: "stream<any>"
+    output: stream<record>
+    provider_capability: null
+    selectors:
+      - {name: key, type: value, doc: "The expression to group by."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: B
+    note: Returns Group records rather than preformatted headings (spec §53).
+    examples:
+      - get process | group user.name
+      - get socket | where state == established | group process.name
+
+  - id: ono.data.take
+    verb: take
+    target: null
+    summary: Take the first N values.
+    stability: stable
+    argument_mode: expression
+    input: "stream<any>"
+    output: "stream<any>"
+    provider_capability: null
+    selectors:
+      - {name: count, type: int, doc: "How many values to take."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: B
+    note: Streaming and lazy; also the way to bound an unbounded stream for `sort` or `count`.
+    examples:
+      - get process | sort cpu desc | take 10
+
+  - id: ono.data.skip
+    verb: skip
+    target: null
+    summary: Skip the first N values.
+    stability: stable
+    argument_mode: expression
+    input: "stream<any>"
+    output: "stream<any>"
+    provider_capability: null
+    selectors:
+      - {name: count, type: int, doc: "How many values to skip."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: B
+    examples:
+      - get process | sort cpu desc | skip 1 | take 5
+
+  - id: ono.data.each
+    verb: each
+    target: null
+    summary: Map each value through an expression or block.
+    stability: stable
+    argument_mode: expression
+    input: "stream<any>"
+    output: "stream<any>"
+    provider_capability: null
+    selectors:
+      - {name: body, type: value, doc: "The expression or block to evaluate per value, with `@` bound to it (spec §19.4)."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: B
+    note: >-
+      Maps one input value to zero, one or many outputs depending on the block. Spec §53 warns
+      that this must be specified carefully to avoid accidental nested streams.
+    examples:
+      - get service | where state == failed | each { restart service @ }
+
+  - id: ono.data.reduce
+    verb: reduce
+    target: null
+    summary: Fold a stream into a single value.
+    stability: stable
+    argument_mode: expression
+    input: "stream<any>"
+    output: value
+    provider_capability: null
+    selectors:
+      - {name: body, type: value, doc: "The folding expression, with the accumulator and the current value in scope."}
+    options:
+      - {name: initial, type: value, doc: "The starting accumulator. Without it the first value seeds the fold and an empty stream is an error."}
+    privilege: none
+    streaming: false
+    phase: B
+    examples:
+      - get process | select memory | reduce @acc + @
+
+  - id: ono.data.count
+    verb: count
+    target: null
+    summary: Count the values of a finite input.
+    stability: stable
+    argument_mode: expression
+    input: "stream<any>"
+    output: int
+    provider_capability: null
+    selectors: []
+    options: []
+    privilege: none
+    streaming: false
+    phase: B
+    examples:
+      - get process | count
+      - echo (get process | count)
+
+  - id: ono.data.measure
+    verb: measure
+    target: null
+    summary: Compute statistics over a numeric stream.
+    stability: stable
+    argument_mode: expression
+    input: "stream<any>"
+    output: ono.measure/1
+    provider_capability: null
+    selectors:
+      - {name: key, type: value, doc: "The expression to measure."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: B
+    note: >-
+      Yields count, sum, mean, min and max as typed values, not as formatted strings
+      (spec §53).
+    examples:
+      - get process | measure memory
+
+  - id: ono.data.to
+    verb: to
+    target: null
+    summary: Serialize a value or stream into text or bytes.
+    stability: stable
+    argument_mode: words                  # ADR-0009: format names and options, never expressions
+    input: any
+    output: "string | bytes"
+    provider_capability: null
+    selectors:
+      - {name: format, type: string, doc: "One of `json`, `yaml`, `csv`, `text`, `bytes`."}
+    options:
+      - {name: pretty, type: bool, doc: "Indent the output for a human reader (spec §33.5)."}
+      - {name: human, type: bool, doc: "Emit display forms such as `1.2 GiB` instead of canonical values. Off by default: §33.5 requires canonical values unless a human format is explicitly requested."}
+    privilege: none
+    streaming: true
+    phase: B
+    examples:
+      - get process | to json
+      - get process | to json --pretty
+      - get process | to json > out.json
+
+  - id: ono.data.from
+    verb: from
+    target: null
+    summary: Parse an explicit representation into values.
+    stability: stable
+    argument_mode: words                  # ADR-0009
+    input: "string | bytes"
+    output: "value | stream<record>"
+    provider_capability: null
+    selectors:
+      - {name: format, type: string, doc: "One of `json`, `yaml`, `csv`."}
+    options:
+      - {name: headers, type: bool, doc: "For `csv`, treat the first row as field names."}
+    privilege: none
+    streaming: true
+    phase: B
+    examples:
+      - curl -s https://example/api | from json | where status == "open"
+
+  - id: ono.data.format
+    verb: format
+    target: null
+    summary: Render a value explicitly for a human.
+    stability: experimental               # spec §7.1 and §12.3 (`format table`); §9.1 lists it in no family
+    argument_mode: words                  # ADR-0009
+    input: any
+    output: string
+    provider_capability: null
+    selectors:
+      - {name: renderer, type: string, doc: "`table`, `list`, `tree` or another registered renderer (spec §13)."}
+    options:
+      - {name: columns, type: list<string>, doc: "Override the schema's default column set."}
+      - {name: max-rows, type: int, doc: "Truncate after this many rows (spec §13.3)."}
+    privilege: none
+    streaming: true
+    phase: B
+    note: >-
+      Rendering is a view over values, never a data contract (spec §10.7, §35.5). `format` makes
+      the rendering explicit so it can be piped to a byte sink; it never changes the values.
+    examples:
+      - get process | format table
+      - get process | format table --columns [pid, name, memory]
+
+  - id: ono.data.tail
+    verb: tail
+    target: null
+    summary: Emit the last N values of a finite stream, or follow an unbounded one.
+    stability: experimental               # spec §33.2 and §41.4 both write `| tail 30`
+    argument_mode: words
+    input: "stream<any>"
+    output: "stream<any>"
+    provider_capability: null
+    selectors:
+      - {name: count, type: int, doc: "How many trailing values to emit."}
+    options:
+      - {name: follow, type: bool, doc: "Keep the stream open and emit values as they arrive."}
+    privilege: none
+    streaming: true
+    phase: planned
+    note: >-
+      Distinct from `tail file` and `tail journal`, which take a target word and follow a
+      source. This is the transform spelling, disambiguated by the absence of a target
+      (ADR-0012).
+    examples:
+      - get log --service nginx | tail 30
+
+  - id: ono.data.join
+    verb: join
+    target: null
+    summary: Join two record streams on a key.
+    stability: experimental
+    argument_mode: expression
+    input: "stream<any>"
+    output: stream<record>
+    provider_capability: null
+    selectors:
+      - {name: right, type: value, doc: "The stream to join against."}
+      - {name: on, type: value, doc: "The key expression."}
+    options:
+      - {name: kind, type: string, default: inner, doc: "`inner`, `left`, `right` or `outer`."}
+    privilege: none
+    streaming: false
+    phase: planned
+    note: >-
+      Spec §53: "Relational joins are powerful but complex. Syntax should not be frozen until
+      common shell use cases justify it." The entry exists so the id is reserved and the
+      semantics are written down; the surface is not a promise yet.
+    examples:
+      - get process | join (get socket) --on pid
+
+  - id: ono.data.diff
+    verb: diff
+    target: null
+    summary: Compare two structured snapshots by identity and schema.
+    stability: experimental
+    argument_mode: expression
+    input: "stream<any>"
+    output: stream<record>
+    provider_capability: null
+    selectors:
+      - {name: right, type: value, doc: "The snapshot to compare against."}
+    options:
+      - {name: identity, type: list<string>, doc: "Override the schema's identity fields for the comparison."}
+    privilege: none
+    streaming: false
+    phase: planned
+    note: Spec §53 gives the semantics but not a frozen syntax; see `ono.data.join`.
+    examples:
+      - get service | diff @-1

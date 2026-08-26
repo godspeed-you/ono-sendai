@@ -1,0 +1,106 @@
+# Command family: Package. Source: spec §9.1 Package, complete. No phase of spec §37 delivers a
+# package provider, so every command here is `phase: planned` while remaining `stability: stable`
+# — §9.1 names them, so their ids and semantics are a promise; only their delivery is unscheduled
+# (ADR-0012). Conventions as documented at the head of process.yaml.
+
+version: 1
+family: package
+
+commands:
+  - id: ono.package.get
+    verb: get
+    target: package
+    summary: Enumerate installed and known packages through the active provider.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.package/1>
+    provider_capability: package.list
+    selectors:
+      - {name: name, type: string, doc: "Resolve one package by name."}
+    options:
+      - {name: installed, type: bool, doc: "Restrict to packages that are or are not installed."}
+      - {name: provider, type: string, doc: "Query one named package provider."}
+    privilege: none
+    streaming: true
+    phase: planned
+    examples:
+      - get package
+      - get package nginx
+
+  - id: ono.package.find
+    verb: find
+    target: package
+    summary: Search the provider's repositories.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.package/1>
+    provider_capability: package.search
+    selectors:
+      - {name: query, type: string, doc: "The search term."}
+    options:
+      - {name: provider, type: string, doc: "Search one named package provider."}
+    privilege: none
+    streaming: true
+    phase: planned
+    examples:
+      - find package postgres
+
+  - id: ono.package.add
+    verb: add
+    target: package
+    summary: Install a package.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.package/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: package.manage
+    selectors:
+      - {name: name, type: string, doc: "The package to install."}
+    options:
+      - {name: version, type: string, doc: "Install this version rather than the newest available."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - add package nginx
+
+  - id: ono.package.remove
+    verb: remove
+    target: package
+    summary: Remove a package.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.package/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: package.manage
+    selectors:
+      - {name: name, type: string, doc: "The package to remove."}
+    options:
+      - {name: purge, type: bool, doc: "Remove configuration as well as the package. Destructive, so never the default."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - remove package nginx
+
+  - id: ono.package.set
+    verb: set
+    target: package
+    summary: Request a version transition where the provider supports it.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.package/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: package.manage
+    selectors:
+      - {name: name, type: string, doc: "The package to transition."}
+    options:
+      - {name: version, type: string, doc: "The version to move to."}
+      - {name: hold, type: bool, doc: "Pin the package at its current version."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - set package nginx --version 1.24.0

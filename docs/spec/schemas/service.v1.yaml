@@ -1,0 +1,49 @@
+# Canonical Service schema. Source: spec §28.3, field-for-field; identity "provider + unit/name"
+# as §28.3 gives it. The `state` values are the systemd active states of §23.3, plus `unknown`
+# for a state the provider does not model — never a fabricated value (spec §10.5).
+id: ono.service/1
+name: Service
+summary: A service-manager unit as the active service provider sees it.
+identity: [provider, name]
+fields:
+  name:
+    type: string
+    required: true
+    doc: The unit name, including its suffix where the provider uses one.
+  description:
+    type: string
+    nullable: true
+    doc: The human description the unit declares.
+  state:
+    type: enum
+    required: true
+    values: [active, reloading, inactive, failed, activating, deactivating, unknown]
+    doc: The high-level activity state.
+  substate:
+    type: string
+    nullable: true
+    doc: >-
+      The provider-specific sub-state (`running`, `exited`, `dead`, …). A string rather than an
+      enum because the set is the provider's, not Ono's.
+  pid:
+    type: int
+    nullable: true
+    doc: The main process id; null when the unit runs no process or it is not visible.
+  enabled:
+    type: bool
+    nullable: true
+    doc: Whether the unit starts at boot; null when the provider has no such concept.
+  since:
+    type: timestamp
+    nullable: true
+    doc: When the unit entered its current state.
+  provider:
+    type: string
+    required: true
+    doc: The service provider that produced this record; part of the identity.
+  unit_file:
+    type: path
+    nullable: true
+    doc: The unit file backing the service; null for transient or generated units.
+default_view:
+  columns: [name, state, substate, enabled, description]

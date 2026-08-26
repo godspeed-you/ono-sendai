@@ -1,0 +1,505 @@
+# Command family: Network. Sources: spec §9.1 Network, the `socket`, `interface` and `route`
+# rows of the §52 matrix, §22.3 (`trace socket --port 443`, `trace connection --remote …`),
+# §41.2 and §41.5. Schemas: `ono.socket/1`, `ono.interface/1`, `ono.route/1`, `ono.neighbor/1`.
+#
+# Read paths for these targets are Phase C, which §37 delivers as "interface/route/neighbor,
+# socket/connection". Write paths — configuring an interface or a routing table — are `planned`:
+# §37's Phase C success criterion is about inspection ("common inspection tasks no longer
+# require parsing text"), and network reconfiguration is a different product decision (ADR-0012).
+# Conventions as documented at the head of process.yaml.
+
+version: 1
+family: network
+
+commands:
+  - id: ono.socket.get
+    verb: get
+    target: socket
+    summary: Enumerate sockets as structured records.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.socket/1>
+    provider_capability: socket.list
+    selectors:
+      - {name: port, type: port, doc: "Restrict to sockets bound to or connected on this port."}
+    options:
+      - {name: listening, type: bool, doc: "Restrict to listening sockets."}
+      - {name: protocol, type: string, doc: "Restrict to one transport protocol."}
+      - {name: resolve, type: bool, doc: "Reverse-resolve endpoint host names. Off by default: §22.2 classes the result as derived, and resolution can block."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - get socket
+      - get socket | where state == established | group process.name
+      - get socket | where state == listen | where local.address not in [127.0.0.1, ::1]
+
+  - id: ono.connection.get
+    verb: get
+    target: connection
+    summary: Enumerate connection-oriented socket views.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.connection/1>
+    provider_capability: connection.list
+    selectors: []
+    options:
+      - {name: remote, type: ip, doc: "Restrict to connections with this peer address."}
+      - {name: resolve, type: bool, doc: "Reverse-resolve peer host names."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - get connection
+      - get connection --remote 10.4.2.11
+
+  - id: ono.interface.get
+    verb: get
+    target: interface
+    summary: Enumerate interfaces, their addresses and their state.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.interface/1>
+    provider_capability: interface.list
+    selectors:
+      - {name: name, type: string, doc: "Resolve one interface by name."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get interface
+      - get interface | where state == up
+
+  - id: ono.route.get
+    verb: get
+    target: route
+    summary: Enumerate routing table entries.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.route/1>
+    provider_capability: route.list
+    selectors: []
+    options:
+      - {name: table, type: string, doc: "Query one routing table instead of the main one."}
+      - {name: family, type: string, doc: "Restrict to one address family."}
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get route
+      - get route | where destination == null
+
+  - id: ono.neighbor.get
+    verb: get
+    target: neighbor
+    summary: Enumerate ARP and NDP neighbours.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.neighbor/1>
+    provider_capability: neighbor.list
+    selectors: []
+    options:
+      - {name: interface, type: string, doc: "Restrict to one interface."}
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get neighbor
+      - get neighbor | where state == reachable
+
+  - id: ono.dns.resolve
+    verb: resolve
+    target: dns
+    summary: Perform an explicit DNS resolution.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.dns-record/1>
+    provider_capability: dns.resolve
+    selectors:
+      - {name: query, type: string, doc: "The name or address to resolve. An address performs a reverse lookup."}
+    options:
+      - {name: type, type: string, doc: "Restrict to one record type."}
+      - {name: server, type: ip, doc: "Query this resolver instead of the system's."}
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - resolve dns example.com
+      - resolve dns 10.4.2.11
+
+  - id: ono.port.test
+    verb: test
+    target: port
+    summary: Probe a host and port for reachability, with timing and error detail.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.probe-result/1
+    provider_capability: port.probe
+    selectors:
+      - {name: host, type: string, doc: "The host to probe."}
+      - {name: port, type: port, doc: "The port to probe."}
+    options:
+      - {name: timeout, type: duration, doc: "How long to wait before reporting the probe as unreachable."}
+      - {name: protocol, type: string, doc: "Which transport to probe."}
+    privilege: none
+    streaming: false
+    phase: C
+    examples:
+      - test port example.com 443
+      - test port 10.4.2.11 5432 --timeout 2s
+
+  - id: ono.connection.trace
+    verb: trace
+    target: connection
+    summary: Resolve a connection's process, service and remote endpoint relationships.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.connection/1"
+    output: ono.graph/1
+    provider_capability: socket.trace
+    selectors: []
+    options:
+      - {name: remote, type: ip, doc: "Trace the connections with this peer (spec §22.3)."}
+    privilege: conditional
+    streaming: false
+    phase: G
+    examples:
+      - trace connection --remote 10.4.2.11
+
+  - id: ono.socket.trace
+    verb: trace
+    target: socket
+    summary: Resolve a socket to its owning process, service and peer.
+    stability: stable                     # spec §22.3: `trace socket --port 443`
+    argument_mode: words
+    input: "null | ono.socket/1"
+    output: ono.graph/1
+    provider_capability: socket.trace
+    selectors: []
+    options:
+      - {name: port, type: port, doc: "Trace the sockets on this port (spec §22.3)."}
+    privilege: conditional
+    streaming: false
+    phase: G
+    examples:
+      - trace socket --port 443
+
+  - id: ono.socket.watch
+    verb: watch
+    target: socket
+    summary: Emit socket lifecycle and state changes as a live stream.
+    stability: experimental               # spec §52, socket/watch = "L"
+    argument_mode: words
+    input: "null"
+    output: stream<ono.socket-event/1>
+    provider_capability: socket.watch
+    selectors:
+      - {name: port, type: port, doc: "Watch sockets on one port."}
+    options:
+      - {name: every, type: duration, doc: "Polling interval where the provider has no event source."}
+    privilege: conditional
+    streaming: true
+    phase: F
+    examples:
+      - watch socket --port 443
+
+  - id: ono.interface.watch
+    verb: watch
+    target: interface
+    summary: Emit interface and address changes as a live stream.
+    stability: experimental               # spec §52, interface/watch = "L"
+    argument_mode: words
+    input: "null"
+    output: stream<ono.interface-event/1>
+    provider_capability: interface.watch
+    selectors:
+      - {name: name, type: string, doc: "Watch one interface."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: F
+    examples:
+      - watch interface
+
+  - id: ono.route.watch
+    verb: watch
+    target: route
+    summary: Emit routing table changes as a live stream.
+    stability: experimental               # spec §52, route/watch = "L"
+    argument_mode: words
+    input: "null"
+    output: stream<ono.route-event/1>
+    provider_capability: route.watch
+    selectors: []
+    options:
+      - {name: table, type: string, doc: "Watch one routing table."}
+    privilege: none
+    streaming: true
+    phase: F
+    examples:
+      - watch route
+
+  - id: ono.route.trace
+    verb: trace
+    target: route
+    summary: Show which interface, gateway and neighbour a route depends on.
+    stability: experimental               # spec §52, route/trace = "R"
+    argument_mode: words
+    input: "null | ono.route/1"
+    output: ono.graph/1
+    provider_capability: route.list
+    selectors:
+      - {name: destination, type: ipnetwork, doc: "The route to trace."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: G
+    examples:
+      - trace route 0.0.0.0/0
+
+  # --- network write paths ------------------------------------------------------------------
+  - id: ono.route.add
+    verb: add
+    target: route
+    summary: Add a routing table entry.
+    stability: experimental               # spec §52, route/add = "M"
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: route.set
+    selectors:
+      - {name: destination, type: ipnetwork, doc: "The prefix to route."}
+    options:
+      - {name: gateway, type: ip, doc: "The next hop."}
+      - {name: interface, type: string, doc: "The outgoing interface."}
+      - {name: metric, type: int, doc: "The route priority."}
+      - {name: table, type: string, doc: "Which routing table to add to."}
+    privilege: elevated
+    streaming: false
+    phase: planned
+    examples:
+      - add route 10.0.0.0/8 --gateway 192.168.1.1
+
+  - id: ono.route.remove
+    verb: remove
+    target: route
+    summary: Remove a routing table entry.
+    stability: experimental               # spec §52, route/remove = "M"
+    argument_mode: words
+    input: "null | stream<ono.route/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: route.set
+    selectors:
+      - {name: destination, type: ipnetwork, doc: "The prefix to stop routing."}
+    options:
+      - {name: table, type: string, doc: "Which routing table to remove from."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - remove route 10.0.0.0/8
+
+  - id: ono.route.set
+    verb: set
+    target: route
+    summary: Modify an existing routing table entry.
+    stability: experimental               # spec §52, route/set = "M"
+    argument_mode: words
+    input: "null | stream<ono.route/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: route.set
+    selectors:
+      - {name: destination, type: ipnetwork, doc: "The route to modify."}
+    options:
+      - {name: gateway, type: ip, doc: "New next hop."}
+      - {name: metric, type: int, doc: "New priority."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - set route 10.0.0.0/8 --metric 200
+
+  - id: ono.interface.set
+    verb: set
+    target: interface
+    summary: Change an interface's configuration or administrative state.
+    stability: experimental               # spec §52, interface/set = "M"
+    argument_mode: words
+    input: "null | stream<ono.interface/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: interface.set
+    selectors:
+      - {name: name, type: string, doc: "The interface to modify."}
+    options:
+      - {name: mtu, type: int, doc: "New maximum transmission unit."}
+      - {name: up, type: bool, doc: "Bring the interface administratively up or down."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - set interface eth0 --mtu 9000
+
+  # --- §52 matrix cells whose usefulness the spec asks to validate first --------------------
+  - id: ono.interface.start
+    verb: start
+    target: interface
+    summary: Bring an interface up.
+    stability: planned                    # spec §52, interface/start = "M?"
+    validation_required: true
+    note: Overlaps `set interface --up true`; one spelling should be withdrawn before either is stable.
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: interface.set
+    selectors:
+      - {name: name, type: string, doc: "The interface to bring up."}
+    options: []
+    privilege: elevated
+    streaming: false
+    phase: planned
+    examples:
+      - start interface eth0
+
+  - id: ono.interface.stop
+    verb: stop
+    target: interface
+    summary: Bring an interface down.
+    stability: planned                    # spec §52, interface/stop = "M?"
+    validation_required: true
+    note: Overlaps `set interface --up false`.
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: interface.set
+    selectors:
+      - {name: name, type: string, doc: "The interface to bring down."}
+    options: []
+    privilege: elevated
+    streaming: false
+    phase: planned
+    examples:
+      - stop interface eth0
+
+  - id: ono.interface.add
+    verb: add
+    target: interface
+    summary: Create a virtual interface, or add an address to an existing one.
+    stability: planned                    # spec §52, interface/add = "M?"
+    validation_required: true
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: interface.set
+    selectors:
+      - {name: name, type: string, doc: "The interface to create or extend."}
+    options:
+      - {name: address, type: ipnetwork, doc: "Address to add."}
+      - {name: kind, type: string, doc: "Virtual interface kind to create."}
+    privilege: elevated
+    streaming: false
+    phase: planned
+    examples:
+      - add interface eth0 --address 192.168.1.5/24
+
+  - id: ono.interface.remove
+    verb: remove
+    target: interface
+    summary: Delete a virtual interface, or remove an address from one.
+    stability: planned                    # spec §52, interface/remove = "M?"
+    validation_required: true
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: interface.set
+    selectors:
+      - {name: name, type: string, doc: "The interface to delete or shrink."}
+    options:
+      - {name: address, type: ipnetwork, doc: "Address to remove; without it the interface itself is deleted."}
+    privilege: elevated
+    streaming: false
+    phase: planned
+    examples:
+      - remove interface eth0 --address 192.168.1.5/24
+
+  - id: ono.interface.trace
+    verb: trace
+    target: interface
+    summary: Show the routes, addresses, neighbours and sockets bound to an interface.
+    stability: planned                    # spec §52, interface/trace = "R?"
+    validation_required: true
+    argument_mode: words
+    input: "null | ono.interface/1"
+    output: ono.graph/1
+    provider_capability: interface.list
+    selectors:
+      - {name: name, type: string, doc: "The interface to trace."}
+    options: []
+    privilege: conditional
+    streaming: false
+    phase: G
+    examples:
+      - trace interface eth0
+
+  - id: ono.interface.enter
+    verb: enter
+    target: interface
+    summary: Push an interface onto the context stack.
+    stability: planned                    # spec §52, interface/enter = "C?"
+    validation_required: true
+    argument_mode: words
+    input: "null | ono.interface/1"
+    output: ono.context/1
+    provider_capability: interface.list
+    selectors:
+      - {name: name, type: string, doc: "The interface to enter."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: E
+    examples:
+      - enter interface eth0
+
+  - id: ono.socket.stop
+    verb: stop
+    target: socket
+    summary: Force a socket closed.
+    stability: planned                    # spec §52, socket/stop = "M?"
+    validation_required: true
+    argument_mode: words
+    input: "null | stream<ono.socket/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: socket.close
+    selectors: []
+    options:
+      - {name: confirm, type: bool, doc: "Confirm non-interactively; closing a socket under a running process is destructive."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - get socket | where remote.address == 10.4.2.11 | stop socket
+
+  - id: ono.socket.enter
+    verb: enter
+    target: socket
+    summary: Push a socket onto the context stack.
+    stability: planned                    # spec §52, socket/enter = "C?"
+    validation_required: true
+    argument_mode: words
+    input: "null | ono.socket/1"
+    output: ono.context/1
+    provider_capability: socket.list
+    selectors: []
+    options: []
+    privilege: conditional
+    streaming: false
+    phase: E
+    examples:
+      - get socket | take 1 | enter socket

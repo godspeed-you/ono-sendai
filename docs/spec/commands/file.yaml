@@ -1,0 +1,364 @@
+# Command family: Filesystem. Sources: spec §9.1 Filesystem, the `file` and `dir` rows of the
+# §52 matrix, §22.3 (`trace file … --users`), §41.3 (`find file` + `remove file`) and §7.1 for
+# the `open` and `tail` verbs. Schema: `ono.file/1` for both `file` and `dir`, since §9.1 says
+# `get dir` lists "directory entries as File records".
+#
+# The `dir` row of the §52 matrix mirrors the `file` row. Because a directory listing yields
+# File records, the `watch` and `trace` cells of the `dir` row are served by the `file`
+# commands below; only the `dir` commands that behave differently get their own entry (ADR-0012).
+# Conventions as documented at the head of process.yaml.
+
+version: 1
+family: file
+
+commands:
+  - id: ono.file.get
+    verb: get
+    target: file
+    summary: Return file metadata records for the given paths.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.file/1>
+    provider_capability: file.list
+    selectors:
+      - {name: path, type: path, doc: "The path or glob to describe. Globs resolve to exact objects before anything acts on them (spec §17.3)."}
+    options:
+      - {name: recursive, type: bool, doc: "Descend into directories (spec §11.6, §6.2)."}
+      - {name: follow-symlinks, type: bool, doc: "Describe the symlink target rather than the link itself."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - get file ./src
+      - get file /tmp --recursive | where modified < now()-30d
+
+  - id: ono.file.find
+    verb: find
+    target: file
+    summary: Discover files by walking a root, or through a provider index.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.file/1>
+    provider_capability: file.find
+    selectors:
+      - {name: root, type: path, doc: "Where the search starts."}
+    options:
+      - {name: depth, type: int, doc: "Maximum depth to descend."}
+      - {name: name, type: string, doc: "Match entry names against a glob."}
+      - {name: kind, type: string, doc: "Restrict to one file kind."}
+      - {name: follow-symlinks, type: bool, doc: "Follow symlinks while walking; off by default, because it can cycle."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - find file /var/log
+      - find file /var/log | where size > 100MiB and modified < now()-30d
+
+  - id: ono.file.read
+    verb: read
+    target: file
+    summary: Return file content as bytes or text, according to an explicit detection policy.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.file/1>"
+    output: "bytes | string"
+    provider_capability: file.read
+    selectors:
+      - {name: path, type: path, doc: "The file to read."}
+    options:
+      - {name: encoding, type: string, doc: "Decode as text in this encoding. Without it the content stays bytes — Ono does not guess (spec §12.1)."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - read file /etc/hostname --encoding utf-8
+      - read file ./data.bin | to json
+
+  - id: ono.file.write
+    verb: write
+    target: file
+    summary: Consume pipeline content and write it with an explicit overwrite policy.
+    stability: stable
+    argument_mode: words
+    input: "bytes | string"
+    output: ono.action-result/1
+    provider_capability: file.write
+    selectors:
+      - {name: path, type: path, doc: "The file to write."}
+    options:
+      - {name: append, type: bool, doc: "Append rather than replace."}
+      - {name: overwrite, type: bool, doc: "Permit replacing an existing file. Without it an existing target is `io.already_exists` (Ono-Sendai-E0303)."}
+      - {name: create, type: bool, default: true, doc: "Create the file when it does not exist."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - get process | to json | write file ./processes.json --overwrite
+
+  - id: ono.file.copy
+    verb: copy
+    target: file
+    summary: Copy file resources.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.file/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: file.copy
+    selectors:
+      - {name: source, type: path, doc: "What to copy."}
+      - {name: destination, type: path, doc: "Where to copy it."}
+    options:
+      - {name: recursive, type: bool, doc: "Copy directories and their contents."}
+      - {name: preserve, type: bool, doc: "Preserve ownership, mode and timestamps where permitted."}
+      - {name: overwrite, type: bool, doc: "Permit replacing existing destinations."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - copy file ./a.txt ./b.txt
+
+  - id: ono.file.move
+    verb: move
+    target: file
+    summary: Relocate a file resource.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.file/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: file.move
+    selectors:
+      - {name: source, type: path, doc: "What to move."}
+      - {name: destination, type: path, doc: "Where to move it."}
+    options:
+      - {name: overwrite, type: bool, doc: "Permit replacing an existing destination."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - move file ./a.txt ./archive/a.txt
+
+  - id: ono.file.remove
+    verb: remove
+    target: file
+    summary: Delete file resources, with a destructive preview for broad selections.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.file/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: file.remove
+    selectors:
+      - {name: path, type: path, doc: "What to delete; omitted when files arrive through the pipeline."}
+    options:
+      - {name: recursive, type: bool, doc: "Delete directories and their contents."}
+      - {name: confirm, type: bool, doc: "Confirm a bulk deletion non-interactively. Without it, a selection over the configured threshold fails with `safety.confirmation_required` in a script (spec §11.6, §17.4)."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - remove file ./build.tmp
+      - find file /tmp | where modified < now()-30d | remove file
+
+  - id: ono.file.set
+    verb: set
+    target: file
+    summary: Change file metadata — mode, ownership or timestamps.
+    stability: experimental               # spec §52, file/set = "M"; §7.1 lists "file metadata" among `set`'s targets
+    argument_mode: words
+    input: "null | stream<ono.file/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: file.set
+    selectors:
+      - {name: path, type: path, doc: "The file to modify."}
+    options:
+      - {name: mode, type: string, doc: "Permission bits as four octal digits, matching `ono.file/1`'s `mode` field."}
+      - {name: owner, type: "ref<ono.user/1>", doc: "New owning user."}
+      - {name: group, type: "ref<ono.group/1>", doc: "New owning group."}
+      - {name: recursive, type: bool, doc: "Apply to a directory's contents as well."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - set file ./script.sh --mode 0755
+
+  - id: ono.file.trace
+    verb: trace
+    target: file
+    summary: Show which processes, services and users hold or use a file.
+    stability: experimental               # spec §22.3: `trace file /var/lib/postgresql/... --users`
+    argument_mode: words
+    input: "null | ono.file/1"
+    output: ono.graph/1
+    provider_capability: process.trace
+    selectors:
+      - {name: path, type: path, doc: "The file to trace."}
+    options:
+      - {name: users, type: bool, doc: "Include the users behind the holding processes (spec §22.3)."}
+    privilege: conditional
+    streaming: false
+    phase: G
+    examples:
+      - trace file /var/lib/postgresql/data --users
+
+  - id: ono.file.tail
+    verb: tail
+    target: file
+    summary: Follow a file's appended content.
+    stability: experimental               # spec §7.1 lists `file` among `tail`'s targets
+    argument_mode: words
+    input: "null"
+    output: stream<string>
+    provider_capability: file.watch
+    selectors:
+      - {name: path, type: path, doc: "The file to follow."}
+    options:
+      - {name: lines, type: int, doc: "How many existing lines to emit before following."}
+      - {name: follow, type: bool, default: true, doc: "Keep the stream open as the file grows."}
+    privilege: conditional
+    streaming: true
+    phase: F
+    examples:
+      - tail file /var/log/syslog --lines 50
+
+  - id: ono.file.open
+    verb: open
+    target: file
+    summary: Open a file in its associated handler.
+    stability: experimental               # spec §7.1 lists `file` among `open`'s targets; §9.1 defines no command
+    argument_mode: words
+    input: "null | stream<ono.file/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: file.open
+    selectors:
+      - {name: path, type: path, doc: "The file to open."}
+    options:
+      - {name: with, type: string, doc: "Name the handler explicitly instead of using the association."}
+    privilege: none
+    streaming: true
+    phase: planned
+    examples:
+      - open file ./report.pdf
+
+  - id: ono.file.watch
+    verb: watch
+    target: file
+    summary: Emit filesystem change events for a path or tree.
+    stability: planned                    # spec §52, file/watch = "L?"
+    validation_required: true
+    argument_mode: words
+    input: "null"
+    output: stream<ono.file-event/1>
+    provider_capability: file.watch
+    selectors:
+      - {name: path, type: path, doc: "The path or tree to watch."}
+    options:
+      - {name: recursive, type: bool, doc: "Watch the whole tree."}
+    privilege: conditional
+    streaming: true
+    phase: F
+    examples:
+      - watch file ./src --recursive
+
+  - id: ono.file.enter
+    verb: enter
+    target: file
+    summary: Push a file onto the context stack as the active object.
+    stability: planned                    # spec §52, file/enter = "C?"
+    validation_required: true
+    argument_mode: words
+    input: "null | ono.file/1"
+    output: ono.context/1
+    provider_capability: file.list
+    selectors:
+      - {name: path, type: path, doc: "The file to enter."}
+    options: []
+    privilege: conditional
+    streaming: false
+    phase: E
+    examples:
+      - enter file ./Cargo.toml
+
+  # --- dir ----------------------------------------------------------------------------------
+  - id: ono.dir.get
+    verb: get
+    target: dir
+    summary: List directory entries as File records.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.file/1>
+    provider_capability: dir.list
+    selectors:
+      - {name: path, type: path, doc: "The directory to list. Defaults to the current filesystem context."}
+    options:
+      - {name: all, type: bool, doc: "Include entries whose name begins with a dot."}
+      - {name: recursive, type: bool, doc: "Descend into subdirectories."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - get dir
+      - get dir ./src --recursive | where size > 1MiB
+
+  - id: ono.dir.enter
+    verb: enter
+    target: dir
+    summary: Change the filesystem context — the shell's working directory.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.context/1
+    provider_capability: dir.list
+    selectors:
+      - {name: path, type: path, doc: "The directory to enter."}
+    options: []
+    privilege: conditional
+    streaming: false
+    phase: A
+    examples:
+      - enter dir ./src
+
+  - id: ono.dir.remove
+    verb: remove
+    target: dir
+    summary: Delete a directory.
+    stability: experimental               # spec §52, dir/remove = "M"; §9.1 defines only `remove file`
+    note: Overlaps `remove file --recursive`; kept because `remove dir` is what a user types.
+    argument_mode: words
+    input: "null | stream<ono.file/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: file.remove
+    selectors:
+      - {name: path, type: path, doc: "The directory to delete."}
+    options:
+      - {name: recursive, type: bool, doc: "Delete the contents as well. Without it a non-empty directory is refused."}
+      - {name: confirm, type: bool, doc: "Confirm a bulk deletion non-interactively (spec §11.6, §17.4)."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - remove dir ./build --recursive
+
+  - id: ono.dir.set
+    verb: set
+    target: dir
+    summary: Change directory metadata — mode, ownership or timestamps.
+    stability: experimental               # spec §52, dir/set = "M"
+    note: Overlaps `set file`, which accepts directories; kept for the same reason as `remove dir`.
+    argument_mode: words
+    input: "null | stream<ono.file/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: file.set
+    selectors:
+      - {name: path, type: path, doc: "The directory to modify."}
+    options:
+      - {name: mode, type: string, doc: "Permission bits as four octal digits."}
+      - {name: owner, type: "ref<ono.user/1>", doc: "New owning user."}
+      - {name: group, type: "ref<ono.group/1>", doc: "New owning group."}
+      - {name: recursive, type: bool, doc: "Apply to the contents as well."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - set dir ./secrets --mode 0700
