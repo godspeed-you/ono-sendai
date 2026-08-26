@@ -420,3 +420,21 @@ fn should_accept_an_escaped_dollar_sign_inside_an_interpolating_string() {
     };
     assert_eq!(literal.literal_text(), Some("pid is $$"));
 }
+
+#[test]
+fn should_read_the_last_status_as_a_variable_in_every_position() {
+    // ADR-0019: `$?` is the single most typed variable in any shell, and a user who reaches for
+    // it and gets an empty string concludes the shell is broken, not that it has opinions.
+    for source in ["echo $?", "echo \"status $?\"", "where $? != 0"] {
+        let parsed = ono_parser::parse(source);
+        assert!(
+            !parsed.has_errors(),
+            "{source:?}: {:?}",
+            parsed.diagnostics()
+        );
+        assert!(
+            format!("{:?}", parsed.program()).contains("\"?\""),
+            "{source:?} did not read `$?` as a variable"
+        );
+    }
+}

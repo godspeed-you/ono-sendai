@@ -104,6 +104,12 @@ fn read_name(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<Str
         return None;
     }
 
+    // `$?` is the last exit status: one character, and not an identifier.
+    if chars.peek() == Some(&'?') {
+        chars.next();
+        return Some("?".to_owned());
+    }
+
     let mut name = String::new();
     while let Some(&character) = chars.peek() {
         let acceptable = if name.is_empty() {
@@ -127,6 +133,9 @@ fn read_name(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<Str
 /// Resolves `$name`: `env.NAME` names the environment explicitly; a bare name is a binding first
 /// and the environment second (ADR-0010).
 fn lookup(session: &Session, name: &str) -> String {
+    if name == "?" || name == "status" {
+        return session.status().code().to_string();
+    }
     if let Some(variable) = name.strip_prefix("env.") {
         return session
             .env_var(variable)

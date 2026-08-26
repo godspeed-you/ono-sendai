@@ -715,6 +715,11 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
 }
 
 fn lookup_variable(session: &Session, name: &str) -> Value {
+    // The status of the last statement, under the name every shell user already knows and under
+    // a name they can discover (ADR-0019).
+    if name == "?" || name == "status" {
+        return Value::Int(i128::from(session.status().code()));
+    }
     if let Some(variable) = name.strip_prefix("env.") {
         return session.env_var(variable).map_or(Value::Null, |value| {
             Value::String(value.to_string_lossy().into_owned().into())

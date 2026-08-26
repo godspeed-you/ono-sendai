@@ -1,0 +1,25 @@
+# Spec section 18.1: "Ono-Sendai MUST support foreground processes, background jobs, signals,
+# terminal process groups and PTYs well enough to run normal interactive Unix software."
+case: background jobs are recorded, listed and brought back to the foreground
+# NO_COLOR so the prompt's job segment can be asserted as the literal text a reader sees, and so
+# that the honouring of NO_COLOR on a capable terminal is itself proven (spec section 4.3).
+env: NO_COLOR=1
+pty: true
+columns: 100
+lines: 30
+timeout: 90
+stdin: |
+  sleep 30 &
+  jobs
+  fg
+  echo after-foreground
+  exit 0
+run: |
+  ono
+exit: 0
+stdout-contains: [%1]
+stdout-contains: running
+stdout-contains: sleep 30
+stdout-contains: after-foreground
+# Spec section 4.2: the prompt's job segment, shown only while a job is running.
+stdout-contains: +1 >

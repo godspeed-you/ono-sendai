@@ -1,0 +1,39 @@
+# The exit criterion for phase A, from spec section 37: "Ono-Sendai can replace Bash for ordinary
+# interactive execution without native object features yet becoming a dead end."
+#
+# One session, on a real terminal, doing the work a person actually does in a shell: move around,
+# make and read files, run pipelines, branch on a result, use a variable, recall what was run.
+# Nothing here is a demonstration of a feature; it is a morning's work.
+case: a person can do ordinary work in ono instead of bash
+pty: true
+columns: 100
+lines: 40
+timeout: 120
+stdin: |
+  mkdir -p /tmp/work/notes
+  cd /tmp/work
+  pwd
+  echo "alpha 3" > notes/a.txt
+  echo "bravo 1" > notes/b.txt
+  echo "charlie 2" > notes/c.txt
+  cat notes/*.txt | sort -k2 -n | head -1
+  ls notes | wc -l
+  let project = "ono-sendai"
+  echo building $project
+  grep -l bravo notes/*.txt
+  test -d notes && echo "notes exists" || echo "missing"
+  wc -l < notes/a.txt
+  sh -c 'exit 7'
+  echo "status was $?"
+  cd /tmp/work/notes && pwd
+  exit 0
+run: |
+  ono
+exit: 0
+stdout-contains: /tmp/work
+stdout-contains: bravo 1
+stdout-contains: building ono-sendai
+stdout-contains: notes/b.txt
+stdout-contains: notes exists
+stdout-contains: status was 7
+stdout-contains: /tmp/work/notes

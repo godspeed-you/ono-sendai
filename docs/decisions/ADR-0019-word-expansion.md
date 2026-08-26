@@ -66,6 +66,16 @@ Spec §38 explicitly declines POSIX syntax compatibility, which is what makes th
 is also the direct application of spec §12.1's distinction between text and structure to the
 argument list itself.
 
+### 2a. `$?` and `$status` are the status of the last statement
+
+Both name the same thing. `$status` is the discoverable spelling — it appears in `help`, it reads
+as English, and it is what documentation uses. `$?` is an alias, kept because it is the single
+most-typed variable in any shell and because a user reaching for it and getting an empty string
+would conclude the shell was broken rather than that it had opinions.
+
+`$?` is lexed as a variable rather than as a word, so `if $? != 0 { … }` works in expression
+position too.
+
 ### 3a. A null becomes the empty string when it is interpolated, and `null` when it is shown
 
 `echo "Hello $NAME"` with `NAME` unset prints `Hello `, not `Hello null`.

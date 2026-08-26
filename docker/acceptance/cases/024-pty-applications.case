@@ -1,0 +1,23 @@
+# Spec section 29.3: when an external program owns the foreground terminal, Ono's renderer must
+# get out of the way completely — `vim` should behave like `vim`, not like content inside a
+# widget. ADR-0013 achieves that by not interposing a pseudo-terminal at all: the child inherits
+# the shell's own terminal. This case proves the child really has it.
+case: a program run by ono owns the real terminal
+pty: true
+columns: 100
+lines: 40
+timeout: 60
+run: |
+  ono -c 'test -t 0 && echo stdin-is-a-tty'
+  ono -c 'test -t 1 && echo stdout-is-a-tty'
+  ono -c 'test -t 2 && echo stderr-is-a-tty'
+  echo "size: $(ono -c 'stty size')"
+  echo "term: $(ono -c 'tty' | grep -c '^/dev/')"
+  ono -c 'stty -a' | head -1 | grep -o 'rows [0-9]*'
+exit: 0
+stdout-contains: stdin-is-a-tty
+stdout-contains: stdout-is-a-tty
+stdout-contains: stderr-is-a-tty
+stdout-contains: size: 40 100
+stdout-contains: term: 1
+stdout-contains: rows 40

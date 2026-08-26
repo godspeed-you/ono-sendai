@@ -16,18 +16,18 @@ native object features yet becoming a dead end.* Exit test: acceptance case
 
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase A integration: evaluator, resolution, REPL — files:
-  `crates/ono-cli/**`, `crates/ono-testkit/**`, `crates/ono-history/**`, `xtask/**`,
-  `docs/decisions/**`, `docs/STATE.md`, `Cargo.toml`, `docker/**`, `scripts/**`
-- [agent:parser | 2026-08-26] A1–A3 lexer, AST, recoverable parser — files: `crates/ono-parser/**`
-- [agent:process | 2026-08-26] A4/A6–A9 external exec, redirection, PTY, job control —
-  files: `crates/ono-process/**`
-- [agent:editor | 2026-08-26] A10 line editor, keymap, highlight interface —
-  files: `crates/ono-editor/**`
-- [agent:pipeline | 2026-08-26] B3–B5 stream engine, backpressure, transforms —
-  files: `crates/ono-pipeline/**`
-- [agent:codec | 2026-08-26] B6–B7 yaml/csv/text/bytes codecs and the value-to-presentation
-  bridge — files: `crates/ono-value/**`, `crates/ono-render/**`
+- [orchestrator | 2026-08-26] Phase A completion and integration — files: `crates/ono-cli/**`,
+  `crates/ono-core/**`, `crates/ono-parser/**`, `crates/ono-render/**`, `crates/ono-history/**`,
+  `crates/ono-testkit/**`, `crates/ono-provider-api/**`, `xtask/**`, `docs/**`, `docker/**`,
+  `scripts/**`, `Cargo.toml`
+- [agent:linux | 2026-08-26] C2–C5 process, file, identity, env, mount providers —
+  files: `crates/ono-provider-linux/**`
+- [agent:netlink | 2026-08-26] C6–C7 interface, route, neighbor, socket providers —
+  files: `crates/ono-provider-netlink/**`
+- [agent:systemd | 2026-08-26] C8 service provider over D-Bus —
+  files: `crates/ono-provider-systemd/**`
+- [agent:command | 2026-08-26] D2–D6 command registry, argument binding, help, completion,
+  `explain` — files: `crates/ono-command/**`
 
 ---
 
@@ -39,34 +39,37 @@ not fix yet.
 
 ### Phase A — Language and Unix shell foundation
 
-- [ ] A1 — Lexer: tokens, spans, quoting and escaping corpus — spec sections 6, 26 —
+Delivered: A1–A7 and A10–A14. What remains is job control's user-visible surface, the phase gate,
+and the performance budget.
+
+- [x] A1 — Lexer: tokens, spans, quoting and escaping corpus — spec sections 6, 26 —
       exit test: `crates/ono-parser/tests/lexer.rs` golden corpus
-- [ ] A2 — Parser and AST with recoverable errors and precise spans — spec sections 24.4, 26 —
+- [x] A2 — Parser and AST with recoverable errors and precise spans — spec sections 24.4, 26 —
       exit test: golden AST snapshots + diagnostics snapshots
-- [ ] A3 — Incremental/partial parse for a line being typed — spec section 24.4 —
+- [x] A3 — Incremental/partial parse for a line being typed — spec section 24.4 —
       exit test: partial-input parse tests
-- [ ] A4 — Evaluator skeleton: run an external command, propagate exit status — spec section 29 —
+- [x] A4 — Evaluator skeleton: run an external command, propagate exit status — spec section 29 —
       exit test: acceptance `020-runs-external-commands`
-- [ ] A5 — Environment variables, `cd` and working directory — spec section 19 —
+- [x] A5 — Environment variables, `cd` and working directory — spec section 19 —
       exit test: acceptance `021-cwd-and-environment`
-- [ ] A6 — Redirection: `>`, `>>`, `<`, fd duplication, deterministic non-TTY behaviour —
+- [x] A6 — Redirection: `>`, `>>`, `<`, fd duplication, deterministic non-TTY behaviour —
       spec sections 12, 29 — exit test: acceptance `022-redirection`
-- [ ] A7 — External pipelines and exit status of a pipeline — spec section 11 —
+- [x] A7 — External pipelines and exit status of a pipeline — spec section 11 —
       exit test: acceptance `023-external-pipelines`
 - [ ] A8 — PTY execution for full-screen programs — spec section 29 —
       exit test: acceptance `024-pty-applications`
 - [ ] A9 — Signals, process groups and foreground/background job control — spec section 18 —
       exit test: acceptance `025-job-control`
-- [ ] A10 — Line editor: keymap, editing, syntax highlight from the incremental parse —
+- [x] A10 — Line editor: keymap, editing, syntax highlight from the incremental parse —
       spec section 24.1 — exit test: editor behaviour tests + latency budget
-- [~] A11 — History persistence and recall — spec section 20 — library done
+- [x] A11 — History persistence and recall — spec section 20 — library done
       (`crates/ono-history/tests/history.rs`); wiring and acceptance case
       `026-history-survives-restart` land with the REPL
-- [ ] A12 — Configuration loading, with no eager plugin load and no network at startup —
+- [x] A12 — Configuration loading, with no eager plugin load and no network at startup —
       spec section 30 — exit test: acceptance `027-startup-is-quiet`
-- [ ] A13 — Prompt with location URI and privilege indication — spec sections 4, 17 —
+- [x] A13 — Prompt with location URI and privilege indication — spec sections 4, 17 —
       exit test: acceptance `028-prompt-shows-context`
-- [ ] A14 — Structured error model and exit-status contract — spec sections 16, 43 —
+- [x] A14 — Structured error model and exit-status contract — spec sections 16, 43 —
       exit test: error taxonomy tests
 - [ ] A15 — Phase A gate: `ono` as a login shell doing a real working session —
       exit test: acceptance `010-replaces-bash-for-ordinary-work`

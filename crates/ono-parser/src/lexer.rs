@@ -268,6 +268,9 @@ pub(crate) fn next_token(source: &str, at: u32, mode: LexMode) -> Token {
         b'}' => token(TokenKind::RBrace, start, start + 1),
         b'"' => quoted(bytes, start, b'"', true),
         b'\'' => quoted(bytes, start, b'\'', false),
+        // `$?` is the last exit status. It is not an identifier, and it is the single most
+        // typed variable in any shell, so it is lexed as the variable it is (ADR-0019).
+        b'$' if bytes.get(index + 1) == Some(&b'?') => token(TokenKind::Variable, start, index + 2),
         b'$' if bytes.get(index + 1).copied().is_some_and(is_ident_start) => {
             index += 1;
             while bytes.get(index).copied().is_some_and(is_ident_continue) {

@@ -2059,6 +2059,17 @@ impl Parser<'_> {
             }
             if byte == b'$' {
                 let following = bytes.get(index + 1).copied();
+                // `$?` is the last exit status, which is not an identifier (ADR-0019).
+                if following == Some(b'?') {
+                    flush(&mut parts, &mut text, text_start, index as u32);
+                    parts.push(StrPart::Expr(Expr::Variable(Variable {
+                        name: "?".to_owned(),
+                        span: Span::new(index as u32, index as u32 + 2),
+                    })));
+                    index += 2;
+                    text_start = index as u32;
+                    continue;
+                }
                 if following.is_some_and(is_ident_start) {
                     flush(&mut parts, &mut text, text_start, index as u32);
                     index = self.interpolated_variable(&mut parts, index, end);
