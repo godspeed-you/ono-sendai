@@ -13,16 +13,20 @@ ono-core.workspace = true
 ono-parser.workspace = true
 ono-pipeline.workspace = true
 ono-provider-api.workspace = true
+ono-render.workspace = true
 ono-value.workspace = true
 
+bytes.workspace = true
 jiff.workspace = true
 serde = { workspace = true }
+serde_json.workspace = true
 serde_yaml_ng.workspace = true
 
 [dev-dependencies]
 ono-testkit.workspace = true
 
 async-trait.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

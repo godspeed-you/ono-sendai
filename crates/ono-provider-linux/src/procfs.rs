@@ -188,3 +188,96 @@ mod tests {
         assert_eq!(service_unit("0::/user.slice/user-1000.slice\n"), None);
     }
 }
+
+#[cfg(test)]
+mod fuzz {
+    //! The procfs decoders read text the kernel writes, which is *usually* well formed — and is
+    //! not, on an old kernel, in a container with a synthetic `/proc`, or when a process is
+    //! named to make it so. Spec §35.6 requires fuzzing of the procfs decoders and ADR-0015 T7
+    //! makes an unbounded allocation a release-blocking threat.
+    //!
+    //! These are unit tests rather than integration tests because the decoders are `pub(crate)`,
+    //! and widening an API to test it is a worse trade than testing it from inside (AGENTS.md
+    //! §11).
+    //!
+    //! The contract asserted is narrow: **no panic, and a return.** What a decoder decides a
+    //! particular malformed line means is the implementation's business.
+
+    use super::{parse_stat, parse_status_ids};
+    use ono_testkit::Rng;
+
+    /// Pieces of the real formats, so a generated line reaches past the first rejection.
+    const PIECES: &[&str] = &[
+        "1",
+        "0",
+        "-1",
+        " ",
+        "(",
+        ")",
+        "((",
+        "))",
+        "R",
+        "S",
+        "Z",
+        "\n",
+        "\t",
+        "\0",
+        "18446744073709551615",
+        "99999999999999999999999999",
+        "Name:",
+        "Uid:",
+        "Gid:",
+        ":",
+        "\u{feff}",
+        "é",
+        "-",
+        "+",
+        ".",
+        "e",
+        "comm with spaces",
+        "(weird) name",
+    ];
+
+    #[test]
+    fn should_never_panic_on_anything_that_arrives_as_a_stat_line() {
+        let mut rng = Rng::seeded(0x50_52_4f_43);
+        for _ in 0..4000 {
+            let _ = parse_stat(&rng.assemble(PIECES, 30));
+        }
+    }
+
+    #[test]
+    fn should_never_panic_on_anything_that_arrives_as_a_status_file() {
+        let mut rng = Rng::seeded(0x53_54_41_54);
+        for _ in 0..4000 {
+            let _ = parse_status_ids(&rng.assemble(PIECES, 30));
+        }
+    }
+
+    #[test]
+    fn should_return_rather_than_recurse_on_a_pathologically_long_line() {
+        // A line a few kilobytes long is cheap to write and must stay cheap to read.
+        for length in [1_000usize, 100_000] {
+            let _ = parse_stat(&"1 ".repeat(length));
+            let _ = parse_stat(&"(".repeat(length));
+            let _ = parse_status_ids(&"Uid:\t".repeat(length));
+        }
+    }
+
+    #[test]
+    fn should_read_a_command_name_that_contains_the_delimiters_it_is_wrapped_in() {
+        // A process can be named `((weird) name)`. Splitting on the first `)` is the classic
+        // procfs bug and it is reachable by anyone who can name a process.
+        // Fields 3 through 24, which is everything the decoder reads.
+        let line = "42 (((weird) name)) S 1 0 0 0 0 0 0 0 0 0 100 200 0 0 0 0 3 0 777 4096 10";
+        let parsed = parse_stat(line).expect("a stat line with a hostile comm must still parse");
+        assert_eq!(parsed.comm, "((weird) name)");
+        assert_eq!(parsed.ppid, 1);
+        assert_eq!(parsed.state, 'S');
+        assert_eq!(
+            parsed.starttime, 777,
+            "the fields after a hostile comm still line up"
+        );
+        assert_eq!(parsed.threads, 3);
+    }
+}

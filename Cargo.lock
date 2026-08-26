@@ -525,14 +525,17 @@ name = "ono-command"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "bytes",
  "jiff",
  "ono-core",
  "ono-parser",
  "ono-pipeline",
  "ono-provider-api",
+ "ono-render",
  "ono-testkit",
  "ono-value",
  "serde",
+ "serde_json",
  "serde_yaml_ng",
  "tokio",
 ]
@@ -612,6 +615,7 @@ dependencies = [
  "ono-core",
  "ono-pipeline",
  "ono-provider-api",
+ "ono-testkit",
  "ono-value",
  "tempfile",
  "tokio",

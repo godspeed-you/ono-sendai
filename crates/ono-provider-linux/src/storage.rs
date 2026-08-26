@@ -457,3 +457,58 @@ impl Provider for StorageProvider {
         Ok(found)
     }
 }
+
+#[cfg(test)]
+mod fuzz {
+    //! `mountinfo` is written by the kernel and read here, and its fields are separated by a
+    //! marker (` - `) that a mount point's own name is allowed to contain in escaped form. Spec
+    //! §35.6 requires the decoder be fuzzed; ADR-0015 T7 makes an unbounded allocation a
+    //! release-blocking threat.
+
+    use super::parse_mountinfo;
+    use ono_testkit::Rng;
+
+    const PIECES: &[&str] = &[
+        "36",
+        "35",
+        "/",
+        " ",
+        "-",
+        " - ",
+        "\\040",
+        "\\011",
+        "\\012",
+        "\\134",
+        "rw",
+        "ro",
+        "relatime",
+        ",",
+        ":",
+        "ext4",
+        "tmpfs",
+        "/dev/sda1",
+        "none",
+        "\n",
+        "\t",
+        "0:1",
+        "18446744073709551615",
+        "é",
+        "\u{0}",
+    ];
+
+    #[test]
+    fn should_never_panic_on_anything_that_arrives_as_a_mount_table() {
+        let mut rng = Rng::seeded(0x4d_4e_54);
+        for _ in 0..4000 {
+            let _ = parse_mountinfo(&rng.assemble(PIECES, 40));
+        }
+    }
+
+    #[test]
+    fn should_return_rather_than_recurse_on_a_pathologically_long_table() {
+        for length in [1_000usize, 50_000] {
+            let _ = parse_mountinfo(&" - ".repeat(length));
+            let _ = parse_mountinfo(&"\\040".repeat(length));
+        }
+    }
+}
