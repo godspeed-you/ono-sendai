@@ -98,8 +98,64 @@ async fn should_link_a_process_to_the_files_it_has_open_saying_which_it_reads_an
     assert!(graph.failures().is_empty(), "nothing failed to be read");
 }
 
+/// Whether the suite is running with a uid that mode bits cannot restrain.
+fn running_as_root() -> bool {
+    // `id -u` rather than a libc call: this crate forbids `unsafe` and the answer is only used to
+    // decide whether a permission scenario is reachable at all.
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .is_some_and(|uid| uid.trim() == "0")
+}
+
+#[tokio::test]
+async fn should_report_an_error_when_the_file_descriptors_cannot_be_read() {
+    // The general contract, and it holds for every user: a source that cannot be read becomes a
+    // failure attributed to the object, never a missing edge. A relationship you were not allowed
+    // to see is not a relationship that does not exist.
+    let proc = ProcFixture::new();
+    proc.process(921).fds_not_a_directory();
+    let registry = registry(vec![Arc::new(FixtureProvider::new(
+        "fixture.file",
+        &["file"],
+        Vec::new(),
+    ))]);
+    let subject = process(921, Some(1), "nginx");
+
+    let graph = trace_with(
+        vec![Arc::new(
+            OpenFiles::new(Arc::clone(&registry)).rooted(proc.root()),
+        )],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert!(
+        graph.edges().is_empty(),
+        "a relationship that could not be read is not asserted"
+    );
+    let failure = graph
+        .failures()
+        .first()
+        .expect("a source that cannot be read is reported, not silently dropped");
+    assert_eq!(
+        failure.subject(),
+        node(&subject).id(),
+        "the failure names the object it concerns"
+    );
+}
+
 #[tokio::test]
 async fn should_report_an_error_when_a_process_hides_its_file_descriptors() {
+    // The realistic form of the same thing: another user's process. Mode bits do not restrain
+    // root, so under root the scenario is unreachable and the general test above is what covers
+    // the contract. `ono-provider-linux` skips its two permission tests the same way.
+    if running_as_root() {
+        return;
+    }
     let proc = ProcFixture::new();
     proc.process(921).unreadable_fds();
     let registry = registry(vec![Arc::new(FixtureProvider::new(

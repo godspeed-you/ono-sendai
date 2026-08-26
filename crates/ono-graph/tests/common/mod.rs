@@ -92,6 +92,17 @@ impl ProcessFixture {
         self
     }
 
+    /// Puts a regular file where the `fd` directory belongs, so reading it fails for *everyone*.
+    ///
+    /// The permission fixture below cannot restrain root, and a test that quietly proves nothing
+    /// when the suite happens to run as root — in a container, in CI — is worse than no test.
+    /// This one exercises the same contract, that a source which cannot be read becomes a failure
+    /// attributed to the object rather than a missing edge, and it holds for every user.
+    pub fn fds_not_a_directory(self) -> Self {
+        fs::write(self.dir.join("fd"), "not a directory\n").expect("the fd placeholder");
+        self
+    }
+
     /// Makes the process's `fd` directory unreadable, which is what another user's process looks
     /// like to an unprivileged shell.
     pub fn unreadable_fds(self) -> Self {
