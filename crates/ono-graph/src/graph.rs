@@ -356,10 +356,7 @@ impl Edge {
         .set("from", reference(&self.from))?
         .set("to", reference(&self.to))?
         .set("relation", Value::String(self.relation.as_str().into()))?
-        .set(
-            "direction",
-            Value::String(self.direction.as_str().into()),
-        )?
+        .set("direction", Value::String(self.direction.as_str().into()))?
         .set(
             "confidence",
             Value::String(confidence_name(self.confidence).into()),

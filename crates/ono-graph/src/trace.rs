@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use ono_core::ErrorCode;
 use ono_provider_api::{ProviderRegistry, Query};
-use ono_value::{ErrorValue, RecordValue, Value};
+use ono_value::{ErrorValue, Value};
 
 use crate::graph::{Graph, GraphFailure, Node};
 use crate::provider::RelationshipProvider;
@@ -179,6 +179,18 @@ impl Tracer {
         &self.providers
     }
 
+    /// Whether this provider is asked about this object at all.
+    fn consults(&self, provider: &Arc<dyn RelationshipProvider>, subject: &Node) -> bool {
+        answers_about(provider.as_ref(), subject) && offers_wanted(provider, self)
+    }
+
+    /// Whether any provider would have been asked about this object.
+    fn can_expand(&self, subject: &Node) -> bool {
+        self.providers
+            .iter()
+            .any(|provider| self.consults(provider, subject))
+    }
+
     /// Walks from `roots` and returns the graph.
     ///
     /// The walk is breadth-first, adds every object at most once and never expands an object
@@ -195,11 +207,18 @@ impl Tracer {
 
         while let Some((subject, depth)) = queue.pop_front() {
             if depth >= self.options.depth {
-                graph.truncation_mut().record_depth_limit(self.options.depth);
+                // Only a subject somebody could have answered about was truncated. An object no
+                // registered provider expands has no relationships left to find, and saying a
+                // complete answer was cut short would make the warning worthless.
+                if self.can_expand(&subject) {
+                    graph
+                        .truncation_mut()
+                        .record_depth_limit(self.options.depth);
+                }
                 continue;
             }
             for provider in &self.providers {
-                if !answers_about(provider.as_ref(), &subject) || !offers_wanted(provider, self) {
+                if !self.consults(provider, &subject) {
                     continue;
                 }
                 let (found, failures) = provider.relationships(&subject).await.into_parts();
@@ -232,10 +251,7 @@ impl Tracer {
 /// Whether the provider answers about this kind of object.
 fn answers_about(provider: &dyn RelationshipProvider, subject: &Node) -> bool {
     let kind = subject.kind().to_string();
-    provider
-        .subjects()
-        .iter()
-        .any(|declared| *declared == kind.as_str())
+    provider.subjects().contains(&kind.as_str())
 }
 
 /// Whether the provider offers any of the relations the caller asked for.

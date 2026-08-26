@@ -182,9 +182,9 @@ impl RelationshipProvider for OpenFiles {
                     .with_metadata("fd", Value::Int(i128::from(descriptor.fd)))
                     .with_metadata(
                         "access",
-                        descriptor.access.map_or(Value::Null, |access| {
-                            Value::String(access.as_str().into())
-                        }),
+                        descriptor
+                            .access
+                            .map_or(Value::Null, |access| Value::String(access.as_str().into())),
                     ),
             );
         }

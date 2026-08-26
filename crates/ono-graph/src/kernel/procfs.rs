@@ -165,7 +165,12 @@ pub(crate) fn pids(proc: &Path) -> Result<Vec<i64>, ErrorValue> {
     let entries = fs::read_dir(proc).map_err(|error| io_error(&error, proc))?;
     let mut pids: Vec<i64> = entries
         .flatten()
-        .filter_map(|entry| entry.file_name().to_str().and_then(|name| name.parse().ok()))
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse().ok())
+        })
         .collect();
     pids.sort_unstable();
     Ok(pids)

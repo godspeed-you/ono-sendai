@@ -124,3 +124,37 @@ async fn should_report_a_truncated_walk_in_the_value_as_well_as_in_the_type() {
     assert_eq!(truncation.get("depth_limit"), Some(&Value::Int(1)));
     assert_eq!(truncation.get("unexpanded"), Some(&Value::Int(1)));
 }
+
+#[test]
+fn should_carry_a_relationship_that_holds_in_neither_direction_as_undirected() {
+    let (left, right) = (process(1, Some(0), "left"), process(2, Some(0), "right"));
+    let (left, right) = (node(&left), node(&right));
+    let mut graph = ono_graph::Graph::new();
+    graph.insert_node(left.clone());
+    graph.insert_node(right.clone());
+    graph.insert_edge(
+        ono_graph::Edge::exact(
+            left.id().clone(),
+            right.id().clone(),
+            "shares-namespace",
+            "fixture.peers",
+        )
+        .undirected(),
+    );
+
+    let value = graph.to_value().expect("a graph is a value");
+    let record = value.as_record().expect("the graph is a record").clone();
+    let Some(Value::List(edges)) = record.get("edges").cloned() else {
+        panic!("a graph carries its edges as a list");
+    };
+    let edge = edges
+        .first()
+        .and_then(|value| value.as_record().ok())
+        .expect("one edge")
+        .clone();
+    assert_eq!(
+        edge.get("direction"),
+        Some(&Value::String("undirected".into())),
+        "spec §22.1 gives an edge a direction, and both of its values have to be reachable"
+    );
+}

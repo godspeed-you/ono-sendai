@@ -8,7 +8,7 @@
 //! rest of the shell has to know about.
 
 use ono_provider_api::{Availability, Capability};
-use ono_value::{ErrorValue, MapValue, Value};
+use ono_value::{ErrorValue, Value};
 
 use crate::graph::{Edge, Node};
 
@@ -173,14 +173,4 @@ pub trait RelationshipProvider: Send + Sync + std::fmt::Debug {
     /// A provider that cannot read what it needs returns the failure rather than an empty
     /// result: a relationship this user may not see is not a relationship that does not exist.
     async fn relationships(&self, subject: &Node) -> Relationships;
-}
-
-/// A map with the entries given, for a node's identity or summary.
-#[must_use]
-pub fn fields(entries: impl IntoIterator<Item = (&'static str, Value)>) -> MapValue {
-    let mut map = MapValue::new();
-    for (key, value) in entries {
-        map.insert(key.into(), value);
-    }
-    map
 }

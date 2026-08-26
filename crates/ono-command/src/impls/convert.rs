@@ -67,6 +67,10 @@ impl CommandImpl for ConversionCommand {
             pretty: arguments.flag("pretty"),
             human: arguments.flag("human"),
             headers: arguments.option("headers").cloned(),
+            // `to text --field path` is the bridge spec §29.1 writes for feeding an ordinary
+            // Unix tool. `docs/spec/commands/data.yaml` does not declare the option yet, so
+            // binding rejects it before this is reached; the projection is implemented here so
+            // that declaring it is the only change the contract needs.
             field: arguments
                 .option("field")
                 .and_then(|value| value.as_str().ok())

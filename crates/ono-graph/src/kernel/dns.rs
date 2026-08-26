@@ -69,7 +69,10 @@ impl RelationshipProvider for RemoteHosts {
     }
 
     async fn relationships(&self, subject: &Node) -> Relationships {
-        let Some(remote) = subject.field("remote").and_then(|value| value.as_record().ok()) else {
+        let Some(remote) = subject
+            .field("remote")
+            .and_then(|value| value.as_record().ok())
+        else {
             return Relationships::new();
         };
         let (Some(Value::Ip(address)), port) = (remote.get("address"), remote.get("port").cloned())

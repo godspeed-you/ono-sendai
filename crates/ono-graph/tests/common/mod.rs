@@ -22,9 +22,7 @@ use std::time::Duration;
 
 use ono_graph::{Graph, Node, RelationshipProvider, Resolver, TraceOptions, Tracer};
 use ono_pipeline::ValueStream;
-use ono_provider_api::{
-    Availability, Capability, ObjectRef, Provider, ProviderRegistry, Query, Risk, Selector,
-};
+use ono_provider_api::{Capability, ObjectRef, Provider, ProviderRegistry, Query, Risk, Selector};
 use ono_value::{
     ErrorValue, MapValue, Provenance, RecordValue, Schema, SchemaId, Value, builtin_schemas,
 };

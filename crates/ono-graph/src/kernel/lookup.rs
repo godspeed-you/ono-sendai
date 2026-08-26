@@ -90,7 +90,10 @@ pub(crate) async fn socket_node(
 /// # Errors
 ///
 /// See [`process_node`].
-pub(crate) async fn file_node(registry: &ProviderRegistry, path: &Path) -> Result<Node, ErrorValue> {
+pub(crate) async fn file_node(
+    registry: &ProviderRegistry,
+    path: &Path,
+) -> Result<Node, ErrorValue> {
     let query = Query::target("file").with(Selector::field(
         "path",
         Value::Path(Arc::from(path.to_path_buf())),

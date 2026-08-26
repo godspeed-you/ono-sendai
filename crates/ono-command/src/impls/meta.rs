@@ -190,7 +190,12 @@ impl MetaCommand {
             .collect()
     }
 
-    /// `find command` — the same objects, discovered by a fuzzy search (spec §15.4).
+    /// `find command` — the same objects, discovered by what they do (spec §15.4).
+    ///
+    /// The search is over everything the registry says about a command, its selectors and options
+    /// included, because "the command that lists listening sockets" is how someone actually looks
+    /// for `get socket --listening`. Results are ranked by how many of the query's words they
+    /// answer, so the closest match is first rather than buried.
     fn found(&self, ctx: &Invocation<'_>) -> Vec<Value> {
         let query = ctx
             .arguments()
@@ -198,7 +203,8 @@ impl MetaCommand {
             .and_then(|value| value.as_str().ok())
             .unwrap_or_default()
             .to_lowercase();
-        if query.is_empty() {
+        let words: Vec<&str> = query.split_whitespace().collect();
+        if words.is_empty() {
             return self
                 .registry
                 .commands()
@@ -206,24 +212,54 @@ impl MetaCommand {
                 .map(command_record)
                 .collect();
         }
-        let words: Vec<&str> = query.split_whitespace().collect();
-        self.registry
+
+        let mut ranked: Vec<(usize, &CommandContract)> = self
+            .registry
             .commands()
             .iter()
-            .filter(|command| {
-                let haystack = format!(
-                    "{} {} {} {}",
-                    command.id(),
-                    command.spelling(),
-                    command.summary(),
-                    command.note().unwrap_or_default()
-                )
-                .to_lowercase();
-                words.iter().all(|word| haystack.contains(word))
-            })
-            .map(command_record)
+            .map(|command| (matched_words(command, &words), command))
+            .filter(|(matched, _)| *matched > 0)
+            .collect();
+        ranked.sort_by(|left, right| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| left.1.id().cmp(right.1.id()))
+        });
+        ranked
+            .into_iter()
+            .map(|(_, command)| command_record(command))
             .collect()
     }
+}
+
+/// How many of `words` the registry's description of `command` answers.
+fn matched_words(command: &CommandContract, words: &[&str]) -> usize {
+    let mut haystack = format!(
+        "{} {} {} {}",
+        command.id(),
+        command.spelling(),
+        command.summary(),
+        command.note().unwrap_or_default()
+    );
+    for parameter in command.selectors().iter().chain(command.options()) {
+        haystack.push(' ');
+        haystack.push_str(parameter.name());
+        haystack.push(' ');
+        haystack.push_str(parameter.doc());
+    }
+    let haystack = haystack.to_lowercase();
+    words
+        .iter()
+        .filter(|word| {
+            // A plural in the question and a singular in the documentation are the same word to
+            // anyone but a substring match.
+            haystack.contains(**word)
+                || word
+                    .strip_suffix('s')
+                    .is_some_and(|stem| !stem.is_empty() && haystack.contains(stem))
+        })
+        .count()
 }
 
 fn values(items: impl IntoIterator<Item = Value>) -> Outcome {
