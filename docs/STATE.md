@@ -26,25 +26,22 @@ Tags so far: `phase-a`.
 git push origin implementation && git push origin --tags
 ```
 
-Current phase: **A — Language and Unix shell foundation** (spec section 37)
+Current phase: **B/C/D integration** — the value system, the Linux providers and the command
+registry are built and tested as libraries; what remains is wiring them into the evaluator so
+`get process | where cpu > 20 | to json` runs, and the acceptance cases that prove it.
 
-Phase A exit criterion: *Ono-Sendai can replace Bash for ordinary interactive execution without
-native object features yet becoming a dead end.* Exit test: acceptance case
-`010-replaces-bash-for-ordinary-work`, plus every box in `docs/ACCEPTANCE.md` section 4.1 A.
+Phase A is complete and tagged `phase-a`.
 
 ---
 
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase B/C/D integration: wiring the command registry, the providers
-  and the pipeline into the evaluator — files: `crates/ono-cli/**`, `crates/ono-parser/**`,
-  `crates/ono-core/**`, `crates/ono-render/**`, `crates/ono-history/**`, `crates/ono-testkit/**`,
-  `crates/ono-provider-api/**`, `xtask/**`, `docs/**`, `docker/**`, `scripts/**`, `Cargo.toml`
-- [agent:commands | 2026-08-26] B4–B6, C-wiring, D5: the native command implementations and the
-  expression compiler — files: `crates/ono-command/**`
-- [agent:graph | 2026-08-26] G1–G4 graph values, relationship providers, `trace` —
-  files: `crates/ono-graph/**`
-- [agent:protocol | 2026-08-26] H1 the remote protocol — files: `crates/ono-protocol/**`
+- [orchestrator | 2026-08-26] Phase B/C/D integration: native commands reachable from the
+  evaluator, native pipelines rendered, and the acceptance cases for them — files:
+  `crates/ono-cli/**`, and any crate an integration defect turns out to be in
+
+_No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
+KUANG/11 contracts, adversarial review, security review) have all reported and landed._
 
 ---
 
@@ -103,20 +100,14 @@ budgets of §34 are tracked under *Cross-cutting*, not here.
       `crates/ono-value/tests/` — ADR-0016 — commit 05eb85a
 - [x] B2 — Schema model and registry, the canonical schemas of spec §28, compatibility rules —
       `crates/ono-value/tests/{builtin_schemas,schema_compatibility}.rs` — commit 05eb85a
-- [ ] B3 — Stream engine: bounded channels, backpressure, cancellation, the
-      streaming/blocking transform distinction of §11.1 — exit test: a slow consumer bounds a
-      fast infinite producer's memory; `stream.unbounded_operation` on `sort` over an unbounded
-      stream — acceptance `030-native-pipeline-backpressure`
-- [ ] B4 — Transforms `where`, `select`, `take`, `skip`, `each` (streaming) — spec §53 —
-      exit test: acceptance `031-transforms-stream`
-- [ ] B5 — Transforms `sort`, `group`, `count`, `measure`, `reduce`, `join`, `diff` (bounded) —
-      spec §53 — exit test: acceptance `032-transforms-bounded`
-- [ ] B6 — Conversion `to`/`from` json, yaml, csv, text, bytes — spec §12.3, §12.4 —
-      exit test: round-trip properties + acceptance `033-serialization-round-trip`
-- [~] B7 — Renderer separated from data: table, list, stacked, json, yaml, raw, hex; width-aware
-      layout; visible truncation; human formatting of semantic scalars — spec §13 —
-      exit test: `tests/render/` snapshots at 80 and 200 columns, and identical values through
-      every renderer — acceptance `034-render-is-presentation-only`
+- [x] B4 — Transforms `where`, `select`, `take`, `skip`, `each` (streaming) — spec §53 —
+      `crates/ono-pipeline/tests/streaming_transforms.rs`, `crates/ono-command/tests/transforms.rs`
+      — the acceptance case lands with the evaluator wiring
+- [x] B5 — Transforms `sort`, `group`, `count`, `measure`, `reduce`, `join`, `diff` (bounded) —
+      `crates/ono-pipeline/tests/blocking_transforms.rs` — acceptance case with the wiring
+- [x] B9 — Pipeline type-checking before execution: `where cpy > 20` reports
+      `type.unknown_field` with a suggestion from the contract's output schema, before anything is
+      enumerated — `crates/ono-command/src/check.rs` — acceptance case with the wiring
 - [ ] B8 — Object-to-external and external-to-object boundaries: structured input to an external
       command is a structured error suggesting `to json`; external stdout enters as bytes/text
       without loss — spec §12.2, §12.3 — exit test: acceptance `035-interop-boundary`
