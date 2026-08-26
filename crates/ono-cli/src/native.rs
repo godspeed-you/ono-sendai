@@ -207,8 +207,16 @@ pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitSt
                 status = external_status;
             }
             Segment::Native(indices) => {
-                carried =
-                    run_native_segment(session, registry, list, indices, source, carried, last)?;
+                carried = run_native_segment(
+                    session,
+                    registry,
+                    list,
+                    indices,
+                    source,
+                    carried,
+                    position == 0,
+                    last,
+                )?;
                 status = ExitStatus::SUCCESS;
             }
         }
@@ -224,6 +232,7 @@ fn run_native_segment(
     indices: &[usize],
     source: &str,
     input: Option<Vec<u8>>,
+    first: bool,
     last: bool,
 ) -> Eval<Option<Vec<u8>>> {
     let table = implementations().map_err(Flow::Failed)?;
@@ -246,6 +255,25 @@ fn run_native_segment(
         let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
         structured = !produces_bytes(contract);
         bound.push((contract, arguments));
+    }
+
+    // A head stage that needs bytes reads the shell's own standard input, exactly as a child
+    // process would have: spec §12.4's example is `curl … | ono -c 'from json | …'`, and the
+    // bytes arrive on the shell's stdin, not from a stage inside the pipeline. A terminal is
+    // never read implicitly — an interactive `from json` waiting silently for EOF would look
+    // like a hang, and the "nothing was piped into it" error says what to do instead.
+    let mut input = input;
+    if first
+        && input.is_none()
+        && let Some((head, _)) = bound.first()
+        && !head.input().accepts_null()
+        && accepts_bytes(head.input().text())
+        && !std::io::IsTerminal::is_terminal(&std::io::stdin())
+    {
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut std::io::stdin().lock(), &mut bytes)
+            .map_err(write_failed)?;
+        input = Some(bytes);
     }
 
     let Some((final_contract, _)) = bound.last() else {

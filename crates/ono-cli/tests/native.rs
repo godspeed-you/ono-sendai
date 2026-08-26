@@ -109,3 +109,22 @@ fn should_reject_a_misspelled_field_before_anything_runs() {
          process. Got {stderr:?}"
     );
 }
+
+#[test]
+fn should_read_the_shells_own_standard_input_into_a_parsing_stage() {
+    // Spec §12.4's own example: `curl -s https://example/api | from json | where status == "open"`.
+    // The bytes arrive on the shell's stdin, not from a stage inside the pipeline.
+    let run = Shell::new()
+        .args([
+            "-c",
+            r#"from json | where size > 5 | select name | to json"#,
+        ])
+        .stdin(r#"[{"name":"a","size":1},{"name":"b","size":9}]"#)
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        r#"[{"name":"b"}]"#,
+        "bytes piped into the shell reach the first parsing stage (spec §12.4)"
+    );
+}
