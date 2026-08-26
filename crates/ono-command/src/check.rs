@@ -88,9 +88,32 @@ fn check_stage(
     if contract.argument_mode() == ArgumentMode::Expression
         && let Some(schema) = upstream.as_deref()
     {
-        for argument in resolved.arguments {
-            if let Argument::Value(expression) = argument {
-                check_fields(expression, schema)?;
+        // The check is type-aware, not blind: only an expression bound to a parameter that
+        // carries *values* reads fields from the stream. A word bound to a string parameter —
+        // `sort cpu desc`'s direction, spec §6.3's own spelling — is vocabulary, and rejecting
+        // it as an unknown field would refuse the specification's own examples.
+        if let Ok(bound) = contract.bind(resolved.arguments) {
+            let field_bearing = |name: &str| {
+                contract
+                    .selector(name)
+                    .or_else(|| contract.option(name))
+                    .is_none_or(|spec| spec.declared_type() != &crate::DeclaredType::String)
+            };
+            for (name, binding) in bound.selectors().iter().chain(bound.options()) {
+                if !field_bearing(name) {
+                    continue;
+                }
+                if let crate::Binding::Expressions(expressions) = binding {
+                    for expression in expressions {
+                        check_fields(expression, schema)?;
+                    }
+                }
+            }
+        } else {
+            for argument in resolved.arguments {
+                if let Argument::Value(expression) = argument {
+                    check_fields(expression, schema)?;
+                }
             }
         }
     }

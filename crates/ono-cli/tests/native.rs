@@ -224,3 +224,16 @@ fn should_walk_a_wide_tree_without_hoarding_descriptors() {
         "the root, five hundred directories and five hundred leaves, all reached"
     );
 }
+
+#[test]
+fn should_sort_descending_with_the_specs_own_spelling() {
+    // Spec §6.3 and §48 write `sort cpu desc` — the direction is a word bound to a string
+    // selector, never a field the §11.3 check should reject.
+    let run = ono("get process | sort pid desc | take 1 | select pid | to json");
+    run.assert_success();
+    let text = run.stdout();
+    assert!(
+        text.contains("pid") && !text.contains("Ono-Sendai-E"),
+        "the highest pid comes first and nothing was refused: {text:?}"
+    );
+}
