@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use xtask::{contracts, reference, scan};
+use xtask::{contracts, narrative, reference, scan};
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -108,27 +108,11 @@ fn spec_check() -> ExitCode {
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 
-    let spec_docs = find_narrative_spec(&root);
-    match spec_docs.as_slice() {
-        [] => problems.push("no narrative specification found under docs/".to_owned()),
-        [single] => {
-            for file in ["AGENTS.md", "CLAUDE.md", "README.md"] {
-                let Ok(text) = std::fs::read_to_string(root.join(file)) else {
-                    problems.push(format!("{file} is missing"));
-                    continue;
-                };
-                if !text.contains(single) {
-                    problems.push(format!(
-                        "{file} does not reference the current specification `{single}`"
-                    ));
-                }
-            }
-        }
-        many => problems.push(format!(
-            "several narrative specifications found ({}); exactly one is authoritative",
-            many.join(", ")
-        )),
-    }
+    problems.extend(
+        narrative::check(&root)
+            .into_iter()
+            .map(|problem| format!("{} — {}", problem.location, problem.detail)),
+    );
 
     if root.join("docs").join("spec").is_dir() {
         problems.extend(
@@ -187,17 +171,4 @@ fn check_spec_is_untouched(root: &Path) -> Vec<String> {
             "cannot verify the specification checksum: {error}. `sha256sum` must be available"
         )],
     }
-}
-
-fn find_narrative_spec(root: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(root.join("docs")) else {
-        return Vec::new();
-    };
-    let mut found: Vec<String> = entries
-        .flatten()
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.contains("shell_spec") && name.ends_with(".md"))
-        .collect();
-    found.sort();
-    found
 }
