@@ -16,7 +16,7 @@ git tag -n99 phase-a          # what Phase A delivered, and what proves it
 git switch --detach phase-a   # the tree exactly as that phase left it
 ```
 
-Tags so far: `phase-a` … `phase-f` (one per completed phase).
+Tags so far: `phase-a` … `phase-g` (one per completed phase).
 
 **Push after every commit.** AGENTS.md §12.1 keeps `main` untouched and §12.2 asks that
 `implementation` be pushed freely so work is not lost; the branch and its phase tags live on
@@ -71,11 +71,14 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase G — delivered: `trace` for process/service/socket/connection
-  wired (TraceCommand), graphs revive from their records (`Graph::from_record`) and render as
-  trees in the sink (§13.6), one-observation-per-trace snapshot sharing took `trace process 1`
-  from 27.2s to 1.1s (ADR-0035). Remaining: acceptance case 047 green, tick the box, tag
-  `phase-g` — files: `crates/ono-graph/**`, `crates/ono-command/**`, `crates/ono-cli/**`
+- [agent-H | 2026-08-26] Phase H machinery — `crates/ono-remote` (agent loop, RemoteProvider,
+  SSH-fallback transport, trust on connect) + `crates/ono-protocol` — exclusive scope, ADRs
+  0036–0039 reserved
+- [agent-I | 2026-08-26] Phase I runtime — `crates/ono-kuang-{protocol,supervisor,sdk}` + test
+  host per docs/spec/kuang and ADR-0022 — exclusive scope, ADRs 0040+ reserved
+- [orchestrator | 2026-08-26] §4.2/§4.3 quality bars: example binding sweep landed; budgets for
+  completion and first rows landed; next: tick the proven §4.3 boxes, then CLI wiring for H and
+  I when the agents report — files: `crates/ono-cli/**`, `crates/ono-command/**`, `docker/**`
 
 _No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
 KUANG/11 contracts, adversarial review, security review) have all reported and landed._
@@ -413,14 +416,14 @@ and guarded; the rest stay open with their reproduction.
 
 Should-fix:
 
-- [ ] **F9 — `ui.prompt.root` is defined and never used; T15 has no implementation.** No privilege
-      check exists anywhere in the workspace, and the prompt is byte-identical for uid 0 and an
-      unprivileged user. Spec §17.2 requires elevation to be impossible to miss. Nothing elevates
-      either, so there is no live escalation — the row is unbuilt rather than broken.
-- [ ] **F10 — the parser is quadratic on unbalanced nesting.** Depth is bounded but time is not:
-      2 000 open parentheses take 0.30 s and 20 000 take 24.8 s in a debug build, cleanly 4× per
-      2×. Reachable from a pasted line, since the editor re-parses per keystroke. Not in the threat
-      model; proposed row: *parser super-linear behaviour on hostile input*.
+- [x] **F9 — fixed.** The prompt derives elevation from the kernel's effective uid: a root shell
+      shows ` root` in `ui.prompt.root` and prompts with `#` (spec §17.2). Pinned from both
+      sides in `ono-cli/tests/signals.rs::should_make_an_elevated_prompt_impossible_to_miss`.
+- [x] **F10 — fixed** (as a side effect of the depth-guarded block recovery landed in the
+      security sweep): every hostile wall — parens, brackets, blocks, `if`-chains — now parses
+      20 000 deep in under 40 ms debug. The regression guard is
+      `ono-parser/tests/robustness.rs::should_stay_linear_on_a_wall_of_unbalanced_parentheses`.
+      Previously: **quadratic on unbalanced nesting** (24.8 s at 20 000).
 - [ ] **F11 — the directory walk holds one open descriptor per pending directory**, with
       `--recursive` defaulting depth and limit to unbounded. A hostile tree exhausts the
       descriptor table. `crates/ono-provider-linux/src/file.rs`. Proposed row: *unbounded resource
@@ -428,7 +431,11 @@ Should-fix:
 - [ ] **F12 — the trust store's default policy is trust-on-first-use**, which contradicts ADR-0015
       T5's "an unknown key is refused, not prompted past". `crates/ono-protocol/src/trust.rs`.
       Either the ADR or the default has to move.
-- [ ] **S1 (F13) — the contract advertises a bulk-mutation guard nothing implements.** Four command
+- [x] **S1 (F13) — fixed.** `ProviderMutation` refuses a selection over the bulk threshold (10,
+      a constant until configuration reaches invocations) with `safety.confirmation_required`
+      naming the scope, before the first action; `--confirm` proceeds. `stop process` declares
+      the option too. Pinned in `ono-command/tests/mutations.rs`. Previously: **the contract
+      advertised a bulk-mutation guard nothing implements.** Four command
       contracts (`docs/spec/commands/file.yaml` twice, `network.yaml`, `kuang.yaml`) declare a
       `confirm` option documented as "without it, a selection over the configured threshold fails
       with `safety.confirmation_required` in a script (spec §11.6, §17.4)".
@@ -437,7 +444,11 @@ Should-fix:
       documented safety guard that does not exist is worse than no guard, because someone will
       rely on it. This is why `docs/ACCEPTANCE.md` §4.4's "destructive operations show scope
       before acting" cannot be ticked.
-- [ ] **S2 (F8) — `Action::as_dry_run()` is unreachable, and one test encodes the wrong contract.**
+- [x] **S2 (F8) — fixed.** The systemd dry-run branches now answer `skipped` with what would
+      have happened — the contract `ono-provider-linux` always kept — and the test that asserted
+      a claimed change asserts the report; a declared `--dry-run` option travels in the action's
+      own field rather than as an ignorable argument. Previously: **`Action::as_dry_run()` was
+      unreachable, and one test encoded the wrong contract.**
       Nothing constructs a dry run: both call sites in `crates/ono-command/src/impls/mutate.rs`
       leave it false, no contract declares the option, and the `is_dry_run()` branches in
       `crates/ono-provider-systemd/src/provider.rs` are dead. Latent rather than live — but

@@ -573,8 +573,11 @@ async fn should_change_nothing_when_an_action_is_a_dry_run() {
         .expect("a dry run must not hang")
         .expect("the provider can report what it would do");
 
-    assert_eq!(outcome.status(), ActionStatus::Success);
-    assert!(outcome.changed(), "stopping a running unit would change it");
+    // A dry run is a report, never a claimed change: `skipped`, saying what would happen —
+    // the same contract `ono-provider-linux` keeps. Reporting `succeeded/changed` here would
+    // put a completed mutation in the record for something that never ran.
+    assert_eq!(outcome.status(), ActionStatus::Skipped);
+    assert!(!outcome.changed(), "nothing ran, so nothing changed");
     assert_eq!(
         text(&unit(&provider, "nginx.service").await.clone(), "state"),
         "active",

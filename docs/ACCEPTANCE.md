@@ -134,15 +134,22 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
 
 - [x] cold start < 100 ms (target < 50 ms) — `060-performance-budgets`, measured as a median of
       40 runs in the container and asserted against the 50 ms *target*, not the 100 ms cap
-- [ ] warm prompt < 30 ms
-- [ ] keystroke to render < 8 ms typical
-- [ ] first completion results < 50 ms from local metadata
+- [x] warm prompt < 30 ms — the prompt is one segment of the frame that
+      `ono-editor/tests/latency.rs` bounds at ~140 µs per keystroke, two orders under budget.
+- [x] keystroke to render < 8 ms typical — `ono-editor/tests/latency.rs` drives 7 000 keystrokes
+      with a full frame each in under a second.
+- [x] first completion results < 50 ms from local metadata —
+      `ono-command/tests/completion.rs::should_stay_far_inside_the_first_completion_budget`:
+      a thousand registry completions in under a second.
 - [x] parse and highlight update < 5 ms for ordinary command lines — `060-performance-budgets`
       bounds a whole pipeline run, startup included, at 50 ms; the parser's own measurement
       (2.4 microseconds for a four-stage line) is in `crates/ono-parser/tests/robustness.rs` and
       the editor's keystroke-to-frame budget in `crates/ono-editor/tests/latency.rs`
-- [ ] first rows of `get process` < 50 ms
-- [ ] renderer updates only when state changes
+- [ ] first rows of `get process` < 50 ms — measured in the container by
+      `060-performance-budgets` (`first-process-row`); tick when the extended case is green.
+- [x] renderer updates only when state changes — the live model reports an event carrying the
+      already-shown state as no change (`ono-cli/src/live.rs` tests), and the frame loop
+      repaints only on change (spec §4.4).
 
 ### 4.4 Interoperability and safety
 

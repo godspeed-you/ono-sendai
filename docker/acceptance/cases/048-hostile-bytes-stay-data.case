@@ -1,0 +1,37 @@
+# ADR-0015 T1/T2/T9 and spec §49: a shell executes untrusted filenames and renders untrusted
+# bytes, and none of them may gain control of the terminal. A malicious filename is listed as
+# data; an external program's escapes reach the terminal only while that program owns it; an OSC
+# hyperlink inside a value never survives painting.
+case: hostile filenames and escape sequences stay data
+timeout: 120
+run: |
+  root=$(mktemp -d)
+  # A filename carrying a cursor-move, a clear-screen and an OSC title write.
+  printf 'x' > "$root/$(printf 'evil\033[2Jname')"
+  printf 'x' > "$root/$(printf 'osc\033]0;pwned\007link')"
+  # A filename carrying a newline, which forged table rows before the render boundary learned
+  # to escape every control character.
+  printf 'x' > "$root/$(printf 'two\nrows')"
+
+  echo "== the listing renders the names as data =="
+  out=$(ono -c "get dir $root --all | select name | to json")
+  echo "$out" | grep -c 'evil' >/dev/null && echo "listed"
+  if printf '%s' "$out" | grep -q $'\033'; then echo "RAW ESCAPE IN OUTPUT"; else echo "escapes-neutralised"; fi
+
+  echo "== the table cannot be forged by a newline =="
+  rows=$(ono -c "get dir $root --all | select name" | wc -l)
+  echo "rows=$rows"
+  test "$rows" -le 5 && echo "no-forged-rows"
+
+  echo "== rendering sanitises what serialisation faithfully keeps (spec §49) =="
+  # The value holds the escape byte — that is data, and JSON encodes it as \u001b. The
+  # *rendered* form is what must never carry it.
+  shown=$(printf 'safe\033[2Jdanger\n' | ono -c 'from text')
+  if printf '%s' "$shown" | grep -q $'\033\[2J'; then echo "CLEAR-SCREEN REACHED THE RENDERER"; else echo "rendered-safely"; fi
+exit: 0
+stdout-contains: listed
+stdout-contains: escapes-neutralised
+stdout-contains: no-forged-rows
+stdout-contains: rendered-safely
+stdout-not-contains: RAW ESCAPE IN OUTPUT
+stdout-not-contains: CLEAR-SCREEN REACHED THE RENDERER

@@ -202,3 +202,28 @@ fn should_interrupt_a_native_pipeline_and_leave_the_prompt_standing() {
     shell.write_all(b"exit\n").expect("input");
     let _ = shell.wait();
 }
+
+#[test]
+fn should_make_an_elevated_prompt_impossible_to_miss() {
+    // Spec §17.2. Mode bits and prompts cannot be faked from outside: the marker is derived
+    // from the kernel's effective uid, so the assertion has two sides — an unprivileged run
+    // must NOT show the elevated marker, and a privileged run must.
+    let mut shell = interactive_shell();
+    let seen = read_until(&mut shell, ">", Duration::from_secs(10))
+        + &read_until(&mut shell, "\u{200b}", Duration::from_millis(300));
+
+    if ono_process::effective_uid() == 0 {
+        assert!(
+            seen.contains("root") && seen.contains('#'),
+            "a root shell announces itself in the prompt (spec §17.2); saw:\n{seen}"
+        );
+    } else {
+        assert!(
+            !seen.contains(" root://"),
+            "an unprivileged shell must not claim elevation; saw:\n{seen}"
+        );
+    }
+
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}

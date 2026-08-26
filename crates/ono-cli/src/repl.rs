@@ -345,6 +345,12 @@ fn print_identity_line(session: &Session, theme: &Theme, presentation: Presentat
 /// The prompt as a HUD (spec §4.2): where commands will run, and where you are.
 fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
     let mut prompt = ono_editor::Prompt::plain("").segment("local", Token::PromptLink);
+
+    // Spec §17.2: an elevated context must be impossible to miss. The kernel's answer, not
+    // `$USER`'s — and painted in the token the theme reserves for exactly this.
+    if ono_process::effective_uid() == 0 {
+        prompt = prompt.segment(" root", Token::PromptRoot);
+    }
     prompt = prompt.segment("://", Token::Dim);
 
     // Spec §14.3: inside an object context the prompt names the object — `local://service/nginx`
@@ -370,7 +376,12 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
     if jobs > 0 {
         prompt = prompt.segment(format!(" +{jobs}"), Token::Accent);
     }
-    prompt.segment(" > ", Token::Dim)
+    let marker = if ono_process::effective_uid() == 0 {
+        " # "
+    } else {
+        " > "
+    };
+    prompt.segment(marker, Token::Dim)
 }
 
 fn environment_pairs(session: &Session) -> Vec<(&str, &str)> {

@@ -163,3 +163,48 @@ async fn should_act_only_on_the_objects_a_filter_kept() {
         Some(2)
     );
 }
+
+#[tokio::test]
+async fn should_refuse_a_bulk_mutation_over_the_threshold_and_change_nothing() {
+    // Spec §11.6 and §17.4: destructive scope is shown before acting, and a selection over the
+    // bulk threshold mutates nothing without the written confirmation. The refusal comes before
+    // the first action — a refused bulk never half-ran.
+    let provider = FixtureProvider::live();
+    let handle = provider.handle();
+    for pid in 100..112 {
+        handle.add(pid, &format!("bulk-{pid}"), Some(64), "root");
+    }
+
+    let error = run("get process | stop process", &providers(provider))
+        .await
+        .expect_err("fifteen objects is over the threshold");
+    assert_eq!(error.code(), ErrorCode::SafetyConfirmationRequired);
+    assert!(
+        error.message().contains("15"),
+        "the refusal names the scope: {}",
+        error.message()
+    );
+    assert!(
+        error.help().is_some_and(|help| help.contains("--confirm")),
+        "the refusal says how to proceed: {:?}",
+        error.help()
+    );
+}
+
+#[tokio::test]
+async fn should_act_on_every_object_when_the_bulk_was_confirmed() {
+    let provider = FixtureProvider::live();
+    let handle = provider.handle();
+    for pid in 100..112 {
+        handle.add(pid, &format!("bulk-{pid}"), Some(64), "root");
+    }
+
+    let ran = run("get process | stop process --confirm", &providers(provider))
+        .await
+        .expect("the confirmed bulk runs");
+    assert_eq!(
+        ran.actions().len(),
+        15,
+        "spec §11.5: one outcome per confirmed target"
+    );
+}

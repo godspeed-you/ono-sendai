@@ -163,3 +163,35 @@ fn should_leave_provider_backed_value_completion_to_the_caller() {
 fn should_offer_nothing_for_a_head_no_command_answers_to() {
     assert!(complete("frobnicate ").is_empty());
 }
+
+#[test]
+fn should_stay_far_inside_the_first_completion_budget() {
+    // Spec §34 budgets the first completion results at under 50 ms from local metadata. A
+    // wall-clock assertion that tight is flaky on shared hardware, so the whole sweep is
+    // bounded generously instead: a thousand completions across verb, target and option
+    // positions in under a second means one completion is under a millisecond, and a
+    // catastrophic regression — a scan where a lookup belongs — fails the gate while machine
+    // noise does not.
+    let registry = registry();
+    let positions = [
+        ("ge", 2usize),
+        ("get pro", 7),
+        ("get process | whe", 17),
+        ("get process | where ", 20),
+        ("watch process --ev", 18),
+    ];
+
+    let start = std::time::Instant::now();
+    for _ in 0..200 {
+        for (line, cursor) in positions {
+            let context = ono_command::StageContext::from_line(line, cursor);
+            let _ = ono_command::complete(registry, &context, None);
+        }
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "1000 completions took {elapsed:?}; the 50 ms budget of spec §34 needs each to be far \
+         below a millisecond"
+    );
+}

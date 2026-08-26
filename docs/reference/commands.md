@@ -3743,6 +3743,7 @@ Request graceful termination using default TERM semantics.
 | name | type | meaning |
 |---|---|---|
 | `--timeout` | `duration` | How long to wait for the process to exit before reporting failure. |
+| `--confirm` | `bool` | Confirm a bulk stop non-interactively. Without it, a selection over the bulk threshold fails with `safety.confirmation_required` (spec §11.6, §17.4). |
 
 **Examples**
 

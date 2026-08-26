@@ -57,13 +57,44 @@ impl ProviderMutation {
         let mut failures = Vec::new();
         let targets = self.targets(ctx, target, &spelling, &mut failures).await?;
 
+        // The bulk guard of spec §11.6 and §17.4: a selection above the threshold mutates
+        // nothing unless the confirmation was written. The refusal names the scope — the count
+        // is exactly what the user needed shown before acting — and it comes before the first
+        // action, so a refused bulk never half-ran. The threshold is deliberately a constant
+        // until configuration reaches invocations; a documented guard that exists strictly is
+        // better than a configurable one that does not.
+        const BULK_THRESHOLD: usize = 10;
+        let confirmed = ctx.arguments().option("confirm") == Some(&Value::Bool(true));
+        if contract.option("confirm").is_some() && targets.len() > BULK_THRESHOLD && !confirmed {
+            return Err(ErrorValue::new(
+                ErrorCode::SafetyConfirmationRequired,
+                format!(
+                    "`{spelling}` would act on {} objects, which is more than the bulk                      threshold of {BULK_THRESHOLD}",
+                    targets.len(),
+                ),
+            )
+            .with_help(format!(
+                "nothing was changed. Write `--confirm` to act on all {} (spec §17.4), or                  narrow the selection",
+                targets.len(),
+            )));
+        }
+
         let providers = ctx.providers();
         let mut outcomes = Vec::with_capacity(targets.len() + failures.len());
         outcomes.append(&mut failures);
+        let dry_run = ctx.arguments().option("dry-run") == Some(&Value::Bool(true));
         for object in targets {
             let mut action = Action::new(target, &operation, object);
+            // A declared `--dry-run` is the ask-without-obeying of spec §11.6, not an ordinary
+            // argument a provider might ignore: it travels in the action's own field, and a
+            // provider that honours it answers `skipped` with what would have happened.
+            if dry_run {
+                action = action.as_dry_run();
+            }
             for (name, value) in &arguments {
-                action = action.with(name, value.clone());
+                if name != "dry-run" {
+                    action = action.with(name, value.clone());
+                }
             }
             match providers.act(&action).await {
                 Ok(outcome) => outcomes.push(outcome),

@@ -209,3 +209,24 @@ fn should_refuse_deeply_nested_function_bodies_and_loops_too() {
         );
     }
 }
+
+#[test]
+fn should_stay_linear_on_a_wall_of_unbalanced_parentheses() {
+    // A pasted line is attacker-sized input (ADR-0015: parser super-linear behaviour on hostile
+    // input), and the editor re-parses per keystroke. Twenty thousand unmatched parentheses
+    // were quadratic — 25 seconds in a debug build — which is a denial of service typed with
+    // one key held down. The bound here is generous enough for any machine and two orders
+    // below where the quadratic curve lands.
+    let hostile = "(".repeat(20_000);
+    let start = Instant::now();
+    let parsed = parse(&hostile);
+    let elapsed = start.elapsed();
+    assert!(
+        parsed.has_errors(),
+        "an unbalanced wall is an error, not a hang"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "20k unbalanced parens took {elapsed:?}; the parser must degrade linearly"
+    );
+}

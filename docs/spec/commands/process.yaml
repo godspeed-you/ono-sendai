@@ -94,6 +94,7 @@ commands:
       - {name: pid, type: int, doc: "The process to stop; omitted when processes arrive through the pipeline."}
     options:
       - {name: timeout, type: duration, doc: "How long to wait for the process to exit before reporting failure."}
+      - {name: confirm, type: bool, doc: "Confirm a bulk stop non-interactively. Without it, a selection over the bulk threshold fails with `safety.confirmation_required` (spec §11.6, §17.4)."}
     privilege: conditional
     streaming: true
     phase: C

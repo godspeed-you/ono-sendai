@@ -74,6 +74,16 @@ pub use fd::Fd;
 pub use job::{Job, JobChange, JobId, JobProcess, JobState};
 pub use pipeline::{Pipeline, PipelineOutcome, StageOutcome};
 pub use pty::PtySession;
+/// The effective user id this shell runs as.
+///
+/// Spec §17.2 requires an elevated context to be impossible to miss, and the prompt is where
+/// nobody can miss it — so the answer has to come from the kernel, not from `$USER`, which any
+/// caller can set to anything.
+#[must_use]
+pub fn effective_uid() -> u32 {
+    nix::unistd::geteuid().as_raw()
+}
+
 pub use signals::{
     Signal, install_child_watch, install_shell_signals, take_child_transition, take_interrupt,
 };

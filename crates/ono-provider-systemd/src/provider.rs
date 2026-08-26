@@ -357,7 +357,10 @@ impl Provider for SystemdProvider {
                     return Ok(ActionOutcome::skipped(action, why));
                 }
                 if action.is_dry_run() {
-                    return Ok(ActionOutcome::succeeded(action, true));
+                    return Ok(ActionOutcome::skipped(
+                        action,
+                        format!("would queue `{job:?}` for `{}`", properties.name),
+                    ));
                 }
                 match bus.queue_job(&properties.name, job).await {
                     Ok(()) => Ok(ActionOutcome::succeeded(action, true)),
@@ -373,7 +376,10 @@ impl Provider for SystemdProvider {
                     ));
                 }
                 if action.is_dry_run() {
-                    return Ok(ActionOutcome::succeeded(action, true));
+                    return Ok(ActionOutcome::skipped(
+                        action,
+                        format!("would set `{}` to {target}", properties.name),
+                    ));
                 }
                 match bus.set_unit_file_enabled(&properties.name, wanted).await {
                     Ok(true) => Ok(ActionOutcome::succeeded(action, true)),
