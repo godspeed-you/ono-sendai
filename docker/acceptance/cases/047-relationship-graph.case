@@ -20,7 +20,7 @@ run: |
 exit: 0
 stdout-contains: +-- child ->
 stdout-contains: ono.graph/1
-stdout-contains: "nodes"
+stdout-contains: "edges"
 stdout-contains: Ono-Sendai-E
 stdout-contains: "provider":"linux.process-tree"
 stdout-not-contains: panicked

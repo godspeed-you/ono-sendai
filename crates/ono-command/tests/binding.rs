@@ -276,3 +276,35 @@ fn should_build_a_provider_query_from_the_bound_arguments() {
         "the pid selector is pushed down to the provider"
     );
 }
+
+#[test]
+fn should_skip_the_assignment_word_between_a_key_and_its_value() {
+    // Spec §41's own spelling: `set config prompt.path = "smart"`. The `=` is the assignment
+    // separator, not a value; the words either side of it bind exactly as if it were absent.
+    let stage = stage(r#"set config prompt.path = "smart""#);
+    let resolved = registry()
+        .resolve("set", &stage.arguments)
+        .expect("`set config` resolves");
+    let bound = resolved
+        .contract
+        .bind(resolved.arguments)
+        .expect("the assignment spelling binds");
+    assert_eq!(bound.selector("key"), Some(&Value::string("prompt.path")));
+    assert_eq!(bound.selector("value"), Some(&Value::string("smart")));
+}
+
+#[test]
+fn should_take_a_bool_word_as_a_flag_option_value_when_one_follows() {
+    // Spec §31.3's own spelling: `set plugin pg-surgeon --enabled false`. `true` and `false`
+    // are literals of the language, so a flag followed by one takes it as its value — this is a
+    // literal rule, not a shape heuristic (ADR-0009).
+    let stage = stage("set plugin dev.example.packet-eye --enabled false");
+    let resolved = registry()
+        .resolve("set", &stage.arguments)
+        .expect("`set plugin` resolves");
+    let bound = resolved
+        .contract
+        .bind(resolved.arguments)
+        .expect("the explicit bool binds");
+    assert_eq!(bound.option("enabled"), Some(&Value::Bool(false)));
+}

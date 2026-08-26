@@ -239,7 +239,8 @@ commands:
     provider_capability: capability.revoke
     selectors:
       - {name: selector, type: string, doc: "The grant to revoke."}
-    options: []
+    options:
+      - {name: plugin, type: string, doc: "Revoke only this plugin's grant of the capability."}
     privilege: none
     streaming: true
     phase: I

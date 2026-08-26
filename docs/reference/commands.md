@@ -738,12 +738,12 @@ Join two record streams on a key.
 | name | type | meaning |
 |---|---|---|
 | `right` | `value` | The stream to join against. |
-| `on` | `value` | The key expression. |
 
 **Options**
 
 | name | type | meaning |
 |---|---|---|
+| `--on` | `value` | The key expression, as `--on pid`. |
 | `--kind` | `string` | `inner`, `left`, `right` or `outer`. |
 
 **Examples**
@@ -2218,6 +2218,12 @@ Revoke a capability grant or lease.
 |---|---|---|
 | `selector` | `string` | The grant to revoke. |
 
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--plugin` | `string` | Revoke only this plugin's grant of the capability. |
+
 **Examples**
 
 ```text
@@ -2473,7 +2479,7 @@ Show the resolution, provider, coercions, privilege and planned effects without 
 
 | name | type | meaning |
 |---|---|---|
-| `subject` | `string` | The command or pipeline to plan. |
+| `subject` | `string` | The command or pipeline to plan, written as words or quoted. |
 
 **Examples**
 
@@ -2995,7 +3001,7 @@ Emit socket lifecycle and state changes as a live stream.
 **Examples**
 
 ```text
-watch socket --port 443
+watch socket 443
 ```
 
 ### `watch interface`
@@ -3926,7 +3932,7 @@ Deliver a signal to a process or job.
 **Examples**
 
 ```text
-send signal SIGHUP --pid 4419
+get process 4419 | send signal SIGHUP
 ```
 
 ## remote

@@ -321,8 +321,8 @@ commands:
     provider_capability: null
     selectors:
       - {name: right, type: value, doc: "The stream to join against."}
-      - {name: on, type: value, doc: "The key expression."}
     options:
+      - {name: on, type: value, doc: "The key expression, as `--on pid`."}
       - {name: kind, type: string, default: inner, doc: "`inner`, `left`, `right` or `outer`."}
     privilege: none
     streaming: false

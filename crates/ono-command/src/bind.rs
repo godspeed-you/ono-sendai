@@ -201,8 +201,15 @@ impl CommandContract {
         let mut options: Vec<(String, Vec<Binding>)> = Vec::new();
         let mut used = vec![false; self.selectors().len()];
         let mut pending: Option<&ParameterSpec> = None;
+        let mut pending_flag: Option<&ParameterSpec> = None;
 
         for argument in arguments {
+            // Spec §41 writes assignment as `set config key = value`: the bare `=` is the
+            // separator of that spelling, never a value, and the words either side of it bind
+            // exactly as if it were absent.
+            if pending.is_none() && matches!(argument, Argument::Word(word) if word.text == "=") {
+                continue;
+            }
             if let Argument::Option(written) = argument {
                 if let Some(spec) = pending.take() {
                     return Err(self.missing_option_value(spec));
@@ -216,7 +223,11 @@ impl CommandContract {
                         push(&mut options, spec.name(), binding);
                     }
                     None if spec.declared_type().is_flag() => {
-                        push(&mut options, spec.name(), Binding::Value(Value::Bool(true)));
+                        // `true` and `false` are literals of the language, so a flag followed
+                        // by one takes it as its value — spec §31.3 writes `--enabled false`.
+                        // A literal rule, not a shape heuristic (ADR-0009): any other word
+                        // leaves the flag meaning `true` exactly as before.
+                        pending_flag = Some(spec);
                     }
                     None => pending = Some(spec),
                 }
@@ -229,6 +240,20 @@ impl CommandContract {
                 continue;
             }
 
+            if let Some(spec) = pending_flag.take() {
+                if let Argument::Word(word) = argument
+                    && let Ok(explicit) = word.text.parse::<bool>()
+                {
+                    push(
+                        &mut options,
+                        spec.name(),
+                        Binding::Value(Value::Bool(explicit)),
+                    );
+                    continue;
+                }
+                push(&mut options, spec.name(), Binding::Value(Value::Bool(true)));
+            }
+
             let (index, binding) = self.positional_binding(&used, argument)?;
             used[index] = true;
             push(&mut selectors, self.selectors()[index].name(), binding);
@@ -236,6 +261,9 @@ impl CommandContract {
 
         if let Some(spec) = pending {
             return Err(self.missing_option_value(spec));
+        }
+        if let Some(spec) = pending_flag {
+            push(&mut options, spec.name(), Binding::Value(Value::Bool(true)));
         }
 
         Ok(BoundArguments {

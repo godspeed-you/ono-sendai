@@ -222,4 +222,4 @@ commands:
     streaming: true
     phase: planned
     examples:
-      - send signal SIGHUP --pid 4419
+      - get process 4419 | send signal SIGHUP

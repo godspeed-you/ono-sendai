@@ -22,7 +22,7 @@ commands:
     output: ono.help-page/1
     provider_capability: command.list
     selectors:
-      - {name: topic, type: string, doc: "The command, target or topic to explain. Without one, help browses the registry."}
+      - {name: topic, type: string, repeatable: true, doc: "The command, target or topic to explain. Without one, help browses the registry."}
     options: []
     privilege: none
     streaming: false
@@ -87,7 +87,7 @@ commands:
     output: ono.execution-plan/1
     provider_capability: null
     selectors:
-      - {name: subject, type: string, doc: "The command or pipeline to plan."}
+      - {name: subject, type: string, repeatable: true, doc: "The command or pipeline to plan, written as words or quoted."}
     options: []
     privilege: none
     streaming: false

@@ -54,7 +54,14 @@ impl CommandImpl for TraceCommand {
                         query
                             .selectors()
                             .first()
-                            .map_or_else(String::new, |selector| format!("{selector:?}")),
+                            .map_or_else(String::new, |selector| {
+                                match selector {
+                                    ono_provider_api::Selector::Field { name, value } => {
+                                        format!("{name} {value}")
+                                    }
+                                    other => format!("{other:?}"),
+                                }
+                            }),
                     ),
                 )
                 .with_help(format!("`get {target}` shows what exists"))

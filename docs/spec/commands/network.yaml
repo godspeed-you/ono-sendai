@@ -214,7 +214,7 @@ commands:
     streaming: true
     phase: F
     examples:
-      - watch socket --port 443
+      - watch socket 443
 
   - id: ono.interface.watch
     verb: watch
