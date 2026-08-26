@@ -26,9 +26,13 @@ Tags so far: `phase-a` … `phase-j` (one per completed phase; H, I and J tagged
 git push origin implementation && git push origin --tags
 ```
 
-All ten phases of spec §37 are complete, proven and tagged; docs/ACCEPTANCE.md §4 is fully
-ticked and `scripts/release-check.sh` is the arbiter of the finished state. What remains under
+**`release-check: the shell is release-ready` — printed 2026-08-26 by `scripts/release-check.sh`
+at commit 58fadee.** All ten phases of spec §37 are complete, proven and tagged; every box in
+docs/ACCEPTANCE.md §4 is ticked by a named automated proof; the containerised suite stands at
+35 cases green and the workspace at ~1 400 outcome tests across 21 crates. What remains under
 Next up is post-release deepening — every item deliberate, none blocking the deliverable.
+Promoting `implementation` to `main` is the user's decision and the user's action
+(AGENTS.md §12.1).
 
 Phases A–D are complete and tagged. B/C/D landed as: native commands wired into the evaluator
 (ADR-0028), partial failure semantics (ADR-0029), the §33.5 interop serialisation (ADR-0030),
@@ -80,6 +84,11 @@ KUANG/11 contracts, adversarial review, security review) have all reported and l
 
 ## Next up (ordered)
 
+- [ ] A `SIGPIPE`d stdout (`ono -c '… | to json' | head -c 100`) reports io.permission_denied
+  where every other shell exits quietly — treat EPIPE on stdout as normal termination — exit
+  test: a cli case piping into head
+- [ ] `sort` over a stream of scalars requires a key; identity should be the default key so
+  `from json | sort` works on numbers — exit test: a transforms case
 - [ ] `ono.plugin/1` records for `get plugin` so it composes (`| where state == loaded`),
   registry integration of contributions with origin `plugin(id, version)` (§31.64),
   `inspect plugin`, `get audit`, and folding the K11 codes into `ono_core::ErrorCode`
