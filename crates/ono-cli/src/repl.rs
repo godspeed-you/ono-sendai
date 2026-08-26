@@ -246,7 +246,11 @@ fn short_path(path: &std::path::Path, home: Option<&std::path::Path>) -> String 
     // component is the one that says where you are, so it is never touched.
     let render = |parts: &[String]| {
         let joined = parts.join("/");
-        if absolute { format!("/{joined}") } else { joined }
+        if absolute {
+            format!("/{joined}")
+        } else {
+            joined
+        }
     };
     for index in 0..parts.len() - 1 {
         parts[index] = match parts[index].chars().next() {
@@ -391,7 +395,10 @@ mod tests {
     #[test]
     fn should_show_a_short_path_whole_when_it_already_fits() {
         assert_eq!(short_path(Path::new("/etc"), None), "/etc");
-        assert_eq!(short_path(Path::new("/var/log/nginx"), None), "/var/log/nginx");
+        assert_eq!(
+            short_path(Path::new("/var/log/nginx"), None),
+            "/var/log/nginx"
+        );
     }
 
     #[test]
