@@ -403,3 +403,20 @@ fn should_not_treat_a_backslash_as_an_escape_in_expression_mode_when_lexing() {
     let parsed = ono_parser::parse("where name == \"a\\\\b\"");
     assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics());
 }
+
+#[test]
+fn should_accept_an_escaped_dollar_sign_inside_an_interpolating_string() {
+    // Without it there is no way at all to write a literal `$` in a string that interpolates,
+    // and the first shell command anyone writes that mentions `$$` needs one.
+    let parsed = ono_parser::parse("echo \"pid is \\$\\$\"");
+    assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics());
+    let stage = &parsed.program().statements[0]
+        .as_pipeline()
+        .expect("a pipeline")
+        .head
+        .stages[0];
+    let ono_parser::Argument::Value(ono_parser::Expr::Str(literal)) = &stage.arguments[0] else {
+        panic!("expected a string, got {:?}", stage.arguments[0]);
+    };
+    assert_eq!(literal.literal_text(), Some("pid is $$"));
+}

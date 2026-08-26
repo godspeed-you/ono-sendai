@@ -1,0 +1,22 @@
+# Phase A: a working directory and an environment that outlive one command, which is the whole
+# difference between a shell and a command runner.
+case: cd and the environment persist across the commands that follow
+run: |
+  mkdir -p /tmp/ono-case/inner
+  echo marker > /tmp/ono-case/inner/file.txt
+  ono -c 'cd /tmp/ono-case/inner
+  pwd
+  ls
+  cat file.txt'
+  ono -c 'set env ONO_PROBE = "carried"
+  sh -c "echo probe=\$ONO_PROBE"'
+  ONO_PROBE=outer ono -c 'remove env ONO_PROBE
+  sh -c "echo removed=[\$ONO_PROBE]"'
+  ono -c 'cd /definitely/not/here' 2>&1 | head -1
+exit: 0
+stdout-contains: /tmp/ono-case/inner
+stdout-contains: file.txt
+stdout-contains: marker
+stdout-contains: probe=carried
+stdout-contains: removed=[]
+stdout-contains: Ono-Sendai-E0301

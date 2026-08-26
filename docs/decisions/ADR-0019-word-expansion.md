@@ -66,6 +66,20 @@ Spec §38 explicitly declines POSIX syntax compatibility, which is what makes th
 is also the direct application of spec §12.1's distinction between text and structure to the
 argument list itself.
 
+### 3a. A null becomes the empty string when it is interpolated, and `null` when it is shown
+
+`echo "Hello $NAME"` with `NAME` unset prints `Hello `, not `Hello null`.
+
+This is not a contradiction of spec §10.5, which requires that unknown data stay visible. That
+rule is about *showing data to a person*: a table cell for an unknown value says `null`, and
+`to text` writes `null`, and both are tested. An interpolated command argument is not a
+rendering — it is a word being handed to a program — and putting the four letters `null` into it
+would be a worse lie than putting nothing, because the program would then receive a value that
+looks like data and is not.
+
+So the boundary is exactly where the two rules meet: everything that renders shows `null`;
+everything that builds an argument for a command turns it into an empty word.
+
 ### 4. A glob that matches nothing is an error
 
 `*`, `?` and `[…]` expand against the filesystem, per path component, in sorted order. `**` is

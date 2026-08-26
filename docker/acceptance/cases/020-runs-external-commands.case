@@ -1,0 +1,18 @@
+# Phase A: the shell runs the Unix world. AUTONOMOUS_IMPLEMENTATION.md section 12 is explicit
+# that invoking `echo` proves nothing on its own, so this runs real programs and checks the
+# statuses a script would branch on.
+case: ono runs external commands and reports their status faithfully
+run: |
+  ono -c 'echo hello from ono'
+  ono -c 'sh -c "exit 42"'; echo "status=$?"
+  ono -c 'definitely-not-a-command' 2>/dev/null; echo "notfound=$?"
+  ono -c 'sh -c "kill -TERM \$\$"'; echo "signalled=$?"
+  ono -c '/bin/echo absolute-path'
+  ono -c 'exec:echo forced-namespace'
+exit: 0
+stdout-contains: hello from ono
+stdout-contains: status=42
+stdout-contains: notfound=127
+stdout-contains: signalled=143
+stdout-contains: absolute-path
+stdout-contains: forced-namespace

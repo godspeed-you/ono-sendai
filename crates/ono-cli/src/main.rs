@@ -1,52 +1,100 @@
 //! The `ono` binary.
-//!
-//! Scaffolding only. It answers `--version` and `--help` so that the workspace, the quality
-//! gate and the containerised acceptance harness have something real to verify before phase A
-//! of the specification begins. The interpreter itself is built test-first from there.
 
+#![forbid(unsafe_code)]
+
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
-use ono_core::{PRODUCT_NAME, SHORT_NAME, VERSION};
-
-/// Exit code used when the command line could not be understood (spec section 16).
-const EXIT_USAGE: u8 = 2;
+use ono_cli::invocation::{Invocation, Options};
+use ono_cli::report::Reporter;
+use ono_cli::session::Session;
+use ono_cli::{config, repl};
+use ono_core::ExitStatus;
+use ono_render::Presentation;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let flags: Vec<&str> = args.iter().map(String::as_str).collect();
+    let invocation = Invocation::from_args(std::env::args().skip(1));
 
-    match flags.as_slice() {
-        ["--version" | "-V"] => {
-            println!("{SHORT_NAME} {VERSION}");
-            ExitCode::SUCCESS
+    let status = match invocation {
+        Invocation::Version => {
+            println!("{} {}", ono_core::SHORT_NAME, ono_core::VERSION);
+            ExitStatus::SUCCESS
         }
-        ["--help" | "-h"] => {
-            print_help();
-            ExitCode::SUCCESS
+        Invocation::Help => {
+            println!("{}", ono_cli::usage_text());
+            ExitStatus::SUCCESS
         }
-        [] => {
-            eprintln!(
-                "{SHORT_NAME}: the interactive shell is not implemented yet; see docs/STATE.md"
-            );
-            ExitCode::from(EXIT_USAGE)
+        Invocation::Usage(message) => {
+            eprintln!("{}: {message}", ono_core::SHORT_NAME);
+            eprintln!("try `{} --help`", ono_core::SHORT_NAME);
+            ExitStatus::USAGE
         }
-        unknown => {
-            eprintln!(
-                "{SHORT_NAME}: unrecognised arguments: {}",
-                unknown.join(" ")
-            );
-            eprintln!("try `{SHORT_NAME} --help`");
-            ExitCode::from(EXIT_USAGE)
+        Invocation::Source(source, options) => {
+            let (mut session, reporter) = start(false, &options);
+            let status = repl::run_source(&mut session, &source, &reporter);
+            session.leaving().unwrap_or(status)
         }
-    }
+        Invocation::Stdin(options) => {
+            let (mut session, reporter) = start(false, &options);
+            let status =
+                repl::run_from_reader(&mut session, &reporter, &mut std::io::stdin().lock());
+            session.leaving().unwrap_or(status)
+        }
+        Invocation::Script(path, arguments, options) => {
+            let (mut session, reporter) = start(false, &options);
+            match std::fs::read_to_string(&path) {
+                Ok(source) => {
+                    let values: Vec<ono_value::Value> = arguments
+                        .into_iter()
+                        .map(|argument| ono_value::Value::String(argument.into()))
+                        .collect();
+                    session.bind("args", ono_value::Value::List(values.into()));
+                    let status = repl::run_source(&mut session, &source, &reporter);
+                    session.leaving().unwrap_or(status)
+                }
+                Err(error) => {
+                    reporter.error(&ono_cli::builtin::io_error(&path, &error));
+                    ExitStatus::FAILURE
+                }
+            }
+        }
+        Invocation::Interactive(options) => {
+            let (mut session, reporter) = start(true, &options);
+            repl::run(&mut session, &options, &reporter)
+        }
+    };
+
+    ExitCode::from(status)
 }
 
-fn print_help() {
-    println!("{PRODUCT_NAME} - a typed, structured Unix shell");
-    println!();
-    println!("usage: {SHORT_NAME} [options]");
-    println!();
-    println!("options:");
-    println!("  -V, --version    print the version and exit");
-    println!("  -h, --help       print this help and exit");
+/// Builds the session and reads configuration (ADR-0010).
+fn start(interactive: bool, options: &Options) -> (Session, Reporter) {
+    let mut session = Session::new(interactive);
+    let presentation = Presentation::choose(
+        std::io::stderr().is_terminal(),
+        &[
+            (
+                "NO_COLOR",
+                session
+                    .env_var("NO_COLOR")
+                    .and_then(|v| v.to_str())
+                    .unwrap_or(""),
+            ),
+            (
+                "TERM",
+                session
+                    .env_var("TERM")
+                    .and_then(|v| v.to_str())
+                    .unwrap_or(""),
+            ),
+        ],
+    );
+    let presentation = if session.env_var("NO_COLOR").is_none() {
+        presentation
+    } else {
+        Presentation::Plain
+    };
+    let reporter = Reporter::new(presentation);
+    config::load(&mut session, options, &reporter);
+    (session, reporter)
 }

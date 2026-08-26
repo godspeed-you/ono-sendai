@@ -14,6 +14,12 @@ path = "src/main.rs"
 
 [dependencies]
 ono-core.workspace = true
+ono-editor.workspace = true
+ono-history.workspace = true
+ono-parser.workspace = true
+ono-process.workspace = true
+ono-render.workspace = true
+ono-value.workspace = true
 
 [dev-dependencies]
 ono-testkit.workspace = true

@@ -61,7 +61,7 @@ above is the parser's built-in default and the only thing it needs at keystroke 
   reinterpreted as a number, unit literal, keyword or field path only where the grammar asks for
   one; its exact source text is always retained so an external command receives what was typed.
 - **Comment** — `#` to end of line, when `#` begins a token.
-- **Strings** — `"…"` supports `\\ \" \n \r \t \0 \e \xNN \u{…}` and interpolates `$name`,
+- **Strings** — `"…"` supports `\\ \" \' \$ \n \r \t \0 \e \xNN \u{…}` and interpolates `$name`,
   `$name.field` and `$( … )`; `'…'` is raw: no escapes, no interpolation, and the only way to
   write a literal `'` is to use the double-quoted form. Unterminated strings are `parse.incomplete`
   (E0002), never `parse.syntax`, so the editor can tell "still typing" from "wrong".

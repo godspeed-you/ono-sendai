@@ -339,7 +339,25 @@ fn words_token(bytes: &[u8], start: usize) -> Token {
     }
 
     let mut index = start;
+    let mut braces = 0usize;
     while let Some(&byte) = bytes.get(index) {
+        // `${NAME}` lets a variable abut ordinary text, as in `${PROBE}able` (ADR-0019). The
+        // braces are part of the word, so the evaluator sees one argument and does the
+        // substitution; without this the `{` would end the word and start a block.
+        if byte == b'$' && bytes.get(index + 1) == Some(&b'{') {
+            braces += 1;
+            index += 2;
+            continue;
+        }
+        if braces > 0 && byte == b'}' {
+            braces -= 1;
+            index += 1;
+            continue;
+        }
+        if braces > 0 && !byte.is_ascii_whitespace() {
+            index += 1;
+            continue;
+        }
         // A backslash carries the next character into the word, whitespace included, so
         // `cd My\ Documents` is one argument (ADR-0019). The escape is kept in the token text;
         // removing it is the evaluator's job, because an external command must be able to

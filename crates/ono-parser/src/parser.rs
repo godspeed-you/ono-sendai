@@ -339,7 +339,14 @@ impl<'a> Parser<'a> {
             let description = self.describe(assign);
             self.report_unexpected(assign, format!("expected `=`, found {description}"));
         }
-        let value = self.parse_pipeline();
+        // `let hot = get process | where …` binds a pipeline; `let n = 3` binds a value. Both are
+        // ordinary and the same lookahead that disambiguates `( … )` decides which is which.
+        let value = if self.parens_hold_expression(assign) {
+            let expression = self.parse_expression();
+            expression_as_pipeline(expression)
+        } else {
+            self.parse_pipeline()
+        };
         let span = keyword.span.join(value.span);
         LetStmt {
             name,
@@ -1945,6 +1952,29 @@ impl Parser<'_> {
     }
 }
 
+/// Wraps a bare expression as the one-stage pipeline the AST models a binding's value as.
+///
+/// `let name = "world"` and `let hot = get process | …` then have one shape, so the evaluator has
+/// one path rather than two that can drift apart.
+fn expression_as_pipeline(expression: Expr) -> Pipeline {
+    let span = expression.span();
+    Pipeline {
+        head: StageList {
+            stages: vec![Stage {
+                head: StageHead::Value(expression),
+                mode: ArgMode::Expression,
+                arguments: Vec::new(),
+                redirections: Vec::new(),
+                span,
+            }],
+            span,
+        },
+        tail: Vec::new(),
+        background: false,
+        span,
+    }
+}
+
 fn binary(op: BinaryOp, op_span: Span, lhs: Expr, rhs: Expr) -> Expr {
     Expr::Binary(Box::new(BinaryExpr {
         op,
@@ -2139,6 +2169,10 @@ impl Parser<'_> {
             b't' => Some('\t'),
             b'0' => Some('\0'),
             b'e' => Some('\u{1b}'),
+            // Without `\$` there is no way at all to write a literal dollar sign inside an
+            // interpolating string, and every user needs one the first time they write a
+            // shell command that mentions `$$` or a price.
+            b'$' => Some('$'),
             _ => None,
         };
         if let Some(character) = simple {
