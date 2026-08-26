@@ -87,3 +87,25 @@ fn should_write_the_same_bytes_whether_the_output_is_a_pipe_or_a_file() {
         "spec §50: redirected output must be the same bytes as piped output"
     );
 }
+
+#[test]
+fn should_reject_a_misspelled_field_before_anything_runs() {
+    let run = ono("get process | where cpy > 20");
+    assert!(
+        !run.status().is_success(),
+        "a field the schema does not declare cannot succeed, got {:?}",
+        run.output()
+    );
+
+    let stderr = run.stderr();
+    assert!(
+        stderr.contains("perhaps: cpu"),
+        "spec §15.4: the near miss is suggested, got {stderr:?}"
+    );
+    assert_eq!(
+        stderr.matches("cpy").count(),
+        1,
+        "spec §11.3: the typo is caught before enumeration begins, once — not once per \
+         process. Got {stderr:?}"
+    );
+}

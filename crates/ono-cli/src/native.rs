@@ -159,6 +159,26 @@ fn produces_bytes(contract: &CommandContract) -> bool {
     })
 }
 
+/// Checks every expression in `pipeline` against the schema that would reach it.
+///
+/// Spec §11.3: a typo in a field name is caught before process enumeration begins, because the
+/// contracts declare what flows where. Everything here is declarative — nothing is enumerated and
+/// nothing is spawned — so the check costs nothing when the pipeline is sound. A pipeline whose
+/// schemas are unknown is not checked rather than guessed at.
+///
+/// # Errors
+///
+/// `type.unknown_field` naming the field, the schema, and the nearest declared field.
+pub fn check(pipeline: &ono_parser::Pipeline) -> Result<(), ErrorValue> {
+    let Ok(registry) = registry() else {
+        // An unreadable registry is reported where a native stage actually runs; the pre-flight
+        // check is an optimisation of the failure path, not a second gate.
+        return Ok(());
+    };
+    let schemas: Vec<_> = ono_value::builtin_schemas().schemas().cloned().collect();
+    ono_command::check_pipeline(registry, &schemas, pipeline)
+}
+
 /// Runs a stage list that contains at least one native command.
 ///
 /// # Errors
