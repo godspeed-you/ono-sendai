@@ -13,9 +13,11 @@ That is the whole idea here, minus the fiction:
 
 The command is `ono`. The deck is real this time.
 
-> **Status: pre-implementation.** The specification, the agent instructions, the workspace and
-> the containerised verification harness are in place and green. The interpreter is not — there
-> is no shell to install yet. What follows describes what is being built and how it will behave.
+> **Status: release-ready.** `scripts/release-check.sh` prints `the shell is release-ready`:
+> all ten phases of the specification are implemented, every box of `docs/ACCEPTANCE.md` is
+> ticked by a named automated proof, and the containerised acceptance suite — 35 cases against
+> the real binary as a login shell, network cut — is green, as is CI. What follows describes
+> what was built and how it behaves; every example below runs.
 
 ---
 
@@ -40,11 +42,12 @@ for terminal culture: terse, composable, and honest about the Unix underneath.
 Values keep their shape all the way down the pipe:
 
 ```text
-local://~ > get process | where cpu > 20 | sort cpu desc
+local://~ > get process | sort memory desc | take 3 | select pid name memory
 
-PID    PROCESS        CPU     MEM      USER
-4419   rustc          96.1%   3.8 GiB  masl
-812    postgres       24.8%   1.2 GiB  postgres
+PID      NAME            MEMORY
+3647     claude-desktop  3.21 GiB
+2573964  rustc           815.52 MiB
+1719281  postgres        651.29 MiB
 ```
 
 That table is only a *rendering*. What actually flows is `Stream<Process>` — so the next stage
@@ -67,30 +70,30 @@ speaks a structured protocol, and honest text everywhere else.
 ### Remote hosts become places, not subprocesses
 
 ```text
-local://~ > link prod-db
-link prod-db established  12 ms  linux/amd64
+local://~ > link host prod-db
+linked prod-db (ssh): process file dir user group env mount filesystem interface route neighbor socket connection service
 
-prod-db://~ > enter service postgres
+local://~ > enter link prod-db
 
-prod-db://service/postgres > get socket
+prod-db://~ > get socket | where state == "listen" | select protocol local state
 
-PROTO  LOCAL        REMOTE            STATE
-tcp    :5432        10.4.3.17:55128   established
-tcp    :5432        10.4.3.21:49312   established
+PROTOCOL  LOCAL    STATE
+tcp       :5432    listen
 
-prod-db://service/postgres > trace
+prod-db://~ > trace process 1
 
-postgres
-+-- listens tcp/:5432
-+-- reads /etc/postgresql/...
-+-- writes /var/lib/postgresql/...
-+-- clients
-    +-- api-1  10.4.3.17
-    +-- api-2  10.4.3.21
+process/1 systemd
++-- child -> process/812 postgres
+|   +-- connects -> socket/59113
++-- child -> process/401 systemd-journal
 ```
 
-The prompt is a location URI because you are, in a real sense, somewhere. `link`, `enter`,
-`trace`, `detach` are not costume jewellery — each names exactly what it does.
+The prompt is a location URI because you are, in a real sense, somewhere. Inside the frame,
+`get process` answers from the other side with provenance saying which host; `leave` brings you
+home. `link`, `enter`, `trace`, `watch` are not costume jewellery — each names exactly what it
+does. And every one of the pieces above — the agent on the far end, the negotiation, the
+mounted providers, the refusals when a host key changes — is proven offline against a real
+second process, no network required.
 
 ## Core ideas
 
@@ -140,41 +143,61 @@ of place because you actually are somewhere. Every effect in this shell is a sid
 telling the truth about the system — which is also why none of it can be turned into a
 screensaver.
 
-## Where this is going
+## What was built
 
-The build order is dependency-respecting, not MVP-then-maybe-finish. Every phase is meant to be
-production infrastructure for the next one.
+The build order was dependency-respecting, not MVP-then-maybe-finish — and it ran to the end.
+Each phase is tagged in git (`phase-a` … `phase-j`) with the acceptance case that proves it.
 
-| Phase | Delivers |
+| Phase | Delivered |
 |---|---|
-| **A** | Language and Unix shell foundation — parser, execution, quoting, jobs, signals |
-| **B** | Value system and native pipelines — the typed stream engine |
-| **C** | Linux core providers — process, file, user, mount, interface, socket, service |
-| **D** | Consistency and discoverability — registries, help, semantic completion, `explain` |
-| **E** | Contextual systems interface — the context stack, `enter`/`leave` |
-| **F** | Live system semantics — `watch`, events, native background jobs |
-| **G** | Relationship graph — `trace`, graph values, provenance |
-| **H** | Remote links — the protocol, the agent, capability negotiation |
-| **I** | KUANG/11 extension runtime |
-| **J** | Advanced TUI views — where the semantics actually justify them |
+| **A** ✓ | Language and Unix shell foundation — parser, execution, quoting, jobs, signals |
+| **B** ✓ | Value system and native pipelines — the typed stream engine |
+| **C** ✓ | Linux core providers — process, file, user, mount, interface, socket, service |
+| **D** ✓ | Consistency and discoverability — registries, help, semantic completion, `explain` |
+| **E** ✓ | Contextual systems interface — the context stack, `enter`/`leave`, `@`-reuse |
+| **F** ✓ | Live system semantics — `watch`, events, in-place tables, native background jobs |
+| **G** ✓ | Relationship graph — `trace`, graph values, provenance and confidence |
+| **H** ✓ | Remote links — the protocol, the agent, `ono --agent`, capability negotiation |
+| **I** ✓ | KUANG/11 extension runtime — broker, audit, SDK, deterministic test host |
+| **J** ✓ | Advanced TUI views — `view`, the cursor that sets `@`, only where semantics justify |
 
-Written in Rust, because this needs low-level Unix integration, async I/O, real concurrency
-safety, a recoverable parser, and PTY and job-control work. Latency is treated as a product
-feature and specified like one: under 50 ms cold start, under 8 ms from keystroke to render,
-first rows of `get process` inside 50 ms — measured against machines with tens of thousands of
-processes, slow NSS and high-latency links.
+Written in Rust — 21 crates, ~1 400 outcome tests. Latency is treated as a product feature and
+*measured* like one, in the container, on every acceptance run: cold start, parse, and the
+first rows of `get process` all inside their spec §34 budgets, with the keystroke-to-render
+path bounded in the editor's own suite.
+
+## Building and running it
+
+```bash
+cargo build --release -p ono-cli     # the shell: target/release/ono
+./target/release/ono                  # a conversation, if stdin is a terminal
+./target/release/ono -c 'get process | where cpu > 20'
+./target/release/ono --agent          # the remote end of a link, over stdin/stdout
+```
+
+Try the parts that only exist because the machine is typed: `watch process` at a terminal and
+watch the table update in place; `trace process 1` and walk the tree; `get process | view table`,
+pick a row with the arrows, quit, and `@ | inspect` the thing you picked; `enter service nginx`
+and ask `get process` inside the frame. `help` is generated from the same registries the
+commands are — the shell is its own manual.
+
+KUANG/11 packages install as files: a directory under `~/.config/ono/plugins` (or
+`$ONO_PLUGIN_PATH`) holding a `manifest.yaml` and its runtime. `get plugin` lists them,
+`load plugin <id>` negotiates capabilities before the binary ever starts, and a loaded
+package's commands run as `<name>:<command>` in ordinary pipelines.
 
 ## Repository
 
 ```
-docs/ono_sendai_shell_spec_v0.2.md   the specification — product, language, architecture, KUANG/11
-docs/ACCEPTANCE.md                   what "finished" means, in boxes a script can check
-docs/STATE.md                        the work board: what is done, what is next
-docs/decisions/                      architecture decision records
+docs/ono_sendai_shell_spec_v0.2.md   the immutable base specification — product, language, KUANG/11
+docs/*_shell_spec_*.md               enhancement specs, layered on the base (AGENTS.md §5.2)
+docs/ACCEPTANCE.md                   what "finished" means, in boxes a script can check — all ticked
+docs/STATE.md                        the work board: the release verdict, and what comes next
+docs/decisions/                      41 architecture decision records
 AGENTS.md                            operating instructions for autonomous agents
-crates/, xtask/                      the workspace
+crates/                              21 crates: the shell, the engine, the providers, the runtimes
 docker/, scripts/                    the container and the three gates
-docs/spec/                           machine-readable contracts — arrives with phase D
+docs/spec/                           machine-readable contracts: commands, schemas, verbs, errors
 ```
 
 ### Verifying it
@@ -187,11 +210,14 @@ scripts/release-check.sh   # both, plus the release checklist
 
 The middle one is the interesting one. It builds a clean Debian image, installs `ono` as the
 login shell of an unprivileged user, cuts the network, and asks the binary to prove each
-advertised capability against a process table nobody tuned for the test. A feature that has not
-survived that is not a feature yet.
+advertised capability against a process table nobody tuned for the test — 35 cases, from "a
+person can do ordinary work in ono instead of bash" to hostile filenames, live watches, remote
+links against a real child agent, and a KUANG/11 package loaded under the broker. A feature
+that has not survived that is not a feature yet.
 
-`scripts/release-check.sh` currently exits 1 and prints the boxes that are still open. It will
-keep doing that until the shell is done.
+`scripts/release-check.sh` runs both gates and then the checklist, and prints
+`release-check: the shell is release-ready`. That line is the project's definition of done, and
+it was reached — not declared.
 
 The specification is the source of truth and is deliberately more detailed than a pitch:
 command metadata, object schemas, error taxonomy, grammar and test matrices are meant to be
@@ -202,10 +228,12 @@ work under — tests are the referee for whether a goal is reached, and every de
 does not fix is made autonomously and recorded as an ADR. If you are an agent reading this:
 `AGENTS.md` is your entry point, not this file.
 
-`main` carries the specification, the instructions and the harness, and nothing else. The
-implementation lives on the `implementation` branch, which is disposable on purpose: an attempt
-that goes wrong is deleted, not repaired. The specification is immutable and checksummed — where
-it is ambiguous or wrong, the deviation is recorded in an ADR and the document stays as written.
+`main` carries the specification, the instructions and the harness — the state a run starts
+from. The finished implementation lives on the `implementation` branch, phase-tagged from
+`phase-a` to `phase-j`; promoting it is the user's deliberate act, not an agent's. The
+specification is immutable and checksummed — where it was ambiguous or wrong, the deviation is
+recorded in an ADR (two of the forty-one carry a `Spec deviation` heading) and the document
+stays exactly as written.
 
 ## License
 
