@@ -694,6 +694,22 @@ Default view: `destination`, `gateway`, `interface`, `metric`, `protocol`
 | `metric` | `int` | — | nullable | The route priority; lower wins. Null when the provider supplies no metric. |
 | `table` | `string` | — | nullable | The routing table the entry belongs to, by name where one exists, otherwise its number. |
 
+## ServiceEvent — `ono.service-event/1`
+
+One change to one service, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `service`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `service` | `record` | — | optional | The service as it now is — or, for `removed`, as it last was. Identity lives inside it. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the provider has no event source and the runtime compared snapshots at the configured interval — explicit, as spec §18.2 requires. |
+
 ## Service — `ono.service/1`
 
 A service-manager unit as the active service provider sees it.
@@ -713,6 +729,22 @@ Default view: `name`, `state`, `substate`, `enabled`, `description`
 | `since` | `timestamp` | — | nullable | When the unit entered its current state. |
 | `provider` | `string` | — | required | The service provider that produced this record; part of the identity. |
 | `unit_file` | `path` | — | nullable | The unit file backing the service; null for transient or generated units. |
+
+## SocketEvent — `ono.socket-event/1`
+
+One change to one socket, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `socket`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `socket` | `record` | — | optional | The socket as it now is — or, for `removed`, as it last was. Identity lives inside it. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the provider has no event source and the runtime compared snapshots at the configured interval — explicit, as spec §18.2 requires. |
 
 ## Socket — `ono.socket/1`
 

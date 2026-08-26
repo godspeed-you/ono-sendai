@@ -97,6 +97,77 @@ impl Default for Identity {
     }
 }
 
+/// One thing a remote provider can do, with how much it could change (spec §17.1, §21.2).
+///
+/// This is [`ono_provider_api::Capability`] as the wire writes it down. Risk and elevation
+/// travel with the id because they are what a *local* risk display is computed from: a remote
+/// `process.signal` that arrived as a bare name would be indistinguishable from a read, and a
+/// destructive remote action would look safe (ADR-0015).
+///
+/// The risk is carried as its `docs/spec/capabilities.yaml` name. A name this build does not
+/// know decodes as [`Risk::Destructive`](ono_provider_api::Risk::Destructive): a claim that
+/// cannot be understood must be over-stated, never under-stated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityDescriptor {
+    id: String,
+    #[serde(default = "default_risk")]
+    risk: String,
+    #[serde(default)]
+    elevation: bool,
+}
+
+fn default_risk() -> String {
+    ono_provider_api::Risk::Read.as_str().to_owned()
+}
+
+impl CapabilityDescriptor {
+    /// The capability's id, as `docs/spec/capabilities.yaml` spells it.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The capability as a provider declares it, for mounting a remote provider locally.
+    #[must_use]
+    pub fn to_capability(&self) -> ono_provider_api::Capability {
+        use ono_provider_api::Risk;
+        let risk = match self.risk.as_str() {
+            "read" => Risk::Read,
+            "observe" => Risk::Observe,
+            "mutate" => Risk::Mutate,
+            // `destructive`, and every claim this build cannot understand: assume the worst.
+            _ => Risk::Destructive,
+        };
+        let capability = ono_provider_api::Capability::new(&self.id, risk);
+        if self.elevation {
+            capability.needing_elevation()
+        } else {
+            capability
+        }
+    }
+}
+
+impl From<&ono_provider_api::Capability> for CapabilityDescriptor {
+    fn from(capability: &ono_provider_api::Capability) -> Self {
+        Self {
+            id: capability.id().to_owned(),
+            risk: capability.risk().as_str().to_owned(),
+            elevation: capability.needs_elevation(),
+        }
+    }
+}
+
+impl From<&str> for CapabilityDescriptor {
+    /// A bare name makes the weakest claim: a read that needs no elevation.
+    fn from(id: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            risk: default_risk(),
+            elevation: false,
+        }
+    }
+}
+
 /// A provider the remote end has, and whether it can actually answer there.
 ///
 /// An unavailable provider is still described. Spec §35.3 and §21.3 both turn on the same point:
@@ -108,7 +179,7 @@ pub struct ProviderDescriptor {
     #[serde(default)]
     targets: Vec<String>,
     #[serde(default)]
-    capabilities: Vec<String>,
+    capabilities: Vec<CapabilityDescriptor>,
     #[serde(default)]
     unavailable: Option<String>,
 }
@@ -137,13 +208,24 @@ impl ProviderDescriptor {
     }
 
     /// Declares what it must be allowed to do.
+    ///
+    /// Accepts bare names for the read-only common case; a capability that mutates or needs
+    /// elevation goes through [`with_capability`](Self::with_capability) so its risk crosses
+    /// the link.
     #[must_use]
     pub fn with_capabilities<I, S>(mut self, capabilities: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: Into<String>,
+        S: Into<CapabilityDescriptor>,
     {
         self.capabilities = capabilities.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Declares one capability with everything a provider says about it.
+    #[must_use]
+    pub fn with_capability(mut self, capability: impl Into<CapabilityDescriptor>) -> Self {
+        self.capabilities.push(capability.into());
         self
     }
 
@@ -168,7 +250,7 @@ impl ProviderDescriptor {
 
     /// What it must be allowed to do.
     #[must_use]
-    pub fn capabilities(&self) -> &[String] {
+    pub fn capabilities(&self) -> &[CapabilityDescriptor] {
         &self.capabilities
     }
 

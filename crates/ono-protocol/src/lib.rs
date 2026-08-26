@@ -69,7 +69,8 @@ pub mod transport;
 pub use error::ProtocolError;
 pub use frame::{FRAME_HEADER_LEN, FRAME_VERSION, Frame, FrameKind, decode, encode};
 pub use handshake::{
-    Accept, Hello, Identity, Negotiated, PROTOCOL_VERSION, PeerInfo, ProviderDescriptor, Reject,
+    Accept, CapabilityDescriptor, Hello, Identity, Negotiated, PROTOCOL_VERSION, PeerInfo,
+    ProviderDescriptor, Reject,
 };
 pub use limits::{
     DEFAULT_CREDIT, Limits, MAX_CREDIT, MAX_FRAME_PAYLOAD, MAX_STREAMS, MAX_VALUE_DEPTH,

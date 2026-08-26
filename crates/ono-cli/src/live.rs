@@ -96,10 +96,9 @@ pub(crate) fn apply(rows: &mut BTreeMap<String, Value>, event: &Value) -> bool {
 
     match kind {
         "removed" => rows.remove(&key).is_some(),
-        _ => {
-            rows.insert(key, object);
-            true
-        }
+        // Spec §4.4: a tick that changed nothing repaints nothing. An event carrying the same
+        // state as the row already shows is applied, but it is not a change.
+        _ => rows.insert(key, object.clone()) != Some(object),
     }
 }
 
@@ -131,4 +130,56 @@ fn repaint(
     }
     let _ = out.flush();
     lines.len()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+
+    fn event(kind: &str, pid: i128, name: &str) -> Value {
+        let schemas = ono_value::builtin_schemas();
+        let process_schema = schemas
+            .get(&"ono.process/1".parse().expect("a schema id"))
+            .expect("the process schema");
+        let event_schema = schemas
+            .get(&"ono.process-event/1".parse().expect("a schema id"))
+            .expect("the event schema");
+        let provenance =
+            ono_value::Provenance::local("test", process_schema.id().clone());
+        let process = ono_value::RecordValue::builder(process_schema, provenance.clone())
+            .set("pid", Value::Int(pid))
+            .and_then(|builder| builder.set("name", Value::string(name)))
+            .expect("a process record")
+            .build();
+        let record = ono_value::RecordValue::builder(event_schema, provenance)
+            .set("kind", Value::string(kind))
+            .and_then(|b| b.set("at", Value::Null))
+            .and_then(|b| b.set("process", Value::Record(std::sync::Arc::new(process))))
+            .and_then(|b| b.set("source", Value::string("poll")))
+            .expect("an event record")
+            .build();
+        Value::Record(std::sync::Arc::new(record))
+    }
+
+    #[test]
+    fn should_report_no_change_when_an_event_repeats_the_shown_state() {
+        // Spec §4.4: a tick that changed nothing repaints nothing.
+        let mut rows = BTreeMap::new();
+        assert!(apply(&mut rows, &event("snapshot", 1, "systemd")));
+        assert!(
+            !apply(&mut rows, &event("snapshot", 1, "systemd")),
+            "the same state again is not a change"
+        );
+        assert!(
+            apply(&mut rows, &event("changed", 1, "systemd-renamed")),
+            "a different state is"
+        );
+        assert!(apply(&mut rows, &event("removed", 1, "systemd-renamed")));
+        assert!(!apply(&mut rows, &event("removed", 1, "systemd-renamed")));
+    }
 }

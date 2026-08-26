@@ -23,7 +23,7 @@ use ono_protocol::{
     ActRequest, ClientConfig, HostKey, Identity, PlainTransport, ProviderDescriptor, RemoteQuery,
     RemoteService, ServerConfig, StreamResponder, TrustPolicy, TrustStore, serve,
 };
-use ono_provider_api::{ActionOutcome, ObjectEvent};
+use ono_provider_api::{ActionOutcome, Capability, ObjectEvent, Risk};
 use ono_value::{
     ErrorValue, FieldDef, FieldType, Provenance, RecordValue, Schema, SchemaId, SchemaRegistry,
     Value,
@@ -162,7 +162,8 @@ pub fn server_config() -> ServerConfig {
         .with_provider(
             ProviderDescriptor::new("linux.procfs")
                 .with_targets(["process"])
-                .with_capabilities(["process.list"]),
+                .with_capabilities(["process.list"])
+                .with_capability(&Capability::new("process.signal", Risk::Mutate).needing_elevation()),
         )
         .with_provider(
             ProviderDescriptor::new("linux.systemd")

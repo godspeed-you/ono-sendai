@@ -110,7 +110,9 @@ fn implementation_of(
         "ono.data.format" => Arc::new(ConversionCommand::new(id, Direction::Render)),
 
         // --- the commands that describe the shell ----------------------------------------------
-        "ono.process.watch" => Arc::new(watch::WatchCommand::new(id)),
+        "ono.process.watch" | "ono.socket.watch" | "ono.service.watch" => {
+            Arc::new(watch::WatchCommand::new(id))
+        }
         "ono.process.trace" | "ono.service.trace" | "ono.socket.trace" | "ono.connection.trace" => {
             Arc::new(trace::TraceCommand::new(id))
         }

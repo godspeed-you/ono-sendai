@@ -190,6 +190,12 @@ impl ClientConfig {
     pub fn host(&self) -> &str {
         &self.host
     }
+
+    /// The schemas this end can decode.
+    #[must_use]
+    pub fn schemas(&self) -> &Arc<SchemaRegistry> {
+        &self.schemas
+    }
 }
 
 /// One message arriving on a stream.

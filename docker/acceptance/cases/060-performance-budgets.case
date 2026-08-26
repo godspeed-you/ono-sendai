@@ -35,8 +35,14 @@ run: |
   # proves parsing is nowhere near the cost. The parser's own microsecond-level measurement lives
   # in its test suite, where it can be measured without a process around it.
   measure parse-pipeline 50 ono --no-config -c 'true | true | true'
+
+  # First rows of `get process` (spec section 34: < 50 ms). Measured as the whole run with the
+  # stream bounded to one row — startup, provider, first record, render and teardown together —
+  # which is strictly harsher than the budgeted moment.
+  measure first-process-row 50 ono --no-config -c 'get process | take 1'
 exit: 0
 stdout-contains: cold-start: within budget
 stdout-contains: bare-start: within budget
+stdout-contains: first-process-row: within budget
 stdout-contains: parse-pipeline: within budget
 stdout-not-contains: OVER BUDGET

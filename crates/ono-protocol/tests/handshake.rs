@@ -186,3 +186,43 @@ async fn should_prefer_the_highest_version_both_ends_speak() {
         "a newer shared version is chosen over an older one"
     );
 }
+
+#[tokio::test]
+async fn should_carry_a_provider_capability_with_its_risk_across_the_link() {
+    let fixture = connect().await;
+    let negotiated = fixture.link.negotiated();
+
+    let procfs = negotiated
+        .providers()
+        .iter()
+        .find(|provider| provider.id() == "linux.procfs")
+        .expect("the fixture offers linux.procfs");
+    let signal = procfs
+        .capabilities()
+        .iter()
+        .find(|capability| capability.id() == "process.signal")
+        .expect("the fixture announces process.signal");
+    let projected = signal.to_capability();
+    assert_eq!(
+        projected.risk(),
+        ono_provider_api::Risk::Mutate,
+        "spec §17.1 computes risk from what the provider declares; a remote capability that \
+         arrived without its risk would make a destructive remote action look like a read"
+    );
+    assert!(
+        projected.needs_elevation(),
+        "whether a capability needs elevation is part of what spec §21.2 negotiates as \
+         identity and privilege"
+    );
+
+    let list = procfs
+        .capabilities()
+        .iter()
+        .find(|capability| capability.id() == "process.list")
+        .expect("a capability named without a risk still crosses the link");
+    assert_eq!(
+        list.to_capability().risk(),
+        ono_provider_api::Risk::Read,
+        "a bare capability name defaults to the weakest claim, read"
+    );
+}

@@ -95,8 +95,12 @@ Each phase's success criterion from spec section 37, each proven by a named acce
       `ono-command/tests/watch.rs` (the poll diff over a mutating fixture: snapshots first,
       `changed` naming its fields, identity-ordered), and `ono-cli/tests/watch_live.rs` (in-place
       repaints, Ctrl-C ending a watch with 128+SIGINT, `fg` reattaching a backgrounded watch).
-- [ ] **G — Relationship graph.** Graph values, relationship providers, `trace` for process,
+- [x] **G — Relationship graph.** Graph values, relationship providers, `trace` for process,
       service and socket, tree and graph rendering, provenance and confidence.
+      Proven by `047-relationship-graph` (a trace drawn as a tree, the graph value serialised
+      and inspectable, a trace of nothing refused, every edge naming its asserter),
+      `ono-graph/tests/` (relationships, rendering, the record round trip) and
+      `ono-command/tests/trace.rs`. One trace is one observation (ADR-0035): 27.2s → 1.1s.
 - [ ] **H — Remote links.** Remote protocol, agent, SSH fallback, provider negotiation, security
       model, remote prompt, multiplexed streams.
 - [ ] **I — KUANG/11 extension runtime.** The production path of spec section 31: manifests,

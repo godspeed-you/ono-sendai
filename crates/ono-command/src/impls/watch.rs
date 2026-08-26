@@ -69,10 +69,12 @@ impl CommandImpl for WatchCommand {
         // Spec §18.2: providers MAY support event-driven updates; this build's providers do not
         // yet, so the runtime polls and says so on every event. When a provider grows
         // `subscribe`, this is where the stream switches source.
+        let object_field = ctx.contract().target().unwrap_or("object").to_owned();
         Ok(Outcome::Values(poll(
             ctx.providers().clone(),
             query,
             event_schema,
+            object_field,
             interval,
         )))
     }
@@ -110,6 +112,7 @@ fn poll(
     providers: ProviderRegistry,
     query: Query,
     event_schema: Arc<Schema>,
+    object_field: String,
     interval: Duration,
 ) -> ValueStream {
     ValueStream::spawn(
@@ -144,11 +147,11 @@ fn poll(
                 // What changed, in identity order — deterministic however the provider answered.
                 for (key, record) in &seen {
                     let event = match known.get(key) {
-                        _ if first => event("snapshot", record, None, &event_schema),
-                        None => event("added", record, None, &event_schema),
+                        _ if first => event("snapshot", record, None, &event_schema, &object_field),
+                        None => event("added", record, None, &event_schema, &object_field),
                         Some(previous) if previous != record => {
                             let moved = changed_fields(previous, record);
-                            event("changed", record, Some(moved), &event_schema)
+                            event("changed", record, Some(moved), &event_schema, &object_field)
                         }
                         Some(_) => continue,
                     };
@@ -159,7 +162,7 @@ fn poll(
                 for (key, record) in &known {
                     if !seen.contains_key(key)
                         && sink
-                            .send(event("removed", record, None, &event_schema))
+                            .send(event("removed", record, None, &event_schema, &object_field))
                             .await
                             .is_err()
                     {
@@ -208,12 +211,13 @@ fn event(
     record: &Arc<RecordValue>,
     changed: Option<Vec<Value>>,
     schema: &Arc<Schema>,
+    object_field: &str,
 ) -> Value {
     let provenance = record.provenance().clone();
     let built = RecordValue::builder(Arc::clone(schema), provenance)
         .set("kind", Value::string(kind))
         .and_then(|builder| builder.set("at", Value::Timestamp(jiff::Timestamp::now())))
-        .and_then(|builder| builder.set("process", Value::Record(Arc::clone(record))))
+        .and_then(|builder| builder.set(object_field, Value::Record(Arc::clone(record))))
         .and_then(|builder| builder.set("changed", changed.map_or(Value::Null, Value::list)))
         .and_then(|builder| builder.set("source", Value::string("poll")));
     match built {

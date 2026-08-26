@@ -51,12 +51,6 @@ deferred:
   - id: ono.route-event/1
     phase: "F"
     required_by: [ono.route.watch]
-  - id: ono.service-event/1
-    phase: "F"
-    required_by: [ono.service.watch]
-  - id: ono.socket-event/1
-    phase: "F"
-    required_by: [ono.socket.watch]
   - id: ono.link-event/1
     phase: "H"
     required_by: [ono.link.watch]
