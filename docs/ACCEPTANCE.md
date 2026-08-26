@@ -87,8 +87,14 @@ Each phase's success criterion from spec section 37, each proven by a named acce
       `ono-command/tests/producers.rs` (a frame narrows the provider query; an unnarrowable
       target refused naming the frame) and `ono-cli/tests/context.rs`. Selection is positional
       addressing per ADR-0033; the visual cursor is Phase J's.
-- [ ] **F — Live system semantics.** `watch`, the event/snapshot model, in-place rendering,
+- [x] **F — Live system semantics.** `watch`, the event/snapshot model, in-place rendering,
       native background jobs, stable object identity.
+      Proven by `046-live-system-semantics` (snapshot events with `source: poll` through a
+      serializer, the piped refusal naming the fix, a live view at a real terminal, a
+      backgrounded watch listed running, a bounded background pipeline finishing as done),
+      `ono-command/tests/watch.rs` (the poll diff over a mutating fixture: snapshots first,
+      `changed` naming its fields, identity-ordered), and `ono-cli/tests/watch_live.rs` (in-place
+      repaints, Ctrl-C ending a watch with 128+SIGINT, `fg` reattaching a backgrounded watch).
 - [ ] **G — Relationship graph.** Graph values, relationship providers, `trace` for process,
       service and socket, tree and graph rendering, provenance and confidence.
 - [ ] **H — Remote links.** Remote protocol, agent, SSH fallback, provider negotiation, security

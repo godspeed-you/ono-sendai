@@ -16,7 +16,7 @@ git tag -n99 phase-a          # what Phase A delivered, and what proves it
 git switch --detach phase-a   # the tree exactly as that phase left it
 ```
 
-Tags so far: `phase-a`, `phase-b`, `phase-c`, `phase-d`.
+Tags so far: `phase-a` … `phase-f` (one per completed phase).
 
 **Push after every commit.** AGENTS.md §12.1 keeps `main` untouched and §12.2 asks that
 `implementation` be pushed freely so work is not lost; the branch and its phase tags live on
@@ -71,11 +71,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase F — remaining: acceptance case 046 green, tick the box,
-  tag `phase-f`. Delivered so far: Ctrl-C cancellation for native pipelines, `watch` as a
-  polling diff (ADR-0034), the live in-place table, `ono.process-event/1`, native background
-  jobs sharing the external job number sequence, `fg` reattaching a live view — files:
-  `crates/ono-cli/**`, `crates/ono-command/**`
+- [orchestrator | 2026-08-26] Phase G — the relationship graph (spec §37): graph values and
+  rendering exist in `ono-graph`; wire `trace` for process/service/socket into the registry and
+  evaluator, prove with an acceptance case — files: `crates/ono-graph/**`,
+  `crates/ono-command/**`, `crates/ono-cli/**`
 
 _No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
 KUANG/11 contracts, adversarial review, security review) have all reported and landed._

@@ -104,3 +104,69 @@ fn should_render_in_place_at_a_terminal_and_stop_on_ctrl_c() {
     shell.write_all(b"exit\n").expect("input");
     let _ = shell.wait();
 }
+
+#[test]
+fn should_reattach_a_backgrounded_watch_and_end_it_with_ctrl_c() {
+    // ADR-0024: `fg` brings a live view's rendering back to the foreground, and Ctrl-C then
+    // ends it exactly as it ends a foreground watch.
+    let mut executor = Executor::detached();
+    let command = Command::new(ono_testkit::ono_binary())
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
+        .env("HOME", std::env::temp_dir().display().to_string());
+    let mut shell = executor
+        .run_pty(&command, WindowSize::new(30, 100))
+        .expect("a pseudo-terminal");
+
+    let mut seen = String::new();
+    let mut buffer = [0u8; 8192];
+    let mut wait_for = |shell: &mut ono_process::PtySession, needle: &str, budget: Duration| {
+        let deadline = Instant::now() + budget;
+        while Instant::now() < deadline {
+            if let Ok(Some(count)) = shell.read_timeout(&mut buffer, Duration::from_millis(150)) {
+                seen.push_str(&String::from_utf8_lossy(&buffer[..count]));
+            }
+            if seen.contains(needle) {
+                return true;
+            }
+        }
+        false
+    };
+
+    assert!(
+        wait_for(&mut shell, ">", Duration::from_secs(10)),
+        "a prompt"
+    );
+    shell
+        .write_all(b"watch process --every 200ms &\n")
+        .expect("the terminal accepts the background watch");
+    assert!(
+        wait_for(&mut shell, "[%1]", Duration::from_secs(8)),
+        "the job is announced under its number (spec §18.4); saw:\n{seen}"
+    );
+
+    shell.write_all(b"fg 1\n").expect("the terminal accepts fg");
+    assert!(
+        wait_for(&mut shell, "\x1b[0J", Duration::from_secs(8)),
+        "fg reattaches the in-place rendering (ADR-0024); saw {} bytes",
+        seen.len()
+    );
+
+    shell.write_all(&[0x03]).expect("Ctrl-C");
+    shell.write_all(b"jobs; echo after-$?\n").expect("input");
+    assert!(
+        wait_for(&mut shell, "after-0", Duration::from_secs(8)),
+        "the prompt survives; saw:\n{seen}"
+    );
+    let after_fg = seen
+        .rsplit_once("fg 1")
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    assert!(
+        !after_fg.contains("running watch"),
+        "the collected job is gone from the table; saw:\n{seen}"
+    );
+
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}
