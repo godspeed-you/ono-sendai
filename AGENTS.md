@@ -21,6 +21,8 @@ Four rules override everything else:
 4. **Be pragmatic and stay on task.** Solve the problem in front of you, nothing else (§4).
 5. **Do not stop early.** The run ends when `scripts/release-check.sh` passes and not before
    (§15). There is no MVP exit and no proof-of-concept exit.
+6. **Never commit to `main`.** All implementation happens on the `implementation` branch, so the
+   whole run stays disposable (§12.1).
 
 If you catch yourself writing "should I…?", "which option do you prefer?", or "let me know
 how to proceed" — stop, pick the option best aligned with the spec, write an ADR, proceed.
@@ -427,16 +429,44 @@ fixture creates them), one behaviour per test, assertion messages that explain t
 
 ---
 
-## 12. Commits and Version Control
+## 12. Branch Policy and Commits
 
-- Work on `main` unless the user asked otherwise; **every commit must be green** (§10).
-- One increment of **one kind** per commit (§4). Conventional Commits:
-  `feat|fix|refactor|perf|test|docs|spec|chore(scope): summary`
+### 12.1 Implementation lives on a feature branch
+
+**`main` is never written to by an agent.** It holds the immutable specification, these
+instructions, the verification harness and the README — the state a run starts from, and the
+state the user can always return to.
+
+**All implementation happens on the branch `implementation`.** It is created from `main` and is
+**disposable by design**: the entire run can be thrown away and restarted from a clean `main`
+without losing anything that matters, because everything that matters is on `main` already.
+
+```bash
+git switch implementation || git switch --create implementation main   # start or resume
+git rev-parse --abbrev-ref HEAD                                        # confirm before editing
+```
+
+Rules:
+
+- Confirm the branch **before your first edit**, every session (§17). A commit on `main` is a
+  policy breach even when the content is good.
+- Never merge, rebase or fast-forward `implementation` into `main`. Promoting the work is the
+  user's decision and the user's action, taken when the release gate passes (§15).
+- Never delete or recreate `implementation` yourself. Discarding a run is the user's call.
+- `scripts/gate.sh` refuses to run on `main`. That guard is not to be removed or worked around;
+  the user sets `ONO_ALLOW_MAIN=1` when they work on the harness itself.
+- Sub-branches are allowed for parallel agents (`implementation/<crate>`), merged back into
+  `implementation` — never into `main`.
+
+### 12.2 Commits
+
+- **Every commit must be green** (§10). One increment of **one kind** per commit (§4).
+- Conventional Commits: `feat|fix|refactor|perf|test|docs|spec|chore(scope): summary`
 - Body: what changed, which spec section it implements, which ADR it follows, which tests prove
   it. For `refactor`: state explicitly that no test changed.
 - Never `--force`, never rewrite pushed history, never commit generated artifacts that the
   generator can reproduce (except where CI needs them checked in — then say so in an ADR).
-- Do **not** push or open PRs unless the user asked for it.
+- Push `implementation` freely so work is not lost. Do **not** open PRs unless asked.
 
 ---
 
@@ -536,7 +566,8 @@ is routine is the one failure mode this project cannot absorb.
 ## 17. Session Checklist
 
 **Start:** read `AGENTS.md` → `docs/STATE.md` → `docs/ACCEPTANCE.md` → recent ADRs →
-`git log --oneline -10` → run `scripts/gate.sh` to confirm you start from green.
+`git log --oneline -10` → **switch to `implementation` and confirm you are not on `main`**
+(§12.1) → run `scripts/gate.sh` to confirm you start from green.
 
 **During:** one TDD loop at a time; one kind of change at a time; decide instead of asking;
 ADR for anything architectural; an acceptance case for anything a user can see.

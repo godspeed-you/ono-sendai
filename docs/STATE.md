@@ -4,6 +4,8 @@ The shared work board. **Read it first, update it last, every session** (AGENTS.
 The stopping rule lives in `docs/ACCEPTANCE.md`: the run ends when `scripts/release-check.sh`
 passes, not when this file looks tidy.
 
+Working branch: **`implementation`** — never commit to `main` (AGENTS.md section 12.1)
+
 Current phase: **A — Language and Unix shell foundation** (spec section 37)
 
 Phase A exit criterion: *Ono-Sendai can replace Bash for ordinary interactive execution without
@@ -117,6 +119,8 @@ not fix yet.
       ADR-0002
 - [x] CI running the gate and the acceptance suite on every push — ADR-0002
 - [x] Specification immutability enforced by checksum in `cargo xtask spec-check` — ADR-0003
+- [x] Branch policy: implementation on a disposable `implementation` branch, guarded in
+      `scripts/gate.sh` — ADR-0004
 
 ---
 
@@ -129,6 +133,7 @@ assumption)_
 
 ## Notes for whoever starts phase A
 
+- Switch to `implementation` before your first edit. The gate refuses to run on `main`.
 - The workspace is green as delivered. Confirm it (`scripts/gate.sh`) before your first edit, so
   a later red gate is unambiguously yours.
 - `crates/ono-cli/src/main.rs` is scaffolding: it answers `--version` and `--help` and refuses

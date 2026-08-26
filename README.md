@@ -202,6 +202,11 @@ work under — tests are the referee for whether a goal is reached, and every de
 does not fix is made autonomously and recorded as an ADR. If you are an agent reading this:
 `AGENTS.md` is your entry point, not this file.
 
+`main` carries the specification, the instructions and the harness, and nothing else. The
+implementation lives on the `implementation` branch, which is disposable on purpose: an attempt
+that goes wrong is deleted, not repaired. The specification is immutable and checksummed — where
+it is ambiguous or wrong, the deviation is recorded in an ADR and the document stays as written.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

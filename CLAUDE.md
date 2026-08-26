@@ -36,6 +36,8 @@ duplicate rules here — if a rule needs to change, change it in `AGENTS.md`.
   unprivileged user (AGENTS.md §10). A capability without an acceptance case is not delivered.
 - **Stopping rule:** the run ends when `scripts/release-check.sh` prints `the shell is
   release-ready` — never earlier. No MVP exit (AGENTS.md §15, `docs/ACCEPTANCE.md`).
+- **Branch:** all implementation goes on `implementation`, never on `main`, so the whole run
+  stays disposable. `scripts/gate.sh` refuses to run on `main` (AGENTS.md §12.1).
 - **State board:** `docs/STATE.md` — read first, update last, every session (AGENTS.md §9).
 - **Repo language is English** (code, tests, docs, commits). Talk to the user in their language.
 

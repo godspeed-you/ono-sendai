@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, implementation, "implementation/**"]
   pull_request:
   workflow_dispatch:
 
@@ -13,6 +13,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # CI verifies whatever branch it is handed; the branch policy of AGENTS.md section 12.1 is
+  # enforced where it matters, on the machine an agent commits from.
+  ONO_ALLOW_MAIN: 1
 
 jobs:
   gate:
