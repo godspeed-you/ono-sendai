@@ -53,7 +53,13 @@ fn token_colour(kind: ono_parser::TokenKind) -> Token {
     }
 }
 
-/// Completion over the names the shell can actually resolve (ADR-0011).
+/// Completion over what the shell can actually resolve.
+///
+/// Three sources, in the order a user would expect them: the command registry, which knows every
+/// verb, target and option and their documentation (spec §15.1, §27.1); the executables and
+/// builtins a name could resolve to (ADR-0011); and the filesystem. The registry is consulted
+/// first because it is the only one that can offer a *target* or an *option*, and spec §34
+/// budgets 50 ms for the first results from local metadata — which is a lookup, not a search.
 struct ShellCompleter {
     commands: Vec<String>,
 }
@@ -64,18 +70,33 @@ impl Completer for ShellCompleter {
             .rfind(|c: char| c.is_whitespace() || c == '|')
             .map_or(0, |at| at + 1);
         let prefix = &line[start..cursor];
-
-        // The first word is a command; anything later is a path.
         let is_head = line[..start].trim().is_empty() || line[..start].trim_end().ends_with('|');
-        let candidates = if is_head {
-            self.commands
-                .iter()
-                .filter(|name| name.starts_with(prefix))
-                .cloned()
-                .collect()
-        } else {
-            path_candidates(prefix)
-        };
+
+        let mut candidates: Vec<String> = Vec::new();
+
+        if let Ok(registry) = ono_command::CommandRegistry::embedded() {
+            let context = ono_command::StageContext::from_line(line, cursor);
+            candidates.extend(
+                ono_command::complete(registry, &context, None)
+                    .into_iter()
+                    .map(|candidate| candidate.text().to_owned()),
+            );
+        }
+
+        if is_head {
+            candidates.extend(
+                self.commands
+                    .iter()
+                    .filter(|name| name.starts_with(prefix))
+                    .cloned(),
+            );
+        } else if !prefix.starts_with('-') {
+            // An option is the registry's business; a path is the filesystem's.
+            candidates.extend(path_candidates(prefix));
+        }
+
+        candidates.sort_unstable();
+        candidates.dedup();
 
         Completion {
             span: Span::new(start as u32, cursor as u32),
@@ -407,7 +428,102 @@ pub fn run_from_reader(
 mod tests {
     use std::path::Path;
 
-    use super::short_path;
+    use ono_editor::Completer;
+
+    use super::{ShellCompleter, short_path};
+
+    fn completer() -> ShellCompleter {
+        ShellCompleter {
+            commands: vec!["cd".to_owned(), "git".to_owned()],
+        }
+    }
+
+    #[test]
+    fn should_offer_a_target_from_the_registry_when_a_verb_has_been_typed() {
+        // Spec §15.1: completion is system exploration, and the registry is the only source that
+        // knows a verb has targets at all.
+        let completion = completer().complete("get pro", 7);
+        assert!(
+            completion.candidates.contains(&"process".to_owned()),
+            "got {:?}",
+            completion.candidates
+        );
+        assert_eq!(
+            completion.span.start(),
+            4,
+            "the target word is what gets replaced"
+        );
+        assert_eq!(completion.span.end(), 7);
+    }
+
+    #[test]
+    fn should_offer_a_verb_at_the_start_of_a_stage() {
+        let completion = completer().complete("ge", 2);
+        assert!(
+            completion.candidates.contains(&"get".to_owned()),
+            "got {:?}",
+            completion.candidates
+        );
+    }
+
+    #[test]
+    fn should_offer_a_verb_after_a_pipe_because_a_new_stage_starts_there() {
+        let completion = completer().complete("get process | whe", 17);
+        assert!(
+            completion.candidates.contains(&"where".to_owned()),
+            "got {:?}",
+            completion.candidates
+        );
+    }
+
+    #[test]
+    fn should_offer_an_option_the_command_declares_when_a_dash_has_been_typed() {
+        let completion = completer().complete("get process --tr", 16);
+        assert!(
+            completion
+                .candidates
+                .iter()
+                .any(|candidate| candidate.contains("tree")),
+            "got {:?}",
+            completion.candidates
+        );
+    }
+
+    #[test]
+    fn should_complete_the_line_when_the_editor_is_given_a_tab() {
+        // The completer is only useful if the editor actually reaches it, and the wiring between
+        // them is the kind of thing that looks right and is not.
+        use ono_editor::{Editor, KeyCode, KeyPress, Outcome};
+
+        let mut editor = Editor::new().with_completer(completer());
+        for character in "get pro".chars() {
+            assert!(matches!(
+                editor.feed(KeyPress::char(character)),
+                Outcome::Continue | Outcome::Redraw
+            ));
+        }
+        editor.feed(KeyPress::key(KeyCode::Tab));
+        assert_eq!(
+            editor.line(),
+            "get process",
+            "Tab must complete the target the registry knows"
+        );
+    }
+
+    #[test]
+    fn should_not_offer_a_filesystem_path_where_an_option_was_asked_for() {
+        // A path is the filesystem's business and an option is the registry's; offering both
+        // would bury the answer the user asked for.
+        let completion = completer().complete("get process --", 14);
+        assert!(
+            completion
+                .candidates
+                .iter()
+                .all(|candidate| !candidate.contains('/')),
+            "got {:?}",
+            completion.candidates
+        );
+    }
 
     #[test]
     fn should_show_a_short_path_whole_when_it_already_fits() {

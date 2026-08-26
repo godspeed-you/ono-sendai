@@ -24,6 +24,7 @@ ono-provider-linux = { path = "crates/ono-provider-linux", version = "0.0.1" }
 ono-provider-netlink = { path = "crates/ono-provider-netlink", version = "0.0.1" }
 ono-provider-systemd = { path = "crates/ono-provider-systemd", version = "0.0.1" }
 ono-editor = { path = "crates/ono-editor", version = "0.0.1" }
+ono-graph = { path = "crates/ono-graph", version = "0.0.1" }
 ono-history = { path = "crates/ono-history", version = "0.0.1" }
 ono-protocol = { path = "crates/ono-protocol", version = "0.0.1" }
 ono-kuang-protocol = { path = "crates/ono-kuang-protocol", version = "0.0.1" }

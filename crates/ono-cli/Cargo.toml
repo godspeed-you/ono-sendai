@@ -13,6 +13,7 @@ name = "ono"
 path = "src/main.rs"
 
 [dependencies]
+ono-command.workspace = true
 ono-core.workspace = true
 ono-editor.workspace = true
 ono-history.workspace = true

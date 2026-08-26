@@ -24,7 +24,7 @@ pub fn run(session: &mut Session, name: &str, arguments: &[OsString]) -> Eval<Ex
         "bg" => background(session, arguments),
         "true" => Ok(ExitStatus::SUCCESS),
         "false" => Ok(ExitStatus::FAILURE),
-        "help" => help(),
+        "help" => help(session, arguments),
         "explain" => explain(session, arguments),
         other => Err(Flow::Failed(ErrorValue::new(
             ErrorCode::ResolveCommandNotFound,
@@ -248,50 +248,104 @@ fn job_id(session: &mut Session, arguments: &[OsString]) -> Eval<ono_process::Jo
         })
 }
 
-fn help() -> Eval<ExitStatus> {
-    println!("{}", crate::usage_text());
-    Ok(ExitStatus::SUCCESS)
+/// `help [topic]` — generated from the command registry, never hand-written (spec §15.2).
+///
+/// A help page assembled by hand is one that stops matching the command the first time either
+/// changes. The registry is the contract, so the page is derived from it and `spec-check` fails
+/// if a command's contract loses the summary, the documentation or the example the page needs.
+fn help(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
+    let topic = arguments
+        .iter()
+        .map(|word| word.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let registry = match ono_command::CommandRegistry::embedded() {
+        Ok(registry) => registry,
+        Err(error) => return Err(Flow::Failed(error)),
+    };
+    // The provider registry is consulted so a page can say whether the provider a command needs
+    // is actually available here — but only when a topic was named, so bare `help` stays as cheap
+    // as spec §34's startup budget expects.
+    let page = if topic.is_empty() {
+        ono_command::help(registry, None, "")
+    } else {
+        ono_command::help(registry, Some(session.providers()), &topic)
+    };
+
+    match page {
+        Ok(page) => {
+            println!("{}", page.render());
+            Ok(ExitStatus::SUCCESS)
+        }
+        Err(error) => Err(Flow::Failed(error)),
+    }
 }
 
-/// `explain <command>` — the resolution the shell would perform, reported by the code that
-/// performs it rather than described somewhere that could drift from it (ADR-0011).
+/// `explain <pipeline>` — what would happen, reported without anything happening.
+///
+/// Spec §15.3 and §42 want the resolution and the execution plan of a whole pipeline, not of one
+/// name: which command each stage resolves to, which provider and capability it will use, its
+/// input and output schemas, whether it streams, and what it would change. ADR-0011 requires the
+/// order to be reported by the code that performs it rather than described somewhere that could
+/// drift from it.
+///
+/// A pipeline has to arrive quoted — `explain "get process | where cpu > 20"` — because an
+/// unquoted `|` would send `explain` itself into a pipeline, which is the grammar working
+/// correctly rather than a limitation to work around.
 fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
-    let Some(name) = arguments.first() else {
+    let source = arguments
+        .iter()
+        .map(|word| word.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if source.trim().is_empty() {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                "`explain` needs something to explain",
+            )
+            .with_help("`explain \"get process | where cpu > 20\"` — quote the pipeline"),
+        ));
+    }
+
+    let parsed = ono_parser::parse(&source);
+    let Some(pipeline) = parsed
+        .program()
+        .statements
+        .first()
+        .and_then(ono_parser::Statement::as_pipeline)
+    else {
         return Err(Flow::Failed(ErrorValue::new(
-            ErrorCode::ResolveTargetNotFound,
-            "`explain` needs something to explain",
-        )));
-    };
-    let name = name.to_string_lossy();
-    let (namespace, bare) = match name.split_once(':') {
-        Some((prefix, rest)) => (crate::resolve::Namespace::from_prefix(Some(prefix)), rest),
-        None => (Some(crate::resolve::Namespace::Any), name.as_ref()),
-    };
-    let Some(namespace) = namespace else {
-        return Err(Flow::Failed(ErrorValue::new(
-            ErrorCode::ResolveCommandNotFound,
-            format!("unknown namespace in `{name}`"),
+            ErrorCode::ParseSyntax,
+            format!("`{source}` is not a pipeline"),
         )));
     };
 
-    match crate::resolve::resolve(session, namespace, bare) {
-        Ok(crate::resolve::Resolution::Builtin(builtin)) => {
-            println!("{builtin}: a command the shell runs itself");
-            println!("  step 4 of the resolution order (ADR-0011): native command");
+    let registry = ono_command::CommandRegistry::embedded().map_err(Flow::Failed)?;
+    let plan = ono_command::plan(registry, Some(session.providers()), pipeline, &source);
+    println!("{}", plan.render());
+
+    // A stage the registry does not know is an external program, and which one it will be is the
+    // half of the answer the plan cannot give (ADR-0011 T11: a shadowing binary is only
+    // defensible if the shell will say which one it picked).
+    for stage in &pipeline.head.stages {
+        let Some(name) = stage.head.name() else {
+            continue;
+        };
+        // A head the registry knows as a verb or as a command id is native, and the plan above
+        // already said everything there is to say about it.
+        if registry.verb(name).is_some() || registry.get(name).is_some() {
+            continue;
         }
-        Ok(crate::resolve::Resolution::External(path)) => {
-            println!("{bare}: an external program");
-            println!("  step 5 of the resolution order (ADR-0011): PATH");
-            println!("  resolves to {}", path.display());
-        }
-        Err(error) => {
-            println!("{bare}: not found");
-            println!("  {}", error.render_terse());
-            return Ok(ExitStatus::NOT_FOUND);
+        match crate::resolve::find_on_path(session, name) {
+            Some(path) => println!("  `{name}` is external and resolves to {}", path.display()),
+            None => println!("  `{name}` resolves to nothing on PATH"),
         }
     }
+
     if session.mode() == Mode::Config {
-        println!("  configuration mode: this command would not be allowed to run");
+        println!("  configuration mode: none of this would be allowed to run");
     }
     Ok(ExitStatus::SUCCESS)
 }
