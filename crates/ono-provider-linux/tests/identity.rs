@@ -172,17 +172,19 @@ async fn should_report_the_missing_database_rather_than_an_empty_account_list() 
 }
 
 #[tokio::test]
-async fn should_resolve_the_current_user_through_nss() {
-    use std::os::unix::fs::MetadataExt as _;
-    let uid = fs::metadata("/proc/self")
-        .expect("this machine has a procfs")
-        .uid();
+async fn should_resolve_a_real_account_through_nss() {
+    // Root, not the account running the tests. Every Unix has uid 0 in its account database; the
+    // uid a test happens to run under often is not there at all — a container started with
+    // `--user 1000` has no passwd entry for it, and the test then failed for a reason that had
+    // nothing to do with NSS. What is under test is that a uid the database knows resolves, and
+    // round-trips by name.
+    let uid = 0;
 
     let accounts = NssAccounts::new();
     let account = accounts
         .user(uid)
         .await
-        .expect("the account running the tests resolves through NSS");
+        .expect("uid 0 resolves through NSS on every Unix");
     assert_eq!(account.uid, uid);
     assert!(!account.name.is_empty());
 
