@@ -34,6 +34,28 @@ Phase A is complete and tagged `phase-a`.
 
 ---
 
+## The specification set
+
+`docs/ono_sendai_shell_spec_v0.2.md` is the **base**. `docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md`
+is an **enhancement layered on it** — the External Command Adaptation Layer — and both are
+immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a checksum line in
+`docs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
+
+**v0.3 is the next tranche, not part of this one.** Its §0 and §0.5 call it "a new product input
+for a later revision" after the frozen v0.2 baseline, so `docs/ACCEPTANCE.md` and
+`scripts/release-check.sh` keep measuring v0.2 and the stopping rule of AGENTS.md §15 is
+unchanged. **ADR-0027 carries the whole analysis**: what v0.3 requires, which five existing
+decisions grow (ADR-0006, -0011, -0013, -0016, -0022), where v0.2 and v0.3 read differently, and
+the fifteen-step decomposition of the tranche (`ADAPT-001`…, then Tier A, B, C tools). Read
+ADR-0027 before starting it; do not re-derive it from the 2182-line document.
+
+One constraint from it binds work happening **now**: the pipeline planner computes `OutputDemand`
+backwards from the consumer, because v0.3 §1.5 says the demand model "MUST be part of execution
+planning, not an after-the-fact renderer trick", and retrofitting that into a forward planner is
+the expensive kind of shortcut.
+
+---
+
 ## In progress
 
 - [orchestrator | 2026-08-26] Phase B/C/D integration: native commands reachable from the
