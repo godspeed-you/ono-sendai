@@ -12,6 +12,17 @@ pub struct Scratch {
     path: PathBuf,
 }
 
+/// Where scratch directories are made.
+///
+/// `CARGO_TARGET_TMPDIR` when cargo provides it, which puts test scratch inside `target/` on the
+/// same filesystem as the build. The system temporary directory is often a small shared tmpfs,
+/// and a suite that writes there competes with everything else on the machine for it — this
+/// project has already had one runaway file fill it and take every tool on the box down, which is
+/// a failure that has nothing to do with the code under test.
+fn scratch_root() -> PathBuf {
+    std::env::var_os("CARGO_TARGET_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from)
+}
+
 /// Creates a scratch directory unique to this process and call.
 ///
 /// # Panics
@@ -21,7 +32,7 @@ pub struct Scratch {
 pub fn scratch() -> Scratch {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let mut path = std::env::temp_dir();
+    let mut path = scratch_root();
     path.push(format!("ono-test-{}-{unique}", std::process::id()));
     std::fs::create_dir_all(&path)
         .unwrap_or_else(|error| panic!("cannot create {}: {error}", path.display()));
