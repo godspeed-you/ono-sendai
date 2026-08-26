@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use xtask::scan;
+use xtask::{contracts, scan};
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -112,13 +112,12 @@ fn spec_check() -> ExitCode {
         )),
     }
 
-    let contracts = root.join("docs").join("spec");
-    if contracts.is_dir() {
-        for entry in walk(&contracts) {
-            if std::fs::metadata(&entry).map(|m| m.len()).unwrap_or(0) == 0 {
-                problems.push(format!("contract {} is empty", entry.display()));
-            }
-        }
+    if root.join("docs").join("spec").is_dir() {
+        problems.extend(
+            contracts::check_contracts(&root)
+                .into_iter()
+                .map(|problem| format!("{} — {}", problem.location, problem.detail)),
+        );
     } else {
         println!("spec-check: docs/spec/ does not exist yet (expected before phase D)");
     }
@@ -181,20 +180,4 @@ fn find_narrative_spec(root: &Path) -> Vec<String> {
         .collect();
     found.sort();
     found
-}
-
-fn walk(dir: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return files;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            files.extend(walk(&path));
-        } else {
-            files.push(path);
-        }
-    }
-    files
 }

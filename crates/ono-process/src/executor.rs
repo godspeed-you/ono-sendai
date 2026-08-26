@@ -1,0 +1,644 @@
+//! Running pipelines, owning the terminal, and keeping the job table (spec §18.1, §29).
+
+use std::os::fd::OwnedFd;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::{Duration, Instant};
+
+use nix::errno::Errno;
+use nix::sys::signal::killpg;
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::unistd::Pid;
+use ono_core::ExitStatus;
+
+use crate::command::Command;
+use crate::error::{Error, Result};
+use crate::job::{Collector, Job, JobChange, JobId, JobState, Running, RunningStage};
+use crate::pipeline::{Pipeline, PipelineOutcome, StageOutcome};
+use crate::plan;
+use crate::pty::PtySession;
+use crate::resolve::{self, Resolution};
+use crate::signals::Signal;
+use crate::spawn::{self, SpawnRequest};
+use crate::terminal::{Terminal, WindowSize};
+
+/// How a foreground pipeline ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForegroundOutcome {
+    /// Every stage finished.
+    Completed(PipelineOutcome),
+    /// A stage was stopped, so the pipeline became a job the user can resume.
+    Stopped {
+        /// The job the stopped pipeline became.
+        job: JobId,
+        /// The signal that stopped it.
+        signal: Signal,
+    },
+}
+
+impl ForegroundOutcome {
+    /// The pipeline outcome, if the run finished rather than stopping.
+    #[must_use]
+    pub const fn completed(&self) -> Option<&PipelineOutcome> {
+        match self {
+            Self::Completed(outcome) => Some(outcome),
+            Self::Stopped { .. } => None,
+        }
+    }
+
+    /// The job a stopped run became, if it stopped.
+    #[must_use]
+    pub const fn stopped(&self) -> Option<JobId> {
+        match self {
+            Self::Completed(_) => None,
+            Self::Stopped { job, .. } => Some(*job),
+        }
+    }
+
+    /// The status the shell reports for this run (ADR-0008).
+    ///
+    /// A stopped pipeline reports `128 + N`, the same convention a terminated one uses.
+    #[must_use]
+    pub fn status(&self) -> ExitStatus {
+        match self {
+            Self::Completed(outcome) => outcome.status(),
+            Self::Stopped { signal, .. } => {
+                ExitStatus::from_signal(u8::try_from(signal.number()).unwrap_or(0))
+            }
+        }
+    }
+}
+
+/// A handle for interrupting whatever is running in the foreground (spec §18.5).
+///
+/// Cancelling a shell-level operation becomes `SIGINT` to the foreground process group, which
+/// is what the terminal itself would have sent. The handle is cheap to clone and safe to keep:
+/// when nothing is in the foreground, cancelling does nothing.
+#[derive(Debug, Clone)]
+pub struct Canceller {
+    foreground: Arc<AtomicI32>,
+}
+
+impl Canceller {
+    /// Whether there is a foreground job to cancel right now.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.foreground.load(Ordering::SeqCst) != 0
+    }
+
+    /// Interrupts the foreground job, as `Ctrl-C` would.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signal cannot be sent for a reason other than the job having
+    /// already finished.
+    pub fn cancel(&self) -> Result<()> {
+        self.send(Signal::INT)
+    }
+
+    /// Sends an arbitrary signal to the foreground process group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signal cannot be sent for a reason other than the job having
+    /// already finished.
+    pub fn send(&self, signal: Signal) -> Result<()> {
+        let group = self.foreground.load(Ordering::SeqCst);
+        if group == 0 {
+            return Ok(());
+        }
+        signal_group(group, signal)
+    }
+}
+
+/// The shell's execution layer: it runs pipelines and remembers the jobs it started.
+///
+/// ```no_run
+/// use ono_process::{Command, Executor, ForegroundOutcome};
+///
+/// let mut executor = Executor::new()?;
+/// let id = executor.run_background(&Command::new("sleep").arg("30").into())?;
+/// for job in executor.jobs() {
+///     println!("{job}");
+/// }
+/// executor.foreground(id)?;
+/// # Ok::<(), ono_process::Error>(())
+/// ```
+#[derive(Debug)]
+pub struct Executor {
+    terminal: Terminal,
+    jobs: Vec<Tracked>,
+    foreground: Arc<AtomicI32>,
+}
+
+#[derive(Debug)]
+struct Tracked {
+    id: JobId,
+    running: Running,
+}
+
+impl std::fmt::Debug for Running {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Running")
+            .field("pgid", &self.pgid)
+            .field("command", &self.command)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Executor {
+    /// An executor attached to the controlling terminal, if this process has one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the terminal cannot be inspected.
+    pub fn new() -> Result<Self> {
+        Ok(Self::with_terminal(Terminal::open()?))
+    }
+
+    /// An executor that never touches a terminal, for scripts and non-interactive runs.
+    #[must_use]
+    pub fn detached() -> Self {
+        Self::with_terminal(Terminal::detached())
+    }
+
+    fn with_terminal(terminal: Terminal) -> Self {
+        Self {
+            terminal,
+            jobs: Vec::new(),
+            foreground: Arc::new(AtomicI32::new(0)),
+        }
+    }
+
+    /// The terminal this executor hands to foreground jobs, if there is one.
+    #[must_use]
+    pub const fn terminal(&self) -> &Terminal {
+        &self.terminal
+    }
+
+    /// A handle for cancelling whatever is in the foreground (spec §18.5).
+    #[must_use]
+    pub fn canceller(&self) -> Canceller {
+        Canceller {
+            foreground: Arc::clone(&self.foreground),
+        }
+    }
+
+    /// Runs `pipeline` in the foreground, giving it the terminal and waiting for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the pipeline could not be started at all. A stage that could not be
+    /// started, or that failed, is reported in the outcome rather than as an error, because the
+    /// remaining stages still ran.
+    pub fn run_foreground(&mut self, pipeline: &Pipeline) -> Result<ForegroundOutcome> {
+        let mut running = self.start(pipeline)?;
+        self.terminal.remember_attributes();
+        if running.pgid != 0 {
+            self.terminal.give_to(running.pgid)?;
+            self.foreground.store(running.pgid, Ordering::SeqCst);
+        }
+        let outcome = wait_foreground(&mut running);
+        self.foreground.store(0, Ordering::SeqCst);
+        let reclaimed = self.terminal.reclaim();
+        outcome?;
+        reclaimed?;
+        self.settle(running)
+    }
+
+    /// Runs `pipeline` in the background as a new job (`&`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the pipeline could not be started at all.
+    pub fn run_background(&mut self, pipeline: &Pipeline) -> Result<JobId> {
+        let running = self.start(pipeline)?;
+        Ok(self.register(running))
+    }
+
+    /// Runs one command under a pseudoterminal of its own (spec §29.3).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the terminal cannot be allocated or the program cannot be started.
+    pub fn run_pty(&mut self, command: &Command, size: WindowSize) -> Result<PtySession> {
+        PtySession::start(command, size)
+    }
+
+    /// Reaps whatever the operating system is willing to tell us, without blocking.
+    ///
+    /// This is what a prompt calls before it draws: it turns stops, continuations and exits
+    /// into job-table transitions. Nothing is lost by calling it rarely — the kernel keeps each
+    /// child in its stopped or zombie state until it is asked about.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if waiting fails for a reason other than the job having disappeared.
+    pub fn poll_jobs(&mut self) -> Result<Vec<JobChange>> {
+        let mut changes = Vec::new();
+        for tracked in &mut self.jobs {
+            let previous = tracked.running.state();
+            reap(&mut tracked.running, false)?;
+            let current = tracked.running.state();
+            if current != previous {
+                changes.push(JobChange {
+                    id: tracked.id,
+                    previous,
+                    current,
+                });
+            }
+        }
+        Ok(changes)
+    }
+
+    /// Every job the shell is still responsible for, in job-number order.
+    #[must_use]
+    pub fn jobs(&self) -> Vec<Job> {
+        self.jobs
+            .iter()
+            .map(|tracked| tracked.running.snapshot(tracked.id))
+            .collect()
+    }
+
+    /// One job, if the shell still has it.
+    #[must_use]
+    pub fn job(&self, id: JobId) -> Option<Job> {
+        self.jobs
+            .iter()
+            .find(|tracked| tracked.id == id)
+            .map(|tracked| tracked.running.snapshot(id))
+    }
+
+    /// Brings a job back to the foreground (`fg`), continuing it if it was stopped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there is no such job, or if the terminal cannot be moved.
+    pub fn foreground(&mut self, id: JobId) -> Result<ForegroundOutcome> {
+        let index = self.locate(id)?;
+        let mut running = self.jobs.remove(index).running;
+        if running.is_stopped() {
+            continue_group(&mut running)?;
+        }
+        self.terminal.remember_attributes();
+        if !running.is_finished() && running.pgid != 0 {
+            self.terminal.give_to(running.pgid)?;
+            self.foreground.store(running.pgid, Ordering::SeqCst);
+        }
+        let outcome = wait_foreground(&mut running);
+        self.foreground.store(0, Ordering::SeqCst);
+        let reclaimed = self.terminal.reclaim();
+        outcome?;
+        reclaimed?;
+        self.settle(running)
+    }
+
+    /// Continues a stopped job in the background (`bg`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there is no such job, or if it cannot be continued.
+    pub fn background(&mut self, id: JobId) -> Result<()> {
+        let index = self.locate(id)?;
+        continue_group(&mut self.jobs[index].running)
+    }
+
+    /// Sends a signal to every process in a job.
+    ///
+    /// A job that has already finished is not an error: the shell asked for something that has
+    /// simply already happened.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there is no such job, or if the signal cannot be sent.
+    pub fn signal_job(&mut self, id: JobId, signal: Signal) -> Result<()> {
+        let index = self.locate(id)?;
+        let group = self.jobs[index].running.pgid;
+        if group == 0 {
+            return Ok(());
+        }
+        signal_group(group, signal)?;
+        if signal == Signal::CONT {
+            resume(&mut self.jobs[index].running);
+        }
+        Ok(())
+    }
+
+    /// Waits for a job to finish, giving up after `timeout`.
+    ///
+    /// Returns the finished job and drops it from the table, or `None` if it is still going.
+    /// With no timeout it waits as long as the job takes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there is no such job, or if waiting fails.
+    pub fn wait_job(&mut self, id: JobId, timeout: Option<Duration>) -> Result<Option<Job>> {
+        let deadline = timeout.map(|timeout| Instant::now() + timeout);
+        loop {
+            let index = self.locate(id)?;
+            reap(&mut self.jobs[index].running, false)?;
+            if self.jobs[index].running.is_finished() {
+                let running = self.jobs.remove(index).running;
+                let snapshot = running.snapshot(id);
+                collect(running);
+                return Ok(Some(snapshot));
+            }
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Starts every stage of a pipeline in one new process group.
+    fn start(&mut self, pipeline: &Pipeline) -> Result<Running> {
+        let mut running = Running {
+            pgid: 0,
+            command: pipeline.to_string(),
+            stages: Vec::with_capacity(pipeline.len()),
+        };
+
+        // Every pipe is made before anything is spawned, so each stage can be handed its ends
+        // and the parent's copies can be dropped the moment that stage has forked.
+        let mut pipes: Vec<(OwnedFd, OwnedFd)> = Vec::new();
+        for _ in 1..pipeline.len() {
+            pipes.push(
+                nix::unistd::pipe2(nix::fcntl::OFlag::O_CLOEXEC)
+                    .map_err(|errno| spawn::system("creating a pipeline", errno))?,
+            );
+        }
+        let mut read_ends: Vec<Option<OwnedFd>> = Vec::with_capacity(pipeline.len());
+        let mut write_ends: Vec<Option<OwnedFd>> = Vec::with_capacity(pipeline.len());
+        read_ends.push(None);
+        for (read_end, write_end) in pipes {
+            read_ends.push(Some(read_end));
+            write_ends.push(Some(write_end));
+        }
+        write_ends.push(None);
+
+        for (index, command) in pipeline.stages().iter().enumerate() {
+            let piped_input = read_ends[index].take();
+            let piped_output = write_ends[index].take();
+            let stage = self.start_stage(command, piped_input, piped_output, &mut running);
+            running.stages.push(stage?);
+        }
+        Ok(running)
+    }
+
+    fn start_stage(
+        &mut self,
+        command: &Command,
+        piped_input: Option<OwnedFd>,
+        piped_output: Option<OwnedFd>,
+        running: &mut Running,
+    ) -> Result<RunningStage> {
+        let env = command.resolved_env();
+        let path = resolve::effective_path(env.as_deref(), command.clears_env());
+        let resolved = resolve::resolve(command.program(), path.as_deref(), command.directory());
+        let program = match resolved {
+            Resolution::Found(program) => program,
+            other => {
+                // The stage cannot run, but the ones around it already have their pipes: they
+                // must still see a clean end of input rather than a hang.
+                drop(piped_input);
+                drop(piped_output);
+                let (status, error) = other.failure().unwrap_or((
+                    ExitStatus::NOT_FOUND,
+                    Error::new(
+                        ono_core::ErrorCode::ResolveCommandNotFound,
+                        "command not found",
+                    ),
+                ));
+                return Ok(RunningStage {
+                    pid: 0,
+                    state: JobState::Exited(status),
+                    failure: Some(error),
+                    stdout: None,
+                    stderr: None,
+                });
+            }
+        };
+
+        let io = match plan::prepare(command, piped_input, piped_output) {
+            Ok(io) => io,
+            Err(error) => {
+                return Ok(RunningStage {
+                    pid: 0,
+                    state: JobState::Exited(ExitStatus::FAILURE),
+                    failure: Some(error),
+                    stdout: None,
+                    stderr: None,
+                });
+            }
+        };
+
+        let request = SpawnRequest {
+            program: &program,
+            args: command.args_slice(),
+            env: env.as_deref(),
+            clear_env: command.clears_env(),
+            cwd: command.directory(),
+            process_group: Some(running.pgid),
+            controlling_terminal: None,
+        };
+        let spawned = spawn::spawn(&request, &io.plan);
+        drop(io.plan);
+
+        let pid = match spawned {
+            Ok(pid) => pid,
+            Err(error) => {
+                let (status, error) = spawn::exec_failure(&program, &error);
+                return Ok(RunningStage {
+                    pid: 0,
+                    state: JobState::Exited(status),
+                    failure: Some(error),
+                    stdout: None,
+                    stderr: None,
+                });
+            }
+        };
+        if running.pgid == 0 {
+            running.pgid = pid;
+        }
+
+        if let Some((sink, bytes)) = io.feed {
+            feed(sink, bytes);
+        }
+        Ok(RunningStage {
+            pid,
+            state: JobState::Running,
+            failure: None,
+            stdout: io.stdout.map(Collector::start),
+            stderr: io.stderr.map(Collector::start),
+        })
+    }
+
+    /// Turns a finished or stopped pipeline into the right kind of outcome.
+    fn settle(&mut self, running: Running) -> Result<ForegroundOutcome> {
+        if running.is_stopped() {
+            let signal = match running.state() {
+                JobState::Stopped(signal) => signal,
+                _ => Signal::TSTP,
+            };
+            let id = self.register(running);
+            return Ok(ForegroundOutcome::Stopped { job: id, signal });
+        }
+        let group = u32::try_from(running.pgid).unwrap_or(0);
+        Ok(ForegroundOutcome::Completed(PipelineOutcome::new(
+            collect(running),
+            group,
+        )))
+    }
+
+    /// Adds a pipeline to the job table under the lowest free job number.
+    fn register(&mut self, running: Running) -> JobId {
+        let mut number = 1;
+        while self
+            .jobs
+            .iter()
+            .any(|tracked| tracked.id.number() == number)
+        {
+            number += 1;
+        }
+        let id = JobId::new(number);
+        self.jobs.push(Tracked { id, running });
+        id
+    }
+
+    fn locate(&self, id: JobId) -> Result<usize> {
+        self.jobs
+            .iter()
+            .position(|tracked| tracked.id == id)
+            .ok_or_else(|| {
+                Error::new(
+                    ono_core::ErrorCode::ResolveTargetNotFound,
+                    format!("there is no job {id}"),
+                )
+            })
+    }
+}
+
+impl Default for Executor {
+    fn default() -> Self {
+        Self::detached()
+    }
+}
+
+/// Waits for a foreground pipeline until it finishes or a stage stops.
+fn wait_foreground(running: &mut Running) -> Result<()> {
+    while !running.is_finished() && !running.is_stopped() {
+        if running.pgid == 0 {
+            break;
+        }
+        reap(running, true)?;
+    }
+    Ok(())
+}
+
+/// Joins the capture threads and turns a finished pipeline into its stage outcomes.
+fn collect(running: Running) -> Vec<StageOutcome> {
+    running
+        .stages
+        .into_iter()
+        .map(|stage| StageOutcome {
+            pid: u32::try_from(stage.pid).unwrap_or(0),
+            status: match stage.state {
+                JobState::Exited(status) => status,
+                JobState::Stopped(signal) => {
+                    ExitStatus::from_signal(u8::try_from(signal.number()).unwrap_or(0))
+                }
+                JobState::Running => ExitStatus::SUCCESS,
+            },
+            stdout: stage.stdout.map(Collector::finish).unwrap_or_default(),
+            stderr: stage.stderr.map(Collector::finish).unwrap_or_default(),
+            failure: stage.failure,
+        })
+        .collect()
+}
+
+/// Writes the bytes a command was given as standard input, on a thread of its own.
+fn feed(sink: OwnedFd, bytes: Vec<u8>) {
+    std::thread::spawn(move || {
+        let mut file = std::fs::File::from(sink);
+        // A reader that stops early is normal — `head` does it — so a broken pipe is not an
+        // error here; the child's own status already says what happened.
+        let _ = std::io::Write::write_all(&mut file, &bytes);
+    });
+}
+
+/// Collects everything `waitpid` has to say about a job's process group.
+fn reap(running: &mut Running, block: bool) -> Result<()> {
+    if running.pgid == 0 {
+        return Ok(());
+    }
+    let mut flags = WaitPidFlag::WUNTRACED | WaitPidFlag::WCONTINUED;
+    if !block {
+        flags |= WaitPidFlag::WNOHANG;
+    }
+    loop {
+        match waitpid(Pid::from_raw(-running.pgid), Some(flags)) {
+            Ok(WaitStatus::StillAlive) => return Ok(()),
+            Ok(WaitStatus::Exited(pid, code)) => {
+                let status = ExitStatus::from_code(u8::try_from(code & 0xff).unwrap_or(1));
+                running.record(pid.as_raw(), JobState::Exited(status));
+            }
+            Ok(WaitStatus::Signaled(pid, signal, _)) => {
+                let status = ExitStatus::from_signal(u8::try_from(signal as i32).unwrap_or(0));
+                running.record(pid.as_raw(), JobState::Exited(status));
+            }
+            Ok(WaitStatus::Stopped(pid, signal)) => {
+                running.record(pid.as_raw(), JobState::Stopped(Signal::from_nix(signal)));
+            }
+            Ok(WaitStatus::Continued(pid)) => {
+                running.record(pid.as_raw(), JobState::Running);
+            }
+            Ok(_) => {}
+            Err(Errno::EINTR) => {}
+            // Nothing left in the group: whatever we have not heard about is gone.
+            Err(Errno::ECHILD) => {
+                finish_unheard(running);
+                return Ok(());
+            }
+            Err(errno) => return Err(spawn::system("waiting for a job", errno)),
+        }
+        if block && (running.is_finished() || running.is_stopped()) {
+            return Ok(());
+        }
+        if !block && running.is_finished() {
+            return Ok(());
+        }
+    }
+}
+
+/// A process the kernel no longer knows about cannot report a status of its own.
+fn finish_unheard(running: &mut Running) {
+    for stage in &mut running.stages {
+        if !stage.state.is_final() {
+            stage.state = JobState::Exited(ExitStatus::SUCCESS);
+        }
+    }
+}
+
+fn continue_group(running: &mut Running) -> Result<()> {
+    if running.pgid == 0 {
+        return Ok(());
+    }
+    signal_group(running.pgid, Signal::CONT)?;
+    resume(running);
+    Ok(())
+}
+
+fn resume(running: &mut Running) {
+    for stage in &mut running.stages {
+        if matches!(stage.state, JobState::Stopped(_)) {
+            stage.state = JobState::Running;
+        }
+    }
+}
+
+fn signal_group(group: i32, signal: Signal) -> Result<()> {
+    match killpg(Pid::from_raw(group), signal.to_nix()?) {
+        Ok(()) | Err(Errno::ESRCH) => Ok(()),
+        Err(errno) => Err(spawn::system("signalling a job", errno)),
+    }
+}

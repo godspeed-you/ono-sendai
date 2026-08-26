@@ -1,0 +1,20 @@
+[package]
+name = "ono-process"
+description = "The Unix execution layer of the Ono-Sendai shell: external commands, redirection, pipelines, PTYs, signals and job control."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+nix = { workspace = true, features = ["fs", "ioctl", "poll", "process", "signal", "term"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

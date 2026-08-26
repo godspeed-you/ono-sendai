@@ -17,6 +17,11 @@ path = "src/lib.rs"
 name = "xtask"
 path = "src/main.rs"
 
+[dependencies]
+ono-core.workspace = true
+serde = { workspace = true }
+serde_yaml_ng.workspace = true
+
 [dev-dependencies]
 ono-testkit.workspace = true
 

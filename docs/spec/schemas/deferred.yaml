@@ -1,0 +1,110 @@
+# Schemas a command already advertises and a later phase will write.
+#
+# The registries describe the whole product, not the part that exists today (ADR-0012), so a
+# stable command may name an output schema before the phase that delivers it has run. That is a
+# promise, and `cargo xtask spec-check` refuses to let a promise go unwritten: every schema id a
+# non-planned command references must either exist under `docs/spec/schemas/` or appear here with
+# the spec §37 phase that will write it.
+#
+# The check is symmetric. An entry naming a schema that now exists is reported as stale, so this
+# list cannot quietly rot into a permanent exemption.
+
+version: 1
+
+deferred:
+  - id: ono.context/1
+    phase: "A/E/H/planned"
+    required_by: [ono.container.enter, ono.context.get, ono.context.leave, ono.dir.enter, ono.file.enter, ono.group.enter, ono.interface.enter, ono.link.enter, ono.mount.enter, ono.process.enter, ono.service.enter, ono.socket.enter, ono.user.enter]
+  - id: ono.measure/1
+    phase: "B"
+    required_by: [ono.data.measure]
+  - id: ono.device/1
+    phase: "C"
+    required_by: [ono.device.get]
+  - id: ono.dns-record/1
+    phase: "C"
+    required_by: [ono.dns.resolve]
+  - id: ono.session/1
+    phase: "C"
+    required_by: [ono.session.get]
+  - id: ono.connection/1
+    phase: "C/G"
+    required_by: [ono.connection.get, ono.connection.trace]
+  - id: ono.probe-result/1
+    phase: "C/H"
+    required_by: [ono.host.test, ono.port.test]
+  - id: ono.command/1
+    phase: "D"
+    required_by: [ono.command.find, ono.command.get, ono.command.resolve]
+  - id: ono.execution-plan/1
+    phase: "D"
+    required_by: [ono.meta.explain]
+  - id: ono.help-page/1
+    phase: "D"
+    required_by: [ono.meta.help]
+  - id: ono.inspection/1
+    phase: "D"
+    required_by: [ono.meta.inspect]
+  - id: ono.process-detail/1
+    phase: "D"
+    required_by: [ono.process.inspect]
+  - id: ono.type-info/1
+    phase: "D"
+    required_by: [ono.meta.type]
+  - id: ono.interface-event/1
+    phase: "F"
+    required_by: [ono.interface.watch]
+  - id: ono.process-event/1
+    phase: "F"
+    required_by: [ono.process.watch]
+  - id: ono.route-event/1
+    phase: "F"
+    required_by: [ono.route.watch]
+  - id: ono.service-event/1
+    phase: "F"
+    required_by: [ono.service.watch]
+  - id: ono.socket-event/1
+    phase: "F"
+    required_by: [ono.socket.watch]
+  - id: ono.link-event/1
+    phase: "H"
+    required_by: [ono.link.watch]
+  - id: ono.link/1
+    phase: "H"
+    required_by: [ono.host.connect, ono.host.link, ono.link.detach, ono.link.enter, ono.link.get, ono.link.remove, ono.link.rename, ono.link.set, ono.link.trace]
+  - id: ono.host/1
+    phase: "H/planned"
+    required_by: [ono.host.get, ono.host.remove, ono.host.set, ono.host.trace]
+  - id: ono.assistant-turn/1
+    phase: "I"
+    required_by: [ono.assistant.ask]
+  - id: ono.assistant/1
+    phase: "I"
+    required_by: [ono.assistant.get]
+  - id: ono.capability-grant/1
+    phase: "I"
+    required_by: [ono.capability.get, ono.capability.grant, ono.capability.revoke]
+  - id: ono.finding/1
+    phase: "I"
+    required_by: [ono.finding.get]
+  - id: ono.model-provider/1
+    phase: "I"
+    required_by: [ono.model.get]
+  - id: ono.plugin-audit-event/1
+    phase: "I"
+    required_by: [ono.audit.get]
+  - id: ono.plugin-inspection/1
+    phase: "I"
+    required_by: [ono.plugin.inspect]
+  - id: ono.plugin-package/1
+    phase: "I"
+    required_by: [ono.plugin.find]
+  - id: ono.plugin-runtime/1
+    phase: "I"
+    required_by: [ono.plugin.load]
+  - id: ono.plugin/1
+    phase: "I"
+    required_by: [ono.plugin.get, ono.plugin.inspect, ono.plugin.load, ono.plugin.remove, ono.plugin.unload, ono.plugin.verify]
+  - id: ono.verification-result/1
+    phase: "I"
+    required_by: [ono.plugin.verify]
