@@ -8,7 +8,7 @@
 
 ## 1. Prime Directive
 
-Build **Ono-Sendai**, the shell specified in `docs/ono-sendai_shell_spec_v0.1.md`, to completion —
+Build **Ono-Sendai**, the shell specified in `docs/ono_sendai_shell_spec_v0.2.md`, to completion —
 **test-driven, autonomously, without asking the user for input.**
 
 Four rules override everything else:
@@ -41,7 +41,7 @@ ono-sendai/
 ├── examples/
 ├── xtask/                        spec validation, generators, gates
 └── docs/
-    ├── ono-sendai_shell_spec_v0.1.md
+    ├── ono_sendai_shell_spec_v0.2.md
     │                             narrative spec (normative)
     ├── STATE.md                  progress board (§9)
     ├── decisions/ADR-*.md        recorded agent decisions (§8)
@@ -54,33 +54,45 @@ ono-sendai/
     │   ├── capabilities.yaml
     │   ├── commands/*.yaml
     │   ├── schemas/*.v1.yaml
-    │   └── providers/*.yaml
+    │   ├── providers/*.yaml
+    │   └── kuang/                KUANG/11 contracts (spec §31.78)
     └── reference/                generated docs — never hand-edited
 ```
 
-This deviates deliberately from the top-level `spec/` sketched in spec §24.2 and §47: **the
-directory is `docs/spec/`.** Read every `spec/...` path in the narrative spec as `docs/spec/...`.
-Only build artifacts, source code and tooling belong at the top level.
+This deviates deliberately from the top-level `spec/` sketched in spec §24.2, §47 and §31.78:
+**the directory is `docs/spec/`.** Read every `spec/...` path in the narrative spec as
+`docs/spec/...`, including `spec/kuang/...` as `docs/spec/kuang/...`. Only build artifacts,
+source code and tooling belong at the top level.
 
 ---
 
 ## 3. Naming
 
-The project was renamed from *Kuang* to **Ono-Sendai**; the narrative spec still says "KUANG"
-throughout. Read every occurrence of that word in the spec as **Ono-Sendai**, and apply these
-names in everything you write:
+Two names coexist deliberately, and they are not interchangeable (spec §0, §31):
 
 | Thing | Name |
 |---|---|
-| Project / product | **Ono-Sendai** |
+| Project / product / full name | **Ono-Sendai** |
 | Short name, binary, command, prose default | **`ono`** — the form to prefer everywhere |
-| Cargo crates | `ono-cli`, `ono-core`, `ono-parser`, `ono-value`, … — spec §24.2 with the `ono-` prefix |
+| Cargo crates | `ono-*` — spec §24.2 (`ono-cli`, `ono-core`, `ono-parser`, `ono-value`, …) |
 | Config paths, env vars, protocol ids | derived from `ono`: `~/.config/ono/`, `ONO_*` |
-| Plugin / extension system | **Kuang/11** — reserved for the plugin system of spec §31, nothing else |
+| Reserved ID namespace | `ono.*` — only the Ono project may claim it (spec §31.5) |
+| Extension runtime / plugin system | **KUANG/11** — spec §31, nothing else |
+| KUANG/11 crates and contracts | `ono-kuang-supervisor`, `ono-kuang-protocol`, `ono-kuang-sdk`, `docs/spec/kuang/` |
 
-`kuang` MUST NOT appear as a prefix, crate name, identifier or path for anything outside the
-Kuang/11 plugin system. If you touch a file that still carries the old name, rename it as part
-of that increment; do not do a repository-wide sweep inside an unrelated change (§4).
+> **Ono is the deck; KUANG/11 is the software that can be loaded into the deck** (spec §0).
+
+Consequences for anything you write:
+
+- Prose about the shell itself says *Ono* (or *Ono-Sendai* where the full name reads better),
+  never "KUANG" — the old project name is gone.
+- `kuang` appears **only** in KUANG/11 context: the `kuang` engine component (spec §24.1), the
+  `ono-kuang-*` crates, the `docs/spec/kuang/` contracts, the `kuang_api` manifest field.
+  Anywhere else it is a leftover of the old name and MUST be renamed.
+- Third-party plugin IDs, command IDs, schema IDs and capability IDs are publisher-namespaced
+  (`dev.example.packet-eye.…`) and MUST NOT claim `ono.*` (spec §31.5).
+- If you touch a file that still carries an old name, rename it as part of that increment; do
+  not do a repository-wide sweep inside an unrelated change (§4).
 
 ---
 
@@ -119,7 +131,7 @@ Concretely:
 ## 5. Authority Order (what wins when sources disagree)
 
 ```
-1. docs/ono-sendai_shell_spec_v0.1.md   narrative spec — intent & semantics (normative MUST/SHOULD/MAY)
+1. docs/ono_sendai_shell_spec_v0.2.md   narrative spec — intent & semantics (normative MUST/SHOULD/MAY)
 2. docs/spec/*.yaml, grammar.ebnf  machine-readable contracts (public API surface)
 3. docs/decisions/ADR-*.md         recorded agent decisions (fill gaps in 1 & 2)
 4. tests/                          executable behaviour contract
@@ -333,6 +345,7 @@ Test layers (spec §35):
 | Conformance | generated from `docs/spec/providers/*.yaml` | every provider capability (spec §35.3) |
 | Integration | `tests/` | container/VM fixtures: processes, systemd, sockets, PTY, signals (spec §35.4) |
 | Snapshot | `tests/render/` | renderer output only — **never** a data contract (spec §35.5) |
+| Plugin conformance | KUANG/11 test host (spec §31.73) | manifest/schema validation, capability denial paths, cancellation, backpressure, quotas (spec §31.74) |
 | Doc examples | via `cargo xtask` | every documented example must parse and execute |
 
 Test quality rules: deterministic (no wall-clock, network or ordering dependence), isolated (no
@@ -378,10 +391,11 @@ a green quality gate:
 1. `Cargo.toml` workspace + `crates/ono-cli` + `crates/ono-core`, `rust-toolchain.toml`,
    `rustfmt.toml`, `clippy.toml`, and one behaviour test that fails first.
 2. `xtask` crate: `cargo xtask spec-check`, `cargo xtask gen-docs`, `cargo xtask gen-tests`
-   (spec §36, §47). Start as failing stubs with tests.
+   (spec §36, §47; the spec calls this binary `ono-specgen`). Start as failing stubs with tests.
 3. `docs/spec/` skeleton per spec §47 — `language.yaml`, `grammar.ebnf`, `verbs.yaml`,
    `targets.yaml`, `errors.yaml`, `capabilities.yaml`, `commands/`, `schemas/`, `providers/` —
-   each with a loader + validation test.
+   each with a loader + validation test. The `docs/spec/kuang/` contracts (spec §31.78) follow
+   with Phase I; do not stub them earlier.
 4. `crates/ono-testkit`: fixtures, golden/snapshot helpers, property-test helpers, provider
    conformance harness generated from registry metadata (spec §35.3).
 5. CI workflow running exactly the §10 gate.

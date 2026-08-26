@@ -11,11 +11,11 @@ duplicate rules here — if a rule needs to change, change it in `AGENTS.md`.
 ## The short version (full rules in AGENTS.md)
 
 - **Project:** Ono-Sendai (binary: `ono`), an object-pipeline shell in Rust. Narrative spec:
-  `docs/ono-sendai_shell_spec_v0.1.md` (normative MUST/SHOULD/MAY). Machine-readable contracts live
+  `docs/ono_sendai_shell_spec_v0.2.md` (normative MUST/SHOULD/MAY). Machine-readable contracts live
   in `docs/spec/`.
 - **Naming:** the product is **Ono-Sendai**, the short name and binary is **`ono`**, crates are
-  `ono-*`. The spec still writes "KUANG" — read it as Ono-Sendai. `Kuang/11` is reserved for the
-  plugin system only (AGENTS.md §3).
+  `ono-*`. **KUANG/11** is a different thing — the extension runtime of spec §31, not an old
+  name for the shell. `kuang` belongs only in KUANG/11 context (AGENTS.md §3).
 - **Everything an agent reads lives under `docs/`** — no top-level `spec/`. Read every
   `spec/...` path in the narrative spec as `docs/spec/...` (AGENTS.md §2).
 - **Method:** strict TDD. `RED → GREEN → REFACTOR → GATE → RECORD → LOOP` (AGENTS.md §7).
@@ -62,7 +62,7 @@ AGENTS.md rules plus its exclusive file scope.
 
 **Parallel tool calls.** Batch independent reads/greps/test runs into a single message.
 
-**Long spec file.** `docs/ono-sendai_shell_spec_v0.1.md` is ~3300 lines. Do not read it whole; use
+**Long spec file.** `docs/ono_sendai_shell_spec_v0.2.md` is ~5800 lines. Do not read it whole; use
 `grep -n '^#'` for the section index, then `sed -n 'A,Bp'` for the sections you need, and cite
 sections as `§N` in ADRs, tests and commit messages.
 
