@@ -1,0 +1,32 @@
+# Phase E (spec §37): objects can be investigated without constantly restating selectors. The
+# context stack narrows what commands mean, the stack is visible and reversible, and what a
+# pipeline showed is reusable by position — no selector restated, nothing re-run, no screen
+# scraping.
+case: objects are investigated without restating selectors
+timeout: 120
+run: |
+  echo "== a context is entered, shown, and left =="
+  ono -c 'enter dir /etc; pwd; get context; leave; pwd'
+
+  echo "== the ground cannot be left =="
+  ono -c 'leave' 2>&1
+
+  echo "== a frame is exactly its explicit spelling (spec 14.5) =="
+  ono -c 'enter dir /etc; get context | where kind == "filesystem" | select selector | to json'
+
+  echo "== entering nothing is refused, structurally =="
+  ono -c 'enter service ono-definitely-not-a-unit' 2>&1 | head -1
+
+  echo "== the shown result is reused without re-running (spec 20.2) =="
+  ono -c 'get process | where pid == 1 | select pid name; @-1 | count | to json'
+
+  echo "== one row, addressed by its position (spec 6.4) =="
+  ono -c 'get process | take 3 | select pid; @2 | count | to json'
+exit: 0
+stdout-contains: /etc
+stdout-contains: filesystem
+stdout-contains: nothing to leave
+stdout-contains: cd /etc
+stdout-contains: Ono-Sendai-E
+stdout-contains: [1]
+stdout-not-contains: panicked

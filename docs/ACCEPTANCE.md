@@ -80,8 +80,13 @@ Each phase's success criterion from spec section 37, each proven by a named acce
       registries; explain never executes) and `044-semantic-completion` (a declared target
       completed on a real terminal), with `docs/reference/` staleness and provider drift both
       failing the gate.
-- [ ] **E — Contextual systems interface.** Context stack, `enter`/`leave`, object-aware
+- [x] **E — Contextual systems interface.** Context stack, `enter`/`leave`, object-aware
       selectors, prompt and HUD, interactive selection, structured reuse of recent results.
+      Proven by `045-context-and-reuse` (enter/leave/get context, the §14.5 explicit spelling,
+      result reuse by `@-1` and position by `@N`), with the object-narrowing mechanics pinned by
+      `ono-command/tests/producers.rs` (a frame narrows the provider query; an unnarrowable
+      target refused naming the frame) and `ono-cli/tests/context.rs`. Selection is positional
+      addressing per ADR-0033; the visual cursor is Phase J's.
 - [ ] **F — Live system semantics.** `watch`, the event/snapshot model, in-place rendering,
       native background jobs, stable object identity.
 - [ ] **G — Relationship graph.** Graph values, relationship providers, `trace` for process,

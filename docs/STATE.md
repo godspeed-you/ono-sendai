@@ -60,10 +60,20 @@ the expensive kind of shortcut.
 
 ---
 
+## Product direction from the user (2026-08-26)
+
+**"Es muss immer cool sein und Spaß machen, es zu benutzen. Es soll aufregend sein."** The shell
+is the Ono-Sendai deck: correctness is the floor, not the ceiling. Where a decision is
+otherwise free, prefer the option that feels alive — the prompt as a HUD, tables that update in
+place, colour that means something, latency you never notice (spec §34's budgets are product
+quality), and answers that invite the next question (`@2 | inspect`). Phase F's `watch` is the
+showcase: a live view of the machine should feel like instrumentation, not like polling.
+
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase E — context stack, `enter`/`leave`, implicit selectors,
-  prompt/HUD (ADR-0023 already decides the shape) — files: `crates/ono-cli/**`
+- [orchestrator | 2026-08-26] Phase F — live semantics per ADR-0024: `watch`, the
+  event/snapshot model, in-place rendering, native background jobs, stable object identity —
+  files: `crates/ono-pipeline/**`, `crates/ono-provider-*/**`, `crates/ono-cli/**`
 
 _No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
 KUANG/11 contracts, adversarial review, security review) have all reported and landed._
@@ -72,6 +82,11 @@ KUANG/11 contracts, adversarial review, security review) have all reported and l
 
 ## Next up (ordered)
 
+- [ ] Retained results and secrets: spec §17.5 policy must reach the retention of §20.2
+  (ADR-0033 consequences) — exit test: a redacted field stays redacted in `@-1`
+- [ ] Provider options are silently ignored (`get process --user root` answers everything):
+  audit every declared option against what providers honour, then make ignoring impossible the
+  way selectors now cannot be ignored — exit test: a conformance case per optioned command
 - [ ] `--name=value` in expression mode — ADR-0032 pairs an option with the following
   expression; the `=` spelling stays words-only until an increment adds it — exit test:
   a parse_expressions case for `reduce $acc + @ --initial=10`
