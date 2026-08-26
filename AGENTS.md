@@ -97,7 +97,8 @@ Consequences for anything you write:
 - Third-party plugin IDs, command IDs, schema IDs and capability IDs are publisher-namespaced
   (`dev.example.packet-eye.…`) and MUST NOT claim `ono.*` (spec §31.5).
 - If you touch a file that still carries an old name, rename it as part of that increment; do
-  not do a repository-wide sweep inside an unrelated change (§4).
+  not do a repository-wide sweep inside an unrelated change (§4). The narrative specification is
+  exempt: it is never renamed or edited, whatever it says inside (§5.1).
 
 ---
 
@@ -136,7 +137,7 @@ Concretely:
 ## 5. Authority Order (what wins when sources disagree)
 
 ```
-1. docs/ono_sendai_shell_spec_v0.2.md   narrative spec — intent & semantics (normative MUST/SHOULD/MAY)
+1. docs/ono_sendai_shell_spec_v0.2.md   narrative spec — intent & semantics (IMMUTABLE, read-only)
 2. docs/spec/*.yaml, grammar.ebnf  machine-readable contracts (public API surface)
 3. docs/decisions/ADR-*.md         recorded agent decisions (fill gaps in 1 & 2)
 4. docs/ACCEPTANCE.md              what "finished" means, in checkable boxes
@@ -146,11 +147,40 @@ Concretely:
 ```
 
 Lower levels must never silently contradict higher ones. If implementation reality forces a
-change to a higher level, **change the higher level explicitly** (edit the contract or write an
-ADR) in the same commit, and note it in the commit body.
+change at level 2 or below, **change it explicitly** in the same commit and note it in the
+commit body. Level 1 is the exception, and the exception is absolute:
 
-The narrative spec is explorative. Where it says "plausible", "suggested", "MAY" or leaves an
-Open Design Question (spec §39), **you decide** — see §8.
+### 5.1 The initial specification is immutable
+
+**`docs/ono_sendai_shell_spec_v0.2.md` MUST NOT be edited, amended, reformatted, renamed,
+regenerated or replaced.** Not to fix a typo, not to reflow a paragraph, not to update a name,
+not to correct something you believe is wrong, not to record a decision, not "while you are in
+there". No agent may write to that file for any reason. It is the fixed reference every later
+artifact is measured against, and it stops being that the moment anyone edits it.
+
+This holds even when the spec is:
+
+- **ambiguous** — resolve it in an ADR (§8) and implement to your ADR;
+- **silent** — decide, write an ADR, proceed;
+- **internally inconsistent** — write an ADR that states both readings, chooses one and says
+  why; implement the chosen one;
+- **apparently wrong or unimplementable** — write an ADR recording the finding, the evidence
+  and the deviation you implement instead. Deviating from the spec is allowed; rewriting it to
+  match your deviation is not;
+- **out of date with the code** — the code is what changes, or an ADR records the divergence.
+
+**ADRs are the only mechanism** for resolving anything the spec leaves open or gets wrong. An
+ADR that supersedes spec text MUST cite the exact section (`spec §N.M`), quote the sentence it
+departs from, and state the rule that replaces it. Later readers then find the spec intact and
+the deviations enumerated beside it.
+
+Only the user changes the specification, and only by replacing it deliberately as a new version.
+If that happens, the agent's job is to reconcile the code and the ADRs with the new text — never
+the other way around.
+
+The narrative spec is explorative in tone. Where it says "plausible", "suggested", "MAY" or
+leaves an Open Design Question (spec §39), **you decide** — see §8. Deciding means writing an
+ADR, never annotating the spec.
 
 ---
 
@@ -168,6 +198,8 @@ Fixed by the spec; not open for agent re-decision:
 - Repository language is **English**: code, comments, identifiers, tests, docs, commit
   messages, ADRs. (Conversation with the user may be German.)
 - Non-goals in spec §38 stay non-goals.
+- The narrative specification is **read-only** for every agent (§5.1). Ambiguities and
+  implementation decisions are resolved through ADRs, never by touching the spec.
 
 ---
 
@@ -199,7 +231,8 @@ Rules for the loop:
   (`git restore` / reset to the last green commit), record what failed in `docs/STATE.md`, and
   choose a smaller increment. Never leave the tree broken.
 - Never weaken or delete a test to make the suite pass. Tests only change when the *contract*
-  changes — and then the spec/ADR changes in the same commit.
+  changes — and then the contract (`docs/spec/`) or an ADR changes in the same commit. The
+  narrative spec never changes (§5.1).
 
 ---
 
@@ -239,6 +272,20 @@ What becomes easy, what becomes hard, what must be revisited, which tests encode
 ## Alternatives considered
 Option — why rejected.
 ```
+
+When the ADR departs from something the specification actually says, add one more heading:
+
+```markdown
+## Spec deviation
+- Section: spec §31.12
+- Text: "<the sentence being departed from, quoted>"
+- Instead: <the rule that applies now>
+- Why: <evidence — what made the specified behaviour wrong or unimplementable>
+```
+
+This is the only place a deviation may be recorded. The spec itself stays untouched (§5.1), so
+the set of ADRs carrying a `Spec deviation` heading is the complete, greppable list of every
+point where the product differs from its specification.
 
 Superseding is allowed and expected: write a new ADR, set the old one to
 `superseded by ADR-XXXX`, never edit the history of accepted ADRs.
@@ -439,6 +486,9 @@ Rules for the harness itself:
 - `docs/spec/` registries arrive with Phase D (spec §47); `docs/spec/kuang/` with Phase I
   (spec §31.78). `spec-check` already fails on a top-level `spec/`, on a missing narrative spec,
   on instructions that reference a spec file that does not exist, and on empty contracts.
+- **`spec-check` verifies the specification against `docs/spec.sha256` on every gate run.** Any
+  edit to the narrative spec turns the gate red (§5.1). Restore the file; do not update the
+  checksum. `docs/spec.sha256` is the user's to change, when they replace the spec on purpose.
 
 ---
 

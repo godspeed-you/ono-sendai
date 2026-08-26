@@ -116,6 +116,7 @@ not fix yet.
 - [x] Release gate `scripts/release-check.sh` and the stopping rule in `docs/ACCEPTANCE.md` —
       ADR-0002
 - [x] CI running the gate and the acceptance suite on every push — ADR-0002
+- [x] Specification immutability enforced by checksum in `cargo xtask spec-check` — ADR-0003
 
 ---
 
@@ -137,3 +138,6 @@ assumption)_
   section 24.2 with the `ono-` prefix. Create them as the phase needs them, not upfront.
 - Add the acceptance case in the same increment as the capability. A feature without a case in
   the container does not count as delivered (`docs/ACCEPTANCE.md` section 2).
+- The specification is read-only and checksum-enforced. When it is ambiguous, wrong or in your
+  way, write an ADR with a `Spec deviation` heading and implement your decision — never edit the
+  spec (AGENTS.md section 5.1, ADR-0003).

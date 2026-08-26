@@ -74,6 +74,8 @@ fn spec_check() -> ExitCode {
         );
     }
 
+    problems.extend(check_spec_is_untouched(&root));
+
     let spec_docs = find_narrative_spec(&root);
     match spec_docs.as_slice() {
         [] => problems.push("no narrative specification found under docs/".to_owned()),
@@ -115,6 +117,42 @@ fn spec_check() -> ExitCode {
             eprintln!("spec-check: {problem}");
         }
         ExitCode::FAILURE
+    }
+}
+
+/// Verifies that the immutable narrative specification has not been modified.
+///
+/// The specification is read-only for every agent (AGENTS.md section 5.1): ambiguities are
+/// resolved in ADRs, never by editing the source of truth. A written rule is easy to forget
+/// halfway through a long run, so the rule is checked rather than trusted.
+fn check_spec_is_untouched(root: &Path) -> Vec<String> {
+    let checksum = root.join("docs").join("spec.sha256");
+    if !checksum.is_file() {
+        return vec![
+            "docs/spec.sha256 is missing; the specification can no longer be proven untouched"
+                .to_owned(),
+        ];
+    }
+
+    let output = Command::new("sha256sum")
+        .arg("--check")
+        .arg("--status")
+        .arg(&checksum)
+        .current_dir(root)
+        .status();
+
+    match output {
+        Ok(status) if status.success() => Vec::new(),
+        Ok(_) => vec![
+            "the narrative specification has been modified. It is IMMUTABLE (AGENTS.md \
+             section 5.1): restore it with `git checkout -- docs/*_shell_spec_*.md` and record \
+             the decision in an ADR instead. If the user replaced the specification \
+             deliberately, they update docs/spec.sha256"
+                .to_owned(),
+        ],
+        Err(error) => vec![format!(
+            "cannot verify the specification checksum: {error}. `sha256sum` must be available"
+        )],
     }
 }
 
