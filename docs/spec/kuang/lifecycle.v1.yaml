@@ -1,0 +1,387 @@
+# KUANG/11 package lifecycle.
+#
+# Source: spec §31.8 (install, enable, load and run are different states), §31.9 (discovery,
+# installation sources and the install plan), §31.10 (isolation tiers), §31.34 (failure
+# isolation), §31.35 (upgrades), §31.36 (signing, integrity and trust), §31.63 (capability
+# negotiation at load), §31.68 (lazy loading), §31.70 (lock files), §31.71 (development mode),
+# §31.72 (hot reload), §31.81 (removal). Decisions: ADR-0022.
+#
+# The point of this file is one sentence of spec §31.8: "KUANG/11 MUST distinguish package
+# presence from code execution." A package that is installed has run nothing. A package that is
+# enabled has still run nothing. Only `load` instantiates a runtime, and only an invocation makes
+# it active. Collapsing any two of those is how "I installed a plugin" becomes "I executed a
+# stranger's code".
+#
+# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# States — spec §31.8's definitions list, which is six states and not four: the state machine
+# gives the four on the main path, and the definitions add the two a package can be in beside it.
+# `get plugin` shows one flat column (spec §31.8's example table), so this is one enum.
+#
+# ADR-0022: the fourth state is `active`. Spec §31.8's heading says "run", but its state machine
+# writes ACTIVE and its definitions define "Active" and never define "running".
+# ---------------------------------------------------------------------------------------------
+states:
+  - id: installed
+    on_main_path: true
+    code_has_run: false
+    doc: >-
+      The artifact exists locally and its metadata and signature have been validated
+      (spec §31.8). Nothing of it has executed. Contributions are not registered.
+  - id: enabled
+    on_main_path: true
+    code_has_run: false
+    doc: >-
+      Eligible for autoload or explicit loading under current policy. Still nothing has
+      executed; with `startup: lazy` the package's metadata is registered as placeholders so
+      `get command` can answer for a command whose code has never run (spec §31.68).
+  - id: loaded
+    on_main_path: true
+    code_has_run: true
+    doc: >-
+      A runtime instance exists and contributions are registered. `lifecycle.init` has run and
+      the negotiated contract of §31.63 has been delivered.
+  - id: active
+    on_main_path: true
+    code_has_run: true
+    doc: >-
+      One or more commands, streams, views or assistant turns are executing (spec §31.8).
+      A package returns to `loaded` when the last of them finishes.
+  - id: degraded
+    on_main_path: false
+    code_has_run: true
+    doc: >-
+      Loaded, with one or more optional dependencies or capabilities unavailable (spec §31.8).
+      The package runs with the features that denial disabled switched off, named in its
+      negotiated contract, and it MUST NOT re-prompt for them (spec §31.63).
+  - id: quarantined
+    on_main_path: false
+    code_has_run: false
+    doc: >-
+      Installed, and prevented from loading by trust, integrity or policy failure
+      (spec §31.8). A quarantined package is inert: `load plugin` fails with the reason rather
+      than offering to continue anyway (ADR-0015 rule 4).
+
+# ---------------------------------------------------------------------------------------------
+# Transitions. `requires` must all hold; `runs_package_code` says plainly whether the package
+# executed during the transition, because that is the distinction the whole state model exists
+# to make.
+#
+# `command` names the Ono command that drives the transition, or null where the transition
+# happens as a consequence rather than by request. Two of them name `ono.plugin.set`, which spec
+# §31.3 writes as `set plugin pg-surgeon --enabled false` and §31.38 as
+# `set plugin packet-eye --background true`. `docs/spec/commands/kuang.yaml` carries no entry for
+# it yet; the registry needs one before Phase I, and ADR-0022 records the gap.
+# ---------------------------------------------------------------------------------------------
+transitions:
+
+  - id: install
+    from: absent
+    to: installed
+    command: ono.plugin.install
+    runs_package_code: false
+    requires:
+      - "The manifest parses and satisfies every rule in `manifest.v1.yaml` → `identity_rules`."
+      - "The content hash matches the reference that was resolved (spec §31.36: integrity)."
+      - "The signature verifies, or the package is accepted as unsigned and marked so (spec §31.36)."
+      - "`compatibility.kuang_api` includes the running host API version, and `platforms` includes this host."
+      - "An `ExecutionPlan`-like install plan was produced and confirmed (spec §31.9). Non-interactive confirmation is an explicit flag; its absence is not consent."
+    effects:
+      - "Artifacts are placed under the package's version directory. No install script runs, because the format has none (spec §31.6)."
+      - "No capability is granted. The plan shows what was requested; installing grants nothing (spec §31.9)."
+    errors: [package.invalid, package.incompatible, package.integrity_failed, package.signature_invalid, publisher.untrusted]
+
+  - id: enable
+    from: installed
+    to: enabled
+    command: ono.plugin.set
+    runs_package_code: false
+    requires:
+      - "The package is not quarantined."
+      - "Policy permits the package to load at all."
+    effects:
+      - "With `startup: lazy`, contributions are registered as placeholders: `get command trace packet` answers before the package has ever run (spec §31.68)."
+      - "With `startup: preload`, the package is a candidate for loading at session start. Ono's startup does not wait for it (spec §31.67)."
+    errors: []
+
+  - id: disable
+    from: enabled
+    to: installed
+    command: ono.plugin.set
+    runs_package_code: false
+    requires: []
+    effects:
+      - "Placeholders are withdrawn; a loaded instance is unloaded first."
+    errors: []
+
+  - id: load
+    from: enabled
+    to: loaded
+    command: ono.plugin.load
+    runs_package_code: true
+    requires:
+      - "Every `required` capability is granted, in the scope declared or narrower (spec §31.17)."
+      - "Every dependency resolves and the dependency graph is acyclic (spec §31.30)."
+      - "The runtime tier of `runtime.kind` is available on this host."
+      - "Integrity is re-verified against the recorded hash, so a file changed since install does not load."
+    effects:
+      - "A runtime instance is created in the tier `runtime.kind` names (spec §31.10)."
+      - "The negotiated contract of spec §31.63 is computed and delivered by `lifecycle.init`: host API version, granted and denied capabilities, and effective limits."
+      - "Contributions are registered in the real registries, each recording its origin (spec §31.64)."
+      - "A denied *optional* capability puts the package in `degraded`, not in a failure (spec §31.8, §31.17)."
+    errors: [load.capability_denied, load.dependency_missing, load.dependency_cycle, load.runtime_unavailable]
+
+  - id: unload
+    from: loaded
+    to: enabled
+    command: ono.plugin.unload
+    runs_package_code: true
+    requires:
+      - "Active invocations are drained within the timeout, or cancelled when it expires."
+    effects:
+      - "`lifecycle.shutdown` is delivered with a deadline; after it, the instance is terminated."
+      - "Contributions are withdrawn and revert to placeholders. Handles die with the instance."
+      - "Session-class state is destroyed; persistent state is kept (spec §31.31)."
+    errors: []
+
+  - id: activate
+    from: loaded
+    to: active
+    command: null
+    runs_package_code: true
+    requires:
+      - "The invocation's capabilities are granted at the moment of the call, not at load time."
+    effects:
+      - "An invocation handle is created and owns every handle the plugin opens under it."
+    errors: []
+
+  - id: deactivate
+    from: active
+    to: loaded
+    command: null
+    runs_package_code: true
+    requires: []
+    effects:
+      - "The invocation's handles are closed, its streams cancelled and its invocation-class state destroyed."
+    errors: []
+
+  - id: degrade
+    from: loaded
+    to: degraded
+    command: null
+    runs_package_code: false
+    requires:
+      - "An optional capability or dependency became unavailable, or was denied at load."
+    effects:
+      - "The features that depended on it are disabled and named, in the contract and in `inspect plugin`."
+    errors: []
+
+  - id: quarantine
+    from: installed
+    to: quarantined
+    command: null
+    runs_package_code: false
+    requires:
+      - "Integrity, signature, publisher trust or policy failed — at install, at load, or at a later re-verification."
+    effects:
+      - "A loaded instance is unloaded first. The artifact is retained so it can be inspected and verified, not deleted."
+      - "The reason is recorded on the package object and shown by `get plugin` and `inspect plugin`."
+    errors: []
+
+  - id: remove
+    from: installed
+    to: absent
+    command: ono.plugin.remove
+    runs_package_code: false
+    requires:
+      - "A loaded instance is unloaded first."
+      - "The operator saw what will be removed and what will be retained (spec §31.81)."
+    effects:
+      - "Package versions and registry entries are removed."
+      - "State is retained unless `--purge-state`; grants are retained but disabled unless `--purge-policy` (spec §31.81)."
+      - "A retained grant for an absent package is inert and visible, so nothing survives removal invisibly (spec §31.80: \"plugin persistence survives removal\")."
+    errors: []
+
+# ---------------------------------------------------------------------------------------------
+# Installation sources — spec §31.9. The architecture must not depend on one central marketplace.
+# `core` marks the subset a core release supports itself; the rest may be source-provider
+# extensions, which is spec §31.9's own suggestion.
+# ---------------------------------------------------------------------------------------------
+sources:
+  - {scheme: "file:", core: true, example: "file:./packet-eye.k11", doc: "A local archive. The development and offline path."}
+  - {scheme: "path:", core: true, example: "path:/opt/ono/plugins/packet-eye", doc: "An unpacked directory. Used with `--dev` (spec §31.71)."}
+  - {scheme: "registry:", core: true, example: "registry:dev.example/packet-eye@2.4.1", doc: "A content-addressed registry. One mechanism, not one marketplace."}
+  - {scheme: "git:", core: false, example: "git:https://example.org/packet-eye#v2.4.1", doc: "May be a source-provider extension rather than core."}
+  - {scheme: "oci:", core: false, example: "oci:registry.example.org/ono/packet-eye:2.4.1", doc: "May be a source-provider extension rather than core."}
+
+# spec §31.9. The plan is produced before any mutation, and it is an object, not a paragraph.
+install_plan:
+  doc: >-
+    An `ExecutionPlan`-like object shown before installing (spec §31.9). `explain install plugin`
+    produces it without installing, which is what makes it checkable in a script.
+  fields:
+    package: {type: string, required: true, doc: "The package id and version."}
+    source: {type: string, required: true, doc: "The resolved source reference."}
+    integrity: {type: string, required: true, doc: "The content hash, e.g. `sha256:...`."}
+    signature: {type: string, required: true, doc: "The signature state and the publisher it attests to, or `unsigned`."}
+    contributions: {type: record, required: true, doc: "Counts and ids of what will be added: runtime components, commands, schemas, views, relations."}
+    capabilities: {type: list<record>, required: true, doc: "Every requested capability with its class, scope and current grant state — `granted`, `denied` or `not granted`."}
+    filesystem: {type: list<path>, required: true, doc: "Every path that will be written."}
+    state: {type: record, nullable: true, doc: "The state class and quota the package declares. Null when it declares none."}
+    network: {type: record, required: true, doc: "The declared outbound policy and destinations. `none` is stated, not inferred."}
+  rules:
+    - "Nothing in the plan is marketing metadata. Spec §31.1: \"Every line MUST be backed by a manifest field or a resolved dependency/capability.\""
+    - "Scripts opt into non-interactive policy with an explicit flag; absence of a prompt MUST NOT imply automatic capability grants (spec §31.9)."
+
+# ---------------------------------------------------------------------------------------------
+# Isolation tiers — spec §31.10. `runtime.kind` in the manifest names one of these.
+# ---------------------------------------------------------------------------------------------
+isolation_tiers:
+  - {id: T0, name: core-built-in, manifest_kind: null, third_party: false, doc: "In-process Rust, part of an Ono release. A package cannot declare it: an unsafe block or an allocator bug in third-party code would otherwise compromise the shell."}
+  - {id: T1, name: trusted-native, manifest_kind: native-process, third_party: true, doc: "A separate process speaking the native protocol. For extensions needing OS APIs the component runtime cannot express. Labelled with weaker isolation and requiring stronger trust confirmation (spec §31.21)."}
+  - {id: T2, name: isolated-component, manifest_kind: wasm-component, third_party: true, doc: "A capability-limited component runtime. The default tier for third-party code (spec §31.10)."}
+  - {id: T3, name: remote-service, manifest_kind: remote-service, third_party: true, doc: "A protocol endpoint. No local code execution at all."}
+notes_on_tiers:
+  - "The component technology is an implementation choice; the semantics here do not depend on it (spec §31.10)."
+  - "A package's tier is shown wherever its trust is shown, because \"what can this code do even if I do not trust it\" is a different question from \"do I trust it\" (spec §31.36)."
+
+# ---------------------------------------------------------------------------------------------
+# Verification — spec §31.36 for what `verify plugin` reports, spec §31.9 for when installation
+# checks it. Integrity, signature, publisher trust and runtime isolation are four separate
+# questions and are reported as four separate answers (spec §31.36).
+# ---------------------------------------------------------------------------------------------
+verification:
+  output_schema: ono.verification-result/1
+  checks:
+    - id: integrity
+      question: "Are these the exact bytes the reference named?"
+      values: [valid, invalid, unknown]
+      blocking: true
+      error: package.integrity_failed
+    - id: signature
+      question: "Did a key sign these bytes?"
+      values: [valid, invalid, absent, unknown]
+      blocking: false
+      error: package.signature_invalid
+      doc: >-
+        `absent` is not a failure. Spec §31.36 requires KUANG/11 to "remain safe enough to run
+        unsigned local development packages in a visibly untrusted, capability-limited mode" —
+        so an unsigned package installs, and says so everywhere it appears.
+    - id: publisher
+      question: "Do I trust that key or publisher?"
+      values: [trusted, untrusted, unknown]
+      blocking: false
+      error: publisher.untrusted
+      doc: Publisher trust is the operator's, held in their own trust store. A valid signature from an unknown key is `unknown`, never `trusted`.
+    - id: transparency
+      question: "Is the signature in a transparency log?"
+      values: [present, absent, unknown]
+      blocking: false
+      error: null
+      doc: "`unknown` is the honest default where no log is configured, and spec §31.36's own example prints exactly that."
+    - id: compatibility
+      question: "Can this host run it?"
+      values: [compatible, incompatible, unknown]
+      blocking: true
+      error: package.incompatible
+      doc: "`compatibility.kuang_api`, `ono_language` and `platforms` against this host (spec §31.7, §31.62)."
+    - id: manifest
+      question: "Is the manifest valid and complete?"
+      values: [valid, invalid]
+      blocking: true
+      error: package.invalid
+      doc: Every rule in `manifest.v1.yaml` → `identity_rules`, plus contribution validation (spec §31.22).
+    - id: runtime
+      question: "What can the code do even if I do not trust it?"
+      values: [core-built-in, trusted-native, isolated-component, remote-service]
+      blocking: false
+      error: null
+      doc: Reported, never judged. It is the answer that makes the other four survivable.
+  rules:
+    - "A blocking check that does not pass prevents install and prevents load. It never produces a prompt offering to continue (ADR-0015 rule 4)."
+    - "`verify plugin` is available on an installed package and on a package reference that has not been installed, so a package can be judged before it is on disk."
+    - "Integrity is re-verified at load, not only at install: a file changed on disk afterwards must not load."
+
+# ---------------------------------------------------------------------------------------------
+# Failure isolation — spec §31.34. "Plugin failure MUST degrade the plugin, not the shell."
+# ---------------------------------------------------------------------------------------------
+failure:
+  classes:
+    - {id: trap, error: runtime.trap, restart: automatic-if-stateless, doc: "The component trapped or the native host crashed."}
+    - {id: protocol-violation, error: runtime.protocol_violation, restart: never, doc: "A malformed frame, an out-of-credit emission, a handle that is not the plugin's."}
+    - {id: schema-violation, error: runtime.schema_violation, restart: never, doc: "An emitted value outside the schema the invocation declared."}
+    - {id: capability-violation, error: capability.scope_violation, restart: never, doc: "A call outside the granted scope. Audited with what was attempted."}
+    - {id: resource-limit, error: runtime.memory_limit, restart: automatic-if-stateless, doc: "Memory, fuel, state quota or concurrency ceiling exceeded."}
+    - {id: unresponsive, error: runtime.timeout, restart: automatic-if-stateless, doc: "A deadline passed with no answer."}
+    - {id: invalid-output, error: runtime.schema_violation, restart: never, doc: "Output that is well-formed but not what the contract declared — a view tree that cannot be laid out, a finding whose evidence does not resolve."}
+    - {id: backpressure-failure, error: runtime.backpressure_failure, restart: never, doc: "A `fail-stream` policy fired, or a producer could not be slowed."}
+    - {id: remote-disconnect, error: remote.extension_unavailable, restart: conservative, doc: "A remote component's link dropped."}
+  rules:
+    - "Ono MUST cancel and close streams whose producer died, and emit a structured error identifying the plugin (spec §31.34). A stream that simply stops is not an acceptable report."
+    - "The supervisor MAY restart stateless plugins automatically; stateful or mutating plugins require conservative recovery (spec §31.34) — a mutating invocation is never retried by the supervisor, because it cannot know whether the mutation landed."
+    - "Restart counts are visible in `inspect plugin` (spec §31.33); a package that keeps restarting is a package the operator should be able to see restarting."
+    - "A failure never propagates into another package's invocation. Streams that crossed the failed package are cancelled with an error naming it, and the consumers decide."
+
+# ---------------------------------------------------------------------------------------------
+# Upgrades — spec §31.35. Side-by-side versions, one active per scope.
+# ---------------------------------------------------------------------------------------------
+upgrade:
+  plan:
+    - {step: 1, id: install-verify, doc: "The new version is installed and verified beside the old, which stays loaded."}
+    - {step: 2, id: capability-diff, doc: "The capability difference is displayed. A new request is a new prompt."}
+    - {step: 3, id: migration-dry-run, doc: "State migration runs against a checkpoint, in isolation, without committing (spec §31.32)."}
+    - {step: 4, id: health-check, doc: "The new instance is loaded and `health.probe` must answer `ready`."}
+    - {step: 5, id: registry-switch, doc: "Contributions switch atomically; no invocation sees a half-switched registry."}
+    - {step: 6, id: drain, doc: "The old instance drains its active invocations. A mutating invocation is never replaced mid-action (spec §31.72)."}
+    - {step: 7, id: retain, doc: "The old version is retained for rollback until the operator removes it."}
+  rules:
+    - "A plugin update that requests new capabilities MUST NOT inherit grants automatically unless policy says the new scopes are already covered (spec §31.35)."
+    - "Rollback is available when the migration was reversible or a checkpoint exists (spec §31.32)."
+    - "One version is active per scope unless the package was explicitly designed otherwise (spec §31.35)."
+
+# ---------------------------------------------------------------------------------------------
+# Hot reload — spec §31.72. Desirable for analysers and views, dangerous for mutating jobs.
+# ---------------------------------------------------------------------------------------------
+hot_reload:
+  policy:
+    - {condition: stateless-no-jobs, action: reload-immediately}
+    - {condition: active-read-stream, action: drain-or-cancel-with-consent}
+    - {condition: view, action: preserve-host-owned-layout-state}
+    - {condition: persistent-state, action: run-versioned-migration}
+    - {condition: mutating-invocation, action: never-replace-mid-action}
+    - {condition: assistant-turn, action: finish-or-cancel-turn-first}
+  rules:
+    - "Hot reload is a development-mode convenience and a normal-mode option; it never weakens the capability check, which is re-run against the reloaded manifest."
+
+# ---------------------------------------------------------------------------------------------
+# Development mode — spec §31.71. Low-friction iteration without weakening normal policy.
+# ---------------------------------------------------------------------------------------------
+development_mode:
+  invoked_by: "load plugin . --dev"
+  may:
+    - "Trust the local source location for integrity iteration, so an unsigned working tree loads."
+    - "Enable hot reload."
+    - "Expose verbose protocol diagnostics."
+    - "Mount source schemas directly rather than from the packaged archive."
+    - "Allow test-only host APIs, which are refused outside development mode."
+  must:
+    - "Remain visually marked for the whole session — spec §31.71's `KUANG/11 DEV  packet-eye@workspace  unsigned  isolated`."
+    - "Apply the capability broker unchanged. Development mode relaxes *integrity*, never *authority*: an unsigned working tree still asks before it signals a process."
+    - "Never be enterable non-interactively without an explicit flag, and never be the default for any source scheme."
+
+# ---------------------------------------------------------------------------------------------
+# Reproducible environments — spec §31.70.
+# ---------------------------------------------------------------------------------------------
+lock:
+  produced_by: "get plugin | lock plugin"
+  fields:
+    id: {type: string, required: true, doc: "The package id."}
+    version: {type: string, required: true, doc: "The exact version."}
+    hash: {type: string, required: true, doc: "The content hash, so a restore installs the same bytes or fails."}
+    source: {type: string, required: true, doc: "The source reference the artifact came from."}
+  rules:
+    - "A restore installs exact artifacts and does NOT import capability grants (spec §31.70). Reproducing an environment reproduces its code, never its authority."
+    - "A script declares its extension dependencies and fails before side effects when they are missing (spec §31.69)."

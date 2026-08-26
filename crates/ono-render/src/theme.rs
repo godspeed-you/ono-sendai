@@ -250,24 +250,30 @@ impl Theme {
 /// Escape sequences, carriage returns and backspaces let a value rewrite the screen, retitle the
 /// window or hide what came before it. A shell that prints system data must assume that data is
 /// hostile, so nothing here is conditional on a policy setting.
+///
+/// **A newline and a tab are control characters too, and they are escaped like the rest.** An
+/// earlier version let them through on the grounds that they are ordinary text — but a table cell
+/// holding `"evil\nroot      1"` then rendered as two terminal lines, the second of them
+/// indistinguishable from a real row. A value cannot be allowed to forge the frame it is being
+/// displayed in, and a filename may contain a newline, so this is reachable by anyone who can
+/// create a file.
+///
+/// A caller with genuinely multi-line output splits it into lines and sanitises each, which is
+/// what every renderer in this crate does. Nothing that needs the layout to survive can afford to
+/// have a value decide where its lines end.
 #[must_use]
 pub fn sanitise(text: &str) -> String {
-    if !text
-        .chars()
-        .any(|c| c.is_control() && c != '\n' && c != '\t')
-    {
+    if !text.chars().any(char::is_control) {
         return text.to_owned();
     }
     let mut safe = String::with_capacity(text.len());
     for character in text.chars() {
-        match character {
-            '\n' | '\t' => safe.push(character),
-            control if control.is_control() => {
-                // `\u{1b}` becomes a printable escape rather than vanishing, so a value that
-                // contained one is still visibly different from one that did not.
-                let _ = write!(safe, "\\u{{{:x}}}", control as u32);
-            }
-            other => safe.push(other),
+        if character.is_control() {
+            // `\u{1b}` becomes a printable escape rather than vanishing, so a value that
+            // contained one is still visibly different from one that did not.
+            let _ = write!(safe, "\\u{{{:x}}}", character as u32);
+        } else {
+            safe.push(character);
         }
     }
     safe

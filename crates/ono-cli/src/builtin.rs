@@ -4,6 +4,7 @@
 //! subprocess moves a directory nobody is standing in.
 
 use std::ffi::{OsStr, OsString};
+use std::io::Write;
 use std::path::PathBuf;
 
 use ono_core::{ErrorCode, ExitStatus};
@@ -324,7 +325,11 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
 
     let registry = ono_command::CommandRegistry::embedded().map_err(Flow::Failed)?;
     let plan = ono_command::plan(registry, Some(session.providers()), pipeline, &source);
-    println!("{}", plan.render());
+    // The plan quotes the source it was given and the paths it resolved, both of which are
+    // attacker-controlled: a program named with an OSC sequence sitting on `PATH` would otherwise
+    // retitle the terminal from inside the command that exists to tell you about it, and the
+    // bytes would survive into a file (ADR-0015 T1, T9, T11).
+    print_safely(&plan.render());
 
     // A stage the registry does not know is an external program, and which one it will be is the
     // half of the answer the plan cannot give (ADR-0011 T11: a shadowing binary is only
@@ -339,8 +344,11 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             continue;
         }
         match crate::resolve::find_on_path(session, name) {
-            Some(path) => println!("  `{name}` is external and resolves to {}", path.display()),
-            None => println!("  `{name}` resolves to nothing on PATH"),
+            Some(path) => print_safely(&format!(
+                "  `{name}` is external and resolves to {}",
+                path.display()
+            )),
+            None => print_safely(&format!("  `{name}` resolves to nothing on PATH")),
         }
     }
 
@@ -348,6 +356,22 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         println!("  configuration mode: none of this would be allowed to run");
     }
     Ok(ExitStatus::SUCCESS)
+}
+
+/// Writes text that came from the system, with every control character neutralised.
+///
+/// A path, a program name and a command line are all attacker-controlled in the sense that
+/// matters: anyone who can create a file can choose what a shell will later print about it. A
+/// value must never be able to drive the terminal it is displayed on, and the rule holds when the
+/// output is redirected too, because the file is read by something eventually (ADR-0015 T1, T9).
+///
+/// Line structure is preserved by sanitising each line, so a multi-line report stays a report
+/// while a value inside it cannot invent a line of its own.
+fn print_safely(text: &str) {
+    let mut out = std::io::stdout().lock();
+    for line in text.split('\n') {
+        let _ = writeln!(out, "{}", ono_render::sanitise(line));
+    }
 }
 
 /// Turns an I/O failure into the coded error of spec §43 that matches it.
@@ -367,4 +391,18 @@ pub fn io_error(path: &std::path::Path, error: &std::io::Error) -> ErrorValue {
 pub fn is_builtin(name: &OsStr) -> bool {
     name.to_str()
         .is_some_and(|name| crate::resolve::BUILTINS.contains(&name))
+}
+
+/// Whether `name` may run while a configuration file is being read (ADR-0010).
+///
+/// The allowed set is exactly the declarative one: `set` records a value and `remove` withdraws
+/// one. Everything else — `cd`, `exit`, `jobs`, `fg`, `bg`, `help`, `explain` — changes the
+/// session or writes to the terminal, and a configuration file that could do either would be a
+/// startup script wearing a settings file's name.
+///
+/// `exit` matters most: without this it would end the session before the shell had one, and a
+/// request to leave that survived the load would replace the status of every command afterwards.
+#[must_use]
+pub fn allowed_in_config(name: &str) -> bool {
+    matches!(name, "set" | "remove")
 }

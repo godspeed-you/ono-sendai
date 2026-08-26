@@ -368,10 +368,12 @@ fn persist(path: &Path, contents: &str) -> Result<(), ErrorValue> {
     // Written whole and replaced, so a store is never half a store: a truncated trust store would
     // silently un-pin every host below the point the write stopped.
     let temporary = path.with_extension("tmp");
-    let mut file = std::fs::File::create(&temporary).map_err(|error| io_error(&temporary, &error))?;
+    let mut file =
+        std::fs::File::create(&temporary).map_err(|error| io_error(&temporary, &error))?;
     file.write_all(contents.as_bytes())
         .map_err(|error| io_error(&temporary, &error))?;
-    file.sync_all().map_err(|error| io_error(&temporary, &error))?;
+    file.sync_all()
+        .map_err(|error| io_error(&temporary, &error))?;
     drop(file);
     std::fs::rename(&temporary, path).map_err(|error| io_error(path, &error))
 }
@@ -412,16 +414,17 @@ fn io_error(path: &Path, error: &std::io::Error) -> ErrorValue {
     };
     ErrorValue::new(
         code,
-        format!("the trust store at {} is not usable: {error}", path.display()),
+        format!(
+            "the trust store at {} is not usable: {error}",
+            path.display()
+        ),
     )
 }
 
 fn host_key_changed(host: &str, recorded: Fingerprint, presented: Fingerprint) -> ErrorValue {
     ErrorValue::new(
         ErrorCode::RemoteHostKeyChanged,
-        format!(
-            "{host} presented {presented}, and the trust store records {recorded} for it"
-        ),
+        format!("{host} presented {presented}, and the trust store records {recorded} for it"),
     )
     .with_retryable(false)
     .with_help(
@@ -460,7 +463,9 @@ pub(crate) fn decide(
                 Some(recorded) => Err(host_key_changed(host, recorded, presented)),
                 None => Err(ErrorValue::new(
                     ErrorCode::SafetyPolicyDenied,
-                    format!("{host} is not in the trust store, and this link only uses pinned hosts"),
+                    format!(
+                        "{host} is not in the trust store, and this link only uses pinned hosts"
+                    ),
                 )
                 .with_retryable(false)
                 .with_help(format!(

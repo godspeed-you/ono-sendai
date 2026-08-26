@@ -213,3 +213,70 @@ fn should_print_no_prompt_and_no_identity_line_when_driven_from_a_pipe() {
     assert_eq!(run.stdout(), "only-this\n");
     assert_eq!(run.stderr(), "");
 }
+
+#[test]
+fn should_not_let_a_configuration_file_end_the_session_it_is_configuring() {
+    // `exit` in a config file set a request to leave that was never withdrawn, so every later
+    // statement short-circuited and every command's status was replaced by the config's.
+    let dir = scratch();
+    dir.write("config.ono", "exit 3\n");
+    let run = Shell::new()
+        .args(["-c", "echo first\necho second\nsh -c 'exit 7'"])
+        .env(
+            "ONO_CONFIG",
+            dir.path().join("config.ono").display().to_string(),
+        )
+        .run();
+
+    assert!(run.stdout().contains("first"), "{:?}", run.stdout());
+    assert!(
+        run.stdout().contains("second"),
+        "every statement must run, got {:?}",
+        run.stdout()
+    );
+    assert_eq!(
+        run.status().code(),
+        7,
+        "the command's own status survives, not the config's"
+    );
+}
+
+#[test]
+fn should_refuse_the_shells_own_commands_in_a_configuration_file_too() {
+    // The check used to sit after the single-builtin fast path, so `touch` was stopped while
+    // `cd`, `exit`, `jobs` and `help` all ran — and the error text the code prints says
+    // configuration "runs nothing".
+    let dir = scratch();
+    for (name, source) in [("cd", "cd /etc\n"), ("jobs", "jobs\n"), ("help", "help\n")] {
+        dir.write("config.ono", source);
+        let run = Shell::new()
+            .args(["-c", "pwd"])
+            .env(
+                "ONO_CONFIG",
+                dir.path().join("config.ono").display().to_string(),
+            )
+            .cwd("/tmp")
+            .run();
+        assert!(
+            run.stderr().contains("Ono-Sendai-E0702"),
+            "`{name}` was allowed to run from a configuration file: {:?}",
+            run.stderr()
+        );
+    }
+}
+
+#[test]
+fn should_still_let_a_configuration_file_set_a_value() {
+    // The point of the restriction is that configuration is declarative, not that it is inert.
+    let dir = scratch();
+    dir.write("config.ono", "set env ONO_FROM_CONFIG = \"yes\"\n");
+    let run = Shell::new()
+        .args(["-c", "sh -c 'echo probe=$ONO_FROM_CONFIG'"])
+        .env(
+            "ONO_CONFIG",
+            dir.path().join("config.ono").display().to_string(),
+        )
+        .run();
+    run.assert_success();
+    assert!(run.stdout().contains("probe=yes"), "{:?}", run.stdout());
+}

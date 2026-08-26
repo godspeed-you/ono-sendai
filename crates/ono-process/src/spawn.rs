@@ -141,6 +141,21 @@ fn child_setup(moves: &[(i32, i32)], controlling_terminal: Option<i32>) -> io::R
 pub(crate) fn exec_failure(program: &Path, error: &io::Error) -> (ExitStatus, Error) {
     let name = program.display();
     match error.raw_os_error() {
+        // `execve` answers `ENOENT` for two different situations: the program is not there, and
+        // the program *is* there but the interpreter its `#!` line names is not. They are 127 and
+        // 126 respectively (ADR-0008), and telling a user "command not found" about a script they
+        // are looking at is the least helpful thing a shell can say.
+        Some(libc::ENOENT) if program.exists() => {
+            let missing = shebang_interpreter(program);
+            let detail = missing.map_or_else(
+                || format!("{name}: the interpreter it names does not exist"),
+                |interpreter| format!("{name}: its interpreter `{interpreter}` does not exist"),
+            );
+            (
+                ExitStatus::NOT_EXECUTABLE,
+                Error::new(ErrorCode::IoNotFound, detail),
+            )
+        }
         Some(libc::ENOENT) => (
             ExitStatus::NOT_FOUND,
             Error::new(
@@ -160,6 +175,25 @@ pub(crate) fn exec_failure(program: &Path, error: &io::Error) -> (ExitStatus, Er
             Error::from_io(format!("running {name}"), error),
         ),
     }
+}
+
+/// The interpreter a script's `#!` line names, for an error message that says which one is
+/// missing rather than leaving the reader to open the file.
+fn shebang_interpreter(program: &Path) -> Option<String> {
+    // Only the first line, and only a bounded amount of it: this runs on a failure path and the
+    // file is whatever the user pointed at.
+    let mut header = [0u8; 256];
+    let mut file = std::fs::File::open(program).ok()?;
+    let read = io::Read::read(&mut file, &mut header).ok()?;
+    let line = header.get(..read)?;
+    let line = line.strip_prefix(b"#!")?;
+    let end = line
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .unwrap_or(line.len());
+    let interpreter = std::str::from_utf8(line.get(..end)?).ok()?.trim();
+    let interpreter = interpreter.split_whitespace().next()?;
+    (!interpreter.is_empty()).then(|| interpreter.to_owned())
 }
 
 /// Reports a resolution or spawn failure as a `Result` for callers that cannot continue.

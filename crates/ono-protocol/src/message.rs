@@ -437,9 +437,7 @@ fn pairs_to_json(pairs: &[(String, Value)]) -> Json {
     Json::Array(
         pairs
             .iter()
-            .map(|(name, value)| {
-                Json::Array(vec![Json::String(name.clone()), to_json(value)])
-            })
+            .map(|(name, value)| Json::Array(vec![Json::String(name.clone()), to_json(value)]))
             .collect(),
     )
 }
@@ -617,15 +615,12 @@ fn act_from_json(
 }
 
 fn event_to_json(event: &ObjectEvent) -> Json {
-    let record = event
-        .value()
-        .map_or(Json::Null, |record| to_json(&Value::Record(Arc::clone(record))));
+    let record = event.value().map_or(Json::Null, |record| {
+        to_json(&Value::Record(Arc::clone(record)))
+    });
     object([
         ("kind", Json::String(event.kind().as_str().to_owned())),
-        (
-            "sequence",
-            event.sequence().map_or(Json::Null, Json::from),
-        ),
+        ("sequence", event.sequence().map_or(Json::Null, Json::from)),
         (
             "changed_fields",
             event.changed_fields().map_or(Json::Null, |fields| {

@@ -78,7 +78,7 @@ scope_types:
   - id: window
     type: enum
     values: [current-command, current-view, current-session]
-    doc: How far back a history or context read may reach (spec §31.16's `window: current-session`).
+    doc: "How far back a history or context read may reach (spec §31.16's `window: current-session`)."
   - id: class-list
     type: list<string>
     doc: Data classes from `assistants.v1.yaml` → `data_classes` (spec §31.44).

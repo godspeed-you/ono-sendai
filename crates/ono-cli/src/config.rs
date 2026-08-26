@@ -96,5 +96,13 @@ pub fn load(session: &mut Session, options: &Options, reporter: &Reporter) {
             let mut report = |error: &ErrorValue| reporter.error(error);
             crate::eval::run_program(session, parsed.program(), &source, &mut report);
         });
+
+        // A configuration file cannot end the session. `exit` in one is already refused as a
+        // policy violation, but a request to leave must not survive the load under any
+        // circumstance: it would replace the status of every command the shell later runs and
+        // short-circuit every statement after the first. ADR-0010 promises that a bad setting
+        // never stops the shell from starting, and that promise has to hold for a *hostile*
+        // setting too.
+        session.stay();
     }
 }

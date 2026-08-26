@@ -89,8 +89,7 @@ impl History {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(parent)
-                .map_err(|cause| fail("create the directory for", cause))?;
+            private_directory(parent).map_err(|cause| fail("create the directory for", cause))?;
         }
 
         let mut entries = Vec::new();
@@ -175,7 +174,7 @@ impl History {
 
         if self.stale {
             let temporary = self.path.with_extension("jsonl.new");
-            let mut file = File::create(&temporary).map_err(|cause| fail("write", cause))?;
+            let mut file = private_file(&temporary).map_err(|cause| fail("write", cause))?;
             for entry in &self.entries {
                 write_entry(&mut file, entry).map_err(|cause| fail("write", cause))?;
             }
@@ -190,8 +189,7 @@ impl History {
         if self.persisted >= self.entries.len() {
             return Ok(());
         }
-        let mut file = OpenOptions::new()
-            .create(true)
+        let mut file = private_options()
             .append(true)
             .open(&self.path)
             .map_err(|cause| fail("append to", cause))?;
@@ -231,6 +229,44 @@ impl History {
     pub fn policy(&self) -> &Policy {
         &self.policy
     }
+}
+
+/// Options that create a file only its owner can read.
+///
+/// A shell's history is a record of what someone did on the machine, and a person's habits are
+/// often more revealing than any single command. Created at the ambient umask it lands as 0644,
+/// readable by every account on a shared host — and the redaction of spec §17.5 only ever covers
+/// the secrets somebody thought to name a pattern for.
+///
+/// The mode is set at creation rather than afterwards, so there is no window in which the file
+/// exists and is readable.
+fn private_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.create(true).write(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options
+}
+
+/// Creates or truncates a file that only its owner can read.
+fn private_file(path: &Path) -> std::io::Result<File> {
+    private_options().truncate(true).open(path)
+}
+
+/// Creates a directory only its owner can enter.
+fn private_directory(path: &Path) -> std::io::Result<()> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(path)
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(path)
 }
 
 fn write_entry(file: &mut File, entry: &Entry) -> std::io::Result<()> {

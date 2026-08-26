@@ -1,0 +1,74 @@
+# Recommendation. Source: spec §31.24 (`Finding.recommendations: List<Recommendation>`),
+# §31.25's `recommendation: inspect anonymous mappings`, §31.53's split between a temporary and a
+# durable remedy, and §31.78, which lists `recommendation.schema.yaml` among the KUANG/11
+# contracts.
+#
+# ADR-0022: spec §31.24 names the type without giving its fields, and
+# `docs/spec/schemas/deferred.yaml` does not list it. It is written here rather than typed as a
+# bare `record` (ADR-0012 §13), and the report names it as one the orchestrator must un-defer.
+#
+# A recommendation is advice, and advice that a shell can run is different from advice a person
+# has to translate. `command` is what makes the difference, and it is optional precisely because
+# the honest answer is sometimes "investigate this", with nothing to run.
+#
+# A structural sub-record, so no identity (ADR-0012 §9).
+id: ono.recommendation/1
+name: Recommendation
+summary: One suggested next step attached to a finding, with what it would cost to take it.
+identity: []
+fields:
+  title:
+    type: string
+    required: true
+    doc: One line, what to do. Package-authored text, sanitised before display.
+  detail:
+    type: string
+    nullable: true
+    doc: Why it would help, at more length. Null when the title says everything.
+  horizon:
+    type: enum
+    required: true
+    values: [investigate, temporary, durable]
+    doc: >-
+      What kind of remedy this is. Spec §31.53 distinguishes the temporary fix (`restart service
+      checkout`) from the durable one (`raise LimitNOFILE and investigate socket retention`), and
+      presenting them as interchangeable is how a workaround becomes the fix.
+  command:
+    type: string
+    nullable: true
+    doc: >-
+      The Ono command that would carry it out, e.g. `inspect process 4419 --field limits`. It
+      must parse. Null when there is nothing to run — an `investigate` recommendation often has
+      nothing.
+  mutating:
+    type: bool
+    required: true
+    doc: >-
+      Whether taking it would change anything outside the shell. Required even when false, so
+      "this only looks" is a stated answer rather than an absent field.
+  risk:
+    type: enum
+    nullable: true
+    values: [read, observe, mutate, destructive]
+    doc: >-
+      The risk of the suggested command, from `risk_levels` in `docs/spec/capabilities.yaml`.
+      Null when there is no command. Required whenever `mutating` is true.
+  capability:
+    type: string
+    nullable: true
+    doc: >-
+      The capability the command would cost, so an operator can see the authority a suggestion
+      implies before considering it. Null when there is no command.
+  subject:
+    type: value
+    nullable: true
+    doc: A reference to the object the recommendation is about. Null when it is about the finding as a whole.
+  evidence:
+    type: list<ono.evidence/1>
+    required: true
+    doc: >-
+      What supports this being the right next step. Empty is allowed — a recommendation is
+      advice, not a claim — but an empty list is visible as one, and spec §31.25 encourages
+      conclusions that stay connected to the data that produced them.
+default_view:
+  columns: [title, horizon, mutating, risk, command]

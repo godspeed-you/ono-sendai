@@ -55,63 +55,86 @@ pub fn expand_to_one(session: &Session, text: &str) -> Result<OsString, ErrorVal
 fn substitute(session: &Session, text: &str) -> (String, bool) {
     let mut out = String::with_capacity(text.len());
     let mut has_pattern = false;
-    let mut chars = text.chars().peekable();
-    let mut at_start = true;
+    // Indexed rather than drained, so a construct that turns out not to be one can be put back.
+    // An earlier version consumed the rest of the word looking for the `}` of a `${…}` and
+    // dropped everything it had read when there was none, so `cp report.txt ${dest` silently
+    // became `cp report.txt $` — losing data inside an argument, which is the class of surprise
+    // ADR-0019 exists to remove.
+    let chars: Vec<char> = text.chars().collect();
+    let mut index = 0;
 
-    while let Some(character) = chars.next() {
+    while index < chars.len() {
+        let character = chars[index];
         match character {
             '\\' => {
-                if let Some(escaped) = chars.next() {
-                    out.push(escaped);
+                if let Some(escaped) = chars.get(index + 1) {
+                    out.push(*escaped);
+                    index += 2;
+                } else {
+                    index += 1;
                 }
             }
-            '~' if at_start && matches!(chars.peek(), None | Some('/')) => match session.home() {
-                Some(home) => out.push_str(&home.to_string_lossy()),
-                None => out.push('~'),
+            '~' if index == 0 && matches!(chars.get(1), None | Some('/')) => {
+                match session.home() {
+                    Some(home) => out.push_str(&home.to_string_lossy()),
+                    None => out.push('~'),
+                }
+                index += 1;
+            }
+            '$' => match read_name(&chars, index + 1) {
+                Some((name, next)) => {
+                    out.push_str(&lookup(session, &name));
+                    index = next;
+                }
+                // Not a name after all — a lone `$`, or a `${` nobody closed. The dollar is kept
+                // and everything after it is left exactly as it was typed.
+                None => {
+                    out.push('$');
+                    index += 1;
+                }
             },
-            '$' => {
-                let name = read_name(&mut chars);
-                match name {
-                    Some(name) => out.push_str(&lookup(session, &name)),
-                    // A lone `$` is just a dollar sign.
-                    None => out.push('$'),
-                }
-            }
             '*' | '?' | '[' => {
                 has_pattern = true;
                 out.push(character);
+                index += 1;
             }
-            other => out.push(other),
+            other => {
+                out.push(other);
+                index += 1;
+            }
         }
-        at_start = false;
     }
 
     (out, has_pattern)
 }
 
-/// Reads the variable name after a `$`, in either the bare or the braced form.
-fn read_name(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<String> {
-    if chars.peek() == Some(&'{') {
-        chars.next();
+/// Reads the variable name starting at `from`, in either the bare or the braced form.
+///
+/// Returns the name and the index just past it, or `None` when what follows the `$` is not a
+/// name — in which case nothing has been consumed and the caller keeps the text as typed.
+fn read_name(chars: &[char], from: usize) -> Option<(String, usize)> {
+    if chars.get(from) == Some(&'{') {
+        let mut index = from + 1;
         let mut name = String::new();
-        for character in chars.by_ref() {
+        while let Some(&character) = chars.get(index) {
             if character == '}' {
-                return Some(name);
+                return (!name.is_empty()).then_some((name, index + 1));
             }
             name.push(character);
+            index += 1;
         }
-        // An unclosed brace is not a name; the text is kept as typed.
+        // An unclosed brace is not a name, and nothing has been consumed.
         return None;
     }
 
     // `$?` is the last exit status: one character, and not an identifier.
-    if chars.peek() == Some(&'?') {
-        chars.next();
-        return Some("?".to_owned());
+    if chars.get(from) == Some(&'?') {
+        return Some(("?".to_owned(), from + 1));
     }
 
+    let mut index = from;
     let mut name = String::new();
-    while let Some(&character) = chars.peek() {
+    while let Some(&character) = chars.get(index) {
         let acceptable = if name.is_empty() {
             character.is_alphabetic() || character == '_'
         } else {
@@ -121,13 +144,18 @@ fn read_name(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<Str
             break;
         }
         name.push(character);
-        chars.next();
+        index += 1;
     }
     // A trailing `.` belongs to the surrounding text, not to the name.
     while name.ends_with('.') {
         name.pop();
+        index -= 1;
     }
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some((name, index))
+    }
 }
 
 /// Resolves `$name`: `env.NAME` names the environment explicitly; a bare name is a binding first

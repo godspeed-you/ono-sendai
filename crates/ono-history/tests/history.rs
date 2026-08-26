@@ -273,3 +273,102 @@ fn should_report_a_history_it_cannot_write_rather_than_losing_entries_silently()
     let opened = History::open(&path, Policy::default());
     assert!(opened.is_err(), "an unusable history path must be reported");
 }
+
+#[test]
+fn should_redact_the_obvious_secrets_before_anyone_configures_it_to() {
+    // Spec §17.5 requires that secrets not reach history. An empty default pattern list would
+    // mean the mechanism worked and the product did not: nobody configures redaction before the
+    // first time it would have mattered.
+    let dir = scratch();
+    let path = dir.path().join("history.jsonl");
+    let mut history = history_at(&path);
+
+    for command in [
+        "deploy --password=hunter2 --host prod",
+        "curl --token abc123xyz https://example",
+        "AWS_SECRET_ACCESS_KEY=s3kr1t terraform apply",
+        "run --api-key=deadbeef",
+    ] {
+        history.record(
+            command,
+            Path::new("/"),
+            Outcome::new(ExitStatus::SUCCESS, Duration::ZERO),
+        );
+    }
+    history.flush().expect("write");
+
+    let written = std::fs::read_to_string(&path).expect("read back");
+    for secret in ["hunter2", "abc123xyz", "s3kr1t", "deadbeef"] {
+        assert!(
+            !written.contains(secret),
+            "`{secret}` reached the history file:\n{written}"
+        );
+    }
+    // The rest of each command survives, or the entry would be useless for recall.
+    for kept in ["deploy", "prod", "curl", "terraform apply", "run"] {
+        assert!(written.contains(kept), "`{kept}` was lost:\n{written}");
+    }
+}
+
+#[test]
+fn should_not_redact_ordinary_text_that_merely_mentions_a_secret() {
+    // A pattern that fires on ordinary text teaches people to turn redaction off, which is worse
+    // than not having it.
+    let dir = scratch();
+    let path = dir.path().join("history.jsonl");
+    let mut history = history_at(&path);
+    for command in [
+        "grep password /etc/config",
+        "cat secrets.md",
+        "echo my token is safe",
+    ] {
+        history.record(
+            command,
+            Path::new("/"),
+            Outcome::new(ExitStatus::SUCCESS, Duration::ZERO),
+        );
+    }
+    history.flush().expect("write");
+
+    let texts: Vec<&str> = history.entries().iter().map(|e| e.command_text()).collect();
+    assert_eq!(
+        texts,
+        vec![
+            "grep password /etc/config",
+            "cat secrets.md",
+            "echo my token is safe"
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn should_keep_the_history_readable_only_by_its_owner() {
+    // A shell's history is a record of what someone did on the machine, and a person's habits are
+    // often more revealing than any single command. At the usual umask it would land as 0644 —
+    // readable by every account on a shared host.
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch();
+    let path = dir.path().join("state/ono/history.jsonl");
+    let mut history = history_at(&path);
+    record(&mut history, "get process");
+    history.flush().expect("write");
+
+    let mode = std::fs::metadata(&path)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "the history file is 0o{mode:o}, not 0o600");
+
+    let directory = std::fs::metadata(path.parent().expect("a parent"))
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        directory, 0o700,
+        "the state directory is 0o{directory:o}, not 0o700"
+    );
+}

@@ -32,6 +32,50 @@ use ono_value::{
 /// A test that waits must fail rather than stall the suite, so every await is bounded.
 pub const LIMIT: Duration = Duration::from_secs(20);
 
+/// A throwaway directory for one test, beside the build rather than in the system temp directory.
+///
+/// `CARGO_TARGET_TMPDIR` is Cargo's own scratch space for integration tests. Using it rather than
+/// `/tmp` keeps the trust-store suites from depending on a property of the machine that runs them
+/// — a full or quota-bound system temp directory — which AGENTS.md §11 rules out.
+#[derive(Debug)]
+pub struct Scratch {
+    path: std::path::PathBuf,
+}
+
+/// Creates a scratch directory unique to this process and call.
+pub fn scratch() -> Scratch {
+    use std::sync::atomic::AtomicU64;
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("ono-protocol-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&path)
+        .unwrap_or_else(|error| panic!("cannot create {}: {error}", path.display()));
+    Scratch { path }
+}
+
+impl Scratch {
+    /// The directory's path.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// Writes `contents` to `relative` and returns its path.
+    pub fn write(&self, relative: &str, contents: impl AsRef<[u8]>) -> std::path::PathBuf {
+        let target = self.path.join(relative);
+        std::fs::write(&target, contents)
+            .unwrap_or_else(|error| panic!("cannot write {}: {error}", target.display()));
+        target
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        // A failure here must not mask the test's own outcome.
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
 /// Runs `future` under a hard timeout.
 pub async fn within<F: Future>(future: F) -> F::Output {
     match tokio::time::timeout(LIMIT, future).await {

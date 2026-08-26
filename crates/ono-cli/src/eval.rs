@@ -76,6 +76,11 @@ pub fn run_program(
         if let Some(status) = session.leaving() {
             return status;
         }
+        // Reap whatever finished while that statement ran. Without this a script that backgrounds
+        // work accumulates a zombie per job for the life of the process — the interactive loop
+        // polls between prompts, and a script has no prompts. `waitpid` with `WNOHANG` costs one
+        // syscall that finds nothing when there is nothing.
+        let _ = session.executor().poll_jobs();
     }
     session.status()
 }
@@ -309,30 +314,68 @@ fn run_stage_list(
         && let Some(stage) = list.stages.first()
         && let Some(name) = builtin_name(session, stage)
     {
+        // The configuration check comes before the command runs, and covers builtins as well as
+        // external programs. Only the declarative ones are allowed: ADR-0010 says configuration
+        // "sets values, defines functions and aliases", and a check that stopped `touch` while
+        // letting `cd`, `exit` and `jobs` through would be a claim the code did not keep.
+        if session.mode() == Mode::Config && !builtin::allowed_in_config(name) {
+            return Err(Flow::Failed(config_refusal(name)));
+        }
+        // A builtin writes through the shell's own output, so a redirection has to be applied
+        // here rather than by a child that does not exist. Silently ignoring it would send the
+        // output to the terminal while the user was told it went to a file.
+        if let Some(redirection) = stage.redirections.first() {
+            return Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`{name}` runs in the shell itself and cannot be redirected"),
+                )
+                .with_help(format!(
+                    "`{name}` has no child process to redirect. Send it through a command that \
+                     does: `{name} | to text > file`. The redirection at {} was not applied.",
+                    redirection.span
+                )),
+            ));
+        }
+
         let arguments = stage_arguments(session, stage, source)?;
         return builtin::run(session, name, &arguments);
+    }
+
+    // A builtin in a longer pipeline used to be handed to `exec`, which reported it as not found
+    // and then reported the pipeline as successful. Where the name also exists as a program —
+    // `true`, `false` — the program is what runs, which is what every other shell does and what
+    // keeps `false | true` meaningful. Where it does not, saying so plainly is the least
+    // surprising answer: `cd` changes the shell, so there is no process for a pipe to attach to.
+    for stage in &list.stages {
+        if let Some(name) = builtin_name(session, stage)
+            && stage
+                .head
+                .name()
+                .and_then(|head| resolve::find_on_path(session, head))
+                .is_none()
+        {
+            return Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`{name}` runs in the shell itself and cannot be a pipeline stage"),
+                )
+                .with_help(
+                    "the shell's own commands change the shell, so there is no process for a pipe \
+                     to attach to",
+                ),
+            ));
+        }
+    }
+
+    if session.mode() == Mode::Config {
+        return Err(Flow::Failed(config_refusal("this command")));
     }
 
     let mut built = ono_process::Pipeline::new();
     for stage in &list.stages {
         built = built.stage(build_command(session, stage, source)?);
     }
-
-    if session.mode() == Mode::Config {
-        return Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::SafetyPolicyDenied,
-                "a configuration file may not run a command",
-            )
-            .with_help(
-                "configuration is declarative: it sets values, defines functions and aliases, and \
-                 runs nothing (ADR-0010)",
-            ),
-        ));
-    }
-
-    let cwd = session.cwd().to_path_buf();
-    let _ = cwd;
 
     if background {
         let id = session
@@ -407,6 +450,19 @@ fn is_type_name(name: &str) -> bool {
     )
 }
 
+/// Why a configuration file may not run `what` (ADR-0010).
+fn config_refusal(what: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::SafetyPolicyDenied,
+        format!("a configuration file may not run {what}"),
+    )
+    .with_help(
+        "configuration is declarative: it sets values with `set`, removes them with `remove`, and \
+         defines functions and aliases. It runs nothing else — not an external command, and not \
+         one of the shell's own (ADR-0010).",
+    )
+}
+
 fn process_error(error: ono_process::Error) -> Flow {
     Flow::Failed(ErrorValue::new(error.code(), error.message().to_owned()))
 }
@@ -426,6 +482,10 @@ fn builtin_name(session: &Session, stage: &Stage) -> Option<&'static str> {
 }
 
 /// Builds the external command one stage describes.
+///
+/// Everything that reaches here becomes a child process — a stage the shell runs itself has
+/// already been handled — so a name that is both a builtin and a program on `PATH` resolves to
+/// the program. That is what keeps `false | true` meaningful.
 fn build_command(session: &mut Session, stage: &Stage, source: &str) -> Eval<Command> {
     let StageHead::Command(name) = &stage.head else {
         return Err(Flow::Failed(ErrorValue::new(
@@ -446,6 +506,13 @@ fn build_command(session: &mut Session, stage: &Stage, source: &str) -> Eval<Com
             .with_help("the namespaces are `ono:`, `exec:` and `fn:` (ADR-0011)"),
         )
     })?;
+
+    let namespace =
+        if namespace == Namespace::Any && resolve::BUILTINS.contains(&name.name.as_str()) {
+            Namespace::External
+        } else {
+            namespace
+        };
 
     let resolution = resolve::resolve(session, namespace, &name.name).map_err(|error| {
         let suggestions = resolve::suggestions(session, &name.name);

@@ -211,3 +211,48 @@ fn should_expand_a_variable_in_a_redirection_target() {
     run.assert_success();
     assert_eq!(dir.read("out.txt"), "written\n");
 }
+
+#[test]
+fn should_keep_the_text_after_an_unclosed_brace_rather_than_eating_it() {
+    // An earlier version drained the word looking for the `}` and dropped what it had read, so
+    // `cp report.txt ${dest` silently became `cp report.txt $` — writing to a file named `$`.
+    // Silent data loss inside an argument is the class of surprise ADR-0019 exists to remove.
+    let run = ono("printf '[%s]' a${HOMEb");
+    run.assert_success();
+    assert_eq!(run.stdout(), "[a${HOMEb]");
+
+    let run = ono("printf '[%s]' pre${x");
+    run.assert_success();
+    assert_eq!(run.stdout(), "[pre${x]");
+
+    let run = ono("printf '[%s]' ${}");
+    run.assert_success();
+    assert_eq!(run.stdout(), "[${}]", "an empty name is not a name");
+}
+
+#[test]
+fn should_find_a_relative_path_entry_from_where_the_shell_is_standing() {
+    // The shell stat'd a relative `PATH` entry against the *process's* directory and then ran the
+    // child in the *session's*, so after a `cd` the two disagreed: `explain foo` named one binary
+    // and `foo` ran another. ADR-0015 T11 makes that report the only defence against a shadowing
+    // binary, so a report that does not describe the resolution is worse than none.
+    let dir = scratch();
+    dir.write("here/bin/only-here", "#!/bin/sh\necho found-in-here\n");
+    let program = dir.path().join("here/bin/only-here");
+    let mut permissions = std::fs::metadata(&program).expect("metadata").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&program, permissions).expect("chmod");
+
+    // Start somewhere else entirely, then `cd` into the directory the relative entry is relative
+    // to. Only a lookup that follows the session finds it.
+    let run = Shell::new()
+        .args([
+            "-c",
+            &format!("cd {}/here\nonly-here", dir.path().display()),
+        ])
+        .env("PATH", "bin")
+        .cwd("/")
+        .run();
+    run.assert_success();
+    assert_eq!(run.stdout(), "found-in-here\n");
+}

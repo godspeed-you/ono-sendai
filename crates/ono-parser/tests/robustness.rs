@@ -172,3 +172,40 @@ fn should_stay_far_inside_the_parse_budget_when_an_ordinary_line_is_parsed() {
         "1000 parses of an ordinary line took {elapsed:?}; spec §34 budgets under 5 ms for one"
     );
 }
+
+#[test]
+fn should_refuse_deeply_nested_blocks_rather_than_overflowing_the_stack() {
+    // A block contains statements and a statement contains a block, so statement nesting recurses
+    // just as expression nesting does. Unguarded, `if true { if true { … } }` a couple of thousand
+    // deep aborted the process — and this parser runs on every keystroke in the editor, so that is
+    // one pasted line away from killing a login shell.
+    //
+    // The earlier test named for this repeated `{` 2000 times, which never enters block recursion
+    // at all: it passed while the thing it named was broken.
+    for depth in [500usize, 3_000, 20_000] {
+        let source = format!(
+            "if true {}{}",
+            "{ if true ".repeat(depth),
+            "}".repeat(depth + 1)
+        );
+        let parsed = ono_parser::parse(&source);
+        // What matters is that it returns at all, with a tree and a diagnostic rather than a
+        // crash. Whether it is called incomplete or wrong is the parser's business.
+        assert!(
+            !parsed.program().statements.is_empty() || !parsed.diagnostics().is_empty(),
+            "a {depth}-deep nesting produced neither a tree nor a diagnostic"
+        );
+    }
+}
+
+#[test]
+fn should_refuse_deeply_nested_function_bodies_and_loops_too() {
+    for opener in ["fn f() ", "while true ", "for x in [1] "] {
+        let source = format!("{}{}{}", opener, "{ ".repeat(5_000), "}".repeat(5_000));
+        let parsed = ono_parser::parse(&source);
+        assert!(
+            !parsed.diagnostics().is_empty() || !parsed.program().statements.is_empty(),
+            "{opener} nested deeply produced nothing at all"
+        );
+    }
+}

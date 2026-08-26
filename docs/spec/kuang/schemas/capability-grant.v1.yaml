@@ -1,0 +1,121 @@
+# CapabilityGrant. Source: spec §31.17 (declaration classes), §31.18 (durations and the grant
+# prompt), §31.19 (storage, policy and precedence), §31.40 (remote projection), §31.49 (leases).
+# Output of `get capability` and `grant capability`
+# (`docs/spec/commands/kuang.yaml` → `ono.capability.get`, `ono.capability.grant`).
+#
+# One record covers a standing grant and a lease, because a lease is a grant with an expiry, a
+# use count and a condition — and because an operator asking "what does this package hold?" must
+# get one answer, not two lists that have to be reconciled.
+#
+# Spec §31.18: "'Always' grants MUST be inspectable and revocable." This record is the
+# inspectable part.
+id: ono.capability-grant/1
+name: CapabilityGrant
+summary: What one KUANG/11 package is permitted to do, in what scope, for how long.
+identity: [id]
+fields:
+  id:
+    type: uuid
+    required: true
+    doc: The grant's own identity, so it can be revoked and cited precisely.
+  plugin:
+    type: ref<ono.plugin/1>
+    required: true
+    doc: The package the grant is made to. A grant is never to a publisher or to a class of packages.
+  capability:
+    type: string
+    required: true
+    doc: The capability id, from `kuang_capabilities` in `docs/spec/capabilities.yaml`.
+  class:
+    type: enum
+    required: true
+    values: [required, optional, runtime-requested]
+    doc: How the package declared it (spec §31.17). A `required` denial blocks the load; an `optional` denial degrades it.
+  decision:
+    type: enum
+    required: true
+    values: [allow, deny, ask]
+    doc: >-
+      The standing answer. `ask` is not a grant: it prompts, once, per the requirements of spec
+      §31.18, and resolves to `deny` where no one can be asked.
+  scope:
+    type: record
+    nullable: true
+    doc: >-
+      The scope keys the capability declares, e.g. `{paths: ["/var/log/nginx/**"]}`. Null means
+      unscoped. A key the capability does not declare is invalid, not ignored.
+  enforcement:
+    type: enum
+    required: true
+    values: [broker, advisory, none]
+    doc: >-
+      Whether the scope is checked at every call, merely recorded, or absent because the
+      capability has no scope. Spec §31.16: a scope that cannot be enforced reliably MUST NOT be
+      offered as if it were a security boundary, so this field is shown wherever the scope is.
+  duration:
+    type: enum
+    required: true
+    values: [once, command, view, session, link-session, always]
+    doc: The durations of spec §31.18. Everything but `always` lives only in the session.
+  granted_at:
+    type: timestamp
+    required: true
+    doc: When the decision was made.
+  expires_at:
+    type: timestamp
+    nullable: true
+    doc: >-
+      When it stops working. Null for a grant with no expiry; a grant with one is a lease
+      (spec §31.49) and every field below applies to it.
+  max_uses:
+    type: int
+    nullable: true
+    doc: How many times the lease may be used. Null means unlimited within its window.
+  uses:
+    type: int
+    required: true
+    doc: How many times it has been used. A count, never null.
+  actions:
+    type: list<string>
+    nullable: true
+    doc: >-
+      The operations permitted, e.g. `[restart]` (spec §31.49). Null means every operation the
+      capability allows — which a lease should rarely choose.
+  selector:
+    type: string
+    nullable: true
+    doc: >-
+      The objects a lease reaches, e.g. `"host=staging-3 service=staging-api"` (spec §31.49).
+      Evaluated by the host at each use, against the object it is about to act on.
+  condition:
+    type: string
+    nullable: true
+    doc: A probe or policy reference that must hold at each use. Null means unconditional.
+  source:
+    type: enum
+    required: true
+    values: [system-policy, user-policy, session, prompt, default]
+    doc: >-
+      Which layer produced the decision, in the precedence order of spec §31.19. It is what lets
+      an operator see why a grant they did not make exists.
+  link:
+    type: string
+    nullable: true
+    doc: >-
+      The link the grant applies to, for a remote projection. Null for a local grant. A local
+      grant does not become a remote one; effective authority is the intersection of both
+      sides' policy (spec §31.40).
+  purpose:
+    type: string
+    nullable: true
+    doc: >-
+      What the package said it needed the capability for, as shown in the prompt (spec §31.18).
+      Package-authored, sanitised, and attributed to the package rather than to Ono.
+  revoked_at:
+    type: timestamp
+    nullable: true
+    doc: >-
+      When it was revoked. Null while it stands. A revoked grant is retained rather than deleted,
+      so the record of what was once permitted survives.
+default_view:
+  columns: [plugin, capability, scope, duration, decision, expires_at]

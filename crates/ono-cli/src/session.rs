@@ -250,4 +250,14 @@ impl Session {
     pub fn leaving(&self) -> Option<ExitStatus> {
         self.leaving
     }
+
+    /// Withdraws a request to leave.
+    ///
+    /// Used after reading configuration: a configuration file must not be able to end the session
+    /// it is configuring. Without this, an `exit` in `config.ono` would replace the status of
+    /// every command the shell ever ran and short-circuit every statement after the first
+    /// (ADR-0010).
+    pub fn stay(&mut self) {
+        self.leaving = None;
+    }
 }

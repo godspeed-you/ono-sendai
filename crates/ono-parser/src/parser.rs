@@ -797,7 +797,57 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses `{ statements }`, with the `{` still unconsumed.
+    ///
+    /// Statement nesting is depth-limited for the same reason expression nesting is: a block
+    /// contains statements, a statement contains a block, and `if true { if true { … } }` nested
+    /// a couple of thousand deep would otherwise overflow the stack and abort the process. This
+    /// parser runs on every keystroke in the editor, so that is one pasted line away from killing
+    /// a login shell.
     fn parse_block(&mut self) -> Block {
+        if self.depth >= MAX_DEPTH {
+            let open = self.bump(LexMode::Words);
+            self.report(Diagnostic::syntax(
+                open.span,
+                "this block nests more deeply than the parser will follow",
+            ));
+            // Skip to the matching close without descending, so the rest of the line still
+            // parses and the tree is still returned.
+            let end = self.skip_balanced_block();
+            return Block {
+                statements: Vec::new(),
+                span: open.span.join(end),
+            };
+        }
+        self.depth += 1;
+        let block = self.parse_block_inner();
+        self.depth -= 1;
+        block
+    }
+
+    /// Consumes tokens up to the `}` that closes the block whose `{` was just taken.
+    ///
+    /// Counting braces rather than recursing is the point: the input that gets here is the input
+    /// that was too deep to recurse through.
+    fn skip_balanced_block(&mut self) -> Span {
+        let mut open_braces = 1usize;
+        loop {
+            let token = self.peek(LexMode::Words);
+            match token.kind {
+                TokenKind::Eof => return token.span,
+                TokenKind::LBrace => open_braces += 1,
+                TokenKind::RBrace => {
+                    open_braces -= 1;
+                    if open_braces == 0 {
+                        return self.bump(LexMode::Words).span;
+                    }
+                }
+                _ => {}
+            }
+            self.bump(LexMode::Words);
+        }
+    }
+
+    fn parse_block_inner(&mut self) -> Block {
         let open = self.bump(LexMode::Words);
         let mut statements = Vec::new();
         let end;

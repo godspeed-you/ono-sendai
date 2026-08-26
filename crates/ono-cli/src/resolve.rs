@@ -115,17 +115,30 @@ pub fn find_on_path(session: &Session, name: &str) -> Option<PathBuf> {
 
     let path = session.env_var("PATH")?;
     for directory in std::env::split_paths(path) {
-        let directory = if directory.as_os_str().is_empty() {
-            session.cwd().to_path_buf()
-        } else {
-            directory
-        };
-        let candidate = directory.join(name);
+        let candidate = search_directory(session, &directory).join(name);
         if is_executable_file(&candidate) {
             return Some(candidate);
         }
     }
     None
+}
+
+/// One `PATH` entry, resolved against the directory the shell is actually standing in.
+///
+/// An empty entry means the working directory, as everywhere else. A *relative* entry means a
+/// directory relative to the working directory — and it is the shell's, not the process's. Those
+/// differ the moment `cd` runs, and when they did, `explain foo` reported one binary while `foo`
+/// ran another: the shell stat'd the entry against the process's directory and then spawned the
+/// child in the session's. A resolution report that does not describe the resolution is worse
+/// than none, because ADR-0015 T11 makes it the only defence against a shadowing binary.
+fn search_directory(session: &Session, entry: &Path) -> PathBuf {
+    if entry.as_os_str().is_empty() {
+        return session.cwd().to_path_buf();
+    }
+    if entry.is_relative() {
+        return session.cwd().join(entry);
+    }
+    entry.to_path_buf()
 }
 
 /// Whether the path is a file anyone could plausibly execute.
@@ -149,7 +162,8 @@ pub fn candidates(session: &Session, prefix: &str) -> Vec<String> {
         .collect();
 
     if let Some(path) = session.env_var("PATH") {
-        for directory in std::env::split_paths(path) {
+        for entry in std::env::split_paths(path) {
+            let directory = search_directory(session, &entry);
             let Ok(entries) = std::fs::read_dir(&directory) else {
                 continue;
             };

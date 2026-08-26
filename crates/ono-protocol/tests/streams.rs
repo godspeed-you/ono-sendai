@@ -249,8 +249,7 @@ async fn should_refuse_to_open_more_streams_than_the_limit_allows() {
     let refused = fixture
         .link
         .query(&RemoteQuery::target("endless"))
-        .err()
-        .expect("a third stream is over the limit");
+        .expect_err("a third stream is over the limit");
     assert_eq!(
         refused.code(),
         ErrorCode::RemoteProtocolMismatch,
@@ -360,16 +359,15 @@ async fn should_report_the_link_as_lost_when_the_remote_end_goes_away() {
     let error = fixture
         .link
         .query(&RemoteQuery::target("demo"))
-        .err()
-        .expect("a query cannot be opened on a link that is gone");
+        .expect_err("a query cannot be opened on a link that is gone");
     assert_eq!(error.code(), ErrorCode::RemoteUnreachable);
 }
 
 #[tokio::test]
-async fn should_count_a_credit_grant_against_the_limit() {
-    let observed = ono_protocol::Limits::default();
+async fn should_cap_the_credit_window_at_the_limit_however_much_is_asked_for() {
+    let limits = ono_protocol::Limits::default();
     assert!(
-        observed.max_credit() > 0,
+        limits.max_credit() > 0,
         "a window of zero would deadlock every stream"
     );
     // A peer asking for more credit than the limit gets the limit, never the ask: the window is
@@ -382,6 +380,10 @@ async fn should_count_a_credit_grant_against_the_limit() {
     .await
     .expect("the handshake succeeds");
 
-    assert!(fixture.link.negotiated().credit_window() <= observed.max_credit());
-    assert_eq!(fixture.observed.sent.load(Ordering::SeqCst), 0);
+    assert!(fixture.link.negotiated().credit_window() <= limits.max_credit());
+    assert_eq!(
+        fixture.observed.sent.load(Ordering::SeqCst),
+        0,
+        "nothing is produced until something is asked for"
+    );
 }

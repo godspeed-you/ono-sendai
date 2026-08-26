@@ -3,10 +3,11 @@
 
 mod common;
 
-use common::{impostor_key, pinning_client_config, server_config, server_key, try_connect};
+use common::{
+    impostor_key, pinning_client_config, scratch, server_config, server_key, try_connect,
+};
 use ono_core::ErrorCode;
 use ono_protocol::{HostKey, TrustDecision, TrustPolicy, TrustStore};
-use ono_testkit::scratch;
 
 #[tokio::test]
 async fn should_pin_the_peer_key_on_the_first_connection() {
@@ -141,8 +142,7 @@ fn should_replace_a_pin_only_when_asked_to_deliberately() {
 
     let refused = store
         .pin("db.example.com", &impostor_key())
-        .err()
-        .expect("pinning over a different key is refused");
+        .expect_err("pinning over a different key is refused");
     assert_eq!(refused.code(), ErrorCode::RemoteHostKeyChanged);
 
     store
@@ -217,8 +217,7 @@ fn should_refuse_a_trust_store_line_it_cannot_understand() {
     let path = scratch.write("trust", "db.example.com ed25519\n");
 
     let error = TrustStore::open(&path)
-        .err()
-        .expect("a malformed store is refused rather than silently half-loaded");
+        .expect_err("a malformed store is refused rather than silently half-loaded");
 
     assert_eq!(error.code(), ErrorCode::ParseSyntax);
     assert!(

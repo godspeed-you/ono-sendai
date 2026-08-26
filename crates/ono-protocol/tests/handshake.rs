@@ -120,14 +120,13 @@ async fn should_report_an_unreachable_peer_when_the_transport_ends_before_the_ha
         client_config("testhost"),
     ))
     .await
-    .err()
-    .expect("a peer that is not there cannot be handshaken with");
+    .expect_err("a peer that is not there cannot be handshaken with");
 
     assert_eq!(error.code(), ErrorCode::RemoteUnreachable);
 }
 
 #[tokio::test]
-async fn should_report_an_unreachable_peer_when_the_transport_answers_with_rubbish() {
+async fn should_report_a_protocol_mismatch_when_the_transport_answers_with_rubbish() {
     let (near, far) = tokio::io::duplex(1024);
     tokio::spawn(async move {
         use tokio::io::AsyncWriteExt as _;
@@ -145,8 +144,7 @@ async fn should_report_an_unreachable_peer_when_the_transport_answers_with_rubbi
         client_config("testhost"),
     ))
     .await
-    .err()
-    .expect("a peer that does not speak the protocol cannot be linked to");
+    .expect_err("a peer that does not speak the protocol cannot be linked to");
 
     assert_eq!(
         error.code(),

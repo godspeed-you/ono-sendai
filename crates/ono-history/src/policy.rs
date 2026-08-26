@@ -114,13 +114,33 @@ impl Policy {
     }
 }
 
+/// The secrets a shell redacts before it has been configured to redact anything.
+///
+/// Spec §17.5 requires that secrets not reach history, and an empty default list would mean the
+/// mechanism worked and the product did not: nobody configures redaction before the first time it
+/// would have mattered. These are the spellings a secret actually arrives in on a command line —
+/// an option with a value, or an assignment — and each replaces only the value, so the command
+/// stays readable and only the part that must not be kept is gone.
+///
+/// The list is deliberately short. A pattern that fires on ordinary text would teach people to
+/// turn redaction off, which is worse than not having it.
+const DEFAULT_REDACTIONS: &[&str] = &[
+    // `--password=hunter2`, `--api-key hunter2`, `-p=hunter2`
+    r"(?i)--?(password|passwd|pass|token|secret|api[-_]?key|access[-_]?key|auth|credential)[=\s]+(\S+)",
+    // `PASSWORD=hunter2`, `AWS_SECRET_ACCESS_KEY=…` — an assignment anywhere in the line.
+    r"(?i)\b([A-Z0-9_]*(PASSWORD|TOKEN|SECRET|API_?KEY|CREDENTIAL)[A-Z0-9_]*)=(\S+)",
+];
+
 impl Default for Policy {
     fn default() -> Self {
         Self {
             max_entries: DEFAULT_MAX_ENTRIES,
             collapse_repeats: false,
             hide_leading_space: true,
-            redactions: Vec::new(),
+            redactions: DEFAULT_REDACTIONS
+                .iter()
+                .filter_map(|pattern| Regex::new(pattern).ok())
+                .collect(),
         }
     }
 }

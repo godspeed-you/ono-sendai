@@ -10,8 +10,13 @@ use ono_protocol::{
     ActRequest, Limits, Message, ProtocolError, RemoteQuery, decode_message, encode_message,
 };
 use ono_provider_api::{ActionOutcome, EventKind, ObjectEvent, ObjectId, Selector};
-use ono_value::{ActionStatus, ByteSize, ErrorValue, SchemaId, Value};
+use ono_value::{ActionStatus, ByteSize, Duration, ErrorValue, SchemaId, Value};
 
+/// Encodes a message and decodes it back, the way a link does.
+#[allow(
+    clippy::expect_used,
+    reason = "a helper outside a #[test] body states its preconditions the same way a test does"
+)]
 fn round_trip(message: &Message) -> Message {
     let payload = encode_message(message, &Limits::default()).expect("the message encodes");
     decode_message(message.kind(), &payload, &schemas(), &Limits::default())
@@ -159,6 +164,23 @@ fn should_round_trip_every_action_outcome_status() {
     assert_eq!(
         ActionOutcome::skipped(&action, "x").status(),
         ActionStatus::Skipped
+    );
+}
+
+#[test]
+fn should_carry_the_note_an_outcome_gives_for_skipping() {
+    let object = ObjectId::new(SchemaId::new("ono.test.remote", 1), [Value::Int(4419)]);
+    let action = ActRequest::new("process", "stop", object).to_action();
+    let skipped = ActionOutcome::skipped(&action, "the process had already exited");
+
+    let Message::Outcome(decoded) = round_trip(&Message::Outcome(skipped)) else {
+        panic!("an outcome decodes as an outcome");
+    };
+
+    assert_eq!(
+        decoded.into_record(Duration::from_nanoseconds(0)).message(),
+        Some("the process had already exited"),
+        "spec §11.5: why an action was skipped is part of the answer, not decoration"
     );
 }
 

@@ -271,6 +271,166 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ---
 
+## Known defects (found by adversarial review, 2026-08-26)
+
+An independent review agent was asked to falsify the implementation rather than describe it, as
+AUTONOMOUS_IMPLEMENTATION.md §18 requires. It found these, each with a reproduction it ran. They
+are release-blocking until fixed and each needs a regression test that fails before the fix.
+
+- [ ] **R1 — nested blocks overflow the stack.** `if true { if true { … } }` nested about 2000
+      deep aborts the process with SIGABRT. `MAX_DEPTH` in `crates/ono-parser/src/parser.rs` is
+      consulted in `parse_stage` and in the expression parser but not in `parse_block`, so
+      statement recursion is unguarded. The parser claims never to panic and always to return a
+      tree, and it runs on every keystroke in the editor — one pasted line kills a login shell.
+      `crates/ono-parser/tests/robustness.rs` has a test named for this that repeats `{` 2000
+      times, which never enters block recursion: it passes while the thing it names is broken.
+- [ ] **R2 — `exit` in a configuration file hijacks the whole session.** `config::load` runs the
+      config in the same `Session`, so `exit 3` there sets `session.leaving`, which is never
+      cleared. Every later statement short-circuits and every command's status is replaced.
+      Breaks ADR-0008 ("an external command's status is passed through unchanged") and ADR-0010
+      ("a bad setting never stops the shell from starting").
+- [ ] **R3 — configuration mode stops external commands only.** The single-builtin fast path in
+      `crates/ono-cli/src/eval.rs` returns before the `Mode::Config` check, so `cd`, `remove env`,
+      `help`, `jobs`, `fg`, `bg` and `exit` all run from a config file. The error text the code
+      itself prints says configuration "runs nothing". `028-config-is-restricted` only tries
+      `touch`, so it does not prove what it claims.
+- [ ] **R4 — a builtin ignores its redirections and cannot be piped.** `help > out.txt` prints to
+      stdout and writes no file; `help | cat` reports `resolve.command_not_found` for `help` and
+      then reports success.
+- [ ] **R5 — an unterminated `${` eats the rest of the word.** `printf '[%s]' a${HOMEb` yields
+      `[a$]`. `crates/ono-cli/src/expand.rs` drains the iterator looking for `}` and drops what it
+      consumed, while its own comment says the text is kept as typed. Silent data loss inside an
+      argument, which is the class of surprise ADR-0019 exists to remove.
+- [ ] **R6 — background children are only reaped when `jobs`/`fg`/`bg` runs.** A script that
+      backgrounds 100 commands leaves 100 zombies, because `poll_jobs` is called only from the
+      interactive loop and from the `jobs` builtin.
+- [ ] **R7 — a bad shebang reports 127 rather than 126.** `crates/ono-process/src/spawn.rs` maps
+      every `ENOENT` from `exec` to `NOT_FOUND` without distinguishing the program from its
+      interpreter. ADR-0008's table and every other shell say 126.
+- [ ] **R8 — a parse error echoes the whole source line.** A 100 000-character line produces a
+      98 KB error message; the shown line needs a budget and an ellipsis.
+
+What the review tried hard to break and could not, which is worth keeping: ADR-0019's rule that a
+value's content never becomes a command's structure held under filenames containing spaces,
+newlines, quotes, `$`, `*`, backslashes and raw escape bytes; file-descriptor hygiene is correct
+including the fd-shuffle most hand-written shells get wrong; and the `pre_exec` SAFETY claim of
+ADR-0007 is accurate as written.
+
+### From the security review (ADR-0015 checklist)
+
+Release-blocking. Each was reproduced by the reviewer against the built binary.
+
+- [ ] **F1 — `explain` prints attacker-controlled escape sequences raw.** A program name on `PATH`
+      containing an OSC sequence retitles the terminal when `explain` reports it, and the bytes
+      survive redirection into a file. `crates/ono-cli/src/builtin.rs` and
+      `crates/ono-command/src/explain.rs` echo stage source and resolved paths without sanitising.
+      ADR-0015 T1/T9/T11. The row's named acceptance case uses the benign name `ls`.
+- [ ] **F2 — structured error messages are not sanitised.** Only the code and the help line are
+      painted through the theme; `error.message()` is written raw
+      (`crates/ono-cli/src/report.rs`). `cd` into a directory whose name carries an OSC sequence
+      retitles the window. ADR-0015 T1.
+- [ ] **F3 — a parse diagnostic sanitises the echoed line but not its own message.**
+      `crates/ono-cli/src/report.rs`. ADR-0015 T1.
+- [ ] **F4 — `sanitise` lets `\n` and `\t` through, so a value forges a table row.** A cell
+      containing `"evil\nroot      1"` renders as two terminal lines, the second indistinguishable
+      from a real row. Widths are also measured on unsanitised text, so escapes misalign columns.
+      `crates/ono-render/src/theme.rs`. ADR-0015 T1.
+- [ ] **F6 — resolution and execution disagree about a relative `PATH` entry.** `explain` stats a
+      relative entry against the *process* working directory while the command runs with the
+      *session's*, so `explain foo` reports one binary and `foo` runs another after a `cd`.
+      `crates/ono-cli/src/resolve.rs` versus `crates/ono-cli/src/eval.rs`. ADR-0015 T10/T11 — it
+      defeats that row's only stated mitigation.
+- [ ] **F7 — the history file is world-readable and ships with no redaction patterns.** Created at
+      the ambient umask (0644, in a 0755 directory), and `Policy::default()` has an empty pattern
+      list, so `deploy --password=hunter2` is stored verbatim. ADR-0015 T8; the row's named test
+      supplies its own pattern, so it proves the mechanism rather than the product.
+      `crates/ono-history/src/{store,policy}.rs`, `crates/ono-cli/src/repl.rs`.
+
+Should-fix:
+
+- [ ] **F9 — `ui.prompt.root` is defined and never used; T15 has no implementation.** No privilege
+      check exists anywhere in the workspace, and the prompt is byte-identical for uid 0 and an
+      unprivileged user. Spec §17.2 requires elevation to be impossible to miss. Nothing elevates
+      either, so there is no live escalation — the row is unbuilt rather than broken.
+- [ ] **F10 — the parser is quadratic on unbalanced nesting.** Depth is bounded but time is not:
+      2 000 open parentheses take 0.30 s and 20 000 take 24.8 s in a debug build, cleanly 4× per
+      2×. Reachable from a pasted line, since the editor re-parses per keystroke. Not in the threat
+      model; proposed row: *parser super-linear behaviour on hostile input*.
+- [ ] **F11 — the directory walk holds one open descriptor per pending directory**, with
+      `--recursive` defaulting depth and limit to unbounded. A hostile tree exhausts the
+      descriptor table. `crates/ono-provider-linux/src/file.rs`. Proposed row: *unbounded resource
+      acquisition during traversal*.
+- [ ] **F12 — the trust store's default policy is trust-on-first-use**, which contradicts ADR-0015
+      T5's "an unknown key is refused, not prompted past". `crates/ono-protocol/src/trust.rs`.
+      Either the ADR or the default has to move.
+- [ ] **S1 (F13) — the contract advertises a bulk-mutation guard nothing implements.** Four command
+      contracts (`docs/spec/commands/file.yaml` twice, `network.yaml`, `kuang.yaml`) declare a
+      `confirm` option documented as "without it, a selection over the configured threshold fails
+      with `safety.confirmation_required` in a script (spec §11.6, §17.4)".
+      `ProviderMutation::run` in `crates/ono-command/src/impls/mutate.rs` forwards it verbatim as
+      an opaque argument and contains no threshold and no `safety.confirmation_required` path. A
+      documented safety guard that does not exist is worse than no guard, because someone will
+      rely on it. This is why `docs/ACCEPTANCE.md` §4.4's "destructive operations show scope
+      before acting" cannot be ticked.
+- [ ] **S2 (F8) — `Action::as_dry_run()` is unreachable, and one test encodes the wrong contract.**
+      Nothing constructs a dry run: both call sites in `crates/ono-command/src/impls/mutate.rs`
+      leave it false, no contract declares the option, and the `is_dry_run()` branches in
+      `crates/ono-provider-systemd/src/provider.rs` are dead. Latent rather than live — but
+      declaring `--dry-run` on a contract would make the flag arrive as an ordinary argument and
+      the mutation would *run*. The systemd branches also report a completed change rather than
+      `skipped`, and `crates/ono-provider-systemd/tests/service.rs` asserts that, so the wrong
+      behaviour is currently guarded by a passing test. `ono-provider-linux` does it correctly.
+
+Accepted for now, with the reason recorded so the decision is not re-made by accident:
+
+- **F14** — bidirectional and other format characters pass the sanitiser, because
+  `char::is_control()` covers only the `Cc` category. Trojan-Source display spoofing of a
+  filename. Proposed as an extension of T1.
+- **F15** — an empty `PATH` element resolves to the working directory. Deliberate, matches every
+  other shell, and `explain` prints the absolute path it reached.
+- **F16** — the history and trust-store temporary files are predictable and opened without
+  `O_EXCL`. Only reachable in a directory another user can write, which F7 makes likelier than it
+  should be; fix alongside F7.
+- **F17** — a residual TOCTOU window remains between confirming a process's identity and
+  signalling it. `pidfd_open`/`pidfd_send_signal` would close it; T13 claims only "re-read before
+  signalling", which the code does.
+- **F18** — `O_NOFOLLOW` does not stop `openat` descending into a bind mount;
+  `openat2(RESOLVE_NO_XDEV)` would. T14 claims only that the walk cannot leave the tree *by name*,
+  which holds.
+- **F19** — `is_executable_file` tests `mode & 0o111` rather than `access(X_OK)`.
+- **F20** — `FdPlan::normalise` opens `/dev/null` in a loop up to the target descriptor, so
+  `9999>file` costs ten thousand opens. Self-inflicted.
+
+### What the security review attacked and could not defeat
+
+Worth keeping, because a mitigation that survived a real attempt is the most useful line in a
+security review — and because re-testing these later costs nothing if they are written down:
+
+- **T1/T9 at the render boundary.** `Theme::paint` sanitises *before* choosing colour, so a pipe
+  and a file are covered as well as a terminal; `View::Raw` re-sanitises; every cell, tree node
+  and key goes through it; no setting disables it. `\n` (F4) was the only hole found.
+- **T4, poisoned completion.** Candidates are filenames, never executed, and painted before
+  display.
+- **T7, decoder bombs.** JSON and YAML nesting refused past their depth limits at 200 and beyond;
+  a 3^N YAML alias fan-out refused at N=8; the netlink decoders check every length against the
+  remaining slice and advance by at least one aligned header per step. No overflow, no unbounded
+  allocation, no non-terminating input found.
+- **T13, identity completeness.** No path reaches a signal with a bare pid: every target carries
+  `(pid, started)` from a record or from `providers.resolve()`, and a mismatch refuses.
+- **T14, symlink swap.** Each directory is opened once relative to its parent's held descriptor
+  with `O_NOFOLLOW`, and no path is ever re-resolved. Could not escape the tree by name.
+- **T5/T6, refusal semantics.** A changed key is `remote.host_key_changed` carrying both
+  fingerprints, with no continue-anyway; re-trusting is a separate deliberate act.
+- **ADR-0019, no word splitting.** `has_pattern` is computed from the *source* characters, so a
+  `*` arriving inside a variable's value cannot glob.
+- **Environment propagation.** A child gets the session environment and nothing internal.
+- **ADR-0007's `unsafe` audit.** Seven blocks, all in `ono-process`. The `pre_exec` path calls only
+  `dup2`, `setsid`, `ioctl(TIOCSCTTY)` and `signal`; the one non-libc call,
+  `io::Error::last_os_error()`, builds a non-allocating representation. No `format!`, no lock, no
+  Rust I/O, no panicking index. No signal-mask inheritance across `exec` and no descriptor leak.
+
+---
+
 ## Deferred / blocked
 
 _(empty — an entry here needs a reason, the ignored test's path, and the ADR that states the

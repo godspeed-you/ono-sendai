@@ -36,13 +36,9 @@ fn should_never_panic_when_the_frame_decoder_is_fed_arbitrary_bytes() {
             buffer.extend_from_slice(&[(rng.next_u64() & 0xFF) as u8]);
         }
         let before = buffer.capacity();
-        // The loop drains whatever happens to be decodable, exactly as a connection would.
-        loop {
-            match decode(&mut buffer, &limits()) {
-                Ok(Some(_)) => {}
-                Ok(None) | Err(_) => break,
-            }
-        }
+        // The loop drains whatever happens to be decodable, exactly as a connection would; a
+        // refusal and an incomplete frame both end it, and neither may panic.
+        while let Ok(Some(_)) = decode(&mut buffer, &limits()) {}
         assert!(
             buffer.capacity() <= before.max(FRAME_HEADER_LEN) + 4096,
             "round {round}: the decoder grew its buffer from {before} to {}",
