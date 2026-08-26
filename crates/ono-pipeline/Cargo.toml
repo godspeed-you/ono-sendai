@@ -1,0 +1,22 @@
+[package]
+name = "ono-pipeline"
+description = "The streaming execution engine of the Ono-Sendai shell: backpressure, boundedness, cancellation and the built-in transforms."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

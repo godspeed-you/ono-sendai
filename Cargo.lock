@@ -342,8 +342,13 @@ name = "ono-cli"
 version = "0.0.1"
 dependencies = [
  "ono-core",
+ "ono-editor",
+ "ono-history",
  "ono-parser",
+ "ono-process",
+ "ono-render",
  "ono-testkit",
+ "ono-value",
 ]
 
 [[package]]
