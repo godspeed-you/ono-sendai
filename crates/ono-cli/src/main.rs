@@ -29,6 +29,35 @@ fn main() -> ExitCode {
             eprintln!("try `{} --help`", ono_core::SHORT_NAME);
             ExitStatus::USAGE
         }
+        Invocation::Agent(_) => {
+            // The remote end of a link (spec §21.2): serve this machine's providers over
+            // stdin/stdout. The transport already carried authentication (ADR-0037), and the
+            // agent talks the protocol and nothing else — no prompt, no terminal, no config
+            // execution surface.
+            let environment: Vec<(String, String)> = std::env::vars().collect();
+            let mut registry = ono_cli::providers::registry(environment);
+            let runtime = match tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_name("ono-agent")
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    eprintln!("{}: cannot start the agent runtime: {error}", ono_core::SHORT_NAME);
+                    return ExitCode::from(ExitStatus::FAILURE);
+                }
+            };
+            runtime.block_on(ono_cli::providers::register_async(&mut registry));
+            let config = ono_remote::AgentConfig::new(std::sync::Arc::new(registry))
+                .with_identity(ono_protocol::Identity::new(
+                    std::env::var("USER").unwrap_or_else(|_| "ono".to_owned()),
+                ));
+            return runtime.block_on(ono_remote::agent_main(
+                tokio::io::stdin(),
+                tokio::io::stdout(),
+                config,
+            ));
+        }
         Invocation::Source(source, options) => {
             let (mut session, reporter) = start(false, &options);
             let status = repl::run_source(&mut session, &source, &reporter);

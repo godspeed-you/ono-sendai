@@ -20,6 +20,10 @@ pub enum Request {
     Enter,
     /// `leave` — pop one, or with `--all` pop everything.
     Leave,
+    /// `link host <name>` — create a remote link (spec §21.1).
+    Link,
+    /// `get link` — the links this session holds.
+    GetLink,
 }
 
 /// Whether `stage` is a context command this module runs.
@@ -38,6 +42,15 @@ pub fn claims(stage: &Stage) -> Option<Request> {
     match name.name.as_str() {
         "enter" => Some(Request::Enter),
         "leave" => Some(Request::Leave),
+        "link" => Some(Request::Link),
+        "get" if stage
+            .arguments
+            .first()
+            .and_then(ono_parser::Argument::as_word)
+            == Some("link") =>
+        {
+            Some(Request::GetLink)
+        }
         _ => None,
     }
 }
@@ -68,6 +81,7 @@ pub fn enter(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
             ErrorCode::ResolveTargetNotFound,
             "`enter dir` needs a directory",
         ))),
+        ("link", Some(name)) => enter_link(session, name),
         (target, Some(identity)) => enter_object(session, target, identity),
         (target, None) => Err(Flow::Failed(
             ErrorValue::new(
@@ -102,6 +116,25 @@ fn enter_directory(session: &mut Session, path: &str) -> Eval<ExitStatus> {
     session.push_frame(ShellFrame {
         frame,
         restore_cwd: Some(previous),
+    });
+    Ok(ExitStatus::SUCCESS)
+}
+
+/// Spec §14.4: entering a link makes it decide where provider calls run. The link must already
+/// be held — entering is navigation, not connection.
+fn enter_link(session: &mut Session, name: String) -> Eval<ExitStatus> {
+    if session.link_registry(&name).is_none() {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                format!("this session holds no link named `{name}`"),
+            )
+            .with_help(format!("`link host {name}` creates one (spec §21.1)")),
+        ));
+    }
+    session.push_frame(ShellFrame {
+        frame: ContextFrame::link(Value::string(&name)),
+        restore_cwd: None,
     });
     Ok(ExitStatus::SUCCESS)
 }
@@ -199,4 +232,138 @@ pub fn leave(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
         }
     }
     Ok(ExitStatus::SUCCESS)
+}
+
+/// Runs `link host <name>` (spec §21.1): connect, negotiate, mount, remember.
+///
+/// # Errors
+///
+/// The structured refusals of the handshake and the trust decision — `remote.host_key_changed`,
+/// `safety.policy_denied`, `remote.unreachable` — exactly as the protocol raises them.
+pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStatus> {
+    let words = crate::eval::stage_arguments(session, stage, source)?;
+    let mut host = None;
+    let mut transport = "ssh".to_owned();
+    let mut take_transport = false;
+    for word in &words {
+        let text = word.to_string_lossy();
+        if take_transport {
+            transport = text.into_owned();
+            take_transport = false;
+        } else if text == "--transport" {
+            take_transport = true;
+        } else if let Some(value) = text.strip_prefix("--transport=") {
+            transport = value.to_owned();
+        } else if text == "host" {
+            // the target word of `link host <name>`
+        } else if !text.starts_with("--") {
+            host = Some(text.into_owned());
+        }
+    }
+    let Some(host) = host else {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                "`link host` needs the host to link to",
+            )
+            .with_help("`link host prod-db` (spec §21.1)"),
+        ));
+    };
+
+    let command = match transport.as_str() {
+        // The agent over OpenSSH, which also did the authenticating (ADR-0037).
+        "ssh" => ono_remote::ssh_command(&ono_remote::SshTarget::new(&host)),
+        // This very binary as a child: the whole path over a pipe pair, no network. It is how
+        // a link is exercised in a test, a container, or on the machine itself.
+        "local" => {
+            let mut command = tokio::process::Command::new(
+                std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("ono")),
+            );
+            command.arg("--agent");
+            command
+        }
+        other => {
+            return Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::ResolveTargetNotFound,
+                    format!("no transport answers to `{other}`"),
+                )
+                .with_help("the transports are `ssh` and `local` (ono.link/1)"),
+            ));
+        }
+    };
+
+    let (runtime, _) = session.pipeline_context().ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::IoPermissionDenied,
+            "the operating system refused to start the runtime",
+        ))
+    })?;
+
+    let schemas = std::sync::Arc::new(ono_value::builtin_schemas().clone());
+    // Both transports carry their own authentication story (ADR-0037): over `ssh`, OpenSSH
+    // verified the host before the agent ever spoke; `local` is a child of this very process.
+    // The protocol-level policy is therefore unauthenticated *by name* — an explicit statement,
+    // never a silent default, and a future TCP transport gets `Required` with the trust store.
+    let config = ono_protocol::ClientConfig::new(&host)
+        .with_schemas(schemas)
+        .with_trust_policy(ono_protocol::TrustPolicy::Unauthenticated)
+        .with_identity(ono_protocol::Identity::new(whoami()));
+    let connected = runtime.block_on(async {
+        let transport = ono_remote::SubprocessTransport::spawn(command)?;
+        ono_remote::RemoteLink::connect(transport, config).await
+    });
+    let link = connected.map_err(Flow::Failed)?;
+
+    let mut registry = ono_provider_api::ProviderRegistry::new();
+    link.register_into(&mut registry);
+    let targets: Vec<String> = registry
+        .providers()
+        .iter()
+        .flat_map(|provider| provider.targets().iter().map(|target| (*target).to_owned()))
+        .collect();
+
+    println!(
+        "linked {host} ({transport}): {}",
+        if targets.is_empty() {
+            "no targets negotiated".to_owned()
+        } else {
+            targets.join(" ")
+        }
+    );
+    session.add_link(crate::session::SessionLink {
+        name: host,
+        transport,
+        link,
+        registry: std::sync::Arc::new(registry),
+    });
+    Ok(ExitStatus::SUCCESS)
+}
+
+/// Runs `get link`: the session's link table, one row per link (ono.link/1).
+///
+/// # Errors
+///
+/// None in practice; the signature matches its callers.
+pub fn get_link(session: &mut Session) -> Eval<ExitStatus> {
+    for held in session.links() {
+        let targets: Vec<String> = held
+            .registry
+            .providers()
+            .iter()
+            .flat_map(|provider| provider.targets().iter().map(|target| (*target).to_owned()))
+            .collect();
+        println!(
+            "{}  {}  connected  {}",
+            held.name,
+            held.transport,
+            targets.join(" ")
+        );
+    }
+    Ok(ExitStatus::SUCCESS)
+}
+
+/// The user this side identifies as, for the handshake.
+fn whoami() -> String {
+    std::env::var("USER").unwrap_or_else(|_| "ono".to_owned())
 }

@@ -529,6 +529,7 @@ fn context_records(ctx: &Invocation<'_>) -> Vec<Value> {
     let kind_name = |frame: &crate::ContextFrame| match frame.kind() {
         crate::FrameKind::Object => "object",
         crate::FrameKind::Filesystem => "filesystem",
+        crate::FrameKind::Link => "link",
     };
 
     let mut records = Vec::with_capacity(ctx.context().len() + 1);
@@ -554,6 +555,9 @@ fn context_records(ctx: &Invocation<'_>) -> Vec<Value> {
                     Value::string(&format!("--{} {}", frame.target(), frame.identity()))
                 }
                 crate::FrameKind::Filesystem => Value::string(&format!("cd {}", frame.identity())),
+                crate::FrameKind::Link => {
+                    Value::string(&format!("enter link {}", frame.identity()))
+                }
             },
         );
         records.push(Value::Map(Arc::new(entry)));

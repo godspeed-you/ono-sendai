@@ -16,6 +16,8 @@ pub enum Invocation {
     Script(PathBuf, Vec<String>, Options),
     /// Read a script from standard input.
     Stdin(Options),
+    /// Serve this machine's providers over stdin/stdout (spec §21.2): the remote end of a link.
+    Agent(Options),
     /// Print the version and exit.
     Version,
     /// Print usage and exit.
@@ -54,6 +56,10 @@ impl Invocation {
                 "--help" | "-h" => {
                     rest.next();
                     return Self::Help;
+                }
+                "--agent" => {
+                    rest.next();
+                    return Self::Agent(options);
                 }
                 "--no-config" => {
                     rest.next();

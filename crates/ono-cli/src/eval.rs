@@ -405,6 +405,8 @@ fn run_stage_list(
         return match request {
             crate::context::Request::Enter => crate::context::enter(session, stage, source),
             crate::context::Request::Leave => crate::context::leave(session, stage, source),
+            crate::context::Request::Link => crate::context::link(session, stage, source),
+            crate::context::Request::GetLink => crate::context::get_link(session),
         };
     }
 

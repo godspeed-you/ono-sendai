@@ -1,0 +1,31 @@
+# Link. Spec §21.1 creates one with `link host`, §14.4 makes the active link decide where
+# provider calls run, and §37 Phase H delivers it. The record is the session's own bookkeeping:
+# a link is not an object some provider found, it is a connection this shell holds.
+id: ono.link/1
+name: Link
+summary: One remote Ono link this session holds.
+identity: [name]
+fields:
+  name:
+    type: string
+    required: true
+    doc: The host as the user named it — the prompt's spelling, and `enter link`'s argument.
+  transport:
+    type: enum
+    required: true
+    values: [ssh, local]
+    doc: >-
+      How the bytes travel. `ssh` spawns the remote agent over OpenSSH; `local` spawns
+      `ono --agent` as a child of this shell, which is how a link is exercised without a
+      network.
+  state:
+    type: enum
+    required: true
+    values: [connected, closed]
+    doc: Whether the link is usable now.
+  targets:
+    type: list<string>
+    required: true
+    doc: The targets the remote negotiated (spec §21.2), which is what its context can answer.
+default_view:
+  columns: [name, transport, state, targets]

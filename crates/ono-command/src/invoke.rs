@@ -37,6 +37,9 @@ pub enum FrameKind {
     Object,
     /// An entered directory: `enter dir /etc` (spec §14.2).
     Filesystem,
+    /// An entered remote link: `enter link prod-db` (spec §14.4). The frame decides *where*
+    /// provider calls run; it narrows nothing.
+    Link,
 }
 
 impl ContextFrame {
@@ -57,6 +60,16 @@ impl ContextFrame {
             kind: FrameKind::Filesystem,
             target: "dir".to_owned(),
             identity: path,
+        }
+    }
+
+    /// A frame for an entered remote link (spec §14.4).
+    #[must_use]
+    pub fn link(host: Value) -> Self {
+        Self {
+            kind: FrameKind::Link,
+            target: "link".to_owned(),
+            identity: host,
         }
     }
 

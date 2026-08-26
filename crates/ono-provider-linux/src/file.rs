@@ -284,15 +284,6 @@ fn entry_names(fd: &OwnedFd, path: &Path) -> Result<Vec<OsString>, ErrorValue> {
 }
 
 /// Opens a directory for descent: relative to its parent, and never through a symlink.
-fn descend(parent: &OwnedFd, name: &OsStr) -> Result<OwnedFd, Errno> {
-    openat(
-        parent,
-        name,
-        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
-        Mode::empty(),
-    )
-}
-
 /// Opens the root the user named. Following a symlink here is intended: `get dir /var/run` means
 /// the directory the user pointed at. Every descent below it uses `O_NOFOLLOW`.
 /// Re-opens a directory strictly beneath `root`, refusing symlinks anywhere in the path.

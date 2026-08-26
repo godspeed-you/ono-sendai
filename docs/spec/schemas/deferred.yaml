@@ -54,9 +54,6 @@ deferred:
   - id: ono.link-event/1
     phase: "H"
     required_by: [ono.link.watch]
-  - id: ono.link/1
-    phase: "H"
-    required_by: [ono.host.connect, ono.host.link, ono.link.detach, ono.link.enter, ono.link.get, ono.link.remove, ono.link.rename, ono.link.set, ono.link.trace]
   - id: ono.host/1
     phase: "H/planned"
     required_by: [ono.host.get, ono.host.remove, ono.host.set, ono.host.trace]

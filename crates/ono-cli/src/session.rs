@@ -53,6 +53,29 @@ pub struct Session {
     /// What the last interactive view left selected — the referent of bare `@` (spec §6.4,
     /// ADR-0033, ADR-0050).
     selection: Option<Value>,
+    /// The remote links this session holds (spec §21.1), by the name the user gave them.
+    links: Vec<SessionLink>,
+}
+
+/// One held remote link: the connection, and the registry its providers are mounted in.
+pub struct SessionLink {
+    /// The host as the user named it.
+    pub name: String,
+    /// How the bytes travel, for `get link`.
+    pub transport: String,
+    /// The link itself, kept so dropping the session hangs up.
+    pub link: ono_remote::RemoteLink,
+    /// The mounted registry an active link frame answers from (spec §14.4).
+    pub registry: std::sync::Arc<ProviderRegistry>,
+}
+
+impl std::fmt::Debug for SessionLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionLink")
+            .field("name", &self.name)
+            .field("transport", &self.transport)
+            .finish_non_exhaustive()
+    }
 }
 
 /// One backgrounded native pipeline.
@@ -124,6 +147,7 @@ impl Session {
             results: std::collections::VecDeque::new(),
             native_jobs: Vec::new(),
             selection: None,
+            links: Vec::new(),
         }
     }
 
@@ -140,6 +164,27 @@ impl Session {
                 .ok();
         }
         self.runtime.as_ref()
+    }
+
+    /// Adds a remote link to the session's table.
+    pub fn add_link(&mut self, link: SessionLink) {
+        self.links.retain(|held| held.name != link.name);
+        self.links.push(link);
+    }
+
+    /// The links this session holds, oldest first.
+    #[must_use]
+    pub fn links(&self) -> &[SessionLink] {
+        &self.links
+    }
+
+    /// The mounted registry of the named link, if the session holds it.
+    #[must_use]
+    pub fn link_registry(&self, name: &str) -> Option<std::sync::Arc<ProviderRegistry>> {
+        self.links
+            .iter()
+            .find(|link| link.name == name)
+            .map(|link| std::sync::Arc::clone(&link.registry))
     }
 
     /// Keeps `value` as the interactive selection bare `@` refers to (ADR-0050).
@@ -235,6 +280,18 @@ impl Session {
     /// Returns `None` only if the operating system refuses to start the runtime.
     pub fn pipeline_context(&mut self) -> Option<(&tokio::runtime::Runtime, &ProviderRegistry)> {
         self.runtime()?;
+        // Spec §14.4: the active link frame decides where provider calls run. The innermost
+        // link frame wins; without one, the local registry answers.
+        let remote = self.frames.iter().rev().find_map(|frame| {
+            matches!(frame.frame.kind(), ono_command::FrameKind::Link)
+                .then(|| frame.frame.identity().to_string())
+        });
+        if let Some(host) = remote
+            && let Some(index) = self.links.iter().position(|link| link.name == host)
+        {
+            let runtime = self.runtime.as_ref()?;
+            return Some((runtime, &self.links[index].registry));
+        }
         self.providers();
         match (self.runtime.as_ref(), self.providers.as_ref()) {
             (Some(runtime), Some(providers)) => Some((runtime, providers)),

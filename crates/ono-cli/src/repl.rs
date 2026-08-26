@@ -344,7 +344,18 @@ fn print_identity_line(session: &Session, theme: &Theme, presentation: Presentat
 
 /// The prompt as a HUD (spec §4.2): where commands will run, and where you are.
 fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
-    let mut prompt = ono_editor::Prompt::plain("").segment("local", Token::PromptLink);
+    // Spec §14.4: the active link frame determines where provider calls and processes run, and
+    // the prompt MUST make that unambiguous — the host takes `local`'s place entirely.
+    let location = session
+        .frames()
+        .iter()
+        .rev()
+        .find_map(|frame| {
+            matches!(frame.frame.kind(), ono_command::FrameKind::Link)
+                .then(|| frame.frame.identity().to_string())
+        })
+        .unwrap_or_else(|| "local".to_owned());
+    let mut prompt = ono_editor::Prompt::plain("").segment(location, Token::PromptLink);
 
     // Spec §17.2: an elevated context must be impossible to miss. The kernel's answer, not
     // `$USER`'s — and painted in the token the theme reserves for exactly this.
