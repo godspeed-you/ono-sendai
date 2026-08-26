@@ -588,10 +588,12 @@ dependencies = [
  "ono-parser",
  "ono-pipeline",
  "ono-process",
+ "ono-protocol",
  "ono-provider-api",
  "ono-provider-linux",
  "ono-provider-netlink",
  "ono-provider-systemd",
+ "ono-remote",
  "ono-render",
  "ono-testkit",
  "ono-value",
@@ -675,6 +677,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ono-kuang-sdk"
+version = "0.0.1"
+dependencies = [
+ "ono-kuang-protocol",
+ "ono-kuang-supervisor",
+ "ono-kuang-testhost",
+ "ono-value",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "ono-kuang-supervisor"
 version = "0.0.1"
 dependencies = [
@@ -687,6 +703,15 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "ono-kuang-testhost"
+version = "0.0.1"
+dependencies = [
+ "ono-kuang-protocol",
+ "ono-kuang-supervisor",
+ "serde_json",
 ]
 
 [[package]]

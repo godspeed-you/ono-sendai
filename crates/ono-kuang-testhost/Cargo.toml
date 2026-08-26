@@ -1,0 +1,17 @@
+[package]
+name = "ono-kuang-testhost"
+description = "The deterministic KUANG/11 test host of spec §31.73: runs a plugin binary under the real supervisor with a virtual clock and recorded expectations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-kuang-protocol.workspace = true
+ono-kuang-supervisor.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

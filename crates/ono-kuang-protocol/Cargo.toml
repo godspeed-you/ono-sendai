@@ -1,0 +1,21 @@
+[package]
+name = "ono-kuang-protocol"
+description = "The wire types of the KUANG/11 extension runtime: manifest, messages, lifecycle, capabilities, audit (spec §31)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+globset.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

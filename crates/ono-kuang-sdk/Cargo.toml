@@ -1,0 +1,24 @@
+[package]
+name = "ono-kuang-sdk"
+description = "What a KUANG/11 plugin author uses: declare the manifest surface, answer invocations and queries, stream values, request capabilities (spec §31.59)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-kuang-protocol.workspace = true
+ono-value.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+ono-kuang-supervisor.workspace = true
+ono-kuang-testhost.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

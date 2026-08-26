@@ -812,6 +812,21 @@ plugin_calls:
     returns: {type: record, doc: "`{status, error?}`."}
     doc: Spec §31.29's `Stream<Process> -> Analysis<Process> -> Stream<Finding>`, as a call.
 
+  - id: provider.query
+    direction: host->plugin
+    params:
+      target: {type: string, required: true, doc: "A contributed target name (spec §31.23)."}
+      options: {type: record, nullable: true, doc: "Provider options by name, already typed."}
+      output: {type: handle<stream>, required: true, doc: "Where the plugin answers, in the target's declared schema."}
+      invocation: {type: handle<invocation>, required: true, doc: "The owning invocation."}
+    returns: {type: record, doc: "`{status, error?}`."}
+    doc: >-
+      A query against a contributed target, forwarded to the providing package and answered as a
+      value stream. Added by ADR-0040: `contributions.v1.yaml` registers targets into the
+      provider registry (spec §31.23, §31.64), but no host->plugin call carried the query — the
+      provider conformance case of spec §31.74 forced the gap closed. Every answered record is
+      validated against the target's declared schema and provenance-stamped by the host.
+
   - id: view.mount
     direction: host->plugin
     params:
