@@ -63,6 +63,15 @@ impl Action {
         &self.operation
     }
 
+    /// Every argument, in the order it was written.
+    ///
+    /// A forwarding provider has to carry the arguments it did not itself declare — a `stop`'s
+    /// signal, a `--timeout` — and enumerating them is the only way to carry them all.
+    #[must_use]
+    pub fn arguments(&self) -> &[(String, Value)] {
+        &self.arguments
+    }
+
     /// An argument's value, if it was given.
     #[must_use]
     pub fn argument(&self, name: &str) -> Option<&Value> {

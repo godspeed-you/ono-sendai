@@ -64,6 +64,15 @@ impl Query {
         &self.selectors
     }
 
+    /// Every option, in the order it was written.
+    ///
+    /// A forwarding provider — a remote link, a KUANG/11 bridge — has to carry the options it
+    /// did not itself declare, and enumerating them is the only way to carry them all.
+    #[must_use]
+    pub fn options(&self) -> &[(String, Value)] {
+        &self.options
+    }
+
     /// An option's value, if it was given.
     #[must_use]
     pub fn option_value(&self, name: &str) -> Option<&Value> {
