@@ -128,6 +128,8 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
       pseudo-terminal, where the shell survives it, the command does not, and the status is 130.
 - [ ] Text, bytes and objects are never silently confused at an interop boundary.
 - [ ] Destructive operations show scope before acting; privilege and remote target are visible.
+      Partly proven: `032-resolution-is-inspectable` covers the resolution half — which binary a
+      name reaches, including a shadowing one earlier in `PATH` (ADR-0015 T10, T11).
 - [ ] Fuzzers run clean over parser, serializers, remote protocol, plugin protocol and the
       procfs/netlink decoders.
 - [ ] The threat model of spec section 49 has a test for each stated risk.
