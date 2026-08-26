@@ -1,0 +1,28 @@
+[package]
+name = "ono-provider-systemd"
+description = "The Ono service provider: systemd units read through the D-Bus API, never through `systemctl` output."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-pipeline.workspace = true
+ono-provider-api.workspace = true
+ono-value.workspace = true
+async-trait.workspace = true
+jiff.workspace = true
+tokio.workspace = true
+# Pure-Rust D-Bus. `default-features = false` drops the `async-io` reactor so the connection
+# runs on the shell's own Tokio runtime rather than starting a second one (ADR: see the crate
+# documentation).
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true
