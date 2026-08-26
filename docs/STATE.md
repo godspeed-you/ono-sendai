@@ -72,6 +72,10 @@ KUANG/11 contracts, adversarial review, security review) have all reported and l
 
 ## Next up (ordered)
 
+- [ ] `get service <name>` finds only *loaded* units — an unloaded unit that exists on disk
+  (`systemctl status` finds it) answers "nothing". Resolve by-name queries through
+  `GetUnit`/`LoadUnit` instead of filtering `ListUnits` — exit test: a conformance case naming
+  an unloaded unit
 - [ ] `--name=value` in expression mode — ADR-0032 pairs an option with the following
   expression; the `=` spelling stays words-only until an increment adds it — exit test:
   a parse_expressions case for `reduce $acc + @ --initial=10`

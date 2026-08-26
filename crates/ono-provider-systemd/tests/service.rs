@@ -627,8 +627,12 @@ async fn should_agree_with_the_running_service_manager_when_one_is_present() {
         "no such unit is an answer, not a failure"
     );
 
+    // Only an *active* service is a stable subject: systemd unloads inactive units from memory,
+    // so a condition-failed daemon that shows up in one enumeration can be gone by the next
+    // query — which is exactly what happened to `hv_kvp_daemon.service` on a CI runner.
     let Some(service) = records
         .iter()
+        .filter(|record| text(record, "state") == "active")
         .map(|record| text(record, "name"))
         .find(|name| name.ends_with(".service"))
     else {
