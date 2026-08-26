@@ -549,10 +549,12 @@ impl Provider for ProcessProvider {
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         let schema = schemas::require(&schemas::process_id())?;
         let reader = self.reader.clone();
-        let pids = match Self::pinned_pid(query) {
+        let pinned = Self::pinned_pid(query);
+        let pids = match pinned {
             Some(pid) => vec![pid],
             None => reader.pids()?,
         };
+        let enumerating = pinned.is_none();
         let limit = query.max().unwrap_or(usize::MAX);
         let query = query.clone();
         Ok(ValueStream::spawn(
@@ -574,10 +576,16 @@ impl Provider for ProcessProvider {
                             }
                             sent += 1;
                         }
-                        // A process that exits between the listing and the detail read is not a
-                        // fatal error and must not be silent either (spec §16.5): it leaves the
-                        // stream running and lands on the error channel with its identity.
+                        // A process that exits between the listing and the detail read is not
+                        // part of the answer: it no longer exists, and omitting something that
+                        // is not there is not the same as hiding a failure (ADR-0029). Every
+                        // other way a read can fail — a process that is there and cannot be
+                        // read — still lands on the error channel with its identity, and so
+                        // does a process the user named by pid, because that one is a target.
                         Err(error) => {
+                            if enumerating && error.code() == ErrorCode::IoNotFound {
+                                continue;
+                            }
                             if sink.fail(error).await.is_err() {
                                 return;
                             }

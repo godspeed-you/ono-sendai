@@ -238,16 +238,76 @@ async fn should_skip_a_process_that_exits_between_enumeration_and_detail_read() 
         1,
         "the process that vanished is skipped, not reported half-read"
     );
-    let failure = collected
-        .errors()
-        .first()
-        .expect("the disappearance is reported, not swallowed");
+    assert_eq!(
+        collected.errors(),
+        &[],
+        "a process that no longer exists is not part of the answer and is not a failure to \
+         report; `get process` on a busy machine would otherwise be unusable for the noise \
+         (ADR-0029). Got {:?}",
+        collected.errors()
+    );
+}
+
+#[tokio::test]
+async fn should_report_a_named_process_that_does_not_exist_rather_than_answering_with_nothing() {
+    let fixture = ProcFixture::new();
+    fixture.process(11).stat("survivor", StatFields::default());
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process").with(Selector::field("pid", Value::Int(12))))
+            .expect("a snapshot"),
+    )
+    .await;
+
+    assert!(
+        records(&collected).is_empty(),
+        "there is no process 12 to report"
+    );
+    let failure = collected.errors().first().expect(
+        "a process the user named by pid is a target, and a target that is not there is an \
+         answer the user needs",
+    );
     assert!(
         failure.message().contains("/12/stat"),
-        "the failure names which process went away: {}",
+        "the failure names which process was asked for: {}",
         failure.message()
     );
     assert_eq!(failure.code(), ErrorCode::IoNotFound);
+}
+
+#[tokio::test]
+async fn should_report_a_process_it_is_not_allowed_to_read_while_enumerating() {
+    let fixture = ProcFixture::new();
+    fixture.process(11).stat("survivor", StatFields::default());
+    // A directory where `stat` belongs fails with EISDIR for every user, root included, so this
+    // says the same thing whoever runs the suite. It is not the vanishing case: the process is
+    // there and could not be read, which the user must be told about.
+    fixture.process(12);
+    std::fs::create_dir_all(fixture.proc().join("12/stat")).expect("the blocked stat");
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process"))
+            .expect("a snapshot"),
+    )
+    .await;
+
+    assert_eq!(records(&collected).len(), 1, "the readable process arrives");
+    let failure = collected
+        .errors()
+        .first()
+        .expect("a process that exists and cannot be read is reported (spec §16.5)");
+    assert!(
+        failure.message().contains("/12/stat"),
+        "the failure names the process: {}",
+        failure.message()
+    );
+    assert_ne!(
+        failure.code(),
+        ErrorCode::IoNotFound,
+        "the process is there; only reading it failed"
+    );
 }
 
 #[tokio::test]
