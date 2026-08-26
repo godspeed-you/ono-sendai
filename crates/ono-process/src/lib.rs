@@ -74,5 +74,7 @@ pub use fd::Fd;
 pub use job::{Job, JobChange, JobId, JobProcess, JobState};
 pub use pipeline::{Pipeline, PipelineOutcome, StageOutcome};
 pub use pty::PtySession;
-pub use signals::{Signal, install_child_watch, install_shell_signals, take_child_transition};
+pub use signals::{
+    Signal, install_child_watch, install_shell_signals, take_child_transition, take_interrupt,
+};
 pub use terminal::{Terminal, WindowSize};

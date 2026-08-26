@@ -109,6 +109,24 @@ extern "C" fn note_child_transition(_signal: libc::c_int) {
     CHILD_TRANSITION.store(true, Ordering::Relaxed);
 }
 
+/// Set by the shell's `SIGINT` handler; read and cleared by [`take_interrupt`].
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn note_interrupt(_signal: libc::c_int) {
+    INTERRUPTED.store(true, Ordering::Relaxed);
+}
+
+/// Whether `SIGINT` arrived since the last call, clearing the note.
+///
+/// A native pipeline runs *in* the shell, so the `SIGINT` a terminal sends for Ctrl-C is
+/// delivered to the shell itself — there is no child for the kernel to interrupt. The shell's
+/// disposition notes the signal instead of dying of it, and whatever is driving a native
+/// pipeline polls this to cancel (spec §18.5).
+#[must_use]
+pub fn take_interrupt() -> bool {
+    INTERRUPTED.swap(false, Ordering::Relaxed)
+}
+
 /// Gives the shell process the signal dispositions an interactive shell needs (spec §18.1).
 ///
 /// The signals a terminal generates for the foreground job — `SIGINT`, `SIGQUIT`, `SIGTSTP` —
@@ -127,7 +145,6 @@ extern "C" fn note_child_transition(_signal: libc::c_int) {
 /// Returns an error if the operating system refuses to change a disposition.
 pub fn install_shell_signals() -> Result<()> {
     for signal in [
-        NixSignal::SIGINT,
         NixSignal::SIGQUIT,
         NixSignal::SIGTSTP,
         NixSignal::SIGTTIN,
@@ -139,6 +156,20 @@ pub fn install_shell_signals() -> Result<()> {
         unsafe { sigaction(signal, &action) }
             .map_err(|errno| Error::from_errno(format!("ignoring {signal:?}"), errno))?;
     }
+    // `SIGINT` is noted rather than ignored outright: an external foreground job owns the
+    // terminal and receives Ctrl-C itself, but a *native* pipeline runs in the shell, and the
+    // note is the only way spec §18.5's cancellation can reach it. The handler sets one flag —
+    // async-signal-safe by construction — and the shell behaves as if ignored wherever nothing
+    // polls the flag. `SA_RESTART` is deliberately absent so a blocking read returns.
+    let action = SigAction::new(
+        SigHandler::Handler(note_interrupt),
+        SaFlags::empty(),
+        SigSet::empty(),
+    );
+    // SAFETY: the handler stores one atomic flag, which is async-signal-safe; ADR-0007 permits
+    // signal-disposition changes in this crate.
+    unsafe { sigaction(NixSignal::SIGINT, &action) }
+        .map_err(|errno| Error::from_errno("noting SIGINT", errno))?;
     Ok(())
 }
 

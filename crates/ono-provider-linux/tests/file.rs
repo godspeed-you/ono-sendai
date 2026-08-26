@@ -473,3 +473,33 @@ fn should_claim_the_file_and_dir_targets_with_the_registry_capability_ids() {
     assert!(ids.contains(&"dir.list".to_owned()));
     assert!(ids.contains(&"file.find".to_owned()));
 }
+
+#[tokio::test]
+async fn should_walk_the_whole_tree_when_the_query_names_a_search_root() {
+    // `find file /var/log` binds its path to the selector named `root`, and find *is* the walk
+    // (docs/spec/commands/file.yaml: "Discover files by walking a root"). Only `get file` — the
+    // `path` selector — means the one entry.
+    let scratch = tempfile::tempdir().expect("a temporary directory");
+    fs::create_dir_all(scratch.path().join("a/b")).expect("the nested directories");
+    fs::write(scratch.path().join("a/b/deep.txt"), "x").expect("the deep file");
+    fs::write(scratch.path().join("top.txt"), "y").expect("the top file");
+
+    let query = Query::target("file").with(Selector::field(
+        "root",
+        Value::Path(Arc::from(scratch.path())),
+    ));
+    let collected = drain(provider().snapshot(&query).expect("a snapshot")).await;
+
+    let names: Vec<String> = records(&collected)
+        .iter()
+        .filter_map(|record| record.get("name")?.as_str().ok().map(str::to_owned))
+        .collect();
+    assert!(
+        names.iter().any(|name| name == "deep.txt"),
+        "the walk descends without a --recursive nobody can spell, got {names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name == "top.txt"),
+        "the walk reports every level, got {names:?}"
+    );
+}

@@ -91,11 +91,13 @@ struct Request {
 
 impl Request {
     fn from(query: &Query) -> Self {
+        let mut named_root = false;
         let root = query
             .selectors()
             .iter()
             .find_map(|selector| match selector {
                 Selector::Field { name, value } if name == "path" || name == "root" => {
+                    named_root = name == "root";
                     match value {
                         Value::Path(path) => Some(path.to_path_buf()),
                         Value::String(text) => Some(PathBuf::from(text.as_ref())),
@@ -106,7 +108,11 @@ impl Request {
             })
             .unwrap_or_else(|| PathBuf::from("."));
         let listing = query.target_name() != "file";
-        let recursive = query.flag("recursive");
+        // `find file /var/log` binds its path to the selector named `root`, and find *is* the
+        // walk (docs/spec/commands/file.yaml: "discover files by walking a root"); only
+        // `get file`, whose selector is `path`, means the one entry. The contract declares no
+        // `--recursive` — the verb carries the intent, and the selector name carries the verb.
+        let recursive = named_root || query.flag("recursive");
         let depth = query
             .option_value("depth")
             .and_then(|value| value.as_int().ok())

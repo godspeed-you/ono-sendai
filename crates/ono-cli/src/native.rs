@@ -380,7 +380,23 @@ fn run_native_segment(
         ))
     })?;
 
-    let collected = runtime.block_on(async {
+    // Ctrl-C is delivered to the shell itself while a native pipeline runs — there is no child
+    // for the kernel to interrupt — so the pipeline future races the interrupt note and loses
+    // to it (spec §18.5). Dropping the futures drops every stream receiver, which closes the
+    // bounded channels and stops every producer at its next send.
+    let _ = ono_process::take_interrupt();
+    let interrupted = async {
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(40));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            if ono_process::take_interrupt() {
+                return;
+            }
+        }
+    };
+
+    let pipeline = async {
         let mut stream: Option<ValueStream> = match seed {
             Some(values) => Some(ValueStream::from_values(values)),
             None => input.map(|bytes| ValueStream::from_values([Value::Bytes(bytes.into())])),
@@ -423,9 +439,28 @@ fn run_native_segment(
             }
         }
         Ok((values, failures))
+    };
+
+    let collected = runtime.block_on(async {
+        tokio::select! {
+            outcome = pipeline => outcome,
+            () = interrupted => Err(ErrorValue::new(
+                ErrorCode::StreamCancelled,
+                "interrupted",
+            )),
+        }
     });
 
-    let (values, failures) = collected.map_err(Flow::Failed)?;
+    let (values, failures) = collected.map_err(|error| {
+        if error.code() == ErrorCode::StreamCancelled {
+            // 128 + SIGINT, the status every shell reports for an interrupted foreground job
+            // (ADR-0008); the message would only repeat what the ^C on the terminal already
+            // says.
+            Flow::FailedWith(error, ExitStatus::from_signal(2))
+        } else {
+            Flow::Failed(error)
+        }
+    })?;
 
     // Spec §16.5: what succeeded and what failed are both reported, and neither is collapsed into
     // the other. A process that exits between being listed and being read costs one object, not

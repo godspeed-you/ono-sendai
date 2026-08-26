@@ -173,3 +173,32 @@ fn should_kill_the_shell_when_a_non_interactive_run_is_interrupted() {
         "an interrupted script must not report success, got {status}"
     );
 }
+
+#[test]
+fn should_interrupt_a_native_pipeline_and_leave_the_prompt_standing() {
+    // Spec §18.5: cancellation must propagate through *native* pipelines too. A walk over the
+    // whole filesystem takes long enough that the Ctrl-C below arrives mid-stream, and without
+    // cancellation the prompt would only return when the walk finished on its own.
+    let mut shell = interactive_shell();
+    read_until(&mut shell, ">", Duration::from_secs(10));
+
+    shell
+        .write_all(b"find file / | count\n")
+        .expect("the terminal accepts a command");
+    std::thread::sleep(Duration::from_millis(600));
+    shell
+        .write_all(&[0x03])
+        .expect("the terminal accepts Ctrl-C");
+
+    shell
+        .write_all(b"echo alive-$?\n")
+        .expect("the terminal accepts the follow-up");
+    let seen = read_until(&mut shell, "alive-130", Duration::from_secs(8));
+    assert!(
+        seen.contains("alive-130"),
+        "the native pipeline was cancelled with 128+SIGINT and the shell kept going; saw:\n{seen}"
+    );
+
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}
