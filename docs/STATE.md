@@ -6,6 +6,18 @@ passes, not when this file looks tidy.
 
 Working branch: **`implementation`** — never commit to `main` (AGENTS.md section 12.1)
 
+**Commit every increment, and tag every completed phase.** A phase is done when its box in
+`docs/ACCEPTANCE.md` section 4.1 is ticked; the commit that ticks it gets an annotated tag
+`phase-<letter>` whose message names the exit criterion and the case that proves it. The tags are
+how the state after each phase stays findable in a run of hundreds of commits:
+
+```bash
+git tag -n99 phase-a          # what Phase A delivered, and what proves it
+git switch --detach phase-a   # the tree exactly as that phase left it
+```
+
+Tags so far: `phase-a`.
+
 Current phase: **A — Language and Unix shell foundation** (spec section 37)
 
 Phase A exit criterion: *Ono-Sendai can replace Bash for ordinary interactive execution without
@@ -16,18 +28,15 @@ native object features yet becoming a dead end.* Exit test: acceptance case
 
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase A completion and integration — files: `crates/ono-cli/**`,
-  `crates/ono-core/**`, `crates/ono-parser/**`, `crates/ono-render/**`, `crates/ono-history/**`,
-  `crates/ono-testkit/**`, `crates/ono-provider-api/**`, `xtask/**`, `docs/**`, `docker/**`,
-  `scripts/**`, `Cargo.toml`
-- [agent:linux | 2026-08-26] C2–C5 process, file, identity, env, mount providers —
-  files: `crates/ono-provider-linux/**`
-- [agent:netlink | 2026-08-26] C6–C7 interface, route, neighbor, socket providers —
-  files: `crates/ono-provider-netlink/**`
-- [agent:systemd | 2026-08-26] C8 service provider over D-Bus —
-  files: `crates/ono-provider-systemd/**`
-- [agent:command | 2026-08-26] D2–D6 command registry, argument binding, help, completion,
-  `explain` — files: `crates/ono-command/**`
+- [orchestrator | 2026-08-26] Phase B/C/D integration: wiring the command registry, the providers
+  and the pipeline into the evaluator — files: `crates/ono-cli/**`, `crates/ono-parser/**`,
+  `crates/ono-core/**`, `crates/ono-render/**`, `crates/ono-history/**`, `crates/ono-testkit/**`,
+  `crates/ono-provider-api/**`, `xtask/**`, `docs/**`, `docker/**`, `scripts/**`, `Cargo.toml`
+- [agent:commands | 2026-08-26] B4–B6, C-wiring, D5: the native command implementations and the
+  expression compiler — files: `crates/ono-command/**`
+- [agent:graph | 2026-08-26] G1–G4 graph values, relationship providers, `trace` —
+  files: `crates/ono-graph/**`
+- [agent:protocol | 2026-08-26] H1 the remote protocol — files: `crates/ono-protocol/**`
 
 ---
 
@@ -77,6 +86,11 @@ budgets of §34 are tracked under *Cross-cutting*, not here.
 
 ### Phase B — Value system and native pipelines (spec §10, §11, §12, §13, §25)
 
+- [x] B3 — Stream engine: bounded channels, backpressure, cancellation, the streaming/blocking
+      distinction — `crates/ono-pipeline/tests/{backpressure,boundedness,cancellation}.rs`
+- [x] B6 — Conversion `to`/`from` json, yaml, csv, text, bytes — `crates/ono-value/tests/`
+- [x] B7 — Renderer separated from data: table, stacked, list, tree, raw, hex; width-aware
+      layout; visible truncation; semantic theme tokens — `crates/ono-render/tests/`
 - [x] B1 — Value model: scalars, semantic scalars, units, `Record`, `Map`, `List`, provenance —
       `crates/ono-value/tests/` — ADR-0016 — commit 05eb85a
 - [x] B2 — Schema model and registry, the canonical schemas of spec §28, compatibility rules —
@@ -109,31 +123,31 @@ budgets of §34 are tracked under *Cross-cutting*, not here.
 Every provider answers from the kernel, systemd or NSS — never by parsing unstable human text
 (spec §50, AGENTS.md §6). Every provider ships its conformance case in the same increment.
 
-- [ ] C1 — `ono-provider-api`: the provider trait, capability declarations, and the
+- [x] C1 — `ono-provider-api`: the provider trait, capability declarations, and the
       `snapshot` / `subscribe` / `watch` triple with the `ObjectEvent` envelope of spec §31.14,
       shaped so KUANG/11 consumes it without special cases (spec §31 preamble, §31.13)
-- [ ] C2 — `process` from procfs: enumeration, `ono.process/1` fields, CPU as a rate not a
+- [x] C2 — `process` from procfs: enumeration, `ono.process/1` fields, CPU as a rate not a
       cumulative, permission-denied fields as errors not zeros — spec §23.1, §28.1 —
       exit test: acceptance `040-process-provider`
-- [ ] C3 — `file`/`dir`: metadata, recursion, symlinks, permissions, xattrs where present —
+- [x] C3 — `file`/`dir`: metadata, recursion, symlinks, permissions, xattrs where present —
       spec §23.4, §28.2 — exit test: acceptance `041-file-provider`
-- [ ] C4 — `user`/`group` from NSS, `env` — spec §23.6, §28.7 —
+- [x] C4 — `user`/`group` from NSS, `env` — spec §23.6, §28.7 —
       exit test: acceptance `042-identity-provider`
-- [ ] C5 — `mount`/`filesystem` — spec §23.5, §28.6 — exit test: acceptance `043-mount-provider`
-- [ ] C6 — `interface`/`route`/`neighbor` over netlink — spec §23.2, §28.5 —
+- [x] C5 — `mount`/`filesystem` — spec §23.5, §28.6 — exit test: acceptance `043-mount-provider`
+- [x] C6 — `interface`/`route`/`neighbor` over netlink — spec §23.2, §28.5 —
       exit test: acceptance `044-network-provider`
-- [ ] C7 — `socket`/`connection` over netlink sock_diag, joined to owning process —
+- [x] C7 — `socket`/`connection` over netlink sock_diag, joined to owning process —
       spec §23.2, §28.4 — exit test: acceptance `045-socket-provider`
-- [ ] C8 — `service` over the systemd D-Bus API, degrading to `provider.unavailable` where
+- [x] C8 — `service` over the systemd D-Bus API, degrading to `provider.unavailable` where
       systemd is not running — spec §23.3, §28.3 — exit test: acceptance `046-service-provider`
       plus a D-Bus fixture test for the positive path (see *Deferred*)
 - [ ] C9 — Generated provider conformance suite from `docs/spec/providers/*.yaml` — spec §35.3
 
 ### Phase D — Language consistency and discoverability (spec §15, §27, §36, §47)
 
-- [~] D0 — The registries themselves: `docs/spec/{verbs,targets,errors,capabilities,language}.yaml`,
+- [x] D0 — The registries themselves: `docs/spec/{verbs,targets,errors,capabilities,language}.yaml`,
       `schemas/*.v1.yaml`, `commands/*.yaml` — ADR-0012 — commit e1363de
-- [ ] D1 — `xtask spec-check` validates the registries and cross-checks them against the
+- [x] D1 — `xtask spec-check` validates the registries and cross-checks them against the
       implementation: undocumented stable command, metadata without implementation, doc example
       that no longer parses, schema break without version bump, provider output outside its
       advertised schema — spec §36.5
@@ -147,7 +161,7 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
       spec §42 — spec §15.3
 - [ ] D7 — Fuzzy command discovery and the suggestion path of `resolve.command_not_found` —
       spec §15.4
-- [ ] D8 — Generated documentation under `docs/reference/`, reproducible from the registries and
+- [x] D8 — Generated documentation under `docs/reference/`, reproducible from the registries and
       checked by the gate — spec §36.2, §46
 
 ### Phase E — Contextual systems interface (spec §14, §20)
