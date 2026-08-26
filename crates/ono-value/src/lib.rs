@@ -18,7 +18,10 @@
 //! - [`ErrorValue`] — the structured error of spec §16.1, carried as data.
 //! - [`ActionResult`] — the acknowledgement a mutating command returns (spec §11.5).
 //! - [`builtin_schemas`] — the canonical object schemas of spec §28.
-//! - [`to_json`] and [`from_json`] — the serialization of spec §12.4 and §46.
+//! - [`to_json`], [`to_yaml`], [`to_csv`], [`to_text`] and [`to_bytes`] with their inverses —
+//!   the serializations of spec §7.1, §12.2, §12.4 and §46. Each carries what its format can
+//!   carry and returns a structured error for what it cannot, so no conversion is ever a
+//!   silent lie.
 //!
 //! # The three meanings of "nothing"
 //!
@@ -56,33 +59,42 @@
 mod action;
 mod arith;
 mod builtin;
+mod csv;
 mod decimal;
 mod error;
+mod hex;
 mod json;
 mod map;
 mod net;
 mod provenance;
+mod raw;
 mod record;
 mod regex_value;
 mod schema;
+mod text;
 mod units;
 mod uuid;
 mod value;
+mod yaml;
 
 pub use action::{ActionResult, ActionStatus};
 pub use builtin::{action_result_schema, builtin_schemas};
+pub use csv::{from_csv, to_csv};
 pub use decimal::Decimal;
 pub use error::{ErrorValue, ValueRef};
 pub use json::{from_json, from_json_str, to_json, to_json_string};
 pub use map::MapValue;
 pub use net::IpNetwork;
 pub use provenance::{Link, Provenance};
+pub use raw::{from_bytes, to_bytes};
 pub use record::{FieldAccess, FieldStep, RecordBuilder, RecordValue};
 pub use regex_value::RegexValue;
 pub use schema::{
     Compatibility, FieldDef, FieldType, Schema, SchemaBuilder, SchemaChange, SchemaChangeKind,
     SchemaDiff, SchemaId, SchemaRegistry, Unit, classify_change,
 };
+pub use text::{canonical_text, to_text};
 pub use units::{ByteSize, ByteUnit, Duration, DurationUnit, Percent};
 pub use uuid::Uuid;
 pub use value::Value;
+pub use yaml::{from_yaml, to_yaml};

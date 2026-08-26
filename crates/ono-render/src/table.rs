@@ -3,6 +3,11 @@
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
+use crate::theme::{Theme, Token};
+use ono_value::Value;
+
+use crate::{Presentation, Renderer, View};
+
 /// The marker that tells a reader a value was shortened.
 ///
 /// Spec §13.3 requires truncation to be visible and favours ASCII-safe output, so the marker is
@@ -66,16 +71,42 @@ impl Column {
 ///
 /// A cell holds the complete text. Shortening happens during layout and never here, so the full
 /// value stays available for copy, export and serialization as spec §13.3 requires.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct Cell {
     text: String,
+    token: Token,
+}
+
+/// Two cells are the same cell when they show the same text. The token is how it is painted,
+/// which spec §44 makes a theme's business and never a value's.
+impl PartialEq for Cell {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+    }
 }
 
 impl Cell {
-    /// A cell showing `text`.
+    /// A cell showing `text`, painted as an ordinary value.
     #[must_use]
     pub fn new(text: impl Into<String>) -> Self {
-        Self { text: text.into() }
+        Self {
+            text: text.into(),
+            token: Token::Foreground,
+        }
+    }
+
+    /// Paints the cell with a semantic token, so a number, a unit, a path and an unknown stay
+    /// distinguishable (spec §44).
+    #[must_use]
+    pub fn with_token(mut self, token: Token) -> Self {
+        self.token = token;
+        self
+    }
+
+    /// The token the cell is painted with.
+    #[must_use]
+    pub fn token(&self) -> Token {
+        self.token
     }
 
     /// The complete text, whatever a layout chose to show.
@@ -198,14 +229,233 @@ impl Layout {
         crate::tree::render(root, self.width, self.max_depth)
     }
 
+    /// Lays a tree out and paints it, as far as `presentation` allows.
+    ///
+    /// The shape is decided first and painted afterwards, so colour can never move a connector:
+    /// stripping the escape sequences from this output gives exactly [`render_tree`]'s.
+    ///
+    /// [`render_tree`]: Self::render_tree
+    #[must_use]
+    pub fn render_tree_styled(
+        &self,
+        root: &crate::TreeNode,
+        theme: &Theme,
+        presentation: Presentation,
+    ) -> Vec<String> {
+        crate::tree::lines(root, self.max_depth)
+            .iter()
+            .map(|line| {
+                let plain = match &line.key {
+                    Some(key) => format!("{}{key}: {}", line.indent, line.label),
+                    None => format!("{}{}", line.indent, line.label),
+                };
+                let shown = shorten(&plain, self.width);
+                let Some(rest) = shown.strip_prefix(line.indent.as_str()) else {
+                    return theme.paint(&shown, Token::Border, presentation);
+                };
+                let mut painted = theme.paint(&line.indent, Token::Border, presentation);
+                match &line.key {
+                    Some(key) if rest.starts_with(key.as_str()) && rest.len() >= key.len() + 2 => {
+                        painted.push_str(&theme.paint(
+                            &rest[..key.len() + 2],
+                            Token::TableKey,
+                            presentation,
+                        ));
+                        painted.push_str(&theme.paint(
+                            &rest[key.len() + 2..],
+                            line.token,
+                            presentation,
+                        ));
+                    }
+                    Some(_) => painted.push_str(&theme.paint(rest, Token::TableKey, presentation)),
+                    None => painted.push_str(&theme.paint(rest, line.token, presentation)),
+                }
+                painted
+            })
+            .collect()
+    }
+
+    /// Lays `values` out in one of the built-in views of spec §13.6.
+    #[must_use]
+    pub fn render_view(&self, renderer: &Renderer, values: &[Value], view: View) -> Vec<String> {
+        self.view_lines(renderer, values, view, None)
+    }
+
+    /// Lays `values` out in one of the built-in views and paints them.
+    #[must_use]
+    pub fn render_view_styled(
+        &self,
+        renderer: &Renderer,
+        values: &[Value],
+        view: View,
+        theme: &Theme,
+        presentation: Presentation,
+    ) -> Vec<String> {
+        self.view_lines(
+            renderer,
+            values,
+            view,
+            Some(Paint {
+                theme,
+                presentation,
+            }),
+        )
+    }
+
+    /// Renders a structured error for a human (spec §16.2).
+    ///
+    /// [`Detail::Terse`] is what a failing command prints: the message, what it was about and
+    /// what to do. [`Detail::Full`] is what `inspect @error` shows: the stable code of spec §43,
+    /// the metadata and the whole causal chain.
+    #[must_use]
+    pub fn render_error(
+        &self,
+        error: &ono_value::ErrorValue,
+        detail: Detail,
+        theme: &Theme,
+        presentation: Presentation,
+    ) -> Vec<String> {
+        let text = match detail {
+            Detail::Terse => error.render_terse(),
+            Detail::Full => error.render_full(),
+        };
+        text.lines()
+            .map(|line| {
+                let token = if line.starts_with(' ') || line.contains("caused by") {
+                    Token::Dim
+                } else if detail == Detail::Full && line.contains(error.code().code()) {
+                    Token::ErrorCode
+                } else if line == error.help().unwrap_or_default() {
+                    Token::ErrorHint
+                } else {
+                    Token::ErrorCode
+                };
+                theme.paint(&shorten(line, self.width), token, presentation)
+            })
+            .collect()
+    }
+
+    fn view_lines(
+        &self,
+        renderer: &Renderer,
+        values: &[Value],
+        view: View,
+        paint: Option<Paint<'_>>,
+    ) -> Vec<String> {
+        match view {
+            View::Table => {
+                let table = renderer.table(values);
+                self.render_with(&table, paint)
+            }
+            View::List => {
+                let table = renderer.table(values);
+                if table.columns.is_empty() || table.rows.is_empty() {
+                    return vec![self.paint_line("(no results)", Token::Dim, paint)];
+                }
+                let shown = self
+                    .max_rows
+                    .unwrap_or(table.rows.len())
+                    .min(table.rows.len());
+                let mut lines = self.render_stacked(&table, &table.rows[..shown], paint);
+                let omitted = table.rows.len() - shown;
+                if omitted > 0 {
+                    lines.push(self.paint_line(&format!("... {omitted} more"), Token::Dim, paint));
+                }
+                lines
+            }
+            View::Tree => {
+                let mut lines = Vec::new();
+                for value in values {
+                    if !lines.is_empty() {
+                        lines.push(String::new());
+                    }
+                    let tree = renderer.tree(value);
+                    lines.extend(match paint {
+                        Some(paint) => {
+                            self.render_tree_styled(&tree, paint.theme, paint.presentation)
+                        }
+                        None => self.render_tree(&tree),
+                    });
+                }
+                lines
+            }
+            View::Raw => values
+                .iter()
+                .map(|value| {
+                    // Raw is the escape hatch from a shortened view, so it is never shortened —
+                    // but it still passes through the sanitiser, because it still reaches a
+                    // terminal (spec §49).
+                    let text =
+                        ono_value::canonical_text(value).unwrap_or_else(|_| value.to_string());
+                    self.paint_full(&crate::theme::sanitise(&text), Token::Foreground, paint)
+                })
+                .collect(),
+            View::Hex => {
+                let mut lines = Vec::new();
+                for value in values {
+                    match ono_value::to_bytes(value) {
+                        Ok(bytes) => lines.extend(
+                            hex_dump(&bytes)
+                                .into_iter()
+                                .map(|line| self.paint_line(&line, Token::Foreground, paint)),
+                        ),
+                        Err(error) => lines.push(self.paint_line(
+                            &format!("{}: {}", error.code().name(), error.message()),
+                            Token::ErrorCode,
+                            paint,
+                        )),
+                    }
+                }
+                lines
+            }
+        }
+    }
+
+    fn paint_line(&self, text: &str, token: Token, paint: Option<Paint<'_>>) -> String {
+        self.paint_full(&shorten(text, self.width), token, paint)
+    }
+
+    fn paint_full(&self, text: &str, token: Token, paint: Option<Paint<'_>>) -> String {
+        match paint {
+            Some(paint) => paint.theme.paint(text, token, paint.presentation),
+            None => text.to_owned(),
+        }
+    }
+
     /// Lays `table` out as the lines a terminal would show.
     ///
     /// The choice between a table and stacked records is made here, from the width alone
     /// (spec §13.2). Both forms show every field: the underlying result is identical.
     #[must_use]
     pub fn render(&self, table: &Table) -> Vec<String> {
+        self.render_with(table, None)
+    }
+
+    /// Lays `table` out and paints it, as far as `presentation` allows.
+    ///
+    /// Widths are computed from the unpainted text and the escape sequences are added last, so
+    /// colour can never change the alignment: stripping them gives exactly [`render`]'s output.
+    ///
+    /// [`render`]: Self::render
+    #[must_use]
+    pub fn render_styled(
+        &self,
+        table: &Table,
+        theme: &Theme,
+        presentation: Presentation,
+    ) -> Vec<String> {
+        self.render_with(
+            table,
+            Some(Paint {
+                theme,
+                presentation,
+            }),
+        )
+    }
+
+    fn render_with(&self, table: &Table, paint: Option<Paint<'_>>) -> Vec<String> {
         if table.columns.is_empty() || table.rows.is_empty() {
-            return vec![self.clip("(no results)")];
+            return vec![self.paint_line("(no results)", Token::Dim, paint)];
         }
 
         let shown = self
@@ -216,12 +466,12 @@ impl Layout {
         let rows = &table.rows[..shown];
 
         let mut lines = match self.column_widths(table, rows) {
-            Some(widths) => self.render_table(table, rows, &widths),
-            None => self.render_stacked(table, rows),
+            Some(widths) => self.render_table(table, rows, &widths, paint),
+            None => self.render_stacked(table, rows, paint),
         };
 
         if omitted > 0 {
-            lines.push(self.clip(&format!("... {omitted} more")));
+            lines.push(self.paint_line(&format!("... {omitted} more"), Token::Dim, paint));
         }
         lines
     }
@@ -267,31 +517,46 @@ impl Layout {
         Some(widths)
     }
 
-    fn render_table(&self, table: &Table, rows: &[Vec<Cell>], widths: &[usize]) -> Vec<String> {
+    fn render_table(
+        &self,
+        table: &Table,
+        rows: &[Vec<Cell>],
+        widths: &[usize],
+        paint: Option<Paint<'_>>,
+    ) -> Vec<String> {
         let mut lines = Vec::with_capacity(rows.len() + 1);
 
         let headers: Vec<Cell> = table
             .columns
             .iter()
-            .map(|column| Cell::new(column.header.clone()))
+            .map(|column| Cell::new(column.header.clone()).with_token(Token::TableHeader))
             .collect();
-        lines.push(self.render_row(table, &headers, widths));
+        lines.push(self.render_row(table, &headers, widths, paint));
 
         for row in rows {
-            lines.push(self.render_row(table, row, widths));
+            lines.push(self.render_row(table, row, widths, paint));
         }
         lines
     }
 
-    fn render_row(&self, table: &Table, row: &[Cell], widths: &[usize]) -> String {
+    fn render_row(
+        &self,
+        table: &Table,
+        row: &[Cell],
+        widths: &[usize],
+        paint: Option<Paint<'_>>,
+    ) -> String {
         let mut line = String::new();
         for (index, width) in widths.iter().enumerate() {
             if index > 0 {
                 line.push_str(&" ".repeat(COLUMN_GAP));
             }
-            let text = row.get(index).map_or("", Cell::text);
+            let cell = row.get(index);
+            let text = cell.map_or("", Cell::text);
             let shortened = shorten(text, *width);
             let padding = width.saturating_sub(shortened.width());
+            let token = cell.map_or(Token::Foreground, Cell::token);
+            let shortened = self.paint_full(&shortened, token, paint);
             let align = table
                 .columns
                 .get(index)
@@ -313,7 +578,12 @@ impl Layout {
     }
 
     /// One line per field, for a terminal too narrow to hold a table (spec §13.2).
-    fn render_stacked(&self, table: &Table, rows: &[Vec<Cell>]) -> Vec<String> {
+    fn render_stacked(
+        &self,
+        table: &Table,
+        rows: &[Vec<Cell>],
+        paint: Option<Paint<'_>>,
+    ) -> Vec<String> {
         let label_width = table
             .columns
             .iter()
@@ -332,15 +602,60 @@ impl Layout {
                 let padding = label_width.saturating_sub(label.width());
                 let available = self.width.saturating_sub(label_width + 1);
                 let value = shorten(cell.text(), available);
+                let label = self.paint_full(&label, Token::TableKey, paint);
+                let value = self.paint_full(&value, cell.token(), paint);
                 lines.push(format!("{label}{} {value}", " ".repeat(padding)));
             }
         }
         lines
     }
+}
 
-    fn clip(&self, text: &str) -> String {
-        shorten(text, self.width)
+/// How much of a level of detail an error is rendered at (spec §16.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Detail {
+    /// The message, its target and its help line — what a failing command prints.
+    Terse,
+    /// Code, kind, metadata and the whole causal chain — what `inspect @error` shows.
+    Full,
+}
+
+/// The theme and destination a layout paints with, when it paints at all.
+#[derive(Debug, Clone, Copy)]
+struct Paint<'a> {
+    theme: &'a Theme,
+    presentation: Presentation,
+}
+
+/// A `hexdump -C`-shaped view of `bytes`: offset, sixteen bytes, and their printable form.
+fn hex_dump(bytes: &[u8]) -> Vec<String> {
+    if bytes.is_empty() {
+        return vec![format!("{:08x}", 0)];
     }
+    bytes
+        .chunks(16)
+        .enumerate()
+        .map(|(row, chunk)| {
+            let mut hex = String::with_capacity(47);
+            for (index, byte) in chunk.iter().enumerate() {
+                if index > 0 {
+                    hex.push(' ');
+                }
+                let _ = std::fmt::Write::write_fmt(&mut hex, format_args!("{byte:02x}"));
+            }
+            let text: String = chunk
+                .iter()
+                .map(|byte| {
+                    if byte.is_ascii_graphic() || *byte == b' ' {
+                        char::from(*byte)
+                    } else {
+                        '.'
+                    }
+                })
+                .collect();
+            format!("{:08x}  {hex:<47}  |{text}|", row * 16)
+        })
+        .collect()
 }
 
 /// Shortens `text` to at most `width` terminal cells, marking that it was cut.

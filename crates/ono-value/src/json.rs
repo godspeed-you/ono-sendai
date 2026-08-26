@@ -60,12 +60,12 @@ pub fn to_json(value: &Value) -> Json {
         },
         Value::Decimal(value) => tagged("$decimal", Json::String(value.to_string())),
         Value::String(value) => Json::String(value.to_string()),
-        Value::Bytes(value) => tagged("$bytes", Json::String(to_hex(value))),
+        Value::Bytes(value) => tagged("$bytes", Json::String(crate::hex::encode(value))),
         Value::Path(value) => match value.to_str() {
             Some(text) => tagged("$path", Json::String(text.to_owned())),
             None => tagged(
                 "$path_bytes",
-                Json::String(to_hex(std::os::unix::ffi::OsStrExt::as_bytes(
+                Json::String(crate::hex::encode(std::os::unix::ffi::OsStrExt::as_bytes(
                     value.as_os_str(),
                 ))),
             ),
@@ -171,29 +171,6 @@ fn non_finite_value(name: &str) -> Option<f64> {
         "-inf" => Some(f64::NEG_INFINITY),
         _ => None,
     }
-}
-
-fn to_hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(char::from_digit(u32::from(byte >> 4), 16).unwrap_or('0'));
-        out.push(char::from_digit(u32::from(byte & 0x0f), 16).unwrap_or('0'));
-    }
-    out
-}
-
-fn from_hex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
-        return None;
-    }
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(text.len() / 2);
-    for pair in bytes.chunks(2) {
-        let high = char::from(*pair.first()?).to_digit(16)?;
-        let low = char::from(*pair.get(1)?).to_digit(16)?;
-        out.push(u8::try_from(high * 16 + low).ok()?);
-    }
-    Some(out)
 }
 
 fn map_to_json(map: &MapValue) -> Map<String, Json> {
@@ -357,11 +334,11 @@ fn tagged_from_json(
         "$float" => Value::Float(non_finite_value(text()?).ok_or_else(|| bad_tag(tag, payload))?),
         "$decimal" => Value::Decimal(Decimal::parse(text()?)?),
         "$bytes" => Value::Bytes(bytes::Bytes::from(
-            from_hex(text()?).ok_or_else(|| bad_tag(tag, payload))?,
+            crate::hex::decode(text()?).ok_or_else(|| bad_tag(tag, payload))?,
         )),
         "$path" => Value::Path(Arc::from(std::path::Path::new(text()?))),
         "$path_bytes" => {
-            let raw = from_hex(text()?).ok_or_else(|| bad_tag(tag, payload))?;
+            let raw = crate::hex::decode(text()?).ok_or_else(|| bad_tag(tag, payload))?;
             let os: &std::ffi::OsStr = std::os::unix::ffi::OsStrExt::from_bytes(raw.as_slice());
             Value::Path(Arc::from(std::path::Path::new(os)))
         }

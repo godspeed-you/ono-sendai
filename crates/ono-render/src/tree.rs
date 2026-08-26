@@ -6,6 +6,7 @@
 
 use unicode_width::UnicodeWidthStr;
 
+use crate::Token;
 use crate::table::shorten;
 
 /// How sure the provider is that a relationship exists.
@@ -24,6 +25,8 @@ pub enum Confidence {
 #[derive(Debug, Clone)]
 pub struct TreeNode {
     label: String,
+    key: Option<String>,
+    token: Token,
     relation: Option<String>,
     confidence: Confidence,
     children: Vec<TreeNode>,
@@ -35,10 +38,38 @@ impl TreeNode {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
+            key: None,
+            token: Token::Foreground,
             relation: None,
             confidence: Confidence::Exact,
             children: Vec::new(),
         }
+    }
+
+    /// Names the field or key this node stands for, drawn before the label as `key: label`.
+    #[must_use]
+    pub fn with_key(mut self, key: impl Into<String>) -> Self {
+        self.key = Some(key.into());
+        self
+    }
+
+    /// Paints the node's label with a semantic token (spec §44).
+    #[must_use]
+    pub fn with_token(mut self, token: Token) -> Self {
+        self.token = token;
+        self
+    }
+
+    /// The field or key this node stands for, if it has one.
+    #[must_use]
+    pub fn key(&self) -> Option<&str> {
+        self.key.as_deref()
+    }
+
+    /// The token the node's label is painted with.
+    #[must_use]
+    pub fn token(&self) -> Token {
+        self.token
     }
 
     /// Names the relationship that leads from the parent to this node.
@@ -92,10 +123,45 @@ impl TreeNode {
     }
 }
 
+/// One drawn line, split into the parts a theme paints differently.
+pub(crate) struct TreeLine {
+    /// The connectors leading to this node. Painted as a border.
+    pub indent: String,
+    /// The field or key this node stands for, if it has one.
+    pub key: Option<String>,
+    /// The node's own text.
+    pub label: String,
+    /// The token the label is painted with.
+    pub token: Token,
+}
+
+impl TreeLine {
+    /// The whole line, before any shortening.
+    fn text(&self) -> String {
+        match &self.key {
+            Some(key) => format!("{}{key}: {}", self.indent, self.label),
+            None => format!("{}{}", self.indent, self.label),
+        }
+    }
+}
+
 /// Renders `root` into terminal lines, no wider than `width`.
 pub(crate) fn render(root: &TreeNode, width: usize, max_depth: Option<usize>) -> Vec<String> {
-    let mut lines = vec![shorten(&root.label, width)];
-    draw_children(root, "", width, max_depth, 1, &mut lines);
+    lines(root, max_depth)
+        .iter()
+        .map(|line| shorten(&line.text(), width))
+        .collect()
+}
+
+/// The drawn lines of `root`, before they are fitted to a width.
+pub(crate) fn lines(root: &TreeNode, max_depth: Option<usize>) -> Vec<TreeLine> {
+    let mut lines = vec![TreeLine {
+        indent: String::new(),
+        key: root.key.clone(),
+        label: root.label.clone(),
+        token: root.token,
+    }];
+    draw_children(root, "", max_depth, 1, &mut lines);
     lines
 }
 
@@ -107,10 +173,9 @@ pub(crate) fn render(root: &TreeNode, width: usize, max_depth: Option<usize>) ->
 fn draw_children(
     node: &TreeNode,
     prefix: &str,
-    width: usize,
     max_depth: Option<usize>,
     depth: usize,
-    lines: &mut Vec<String>,
+    lines: &mut Vec<TreeLine>,
 ) {
     if node.children.is_empty() {
         return;
@@ -118,7 +183,12 @@ fn draw_children(
 
     if max_depth.is_some_and(|limit| depth > limit) {
         let hidden = count_descendants(node);
-        lines.push(shorten(&format!("{prefix}+-- ... {hidden} more"), width));
+        lines.push(TreeLine {
+            indent: format!("{prefix}+-- "),
+            key: None,
+            label: format!("... {hidden} more"),
+            token: Token::Dim,
+        });
         return;
     }
 
@@ -133,15 +203,17 @@ fn draw_children(
             Some(relation) => format!(" {relation} ->"),
             None => String::new(),
         };
-        lines.push(shorten(
-            &format!("{prefix}{mark}{arrow} {}", child.label),
-            width,
-        ));
+        lines.push(TreeLine {
+            indent: format!("{prefix}{mark}{arrow} "),
+            key: child.key.clone(),
+            label: child.label.clone(),
+            token: child.token,
+        });
 
         // Every level indents by the same four cells the connector occupies, so a child sits
         // under its parent's label rather than under the connector.
         let child_prefix = format!("{prefix}|   ");
-        draw_children(child, &child_prefix, width, max_depth, depth + 1, lines);
+        draw_children(child, &child_prefix, max_depth, depth + 1, lines);
     }
 }
 
