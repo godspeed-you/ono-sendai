@@ -347,3 +347,59 @@ fn should_select_the_argument_mode_from_the_head_word() {
         assert_eq!(ArgMode::for_head(head), ArgMode::Words, "{head}");
     }
 }
+
+#[test]
+fn should_keep_an_escaped_space_inside_the_word_when_a_path_contains_one() {
+    // ADR-0019: `cd My\ Documents` is muscle memory for every user this shell replaces Bash for.
+    // The backslash keeps the word going; unescaping is the evaluator's job, so the token still
+    // carries what was typed.
+    let parsed = ono_parser::parse("cd My\\ Documents");
+    let statement = &parsed.program().statements[0];
+    let pipeline = statement.as_pipeline().expect("a pipeline");
+    let stage = &pipeline.head.stages[0];
+    assert_eq!(stage.arguments.len(), 1, "got {:?}", stage.arguments);
+    assert_eq!(stage.arguments[0].as_word(), Some("My\\ Documents"));
+}
+
+#[test]
+fn should_keep_an_escaped_structural_character_inside_the_word_when_it_is_escaped() {
+    for (source, expected) in [
+        ("echo a\\|b", "a\\|b"),
+        ("echo a\\;b", "a\\;b"),
+        ("echo a\\\"b", "a\\\"b"),
+        ("echo a\\(b", "a\\(b"),
+        ("echo \\*", "\\*"),
+        ("echo \\\\", "\\\\"),
+    ] {
+        let parsed = ono_parser::parse(source);
+        let stage = &parsed.program().statements[0]
+            .as_pipeline()
+            .expect("a pipeline")
+            .head
+            .stages[0];
+        assert_eq!(
+            stage
+                .arguments
+                .first()
+                .and_then(ono_parser::Argument::as_word),
+            Some(expected),
+            "for {source:?}, got {:?}",
+            stage.arguments
+        );
+    }
+}
+
+#[test]
+fn should_end_the_word_at_a_trailing_backslash_rather_than_reading_past_the_input() {
+    // A line ending in a lone backslash is being typed, not broken.
+    let parsed = ono_parser::parse("echo a\\");
+    assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics());
+}
+
+#[test]
+fn should_not_treat_a_backslash_as_an_escape_in_expression_mode_when_lexing() {
+    // Expression mode has strings for that; a backslash there would collide with the escapes
+    // ADR-0009 already gives a quoted string.
+    let parsed = ono_parser::parse("where name == \"a\\\\b\"");
+    assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics());
+}

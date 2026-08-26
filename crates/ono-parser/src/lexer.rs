@@ -340,6 +340,18 @@ fn words_token(bytes: &[u8], start: usize) -> Token {
 
     let mut index = start;
     while let Some(&byte) = bytes.get(index) {
+        // A backslash carries the next character into the word, whitespace included, so
+        // `cd My\ Documents` is one argument (ADR-0019). The escape is kept in the token text;
+        // removing it is the evaluator's job, because an external command must be able to
+        // receive what was typed.
+        if byte == b'\\' {
+            match bytes.get(index + 1) {
+                Some(_) => index += 2,
+                // A line ending in a lone backslash is being typed, not broken.
+                None => index += 1,
+            }
+            continue;
+        }
         if byte.is_ascii_whitespace() || WORD_STOPPERS.contains(&byte) {
             break;
         }

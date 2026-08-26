@@ -131,6 +131,10 @@ use_stmt       = "use" qualified_name ;
 
 (* WORD  the maximal run of characters that are none of: whitespace, | ( ) [ ] { } ; , ' "
  *       and, in words mode, < > ; and that does not begin a comment.
+ *       A backslash carries the next character into the word, whitespace and structural
+ *       characters included, so `My\ Documents` and `a\|b` are each one word (ADR-0019). The
+ *       escape stays in the token text; removing it is the evaluator's job, because an external
+ *       command must be able to receive exactly what was typed.
  * IDENT a WORD matching [A-Za-z_][A-Za-z0-9_-]* that is not a keyword.
  * COMMENT  "#" to end of line, when "#" begins a token. Not a grammar production.
  *)
