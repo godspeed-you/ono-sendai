@@ -347,10 +347,24 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
     let mut prompt = ono_editor::Prompt::plain("").segment("local", Token::PromptLink);
     prompt = prompt.segment("://", Token::Dim);
 
-    prompt = prompt.segment(
-        short_path(session.cwd(), session.home().as_deref()),
-        Token::PromptContext,
-    );
+    // Spec §14.3: inside an object context the prompt names the object — `local://service/nginx`
+    // — because a frame that changes what commands act on must be impossible to miss
+    // (ADR-0023). The working directory returns to the prompt when the frame is left.
+    let object = session.frames().iter().rev().find_map(|entry| {
+        matches!(entry.frame.kind(), ono_command::FrameKind::Object)
+            .then(|| format!("{}/{}", entry.frame.target(), entry.frame.identity()))
+    });
+    match object {
+        Some(entered) => {
+            prompt = prompt.segment(entered, Token::PromptContext);
+        }
+        None => {
+            prompt = prompt.segment(
+                short_path(session.cwd(), session.home().as_deref()),
+                Token::PromptContext,
+            );
+        }
+    }
 
     let jobs = session.executor().jobs().len();
     if jobs > 0 {

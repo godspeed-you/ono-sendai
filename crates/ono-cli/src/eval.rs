@@ -393,6 +393,21 @@ fn run_stage_list(
         }
     }
 
+    // `enter` and `leave` change what later commands mean, which is session state: the same
+    // reason `cd` runs in the shell (spec §14.1, ADR-0023).
+    if list.stages.len() == 1
+        && let Some(stage) = list.stages.first()
+        && let Some(request) = crate::context::claims(stage)
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        return match request {
+            crate::context::Request::Enter => crate::context::enter(session, stage, source),
+            crate::context::Request::Leave => crate::context::leave(session, stage, source),
+        };
+    }
+
     // A pipeline with a native command in it runs through the object pipeline of spec §5, which
     // threads bytes across the boundary of spec §12.3 where a child process sits on one side.
     // Background is not offered there yet: a native stage has no process group to disown.

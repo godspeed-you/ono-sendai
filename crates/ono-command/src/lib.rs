@@ -73,6 +73,7 @@ pub use expr::{Scope, check_fields, evaluate, evaluate_to_value, is_true};
 pub use help::{CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help};
 pub use impls::builtin_commands;
 pub use invoke::{
-    CommandImpl, CommandTable, Invocation, Outcome, OutcomeFuture, unbound_stable_commands,
+    CommandImpl, CommandTable, ContextFrame, FrameKind, Invocation, Outcome, OutcomeFuture,
+    unbound_stable_commands,
 };
 pub use registry::{CommandRegistry, Resolved};

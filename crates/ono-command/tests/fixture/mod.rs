@@ -308,7 +308,16 @@ impl Ran {
 
 /// Runs `source` against `providers`, the way the evaluator will.
 pub async fn run(source: &str, providers: &ProviderRegistry) -> Result<Ran, ErrorValue> {
-    run_in(source, providers, Scope::new()).await
+    run_full(source, providers, Scope::new(), Vec::new()).await
+}
+
+/// Runs `source` inside the given context frames (spec §14.3).
+pub async fn run_with_context(
+    source: &str,
+    providers: &ProviderRegistry,
+    context: Vec<ono_command::ContextFrame>,
+) -> Result<Ran, ErrorValue> {
+    run_full(source, providers, Scope::new(), context).await
 }
 
 /// Runs `source` with a scope of shell bindings.
@@ -316,6 +325,16 @@ pub async fn run_in(
     source: &str,
     providers: &ProviderRegistry,
     scope: Scope,
+) -> Result<Ran, ErrorValue> {
+    run_full(source, providers, scope, Vec::new()).await
+}
+
+/// Runs `source` with shell bindings and context frames.
+pub async fn run_full(
+    source: &str,
+    providers: &ProviderRegistry,
+    scope: Scope,
+    context: Vec<ono_command::ContextFrame>,
 ) -> Result<Ran, ErrorValue> {
     let table = table();
     let scope = Arc::new(scope);
@@ -343,7 +362,8 @@ pub async fn run_in(
             let resolved = registry().resolve(head, &stage.arguments)?;
             let bound = resolved.contract.bind(resolved.arguments)?;
             let mut invocation = Invocation::new(resolved.contract, &bound, providers)
-                .with_scope(Arc::clone(&scope));
+                .with_scope(Arc::clone(&scope))
+                .with_context(context.clone());
             if let Some(input) = stream.take() {
                 invocation = invocation.with_input(input);
             }

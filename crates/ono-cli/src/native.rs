@@ -298,6 +298,7 @@ fn run_native_segment(
     }
 
     let scope = std::sync::Arc::new(Scope::new());
+    let context = session.context();
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -312,7 +313,8 @@ fn run_native_segment(
         for (contract, arguments) in &bound {
             let started = std::time::Instant::now();
             let mut invocation = Invocation::new(contract, arguments, providers)
-                .with_scope(std::sync::Arc::clone(&scope));
+                .with_scope(std::sync::Arc::clone(&scope))
+                .with_context(context.clone());
             if let Some(previous) = stream.take() {
                 invocation = invocation.with_input(previous);
             }

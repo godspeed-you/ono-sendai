@@ -8,12 +8,82 @@ use std::sync::Arc;
 use ono_core::ErrorCode;
 use ono_pipeline::{CancelToken, ValueStream};
 use ono_provider_api::{ActionOutcome, ProviderRegistry};
-use ono_value::ErrorValue;
+use ono_value::{ErrorValue, Value};
 
 use crate::bind::BoundArguments;
 use crate::contract::CommandContract;
 use crate::expr::Scope;
 use crate::registry::CommandRegistry;
+
+/// One frame of the shell's context stack, as a command sees it (spec §14.1, ADR-0023).
+///
+/// A frame narrows; it never redirects. What it contributes here is exactly the implicit
+/// selector of spec §14.3: `enter service nginx` makes `get process` ask for that service's
+/// processes, and §14.5 requires the same query to be expressible without the context —
+/// `get process --service nginx` — which is why the frame is a field name and a value, nothing
+/// more.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextFrame {
+    kind: FrameKind,
+    target: String,
+    identity: Value,
+}
+
+/// What sort of frame this is (spec §14.1). Only an object frame narrows queries; a filesystem
+/// frame's whole effect is the working directory it changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameKind {
+    /// An entered object: `enter service nginx`.
+    Object,
+    /// An entered directory: `enter dir /etc` (spec §14.2).
+    Filesystem,
+}
+
+impl ContextFrame {
+    /// A frame for the entered object: its target name and its identity.
+    #[must_use]
+    pub fn new(target: impl Into<String>, identity: Value) -> Self {
+        Self {
+            kind: FrameKind::Object,
+            target: target.into(),
+            identity,
+        }
+    }
+
+    /// A frame for an entered directory (spec §14.2).
+    #[must_use]
+    pub fn filesystem(path: Value) -> Self {
+        Self {
+            kind: FrameKind::Filesystem,
+            target: "dir".to_owned(),
+            identity: path,
+        }
+    }
+
+    /// What sort of frame this is.
+    #[must_use]
+    pub fn kind(&self) -> FrameKind {
+        self.kind
+    }
+
+    /// The target the frame narrows to, such as `service`.
+    #[must_use]
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    /// The identity of the entered object.
+    #[must_use]
+    pub fn identity(&self) -> &Value {
+        &self.identity
+    }
+
+    /// The explicit spelling of what this frame contributes (spec §14.5).
+    #[must_use]
+    pub fn spelling(&self) -> String {
+        format!("{} {}", self.target, self.identity)
+    }
+}
 
 /// What a command produced.
 ///
@@ -41,6 +111,7 @@ pub struct Invocation<'a> {
     input: Option<ValueStream>,
     cancel: CancelToken,
     scope: Arc<Scope>,
+    context: Vec<ContextFrame>,
 }
 
 impl<'a> Invocation<'a> {
@@ -59,7 +130,15 @@ impl<'a> Invocation<'a> {
             input: None,
             cancel: CancelToken::new(),
             scope: Arc::new(Scope::new()),
+            context: Vec::new(),
         }
+    }
+
+    /// The context frames in force, innermost last (spec §14.1).
+    #[must_use]
+    pub fn with_context(mut self, context: Vec<ContextFrame>) -> Self {
+        self.context = context;
+        self
     }
 
     /// Connects the stage's input stream.
@@ -127,6 +206,12 @@ impl<'a> Invocation<'a> {
     #[must_use]
     pub fn scope(&self) -> &Arc<Scope> {
         &self.scope
+    }
+
+    /// The context frames in force, outermost first.
+    #[must_use]
+    pub fn context(&self) -> &[ContextFrame] {
+        &self.context
     }
 }
 

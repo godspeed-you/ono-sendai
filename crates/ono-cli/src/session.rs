@@ -41,6 +41,18 @@ pub struct Session {
     runtime: Option<tokio::runtime::Runtime>,
     /// Built on first use, for the same reason: constructing it opens sockets and speaks D-Bus.
     providers: Option<ProviderRegistry>,
+    /// The context stack of spec §14.1, above the implicit ground frame. Each entry pairs the
+    /// frame every command sees with what popping it must restore.
+    frames: Vec<ShellFrame>,
+}
+
+/// One pushed frame, with the shell-side state `leave` restores.
+#[derive(Debug, Clone)]
+pub struct ShellFrame {
+    /// The frame as commands see it (spec §14.3).
+    pub frame: ono_command::ContextFrame,
+    /// Where the session stood before a filesystem frame moved it (spec §14.2).
+    pub restore_cwd: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Session {
@@ -82,6 +94,7 @@ impl Session {
             leaving: None,
             runtime: None,
             providers: None,
+            frames: Vec::new(),
         }
     }
 
@@ -98,6 +111,31 @@ impl Session {
                 .ok();
         }
         self.runtime.as_ref()
+    }
+
+    /// The context stack above the ground frame, outermost first (spec §14.1).
+    #[must_use]
+    pub fn frames(&self) -> &[ShellFrame] {
+        &self.frames
+    }
+
+    /// The frames as commands see them, for an [`ono_command::Invocation`].
+    #[must_use]
+    pub fn context(&self) -> Vec<ono_command::ContextFrame> {
+        self.frames
+            .iter()
+            .map(|entry| entry.frame.clone())
+            .collect()
+    }
+
+    /// Pushes a frame (spec §14.1: `enter` pushes).
+    pub fn push_frame(&mut self, frame: ShellFrame) {
+        self.frames.push(frame);
+    }
+
+    /// Pops the innermost frame, answering it so the caller can restore what it changed.
+    pub fn pop_frame(&mut self) -> Option<ShellFrame> {
+        self.frames.pop()
     }
 
     /// The runtime and the providers together, for a caller that needs both at once.

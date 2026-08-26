@@ -193,3 +193,61 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
         "every other delivered command has an implementation (spec §27.2)"
     );
 }
+
+// --- context frames (spec §14.3, ADR-0023) ---------------------------------------------------
+
+#[tokio::test]
+async fn should_narrow_a_producer_with_the_ambient_selector_of_a_context_frame() {
+    // Inside `enter owner root`, `get process` asks for root's objects: the frame's selector is
+    // pushed into the provider query exactly as `get process --owner root` would be (§14.5).
+    let frame = ono_command::ContextFrame::new("owner", Value::string("root"));
+    let ran = fixture::run_with_context(
+        "get process",
+        &providers(FixtureProvider::new()),
+        vec![frame],
+    )
+    .await
+    .expect("the pipeline runs");
+
+    assert_eq!(
+        ran.values().len(),
+        2,
+        "root owns exactly two fixture objects; a full answer would mean the frame fell back to \
+         global scope"
+    );
+    for value in ran.values() {
+        let record = value.as_record().expect("a record");
+        assert_eq!(
+            record.get("owner"),
+            Some(&Value::string("root")),
+            "every answer belongs to the entered object (spec §14.3)"
+        );
+    }
+}
+
+#[tokio::test]
+async fn should_refuse_a_query_the_context_cannot_narrow_rather_than_widening() {
+    // Spec §14.3: a command with no meaning in the active context fails saying why — it never
+    // quietly runs globally. The widget schema has no `service` field, so a service frame
+    // cannot narrow it.
+    let frame = ono_command::ContextFrame::new("service", Value::string("nginx.service"));
+    let error = fixture::run_with_context(
+        "get process",
+        &providers(FixtureProvider::new()),
+        vec![frame],
+    )
+    .await
+    .expect_err("a context that cannot narrow the query must refuse it");
+
+    assert_eq!(error.code(), ono_core::ErrorCode::ResolveTargetNotFound);
+    assert!(
+        error.message().contains("service"),
+        "the refusal names the frame: {}",
+        error.message()
+    );
+    assert!(
+        error.help().is_some_and(|help| help.contains("leave")),
+        "the refusal says how to widen explicitly (spec §14.5): {:?}",
+        error.help()
+    );
+}

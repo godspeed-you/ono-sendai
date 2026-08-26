@@ -72,10 +72,6 @@ KUANG/11 contracts, adversarial review, security review) have all reported and l
 
 ## Next up (ordered)
 
-- [ ] `get service <name>` finds only *loaded* units — an unloaded unit that exists on disk
-  (`systemctl status` finds it) answers "nothing". Resolve by-name queries through
-  `GetUnit`/`LoadUnit` instead of filtering `ListUnits` — exit test: a conformance case naming
-  an unloaded unit
 - [ ] `--name=value` in expression mode — ADR-0032 pairs an option with the following
   expression; the `=` spelling stays words-only until an increment adds it — exit test:
   a parse_expressions case for `reduce $acc + @ --initial=10`
@@ -275,6 +271,13 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Done
 
+- [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
+      `not-found` stubs. Investigation showed the by-name path already resolved through
+      `LoadUnit`; the real defect behind the CI flake was the inverse — `ListUnits` enumerates a
+      stub for a referenced unit whose file is gone, and the enumeration reported it as a
+      service the by-name path then rightly denied. Both paths now agree — tests:
+      `should_find_a_unit_on_disk_when_systemd_has_not_loaded_it`,
+      `should_report_no_service_when_a_listed_unit_is_only_a_dangling_reference`
 - [x] Bootstrap: Cargo workspace (`ono-cli`, `ono-core`, `ono-testkit`, `xtask`), pinned
       toolchain, lint configuration, first outcome tests — ADR-0001
 - [x] Quality gate `scripts/gate.sh` and contract check `cargo xtask spec-check` — ADR-0001

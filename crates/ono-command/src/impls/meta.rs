@@ -22,6 +22,8 @@ use crate::registry::CommandRegistry;
 /// Which meta command an implementation is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
+    /// `get context` — the stack, ground first (spec §14.1).
+    GetContext,
     Help,
     Explain,
     Type,
@@ -77,6 +79,7 @@ impl CommandImpl for MetaCommand {
                 let plan = crate::plan(self.registry, Some(ctx.providers()), pipeline, subject);
                 Ok(values([plan.to_value()]))
             }
+            Kind::GetContext => Ok(values(context_records(ctx))),
             Kind::Type => self.describe_type(ctx),
             Kind::Inspect => self.inspect(ctx),
             Kind::GetCommand => Ok(values(self.commands(ctx))),
@@ -519,4 +522,41 @@ fn error_map(error: &ErrorValue) -> Value {
         })),
     );
     Value::Map(Arc::new(described))
+}
+
+/// The stack as `ono.context/1` records, the ground frame first (spec §14.1).
+fn context_records(ctx: &Invocation<'_>) -> Vec<Value> {
+    let kind_name = |frame: &crate::ContextFrame| match frame.kind() {
+        crate::FrameKind::Object => "object",
+        crate::FrameKind::Filesystem => "filesystem",
+    };
+
+    let mut records = Vec::with_capacity(ctx.context().len() + 1);
+    let mut ground = MapValue::new();
+    ground.insert("depth".into(), Value::Int(0));
+    ground.insert("kind".into(), Value::string("local"));
+    ground.insert("target".into(), Value::Null);
+    ground.insert("identity".into(), Value::Null);
+    ground.insert("selector".into(), Value::Null);
+    records.push(Value::Map(Arc::new(ground)));
+
+    for (index, frame) in ctx.context().iter().enumerate() {
+        let mut entry = MapValue::new();
+        entry.insert("depth".into(), Value::Int(index as i128 + 1));
+        entry.insert("kind".into(), Value::string(kind_name(frame)));
+        entry.insert("target".into(), Value::string(frame.target()));
+        entry.insert("identity".into(), frame.identity().clone());
+        // Everything a frame contributes can be written out explicitly (spec §14.5, ADR-0023).
+        entry.insert(
+            "selector".into(),
+            match frame.kind() {
+                crate::FrameKind::Object => {
+                    Value::string(&format!("--{} {}", frame.target(), frame.identity()))
+                }
+                crate::FrameKind::Filesystem => Value::string(&format!("cd {}", frame.identity())),
+            },
+        );
+        records.push(Value::Map(Arc::new(entry)));
+    }
+    records
 }
