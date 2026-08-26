@@ -8,17 +8,17 @@
 
 ## 1. Prime Directive
 
-Build **KUANG**, the shell specified in `docs/kuang_shell_spec_v0.1.md`, to completion —
+Build **Ono-Sendai**, the shell specified in `docs/ono-sendai_shell_spec_v0.1.md`, to completion —
 **test-driven, autonomously, without asking the user for input.**
 
 Four rules override everything else:
 
 1. **Do not block on the user.** Every decision that is not explicitly fixed in the spec
-   is yours to make. Decide, record the decision (§7), continue.
+   is yours to make. Decide, record the decision (§8), continue.
 2. **Tests are the referee.** A (sub)goal counts as reached only when its tests are green
-   and the full quality gate (§6) passes. Only then start the next step.
+   and the full quality gate (§10) passes. Only then start the next step.
 3. **No test, no code.** Production code is written *after* a failing test exists for it.
-4. **Be pragmatic and stay on task.** Solve the problem in front of you, nothing else (§3).
+4. **Be pragmatic and stay on task.** Solve the problem in front of you, nothing else (§4).
 
 If you catch yourself writing "should I…?", "which option do you prefer?", or "let me know
 how to proceed" — stop, pick the option best aligned with the spec, write an ADR, proceed.
@@ -31,19 +31,20 @@ how to proceed" — stop, pick the option best aligned with the spec, write an A
 directory at the top level.
 
 ```
-kuang/
+ono-sendai/
 ├── AGENTS.md                     these instructions (authoritative)
 ├── CLAUDE.md                     thin pointer + Claude-specific notes
 ├── README.md
 ├── Cargo.toml                    workspace root
-├── crates/                       implementation (see spec §24.2)
+├── crates/                       implementation, `ono-*` crates (see spec §24.2)
 ├── tests/                        cross-crate integration tests
 ├── examples/
 ├── xtask/                        spec validation, generators, gates
 └── docs/
-    ├── kuang_shell_spec_v0.1.md  narrative spec (normative)
-    ├── STATE.md                  progress board (§8)
-    ├── decisions/ADR-*.md        recorded agent decisions (§7)
+    ├── ono-sendai_shell_spec_v0.1.md
+    │                             narrative spec (normative)
+    ├── STATE.md                  progress board (§9)
+    ├── decisions/ADR-*.md        recorded agent decisions (§8)
     ├── spec/                     machine-readable contracts
     │   ├── language.yaml
     │   ├── grammar.ebnf
@@ -63,7 +64,27 @@ Only build artifacts, source code and tooling belong at the top level.
 
 ---
 
-## 3. Pragmatism and Separation of Concerns
+## 3. Naming
+
+The project was renamed from *Kuang* to **Ono-Sendai**; the narrative spec still says "KUANG"
+throughout. Read every occurrence of that word in the spec as **Ono-Sendai**, and apply these
+names in everything you write:
+
+| Thing | Name |
+|---|---|
+| Project / product | **Ono-Sendai** |
+| Short name, binary, command, prose default | **`ono`** — the form to prefer everywhere |
+| Cargo crates | `ono-cli`, `ono-core`, `ono-parser`, `ono-value`, … — spec §24.2 with the `ono-` prefix |
+| Config paths, env vars, protocol ids | derived from `ono`: `~/.config/ono/`, `ONO_*` |
+| Plugin / extension system | **Kuang/11** — reserved for the plugin system of spec §31, nothing else |
+
+`kuang` MUST NOT appear as a prefix, crate name, identifier or path for anything outside the
+Kuang/11 plugin system. If you touch a file that still carries the old name, rename it as part
+of that increment; do not do a repository-wide sweep inside an unrelated change (§4).
+
+---
+
+## 4. Pragmatism and Separation of Concerns
 
 **Code and reviews are pragmatic and problem-oriented.** Write the straightforward thing that
 solves the actual requirement. No speculative generality, no abstraction for a second use case
@@ -75,9 +96,9 @@ NOT share a commit or a change:
 
 | Kind | What it does | Rule |
 |---|---|---|
-| `feat` | new behaviour | driven by a new test (§5) |
+| `feat` | new behaviour | driven by a new test (§7) |
 | `fix` | wrong behaviour → correct behaviour | starts with a test that reproduces the bug |
-| `refactor` | same behaviour, better structure | **no test may change** (§10) |
+| `refactor` | same behaviour, better structure | **no test may change** (§11) |
 | `perf` | same behaviour, measurably faster | needs a benchmark showing the gain |
 | `test` | test coverage only | no production code changes |
 
@@ -95,10 +116,10 @@ Concretely:
 
 ---
 
-## 4. Authority Order (what wins when sources disagree)
+## 5. Authority Order (what wins when sources disagree)
 
 ```
-1. docs/kuang_shell_spec_v0.1.md   narrative spec — intent & semantics (normative MUST/SHOULD/MAY)
+1. docs/ono-sendai_shell_spec_v0.1.md   narrative spec — intent & semantics (normative MUST/SHOULD/MAY)
 2. docs/spec/*.yaml, grammar.ebnf  machine-readable contracts (public API surface)
 3. docs/decisions/ADR-*.md         recorded agent decisions (fill gaps in 1 & 2)
 4. tests/                          executable behaviour contract
@@ -111,11 +132,11 @@ change to a higher level, **change the higher level explicitly** (edit the contr
 ADR) in the same commit, and note it in the commit body.
 
 The narrative spec is explorative. Where it says "plausible", "suggested", "MAY" or leaves an
-Open Design Question (spec §39), **you decide** — see §7.
+Open Design Question (spec §39), **you decide** — see §8.
 
 ---
 
-## 5. Non-Negotiable Constraints
+## 6. Non-Negotiable Constraints
 
 Fixed by the spec; not open for agent re-decision:
 
@@ -132,20 +153,20 @@ Fixed by the spec; not open for agent re-decision:
 
 ---
 
-## 6. The TDD Loop (mandatory working rhythm)
+## 7. The TDD Loop (mandatory working rhythm)
 
 Work in **small, individually shippable increments**. One increment = one loop:
 
 ```
-0. SELECT     pick the next task (§8). Write it into docs/STATE.md as in-progress.
+0. SELECT     pick the next task (§9). Write it into docs/STATE.md as in-progress.
 1. CONTRACT   if the increment adds public surface: update/create the docs/spec/*.yaml entry first.
 2. RED        write the test(s) that express the desired observable behaviour. Run them.
               They MUST fail, and fail for the right reason. A test that passes immediately is
               a broken test — fix the test, not the assertion count.
 3. GREEN      write the minimum implementation that makes them pass. No speculative features.
-4. REFACTOR   clean up names, duplication, module boundaries — with the tests untouched (§10).
-5. GATE       run the full quality gate (§9). Everything green.
-6. RECORD     ADR if a non-trivial decision was made; update docs/STATE.md; commit (§11).
+4. REFACTOR   clean up names, duplication, module boundaries — with the tests untouched (§11).
+5. GATE       run the full quality gate (§10). Everything green.
+6. RECORD     ADR if a non-trivial decision was made; update docs/STATE.md; commit (§12).
 7. LOOP       go to 0.
 ```
 
@@ -164,7 +185,7 @@ Rules for the loop:
 
 ---
 
-## 7. Autonomous Decisions and ADRs
+## 8. Autonomous Decisions and ADRs
 
 You are explicitly authorised to decide, without asking:
 
@@ -211,7 +232,7 @@ Even then: state your chosen default, proceed with it, and flag it — do not id
 
 ---
 
-## 8. Task Selection and Progress State
+## 9. Task Selection and Progress State
 
 `docs/STATE.md` is the shared, machine- and human-readable progress board. **Read it first,
 update it last, in every session.** If it does not exist, create it from this template:
@@ -241,13 +262,13 @@ Task ordering rules:
    exit criteria are unmet, unless the item is strictly independent.
 2. Within a phase, prefer the task that unblocks the most other tasks.
 3. Prefer the machine-readable contract (`docs/spec/*.yaml`) before its implementation.
-4. Bootstrapping infrastructure (§13) outranks features when a quality gate cannot run.
+4. Bootstrapping infrastructure (§14) outranks features when a quality gate cannot run.
 5. A phase is complete only when its success criterion in spec §37 is demonstrated by an
    automated test — write that test explicitly and name it in `docs/STATE.md`.
 
 ---
 
-## 9. Quality Gate (Definition of Done)
+## 10. Quality Gate (Definition of Done)
 
 An increment is done only when **all** of these pass locally:
 
@@ -268,12 +289,12 @@ deterministic when output is redirected.
 metadata without implementation, doc example that no longer parses, schema break without version
 bump, provider output violating its advertised schema.
 
-If a gate tool is not installed or not yet bootstrapped, **create it** (§13) rather than
+If a gate tool is not installed or not yet bootstrapped, **create it** (§14) rather than
 skipping the gate.
 
 ---
 
-## 10. Testing: Behaviour, Not Structure
+## 11. Testing: Behaviour, Not Structure
 
 **Tests describe *what* the system does, never *how* it does it.** This is the rule that makes
 autonomous refactoring safe.
@@ -306,7 +327,7 @@ Test layers (spec §35):
 | Layer | Location | Content |
 |---|---|---|
 | Unit | `#[cfg(test)]` in module | pure logic with its own contract: value semantics, edge cases |
-| Golden AST | `crates/kuang-parser/tests/` | parse trees, diagnostics snapshots, incremental parse |
+| Golden AST | `crates/ono-parser/tests/` | parse trees, diagnostics snapshots, incremental parse |
 | Property | testkit-driven | serialization round trips, unit arithmetic, null semantics |
 | Fuzz | `fuzz/` | parser, serializers, protocol, procfs/netlink decoders (spec §35.6) |
 | Conformance | generated from `docs/spec/providers/*.yaml` | every provider capability (spec §35.3) |
@@ -320,10 +341,10 @@ fixture creates them), one behaviour per test, assertion messages that explain t
 
 ---
 
-## 11. Commits and Version Control
+## 12. Commits and Version Control
 
-- Work on `main` unless the user asked otherwise; **every commit must be green** (§9).
-- One increment of **one kind** per commit (§3). Conventional Commits:
+- Work on `main` unless the user asked otherwise; **every commit must be green** (§10).
+- One increment of **one kind** per commit (§4). Conventional Commits:
   `feat|fix|refactor|perf|test|docs|spec|chore(scope): summary`
 - Body: what changed, which spec section it implements, which ADR it follows, which tests prove
   it. For `refactor`: state explicitly that no test changed.
@@ -333,7 +354,7 @@ fixture creates them), one behaviour per test, assertion messages that explain t
 
 ---
 
-## 12. Multi-Agent Coordination
+## 13. Multi-Agent Coordination
 
 When several agents work in parallel:
 
@@ -349,27 +370,27 @@ When several agents work in parallel:
 
 ---
 
-## 13. Bootstrapping (empty or partial repository)
+## 14. Bootstrapping (empty or partial repository)
 
 If the workspace does not exist yet, this is the ordered bootstrap backlog. Each step ends with
 a green quality gate:
 
-1. `Cargo.toml` workspace + `crates/kuang-cli` + `crates/kuang-core`, `rust-toolchain.toml`,
+1. `Cargo.toml` workspace + `crates/ono-cli` + `crates/ono-core`, `rust-toolchain.toml`,
    `rustfmt.toml`, `clippy.toml`, and one behaviour test that fails first.
 2. `xtask` crate: `cargo xtask spec-check`, `cargo xtask gen-docs`, `cargo xtask gen-tests`
    (spec §36, §47). Start as failing stubs with tests.
 3. `docs/spec/` skeleton per spec §47 — `language.yaml`, `grammar.ebnf`, `verbs.yaml`,
    `targets.yaml`, `errors.yaml`, `capabilities.yaml`, `commands/`, `schemas/`, `providers/` —
    each with a loader + validation test.
-4. `crates/kuang-testkit`: fixtures, golden/snapshot helpers, property-test helpers, provider
+4. `crates/ono-testkit`: fixtures, golden/snapshot helpers, property-test helpers, provider
    conformance harness generated from registry metadata (spec §35.3).
-5. CI workflow running exactly the §9 gate.
+5. CI workflow running exactly the §10 gate.
 6. `docs/STATE.md`, `docs/decisions/ADR-0001-*.md` recording the bootstrap choices.
 7. Then Phase A of spec §37.
 
 ---
 
-## 14. Code Style
+## 15. Code Style
 
 - Idiomatic Rust; `rustfmt` defaults are authoritative — never hand-format around it.
 - Public items in library crates carry doc comments; doc examples compile.
@@ -383,7 +404,7 @@ a green quality gate:
 
 ---
 
-## 15. Session Checklist
+## 16. Session Checklist
 
 **Start:** read `AGENTS.md` → `docs/STATE.md` → recent ADRs → `git log --oneline -10` →
 run the quality gate to confirm you start from green.
