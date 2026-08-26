@@ -44,6 +44,9 @@ pub struct Session {
     /// The context stack of spec §14.1, above the implicit ground frame. Each entry pairs the
     /// frame every command sees with what popping it must restore.
     frames: Vec<ShellFrame>,
+    /// Recent structured results, newest last (spec §20.2). Bounded, so a long session cannot
+    /// hold every table it ever printed.
+    results: std::collections::VecDeque<Vec<Value>>,
 }
 
 /// One pushed frame, with the shell-side state `leave` restores.
@@ -95,6 +98,7 @@ impl Session {
             runtime: None,
             providers: None,
             frames: Vec::new(),
+            results: std::collections::VecDeque::new(),
         }
     }
 
@@ -111,6 +115,32 @@ impl Session {
                 .ok();
         }
         self.runtime.as_ref()
+    }
+
+    /// Retains a finished pipeline's values for `@-1` and `@N` (spec §6.4, §20.2).
+    ///
+    /// Retention is bounded twice: by result count, and by values per result — a `get file /`
+    /// that printed a million rows does not pin a million values in memory forever. A truncated
+    /// retention is honest about being one: reusing it yields the rows that were kept, exactly
+    /// as the screen showed only the rows that fit.
+    pub fn retain_result(&mut self, mut values: Vec<Value>) {
+        const KEEP_RESULTS: usize = 16;
+        const KEEP_VALUES: usize = 10_000;
+        if values.is_empty() {
+            return;
+        }
+        values.truncate(KEEP_VALUES);
+        if self.results.len() == KEEP_RESULTS {
+            self.results.pop_front();
+        }
+        self.results.push_back(values);
+    }
+
+    /// The `n`th previous result, `1` for the most recent (spec §6.4 `@-1`).
+    #[must_use]
+    pub fn previous_result(&self, n: u32) -> Option<&[Value]> {
+        let index = self.results.len().checked_sub(n as usize)?;
+        self.results.get(index).map(Vec::as_slice)
     }
 
     /// The context stack above the ground frame, outermost first (spec §14.1).

@@ -994,6 +994,12 @@ impl Parser<'_> {
                 self.bump(LexMode::Words);
                 StageHead::Value(self.words_variable(token))
             }
+            // `@-1 | where …` reuses a retained result (spec §6.4, §20.2): a current-value
+            // reference starts a pipeline exactly as a variable does.
+            TokenKind::CurrentValue => {
+                self.bump(LexMode::Words);
+                StageHead::Value(self.words_current_value(token))
+            }
             TokenKind::LParen => {
                 let paren = self.parse_paren_value();
                 StageHead::Value(Expr::Paren(Box::new(paren)))

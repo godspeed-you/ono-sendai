@@ -61,7 +61,7 @@ enum Segment {
 /// reaches it, and nowhere else (ADR-0028).
 #[must_use]
 pub fn claims(session: &Session, list: &StageList) -> bool {
-    segments(session, list).is_some_and(|segments| {
+    segments(session, list, 0, false).is_some_and(|segments| {
         segments
             .iter()
             .any(|segment| matches!(segment, Segment::Native(_)))
@@ -72,12 +72,17 @@ pub fn claims(session: &Session, list: &StageList) -> bool {
 ///
 /// Returns `None` when the registry itself cannot be read, which leaves the caller on the
 /// external path it would have taken before native commands existed.
-fn segments(session: &Session, list: &StageList) -> Option<Vec<Segment>> {
+fn segments(
+    session: &Session,
+    list: &StageList,
+    start: usize,
+    seeded: bool,
+) -> Option<Vec<Segment>> {
     let registry = registry().ok()?;
     let mut segments: Vec<Segment> = Vec::new();
-    let mut structured = false;
+    let mut structured = seeded;
 
-    for (index, stage) in list.stages.iter().enumerate() {
+    for (index, stage) in list.stages.iter().enumerate().skip(start) {
         let native = native_contract(session, registry, stage, structured).is_some();
         structured = native
             && native_contract(session, registry, stage, structured)
@@ -185,8 +190,37 @@ pub fn check(pipeline: &ono_parser::Pipeline) -> Result<(), ErrorValue> {
 ///
 /// The structured error of whichever stage could not be resolved, bound, or run.
 pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitStatus> {
+    run_from(session, list, source, 0, None)
+}
+
+/// Runs a stage list whose head has already produced values.
+///
+/// A pipeline may start with a value instead of a command — `$hot | where …`, `@-1 | count` —
+/// and a list splices because it *is* several values (ADR-0019). The evaluator has already
+/// turned the head into `seed`; everything after it runs exactly as if a native producer had
+/// streamed those values.
+///
+/// # Errors
+///
+/// The structured error of whichever stage could not be resolved, bound, or run.
+pub fn run_seeded(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+    seed: Vec<Value>,
+) -> Eval<ExitStatus> {
+    run_from(session, list, source, 1, Some(seed))
+}
+
+fn run_from(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+    start: usize,
+    seed: Option<Vec<Value>>,
+) -> Eval<ExitStatus> {
     let registry = registry().map_err(Flow::Failed)?;
-    let segments = segments(session, list).ok_or_else(|| {
+    let segments = segments(session, list, start, seed.is_some()).ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::ResolveCommandNotFound,
             "the command registry could not be read",
@@ -194,12 +228,29 @@ pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitSt
     })?;
 
     let mut carried: Option<Vec<u8>> = None;
+    let mut seed = seed;
     let mut status = ExitStatus::SUCCESS;
+
+    // A seeded list with nothing after the seed shows the seed itself: `@-1` alone re-renders
+    // the retained result.
+    if segments.is_empty() {
+        if let Some(values) = seed.take()
+            && let Some(stage) = list.stages.first()
+        {
+            write_result(session, stage, &values, false, source)?;
+        }
+        return Ok(status);
+    }
 
     for (position, segment) in segments.iter().enumerate() {
         let last = position + 1 == segments.len();
         match segment {
             Segment::External(indices) => {
+                if let Some(values) = seed.take() {
+                    // Spec §12.3: objects reach a child process only through an explicit
+                    // representation. Text and bytes already are one.
+                    carried = Some(seed_bytes(values)?);
+                }
                 let (bytes, external_status) = crate::eval::run_external_segment(
                     session, list, indices, source, carried, last,
                 )?;
@@ -214,6 +265,7 @@ pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitSt
                     indices,
                     source,
                     carried,
+                    seed.take(),
                     position == 0,
                     last,
                 )?;
@@ -224,7 +276,28 @@ pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitSt
     Ok(status)
 }
 
+/// The bytes a seed of values hands a child process: text and bytes pass, objects are refused.
+fn seed_bytes(values: Vec<Value>) -> Result<Vec<u8>, Flow> {
+    if values
+        .iter()
+        .any(|value| !matches!(value, Value::String(_) | Value::Bytes(_)))
+    {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                "these values are objects, and the next stage is a program that reads bytes",
+            )
+            .with_help("choose the representation: `… | to json | …` (spec §12.3)"),
+        ));
+    }
+    Ok(bytes_of(&values))
+}
+
 /// Runs one run of native stages, answering with the bytes a following child process would read.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one call site, and the arguments are the pipeline's actual moving parts"
+)]
 fn run_native_segment(
     session: &mut Session,
     registry: &'static CommandRegistry,
@@ -232,6 +305,7 @@ fn run_native_segment(
     indices: &[usize],
     source: &str,
     input: Option<Vec<u8>>,
+    seed: Option<Vec<Value>>,
     first: bool,
     last: bool,
 ) -> Eval<Option<Vec<u8>>> {
@@ -240,7 +314,7 @@ fn run_native_segment(
     // Everything is bound before anything runs. A pipeline that cannot be built runs no part of
     // itself, so a typo in the third stage never leaves the first two half-done.
     let mut bound: Vec<(&'static CommandContract, BoundArguments)> = Vec::new();
-    let mut structured = input.is_none();
+    let mut structured = input.is_none() || seed.is_some();
     for index in indices {
         let stage = &list.stages[*index];
         let contract = native_contract(session, registry, stage, structured).ok_or_else(|| {
@@ -307,8 +381,10 @@ fn run_native_segment(
     })?;
 
     let collected = runtime.block_on(async {
-        let mut stream: Option<ValueStream> =
-            input.map(|bytes| ValueStream::from_values([Value::Bytes(bytes.into())]));
+        let mut stream: Option<ValueStream> = match seed {
+            Some(values) => Some(ValueStream::from_values(values)),
+            None => input.map(|bytes| ValueStream::from_values([Value::Bytes(bytes.into())])),
+        };
 
         for (contract, arguments) in &bound {
             let started = std::time::Instant::now();
@@ -421,6 +497,12 @@ fn write_result(
     serialised: bool,
     source: &str,
 ) -> Eval<()> {
+    // What is about to be shown is what `@-1` and `@N` reuse (spec §20.2). Serialised output is
+    // not retained: its values are one rendered document, and reusing the objects it was made
+    // from is what the retention of the *previous* result is for.
+    if !serialised {
+        session.retain_result(values.to_vec());
+    }
     let destination = crate::eval::output_destination(session, stage, source)?;
     match destination {
         Some(mut file) => {

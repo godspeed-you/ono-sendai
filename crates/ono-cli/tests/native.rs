@@ -128,3 +128,46 @@ fn should_read_the_shells_own_standard_input_into_a_parsing_stage() {
         "bytes piped into the shell reach the first parsing stage (spec §12.4)"
     );
 }
+
+#[test]
+fn should_stream_a_value_that_starts_a_pipeline() {
+    // ADR-0019: a list splices because it *is* several values, so `$xs | count` counts them.
+    let run = ono("let xs = [1, 2, 3]; $xs | count | to json");
+    run.assert_success();
+    assert_eq!(run.stdout().trim(), "[3]");
+}
+
+#[test]
+fn should_reuse_the_previous_result_without_rerunning_it() {
+    // Spec §20.2: `@-1 | where …` reuses the retained structured result — no screen scraping,
+    // and no second enumeration.
+    let run = ono("get process | where pid == 1 | select pid; @-1 | count | to json");
+    run.assert_success();
+    let last = run.stdout().lines().last().unwrap_or_default().to_owned();
+    assert_eq!(
+        last, "[1]",
+        "the retained result has exactly the one row that was shown"
+    );
+}
+
+#[test]
+fn should_pick_one_item_of_the_current_result_by_position() {
+    let run = ono("let xs = [\"a\", \"b\", \"c\"]; $xs | take 3; @2 | to json");
+    run.assert_success();
+    let last = run.stdout().lines().last().unwrap_or_default().to_owned();
+    assert_eq!(
+        last, r#"["b"]"#,
+        "spec §6.4: `@2` is item 2 of the shown result"
+    );
+}
+
+#[test]
+fn should_say_there_is_nothing_to_reuse_when_no_result_was_retained() {
+    let run = ono("@-1 | count");
+    assert!(!run.status().is_success());
+    assert!(
+        run.stderr().contains("Ono-Sendai-E"),
+        "a missing result is a structured error, got {:?}",
+        run.stderr()
+    );
+}

@@ -408,6 +408,22 @@ fn run_stage_list(
         };
     }
 
+    // A pipeline may start with a value instead of a command: `$hot | where …`, `@-1 | count`
+    // (spec §10.2, §20.2). The head is evaluated once and a list splices, because a list *is*
+    // several values (ADR-0019); everything after it runs as if a producer had streamed them.
+    if !background
+        && let Some(stage) = list.stages.first()
+        && let StageHead::Value(expression) = &stage.head
+    {
+        let expression = expression.clone();
+        let value = eval_expr(session, &expression, source)?;
+        let seed = match value {
+            Value::List(items) => items.to_vec(),
+            other => vec![other],
+        };
+        return crate::native::run_seeded(session, list, source, seed);
+    }
+
     // A pipeline with a native command in it runs through the object pipeline of spec §5, which
     // threads bytes across the boundary of spec §12.3 where a child process sits on one side.
     // Background is not offered there yet: a native stage has no process group to disown.
@@ -935,16 +951,49 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
             )
             .with_help("user functions arrive with the module system of spec §19.6"),
         )),
-        Expr::CurrentValue(current) => Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::ResolveTargetNotFound,
-                format!("there is no current value at {}", current.span),
-            )
-            .with_help(
-                "`@` names the item a block is iterating, or the interactive selection; neither \
-                 exists here (spec §6.4, §19.4)",
-            ),
-        )),
+        Expr::CurrentValue(current) => match current.selector {
+            // Spec §20.2: previous structured results are reusable without screen scraping. A
+            // list splices when it starts a pipeline (ADR-0019), so `@-1 | where …` streams the
+            // retained rows.
+            ono_parser::CurrentSelector::Previous(n) => session
+                .previous_result(n)
+                .map(|values| Value::list(values.to_vec()))
+                .ok_or_else(|| {
+                    Flow::Failed(
+                        ErrorValue::new(
+                            ErrorCode::ResolveTargetNotFound,
+                            format!("no result to reuse at {}", current.span),
+                        )
+                        .with_help(
+                            "`@-1` names the previous pipeline's values (spec §20.2), \
+                                    and nothing has produced any yet",
+                        ),
+                    )
+                }),
+            ono_parser::CurrentSelector::Item(n) => session
+                .previous_result(1)
+                .and_then(|values| values.get(n.checked_sub(1)? as usize))
+                .cloned()
+                .ok_or_else(|| {
+                    Flow::Failed(
+                        ErrorValue::new(
+                            ErrorCode::ResolveTargetNotFound,
+                            format!("no item {n} in the current result at {}", current.span),
+                        )
+                        .with_help("`@N` names row N of the last shown result (spec §6.4)"),
+                    )
+                }),
+            ono_parser::CurrentSelector::Current => Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::ResolveTargetNotFound,
+                    format!("there is no current value at {}", current.span),
+                )
+                .with_help(
+                    "`@` names the item a block is iterating, or the interactive selection; \
+                     neither exists here (spec §6.4, §19.4)",
+                ),
+            )),
+        },
         Expr::Block(_) => Ok(Value::Null),
         Expr::Error(span) => Err(Flow::Failed(ErrorValue::new(
             ErrorCode::ParseSyntax,
