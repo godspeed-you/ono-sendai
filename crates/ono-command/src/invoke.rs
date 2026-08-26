@@ -131,8 +131,7 @@ impl<'a> Invocation<'a> {
 }
 
 /// The result of a command that had to await something, boxed so the trait stays object-safe.
-pub type OutcomeFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Outcome, ErrorValue>> + Send + 'a>>;
+pub type OutcomeFuture<'a> = Pin<Box<dyn Future<Output = Result<Outcome, ErrorValue>> + Send + 'a>>;
 
 /// A native implementation of one registry command.
 ///

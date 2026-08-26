@@ -237,3 +237,139 @@ pub fn providers(provider: FixtureProvider) -> ProviderRegistry {
 pub fn no_providers() -> ProviderRegistry {
     ProviderRegistry::new()
 }
+
+// --- driving the command table ------------------------------------------------------------------
+
+use ono_command::{
+    CommandRegistry, CommandTable, Invocation, Outcome, Scope, builtin_commands, check_pipeline,
+};
+use ono_pipeline::Collected;
+
+/// The embedded registry.
+pub fn registry() -> &'static CommandRegistry {
+    CommandRegistry::embedded().expect("the embedded command contracts must parse")
+}
+
+/// The table this build delivers.
+pub fn table() -> CommandTable {
+    builtin_commands(registry())
+}
+
+/// What a whole pipeline produced.
+#[derive(Debug)]
+pub enum Ran {
+    /// The values the last stage emitted, with the partial failures beside them.
+    Values(Collected),
+    /// One outcome per target, from a mutating last stage (spec §11.5).
+    Actions(Vec<ono_provider_api::ActionOutcome>),
+}
+
+impl Ran {
+    /// The values, when the pipeline produced values.
+    pub fn values(&self) -> &[Value] {
+        match self {
+            Ran::Values(collected) => collected.values(),
+            Ran::Actions(_) => panic!("this pipeline ended in a mutation"),
+        }
+    }
+
+    /// The partial failures, when the pipeline produced values.
+    pub fn failures(&self) -> &[ErrorValue] {
+        match self {
+            Ran::Values(collected) => collected.errors(),
+            Ran::Actions(_) => panic!("this pipeline ended in a mutation"),
+        }
+    }
+
+    /// The per-target outcomes, when the pipeline ended in a mutation.
+    pub fn actions(&self) -> &[ono_provider_api::ActionOutcome] {
+        match self {
+            Ran::Actions(outcomes) => outcomes,
+            Ran::Values(_) => panic!("this pipeline produced values"),
+        }
+    }
+
+    /// The single value the pipeline produced.
+    pub fn only(&self) -> &Value {
+        match self.values() {
+            [value] => value,
+            other => panic!("expected exactly one value, got {}", other.len()),
+        }
+    }
+
+    /// The single value as text.
+    pub fn text(&self) -> String {
+        self.only()
+            .as_str()
+            .expect("the pipeline produced text")
+            .to_owned()
+    }
+}
+
+/// Runs `source` against `providers`, the way the evaluator will.
+pub async fn run(source: &str, providers: &ProviderRegistry) -> Result<Ran, ErrorValue> {
+    run_in(source, providers, Scope::new()).await
+}
+
+/// Runs `source` with a scope of shell bindings.
+pub async fn run_in(
+    source: &str,
+    providers: &ProviderRegistry,
+    scope: Scope,
+) -> Result<Ran, ErrorValue> {
+    let table = table();
+    let scope = Arc::new(scope);
+    let parsed = ono_parser::parse(source);
+    assert!(
+        parsed.diagnostics().is_empty(),
+        "`{source}` must parse cleanly, but produced {:?}",
+        parsed.diagnostics()
+    );
+    let pipeline = parsed
+        .program()
+        .statements
+        .first()
+        .and_then(ono_parser::Statement::as_pipeline)
+        .expect("the source is a pipeline")
+        .clone();
+
+    let mut stream: Option<ono_pipeline::ValueStream> = None;
+    let mut actions = None;
+    let lists =
+        std::iter::once(&pipeline.head).chain(pipeline.tail.iter().map(|chained| &chained.list));
+    for list in lists {
+        for stage in &list.stages {
+            let head = stage.head.name().expect("a command head");
+            let resolved = registry().resolve(head, &stage.arguments)?;
+            let bound = resolved.contract.bind(resolved.arguments)?;
+            let mut invocation = Invocation::new(resolved.contract, &bound, providers)
+                .with_scope(Arc::clone(&scope));
+            if let Some(input) = stream.take() {
+                invocation = invocation.with_input(input);
+            }
+            match table.run(resolved.contract.id(), &mut invocation).await? {
+                Outcome::Values(values) => stream = Some(values),
+                Outcome::Actions(outcomes) => actions = Some(outcomes),
+            }
+        }
+    }
+
+    match (stream, actions) {
+        (_, Some(outcomes)) => Ok(Ran::Actions(outcomes)),
+        (Some(values), None) => Ok(Ran::Values(values.collect().await)),
+        (None, None) => panic!("`{source}` produced nothing at all"),
+    }
+}
+
+/// Checks `source` the way spec §11.3 asks, before anything runs.
+pub fn check(source: &str) -> Result<(), ErrorValue> {
+    let schemas: Vec<Arc<Schema>> = ono_value::builtin_schemas().schemas().cloned().collect();
+    let parsed = ono_parser::parse(source);
+    let pipeline = parsed
+        .program()
+        .statements
+        .first()
+        .and_then(ono_parser::Statement::as_pipeline)
+        .expect("the source is a pipeline");
+    check_pipeline(registry(), &schemas, pipeline)
+}

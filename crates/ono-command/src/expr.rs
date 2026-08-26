@@ -20,9 +20,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ono_core::ErrorCode;
-use ono_parser::{
-    BinaryOp, CurrentSelector, Expr, NumberValue, RecordKey, StrPart, UnaryOp, Unit,
-};
+use ono_parser::{BinaryOp, CurrentSelector, Expr, NumberValue, RecordKey, StrPart, UnaryOp, Unit};
 use ono_value::{
     ByteSize, Duration, ErrorValue, FieldStep, MapValue, Percent, RegexValue, Schema, Value,
 };
@@ -191,7 +189,9 @@ pub fn evaluate(expression: &Expr, current: &Value, scope: &Scope) -> Result<Val
             .unwrap_or(Value::Null)),
         Expr::CurrentValue(reference) => match reference.selector {
             CurrentSelector::Current => Ok(scope.current().unwrap_or(current).clone()),
-            CurrentSelector::Previous(back) => Ok(scope.previous(back).cloned().unwrap_or_default()),
+            CurrentSelector::Previous(back) => {
+                Ok(scope.previous(back).cloned().unwrap_or_default())
+            }
             CurrentSelector::Item(index) => Ok(scope.item(index).cloned().unwrap_or_default()),
         },
         // Spec §10.3: within a pipeline predicate the current record exposes its fields directly.

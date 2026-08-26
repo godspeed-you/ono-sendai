@@ -59,8 +59,19 @@ fn main() -> ExitCode {
             }
         }
         Invocation::Interactive(options) => {
-            let (mut session, reporter) = start(true, &options);
-            repl::run(&mut session, &options, &reporter)
+            // `ono` with no arguments means "read commands from standard input". When standard
+            // input is a terminal that is a conversation; when it is a pipe or a file it is a
+            // script, and starting a prompt would read the terminal instead and silently ignore
+            // what was piped in. Every other shell makes the same distinction.
+            if std::io::stdin().is_terminal() {
+                let (mut session, reporter) = start(true, &options);
+                repl::run(&mut session, &options, &reporter)
+            } else {
+                let (mut session, reporter) = start(false, &options);
+                let status =
+                    repl::run_from_reader(&mut session, &reporter, &mut std::io::stdin().lock());
+                session.leaving().unwrap_or(status)
+            }
         }
     };
 

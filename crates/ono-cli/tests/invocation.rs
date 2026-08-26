@@ -183,3 +183,33 @@ fn should_report_an_unusable_option_with_the_usage_status() {
         .run()
         .assert_status(2);
 }
+
+#[test]
+fn should_run_a_script_piped_into_it_rather_than_opening_a_prompt() {
+    // `echo 'command' | ono` is how a shell is driven from another program. Opening a prompt here
+    // would read the terminal instead and silently ignore what was piped in — the failure is
+    // invisible, because the shell exits successfully having done nothing.
+    let run = Shell::new().stdin("echo from-a-pipe\nexit 4\n").run();
+    run.assert_status(4);
+    assert!(
+        run.stdout().contains("from-a-pipe"),
+        "got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_exit_quietly_when_standard_input_is_closed() {
+    let run = Shell::new().stdin("").run();
+    run.assert_success();
+    assert_eq!(run.stdout(), "");
+}
+
+#[test]
+fn should_print_no_prompt_and_no_identity_line_when_driven_from_a_pipe() {
+    // Spec §4.1 and §4.6: nothing a pipe would have to filter.
+    let run = Shell::new().stdin("echo only-this\n").run();
+    run.assert_success();
+    assert_eq!(run.stdout(), "only-this\n");
+    assert_eq!(run.stderr(), "");
+}

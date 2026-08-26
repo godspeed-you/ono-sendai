@@ -1,0 +1,537 @@
+# KUANG/11 capability model, as data.
+#
+# Source: spec §31.16 (families and scopes), §31.17 (declaration classes), §31.18 (grant UX and
+# durations), §31.19 (storage, policy, precedence), §31.20 (secrets), §31.21 (network),
+# §31.35 (upgrades do not inherit grants), §31.37 (audit), §31.40 (remote projection),
+# §31.49 (leases), §31.63 (negotiation at load). Decisions: ADR-0022. Threat model: ADR-0015 T3.
+#
+# Authority: the *family list* is `kuang_capabilities` in `docs/spec/capabilities.yaml`, which
+# carries §31.16's twenty-nine families verbatim with their `risk`, `elevation` and scope keys.
+# This file adds what that registry deliberately leaves out — the shape of each scope, whether
+# the host can actually enforce it, and the lifecycle of a grant. The two files MUST agree on
+# every id, risk, elevation and scope-key list; `cargo xtask spec-check` compares them, and
+# `docs/spec/capabilities.yaml` wins where they ever differ.
+#
+# Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
+#
+# The rule this whole file exists to serve, spec §31.16, verbatim:
+#
+#   "A scope that cannot be enforced reliably MUST NOT be offered as if it were a security
+#    boundary."
+#
+# So every scope key below declares `enforcement`, and an `advisory` scope is labelled as one
+# everywhere it is shown. A scope Ono cannot check is a preference the package expressed, and
+# calling it anything stronger would be the exact failure spec §31.80 lists last: "capability
+# scope is broader in implementation than UI suggests."
+
+version: 1
+capability_registry: ../capabilities.yaml
+
+# ---------------------------------------------------------------------------------------------
+# Enforcement levels. Displayed with the scope wherever a grant is shown (§31.18, §31.63).
+# ---------------------------------------------------------------------------------------------
+enforcement_levels:
+  - id: broker
+    doc: >-
+      The capability broker checks the scope on every host call, before the operation happens,
+      against the value the operation will actually use. Denial is `capability.scope_violation`.
+      This is the only level that may be presented as a security boundary.
+  - id: advisory
+    doc: >-
+      The scope is recorded, audited and shown, but the host cannot prove the operation stayed
+      inside it. Every surface that displays an advisory scope says so. An advisory scope MUST
+      NOT be the only thing standing between a package and the data it is scoped away from.
+
+# ---------------------------------------------------------------------------------------------
+# Scope value types, so a scope key is checkable rather than free-form.
+# ---------------------------------------------------------------------------------------------
+scope_types:
+  - id: path-glob
+    type: list<string>
+    doc: >-
+      Absolute path patterns, `**` matching any number of components. Matched against the
+      resolved real path at call time, with no path re-resolved between check and use, and
+      symlinks not followed out of a scope root (ADR-0015 T14).
+  - id: host-list
+    type: list<string>
+    doc: >-
+      Host names or addresses, with a leading `*.` allowed for a domain. Checked against the
+      *resolved address* at connect time, not only against the name that was asked for.
+  - id: port-list
+    type: list<port>
+    doc: TCP/UDP port numbers. An empty list denies every port and is not the same as absence.
+  - id: name-list
+    type: list<string>
+    doc: Exact names or `*`-globs of a named resource — a unit, a container, a link, a package.
+  - id: id-list
+    type: list<string>
+    doc: Exact ids or `*`-globs of a namespaced id — a schema id, a target name, a provider id.
+  - id: signal-list
+    type: list<string>
+    doc: Signal names without the `SIG` prefix, e.g. `[TERM, HUP]`, as spec §31.16 writes them.
+  - id: predicate
+    type: string
+    doc: >-
+      An Ono `where` predicate over the objects the capability reaches, e.g.
+      `"user == current-user"` (spec §31.16). Evaluated by the host against the object it is
+      about to act on, never by the package.
+  - id: window
+    type: enum
+    values: [current-command, current-view, current-session]
+    doc: How far back a history or context read may reach (spec §31.16's `window: current-session`).
+  - id: class-list
+    type: list<string>
+    doc: Data classes from `assistants.v1.yaml` → `data_classes` (spec §31.44).
+
+# ---------------------------------------------------------------------------------------------
+# The families. `id`, `risk` and `elevation` restate `docs/spec/capabilities.yaml`; `permits`,
+# `scopable` and `scope` are what this file adds. A family with `scopable: false` has no
+# enforceable scope, and declares none rather than a decorative one.
+# ---------------------------------------------------------------------------------------------
+families:
+
+  - id: object.read
+    risk: read
+    elevation: none
+    permits: >-
+      Snapshot and query calls in the `objects` domain against the schemas and targets in scope.
+      It does not permit subscription: a live stream keeps running and is `observe` risk, so it
+      is the target's own capability that pays for it.
+    scopable: true
+    scope:
+      schemas: {type: id-list, enforcement: broker, doc: "Schema ids the package may receive, e.g. `[ono.process/1]`."}
+      targets: {type: id-list, enforcement: broker, doc: "Target names the package may query, e.g. `[process, socket]`."}
+
+  - id: schema.read
+    risk: read
+    elevation: none
+    permits: >-
+      Reading schema definitions, field metadata and default views from the `schemas` domain.
+      Schemas are public contract (spec §27), so there is nothing here to scope.
+    scopable: false
+    scope: {}
+
+  - id: process.read
+    risk: read
+    elevation: none
+    permits: Reading process objects and their detail through the `process` domain.
+    scopable: true
+    scope:
+      selector: {type: predicate, enforcement: broker, doc: "Only processes matching the predicate are visible; the host filters before the package sees anything."}
+
+  - id: process.signal
+    risk: mutate
+    elevation: conditional
+    permits: Delivering the listed signals to processes matching the selector.
+    scopable: true
+    scope:
+      signals: {type: signal-list, enforcement: broker, doc: "The only signals that may be sent. Absent means none."}
+      selector: {type: predicate, enforcement: broker, doc: "Re-evaluated against the object's identity immediately before the signal is delivered, never at grant time — a recycled pid must not inherit a grant (ADR-0015 T12, T13)."}
+
+  - id: process.exec
+    risk: mutate
+    elevation: conditional
+    permits: Starting an external program through the host, with its stdio brokered.
+    scopable: true
+    scope:
+      programs:
+        type: path-glob
+        enforcement: broker
+        doc: >-
+          Absolute paths of the programs that may be started, resolved before exec so a `PATH`
+          shadow cannot substitute another binary (ADR-0015 T11).
+        caveat: >-
+          The scope bounds *what is started*, not what the started program then does. A program
+          outside the component sandbox has the user's own authority, which is why this
+          capability is `conditional` elevation and why spec §31.75 flags a broad `programs`
+          scope in static analysis.
+
+  - id: filesystem.read
+    risk: read
+    elevation: conditional
+    permits: Reading file content, metadata and directory entries under the scoped paths.
+    scopable: true
+    scope:
+      paths: {type: path-glob, enforcement: broker, doc: "The only paths readable. The host performs the I/O; the package never receives a raw descriptor to a path outside the scope."}
+
+  - id: filesystem.write
+    risk: destructive
+    elevation: conditional
+    permits: Creating, modifying, renaming and deleting files under the scoped paths.
+    scopable: true
+    scope:
+      paths: {type: path-glob, enforcement: broker, doc: "The only paths writable. A write whose resolved target leaves the scope is refused, not truncated to it."}
+
+  - id: filesystem.watch
+    risk: observe
+    elevation: conditional
+    permits: Subscribing to filesystem change events under the scoped paths.
+    scopable: true
+    scope:
+      paths: {type: path-glob, enforcement: broker, doc: "The only paths watched. Events for paths outside the scope are never delivered, not merely filtered on arrival."}
+
+  - id: network.observe
+    risk: read
+    elevation: conditional
+    permits: >-
+      Reading network state — sockets, interfaces, routes, neighbours — through the host's own
+      providers. It grants no ability to send or receive anything.
+    scopable: false
+    scope: {}
+
+  - id: network.connect
+    risk: mutate
+    elevation: none
+    permits: Opening outbound connections, and HTTP requests, through the network broker (spec §31.21).
+    scopable: true
+    scope:
+      hosts:
+        type: host-list
+        enforcement: broker
+        doc: >-
+          The only destinations reachable. Checked against the resolved address at connect time
+          as well as the requested name, because a name-only check is not a boundary.
+      ports: {type: port-list, enforcement: broker, doc: "The only ports reachable. Absent means no port, which denies the capability in practice."}
+
+  - id: network.listen
+    risk: mutate
+    elevation: conditional
+    permits: Binding and accepting inbound connections on the scoped ports, through the broker.
+    scopable: true
+    scope:
+      ports: {type: port-list, enforcement: broker, doc: "The only ports bindable."}
+
+  - id: service.read
+    risk: read
+    elevation: none
+    permits: Reading service-manager units, their state and their properties.
+    scopable: true
+    scope:
+      units: {type: name-list, enforcement: broker, doc: "The only units visible, e.g. `[nginx.service]` or `[web-*]`."}
+
+  - id: service.mutate
+    risk: mutate
+    elevation: required
+    permits: Starting, stopping, restarting, enabling and disabling the scoped units.
+    scopable: true
+    scope:
+      units: {type: name-list, enforcement: broker, doc: "The only units mutable. Spec §31.18's worked example scopes this to one unit on one link."}
+
+  - id: container.read
+    risk: read
+    elevation: conditional
+    permits: Reading container objects and their metadata.
+    scopable: true
+    scope:
+      containers: {type: name-list, enforcement: broker, doc: "The only containers visible."}
+
+  - id: container.exec
+    risk: mutate
+    elevation: conditional
+    permits: Executing a program inside the scoped containers.
+    scopable: true
+    scope:
+      containers:
+        type: name-list
+        enforcement: broker
+        doc: The only containers a package may execute in.
+        caveat: >-
+          As with `process.exec`, the scope bounds where a program starts, not what it does once
+          started. A container's own isolation is what bounds the second part, and it is not
+          Ono's to promise.
+
+  - id: remote.read
+    risk: read
+    elevation: none
+    permits: Reading objects across a linked host, subject to the remote side's own policy.
+    scopable: true
+    scope:
+      links: {type: name-list, enforcement: broker, doc: "The link names the package may read across, e.g. `[\"prod-observe-*\"]` (spec §31.16). Effective authority is the intersection of local and remote policy (§31.40)."}
+
+  - id: remote.mutate
+    risk: mutate
+    elevation: conditional
+    permits: Performing mutations across a linked host.
+    scopable: true
+    scope:
+      links: {type: name-list, enforcement: broker, doc: "The link names the package may mutate across. A local grant never becomes a remote grant on its own (spec §31.40)."}
+
+  - id: history.read
+    risk: read
+    elevation: none
+    permits: Reading the session's semantic history within the scoped window.
+    scopable: true
+    scope:
+      window: {type: window, enforcement: broker, doc: "How far back the package may read (spec §31.16, §31.53). Redaction of secret-bearing entries happens before delivery regardless of window (spec §17.5, ADR-0015 T8)."}
+
+  - id: history.write
+    risk: mutate
+    elevation: none
+    permits: >-
+      Adding entries to the session's history. Every entry a package writes is attributed to its
+      package id and can be filtered out by it — spec §31.7's `history.write: {scope: plugin}` is
+      that attribution, which is the only behaviour available and therefore not a grant scope
+      (ADR-0022). A package cannot write an entry attributed to the operator or to another
+      package.
+    scopable: false
+    scope: {}
+
+  - id: context.read
+    risk: read
+    elevation: none
+    permits: >-
+      Reading the current context stack — working directory, active object, active link. Bounded
+      by construction: the context stack is small, and spec §31.12 already calls this "read
+      bounded shell context". It carries no environment variables and no secrets (spec §31.20).
+    scopable: false
+    scope: {}
+
+  - id: ui.view
+    risk: read
+    elevation: none
+    permits: >-
+      Contributing a view and submitting view trees into it. The host owns terminal escape
+      state, sizing, focus and recovery; this capability never confers terminal ownership
+      (spec §31.27, ADR-0015 T1, T2, T9).
+    scopable: false
+    scope: {}
+
+  - id: ui.notify
+    risk: mutate
+    elevation: none
+    permits: >-
+      Raising a notification to the operator, rate-limited by the host (spec §31.15's output
+      rate limits). The text is package-authored and is sanitised before display.
+    scopable: false
+    scope: {}
+
+  - id: relation.read
+    risk: read
+    elevation: none
+    permits: Reading relationship edges from the graph, including edges other packages contributed.
+    scopable: false
+    scope: {}
+
+  - id: relation.write
+    risk: mutate
+    elevation: none
+    permits: >-
+      Contributing relationship edges. Every contributed edge carries the contributing package as
+      its `provider` and cannot claim another source, so there is no scope to grant: a package can
+      only ever add edges attributed to itself (spec §31.26, §31.80 "plugin forges provenance").
+    scopable: false
+    scope: {}
+
+  - id: secret.use
+    risk: mutate
+    elevation: none
+    permits: >-
+      Requesting an opaque handle to a named secret and passing that handle to a host operation.
+      It does not permit reading the secret's bytes and does not permit enumeration: a package
+      asks for a secret by name and learns nothing about the names it did not ask for
+      (spec §31.20).
+    scopable: true
+    scope:
+      secrets: {type: name-list, enforcement: broker, doc: "The secret names that may be requested. A request outside the list is `capability.scope_violation` and is audited with the name that was asked for."}
+
+  - id: model.infer
+    risk: mutate
+    elevation: none
+    permits: Submitting an inference request through the model broker (spec §31.43).
+    scopable: true
+    scope:
+      providers: {type: name-list, enforcement: broker, doc: "The model providers that may be used. `operator-selected` means the operator chooses at call time and the package learns only which one answered."}
+      data_class:
+        type: class-list
+        enforcement: advisory
+        doc: The data classes the package may send (spec §31.44).
+        caveat: >-
+          Classification is applied by the host to the context it assembles, so the *transport*
+          decision is enforced — a value classified `secret` is not sent to a provider that
+          denies it. What cannot be enforced is the classification's completeness: spec §31.44
+          says so outright, "The classification system is a guardrail, not magical DLP." A
+          `data_class` scope therefore says what Ono checked, never what Ono guarantees, and is
+          shown as advisory in the grant prompt and in the model-request plan of §31.82.
+
+  - id: plugin.invoke
+    risk: mutate
+    elevation: none
+    permits: >-
+      Invoking a contribution of another loaded package through the host (spec §31.30). The
+      callee's own capabilities apply to the call; invoking never lends the caller's authority
+      to the callee or the other way round.
+    scopable: true
+    scope:
+      plugins: {type: name-list, enforcement: broker, doc: "The package ids that may be invoked."}
+
+  - id: state.persist
+    risk: mutate
+    elevation: none
+    permits: >-
+      Storing state that survives the session, in the package's own private store under its
+      declared quota (spec §31.31). The store is keyed by package id and no package can name
+      another's; there is nothing further to scope.
+    scopable: false
+    scope: {}
+
+  - id: clock.read
+    risk: read
+    elevation: none
+    permits: Reading monotonic and wall-clock time.
+    scopable: false
+    scope: {}
+
+# ---------------------------------------------------------------------------------------------
+# Declaration classes — spec §31.17. A property of the package's declaration, not of the
+# capability, which is why `docs/spec/capabilities.yaml` has no field for it (ADR-0012 §11).
+# ---------------------------------------------------------------------------------------------
+declaration_classes:
+  - id: required
+    doc: >-
+      The package cannot load without the grant. A denial fails the load with
+      `load.capability_denied`; the package stays `enabled` and does not become `degraded`,
+      because nothing of it is running.
+  - id: optional
+    doc: >-
+      The package loads without the grant and MUST adapt. Its state becomes `degraded`, the
+      negotiated contract of §31.63 names the feature that is disabled, and the package MUST NOT
+      re-prompt for it.
+  - id: runtime-requested
+    doc: >-
+      The package may ask for the capability later, in response to an explicit user action, and
+      only within the scope it declared at install time — narrower is allowed, broader is
+      `capability.scope_violation`. A runtime request that arrives with no user action behind it
+      is denied without prompting, so a package cannot manufacture consent by asking repeatedly.
+
+# ---------------------------------------------------------------------------------------------
+# Grant lifecycle — spec §31.18 (UX and duration), §31.19 (storage, policy, precedence),
+# §31.49 (leases), §31.35 (upgrades), §31.40 (remote), §31.37 (audit).
+# ---------------------------------------------------------------------------------------------
+grant:
+
+  # The prompt is part of the contract, not part of the renderer: §31.18 rejects
+  # "Allow ops-assist system access?" precisely because it states none of these.
+  prompt_requirements:
+    - id: effect
+      rule: The prompt states what the capability lets the package do, in the operation's own terms.
+      spec: "§31.18"
+    - id: scope
+      rule: The prompt states the exact scope being granted, and marks any advisory scope as advisory.
+      spec: "§31.16, §31.18"
+    - id: purpose
+      rule: >-
+        The prompt states the purpose the package declared, sanitised, and attributed to the
+        package rather than presented as Ono's own description.
+      spec: "§31.18"
+    - id: duration
+      rule: The prompt states the duration, from `durations` below, before it is agreed to.
+      spec: "§31.18"
+    - id: consequence
+      rule: >-
+        A `mutate` or `destructive` capability states the consequence the operator would not
+        otherwise see — spec §31.18's "This may interrupt active connections."
+      spec: "§31.18, §17.1"
+    - id: non-interactive
+      rule: >-
+        Absence of an interactive prompt MUST NOT imply a grant. A non-interactive session
+        denies and reports `safety.confirmation_required`; a script opts in with an explicit
+        flag, never by being a script.
+      spec: "§31.9, §17.4"
+
+  durations:
+    - id: once
+      doc: One host call. The lease is consumed by the call that used it, whether it succeeded or not.
+    - id: command
+      doc: The current command, spec §31.18's "this command". Ends when the pipeline ends, including on cancellation.
+    - id: view
+      doc: The current view, spec §31.18's "this view". Ends when the view closes, including on a crash.
+    - id: session
+      doc: The current Ono session. Never written to persistent policy.
+    - id: link-session
+      doc: >-
+        The current session on one link, spec §31.18's "this link session". Ends when the link
+        detaches; a reconnection to the same host does not resume it (spec §31.40).
+    - id: always
+      doc: >-
+        Persistent, and only for the exact scope granted. Spec §31.18: "'Always' grants MUST be
+        inspectable and revocable" — they appear in `get capability` and are removed by
+        `revoke capability`. A later request for a broader scope is a new grant, not a match.
+
+  decisions:
+    - id: allow
+      doc: The call proceeds and is audited.
+    - id: deny
+      doc: The call fails with `capability.denied` and is audited. It is never retried automatically.
+    - id: ask
+      doc: >-
+        The operator is prompted, once, with the prompt requirements above. In a non-interactive
+        context `ask` resolves to `deny`, because a prompt nobody can answer is a denial that
+        pretends otherwise.
+
+  # spec §31.49. A lease is what makes L4 delegated autonomy bounded rather than open-ended.
+  lease:
+    doc: >-
+      A grant with an expiry, a use count and an optional condition. Every field is checked at
+      each use; failing any of them is `capability.lease_expired`, and the lease is closed rather
+      than narrowed.
+    fields:
+      capability: {type: string, required: true, doc: "The capability id being leased."}
+      selector: {type: predicate, required: true, doc: "The objects it reaches, e.g. `\"host=staging-3 service=staging-api\"` (spec §31.49)."}
+      actions: {type: list<string>, nullable: true, doc: "The operations permitted, e.g. `[restart]`. Null means every operation the capability allows, which a lease should rarely choose."}
+      expires_at: {type: timestamp, required: true, doc: "When the lease stops working. A lease without an expiry is a grant, and is stored as one."}
+      max_uses: {type: int, nullable: true, doc: "How many times it may be used. Null means unlimited within the window."}
+      condition: {type: string, nullable: true, doc: "A reference to a probe or policy that must hold at each use — spec §31.49's `ProbePolicyRef`, e.g. \"only if the health endpoint is failing\". Null means unconditional."}
+    rules:
+      - "Leases are auditable and revocable (spec §31.49); every use emits a `PluginAction` record (§31.37)."
+      - "A lease is never extended in place. Extending means issuing a new lease, so the audit trail shows two decisions rather than one mutable one."
+      - "A revoked lease stops working immediately, including for a call already in flight where cancellation is possible."
+
+  storage:
+    doc: >-
+      Grants live outside the package so that a package update cannot rewrite them
+      (spec §31.19).
+    locations:
+      - path: ~/.config/ono/kuang/policy.yaml
+        scope: user
+        doc: The operator's own policy. Written by `grant capability` and `revoke capability`.
+      - path: /etc/ono/kuang/policy.d/
+        scope: system
+        doc: >-
+          Enterprise and system policy, higher priority than the user's (spec §31.19). Read
+          only; Ono never writes here.
+      - path: session
+        scope: session
+        doc: >-
+          Grants of duration `once`, `command`, `view`, `session` and `link-session`. Held in
+          memory and never persisted, so a session's answers cannot outlive it.
+    rules:
+      - "A package update MUST NOT inherit grants for capabilities or scopes it did not already hold (spec §31.35). A new request in an update is a new prompt."
+      - "Removing a package does not remove its grants unless asked; `remove plugin` reports what it will retain and offers `--purge-policy` (spec §31.81)."
+      - "A retained grant for a removed package is disabled: it is visible in `get capability` and inert until the package is installed again."
+
+  # spec §31.19, verbatim: "system deny > user deny > scoped grant > plugin request > default deny"
+  precedence:
+    order:
+      - {rank: 1, id: system-deny, doc: "A deny in `/etc/ono/kuang/policy.d/`. Nothing overrides it, and no prompt is offered for it."}
+      - {rank: 2, id: user-deny, doc: "A deny in the operator's policy. Overridable only by the operator editing their own policy."}
+      - {rank: 3, id: scoped-grant, doc: "An existing grant or lease whose scope covers the request exactly."}
+      - {rank: 4, id: plugin-request, doc: "The package's declared request, which produces a prompt under `ask`, never a grant on its own."}
+      - {rank: 5, id: default-deny, doc: "Everything else. Deny by default is the floor, not a fallback (spec §31.80)."}
+    rules:
+      - "Precedence is evaluated per call, not cached per package: a policy change takes effect on the next host call."
+      - "A scoped grant covers a request only if the request's scope is a subset of the grant's. Overlap is not coverage."
+      - "Remote authority is the intersection of local and remote policy, evaluated on both sides (spec §31.40)."
+
+  revocation:
+    rules:
+      - "Every grant and lease is revocable through `revoke capability`, including `always` grants (spec §31.18)."
+      - "Revocation takes effect on the next host call and cancels in-flight streams that depended on the capability, with `capability.denied` delivered as the stream's terminal error."
+      - "Revoking a `required` capability of a loaded package unloads it rather than leaving it running without the capability it declared it could not run without."
+      - "Revocation is audited with the same `PluginAction` record as a use (spec §31.37)."
+
+  audit:
+    doc: >-
+      Every capability-sensitive call emits one record, whether it succeeded, was denied or
+      failed (spec §31.37). Denials are audited as loudly as successes: a package probing for
+      capabilities it does not have is exactly what the trail is for.
+    schema: ono.plugin-audit-event/1

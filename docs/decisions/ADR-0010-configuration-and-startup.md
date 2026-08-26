@@ -94,11 +94,17 @@ a script, or when output is redirected, which is what makes redirected output de
 ### Non-interactive invocation
 
 ```text
-ono                       interactive REPL
+ono                       read commands from standard input
 ono -c '<source>'         run source, then exit with its status
 ono <file> [args…]        run a script file, `$args` bound to the remainder
-ono -                     read a script from stdin
+ono -                     read a script from stdin, explicitly
 ```
+
+A bare `ono` means "read commands from standard input", and **whether that is a conversation or a
+script depends on whether standard input is a terminal**. `echo 'get process' | ono` runs the
+command; `ono` at a terminal opens a prompt. Deciding by the invocation instead would mean a
+piped script was silently ignored while the shell read the terminal behind it — a failure that
+leaves no trace, because the shell exits successfully having done nothing.
 
 Script and `-c` modes are non-interactive: no identity line, no history recording by default, no
 interactive confirmation prompt ever (§17.4 — a destructive operation that would need

@@ -50,21 +50,29 @@
 #![forbid(unsafe_code)]
 
 mod bind;
+mod check;
 mod complete;
 mod contract;
 mod explain;
+mod expr;
 mod help;
+mod impls;
 mod invoke;
 mod registry;
 mod suggest;
 
 pub use bind::{Binding, BoundArguments};
+pub use check::check_pipeline;
 pub use complete::{Candidate, CandidateKind, StageContext, ValueCompleter, complete};
 pub use contract::{
     ArgumentMode, CapabilitySpec, CommandContract, DeclaredType, Elevation, IoType, ParameterSpec,
     Phase, Privilege, Stability, TargetSpec, VerbSpec,
 };
 pub use explain::{ExecutionPlan, Resolution, StagePlan, plan};
+pub use expr::{Scope, check_fields, evaluate, evaluate_to_value, is_true};
 pub use help::{CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help};
-pub use invoke::{CommandImpl, CommandTable, Invocation, Outcome, unbound_stable_commands};
+pub use impls::builtin_commands;
+pub use invoke::{
+    CommandImpl, CommandTable, Invocation, Outcome, OutcomeFuture, unbound_stable_commands,
+};
 pub use registry::{CommandRegistry, Resolved};

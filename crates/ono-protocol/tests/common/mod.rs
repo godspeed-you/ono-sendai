@@ -201,7 +201,9 @@ impl RemoteService for DemoService {
                 }
             }
             "record" => {
-                let _ = responder.send(remote_record(4419, "nginx").into_value()).await;
+                let _ = responder
+                    .send(remote_record(4419, "nginx").into_value())
+                    .await;
                 Ok(())
             }
             "flaky" => {
@@ -271,7 +273,8 @@ pub async fn try_connect(
     let (near, far) = tokio::io::duplex(16 * 1024);
     let observed = Arc::new(Observed::default());
     let service = DemoService::new(Arc::clone(&observed));
-    let handle = tokio::spawn(async move { serve(PlainTransport::new(far), server, service).await });
+    let handle =
+        tokio::spawn(async move { serve(PlainTransport::new(far), server, service).await });
     let mut transport = PlainTransport::new(near);
     if let Some(key) = presents {
         transport = transport.with_peer_key(key);
