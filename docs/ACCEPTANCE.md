@@ -112,9 +112,18 @@ Each phase's success criterion from spec section 37, each proven by a named acce
 
 For **every** advertised command, in the container:
 
-- [ ] `help` is complete for every command, and every documented example parses and executes.
-- [ ] Completion produces correct candidates for every command, option and argument position.
-- [ ] Every command's output schema is inspectable via `inspect`/`type` and matches what it emits.
+- [x] `help` is complete for every command, and every documented example parses and executes —
+      spec-check refuses a non-planned contract without summary and examples and an example that
+      does not parse; `ono-command/tests/examples.rs` refuses one that does not bind; the
+      acceptance cases 040–047 execute the load-bearing examples against the real system.
+- [x] Completion produces correct candidates for every command, option and argument position —
+      candidates are registry lookups, never lists that can drift (`ono-command/src/complete.rs`),
+      pinned per position in `ono-command/tests/completion.rs` and on a real terminal by case
+      `044-semantic-completion`.
+- [x] Every command's output schema is inspectable via `inspect`/`type` and matches what it
+      emits — `type` answers from the contract without running anything, `inspect` from the
+      value; the provider conformance suites validate every emitted record against the schema it
+      claims (`ono-provider-*/tests/schemas.rs`, `spec-check` drift rules).
 - [x] Behaviour is deterministic when output is redirected or the terminal is not a TTY —
       `034-redirected-output-is-deterministic` runs the same script to a terminal, to a file and
       through a pipe and requires all three to be byte-identical, with no escape sequence
@@ -170,7 +179,11 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
       group and dies when that group is signalled; `025-job-control` covers background, `jobs`
       and `fg`; and `crates/ono-cli/tests/signals.rs` drives a real Ctrl-C through a real
       pseudo-terminal, where the shell survives it, the command does not, and the status is 130.
-- [ ] Text, bytes and objects are never silently confused at an interop boundary.
+- [x] Text, bytes and objects are never silently confused at an interop boundary — objects
+      aimed at a child process are `type.mismatch` naming `to json` (spec §12.3), a value seed
+      feeds a program only when it already is text or bytes, and bytes become objects only
+      through an explicit `from` (spec §12.4). Pinned in `ono-cli/tests/native.rs` and case
+      `040-object-pipeline` both ways across the boundary.
 - [ ] Destructive operations show scope before acting; privilege and remote target are visible.
       Partly proven: `032-resolution-is-inspectable` covers the resolution half — which binary a
       name reaches, including a shadowing one earlier in `PATH` (ADR-0015 T10, T11).
