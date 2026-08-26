@@ -346,6 +346,27 @@ fn run_stage_list(
         return builtin::run(session, name, &arguments);
     }
 
+    // `explain` in front of a pipeline explains the whole pipeline, exactly as spec §11.3
+    // spells it: `explain get process | where cpu > 20 | stop process`. The pipes belong to the
+    // subject, so the subject is the source text from explain's first word to the end of the
+    // list, handed over verbatim — never re-rendered from the AST, which would explain a
+    // normalisation of what the user typed rather than what they typed.
+    if list.stages.len() > 1
+        && let Some(first) = list.stages.first()
+        && builtin_name(session, first) == Some("explain")
+        && let Some(end) = list.stages.last().map(|stage| stage.span.end())
+    {
+        let start = first
+            .arguments
+            .first()
+            .map_or(first.span.end(), |argument| argument.span().start());
+        let subject = source
+            .get(start as usize..end as usize)
+            .unwrap_or_default()
+            .trim();
+        return builtin::run(session, "explain", &[OsString::from(subject)]);
+    }
+
     // A builtin in a longer pipeline used to be handed to `exec`, which reported it as not found
     // and then reported the pipeline as successful. Where the name also exists as a program —
     // `true`, `false` — the program is what runs, which is what every other shell does and what

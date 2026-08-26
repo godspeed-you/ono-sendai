@@ -291,9 +291,9 @@ fn help(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
 /// order to be reported by the code that performs it rather than described somewhere that could
 /// drift from it.
 ///
-/// A pipeline has to arrive quoted — `explain "get process | where cpu > 20"` — because an
-/// unquoted `|` would send `explain` itself into a pipeline, which is the grammar working
-/// correctly rather than a limitation to work around.
+/// The subject may arrive unquoted — `explain get process | where cpu > 20` — because spec §11.3
+/// spells it that way: the evaluator hands the source text after `explain` over whole, pipes and
+/// all, before pipeline construction would claim them. A quoted subject means the same thing.
 fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     let source = arguments
         .iter()

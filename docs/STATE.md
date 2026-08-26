@@ -16,7 +16,7 @@ git tag -n99 phase-a          # what Phase A delivered, and what proves it
 git switch --detach phase-a   # the tree exactly as that phase left it
 ```
 
-Tags so far: `phase-a`.
+Tags so far: `phase-a`, `phase-b`, `phase-c`, `phase-d`.
 
 **Push after every commit.** AGENTS.md §12.1 keeps `main` untouched and §12.2 asks that
 `implementation` be pushed freely so work is not lost; the branch and its phase tags live on
@@ -26,11 +26,15 @@ Tags so far: `phase-a`.
 git push origin implementation && git push origin --tags
 ```
 
-Current phase: **B/C/D integration** — the value system, the Linux providers and the command
-registry are built and tested as libraries; what remains is wiring them into the evaluator so
-`get process | where cpu > 20 | to json` runs, and the acceptance cases that prove it.
+Current phase: **E — Contextual systems interface** (spec §37), with the remaining §50 quality
+bars (help completeness, completion coverage, schema inspection for every command) and the open
+review findings running alongside.
 
-Phase A is complete and tagged `phase-a`.
+Phases A–D are complete and tagged. B/C/D landed as: native commands wired into the evaluator
+(ADR-0028), partial failure semantics (ADR-0029), the §33.5 interop serialisation (ADR-0030),
+path/string comparability (ADR-0031), the pre-flight field check (spec §11.3), shell stdin into
+a parsing head (§12.4), unquoted `explain` over a pipeline, the provider registry
+(docs/spec/providers/), and acceptance cases 040–044.
 
 ---
 
@@ -58,9 +62,10 @@ the expensive kind of shortcut.
 
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase B/C/D integration: native commands reachable from the
-  evaluator, native pipelines rendered, and the acceptance cases for them — files:
-  `crates/ono-cli/**`, and any crate an integration defect turns out to be in
+- [orchestrator | 2026-08-26] Phase B/C/D follow-ups: `reduce` option parsing in expression mode
+  (`--initial` reads as double unary minus; contract example `@acc + @` is grammar-invalid and
+  must become `$acc + @`) — files: `crates/ono-parser/src/parser.rs`,
+  `docs/spec/commands/data.yaml`
 
 _No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
 KUANG/11 contracts, adversarial review, security review) have all reported and landed._

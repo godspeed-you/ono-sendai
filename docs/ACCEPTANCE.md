@@ -62,15 +62,24 @@ Each phase's success criterion from spec section 37, each proven by a named acce
       external commands and status, cwd and environment, redirection, pipelines, PTY ownership,
       quoting and expansion, an interactive session, job control, history across a restart,
       quiet startup, restricted configuration, and the prompt.
-- [ ] **B — Value system and native pipelines.** Typed values flow end to end through `where`,
+- [x] **B — Value system and native pipelines.** Typed values flow end to end through `where`,
       `select`, `sort`, `take`, `skip`, `each`, `count`, `measure`, with JSON/YAML/CSV/text
       conversion, backpressure, and rendering separated from data.
-- [ ] **C — Linux core providers.** `process`, `file`/`dir`, `user`/`group`, `env`,
+      Proven by `041-typed-values-flow-end-to-end` (every phase-B transform and format against
+      parsed data) and `040-object-pipeline` (the §12.3 boundary in both directions).
+- [x] **C — Linux core providers.** `process`, `file`/`dir`, `user`/`group`, `env`,
       `mount`/`filesystem`, `interface`/`route`/`neighbor`, `socket`/`connection` and
       `service` are answered from the kernel and systemd, not from parsed text.
-- [ ] **D — Consistency and discoverability.** Command, verb and schema registries exist under
+      Proven by `042-inspection-without-text-parsing` (a typed field selected from each), with
+      `docs/spec/providers/*.yaml` and `ono-cli/tests/providers.rs` pinning what each provider
+      advertises.
+- [x] **D — Consistency and discoverability.** Command, verb and schema registries exist under
       `docs/spec/`; `help`, completion, `type`, `inspect` and `explain` are driven by them;
       docs and provider conformance tests are generated from them.
+      Proven by `043-discoverable-from-the-shell` (help, type, inspect, explain from the
+      registries; explain never executes) and `044-semantic-completion` (a declared target
+      completed on a real terminal), with `docs/reference/` staleness and provider drift both
+      failing the gate.
 - [ ] **E — Contextual systems interface.** Context stack, `enter`/`leave`, object-aware
       selectors, prompt and HUD, interactive selection, structured reuse of recent results.
 - [ ] **F — Live system semantics.** `watch`, the event/snapshot model, in-place rendering,

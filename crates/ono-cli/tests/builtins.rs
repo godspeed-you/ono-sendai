@@ -112,3 +112,37 @@ fn should_remove_a_variable_from_the_environment_when_asked() {
     run.assert_success();
     assert_eq!(run.stdout(), "[]\n");
 }
+
+#[test]
+fn should_explain_a_whole_pipeline_written_without_quotes() {
+    // Spec §11.3's own spelling: `explain get process | where cpu > 20 | stop process`. The
+    // pipes belong to the pipeline being explained, not to a pipeline around `explain`.
+    let run = Shell::new()
+        .args(["-c", "explain get process | where cpu > 20 | to json"])
+        .run();
+    run.assert_success();
+
+    let text = run.stdout();
+    assert!(
+        text.contains("get process") && text.contains("where cpu > 20") && text.contains("to json"),
+        "every stage of the subject appears in the plan, got {text:?}"
+    );
+    assert!(
+        text.contains("linux.procfs"),
+        "the plan names the provider that would answer (spec §42), got {text:?}"
+    );
+}
+
+#[test]
+fn should_explain_without_running_anything() {
+    // `explain` in front of a pipeline that would fail loudly must stay silent about running it.
+    let run = Shell::new()
+        .args(["-c", "explain sh -c 'echo RAN >&2; exit 9'"])
+        .run();
+    run.assert_success();
+    assert!(
+        !run.stderr().contains("RAN"),
+        "spec §15.3: explain never executes its subject, got {:?}",
+        run.stderr()
+    );
+}
