@@ -38,9 +38,8 @@ use crate::{FrameKind, Limits, ProtocolError};
 /// A request for objects, as it travels between two machines.
 ///
 /// This mirrors [`ono_provider_api::Query`], which is what a provider is actually asked. It
-/// exists as its own type for one reason: `Query` does not expose the provider options it holds
-/// for enumeration, and a request that silently dropped `--recursive` on the way across a link
-/// would be worse than one that could not carry it at all.
+/// exists as its own type because the wire needs a form of the request that this crate owns:
+/// what a link may carry is part of the protocol's contract, not of the provider API's.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RemoteQuery {
     target: String,
@@ -80,16 +79,17 @@ impl RemoteQuery {
         self
     }
 
-    /// The request a local [`Query`] describes.
+    /// The request a local [`Query`] describes: target, selectors, every option, and the limit.
     ///
-    /// The target, the selectors and the limit carry over. Options do not, because `Query` has no
-    /// way to list them; add them with [`option`](Self::option).
+    /// Nothing is dropped on the way across, because an option that silently went missing —
+    /// a `--recursive`, a depth — would make the remote answer a different question than the
+    /// one the user asked.
     #[must_use]
     pub fn from_query(query: &Query) -> Self {
         Self {
             target: query.target_name().to_owned(),
             selectors: query.selectors().to_vec(),
-            options: Vec::new(),
+            options: query.options().to_vec(),
             limit: query.max(),
         }
     }
@@ -146,8 +146,9 @@ impl RemoteQuery {
 
 /// A request to change one object on the remote machine.
 ///
-/// The counterpart of [`RemoteQuery`], and it exists for the same reason:
-/// [`ono_provider_api::Action`] does not expose its arguments for enumeration.
+/// The counterpart of [`RemoteQuery`], and the wire form of
+/// [`ono_provider_api::Action`]; [`from_action`](Self::from_action) and
+/// [`to_action`](Self::to_action) convert losslessly in both directions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActRequest {
     target: String,
@@ -182,6 +183,24 @@ impl ActRequest {
     pub fn as_dry_run(mut self) -> Self {
         self.dry_run = true;
         self
+    }
+
+    /// The request a local [`Action`](ono_provider_api::Action) describes, argument for
+    /// argument.
+    ///
+    /// A mutation must cross the link whole: an argument that went missing — the signal of a
+    /// `stop`, the mode of a `set` — would make the remote do something other than what was
+    /// asked, which is worse than refusing (ADR-0015).
+    #[must_use]
+    pub fn from_action(action: &ono_provider_api::Action) -> Self {
+        let mut request = Self::new(
+            action.target_name(),
+            action.operation(),
+            action.target().clone(),
+        );
+        request.arguments = action.arguments().to_vec();
+        request.dry_run = action.is_dry_run();
+        request
     }
 
     /// The request as an [`Action`](ono_provider_api::Action), to hand to a remote provider.

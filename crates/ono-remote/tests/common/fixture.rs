@@ -136,6 +136,10 @@ impl Provider for FixtureProvider {
         match query.target_name() {
             "process" => {
                 let limit = query.max().unwrap_or(usize::MAX);
+                let min_pid = match query.option_value("min-pid") {
+                    Some(Value::Int(min)) => *min,
+                    _ => i128::MIN,
+                };
                 let query = query.clone();
                 Ok(ValueStream::spawn(
                     PipelineConfig::new(),
@@ -144,6 +148,10 @@ impl Provider for FixtureProvider {
                         let mut sent = 0;
                         for record in fixture_records() {
                             if sent >= limit || !query.matches(&record) {
+                                continue;
+                            }
+                            if !matches!(record.get("pid"), Some(Value::Int(pid)) if *pid >= min_pid)
+                            {
                                 continue;
                             }
                             if sink.send(record.into_value()).await.is_err() {
@@ -221,6 +229,36 @@ impl Provider for FixtureProvider {
     }
 
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        if action.operation() != "stop" {
+            return Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!("the fixture cannot `{}`", action.operation()),
+            ));
+        }
+        let Some(Value::String(signal)) = action.argument("signal") else {
+            return Ok(ActionOutcome::failed(
+                action,
+                ErrorValue::new(
+                    ErrorCode::ProviderUnsupported,
+                    "stop needs a `signal` argument",
+                ),
+            ));
+        };
+        if action.target().values().first() == Some(&Value::Int(1)) {
+            return Ok(ActionOutcome::failed(
+                action,
+                ErrorValue::new(
+                    ErrorCode::SafetyPolicyDenied,
+                    "pid 1 is protected in this fixture",
+                ),
+            ));
+        }
+        if action.is_dry_run() {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("dry run: would send {signal}"),
+            ));
+        }
         Ok(ActionOutcome::succeeded(action, true))
     }
 }

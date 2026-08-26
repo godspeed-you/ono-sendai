@@ -113,3 +113,30 @@ Encoded by: `crates/ono-remote/tests/{agent,provider,trust,subprocess}.rs`,
   the accessors exist.
 - **Capabilities as bare names on the wire** — rejected: a remote `process.signal` would mount
   as `Read`, under-stating a mutation (ADR-0015).
+
+## Amendment (2026-08-26): actions and options now forward
+
+Point 6's follow-up landed the same day: `ono-provider-api` gained `Query::options()` and
+`Action::arguments()`, which removes the only reason the mounted provider refused actions.
+The rules of point 6 are superseded as follows; everything else in this ADR stands.
+
+- `RemoteQuery::from_query` carries **every option** (and the agent replays them into the
+  `Query` it runs), so `get file --recursive` over a link asks the remote the same question it
+  would ask locally.
+- `ActRequest::from_action` converts a local `Action` losslessly — operation, target identity,
+  all arguments, the dry-run flag — and `RemoteProvider::act` forwards through
+  `RemoteLink::act`. The structural refusal is gone; `RemoteLink::act` remains as the explicit
+  form for callers that already hold an `ActRequest`.
+- Spec §16.5 holds across the wire: an action that was attempted and failed comes back as a
+  `Failed` `ActionOutcome` with its structured error (code and message) intact, never collapsed
+  into a link error; a dry run comes back `Skipped` with the remote's own message.
+- No new protocol message was needed: `RemoteQuery` and `ActRequest` always had the fields;
+  only the conversions were lossy.
+
+Encoded by: `crates/ono-protocol/tests/messages.rs`
+(`should_carry_every_option_when_a_local_query_becomes_a_remote_one`,
+`should_carry_every_argument_when_a_local_action_becomes_a_remote_request`) and
+`crates/ono-remote/tests/provider.rs` (`should_carry_a_provider_option_across_the_link`,
+`should_forward_an_action_with_its_arguments_through_the_mounted_provider`,
+`should_report_a_failed_remote_action_as_an_outcome_not_an_error`,
+`should_carry_a_dry_run_and_its_argument_to_the_remote`).

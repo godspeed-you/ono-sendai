@@ -15,7 +15,6 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_protocol::{
     ActRequest, ClientConfig, Link, Negotiated, ProviderDescriptor, RemoteMessage, RemoteQuery,
@@ -120,9 +119,8 @@ impl RemoteLink {
     /// Performs one action on the remote machine and waits for its structured outcome
     /// (spec §11.5).
     ///
-    /// This is the action path for now: the mounted [`RemoteProvider`] deliberately refuses
-    /// [`Provider::act`], because [`Action`] does not expose its arguments for enumeration and
-    /// forwarding an action without them would silently drop, say, the signal of a `stop`.
+    /// The mounted [`RemoteProvider`] forwards [`Provider::act`] through this same path; the
+    /// explicit form exists for callers that build an [`ActRequest`] directly.
     ///
     /// # Errors
     ///
@@ -287,21 +285,11 @@ impl Provider for RemoteProvider {
     }
 
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
-        let _ = action;
-        // `Action` exposes its arguments only by name, so a faithful `ActRequest` cannot be
-        // built from one: forwarding would silently drop, say, the signal of a `stop`, and a
-        // dropped argument on a mutation is exactly the kind of lie ADR-0015 exists to prevent.
-        Err(ErrorValue::new(
-            ErrorCode::ProviderUnsupported,
-            format!(
-                "actions on {} are not forwarded through the mounted provider yet",
-                self.host
-            ),
-        )
-        .with_help(
-            "perform the action through the link itself (`RemoteLink::act`), which carries \
-             every argument explicitly",
-        ))
+        // The request crosses whole — operation, target identity, every argument, the dry-run
+        // flag — and the answer comes back as the structured outcome of spec §11.5: an action
+        // that was attempted and failed arrives as a `Failed` outcome with its error intact,
+        // never collapsed into a transport error (spec §16.5).
+        self.link.act(&ActRequest::from_action(action)).await
     }
 }
 

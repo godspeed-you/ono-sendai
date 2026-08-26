@@ -311,20 +311,99 @@ async fn should_resolve_a_remote_selector_to_object_references() {
 }
 
 #[tokio::test]
-async fn should_refuse_provider_level_actions_with_a_structured_error() {
+async fn should_carry_a_provider_option_across_the_link() {
+    let connected = connect().await;
+    let registry = mounted(&connected);
+
+    let stream = registry
+        .snapshot(&Query::target("process").option("min-pid", Value::Int(2)))
+        .expect("the mounted provider answers `process`");
+    let (values, failures) = within(drain(stream)).await;
+
+    assert!(failures.is_empty(), "nothing failed: {failures:?}");
+    let pids: Vec<Option<Value>> = values
+        .iter()
+        .map(|value| match value {
+            Value::Record(record) => record.get("pid").cloned(),
+            other => panic!("expected records, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        pids,
+        [Some(Value::Int(2)), Some(Value::Int(3))],
+        "the option reached the remote provider and narrowed what it read; an option dropped \
+         in transit would have returned all three"
+    );
+}
+
+#[tokio::test]
+async fn should_forward_an_action_with_its_arguments_through_the_mounted_provider() {
     let connected = connect().await;
     let registry = mounted(&connected);
 
     let object = ono_provider_api::ObjectId::new(fixture_schema_id(), [Value::Int(2)]);
-    let action = ono_provider_api::Action::new("process", "stop", object);
-    let error = within(registry.act(&action))
+    let action = ono_provider_api::Action::new("process", "stop", object)
+        .with("signal", Value::String("TERM".into()));
+    let outcome = within(registry.act(&action))
         .await
-        .expect_err("the mounted provider cannot forward an action it cannot see in full");
+        .expect("the mounted provider forwards the action to the remote registry");
 
+    assert!(
+        outcome.is_success(),
+        "the remote provider saw the signal argument; without it the fixture refuses"
+    );
+    assert!(outcome.changed());
+}
+
+#[tokio::test]
+async fn should_report_a_failed_remote_action_as_an_outcome_not_an_error() {
+    let connected = connect().await;
+    let registry = mounted(&connected);
+
+    let object = ono_provider_api::ObjectId::new(fixture_schema_id(), [Value::Int(1)]);
+    let action = ono_provider_api::Action::new("process", "stop", object)
+        .with("signal", Value::String("TERM".into()));
+    let outcome = within(registry.act(&action))
+        .await
+        .expect("an action that was attempted and failed is an outcome, not an error (spec §16.5)");
+
+    assert_eq!(outcome.status(), ono_value::ActionStatus::Failed);
+    let error = outcome
+        .error()
+        .expect("the failure travels with its structured error");
     assert_eq!(
         error.code(),
-        ErrorCode::ProviderUnsupported,
-        "an action that would silently lose its arguments is refused, never half-forwarded"
+        ErrorCode::SafetyPolicyDenied,
+        "the remote's own refusal survives the wire with its code intact"
+    );
+    assert!(
+        error.message().contains("pid 1 is protected"),
+        "and with its message: {}",
+        error.message()
+    );
+}
+
+#[tokio::test]
+async fn should_carry_a_dry_run_and_its_argument_to_the_remote() {
+    let connected = connect().await;
+    let registry = mounted(&connected);
+
+    let object = ono_provider_api::ObjectId::new(fixture_schema_id(), [Value::Int(2)]);
+    let action = ono_provider_api::Action::new("process", "stop", object)
+        .with("signal", Value::String("TERM".into()))
+        .as_dry_run();
+    let outcome = within(registry.act(&action))
+        .await
+        .expect("a dry run is answered, not executed (spec §11.6)");
+
+    assert_eq!(outcome.status(), ono_value::ActionStatus::Skipped);
+    assert!(!outcome.changed(), "a dry run changes nothing");
+    let record = outcome.into_record(ono_value::Duration::from_nanoseconds(0));
+    assert!(
+        record
+            .message()
+            .is_some_and(|message| message.contains("TERM")),
+        "the remote names the very signal it was given, proving the argument crossed whole"
     );
 }
 

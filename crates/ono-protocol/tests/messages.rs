@@ -262,3 +262,52 @@ fn should_refuse_a_message_larger_than_the_frame_limit() {
         "a message too large to frame is refused at the sender, got {outcome:?}"
     );
 }
+
+#[test]
+fn should_carry_every_option_when_a_local_query_becomes_a_remote_one() {
+    let local = ono_provider_api::Query::target("file")
+        .with(Selector::contains("name", "log"))
+        .option("depth", Value::Int(2))
+        .option("hidden", Value::Bool(true))
+        .limit(10);
+
+    let remote = RemoteQuery::from_query(&local);
+
+    assert_eq!(
+        remote.options(),
+        local.options(),
+        "an option dropped on the way across a link would silently change what a command does"
+    );
+    let replayed = remote.to_query();
+    assert_eq!(replayed.option_value("depth"), Some(&Value::Int(2)));
+    assert_eq!(replayed.option_value("hidden"), Some(&Value::Bool(true)));
+    assert_eq!(replayed.selectors(), local.selectors());
+    assert_eq!(replayed.max(), Some(10));
+}
+
+#[test]
+fn should_carry_every_argument_when_a_local_action_becomes_a_remote_request() {
+    let object = ObjectId::new(SchemaId::new("ono.process", 1), [Value::Int(4419)]);
+    let local = ono_provider_api::Action::new("process", "stop", object.clone())
+        .with("signal", Value::String("TERM".into()))
+        .as_dry_run();
+
+    let request = ActRequest::from_action(&local);
+
+    assert_eq!(
+        request.arguments(),
+        local.arguments(),
+        "an argument dropped from a mutation would make the remote do something else than asked"
+    );
+    assert!(
+        request.is_dry_run(),
+        "a dry run must stay a dry run remotely (spec §11.6)"
+    );
+    let replayed = request.to_action();
+    assert_eq!(
+        replayed.argument("signal"),
+        Some(&Value::String("TERM".into()))
+    );
+    assert_eq!(replayed.operation(), "stop");
+    assert_eq!(replayed.target(), &object);
+}
