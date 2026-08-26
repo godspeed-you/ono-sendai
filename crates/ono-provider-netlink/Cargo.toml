@@ -1,0 +1,30 @@
+[package]
+name = "ono-provider-netlink"
+description = "Network providers that read the Linux kernel through netlink: interfaces, routes, neighbours and sockets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-pipeline.workspace = true
+ono-provider-api.workspace = true
+ono-value.workspace = true
+async-trait.workspace = true
+jiff.workspace = true
+# `socket` is the only feature this crate needs: netlink sockets, `bind`, `send`, `recv` and
+# `SO_RCVTIMEO`. ADR-0005 already chose `nix` for syscalls, and its wrappers are safe, which is
+# what keeps this crate `forbid(unsafe_code)` while it talks to the kernel.
+nix = { workspace = true, features = ["socket"] }
+tokio.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true

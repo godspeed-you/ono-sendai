@@ -23,6 +23,7 @@ ono-value.workspace = true
 
 [dev-dependencies]
 ono-testkit.workspace = true
+ono-process.workspace = true
 
 [lints]
 workspace = true

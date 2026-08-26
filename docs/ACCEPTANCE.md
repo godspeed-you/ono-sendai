@@ -121,7 +121,11 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
       `024-pty-applications` proves the child owns the real terminal, and
       `031-full-screen-application` runs a pager that takes the terminal into raw mode and the
       alternate screen, draws, and gives it back with the shell still usable.
-- [ ] Signals, job control and process groups behave as they do under Bash for foreground work.
+- [x] Signals, job control and process groups behave as they do under Bash for foreground work —
+      `030-signals-and-process-groups` proves the foreground command runs in its own process
+      group and dies when that group is signalled; `025-job-control` covers background, `jobs`
+      and `fg`; and `crates/ono-cli/tests/signals.rs` drives a real Ctrl-C through a real
+      pseudo-terminal, where the shell survives it, the command does not, and the status is 130.
 - [ ] Text, bytes and objects are never silently confused at an interop boundary.
 - [ ] Destructive operations show scope before acting; privilege and remote target are visible.
 - [ ] Fuzzers run clean over parser, serializers, remote protocol, plugin protocol and the

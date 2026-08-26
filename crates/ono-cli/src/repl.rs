@@ -137,6 +137,23 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
         print_identity_line(session, &theme, presentation);
     }
 
+    // The shell ignores the signals a terminal generates for the foreground job, so Ctrl-C
+    // reaches the running command and leaves the prompt standing rather than killing the shell
+    // out from under the user (spec §18.1). Children have these reset before `exec`, so a
+    // program still sees a normal signal environment.
+    if let Err(error) = ono_process::install_shell_signals() {
+        reporter.error(&ono_value::ErrorValue::new(
+            error.code(),
+            error.message().to_owned(),
+        ));
+    }
+    if let Err(error) = ono_process::install_child_watch() {
+        reporter.error(&ono_value::ErrorValue::new(
+            error.code(),
+            error.message().to_owned(),
+        ));
+    }
+
     // The renderer is stateful: it remembers how tall the last frame was so it can paint over it.
     // A fresh one per keystroke would leave every previous frame on the screen.
     let mut renderer = ono_editor::Renderer::new(std::io::stdout());

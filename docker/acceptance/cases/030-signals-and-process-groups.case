@@ -1,0 +1,40 @@
+# Spec section 18.1 and docs/ACCEPTANCE.md section 4.4: signals and process groups behave the way
+# they do under Bash for foreground work. What is proven here is the part a person cannot see and
+# every shell gets wrong at least once: the foreground command runs in its own process group, a
+# group-directed signal reaches it, and the status that comes back is 128 + the signal.
+case: a foreground command runs in its own process group and can be signalled there
+timeout: 90
+run: |
+  ono -c 'sleep 30' &
+  shell_pid=$!
+
+  child=""
+  for _ in $(seq 100); do
+    child="$(pgrep -P "$shell_pid" -x sleep || true)"
+    [ -n "$child" ] && break
+    sleep 0.1
+  done
+  test -n "$child" || { echo "NO CHILD APPEARED"; exit 1; }
+
+  shell_group="$(ps -o pgid= -p "$shell_pid" | tr -d ' ')"
+  child_group="$(ps -o pgid= -p "$child" | tr -d ' ')"
+  if [ "$shell_group" = "$child_group" ]; then
+    echo "SAME GROUP: a terminal signal would hit the shell too"
+  else
+    echo "child has its own process group"
+  fi
+
+  # Exactly what a terminal does on Ctrl-C: signal the whole foreground group.
+  kill -INT -"$child_group"
+  wait "$shell_pid"
+  echo "interrupted-status=$?"
+
+  # And the child is gone, rather than orphaned and still running.
+  kill -0 "$child" 2>/dev/null && echo "CHILD SURVIVED" || echo "child is gone"
+exit: 0
+stdout-contains: child has its own process group
+stdout-contains: interrupted-status=130
+stdout-contains: child is gone
+stdout-not-contains: SAME GROUP
+stdout-not-contains: CHILD SURVIVED
+stdout-not-contains: NO CHILD APPEARED
