@@ -13,10 +13,9 @@ That is the whole idea here, minus the fiction:
 
 The command is `ono`. The deck is real this time.
 
-> **Status: pre-implementation.** This repository currently contains the specification and the
-> instructions its autonomous agents work from. There is no shell to install yet. What follows
-> describes what is being built and how it will behave — the design is far ahead of the code,
-> deliberately.
+> **Status: pre-implementation.** The specification, the agent instructions, the workspace and
+> the containerised verification harness are in place and green. The interpreter is not — there
+> is no shell to install yet. What follows describes what is being built and how it will behave.
 
 ---
 
@@ -169,13 +168,30 @@ processes, slow NSS and high-latency links.
 
 ```
 docs/ono_sendai_shell_spec_v0.2.md   the specification — product, language, architecture, KUANG/11
-AGENTS.md                            operating instructions for autonomous agents
-docs/spec/                           machine-readable contracts — commands, schemas, verbs, errors
+docs/ACCEPTANCE.md                   what "finished" means, in boxes a script can check
+docs/STATE.md                        the work board: what is done, what is next
 docs/decisions/                      architecture decision records
-docs/STATE.md                        current build state
+AGENTS.md                            operating instructions for autonomous agents
+crates/, xtask/                      the workspace
+docker/, scripts/                    the container and the three gates
+docs/spec/                           machine-readable contracts — arrives with phase D
 ```
 
-The first two exist today; the rest appear as the build starts.
+### Verifying it
+
+```bash
+scripts/gate.sh            # format, lint, test, contract check, docs
+scripts/acceptance.sh      # build a container, run every case against the real `ono` binary
+scripts/release-check.sh   # both, plus the release checklist
+```
+
+The middle one is the interesting one. It builds a clean Debian image, installs `ono` as the
+login shell of an unprivileged user, cuts the network, and asks the binary to prove each
+advertised capability against a process table nobody tuned for the test. A feature that has not
+survived that is not a feature yet.
+
+`scripts/release-check.sh` currently exits 1 and prints the boxes that are still open. It will
+keep doing that until the shell is done.
 
 The specification is the source of truth and is deliberately more detailed than a pitch:
 command metadata, object schemas, error taxonomy, grammar and test matrices are meant to be

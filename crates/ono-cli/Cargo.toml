@@ -1,0 +1,22 @@
+[package]
+name = "ono-cli"
+description = "The ono shell binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "ono"
+path = "src/main.rs"
+
+[dependencies]
+ono-core.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

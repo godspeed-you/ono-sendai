@@ -1,0 +1,6 @@
+# The container user's login shell is ono. This case exists to fail loudly the moment the
+# binary stops being installable as a real user shell.
+case: ono is installed as the login shell of a real user
+run: getent passwd case | cut -d: -f7
+exit: 0
+stdout-contains: /usr/local/bin/ono

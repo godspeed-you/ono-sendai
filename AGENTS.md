@@ -19,6 +19,8 @@ Four rules override everything else:
    and the full quality gate (§10) passes. Only then start the next step.
 3. **No test, no code.** Production code is written *after* a failing test exists for it.
 4. **Be pragmatic and stay on task.** Solve the problem in front of you, nothing else (§4).
+5. **Do not stop early.** The run ends when `scripts/release-check.sh` passes and not before
+   (§15). There is no MVP exit and no proof-of-concept exit.
 
 If you catch yourself writing "should I…?", "which option do you prefer?", or "let me know
 how to proceed" — stop, pick the option best aligned with the spec, write an ADR, proceed.
@@ -40,10 +42,13 @@ ono-sendai/
 ├── tests/                        cross-crate integration tests
 ├── examples/
 ├── xtask/                        spec validation, generators, gates
+├── scripts/                      gate.sh, acceptance.sh, release-check.sh
+├── docker/                       Dockerfile + acceptance/cases/ (the referee, §10)
 └── docs/
     ├── ono_sendai_shell_spec_v0.2.md
     │                             narrative spec (normative)
     ├── STATE.md                  progress board (§9)
+    ├── ACCEPTANCE.md             definition of release-ready + stopping rule (§15)
     ├── decisions/ADR-*.md        recorded agent decisions (§8)
     ├── spec/                     machine-readable contracts
     │   ├── language.yaml
@@ -134,9 +139,10 @@ Concretely:
 1. docs/ono_sendai_shell_spec_v0.2.md   narrative spec — intent & semantics (normative MUST/SHOULD/MAY)
 2. docs/spec/*.yaml, grammar.ebnf  machine-readable contracts (public API surface)
 3. docs/decisions/ADR-*.md         recorded agent decisions (fill gaps in 1 & 2)
-4. tests/                          executable behaviour contract
-5. crates/                         implementation
-6. docs/reference/, generated code derived artifacts — never hand-edited
+4. docs/ACCEPTANCE.md              what "finished" means, in checkable boxes
+5. tests/ + docker/acceptance/     executable behaviour contract
+6. crates/                         implementation
+7. docs/reference/, generated code derived artifacts — never hand-edited
 ```
 
 Lower levels must never silently contradict higher ones. If implementation reality forces a
@@ -274,7 +280,8 @@ Task ordering rules:
    exit criteria are unmet, unless the item is strictly independent.
 2. Within a phase, prefer the task that unblocks the most other tasks.
 3. Prefer the machine-readable contract (`docs/spec/*.yaml`) before its implementation.
-4. Bootstrapping infrastructure (§14) outranks features when a quality gate cannot run.
+4. Repairing the gate or the acceptance harness (§14) outranks features whenever either
+   cannot run — a broken referee makes every later claim of progress worthless.
 5. A phase is complete only when its success criterion in spec §37 is demonstrated by an
    automated test — write that test explicitly and name it in `docs/STATE.md`.
 
@@ -282,15 +289,34 @@ Task ordering rules:
 
 ## 10. Quality Gate (Definition of Done)
 
-An increment is done only when **all** of these pass locally:
+An increment is done only when the gate passes locally:
+
+```bash
+scripts/gate.sh          # or: cargo xtask gate
+```
+
+which runs, in order:
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-cargo xtask spec-check     # once xtask exists: contract ↔ implementation drift (spec §36.5)
-cargo doc --workspace --no-deps   # no doc warnings
+cargo run -p xtask -- spec-check          # contract ↔ implementation drift (spec §36.5)
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
+
+**And, for any increment that adds or changes a user-visible capability, the container:**
+
+```bash
+scripts/acceptance.sh    # or: cargo xtask acceptance
+```
+
+`scripts/acceptance.sh` builds `docker/Dockerfile` and runs every case in
+`docker/acceptance/cases/` against the real `ono` binary, as an unprivileged user whose login
+shell is `ono`, with networking disabled. **A capability without a passing acceptance case is
+not delivered** — write the case in the same increment as the feature, not afterwards
+(`docs/ACCEPTANCE.md` §2). Unit tests prove the code is sound; only the container proves the
+product exists.
 
 Additionally, per spec §50, an increment that advertises a user-visible capability is not done
 until: help is complete, completion metadata exists, the output schema is inspectable, error
@@ -383,28 +409,67 @@ When several agents work in parallel:
 
 ---
 
-## 14. Bootstrapping (empty or partial repository)
+## 14. The Harness (already built — keep it working)
 
-If the workspace does not exist yet, this is the ordered bootstrap backlog. Each step ends with
-a green quality gate:
+The bootstrap is **done**. The repository ships a green baseline; confirm it before your first
+edit so a later red gate is unambiguously yours.
 
-1. `Cargo.toml` workspace + `crates/ono-cli` + `crates/ono-core`, `rust-toolchain.toml`,
-   `rustfmt.toml`, `clippy.toml`, and one behaviour test that fails first.
-2. `xtask` crate: `cargo xtask spec-check`, `cargo xtask gen-docs`, `cargo xtask gen-tests`
-   (spec §36, §47; the spec calls this binary `ono-specgen`). Start as failing stubs with tests.
-3. `docs/spec/` skeleton per spec §47 — `language.yaml`, `grammar.ebnf`, `verbs.yaml`,
-   `targets.yaml`, `errors.yaml`, `capabilities.yaml`, `commands/`, `schemas/`, `providers/` —
-   each with a loader + validation test. The `docs/spec/kuang/` contracts (spec §31.78) follow
-   with Phase I; do not stub them earlier.
-4. `crates/ono-testkit`: fixtures, golden/snapshot helpers, property-test helpers, provider
-   conformance harness generated from registry metadata (spec §35.3).
-5. CI workflow running exactly the §10 gate.
-6. `docs/STATE.md`, `docs/decisions/ADR-0001-*.md` recording the bootstrap choices.
-7. Then Phase A of spec §37.
+| Piece | What it is |
+|---|---|
+| `Cargo.toml`, `rust-toolchain.toml` | workspace, toolchain pinned to 1.94 (ADR-0001) |
+| `crates/ono-cli` | the `ono` binary — scaffolding: `--version`, `--help`, usage error |
+| `crates/ono-core`, `crates/ono-testkit` | shared types; test helpers for outcome assertions |
+| `xtask` | `gate`, `spec-check`, `acceptance`, `release-check` |
+| `scripts/gate.sh` | the quality gate of §10 |
+| `scripts/acceptance.sh` | builds the container, runs `docker/acceptance/cases/` |
+| `scripts/release-check.sh` | the stopping rule of §15 |
+| `.github/workflows/ci.yml` | gate + acceptance on every push |
+
+Rules for the harness itself:
+
+- **The referee outranks the feature.** If the gate or the acceptance harness cannot run, fixing
+  it is the next task, ahead of anything in *Next up*.
+- Never weaken the harness to get a green result: not by deleting a case, not by loosening a
+  regex, not by removing `-D warnings`, not by adding `--no-verify`. If a case is wrong, fix the
+  case in its own `test:` commit and say why in the body.
+- The scaffolding in `ono-cli/src/main.rs` is meant to be replaced by the real interpreter. Its
+  three acceptance cases are a floor and must keep passing.
+- Crates from spec §24.2 (`ono-parser`, `ono-value`, `ono-pipeline`, …) are created when a phase
+  needs them, not upfront (ADR-0001).
+- `docs/spec/` registries arrive with Phase D (spec §47); `docs/spec/kuang/` with Phase I
+  (spec §31.78). `spec-check` already fails on a top-level `spec/`, on a missing narrative spec,
+  on instructions that reference a spec file that does not exist, and on empty contracts.
 
 ---
 
-## 15. Code Style
+## 15. Stopping Rule
+
+`docs/ACCEPTANCE.md` defines *finished*, and `scripts/release-check.sh` evaluates it: the
+quality gate, then the containerised acceptance suite, then a scan for unticked boxes in the
+release checklist.
+
+**Stop when — and only when — it prints `release-check: the shell is release-ready`.**
+
+Not stopping conditions, individually or together:
+
+- the quality gate is green;
+- the acceptance suite passes;
+- a phase from spec §37 is complete;
+- the repository looks tidy and `docs/STATE.md` has an empty *In progress*;
+- the remaining work looks large, tedious or unglamorous;
+- you have been working for a long time.
+
+If a box in `docs/ACCEPTANCE.md` §4 is unticked, there is a next task. Decompose it into the
+next increment, write it into `docs/STATE.md`, and continue the loop of §7. Tick a box only when
+an automated case or test that runs in the gate proves it — never on judgement.
+
+The deliverable is a shell someone can set as their login shell and keep. Not a demo, not a
+prototype, not "the interesting parts". Handing back an unfinished shell because the remainder
+is routine is the one failure mode this project cannot absorb.
+
+---
+
+## 16. Code Style
 
 - Idiomatic Rust; `rustfmt` defaults are authoritative — never hand-format around it.
 - Public items in library crates carry doc comments; doc examples compile.
@@ -418,13 +483,15 @@ a green quality gate:
 
 ---
 
-## 16. Session Checklist
+## 17. Session Checklist
 
-**Start:** read `AGENTS.md` → `docs/STATE.md` → recent ADRs → `git log --oneline -10` →
-run the quality gate to confirm you start from green.
+**Start:** read `AGENTS.md` → `docs/STATE.md` → `docs/ACCEPTANCE.md` → recent ADRs →
+`git log --oneline -10` → run `scripts/gate.sh` to confirm you start from green.
 
 **During:** one TDD loop at a time; one kind of change at a time; decide instead of asking;
-ADR for anything architectural.
+ADR for anything architectural; an acceptance case for anything a user can see.
 
-**End:** gate green → `docs/STATE.md` updated (In progress cleared, Done/Next up accurate) →
-committed → a two-line summary of what was proven by which tests and what the next task is.
+**End:** gate green → acceptance green if a capability changed → `docs/STATE.md` updated
+(In progress cleared, Done/Next up accurate, boxes ticked in `docs/ACCEPTANCE.md` only where
+proven) → committed → then run `scripts/release-check.sh`. If it does not print
+`release-check: the shell is release-ready`, take the next task and keep going (§15).

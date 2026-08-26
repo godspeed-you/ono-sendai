@@ -1,0 +1,3 @@
+# Keep the bar where the spec puts it: an interactive shell must stay fast and legible.
+too-many-arguments-threshold = 8
+type-complexity-threshold = 500

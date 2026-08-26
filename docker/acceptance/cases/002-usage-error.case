@@ -1,0 +1,5 @@
+# An unusable command line fails with a structured status rather than pretending to work.
+case: an unknown flag fails with the usage status
+run: ono --definitely-not-a-flag
+exit: 2
+stdout-contains: unrecognised arguments

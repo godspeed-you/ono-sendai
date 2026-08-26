@@ -1,0 +1,3 @@
+# Defaults are authoritative (AGENTS.md section 15). Only edition is pinned so that
+# `cargo fmt` behaves identically inside and outside the container.
+edition = "2024"

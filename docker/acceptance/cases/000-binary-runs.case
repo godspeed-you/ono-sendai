@@ -1,0 +1,5 @@
+# The binary exists, starts in a clean container and identifies itself.
+case: the shell reports its name and version
+run: ono --version
+exit: 0
+stdout-matches: ^ono [0-9]+\.[0-9]+\.[0-9]+$

@@ -27,18 +27,18 @@ duplicate rules here — if a rule needs to change, change it in `AGENTS.md`.
   (AGENTS.md §11).
 - **Autonomy:** every decision not fixed by the spec is yours. Decide, write an ADR in
   `docs/decisions/`, continue. Do not ask the user; do not idle (AGENTS.md §8).
-- **Referee:** the test suite plus the quality gate (AGENTS.md §10) decide whether a (sub)goal is
-  reached and the next step may start.
+- **Referee:** `scripts/gate.sh` decides whether an increment is sound; `scripts/acceptance.sh`
+  decides whether the product exists, by running the real `ono` binary in a container as an
+  unprivileged user (AGENTS.md §10). A capability without an acceptance case is not delivered.
+- **Stopping rule:** the run ends when `scripts/release-check.sh` prints `the shell is
+  release-ready` — never earlier. No MVP exit (AGENTS.md §15, `docs/ACCEPTANCE.md`).
 - **State board:** `docs/STATE.md` — read first, update last, every session (AGENTS.md §9).
 - **Repo language is English** (code, tests, docs, commits). Talk to the user in their language.
 
-Quality gate, must be green before every commit:
-
 ```bash
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo xtask spec-check
+scripts/gate.sh            # fmt, clippy -D warnings, tests, spec-check, docs
+scripts/acceptance.sh      # build the container, run docker/acceptance/cases/ against `ono`
+scripts/release-check.sh   # both of the above + the checklist in docs/ACCEPTANCE.md
 ```
 
 ---

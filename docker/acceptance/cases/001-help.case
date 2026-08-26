@@ -1,0 +1,6 @@
+# Help is reachable without arguments knowledge. Spec section 50 requires complete help for
+# every advertised capability; this is the floor of that requirement.
+case: the shell explains its own usage
+run: ono --help
+exit: 0
+stdout-contains: usage: ono
