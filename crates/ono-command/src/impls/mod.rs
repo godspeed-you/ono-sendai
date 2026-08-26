@@ -28,6 +28,7 @@ pub(crate) mod meta;
 pub(crate) mod mutate;
 pub(crate) mod producer;
 pub(crate) mod transform;
+mod watch;
 
 use std::sync::Arc;
 
@@ -40,7 +41,7 @@ use crate::registry::CommandRegistry;
 /// A command scheduled for a later phase is not registered, so the honesty of
 /// [`unbound_stable_commands`](crate::unbound_stable_commands) survives contact with a half-built
 /// shell.
-const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E'];
+const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F'];
 
 /// The command table this build has: every implementation, registered against its contract id.
 ///
@@ -108,6 +109,7 @@ fn implementation_of(
         "ono.data.format" => Arc::new(ConversionCommand::new(id, Direction::Render)),
 
         // --- the commands that describe the shell ----------------------------------------------
+        "ono.process.watch" => Arc::new(watch::WatchCommand::new(id)),
         "ono.context.get" => Arc::new(MetaCommand::new(id, meta::Kind::GetContext, registry)),
         "ono.meta.help" => Arc::new(MetaCommand::new(id, meta::Kind::Help, registry)),
         "ono.meta.explain" => Arc::new(MetaCommand::new(id, meta::Kind::Explain, registry)),

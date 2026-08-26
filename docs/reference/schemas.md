@@ -610,6 +610,22 @@ Default view: `name`, `version`, `state`, `trust`, `jobs`, `memory`
 | `restart_count` | `int` | — | required | How often the supervisor has restarted this package's instance in this session (spec §31.34). A package that keeps restarting should be visible as one. |
 | `last_error` | `ono.error/1` | — | nullable | The most recent structured error from this package. Null when it has produced none. |
 
+## ProcessEvent — `ono.process-event/1`
+
+One change to one process, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `process`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `process` | `record` | — | optional | The process as it now is — or, for `removed`, as it last was. Identity lives inside it: a process is (pid, started), never pid alone (ADR-0015 T13). |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the provider has no event source and the runtime compared snapshots at the configured interval — explicit, as spec §18.2 requires. |
+
 ## Process — `ono.process/1`
 
 A running process as the process provider observes it.

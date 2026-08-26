@@ -16,7 +16,7 @@ use crate::{
 /// a later one claiming the same target extends rather than replaces — which is what lets a
 /// KUANG/11 package add a container runtime without displacing the one already there
 /// (spec §31.23).
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ProviderRegistry {
     providers: Vec<Arc<dyn Provider>>,
 }

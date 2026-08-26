@@ -13,6 +13,7 @@ pub mod context;
 pub mod eval;
 pub mod expand;
 pub mod invocation;
+pub mod live;
 pub mod native;
 pub mod providers;
 pub mod repl;

@@ -51,7 +51,7 @@ impl CommandImpl for ProviderProducer {
 /// itself narrows to that one object by name. A target whose schema cannot carry the frame's
 /// field is refused with the reason, because falling back to the whole machine would mean a
 /// command acting on state the user cannot see — exactly what spec §14.3 forbids.
-fn ambient_selector(
+pub(super) fn ambient_selector(
     contract: &crate::CommandContract,
     providers: &ono_provider_api::ProviderRegistry,
     frame: &crate::ContextFrame,

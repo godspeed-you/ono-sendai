@@ -93,6 +93,60 @@ pub struct FixtureProvider {
     availability: Availability,
     failing: Vec<i128>,
     endless: bool,
+    live: Option<LiveWidgets>,
+}
+
+/// A shared, mutable widget population, so a test can change the world between two polls.
+#[derive(Clone, Debug)]
+pub struct LiveWidgets {
+    state: Arc<std::sync::Mutex<Vec<RecordValue>>>,
+}
+
+impl LiveWidgets {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(std::sync::Mutex::new(widgets())),
+        }
+    }
+
+    fn current(&self) -> Vec<RecordValue> {
+        self.state.lock().expect("the fixture lock").clone()
+    }
+
+    /// Replaces widget `pid`'s size.
+    pub fn set_size(&self, pid: i128, size: u128) {
+        let mut state = self.state.lock().expect("the fixture lock");
+        if let Some(position) = state
+            .iter()
+            .position(|record| record.get("pid") == Some(&Value::Int(pid)))
+        {
+            let name = state[position]
+                .get("name")
+                .and_then(|value| value.as_str().ok().map(str::to_owned))
+                .unwrap_or_default();
+            let owner = state[position]
+                .get("owner")
+                .and_then(|value| value.as_str().ok().map(str::to_owned))
+                .unwrap_or_default();
+            state[position] = widget(pid, &name, Some(size), &owner);
+        }
+    }
+
+    /// Adds a widget.
+    pub fn add(&self, pid: i128, name: &str, size: Option<u128>, owner: &str) {
+        self.state
+            .lock()
+            .expect("the fixture lock")
+            .push(widget(pid, name, size, owner));
+    }
+
+    /// Removes widget `pid`.
+    pub fn remove(&self, pid: i128) {
+        self.state
+            .lock()
+            .expect("the fixture lock")
+            .retain(|record| record.get("pid") != Some(&Value::Int(pid)));
+    }
 }
 
 impl Default for FixtureProvider {
@@ -102,6 +156,24 @@ impl Default for FixtureProvider {
 }
 
 impl FixtureProvider {
+    /// A provider whose population a test can mutate between polls.
+    #[must_use]
+    pub fn live() -> Self {
+        let mut provider = Self::new();
+        provider.live = Some(LiveWidgets::new());
+        provider
+    }
+
+    /// The handle a test mutates the live population through.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the provider was not built with [`FixtureProvider::live`].
+    #[must_use]
+    pub fn handle(&self) -> LiveWidgets {
+        self.live.clone().expect("a live fixture")
+    }
+
     /// A provider that answers.
     #[must_use]
     pub fn new() -> Self {
@@ -109,6 +181,7 @@ impl FixtureProvider {
             availability: Availability::Available,
             failing: Vec::new(),
             endless: false,
+            live: None,
         }
     }
 
@@ -119,6 +192,7 @@ impl FixtureProvider {
             availability: Availability::unavailable(reason),
             failing: Vec::new(),
             endless: false,
+            live: None,
         }
     }
 
@@ -165,7 +239,11 @@ impl Provider for FixtureProvider {
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         // The provider narrows itself, which is the push-down of spec §27.1: a test asking for one
         // object can then tell that the selector reached the provider.
-        let matching: Vec<Value> = widgets()
+        let population = match &self.live {
+            Some(live) => live.current(),
+            None => widgets(),
+        };
+        let matching: Vec<Value> = population
             .into_iter()
             .filter(|widget| query.matches(widget))
             .map(RecordValue::into_value)

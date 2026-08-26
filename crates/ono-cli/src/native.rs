@@ -354,6 +354,9 @@ fn run_native_segment(
         return Ok(None);
     };
     let final_contract = *final_contract;
+    let stage_has_no_redirection = list.stages[*indices.last().unwrap_or(&0)]
+        .redirections
+        .is_empty();
 
     // A structured stream cannot be handed to a child process. Spec §12.3 makes the boundary
     // explicit in both directions, and guessing a rendering the program would have to parse back
@@ -431,6 +434,24 @@ fn run_native_segment(
         let mut values = Vec::new();
         let mut failures = Vec::new();
         if let Some(mut stream) = stream {
+            if last && !stream.boundedness().is_bounded() && stage_has_no_redirection {
+                // A live stream at a terminal renders in place (spec §18.3); anywhere else the
+                // representation must be chosen, because an endless unserialised stream into a
+                // pipe or file is a table that never learns its widths.
+                if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                    let (width, height) = live_geometry();
+                    failures.extend(crate::live::show(stream, width, height).await);
+                    return Ok((Vec::new(), failures));
+                }
+                return Err(ErrorValue::new(
+                    ErrorCode::StreamUnboundedOperation,
+                    "a live stream needs a representation when nobody is watching it",
+                )
+                .with_help(
+                    "pipe it through a serializer — `watch process | to json` — or bound it \
+                     with `take` (spec §18.3)",
+                ));
+            }
             while let Some(event) = stream.recv().await {
                 match event {
                     StreamEvent::Value(value) => values.push(value),
@@ -601,4 +622,10 @@ fn write_failed(error: std::io::Error) -> Flow {
         code,
         format!("the output could not be written: {error}"),
     ))
+}
+
+/// The terminal's size for a live view, with the fallbacks the sink already uses.
+fn live_geometry() -> (usize, usize) {
+    let (width, height) = ono_editor::terminal_size().unwrap_or((0, 0));
+    (width.max(20), if height == 0 { 24 } else { height })
 }

@@ -48,9 +48,6 @@ deferred:
   - id: ono.interface-event/1
     phase: "F"
     required_by: [ono.interface.watch]
-  - id: ono.process-event/1
-    phase: "F"
-    required_by: [ono.process.watch]
   - id: ono.route-event/1
     phase: "F"
     required_by: [ono.route.watch]
