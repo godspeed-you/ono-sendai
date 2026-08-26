@@ -95,6 +95,16 @@ impl Terminal {
         }
     }
 
+    /// The terminal's raw descriptor, for a child to claim the foreground with before `exec`.
+    ///
+    /// The number stays valid in the child because descriptors survive `fork`, and the child
+    /// only reads it — ownership stays here.
+    #[must_use]
+    pub(crate) fn descriptor(&self) -> Option<i32> {
+        use std::os::fd::AsRawFd as _;
+        self.tty.as_ref().map(|tty| tty.as_raw_fd())
+    }
+
     /// Whether the shell has a terminal to hand to foreground jobs.
     #[must_use]
     pub const fn is_interactive(&self) -> bool {

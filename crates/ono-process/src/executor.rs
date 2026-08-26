@@ -192,7 +192,7 @@ impl Executor {
     /// started, or that failed, is reported in the outcome rather than as an error, because the
     /// remaining stages still ran.
     pub fn run_foreground(&mut self, pipeline: &Pipeline) -> Result<ForegroundOutcome> {
-        let mut running = self.start(pipeline)?;
+        let mut running = self.start(pipeline, true)?;
         self.terminal.remember_attributes();
         if running.pgid != 0 {
             self.terminal.give_to(running.pgid)?;
@@ -212,7 +212,7 @@ impl Executor {
     ///
     /// Returns an error if the pipeline could not be started at all.
     pub fn run_background(&mut self, pipeline: &Pipeline) -> Result<JobId> {
-        let running = self.start(pipeline)?;
+        let running = self.start(pipeline, false)?;
         Ok(self.register(running))
     }
 
@@ -277,13 +277,15 @@ impl Executor {
     pub fn foreground(&mut self, id: JobId) -> Result<ForegroundOutcome> {
         let index = self.locate(id)?;
         let mut running = self.jobs.remove(index).running;
-        if running.is_stopped() {
-            continue_group(&mut running)?;
-        }
         self.terminal.remember_attributes();
+        // The terminal is handed over before the group is woken: a job continued first could
+        // read in the instant before the handover and be stopped again by `SIGTTIN`.
         if !running.is_finished() && running.pgid != 0 {
             self.terminal.give_to(running.pgid)?;
             self.foreground.store(running.pgid, Ordering::SeqCst);
+        }
+        if running.is_stopped() {
+            continue_group(&mut running)?;
         }
         let outcome = wait_foreground(&mut running);
         self.foreground.store(0, Ordering::SeqCst);
@@ -383,7 +385,7 @@ fn refuse(count: usize, at: usize, refusal: (ExitStatus, Error)) -> Vec<RunningS
 
 impl Executor {
     /// Starts every stage of a pipeline in one new process group.
-    fn start(&mut self, pipeline: &Pipeline) -> Result<Running> {
+    fn start(&mut self, pipeline: &Pipeline, foreground: bool) -> Result<Running> {
         let mut running = Running {
             pgid: 0,
             command: pipeline.to_string(),
@@ -432,7 +434,7 @@ impl Executor {
         }
 
         for ready in prepared {
-            let stage = self.spawn_stage(ready, &mut running);
+            let stage = self.spawn_stage(ready, &mut running, foreground);
             running.stages.push(stage);
         }
         Ok(running)
@@ -479,7 +481,12 @@ impl Executor {
     }
 
     /// Spawns a stage that has already been resolved and had its descriptors opened.
-    fn spawn_stage(&mut self, ready: ReadyStage, running: &mut Running) -> RunningStage {
+    fn spawn_stage(
+        &mut self,
+        ready: ReadyStage,
+        running: &mut Running,
+        foreground: bool,
+    ) -> RunningStage {
         let ReadyStage {
             program,
             args,
@@ -497,6 +504,14 @@ impl Executor {
             cwd: cwd.as_deref(),
             process_group: Some(running.pgid),
             controlling_terminal: None,
+            // The child claims the terminal itself before `exec`, and the parent hands it over
+            // as well (`run_foreground`). Either alone leaves a window: a child that reads
+            // before the parent's handover is stopped by `SIGTTIN`, which is exactly the flake
+            // CI caught in `terminal_control.rs`. Both together close it, which is what every
+            // job-control shell does.
+            claim_foreground: (foreground && self.terminal.is_interactive())
+                .then(|| self.terminal.descriptor())
+                .flatten(),
         };
         let spawned = spawn::spawn(&request, &io.plan);
         drop(io.plan);

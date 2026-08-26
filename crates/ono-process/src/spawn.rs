@@ -35,6 +35,12 @@ pub(crate) struct SpawnRequest<'a> {
     pub(crate) process_group: Option<i32>,
     /// The descriptor number, as the child will see it, to claim as controlling terminal.
     pub(crate) controlling_terminal: Option<i32>,
+    /// A terminal whose foreground group the child claims for its own group before `exec`.
+    ///
+    /// The parent performs the same handover after spawning. Doing it on both sides is what
+    /// every job-control shell does: either alone leaves a window in which a child that reads
+    /// the terminal first is stopped by `SIGTTIN`.
+    pub(crate) claim_foreground: Option<i32>,
 }
 
 /// Starts the child described by `request` with the descriptor table `plan` prepared.
@@ -73,6 +79,7 @@ pub(crate) fn spawn(request: &SpawnRequest<'_>, plan: &FdPlan) -> io::Result<i32
 
     let moves = plan.moves();
     let controlling_terminal = request.controlling_terminal;
+    let claim_foreground = request.claim_foreground;
     // SAFETY: `pre_exec` requires the closure to be async-signal-safe, because it runs in a
     // child that has forked away from a possibly multi-threaded parent. `child_setup` calls
     // only `dup2`, `setsid`, `ioctl` and `signal`, all of which POSIX lists as
@@ -82,7 +89,7 @@ pub(crate) fn spawn(request: &SpawnRequest<'_>, plan: &FdPlan) -> io::Result<i32
     // owns them alive until `spawn` returns, and this closure only ever runs inside `spawn`.
     unsafe {
         std::os::unix::process::CommandExt::pre_exec(&mut command, move || {
-            child_setup(&moves, controlling_terminal)
+            child_setup(&moves, controlling_terminal, claim_foreground)
         });
     }
 
@@ -102,7 +109,11 @@ pub(crate) fn spawn(request: &SpawnRequest<'_>, plan: &FdPlan) -> io::Result<i32
 }
 
 /// The post-`fork`, pre-`exec` setup. Async-signal-safe by construction.
-fn child_setup(moves: &[(i32, i32)], controlling_terminal: Option<i32>) -> io::Result<()> {
+fn child_setup(
+    moves: &[(i32, i32)],
+    controlling_terminal: Option<i32>,
+    claim_foreground: Option<i32>,
+) -> io::Result<()> {
     for &(target, source) in moves {
         // SAFETY: `dup2` is async-signal-safe. `source` is open in this address space because
         // it was open in the parent at `fork` and is only closed at `exec`; `target` is a small
@@ -123,6 +134,22 @@ fn child_setup(moves: &[(i32, i32)], controlling_terminal: Option<i32>) -> io::R
         // `int` argument and returns its error through `errno`.
         if unsafe { libc::ioctl(terminal, libc::TIOCSCTTY as _, 0) } < 0 {
             return Err(io::Error::last_os_error());
+        }
+    }
+
+    if let Some(terminal) = claim_foreground {
+        // SAFETY: `signal`, `getpgrp` and `tcsetpgrp` are async-signal-safe. `SIGTTOU` must be
+        // ignored for the call, because a child that is not yet the foreground group calling
+        // `tcsetpgrp` is otherwise stopped by exactly the signal it is trying to prevent; the
+        // disposition is reset to default immediately after, and again by the loop below.
+        unsafe {
+            let previous = libc::signal(libc::SIGTTOU, libc::SIG_IGN);
+            // The group may already own the terminal when the parent won the race; the call is
+            // then a no-op. A failure is not fatal: the parent performs the same handover, and
+            // refusing to run the child over a lost race would turn a closed window into a
+            // failure mode of its own.
+            let _ = libc::tcsetpgrp(terminal, libc::getpgrp());
+            libc::signal(libc::SIGTTOU, previous);
         }
     }
 

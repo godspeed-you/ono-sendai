@@ -69,6 +69,8 @@ impl PtySession {
             cwd: command.directory(),
             process_group: None,
             controlling_terminal: Some(0),
+            // A new session leader on its own pty is the foreground group already.
+            claim_foreground: None,
         };
         let pid = spawn::spawn(&request, &fd_plan)
             .map_err(|error| spawn::cannot_run(&program, &error))?;
