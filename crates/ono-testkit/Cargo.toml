@@ -1,12 +1,16 @@
 [package]
 name = "ono-testkit"
-description = "Test fixtures and harness helpers for the Ono-Sendai workspace."
+description = "Test fixtures and harness helpers shared by every crate in the workspace."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+publish = false
+
+[dependencies]
+ono-core.workspace = true
 
 [lints]
 workspace = true
