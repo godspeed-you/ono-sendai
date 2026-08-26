@@ -171,3 +171,27 @@ fn should_say_there_is_nothing_to_reuse_when_no_result_was_retained() {
         run.stderr()
     );
 }
+
+#[test]
+fn should_draw_a_trace_as_a_tree_rather_than_a_table() {
+    // Spec §13.6: a graph never renders as a table. PID 1 exists everywhere and always has
+    // relationships — children at least.
+    let run = ono("trace process 1");
+    run.assert_success();
+    let text = run.stdout();
+    assert!(
+        text.contains("+--") || text.contains("└") || text.contains("├"),
+        "the graph draws as a tree (spec §13.6), got {text:?}"
+    );
+    assert!(
+        text.contains("1") && (text.contains("systemd") || text.contains("init")),
+        "the root names the traced process, got {text:?}"
+    );
+}
+
+#[test]
+fn should_carry_a_trace_through_the_pipeline_as_a_graph_value() {
+    let run = ono("trace process 1 | type");
+    run.assert_success();
+    run.assert_stdout_contains("ono.graph/1");
+}

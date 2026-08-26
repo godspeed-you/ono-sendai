@@ -71,10 +71,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase G — the relationship graph (spec §37): graph values and
-  rendering exist in `ono-graph`; wire `trace` for process/service/socket into the registry and
-  evaluator, prove with an acceptance case — files: `crates/ono-graph/**`,
-  `crates/ono-command/**`, `crates/ono-cli/**`
+- [orchestrator | 2026-08-26] Phase G — delivered: `trace` for process/service/socket/connection
+  wired (TraceCommand), graphs revive from their records (`Graph::from_record`) and render as
+  trees in the sink (§13.6), one-observation-per-trace snapshot sharing took `trace process 1`
+  from 27.2s to 1.1s (ADR-0035). Remaining: acceptance case 047 green, tick the box, tag
+  `phase-g` — files: `crates/ono-graph/**`, `crates/ono-command/**`, `crates/ono-cli/**`
 
 _No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
 KUANG/11 contracts, adversarial review, security review) have all reported and landed._

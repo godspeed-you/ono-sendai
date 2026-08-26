@@ -38,10 +38,21 @@ pub fn rooted_relationships(
     root: impl AsRef<Path>,
 ) -> Vec<Arc<dyn RelationshipProvider>> {
     let root = root.as_ref();
+    // One trace is one observation: the expansions share one snapshot per target for exactly
+    // the lifetime of this provider set (`lookup::SharedSnapshots`).
+    let snapshots = Arc::new(lookup::SharedSnapshots::default());
     vec![
-        Arc::new(ServiceProcesses::new(Arc::clone(&registry)).rooted(root)),
-        Arc::new(ProcessTree::new(Arc::clone(&registry))),
-        Arc::new(ProcessSockets::new(Arc::clone(&registry)).rooted(root)),
+        Arc::new(
+            ServiceProcesses::new(Arc::clone(&registry))
+                .rooted(root)
+                .sharing(Arc::clone(&snapshots)),
+        ),
+        Arc::new(ProcessTree::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
+        Arc::new(
+            ProcessSockets::new(Arc::clone(&registry))
+                .rooted(root)
+                .sharing(Arc::clone(&snapshots)),
+        ),
         Arc::new(OpenFiles::new(Arc::clone(&registry)).rooted(root)),
         Arc::new(SocketOwners::new(Arc::clone(&registry)).rooted(root)),
         Arc::new(MountDevices::new(registry)),

@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ono_core::ErrorCode;
-use ono_provider_api::{Availability, Capability, ProviderRegistry, Query, Risk};
+use ono_provider_api::{Availability, Capability, ProviderRegistry, Risk};
 use ono_value::{ErrorValue, Value};
 
 use crate::graph::Node;
 use crate::kernel::process::{missing_field, proc_availability};
-use crate::kernel::{lookup, procfs};
+use crate::kernel::procfs;
 use crate::provider::{Relationship, RelationshipProvider, Relationships};
 
 /// The processes belonging to a service unit.
@@ -22,15 +22,22 @@ use crate::provider::{Relationship, RelationshipProvider, Relationships};
 pub struct ServiceProcesses {
     registry: Arc<ProviderRegistry>,
     root: PathBuf,
+    snapshots: Arc<super::lookup::SharedSnapshots>,
 }
 
 impl ServiceProcesses {
+    pub(crate) fn sharing(mut self, snapshots: Arc<super::lookup::SharedSnapshots>) -> Self {
+        self.snapshots = snapshots;
+        self
+    }
+
     /// A provider reading the running system's `/proc`.
     #[must_use]
     pub fn new(registry: Arc<ProviderRegistry>) -> Self {
         Self {
             registry,
             root: PathBuf::from("/"),
+            snapshots: Arc::default(),
         }
     }
 
@@ -71,11 +78,10 @@ impl RelationshipProvider for ServiceProcesses {
         let main = subject.integer("pid");
         let proc = procfs::proc_dir(&self.root);
 
-        let (records, stream_failures) =
-            match lookup::find(&self.registry, &Query::target("process")).await {
-                Ok(found) => found,
-                Err(error) => return Relationships::failed(error),
-            };
+        let (records, stream_failures) = match self.snapshots.all(&self.registry, "process").await {
+            Ok(found) => found,
+            Err(error) => return Relationships::failed(error),
+        };
         let mut processes: Vec<(i64, Node)> = records
             .iter()
             .filter_map(|record| {

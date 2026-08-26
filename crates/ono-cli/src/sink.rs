@@ -113,6 +113,20 @@ impl Sink {
         if values.is_empty() {
             return Vec::new();
         }
+        // A graph never renders as a table (spec §13.6): its record revives and draws as the
+        // trees it holds, wherever it came from — a live trace, a file, a pipe.
+        if let [value] = values
+            && let Ok(record) = value.as_record()
+            && record.schema_id().to_string() == "ono.graph/1"
+            && let Ok(graph) = ono_graph::Graph::from_record(record)
+        {
+            let layout = Layout::new(self.width);
+            return graph
+                .trees()
+                .iter()
+                .flat_map(|tree| layout.render_tree_styled(tree, &self.theme, self.presentation))
+                .collect();
+        }
         let renderer = Renderer::new();
         let mut layout = Layout::new(self.width);
         if let Some(max_rows) = self.max_rows {

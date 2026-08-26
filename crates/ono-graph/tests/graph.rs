@@ -6,9 +6,10 @@ mod common;
 use std::sync::Arc;
 
 use common::{FixtureProvider, ProcFixture, endpoint, node, process, registry, socket, trace_with};
-use ono_graph::{ProcessSockets, TraceOptions};
+use ono_graph::{Edge, Graph, Node, ProcessSockets, TraceOptions};
 use ono_pipeline::ValueStream;
 use ono_provider_api::Provider;
+use ono_value::MapValue;
 use ono_value::{SchemaId, Value, builtin_schemas, to_json_string};
 
 async fn nginx_graph() -> ono_graph::Graph {
@@ -156,5 +157,59 @@ fn should_carry_a_relationship_that_holds_in_neither_direction_as_undirected() {
         edge.get("direction"),
         Some(&Value::String("undirected".into())),
         "spec §22.1 gives an edge a direction, and both of its values have to be reachable"
+    );
+}
+
+#[test]
+fn should_round_trip_a_graph_through_its_record_and_draw_the_same_trees() {
+    // A graph that travelled a pipeline — serialised, stored, piped — must render exactly as
+    // the live one does: the record of spec §22.1 carries everything the trees need, and losing
+    // shape in transit would make `trace … | to json` and `trace …` disagree.
+    let build = |schema: &str, field: &str, value: Value, label: &str| {
+        let mut identity = MapValue::new();
+        identity.insert(field.into(), value);
+        Node::new(SchemaId::new(schema, 1), identity, label)
+    };
+    let mut graph = Graph::new();
+    let root = build(
+        "ono.service",
+        "name",
+        Value::string("nginx.service"),
+        "nginx.service",
+    );
+    let worker = build("ono.process", "pid", Value::Int(812), "812 nginx: worker");
+    let socket = build("ono.socket", "port", Value::Int(443), ":443 tcp listen");
+    graph.insert_node(root.clone());
+    graph.insert_node(worker.clone());
+    graph.insert_node(socket.clone());
+    graph.insert_edge(Edge::exact(
+        root.id().clone(),
+        worker.id().clone(),
+        "runs",
+        "test.fixture",
+    ));
+    graph.insert_edge(Edge::inferred(
+        worker.id().clone(),
+        socket.id().clone(),
+        "listens",
+        "test.fixture",
+        "socket inode matched in /proc",
+    ));
+
+    let value = graph.to_value().expect("the graph serialises");
+    let record = value.as_record().expect("an ono.graph/1 record");
+    let revived = Graph::from_record(record).expect("the record parses back");
+
+    let drawn = |graph: &Graph| -> Vec<String> {
+        graph
+            .trees()
+            .iter()
+            .map(|tree| format!("{tree:?}"))
+            .collect()
+    };
+    assert_eq!(
+        drawn(&graph),
+        drawn(&revived),
+        "the revived graph draws exactly the trees the live one drew"
     );
 }

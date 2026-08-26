@@ -654,6 +654,132 @@ impl Graph {
     }
 }
 
+impl Graph {
+    /// Parses a graph back out of an `ono.graph/1` record.
+    ///
+    /// This is [`Graph::to_value`]'s inverse, and it exists so a graph that travelled a pipeline
+    /// — serialised, stored, piped — renders exactly as the live one does. What the record does
+    /// not carry (a node's full source record, an edge's original metadata types after a lossy
+    /// codec) stays absent; the trees only need what the record keeps.
+    ///
+    /// # Errors
+    ///
+    /// Returns `type.mismatch` when the record is not an `ono.graph/1` or a node or edge in it
+    /// cannot be read.
+    pub fn from_record(record: &RecordValue) -> Result<Self, ErrorValue> {
+        if record.schema_id() != &SchemaId::new("ono.graph", 1) {
+            return Err(ErrorValue::new(
+                ono_core::ErrorCode::TypeMismatch,
+                format!("{} is not an ono.graph/1 record", record.schema_id()),
+            ));
+        }
+
+        let reference = |value: &Value| -> Result<(SchemaId, MapValue, String), ErrorValue> {
+            let map = value.as_map().map_err(|_| bad_graph("a node reference"))?;
+            let schema: SchemaId = map
+                .get("schema")
+                .and_then(|schema| schema.as_str().ok())
+                .ok_or_else(|| bad_graph("a reference schema"))?
+                .parse()?;
+            let identity = map
+                .get("identity")
+                .and_then(|identity| identity.as_map().ok())
+                .ok_or_else(|| bad_graph("a reference identity"))?
+                .clone();
+            let label = map
+                .get("label")
+                .and_then(|label| label.as_str().ok())
+                .unwrap_or_default()
+                .to_owned();
+            Ok((schema, identity, label))
+        };
+
+        let mut graph = Graph::new();
+        let entries = |name: &str| -> Vec<Value> {
+            record
+                .get(name)
+                .and_then(|value| value.as_list().ok())
+                .map(|list| list.to_vec())
+                .unwrap_or_default()
+        };
+
+        for value in entries("nodes") {
+            let node = value.as_record().map_err(|_| bad_graph("a node"))?;
+            let (kind, identity, label) = node
+                .get("id")
+                .map(reference)
+                .transpose()?
+                .ok_or_else(|| bad_graph("a node id"))?;
+            let summary = node
+                .get("value")
+                .and_then(|summary| summary.as_map().ok())
+                .cloned()
+                .unwrap_or_default();
+            graph.insert_node(
+                Node::new(kind, identity, label)
+                    .with_summary(summary)
+                    .with_provenance(node.provenance().clone()),
+            );
+        }
+
+        for value in entries("edges") {
+            let edge = value.as_record().map_err(|_| bad_graph("an edge"))?;
+            let end = |name: &str| -> Result<ObjectId, ErrorValue> {
+                edge.get(name)
+                    .map(reference)
+                    .transpose()?
+                    .map(|(kind, identity, _)| Node::new(kind, identity, "").id().clone())
+                    .ok_or_else(|| bad_graph("an edge end"))
+            };
+            let text = |name: &str| {
+                edge.get(name)
+                    .and_then(|value| value.as_str().ok())
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let mut revived = match text("confidence").as_str() {
+                "exact" => {
+                    Edge::exact(end("from")?, end("to")?, text("relation"), text("provider"))
+                }
+                _ => Edge::inferred(
+                    end("from")?,
+                    end("to")?,
+                    text("relation"),
+                    text("provider"),
+                    "",
+                ),
+            };
+            if text("direction") == "undirected" {
+                revived = revived.undirected();
+            }
+            if let Some(metadata) = edge.get("metadata").and_then(|value| value.as_map().ok()) {
+                for (key, value) in metadata {
+                    revived = revived.with_metadata(key, value.clone());
+                }
+            }
+            graph.insert_edge(revived);
+        }
+
+        // The root travels as a reference; parsing keeps it even when insertion order differed.
+        if let Some((kind, identity, _)) = record
+            .get("root")
+            .filter(|root| !matches!(root, Value::Null))
+            .map(reference)
+            .transpose()?
+        {
+            graph.root = Some(Node::new(kind, identity, "").id().clone());
+        }
+        Ok(graph)
+    }
+}
+
+fn bad_graph(what: &str) -> ErrorValue {
+    ErrorValue::new(
+        ono_core::ErrorCode::TypeMismatch,
+        format!("this ono.graph/1 record cannot be read: {what} is missing or malformed"),
+    )
+}
+
 /// One of this crate's contracts, by name.
 fn schema(name: &str) -> Result<std::sync::Arc<Schema>, ErrorValue> {
     builtin_schemas()

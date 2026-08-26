@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ono_core::ErrorCode;
-use ono_provider_api::{Availability, Capability, ProviderRegistry, Query, Risk};
+use ono_provider_api::{Availability, Capability, ProviderRegistry, Risk};
 use ono_value::{ErrorValue, Value};
 
 use crate::graph::Node;
@@ -24,13 +24,22 @@ const SOCKET: &str = "ono.socket/1";
 #[derive(Debug)]
 pub struct ProcessTree {
     registry: Arc<ProviderRegistry>,
+    snapshots: Arc<super::lookup::SharedSnapshots>,
 }
 
 impl ProcessTree {
     /// A provider reading through `registry`'s process provider.
     #[must_use]
     pub fn new(registry: Arc<ProviderRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            snapshots: Arc::default(),
+        }
+    }
+
+    pub(crate) fn sharing(mut self, snapshots: Arc<super::lookup::SharedSnapshots>) -> Self {
+        self.snapshots = snapshots;
+        self
     }
 }
 
@@ -56,11 +65,10 @@ impl RelationshipProvider for ProcessTree {
         let Some(pid) = subject.integer("pid") else {
             return Relationships::failed(missing_field(subject, "pid"));
         };
-        let (records, failures) =
-            match lookup::find(&self.registry, &Query::target("process")).await {
-                Ok(found) => found,
-                Err(error) => return Relationships::failed(error),
-            };
+        let (records, failures) = match self.snapshots.all(&self.registry, "process").await {
+            Ok(found) => found,
+            Err(error) => return Relationships::failed(error),
+        };
 
         let mut nodes: Vec<(i64, Option<i64>, Node)> = records
             .iter()
@@ -197,6 +205,7 @@ impl RelationshipProvider for OpenFiles {
 pub struct ProcessSockets {
     registry: Arc<ProviderRegistry>,
     root: PathBuf,
+    snapshots: Arc<super::lookup::SharedSnapshots>,
 }
 
 impl ProcessSockets {
@@ -206,7 +215,13 @@ impl ProcessSockets {
         Self {
             registry,
             root: PathBuf::from("/"),
+            snapshots: Arc::default(),
         }
+    }
+
+    pub(crate) fn sharing(mut self, snapshots: Arc<super::lookup::SharedSnapshots>) -> Self {
+        self.snapshots = snapshots;
+        self
     }
 
     /// Reads `<root>/proc` instead.
@@ -254,7 +269,7 @@ impl RelationshipProvider for ProcessSockets {
             let Some(inode) = descriptor.socket_inode() else {
                 continue;
             };
-            let node = match lookup::socket_node(&self.registry, inode).await {
+            let node = match lookup::socket_node(&self.registry, &self.snapshots, inode).await {
                 Ok(node) => node,
                 Err(error) => {
                     found.fail(error);

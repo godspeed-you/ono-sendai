@@ -16,6 +16,7 @@ path = "src/main.rs"
 ono-command.workspace = true
 ono-core.workspace = true
 ono-editor.workspace = true
+ono-graph.workspace = true
 ono-history.workspace = true
 ono-parser.workspace = true
 ono-process.workspace = true

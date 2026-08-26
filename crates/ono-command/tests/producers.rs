@@ -111,12 +111,7 @@ fn should_register_a_producer_for_every_delivered_target() {
 #[test]
 fn should_not_register_a_command_whose_phase_has_not_been_delivered() {
     let table = table();
-    for id in [
-        "ono.plugin.install",
-        "ono.host.link",
-        "ono.process.trace",
-        "ono.container.get",
-    ] {
+    for id in ["ono.plugin.install", "ono.host.link", "ono.container.get"] {
         assert!(
             !table.contains(id),
             "`{id}` is scheduled for a later phase, and a stub would be worse than an honest \
