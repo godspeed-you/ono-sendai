@@ -164,6 +164,7 @@ impl Table {
 pub struct Layout {
     width: usize,
     max_rows: Option<usize>,
+    max_depth: Option<usize>,
 }
 
 impl Layout {
@@ -173,6 +174,7 @@ impl Layout {
         Self {
             width: width.max(1),
             max_rows: None,
+            max_depth: None,
         }
     }
 
@@ -181,6 +183,19 @@ impl Layout {
     pub fn max_rows(mut self, max_rows: usize) -> Self {
         self.max_rows = Some(max_rows);
         self
+    }
+
+    /// Descends at most `max_depth` levels into a tree, then says how much it left out.
+    #[must_use]
+    pub fn max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = Some(max_depth);
+        self
+    }
+
+    /// Lays a tree out as the lines a terminal would show (spec §22.4).
+    #[must_use]
+    pub fn render_tree(&self, root: &crate::TreeNode) -> Vec<String> {
+        crate::tree::render(root, self.width, self.max_depth)
     }
 
     /// Lays `table` out as the lines a terminal would show.
@@ -332,7 +347,7 @@ impl Layout {
 ///
 /// Never splits a character, and never returns something wider than asked for — a line that
 /// escapes the terminal wraps and destroys the alignment of everything below it.
-fn shorten(text: &str, width: usize) -> String {
+pub(crate) fn shorten(text: &str, width: usize) -> String {
     if text.width() <= width {
         return text.to_owned();
     }
