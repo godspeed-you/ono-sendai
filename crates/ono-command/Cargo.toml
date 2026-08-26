@@ -1,0 +1,29 @@
+[package]
+name = "ono-command"
+description = "The Ono-Sendai command registry: public command contracts as data, and the binding, help, completion and planning derived from them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-parser.workspace = true
+ono-pipeline.workspace = true
+ono-provider-api.workspace = true
+ono-value.workspace = true
+
+jiff.workspace = true
+serde = { workspace = true }
+serde_yaml_ng.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

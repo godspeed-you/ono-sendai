@@ -279,13 +279,16 @@ fn should_define_route_and_neighbor_schemas_for_the_network_targets() {
     assert_eq!(
         shape(&route),
         vec![
-            ("destination", false),
+            ("destination", true),
             ("gateway", true),
             ("interface", true),
             ("source", true),
-            ("protocol", true),
+            ("family", false),
+            ("type", true),
             ("scope", true),
+            ("protocol", true),
             ("metric", true),
+            ("table", true),
         ]
     );
     assert_eq!(
@@ -300,7 +303,10 @@ fn should_define_route_and_neighbor_schemas_for_the_network_targets() {
             ("address", false),
             ("mac", true),
             ("interface", false),
-            ("state", true),
+            ("family", false),
+            ("state", false),
+            ("router", true),
+            ("updated", true),
         ]
     );
 }

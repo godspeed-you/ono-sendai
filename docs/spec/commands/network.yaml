@@ -42,12 +42,17 @@ commands:
     stability: stable
     argument_mode: words
     input: "null"
-    output: stream<ono.connection/1>
+    # A connection is a socket that has a peer, not a different kind of object, so it carries
+    # the socket schema. Giving it a schema of its own would mean two contracts describing one
+    # thing, which spec §40.3 exists to prevent and which would put the two out of step the first
+    # time either changed.
+    output: stream<ono.socket/1>
     provider_capability: connection.list
     selectors: []
     options:
       - {name: remote, type: ip, doc: "Restrict to connections with this peer address."}
       - {name: resolve, type: bool, doc: "Reverse-resolve peer host names."}
+      - {name: process, type: bool, doc: "Join each connection to the process holding it. Off by default: the join scans every open descriptor on the machine, which the interactive budget of spec §34 cannot absorb on every call. Without it the `process` field is null rather than invented."}
     privilege: conditional
     streaming: true
     phase: C
@@ -162,7 +167,7 @@ commands:
     summary: Resolve a connection's process, service and remote endpoint relationships.
     stability: stable
     argument_mode: words
-    input: "null | ono.connection/1"
+    input: "null | ono.socket/1"
     output: ono.graph/1
     provider_capability: socket.trace
     selectors: []

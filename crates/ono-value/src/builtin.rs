@@ -1,706 +1,292 @@
-//! The canonical object schemas of spec §28.
+//! The canonical object schemas of spec §28, loaded from the contracts that define them.
 //!
-//! These are the contract the Linux providers of phase C implement against, and the reason the
-//! field names and their nullability are asserted field by field in the crate's tests: a
-//! provider that quietly renames `virtual_mem` breaks every script that reads it, and only a
-//! test that spells the contract out catches that.
+//! Spec §27 makes the machine-readable registries the public contract, and AGENTS.md §5 places
+//! `docs/spec/` above the implementation in the authority order. These schemas are therefore
+//! **parsed from `docs/spec/schemas/*.v1.yaml`**, embedded at compile time, rather than restated
+//! in Rust beside them.
 //!
-//! Where spec §28 leaves a detail open — the exact members of an enumeration, the identity of a
-//! type it gives no identity line for, the default view of a type spec §27.3 does not
-//! exemplify — the choice is made here and stated in the schema's documentation.
+//! Restating them was the first thing tried, and it drifted within a single phase: the file
+//! schema and the contract disagreed about which fields identify an interface, and nothing could
+//! have noticed, because each was checked only against itself. One source of truth removes the
+//! whole class of problem rather than adding a check for it (spec §36.4, §36.5).
+//!
+//! Parsing happens once, lazily, behind a `OnceLock`, so it costs nothing until a provider is
+//! actually used and never appears in the startup budget of spec §34.
 
 use std::sync::{Arc, OnceLock};
 
-use crate::{FieldDef, FieldType, Schema, SchemaId, SchemaRegistry, Unit};
+use ono_core::ErrorCode;
+use serde_yaml_ng::Value as Yaml;
 
-/// Every schema the shell ships with, by id (spec §28).
+use crate::error::ErrorValue;
+use crate::schema::{FieldDef, FieldType, Schema, SchemaId, SchemaRegistry, Unit};
+
+/// Every schema contract, embedded at compile time.
+///
+/// A schema whose file is missing is a compile error rather than an empty registry at run time,
+/// which is the point of embedding them.
+const CONTRACTS: &[&str] = &[
+    include_str!("../../../docs/spec/schemas/action-result.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/config-setting.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/endpoint.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/env-var.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/error.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/file.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/filesystem.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/graph-edge.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/graph-node.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/graph.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/group.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/interface.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/job.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/mount.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/neighbor.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/process.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/route.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/service.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/socket.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/user.v1.yaml"),
+];
+
+/// The schemas every provider and command can rely on.
 ///
 /// ```
 /// use ono_value::{SchemaId, builtin_schemas};
 /// let process = builtin_schemas()
 ///     .get(&SchemaId::new("ono.process", 1))
-///     .expect("the process schema ships with the shell");
+///     .expect("the process schema is built in");
 /// assert_eq!(process.name(), "Process");
+/// assert!(process.field("pid").is_some());
 /// ```
 #[must_use]
 pub fn builtin_schemas() -> &'static SchemaRegistry {
     static REGISTRY: OnceLock<SchemaRegistry> = OnceLock::new();
-    // A schema that fails to build would leave the registry short of that entry, which the
-    // per-schema tests in `tests/builtin_schemas.rs` fail on immediately.
-    REGISTRY.get_or_init(|| build_registry().unwrap_or_default())
+    REGISTRY.get_or_init(|| {
+        let mut registry = SchemaRegistry::new();
+        for contract in CONTRACTS {
+            match parse_schema(contract) {
+                Ok(schema) => {
+                    // Two contracts declaring one id is a contract bug, and `spec-check` reports
+                    // it by name. Here the first wins, so a duplicate cannot make the registry
+                    // unusable for every other schema.
+                    let _ = registry.register(schema);
+                }
+                // A contract that does not parse is caught by the test below and by
+                // `cargo xtask spec-check`; at run time the remaining schemas still load, so one
+                // malformed file cannot take the whole shell down with it.
+                Err(_) => continue,
+            }
+        }
+        registry
+    })
 }
 
-/// The `ActionResult` schema of spec §11.5 and §28.8.
+/// The `ono.action-result/1` schema, which every mutating command produces (spec §11.5).
+///
+/// # Panics
+///
+/// Panics only if the embedded contract for it is malformed, which the test suite and
+/// `cargo xtask spec-check` both prevent from reaching a release.
 #[must_use]
 pub fn action_result_schema() -> Arc<Schema> {
-    static SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
-    Arc::clone(SCHEMA.get_or_init(|| {
-        builtin_schemas()
-            .get(&SchemaId::new("ono.action-result", 1))
-            .unwrap_or_else(|| {
-                // Only reachable if the definition below stopped building, which the crate's
-                // schema tests fail on. An empty schema keeps the shell running rather than
-                // taking the process down over a contract bug.
-                Arc::new(Schema::empty(
-                    SchemaId::new("ono.action-result", 1),
-                    "ActionResult",
-                ))
-            })
-    }))
+    static FALLBACK: OnceLock<Arc<Schema>> = OnceLock::new();
+    builtin_schemas()
+        .get(&SchemaId::new("ono.action-result", 1))
+        .unwrap_or_else(|| {
+            // Unreachable while the contract is valid, which the test below and `spec-check` both
+            // require. A degraded schema is still better than a panic in a shell someone is using.
+            Arc::clone(FALLBACK.get_or_init(|| {
+                Arc::new(
+                    Schema::builder(SchemaId::new("ono.action-result", 1), "ActionResult")
+                        .field(FieldDef::new("operation", FieldType::String).required())
+                        .build()
+                        .unwrap_or_else(|_| {
+                            Schema::empty(SchemaId::new("ono.action-result", 1), "ActionResult")
+                        }),
+                )
+            }))
+        })
 }
 
-fn build_registry() -> Result<SchemaRegistry, crate::ErrorValue> {
-    let mut registry = SchemaRegistry::new();
-    for schema in [
-        process()?,
-        file()?,
-        service()?,
-        socket()?,
-        interface()?,
-        mount()?,
-        user()?,
-        group()?,
-        route()?,
-        neighbor()?,
-        action_result_definition()?,
-    ] {
-        registry.register(schema)?;
+/// Reads one contract into a [`Schema`].
+fn parse_schema(contract: &str) -> Result<Schema, ErrorValue> {
+    let document: Yaml = serde_yaml_ng::from_str(contract).map_err(|error| {
+        ErrorValue::new(
+            ErrorCode::ProviderSchemaViolation,
+            format!("a schema contract is not valid YAML: {error}"),
+        )
+    })?;
+
+    let id: SchemaId = text(&document, "id")
+        .ok_or_else(|| violation("a schema contract has no `id`"))?
+        .parse()?;
+    let name =
+        text(&document, "name").ok_or_else(|| violation("a schema contract has no `name`"))?;
+
+    let mut builder = Schema::builder(id.clone(), &name);
+    if let Some(summary) = text(&document, "summary") {
+        builder = builder.doc(&summary);
     }
-    Ok(registry)
+
+    let fields = document
+        .get("fields")
+        .and_then(Yaml::as_mapping)
+        .ok_or_else(|| violation(&format!("`{id}` declares no fields")))?;
+
+    for (key, definition) in fields {
+        let Some(field_name) = key.as_str() else {
+            continue;
+        };
+        let declared = text(definition, "type")
+            .ok_or_else(|| violation(&format!("`{id}.{field_name}` has no type")))?;
+        let mut field = FieldDef::new(field_name, parse_type(&declared, definition)?);
+
+        if definition.get("required").and_then(Yaml::as_bool) == Some(true) {
+            field = field.required();
+        }
+        if definition.get("nullable").and_then(Yaml::as_bool) == Some(true) {
+            field = field.nullable();
+        }
+        if let Some(unit) = text(definition, "unit").and_then(|unit| parse_unit(&unit)) {
+            field = field.with_unit(unit);
+        }
+        if let Some(doc) = text(definition, "doc") {
+            field = field.with_doc(&doc);
+        }
+        builder = builder.field(field);
+    }
+
+    let identity: Vec<String> = list(&document, "identity");
+    if !identity.is_empty() {
+        builder = builder.identity(identity.iter().map(String::as_str));
+    }
+    let columns: Vec<String> = document
+        .get("default_view")
+        .map(|view| list(view, "columns"))
+        .unwrap_or_default();
+    if !columns.is_empty() {
+        builder = builder.default_view(columns.iter().map(String::as_str));
+    }
+
+    builder.build()
 }
 
-fn user_ref() -> FieldType {
-    FieldType::Ref(SchemaId::new("ono.user", 1))
+/// Reads the type vocabulary of spec §10.2 as `docs/spec/schemas/` spells it.
+fn parse_type(declared: &str, definition: &Yaml) -> Result<FieldType, ErrorValue> {
+    // `enum` carries its members beside it, because a closed set is not a type on its own.
+    if declared == "enum" {
+        let variants = list(definition, "values");
+        if variants.is_empty() {
+            return Err(violation("an `enum` field declares no `values`"));
+        }
+        let borrowed: Vec<&str> = variants.iter().map(String::as_str).collect();
+        return Ok(FieldType::enumeration(&borrowed));
+    }
+    if let Some(inner) = declared
+        .strip_prefix("list<")
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        return Ok(FieldType::list(parse_type(inner, &Yaml::Null)?));
+    }
+    if let Some(target) = declared
+        .strip_prefix("ref<")
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        return Ok(FieldType::Ref(target.parse()?));
+    }
+    // `ono.error/1` is the shape of the error *value*, not of a record that happens to describe
+    // one: a structured error is its own `Value` variant (spec §25), so a field declared with it
+    // accepts an error and nothing else. Writing the schema id in the contract keeps the field's
+    // shape documented in one place; mapping it here keeps the runtime type honest.
+    if declared == "ono.error/1" {
+        return Ok(FieldType::Error);
+    }
+    // Any other bare schema id means the record itself, as against `ref<…>`, which carries only
+    // its identity.
+    if declared.contains('/') {
+        return Ok(FieldType::Record(declared.parse()?));
+    }
+
+    Ok(match declared {
+        "any" | "value" => FieldType::Any,
+        "bool" => FieldType::Bool,
+        "int" => FieldType::Int,
+        "float" => FieldType::Float,
+        "decimal" => FieldType::Decimal,
+        "string" => FieldType::String,
+        "bytes" => FieldType::Bytes,
+        "path" => FieldType::Path,
+        "timestamp" => FieldType::Timestamp,
+        "duration" => FieldType::Duration,
+        "bytesize" => FieldType::ByteSize,
+        "percent" => FieldType::Percent,
+        "regex" => FieldType::Regex,
+        "uuid" => FieldType::Uuid,
+        "ip" => FieldType::Ip,
+        "ipnetwork" => FieldType::IpNetwork,
+        "port" => FieldType::Port,
+        "map" | "record" => FieldType::Map,
+        "error" => FieldType::Error,
+        other => {
+            return Err(violation(&format!(
+                "`{other}` is not one of the types spec §10.2 defines"
+            )));
+        }
+    })
 }
 
-fn group_ref() -> FieldType {
-    FieldType::Ref(SchemaId::new("ono.group", 1))
+fn parse_unit(declared: &str) -> Option<Unit> {
+    match declared {
+        "percent" => Some(Unit::Percent),
+        "bytes" => Some(Unit::Bytes),
+        "seconds" => Some(Unit::Seconds),
+        "count" => Some(Unit::Count),
+        _ => None,
+    }
 }
 
-fn device_ref() -> FieldType {
-    FieldType::Ref(SchemaId::new("ono.device", 1))
+fn violation(message: &str) -> ErrorValue {
+    ErrorValue::new(ErrorCode::ProviderSchemaViolation, message.to_owned())
 }
 
-/// Spec §28.1.
-fn process() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.process", 1), "Process")
-        .doc("A running process, as spec §28.1 defines it.")
-        .field(
-            FieldDef::new("pid", FieldType::Int)
-                .required()
-                .with_doc("Process id."),
-        )
-        .field(
-            FieldDef::new("ppid", FieldType::Int)
-                .nullable()
-                .with_doc("Parent process id."),
-        )
-        .field(
-            FieldDef::new("name", FieldType::String)
-                .required()
-                .with_doc("Executable name."),
-        )
-        .field(
-            FieldDef::new("command", FieldType::list(FieldType::String))
-                .nullable()
-                .with_doc("Argument vector, unsplit and unquoted."),
-        )
-        .field(
-            FieldDef::new("executable", FieldType::Path)
-                .nullable()
-                .with_doc("Resolved binary."),
-        )
-        .field(
-            FieldDef::new("user", user_ref())
-                .nullable()
-                .with_doc("Owning user."),
-        )
-        .field(
-            FieldDef::new("group", group_ref())
-                .nullable()
-                .with_doc("Owning group."),
-        )
-        .field(
-            FieldDef::new("state", process_state())
-                .required()
-                .with_doc("Scheduler state."),
-        )
-        .field(
-            FieldDef::new("cpu", FieldType::Float)
-                .nullable()
-                .with_unit(Unit::Percent)
-                .with_doc("Percent of one logical CPU, unless a provider documents otherwise."),
-        )
-        .field(
-            FieldDef::new("memory", FieldType::ByteSize)
-                .nullable()
-                .with_doc("Resident set size."),
-        )
-        .field(
-            FieldDef::new("virtual_mem", FieldType::ByteSize)
-                .nullable()
-                .with_doc("Virtual address space size."),
-        )
-        .field(
-            FieldDef::new("threads", FieldType::Int)
-                .nullable()
-                .with_doc("Thread count."),
-        )
-        .field(
-            FieldDef::new("started", FieldType::Timestamp)
-                .nullable()
-                .with_doc("Start time, which spec §23.1 makes part of the identity."),
-        )
-        .field(
-            FieldDef::new("cwd", FieldType::Path)
-                .nullable()
-                .with_doc("Working directory."),
-        )
-        .field(
-            FieldDef::new("service", FieldType::Ref(SchemaId::new("ono.service", 1)))
-                .nullable()
-                .with_doc("Owning service, where one claims the process."),
-        )
-        .field(
-            FieldDef::new(
-                "container",
-                FieldType::Ref(SchemaId::new("ono.container", 1)),
-            )
-            .nullable()
-            .with_doc("Owning container, where one claims the process."),
-        )
-        .identity(["pid", "started"])
-        .default_view(["pid", "name", "cpu", "memory", "user"])
-        .build()
+fn text(document: &Yaml, key: &str) -> Option<String> {
+    document.get(key).and_then(Yaml::as_str).map(str::to_owned)
 }
 
-/// The scheduler states a Linux process can be in, plus `unknown` for a provider that cannot
-/// tell. Spec §28.1 declares the field an enumeration without listing its members.
-fn process_state() -> FieldType {
-    FieldType::enumeration(&[
-        "running",
-        "sleeping",
-        "waiting",
-        "stopped",
-        "tracing-stopped",
-        "zombie",
-        "dead",
-        "idle",
-        "unknown",
-    ])
+fn list(document: &Yaml, key: &str) -> Vec<String> {
+    document
+        .get(key)
+        .and_then(Yaml::as_sequence)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
-/// Spec §28.2.
-fn file() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.file", 1), "File")
-        .doc("A filesystem entry, as spec §28.2 defines it.")
-        .field(
-            FieldDef::new("path", FieldType::Path)
-                .required()
-                .with_doc("Path this entry was reached by."),
-        )
-        .field(
-            FieldDef::new("name", FieldType::String)
-                .required()
-                .with_doc("Final path component."),
-        )
-        .field(
-            FieldDef::new(
-                "kind",
-                FieldType::enumeration(&[
-                    "file", "dir", "symlink", "socket", "fifo", "device", "other",
-                ]),
-            )
-            .required()
-            .with_doc("What kind of entry this is."),
-        )
-        .field(
-            FieldDef::new("size", FieldType::ByteSize)
-                .nullable()
-                .with_doc("Size in bytes."),
-        )
-        .field(
-            FieldDef::new("owner", user_ref())
-                .nullable()
-                .with_doc("Owning user."),
-        )
-        .field(
-            FieldDef::new("group", group_ref())
-                .nullable()
-                .with_doc("Owning group."),
-        )
-        .field(
-            FieldDef::new("mode", FieldType::Int)
-                .nullable()
-                .with_doc("Permission bits, as the octal mode the kernel reports."),
-        )
-        .field(
-            FieldDef::new("modified", FieldType::Timestamp)
-                .nullable()
-                .with_doc("Last content change."),
-        )
-        .field(
-            FieldDef::new("accessed", FieldType::Timestamp)
-                .nullable()
-                .with_doc("Last access."),
-        )
-        .field(
-            FieldDef::new("created", FieldType::Timestamp)
-                .nullable()
-                .with_doc("Creation time, where the filesystem records one."),
-        )
-        .field(
-            FieldDef::new("inode", FieldType::Int)
-                .nullable()
-                .with_doc("Inode number."),
-        )
-        .field(
-            FieldDef::new("device", device_ref())
-                .nullable()
-                .with_doc("Device the entry lives on."),
-        )
-        .field(
-            FieldDef::new("target", FieldType::Path)
-                .nullable()
-                .with_doc("Symlink target."),
-        )
-        .identity(["device", "inode"])
-        .default_view(["name", "kind", "size", "modified", "owner"])
-        .build()
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Spec §28.3.
-fn service() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.service", 1), "Service")
-        .doc("A managed service, as spec §28.3 defines it.")
-        .field(
-            FieldDef::new("name", FieldType::String)
-                .required()
-                .with_doc("Service name."),
-        )
-        .field(
-            FieldDef::new("description", FieldType::String)
-                .nullable()
-                .with_doc("Human description."),
-        )
-        .field(
-            FieldDef::new(
-                "state",
-                FieldType::enumeration(&[
-                    "active",
-                    "activating",
-                    "deactivating",
-                    "inactive",
-                    "failed",
-                    "reloading",
-                    "unknown",
-                ]),
-            )
-            .required()
-            .with_doc("High-level state."),
-        )
-        .field(
-            FieldDef::new("substate", FieldType::String)
-                .nullable()
-                .with_doc("Provider-specific sub-state."),
-        )
-        .field(
-            FieldDef::new("pid", FieldType::Int)
-                .nullable()
-                .with_doc("Main process id."),
-        )
-        .field(
-            FieldDef::new("enabled", FieldType::Bool)
-                .nullable()
-                .with_doc("Whether it starts at boot."),
-        )
-        .field(
-            FieldDef::new("since", FieldType::Timestamp)
-                .nullable()
-                .with_doc("When the state was entered."),
-        )
-        .field(
-            FieldDef::new("provider", FieldType::String)
-                .required()
-                .with_doc("Service manager that reported it."),
-        )
-        .field(
-            FieldDef::new("unit_file", FieldType::Path)
-                .nullable()
-                .with_doc("Backing unit file."),
-        )
-        .identity(["provider", "name"])
-        .default_view(["name", "state", "substate", "enabled", "pid"])
-        .build()
-}
-
-/// Spec §28.4. `local` and `remote` are endpoint maps of `address` and `port`; spec §47 lists no
-/// endpoint schema, so they stay maps rather than inventing an object type for two fields.
-fn socket() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.socket", 1), "Socket")
-        .doc("A socket, as spec §28.4 defines it.")
-        .field(
-            FieldDef::new(
-                "protocol",
-                FieldType::enumeration(&["tcp", "udp", "unix", "raw", "other"]),
-            )
-            .required()
-            .with_doc("Transport protocol."),
-        )
-        .field(
-            FieldDef::new(
-                "family",
-                FieldType::enumeration(&["inet", "inet6", "unix", "netlink", "packet", "other"]),
-            )
-            .required()
-            .with_doc("Address family."),
-        )
-        .field(
-            FieldDef::new("local", FieldType::Map)
-                .nullable()
-                .with_doc("Local endpoint: address and port."),
-        )
-        .field(
-            FieldDef::new("remote", FieldType::Map)
-                .nullable()
-                .with_doc("Remote endpoint: address and port."),
-        )
-        .field(
-            FieldDef::new(
-                "state",
-                FieldType::enumeration(&[
-                    "established",
-                    "syn-sent",
-                    "syn-recv",
-                    "fin-wait1",
-                    "fin-wait2",
-                    "time-wait",
-                    "close",
-                    "close-wait",
-                    "last-ack",
-                    "listen",
-                    "closing",
-                    "unknown",
-                ]),
-            )
-            .nullable()
-            .with_doc("Connection state, where the protocol has one."),
-        )
-        .field(
-            FieldDef::new("process", FieldType::Ref(SchemaId::new("ono.process", 1)))
-                .nullable()
-                .with_doc("Process holding the socket."),
-        )
-        .field(
-            FieldDef::new("user", user_ref())
-                .nullable()
-                .with_doc("Owning user."),
-        )
-        .field(
-            FieldDef::new("inode", FieldType::Int)
-                .nullable()
-                .with_doc("Socket inode, the kernel's identity for it."),
-        )
-        .identity(["inode"])
-        .default_view(["protocol", "local", "remote", "state", "process"])
-        .build()
-}
-
-/// Spec §28.5. Spec §28.5 gives no identity line; the interface name is what a user addresses an
-/// interface by on Linux, so that is the identity here.
-fn interface() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.interface", 1), "Interface")
-        .doc("A network interface, as spec §28.5 defines it.")
-        .field(
-            FieldDef::new("name", FieldType::String)
-                .required()
-                .with_doc("Interface name."),
-        )
-        .field(
-            FieldDef::new("index", FieldType::Int)
-                .required()
-                .with_doc("Kernel interface index."),
-        )
-        .field(
-            FieldDef::new("mac", FieldType::String)
-                .nullable()
-                .with_doc("Hardware address."),
-        )
-        .field(
-            FieldDef::new(
-                "state",
-                FieldType::enumeration(&[
-                    "up",
-                    "down",
-                    "testing",
-                    "dormant",
-                    "not-present",
-                    "lower-layer-down",
-                    "unknown",
-                ]),
-            )
-            .required()
-            .with_doc("Operational state."),
-        )
-        .field(
-            FieldDef::new("mtu", FieldType::Int)
-                .required()
-                .with_doc("Maximum transmission unit."),
-        )
-        .field(
-            FieldDef::new("addresses", FieldType::list(FieldType::IpNetwork))
-                .required()
-                .with_doc("Configured addresses with their prefixes."),
-        )
-        .field(
-            FieldDef::new("rx_bytes", FieldType::ByteSize)
-                .nullable()
-                .with_doc("Bytes received."),
-        )
-        .field(
-            FieldDef::new("tx_bytes", FieldType::ByteSize)
-                .nullable()
-                .with_doc("Bytes transmitted."),
-        )
-        .identity(["name"])
-        .default_view(["name", "state", "mtu", "addresses"])
-        .build()
-}
-
-/// Spec §28.6. Spec §28.6 gives no identity line; a mount point carries at most one mount, so the
-/// target is the identity.
-fn mount() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.mount", 1), "Mount")
-        .doc("A mounted filesystem, as spec §28.6 defines it.")
-        .field(
-            FieldDef::new("source", FieldType::String)
-                .required()
-                .with_doc("What is mounted."),
-        )
-        .field(
-            FieldDef::new("target", FieldType::Path)
-                .required()
-                .with_doc("Where it is mounted."),
-        )
-        .field(
-            FieldDef::new("filesystem", FieldType::String)
-                .required()
-                .with_doc("Filesystem type."),
-        )
-        .field(
-            FieldDef::new("options", FieldType::list(FieldType::String))
-                .required()
-                .with_doc("Mount options, one per element."),
-        )
-        .field(
-            FieldDef::new("read_only", FieldType::Bool)
-                .required()
-                .with_doc("Whether the mount is read-only."),
-        )
-        .field(
-            FieldDef::new("device", device_ref())
-                .nullable()
-                .with_doc("Backing device."),
-        )
-        .identity(["target"])
-        .default_view(["target", "source", "filesystem", "options"])
-        .build()
-}
-
-/// Spec §28.7.
-fn user() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.user", 1), "User")
-        .doc("A system user, as spec §28.7 defines it.")
-        .field(
-            FieldDef::new("uid", FieldType::Int)
-                .required()
-                .with_doc("User id."),
-        )
-        .field(
-            FieldDef::new("name", FieldType::String)
-                .nullable()
-                .with_doc("Login name."),
-        )
-        .field(
-            FieldDef::new("primary_group", group_ref())
-                .nullable()
-                .with_doc("Primary group."),
-        )
-        .field(
-            FieldDef::new("home", FieldType::Path)
-                .nullable()
-                .with_doc("Home directory."),
-        )
-        .field(
-            FieldDef::new("shell", FieldType::Path)
-                .nullable()
-                .with_doc("Login shell."),
-        )
-        .field(
-            FieldDef::new("gecos", FieldType::String)
-                .nullable()
-                .with_doc("GECOS field."),
-        )
-        .identity(["uid"])
-        .default_view(["uid", "name", "home", "shell"])
-        .build()
-}
-
-/// Spec §28 references `GroupRef` from three schemas without defining the object it refers to,
-/// and spec §8.1 lists `group` as a target. This is the shape those references resolve to.
-fn group() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.group", 1), "Group")
-        .doc("A system group, referenced by spec §28.1, §28.2 and §28.7 as `GroupRef`.")
-        .field(
-            FieldDef::new("gid", FieldType::Int)
-                .required()
-                .with_doc("Group id."),
-        )
-        .field(
-            FieldDef::new("name", FieldType::String)
-                .nullable()
-                .with_doc("Group name."),
-        )
-        .field(
-            FieldDef::new("members", FieldType::list(FieldType::String))
-                .nullable()
-                .with_doc("Names of the members, where the provider can enumerate them."),
-        )
-        .identity(["gid"])
-        .default_view(["gid", "name"])
-        .build()
-}
-
-/// Spec §47 lists `route.v1.yaml` and spec §8.1 lists `route` as a target, but spec §28 defines
-/// no fields for it. This is the shape the netlink provider of spec §23.2 reports.
-fn route() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.route", 1), "Route")
-        .doc("A routing table entry, implied by spec §8.1 and spec §47.")
-        .field(
-            FieldDef::new("destination", FieldType::IpNetwork)
-                .required()
-                .with_doc("Destination prefix."),
-        )
-        .field(
-            FieldDef::new("gateway", FieldType::Ip)
-                .nullable()
-                .with_doc("Next hop."),
-        )
-        .field(
-            FieldDef::new("interface", FieldType::String)
-                .nullable()
-                .with_doc("Outgoing interface name."),
-        )
-        .field(
-            FieldDef::new("source", FieldType::Ip)
-                .nullable()
-                .with_doc("Preferred source address."),
-        )
-        .field(
-            FieldDef::new("protocol", FieldType::String)
-                .nullable()
-                .with_doc("Routing protocol that installed it."),
-        )
-        .field(
-            FieldDef::new("scope", FieldType::String)
-                .nullable()
-                .with_doc("Route scope."),
-        )
-        .field(
-            FieldDef::new("metric", FieldType::Int)
-                .nullable()
-                .with_doc("Route metric."),
-        )
-        .identity(["destination"])
-        .default_view(["destination", "gateway", "interface", "metric"])
-        .build()
-}
-
-/// Spec §8.1 lists `neighbor` as a target and spec §23.2 makes netlink its source; spec §28
-/// defines no fields for it. This is the shape that provider reports.
-fn neighbor() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.neighbor", 1), "Neighbor")
-        .doc("A neighbour table entry, implied by spec §8.1 and spec §23.2.")
-        .field(
-            FieldDef::new("address", FieldType::Ip)
-                .required()
-                .with_doc("Neighbour address."),
-        )
-        .field(
-            FieldDef::new("mac", FieldType::String)
-                .nullable()
-                .with_doc("Link-layer address."),
-        )
-        .field(
-            FieldDef::new("interface", FieldType::String)
-                .required()
-                .with_doc("Interface the entry belongs to."),
-        )
-        .field(
-            FieldDef::new(
-                "state",
-                FieldType::enumeration(&[
-                    "reachable",
-                    "stale",
-                    "delay",
-                    "probe",
-                    "failed",
-                    "incomplete",
-                    "permanent",
-                    "none",
-                ]),
-            )
-            .nullable()
-            .with_doc("Neighbour state."),
-        )
-        .identity(["address", "interface"])
-        .default_view(["address", "mac", "interface", "state"])
-        .build()
-}
-
-/// Spec §11.5 and §28.8.
-fn action_result_definition() -> Result<Schema, crate::ErrorValue> {
-    Schema::builder(SchemaId::new("ono.action-result", 1), "ActionResult")
-        .doc("The acknowledgement a mutating command returns, as spec §11.5 defines it.")
-        .field(
-            FieldDef::new("target", FieldType::Any)
-                .required()
-                .with_doc("What the action was performed on."),
-        )
-        .field(
-            FieldDef::new("operation", FieldType::String)
-                .required()
-                .with_doc("What was attempted."),
-        )
-        .field(
-            FieldDef::new(
-                "status",
-                FieldType::enumeration(&["success", "skipped", "failed"]),
-            )
-            .required()
-            .with_doc("How it ended."),
-        )
-        .field(
-            FieldDef::new("changed", FieldType::Bool)
-                .required()
-                .with_doc("Whether anything actually changed."),
-        )
-        .field(
-            FieldDef::new("message", FieldType::String)
-                .nullable()
-                .with_doc("Human explanation."),
-        )
-        .field(
-            FieldDef::new("error", FieldType::Error)
-                .nullable()
-                .with_doc("The structured failure, when there was one."),
-        )
-        .field(
-            FieldDef::new("duration", FieldType::Duration)
-                .required()
-                .with_doc("How long the action took."),
-        )
-        .identity(["target", "operation"])
-        .default_view(["target", "operation", "status", "changed", "duration"])
-        .build()
+    #[test]
+    fn should_load_every_embedded_contract_without_a_single_failure() {
+        // A contract that does not parse degrades gracefully at run time, which is right, and
+        // would therefore be invisible. This is where it is made visible.
+        for contract in CONTRACTS {
+            let parsed = parse_schema(contract);
+            assert!(
+                parsed.is_ok(),
+                "a committed schema contract does not load: {:?}\n{}",
+                parsed.err().map(|error| error.message().to_owned()),
+                contract.lines().take(4).collect::<Vec<_>>().join("\n")
+            );
+        }
+        assert_eq!(
+            builtin_schemas().len(),
+            CONTRACTS.len(),
+            "every contract must reach the registry; a missing one means two declared the same id"
+        );
+    }
 }

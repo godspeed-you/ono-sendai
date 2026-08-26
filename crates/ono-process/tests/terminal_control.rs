@@ -67,7 +67,16 @@ fn drain(session: &mut PtySession, timeout: Duration, role: &str) -> String {
                     seen.push_str("SENT-INPUT");
                 }
             }
-            Some(0) => return seen,
+            Some(0) => {
+                // A zero-length read on the master means end of file — but only once the child
+                // has actually finished. Under a loaded machine the master can report zero
+                // before the child has been scheduled at all, and returning here would assert
+                // against an empty transcript. Waiting for the exit makes the test measure the
+                // child rather than the scheduler.
+                if session.try_wait().is_ok_and(|status| status.is_some()) {
+                    return seen;
+                }
+            }
             Some(read) => seen.push_str(&String::from_utf8_lossy(&buf[..read])),
         }
     }

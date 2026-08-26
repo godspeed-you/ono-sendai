@@ -2698,7 +2698,7 @@ Enumerate connection-oriented socket views.
 | stability | stable |
 | phase | C |
 | input | `null` |
-| output | `stream<ono.connection/1>` |
+| output | `stream<ono.socket/1>` |
 | provider capability | `connection.list` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
@@ -2709,6 +2709,7 @@ Enumerate connection-oriented socket views.
 |---|---|---|
 | `--remote` | `ip` | Restrict to connections with this peer address. |
 | `--resolve` | `bool` | Reverse-resolve peer host names. |
+| `--process` | `bool` | Join each connection to the process holding it. Off by default: the join scans every open descriptor on the machine, which the interactive budget of spec §34 cannot absorb on every call. Without it the `process` field is null rather than invented. |
 
 **Examples**
 
@@ -2882,7 +2883,7 @@ Resolve a connection's process, service and remote endpoint relationships.
 | id | `ono.connection.trace` |
 | stability | stable |
 | phase | G |
-| input | `null | ono.connection/1` |
+| input | `null | ono.socket/1` |
 | output | `ono.graph/1` |
 | provider capability | `socket.trace` |
 | privilege | conditional |
