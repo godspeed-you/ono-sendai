@@ -12,9 +12,11 @@ pub mod config;
 pub mod eval;
 pub mod expand;
 pub mod invocation;
+pub mod providers;
 pub mod repl;
 pub mod report;
 pub mod resolve;
+pub mod sink;
 pub mod session;
 
 /// The usage text, shown by `--help` and by the `help` builtin.

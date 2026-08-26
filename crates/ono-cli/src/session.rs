@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use ono_core::ExitStatus;
 use ono_process::Executor;
+use ono_provider_api::ProviderRegistry;
 use ono_value::Value;
 
 /// What the evaluator is allowed to do.
@@ -35,6 +36,11 @@ pub struct Session {
     interactive: bool,
     /// Set by `exit`, so the evaluator can unwind without unwinding the process.
     leaving: Option<ExitStatus>,
+    /// Built on first use. A shell that runs `echo hi` should not have paid for a thread pool to
+    /// do it, and spec §34's cold-start budget is measured on exactly that command.
+    runtime: Option<tokio::runtime::Runtime>,
+    /// Built on first use, for the same reason: constructing it opens sockets and speaks D-Bus.
+    providers: Option<ProviderRegistry>,
 }
 
 impl std::fmt::Debug for Session {
@@ -74,7 +80,64 @@ impl Session {
             mode: Mode::Normal,
             interactive,
             leaving: None,
+            runtime: None,
+            providers: None,
         }
+    }
+
+    /// The async runtime native pipelines run on, built the first time one is needed.
+    ///
+    /// Returns `None` only if the operating system refuses to start it, which a caller reports as
+    /// a structured error rather than treating as impossible.
+    pub fn runtime(&mut self) -> Option<&tokio::runtime::Runtime> {
+        if self.runtime.is_none() {
+            self.runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_name("ono")
+                .build()
+                .ok();
+        }
+        self.runtime.as_ref()
+    }
+
+    /// The providers this session can ask, built the first time one is needed.
+    ///
+    /// Building them opens sockets and speaks D-Bus, so it happens here rather than at startup.
+    /// A provider that cannot be reached is still registered: it reports its own unavailability
+    /// with a reason, which is a different answer from there being none of the thing asked for.
+    pub fn providers(&mut self) -> &ProviderRegistry {
+        if self.providers.is_none() {
+            let environment: Vec<(String, String)> = self
+                .env
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect();
+            let mut registry = crate::providers::registry(environment);
+            if let Some(runtime) = self.runtime() {
+                runtime.block_on(crate::providers::register_async(&mut registry));
+            }
+            self.providers = Some(registry);
+        }
+        self.providers
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("just constructed"))
+    }
+
+    /// The environment pairs the presentation choice consults (spec §4.3, §4.6).
+    #[must_use]
+    pub fn presentation_environment(&self) -> Vec<(String, String)> {
+        ["NO_COLOR", "TERM"]
+            .into_iter()
+            .filter_map(|name| {
+                self.env_var(name)
+                    .map(|value| (name.to_owned(), value.to_string_lossy().into_owned()))
+            })
+            .collect()
     }
 
     /// The current working directory.

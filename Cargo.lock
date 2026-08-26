@@ -508,10 +508,16 @@ dependencies = [
  "ono-editor",
  "ono-history",
  "ono-parser",
+ "ono-pipeline",
  "ono-process",
+ "ono-provider-api",
+ "ono-provider-linux",
+ "ono-provider-netlink",
+ "ono-provider-systemd",
  "ono-render",
  "ono-testkit",
  "ono-value",
+ "tokio",
 ]
 
 [[package]]
