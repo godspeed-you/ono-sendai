@@ -9,5 +9,16 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[lib]
+name = "xtask"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
 [lints]
 workspace = true

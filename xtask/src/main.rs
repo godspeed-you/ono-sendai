@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use xtask::scan;
+
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
     let rest: Vec<String> = std::env::args().skip(2).collect();
@@ -75,6 +77,18 @@ fn spec_check() -> ExitCode {
     }
 
     problems.extend(check_spec_is_untouched(&root));
+
+    let state = std::fs::read_to_string(root.join("docs").join("STATE.md")).unwrap_or_default();
+    if state.is_empty() {
+        problems.push(
+            "docs/STATE.md is missing; it is the shared work board (AGENTS.md §9)".to_owned(),
+        );
+    }
+    problems.extend(
+        scan::check_unfinished_work(&root, &state)
+            .into_iter()
+            .map(|problem| format!("{} — {}", problem.location, problem.detail)),
+    );
 
     let spec_docs = find_narrative_spec(&root);
     match spec_docs.as_slice() {
