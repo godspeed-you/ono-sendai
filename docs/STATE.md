@@ -64,52 +64,144 @@ not fix yet.
 - [ ] A15 — Phase A gate: `ono` as a login shell doing a real working session —
       exit test: acceptance `010-replaces-bash-for-ordinary-work`
 
-### Phase B — Value system and native pipelines
+### Phase B — Value system and native pipelines (spec §10, §11, §12, §13, §25)
 
-- [ ] Value model and schemas; stream engine with backpressure and cancellation; `where`,
-      `select`, `sort`, `take`, `skip`, `each`, `count`, `measure`; JSON/YAML/CSV/text
-      conversion; renderer separated from data — spec sections 10, 11, 13, 25
+- [ ] B1 — Value model: scalars, semantic scalars, units, `Record`, `Map`, `List`, provenance —
+      exit test: `crates/ono-value/tests/` value semantics, unit arithmetic, null semantics
+- [ ] B2 — Schema model and registry, the canonical schemas of spec §28, compatibility rules —
+      exit test: `crates/ono-value/tests/{builtin_schemas,schema_compatibility}.rs`
+- [ ] B3 — Stream engine: bounded channels, backpressure, cancellation, the
+      streaming/blocking transform distinction of §11.1 — exit test: a slow consumer bounds a
+      fast infinite producer's memory; `stream.unbounded_operation` on `sort` over an unbounded
+      stream — acceptance `030-native-pipeline-backpressure`
+- [ ] B4 — Transforms `where`, `select`, `take`, `skip`, `each` (streaming) — spec §53 —
+      exit test: acceptance `031-transforms-stream`
+- [ ] B5 — Transforms `sort`, `group`, `count`, `measure`, `reduce`, `join`, `diff` (bounded) —
+      spec §53 — exit test: acceptance `032-transforms-bounded`
+- [ ] B6 — Conversion `to`/`from` json, yaml, csv, text, bytes — spec §12.3, §12.4 —
+      exit test: round-trip properties + acceptance `033-serialization-round-trip`
+- [ ] B7 — Renderer separated from data: table, list, stacked, json, yaml, raw, hex; width-aware
+      layout; visible truncation; human formatting of semantic scalars — spec §13 —
+      exit test: `tests/render/` snapshots at 80 and 200 columns, and identical values through
+      every renderer — acceptance `034-render-is-presentation-only`
+- [ ] B8 — Object-to-external and external-to-object boundaries: structured input to an external
+      command is a structured error suggesting `to json`; external stdout enters as bytes/text
+      without loss — spec §12.2, §12.3 — exit test: acceptance `035-interop-boundary`
+- [ ] B9 — Pipeline type-checking before execution where schemas are known: `where cpy > 20`
+      reports `type.unknown_field` with a suggestion, before enumeration starts — spec §11.3 —
+      exit test: acceptance `036-typo-caught-before-execution`
+- [ ] B10 — `ActionResult` and partial failure: bulk mutation reports per-target results and
+      never collapses them — spec §11.5, §16.5 — exit test: acceptance `037-partial-failure`
 
-### Phase C — Linux core providers
+### Phase C — Linux core providers (spec §23, §28, §35.3)
 
-- [ ] `process`, `file`/`dir`, `user`/`group`, `env`, `mount`/`filesystem`,
-      `interface`/`route`/`neighbor`, `socket`/`connection`, `service` — spec section 23
+Every provider answers from the kernel, systemd or NSS — never by parsing unstable human text
+(spec §50, AGENTS.md §6). Every provider ships its conformance case in the same increment.
 
-### Phase D — Language consistency and discoverability
+- [ ] C1 — `ono-provider-api`: the provider trait, capability declarations, and the
+      `snapshot` / `subscribe` / `watch` triple with the `ObjectEvent` envelope of spec §31.14,
+      shaped so KUANG/11 consumes it without special cases (spec §31 preamble, §31.13)
+- [ ] C2 — `process` from procfs: enumeration, `ono.process/1` fields, CPU as a rate not a
+      cumulative, permission-denied fields as errors not zeros — spec §23.1, §28.1 —
+      exit test: acceptance `040-process-provider`
+- [ ] C3 — `file`/`dir`: metadata, recursion, symlinks, permissions, xattrs where present —
+      spec §23.4, §28.2 — exit test: acceptance `041-file-provider`
+- [ ] C4 — `user`/`group` from NSS, `env` — spec §23.6, §28.7 —
+      exit test: acceptance `042-identity-provider`
+- [ ] C5 — `mount`/`filesystem` — spec §23.5, §28.6 — exit test: acceptance `043-mount-provider`
+- [ ] C6 — `interface`/`route`/`neighbor` over netlink — spec §23.2, §28.5 —
+      exit test: acceptance `044-network-provider`
+- [ ] C7 — `socket`/`connection` over netlink sock_diag, joined to owning process —
+      spec §23.2, §28.4 — exit test: acceptance `045-socket-provider`
+- [ ] C8 — `service` over the systemd D-Bus API, degrading to `provider.unavailable` where
+      systemd is not running — spec §23.3, §28.3 — exit test: acceptance `046-service-provider`
+      plus a D-Bus fixture test for the positive path (see *Deferred*)
+- [ ] C9 — Generated provider conformance suite from `docs/spec/providers/*.yaml` — spec §35.3
 
-- [ ] `docs/spec/` registries as the public contract; metadata-driven help and completion;
-      `type`, `inspect`, `explain`; generated docs; generated provider conformance suites —
-      spec sections 15, 27, 36, 47
+### Phase D — Language consistency and discoverability (spec §15, §27, §36, §47)
 
-### Phase E — Contextual systems interface
+- [ ] D1 — `xtask spec-check` validates the registries and cross-checks them against the
+      implementation: undocumented stable command, metadata without implementation, doc example
+      that no longer parses, schema break without version bump, provider output outside its
+      advertised schema — spec §36.5
+- [ ] D2 — The command registry drives dispatch: one stable id per command, bound to an
+      implementation, verified by `spec-check` — spec §27.2
+- [ ] D3 — `help` generated from metadata for every command, target and topic — spec §15.2
+- [ ] D4 — Completion from metadata: commands, verbs, targets, options, argument positions, and
+      live values where a provider is cheap — spec §15.1 — exit test: first results < 50 ms
+- [ ] D5 — `type` and `inspect`, showing schema, provenance and the causal chain — spec §15.2
+- [ ] D6 — `explain`: the resolution and execution plan without executing, in the shape of
+      spec §42 — spec §15.3
+- [ ] D7 — Fuzzy command discovery and the suggestion path of `resolve.command_not_found` —
+      spec §15.4
+- [ ] D8 — Generated documentation under `docs/reference/`, reproducible from the registries and
+      checked by the gate — spec §36.2, §46
 
-- [ ] Context stack, `enter`/`leave`, implicit selectors, prompt/HUD, interactive selection,
-      structured recent-result reuse — spec sections 14, 20
+### Phase E — Contextual systems interface (spec §14, §20)
 
-### Phase F — Live system semantics
+- [ ] E1 — Context stack, `enter`/`leave`, filesystem and object contexts — spec §14.1–§14.3
+- [ ] E2 — Implicit selectors from context — spec §14.3
+- [ ] E3 — Prompt as a HUD: link, privilege, context, path, vcs, jobs — spec §4.2
+- [ ] E4 — Interactive selection over rendered collections, never altering pipeline data —
+      spec §13.5
+- [ ] E5 — Semantic history and bounded structured result retention; `@`, `@-1`, `@3` —
+      spec §20.1, §20.2, §6.4
 
-- [ ] `watch`, event/snapshot model, in-place rendering, native background jobs, stable object
-      identity — spec section 18
+### Phase F — Live system semantics (spec §18)
 
-### Phase G — Relationship graph
+- [ ] F1 — `watch` over a query, event/snapshot model, explicit polling metadata — §18.2
+- [ ] F2 — In-place rendering keyed by stable object identity — §18.3
+- [ ] F3 — Native background jobs, `get job`, the prompt's job segment — §18.4
+- [ ] F4 — Cancellation through native pipelines and into external processes — §18.5
 
-- [ ] Graph value type, relationship providers, `trace`, tree/graph renderers, provenance and
-      confidence — spec section 22
+### Phase G — Relationship graph (spec §22)
 
-### Phase H — Remote links
+- [ ] G1 — Graph value type with provenance and confidence — §22.1, §22.2
+- [ ] G2 — Exact relationship providers: process tree, socket to process, service to process,
+      mount to device — §22.3
+- [ ] G3 — `trace` for process, service and socket — §22.3
+- [ ] G4 — Tree and ASCII graph renderers; the graph view never fabricates edges — §22.4
 
-- [ ] Remote protocol, agent, SSH fallback, provider negotiation, security model, remote prompt,
-      multiplexed streams — spec section 21
+### Phase H — Remote links (spec §21)
 
-### Phase I — KUANG/11 extension runtime
+- [ ] H1 — `ono-protocol`: typed transport, framing, versioning, multiplexed streams — §21.2
+- [ ] H2 — `ono-agent`: the remote endpoint — §21.4
+- [ ] H3 — Agentless SSH fallback — §21.3
+- [ ] H4 — Provider negotiation and capability discovery — §21.2
+- [ ] H5 — Security model: host key pinning, `remote.host_key_changed` — §21.5, §49
+- [ ] H6 — Remote context and prompt — §14.4, §4.2
 
-- [ ] The production path of spec section 31: manifests, capabilities, isolation, host API,
-      contributions, audit, SDK, `docs/spec/kuang/` contracts, test host, conformance suite
+### Phase I — KUANG/11 extension runtime (spec §31)
 
-### Phase J — Advanced TUI views
+- [ ] I1 — `docs/spec/kuang/` contracts: manifest, capability, protocol schemas — §31.78
+- [ ] I2 — `ono-kuang-protocol`: the typed host/plugin protocol — §31.12
+- [ ] I3 — Package identity, layout, manifest validation, verification — §31.5–§31.7, §31.9
+- [ ] I4 — Supervisor: install/enable/load/run states, lifecycle, isolation — §31.8, §31.10
+- [ ] I5 — Capability broker, scopes, grant UX, storage and policy, audit — §31.16–§31.19, §31.33
+- [ ] I6 — Host API domains: objects, streams, schemas, commands, relations, views, context,
+      history, filesystem, network, process, secrets, models, state, audit, clock — §31.12
+- [ ] I7 — Backpressure, quotas and overflow policy — §31.15
+- [ ] I8 — Contribution model: commands, targets, schemas, relations, views, annotations — §31.22–§31.27
+- [ ] I9 — `ono-kuang-sdk` and the deterministic test host — §31.73
+- [ ] I10 — Plugin conformance suite — §31.74
+- [ ] I11 — `ono-model-broker`: operator-approved inference, no LLM in a privileged path — §31.12
 
-- [ ] Navigable graphs, multi-pane inspect/watch, timeline exploration, object pickers, remote
-      link overview — only where the semantics justify them
+### Phase J — Advanced TUI views (spec §37 Phase J, §13.6)
+
+- [ ] J1 — Navigable graph view — §22.5
+- [ ] J2 — Multi-pane inspect/watch — §37
+- [ ] J3 — Timeline/history exploration — §20.3
+- [ ] J4 — Object pickers — §13.5
+- [ ] J5 — Remote link overview — §37
+
+### Cross-cutting, tracked to the release checklist
+
+- [ ] Performance budgets of spec §34 measured in the container on the pathological fixtures
+- [ ] Fuzzers over parser, serializers, remote protocol, plugin protocol, procfs/netlink
+      decoders — spec §35.6
+- [ ] A test for each risk in the threat model of spec §49
+- [ ] Theme and semantic visual tokens — spec §44
+- [ ] The per-capability quality bar of spec §50 for every advertised command
 
 ---
 
