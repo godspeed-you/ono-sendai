@@ -91,8 +91,13 @@ For **every** advertised command, in the container:
 - [ ] `help` is complete for every command, and every documented example parses and executes.
 - [ ] Completion produces correct candidates for every command, option and argument position.
 - [ ] Every command's output schema is inspectable via `inspect`/`type` and matches what it emits.
-- [ ] Behaviour is deterministic when output is redirected or the terminal is not a TTY.
-- [ ] Every failure is a structured error of the taxonomy in spec section 43, never a bare string.
+- [x] Behaviour is deterministic when output is redirected or the terminal is not a TTY —
+      `034-redirected-output-is-deterministic` runs the same script to a terminal, to a file and
+      through a pipe and requires all three to be byte-identical, with no escape sequence
+      reaching a file.
+- [x] Every failure is a structured error of the taxonomy in spec section 43, never a bare
+      string — `033-errors-are-structured` checks that each failure names a code of the form
+      `Ono-Sendai-ENNNN`, for the resolution, I/O, parse and type families.
 - [ ] Privilege boundaries and race conditions are covered by tests, including denial paths.
 - [ ] No provider parses unstable human-readable text except where declared an adapter fallback.
 - [ ] Unknown data is `null`, never fabricated and never silently zero.

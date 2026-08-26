@@ -1,0 +1,28 @@
+# docs/ACCEPTANCE.md section 4.2 and spec section 43: every failure is a structured error of the
+# stable taxonomy, never a bare string. A code is what a script matches on and what a person can
+# search for, so a failure that carries none is a failure nobody can handle.
+case: every failure carries a stable code from the taxonomy of spec section 43
+run: |
+  fail() { ono -c "$1" 2>&1 | head -1; }
+  fail 'definitely-not-a-command'
+  fail 'cd /definitely/not/here'
+  fail 'cat < /definitely/not/here'
+  fail 'echo *.matches-nothing-at-all'
+  fail 'echo )'
+  fail 'exit not-a-number'
+  fail 'ono:definitely-not-native'
+
+  # And a code is only worth having if it is stable: every line above names one, and none of them
+  # is bare prose.
+  for source in 'definitely-not-a-command' 'cd /definitely/not/here' 'echo )'; do
+    ono -c "$source" 2>&1 | head -1 | grep -q 'Ono-Sendai-E[0-9][0-9][0-9][0-9]' \
+      || echo "UNCODED: $source"
+  done
+  echo "checked"
+exit: 0
+stdout-contains: Ono-Sendai-E0101
+stdout-contains: Ono-Sendai-E0301
+stdout-contains: Ono-Sendai-E0001
+stdout-contains: Ono-Sendai-E0201
+stdout-contains: checked
+stdout-not-contains: UNCODED

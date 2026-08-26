@@ -1,14 +1,18 @@
 //! Binding a native implementation to a registry id, and running it (spec §27.2).
 
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
+use ono_core::ErrorCode;
 use ono_pipeline::{CancelToken, ValueStream};
 use ono_provider_api::{ActionOutcome, ProviderRegistry};
 use ono_value::ErrorValue;
 
 use crate::bind::BoundArguments;
 use crate::contract::CommandContract;
+use crate::expr::Scope;
 use crate::registry::CommandRegistry;
 
 /// What a command produced.
@@ -36,6 +40,7 @@ pub struct Invocation<'a> {
     providers: &'a ProviderRegistry,
     input: Option<ValueStream>,
     cancel: CancelToken,
+    scope: Arc<Scope>,
 }
 
 impl<'a> Invocation<'a> {
@@ -53,6 +58,7 @@ impl<'a> Invocation<'a> {
             providers,
             input: None,
             cancel: CancelToken::new(),
+            scope: Arc::new(Scope::new()),
         }
     }
 
@@ -67,6 +73,17 @@ impl<'a> Invocation<'a> {
     #[must_use]
     pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
         self.cancel = cancel;
+        self
+    }
+
+    /// Gives the command the shell bindings its expressions can see.
+    ///
+    /// `$name`, `@-1` and `@3` come from the session, and a command must not reach for a global to
+    /// find them: the scope is passed in, so what an expression can see is exactly what the caller
+    /// handed over (spec §6.4, §10.3).
+    #[must_use]
+    pub fn with_scope(mut self, scope: Arc<Scope>) -> Self {
+        self.scope = scope;
         self
     }
 
@@ -105,7 +122,17 @@ impl<'a> Invocation<'a> {
     pub fn cancel_token(&self) -> &CancelToken {
         &self.cancel
     }
+
+    /// The shell bindings the command's expressions can see.
+    #[must_use]
+    pub fn scope(&self) -> &Arc<Scope> {
+        &self.scope
+    }
 }
+
+/// The result of a command that had to await something, boxed so the trait stays object-safe.
+pub type OutcomeFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Outcome, ErrorValue>> + Send + 'a>>;
 
 /// A native implementation of one registry command.
 ///
@@ -117,12 +144,39 @@ pub trait CommandImpl: Send + Sync {
 
     /// Runs the command.
     ///
+    /// Most commands answer here. A producer hands back the provider's stream and a transform
+    /// hands back a stage over its input, so neither has to await anything: the awaiting happens
+    /// inside the stream, where backpressure and cancellation already live (ADR-0013).
+    ///
     /// # Errors
     ///
     /// A structured error when the command cannot run at all. A per-object failure belongs in an
     /// [`ActionOutcome`] or on the stream's error channel, so the objects that did work still
     /// arrive (spec §16.5).
     fn invoke(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue>;
+
+    /// Runs the command, awaiting whatever it has to await.
+    ///
+    /// **This is the entry point a host should call**, through [`CommandTable::run`]. The default
+    /// answers with [`CommandImpl::invoke`], which is what every command that never awaits does.
+    ///
+    /// A mutation overrides it, because [`Provider::act`](ono_provider_api::Provider::act) and
+    /// [`Provider::resolve`](ono_provider_api::Provider::resolve) are asynchronous and a mutation
+    /// has to hold one [`ActionOutcome`] per target before it can answer (spec §11.5, §16.5). Its
+    /// synchronous `invoke` therefore reports that it must be awaited rather than guessing.
+    fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
+        Box::pin(std::future::ready(self.invoke(ctx)))
+    }
+}
+
+/// The error a command raises when it was run through the synchronous entry point but has to
+/// reach a provider to answer.
+pub(crate) fn must_be_awaited(spelling: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::ProviderUnsupported,
+        format!("`{spelling}` reaches a provider, and reaching one is asynchronous"),
+    )
+    .with_help("run it through `CommandTable::run`, which awaits what has to be awaited")
 }
 
 /// The implementations this shell has, by command id.
@@ -174,6 +228,27 @@ impl CommandTable {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.implementations.is_empty()
+    }
+
+    /// Runs the implementation of `id`, awaiting whatever it has to await.
+    ///
+    /// This is the one call a host needs: it is correct for a producer, a transform and a
+    /// mutation alike, because it goes through [`CommandImpl::invoke_async`].
+    ///
+    /// # Errors
+    ///
+    /// `resolve.command_not_found` when no implementation is registered for `id` — which is what
+    /// a command whose spec §37 phase this build does not deliver looks like — and whatever the
+    /// implementation itself reports.
+    pub async fn run(&self, id: &str, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
+        let implementation = self.get(id).cloned().ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                format!("`{id}` is declared but this build implements nothing for it"),
+            )
+            .with_help("`help` lists what this shell can do; the rest is scheduled, not hidden")
+        })?;
+        implementation.invoke_async(ctx).await
     }
 }
 

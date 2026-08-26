@@ -1,0 +1,113 @@
+//! The check spec §11.3 asks for: field names are verified against the schema flowing into a
+//! stage *before* the pipeline runs.
+//!
+//! ```text
+//! get process | where cpy > 20
+//!
+//! unknown field `cpy` on Process
+//! perhaps: cpu
+//! ```
+//!
+//! Spec §11.3 says outright that this "can happen before process enumeration begins because
+//! `get process` advertises `Stream<Process>`", and ADR-0013 makes it the *check* step, ahead of
+//! planning and running. Everything this needs is declarative — the contract's output type, and
+//! the schemas the providers advertise — so nothing is enumerated, nothing is spawned, and a typo
+//! costs nothing.
+
+use std::sync::Arc;
+
+use ono_parser::{Argument, Pipeline, Stage};
+use ono_value::{ErrorValue, Schema};
+
+use crate::contract::{ArgumentMode, IoType};
+use crate::expr::check_fields;
+use crate::registry::CommandRegistry;
+
+/// Checks every expression in `pipeline` against the schema that would reach it.
+///
+/// `schemas` is what the providers advertise, which is where an output type such as
+/// `stream<ono.process/1>` is resolved to the fields `ono.process/1` actually declares. A stage
+/// whose element type is unknown — because nothing advertises it, or because an upstream stage
+/// reshaped the stream — is not checked rather than guessed at: spec §11.3 asks for the check
+/// "where schemas are known", and inventing an answer where they are not would reject valid
+/// pipelines.
+///
+/// ```
+/// use ono_command::{CommandRegistry, check_pipeline};
+///
+/// let registry = CommandRegistry::embedded()?;
+/// let schemas: Vec<_> = ono_value::builtin_schemas().schemas().cloned().collect();
+/// let parsed = ono_parser::parse("get process | where cpy > 20");
+/// let pipeline = parsed.program().statements[0].as_pipeline().expect("a pipeline");
+///
+/// let error = check_pipeline(registry, &schemas, pipeline).expect_err("`cpy` is not a field");
+/// assert_eq!(error.code(), ono_core::ErrorCode::TypeUnknownField);
+/// assert_eq!(error.help(), Some("perhaps: cpu"));
+/// # Ok::<(), ono_value::ErrorValue>(())
+/// ```
+///
+/// # Errors
+///
+/// `type.unknown_field` naming the field, the schema and the nearest declared field. Only the
+/// first such field is reported: spec §15.4's help is a suggestion, and a list of six of them is
+/// not one.
+pub fn check_pipeline(
+    registry: &CommandRegistry,
+    schemas: &[Arc<Schema>],
+    pipeline: &Pipeline,
+) -> Result<(), ErrorValue> {
+    let mut element: Option<Arc<Schema>> = None;
+    let lists =
+        std::iter::once(&pipeline.head).chain(pipeline.tail.iter().map(|chained| &chained.list));
+    for list in lists {
+        for stage in &list.stages {
+            element = check_stage(registry, schemas, stage, element)?;
+        }
+    }
+    Ok(())
+}
+
+/// Checks one stage and reports the schema its output carries.
+fn check_stage(
+    registry: &CommandRegistry,
+    schemas: &[Arc<Schema>],
+    stage: &Stage,
+    upstream: Option<Arc<Schema>>,
+) -> Result<Option<Arc<Schema>>, ErrorValue> {
+    let Some(head) = stage.head.name() else {
+        // A value head — a variable, a parenthesised pipeline — carries no declared schema.
+        return Ok(None);
+    };
+    let Ok(resolved) = registry.resolve(head, &stage.arguments) else {
+        // Not a native command: an external program's output has no schema to check against, and
+        // ADR-0011 puts `PATH` after the registry rather than instead of it.
+        return Ok(None);
+    };
+    let contract = resolved.contract;
+
+    if contract.argument_mode() == ArgumentMode::Expression
+        && let Some(schema) = upstream.as_deref()
+    {
+        for argument in resolved.arguments {
+            if let Argument::Value(expression) = argument {
+                check_fields(expression, schema)?;
+            }
+        }
+    }
+
+    Ok(output_schema(contract.output(), schemas, upstream))
+}
+
+/// The schema flowing out of a stage: its own where it names one, the upstream's where its output
+/// type is open, and nothing where it reshapes the stream into something undeclared.
+fn output_schema(
+    output: &IoType,
+    schemas: &[Arc<Schema>],
+    upstream: Option<Arc<Schema>>,
+) -> Option<Arc<Schema>> {
+    if output.is_open() {
+        return upstream;
+    }
+    let id: ono_value::SchemaId = output.element_schema()?.parse().ok()?;
+    schemas.iter().find(|schema| *schema.id() == id).cloned()
+}
