@@ -273,23 +273,27 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Known defects (found by adversarial review, 2026-08-26)
 
-An independent review agent was asked to falsify the implementation rather than describe it, as
-AUTONOMOUS_IMPLEMENTATION.md §18 requires. It found these, each with a reproduction it ran. They
-are release-blocking until fixed and each needs a regression test that fails before the fix.
+Two independent reviewers were asked to falsify the implementation rather than describe it, as
+AUTONOMOUS_IMPLEMENTATION.md §18 requires. Between them they found 27 things, each with a
+reproduction they ran.
 
-- [ ] **R1 — nested blocks overflow the stack.** `if true { if true { … } }` nested about 2000
+**Everything release-blocking is fixed**, each with a regression test that fails without the fix
+(commits 4034a41, 468258d). A ticked box below means fixed *and* guarded. What remains unticked is
+should-fix or unbuilt, and each entry says which.
+
+- [x] **R1 — nested blocks overflow the stack.** `if true { if true { … } }` nested about 2000
       deep aborts the process with SIGABRT. `MAX_DEPTH` in `crates/ono-parser/src/parser.rs` is
       consulted in `parse_stage` and in the expression parser but not in `parse_block`, so
       statement recursion is unguarded. The parser claims never to panic and always to return a
       tree, and it runs on every keystroke in the editor — one pasted line kills a login shell.
       `crates/ono-parser/tests/robustness.rs` has a test named for this that repeats `{` 2000
       times, which never enters block recursion: it passes while the thing it names is broken.
-- [ ] **R2 — `exit` in a configuration file hijacks the whole session.** `config::load` runs the
+- [x] **R2 — `exit` in a configuration file hijacks the whole session.** `config::load` runs the
       config in the same `Session`, so `exit 3` there sets `session.leaving`, which is never
       cleared. Every later statement short-circuits and every command's status is replaced.
       Breaks ADR-0008 ("an external command's status is passed through unchanged") and ADR-0010
       ("a bad setting never stops the shell from starting").
-- [ ] **R3 — configuration mode stops external commands only.** The single-builtin fast path in
+- [x] **R3 — configuration mode stops external commands only.** The single-builtin fast path in
       `crates/ono-cli/src/eval.rs` returns before the `Mode::Config` check, so `cd`, `remove env`,
       `help`, `jobs`, `fg`, `bg` and `exit` all run from a config file. The error text the code
       itself prints says configuration "runs nothing". `028-config-is-restricted` only tries
@@ -297,17 +301,17 @@ are release-blocking until fixed and each needs a regression test that fails bef
 - [ ] **R4 — a builtin ignores its redirections and cannot be piped.** `help > out.txt` prints to
       stdout and writes no file; `help | cat` reports `resolve.command_not_found` for `help` and
       then reports success.
-- [ ] **R5 — an unterminated `${` eats the rest of the word.** `printf '[%s]' a${HOMEb` yields
+- [x] **R5 — an unterminated `${` eats the rest of the word.** `printf '[%s]' a${HOMEb` yields
       `[a$]`. `crates/ono-cli/src/expand.rs` drains the iterator looking for `}` and drops what it
       consumed, while its own comment says the text is kept as typed. Silent data loss inside an
       argument, which is the class of surprise ADR-0019 exists to remove.
-- [ ] **R6 — background children are only reaped when `jobs`/`fg`/`bg` runs.** A script that
+- [x] **R6 — background children are only reaped when `jobs`/`fg`/`bg` runs.** A script that
       backgrounds 100 commands leaves 100 zombies, because `poll_jobs` is called only from the
       interactive loop and from the `jobs` builtin.
-- [ ] **R7 — a bad shebang reports 127 rather than 126.** `crates/ono-process/src/spawn.rs` maps
+- [x] **R7 — a bad shebang reports 127 rather than 126.** `crates/ono-process/src/spawn.rs` maps
       every `ENOENT` from `exec` to `NOT_FOUND` without distinguishing the program from its
       interpreter. ADR-0008's table and every other shell say 126.
-- [ ] **R8 — a parse error echoes the whole source line.** A 100 000-character line produces a
+- [x] **R8 — a parse error echoes the whole source line.** A 100 000-character line produces a
       98 KB error message; the shown line needs a budget and an ellipsis.
 
 What the review tried hard to break and could not, which is worth keeping: ADR-0019's rule that a
@@ -318,29 +322,30 @@ ADR-0007 is accurate as written.
 
 ### From the security review (ADR-0015 checklist)
 
-Release-blocking. Each was reproduced by the reviewer against the built binary.
+Each was reproduced by the reviewer against the built binary. The release-blocking ones are fixed
+and guarded; the rest stay open with their reproduction.
 
-- [ ] **F1 — `explain` prints attacker-controlled escape sequences raw.** A program name on `PATH`
+- [x] **F1 — `explain` prints attacker-controlled escape sequences raw.** A program name on `PATH`
       containing an OSC sequence retitles the terminal when `explain` reports it, and the bytes
       survive redirection into a file. `crates/ono-cli/src/builtin.rs` and
       `crates/ono-command/src/explain.rs` echo stage source and resolved paths without sanitising.
       ADR-0015 T1/T9/T11. The row's named acceptance case uses the benign name `ls`.
-- [ ] **F2 — structured error messages are not sanitised.** Only the code and the help line are
+- [x] **F2 — structured error messages are not sanitised.** Only the code and the help line are
       painted through the theme; `error.message()` is written raw
       (`crates/ono-cli/src/report.rs`). `cd` into a directory whose name carries an OSC sequence
       retitles the window. ADR-0015 T1.
-- [ ] **F3 — a parse diagnostic sanitises the echoed line but not its own message.**
+- [x] **F3 — a parse diagnostic sanitises the echoed line but not its own message.**
       `crates/ono-cli/src/report.rs`. ADR-0015 T1.
-- [ ] **F4 — `sanitise` lets `\n` and `\t` through, so a value forges a table row.** A cell
+- [x] **F4 — `sanitise` lets `\n` and `\t` through, so a value forges a table row.** A cell
       containing `"evil\nroot      1"` renders as two terminal lines, the second indistinguishable
       from a real row. Widths are also measured on unsanitised text, so escapes misalign columns.
       `crates/ono-render/src/theme.rs`. ADR-0015 T1.
-- [ ] **F6 — resolution and execution disagree about a relative `PATH` entry.** `explain` stats a
+- [x] **F6 — resolution and execution disagree about a relative `PATH` entry.** `explain` stats a
       relative entry against the *process* working directory while the command runs with the
       *session's*, so `explain foo` reports one binary and `foo` runs another after a `cd`.
       `crates/ono-cli/src/resolve.rs` versus `crates/ono-cli/src/eval.rs`. ADR-0015 T10/T11 — it
       defeats that row's only stated mitigation.
-- [ ] **F7 — the history file is world-readable and ships with no redaction patterns.** Created at
+- [x] **F7 — the history file is world-readable and ships with no redaction patterns.** Created at
       the ambient umask (0644, in a 0755 directory), and `Policy::default()` has an empty pattern
       list, so `deploy --password=hunter2` is stored verbatim. ADR-0015 T8; the row's named test
       supplies its own pattern, so it proves the mechanism rather than the product.
