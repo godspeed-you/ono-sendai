@@ -354,6 +354,10 @@ provider_capabilities:
     summary: Drain a package's jobs and withdraw its runtime contributions.
     risk: mutate
     elevation: none
+  - id: plugin.set
+    summary: Change a package's management settings, such as enablement and background policy.
+    risk: mutate
+    elevation: none
   - id: capability.list
     summary: Read capability definitions, requests, grants and leases.
     risk: read

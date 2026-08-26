@@ -22,6 +22,113 @@ Default view: `target`, `operation`, `status`, `changed`, `duration`
 | `error` | `ono.error/1` | — | nullable | The structured error for a failed result; null for `success` and `skipped`. |
 | `duration` | `duration` | — | required | How long the operation took, so that a slow success is visible as such. |
 
+## AssistantAction — `ono.assistant-action/1`
+
+One step an assistant proposed, with what it would cost and whether it has been taken.
+
+Identity: 
+
+Default view: `index`, `summary`, `mutating`, `risk`, `status`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `index` | `int` | — | required | The step's position in the proposal, as spec §31.47 numbers them, so `run 1-2` means something. |
+| `tool` | `string` | — | required | The tool or command id the model requested, e.g. `ono.service.restart`. It must be one the host exposed for this turn; anything else is `assistant.tool_invalid` and never reaches a proposal (`assistants.v1.yaml` → `authority_invariants.tools-are-declared`). |
+| `arguments` | `record` | — | required | The structured arguments the model supplied, already validated against the tool's descriptor. There is no command line here: an assistant never composes shell text. |
+| `summary` | `string` | — | required | One line, what the step would do, e.g. `restart service nginx`. |
+| `subject` | `value` | — | nullable | A reference to the object the step would act on, as it was when proposed. Re-resolved at execution time; a subject that changed identity in between refuses rather than acts (ADR-0015 T12). |
+| `mutating` | `bool` | — | required | Whether it would change anything outside the shell — spec §31.47's `[mutating]` marker. Required even when false, so "this only looks" is stated rather than inferred. |
+| `risk` | `enum` | — | nullable | From `risk_levels` in `docs/spec/capabilities.yaml`. Required whenever `mutating` is true; spec §31.75 flags a mutation tool without risk metadata as a static-analysis finding. |
+| `capability` | `string` | — | required | The capability the step would cost, checked against the assistant's grants before anything runs. |
+| `confirmation` | `enum` | — | required | Whether the operator confirms, from the tool's descriptor (spec §31.46). |
+| `evidence` | `list<ono.evidence/1>` | — | required | Why the assistant proposes it. Empty is allowed for an obvious read-only check; a mutating step with no evidence is a proposal an operator has no basis to judge, and reads as one. |
+| `status` | `enum` | — | required | Where the step stands. `proposed` is the resting state and the default: spec §31.47 says an assistant proposes rather than silently executes. `refused` means the operator declined; `skipped` means an earlier step made it unnecessary. |
+| `result` | `ono.action-result/1` | — | nullable | The structured outcome, once the step ran (spec §11.5). Null while it has not — which is the state every mutating step is in until an operator or a lease says otherwise. |
+
+## AssistantTurn — `ono.assistant-turn/1`
+
+One assistant exchange — the context it saw, what it concluded, and what it proposed or did.
+
+Identity: `id`
+
+Default view: `at`, `assistant`, `request`, `status`, `autonomy`, `executed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `uuid` | — | required | The turn's own identity, so an answer can be cited and re-inspected later. |
+| `assistant` | `ref<ono.assistant/1>` | — | required | Which assistant took the turn. Never implicit: the assistant is named on the command line (spec §7.1, §31.42). |
+| `conversation` | `string` | — | nullable | The conversation this turn belongs to. Null for a one-shot `ask assistant`. |
+| `request` | `string` | — | required | What the operator asked, verbatim. Labelled `OPERATOR_REQUEST` in the model context (spec §31.52). |
+| `at` | `timestamp` | — | required | When the turn started. |
+| `duration` | `duration` | — | required | How long it took, so a slow answer is visible as one. |
+| `autonomy` | `enum` | — | required | The effective level for this turn — the minimum of the package's declaration and policy (spec §31.48). |
+| `model` | `ref<ono.model-provider/1>` | — | nullable | Which provider answered. Null when no inference happened — because none was configured, because policy denied it, or because the turn was answered from tools alone. |
+| `context` | `record` | — | required | The visible context summary of spec §31.45: `{included: list<record>, excluded: list<record>, fields: list<string>, at: timestamp, host: string}`. The `excluded` list is the part an operator cannot verify any other way — shell history, environment, file contents, secrets — so it is stated rather than implied. |
+| `data_boundary` | `record` | — | nullable | The model-request plan of spec §31.82: what was sent, what was removed, and under which policy. Retained on the turn whether or not it was displayed, so inspection stays available even when a repeat call was shown tersely. Null when nothing left the process. |
+| `answer` | `string` | — | required | The assistant's answer. Model-authored text, sanitised before display like any other value (ADR-0015 T1); it never reaches the terminal as escape sequences. |
+| `citations` | `list<ono.evidence/1>` | — | required | The object references supporting the answer's claims (spec §31.50). Each must resolve, or the turn fails output validation — spec §31.87 asks that the same question be investigable manually from these alone. |
+| `findings` | `list<ono.finding/1>` | — | required | Findings the turn produced or surfaced. Empty when it produced none. |
+| `tool_calls` | `list<record>` | — | required | Every tool the model requested, as `{tool, arguments, decision, at, error}` with `decision` one of `executed`, `denied`, `invalid`. Denied and invalid calls are kept: a model asking for tools it was not given is worth seeing (spec §31.46). |
+| `proposed_actions` | `list<ono.assistant-action/1>` | — | required | The action plan, in order. Empty when the turn proposed nothing. At `L2` and below, every mutating entry stays `proposed` until an operator chooses (spec §31.47). |
+| `executed` | `bool` | — | required | Whether anything in the plan actually ran in this turn. Required even when false, because "no changes made" — spec §31.53's own closing line — is the answer an operator most needs stated plainly. |
+| `status` | `enum` | — | required | How the turn ended. `proposed` means it produced a plan awaiting a decision; `denied` means policy stopped it, in context assembly, in model selection or at a capability check. |
+| `error` | `ono.error/1` | — | nullable | The structured error for `denied`, `failed` and `cancelled`. Null otherwise. |
+
+## Assistant — `ono.assistant/1`
+
+One loaded assistant extension — what it may see, which model it uses, and how far it may act.
+
+Identity: `id`
+
+Default view: `id`, `plugin`, `state`, `model`, `autonomy`, `tools`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The assistant's id, as `ask assistant <id>` names it, e.g. `ops-assist`. |
+| `plugin` | `ref<ono.plugin/1>` | — | required | The package that provides it. An assistant is an extension role, not a separate subsystem (spec §31.41). |
+| `name` | `string` | — | required | The display name. |
+| `state` | `enum` | — | required | Spec §31.42's state set. `loaded` means the package is up but the assistant has not completed its model selection; `ready` means it can take a turn; `degraded` means it can take a turn with something missing — typically no model. |
+| `model_policy` | `record` | — | required | The requirements the package declares and the resolution the broker made: `{requirements, selected, allowed_providers}`. Shape in `docs/spec/kuang/assistants.v1.yaml` → `model_requirements` (spec §31.43). |
+| `model` | `ref<ono.model-provider/1>` | — | nullable | The provider currently selected. Null when none is configured or none satisfies the requirements — and an assistant with a null model still loads and still says why it cannot answer (spec §31.87). |
+| `capabilities` | `list<ono.capability-grant/1>` | — | required | The grants and leases the assistant holds. This is what bounds its tools: a tool it cannot pay for is never exposed to the model (`assistants.v1.yaml` → `tool`). |
+| `context_policy` | `record` | — | required | Which context sources it may draw on, and which it is denied. Shape in `docs/spec/kuang/assistants.v1.yaml` → `context_broker.sources` (spec §31.45). |
+| `autonomy` | `enum` | — | required | The effective level — the minimum of what the package declares and what policy permits (spec §31.48). This is the number that governs, which is why the declared set is a separate field. |
+| `autonomy_declared` | `list<string>` | — | required | The levels the package says it supports. Declaring a level is not being granted it. |
+| `tools` | `list<string>` | — | required | The tool ids currently exposed to the model — the declared set intersected with the grants and the effective autonomy level. Empty at `L0`, where no tool call is possible. |
+| `memory` | `enum` | — | required | The conversation memory scope of spec §31.51. `persistent` requires `state.persist` and is inspectable and deletable; shell history is never assistant memory. |
+| `conversation` | `string` | — | nullable | The current conversation's id, when one is open. Null when there is none. |
+| `turns` | `int` | — | required | How many turns this assistant has taken in this session. Zero is a real answer. |
+
+## CapabilityGrant — `ono.capability-grant/1`
+
+What one KUANG/11 package is permitted to do, in what scope, for how long.
+
+Identity: `id`
+
+Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `uuid` | — | required | The grant's own identity, so it can be revoked and cited precisely. |
+| `plugin` | `ref<ono.plugin/1>` | — | required | The package the grant is made to. A grant is never to a publisher or to a class of packages. |
+| `capability` | `string` | — | required | The capability id, from `kuang_capabilities` in `docs/spec/capabilities.yaml`. |
+| `class` | `enum` | — | required | How the package declared it (spec §31.17). A `required` denial blocks the load; an `optional` denial degrades it. |
+| `decision` | `enum` | — | required | The standing answer. `ask` is not a grant: it prompts, once, per the requirements of spec §31.18, and resolves to `deny` where no one can be asked. |
+| `scope` | `record` | — | nullable | The scope keys the capability declares, e.g. `{paths: ["/var/log/nginx/**"]}`. Null means unscoped. A key the capability does not declare is invalid, not ignored. |
+| `enforcement` | `enum` | — | required | Whether the scope is checked at every call, merely recorded, or absent because the capability has no scope. Spec §31.16: a scope that cannot be enforced reliably MUST NOT be offered as if it were a security boundary, so this field is shown wherever the scope is. |
+| `duration` | `enum` | — | required | The durations of spec §31.18. Everything but `always` lives only in the session. |
+| `granted_at` | `timestamp` | — | required | When the decision was made. |
+| `expires_at` | `timestamp` | — | nullable | When it stops working. Null for a grant with no expiry; a grant with one is a lease (spec §31.49) and every field below applies to it. |
+| `max_uses` | `int` | — | nullable | How many times the lease may be used. Null means unlimited within its window. |
+| `uses` | `int` | — | required | How many times it has been used. A count, never null. |
+| `actions` | `list<string>` | — | nullable | The operations permitted, e.g. `[restart]` (spec §31.49). Null means every operation the capability allows — which a lease should rarely choose. |
+| `selector` | `string` | — | nullable | The objects a lease reaches, e.g. `"host=staging-3 service=staging-api"` (spec §31.49). Evaluated by the host at each use, against the object it is about to act on. |
+| `condition` | `string` | — | nullable | A probe or policy reference that must hold at each use. Null means unconditional. |
+| `source` | `enum` | — | required | Which layer produced the decision, in the precedence order of spec §31.19. It is what lets an operator see why a grant they did not make exists. |
+| `link` | `string` | — | nullable | The link the grant applies to, for a remote projection. Null for a local grant. A local grant does not become a remote one; effective authority is the intersection of both sides' policy (spec §31.40). |
+| `purpose` | `string` | — | nullable | What the package said it needed the capability for, as shown in the prompt (spec §31.18). Package-authored, sanitised, and attributed to the package rather than to Ono. |
+| `revoked_at` | `timestamp` | — | nullable | When it was revoked. Null while it stands. A revoked grant is retained rather than deleted, so the record of what was once permitted survives. |
+
 ## ConfigSetting — `ono.config-setting/1`
 
 One resolved configuration setting together with the layer that set it.
@@ -40,6 +147,22 @@ Default view: `key`, `value`, `layer`, `source`
 | `line` | `int` | — | nullable | The line within `source`; null wherever `source` is null. |
 | `default_value` | `value` | — | nullable | The built-in default, so the user can see what they have overridden. |
 | `description` | `string` | — | nullable | One line describing what the setting does, shown by `help` and by completion. |
+
+## Context — `ono.context/1`
+
+One frame of the context stack — where commands run and what narrows them.
+
+Identity: `depth`
+
+Default view: `depth`, `kind`, `target`, `identity`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `depth` | `int` | — | required | The frame's position, 0 for the session's ground frame. The stack renders bottom-up. |
+| `kind` | `enum` | — | required | What sort of frame this is (spec §14.1). |
+| `target` | `string` | — | optional | The target the frame narrows to, such as `service` for `enter service nginx`. Null for the ground frame and for frames that narrow nothing. |
+| `identity` | `string` | — | optional | The identity of the entered object — `nginx.service`, `/etc`, `prod-db` — rendered the way the prompt shows it. Null for the ground frame. |
+| `selector` | `string` | — | optional | The explicit spelling of what the frame contributes, such as `--service nginx.service` (spec §14.5, ADR-0023): every context is expressible without entering it. |
 
 ## Endpoint — `ono.endpoint/1`
 
@@ -92,6 +215,28 @@ Default view: `code`, `name`, `message`, `target`
 | `span` | `record` | — | nullable | The byte range of the source text the error refers to, for parse errors (§16.3). Null for errors that do not come from text. |
 | `metadata` | `record` | — | required | Error-specific structured detail — the exit status of an external process, the signal name, the candidate list of an ambiguous name. An empty record when there is none. |
 
+## Evidence — `ono.evidence/1`
+
+One inspectable observation supporting a finding, an annotation or an assistant claim.
+
+Identity: 
+
+Default view: `kind`, `reference`, `source`, `samples`, `observed_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What sort of evidence this is. `unavailable` records an observation that was attempted and could not be made — spec §31.25's `heap unavailable`. Recording the gap is evidence; omitting it is how a confident-looking conclusion gets built on a hole. |
+| `reference` | `string` | — | required | The stable citation id, e.g. `@process/4419.smaps#12` (spec §31.50). Selectable in an interactive renderer and a stable textual id when output is redirected — the same value either way. It must resolve, or the finding carrying it is rejected. |
+| `subject` | `value` | — | nullable | A reference to the object the evidence is about. Null for evidence about no single object, such as a source that was read across many. |
+| `field` | `string` | — | nullable | The field observed, for `kind: field`. Null otherwise. |
+| `observed` | `value` | — | nullable | What was observed — a value, a range, a before-and-after pair. Null for `unavailable` and for `command`, where the reference is the evidence. |
+| `source` | `string` | — | nullable | What was read, e.g. `/proc/4419/smaps` or `process snapshots` (spec §31.25). Null where the subject reference already says. |
+| `samples` | `int` | — | nullable | How many observations back it, e.g. spec §31.25's `85 samples`. Null when the count is not meaningful — and null is not one (spec §10.5). |
+| `window` | `duration` | — | nullable | The period the observations cover, e.g. spec §31.25's `window 14m`. Null for a point observation. |
+| `observed_at` | `timestamp` | — | required | When the observation was made, or when the window ended. |
+| `command` | `string` | — | nullable | An Ono command that reproduces the observation, for `kind: command`. It must parse and be runnable — spec §31.87 asks that the same question be investigable manually from the citations. Null for the other kinds. |
+| `unavailable_reason` | `string` | — | nullable | Why the observation could not be made, for `kind: unavailable`. Null otherwise. |
+
 ## File — `ono.file/1`
 
 A filesystem object and its metadata.
@@ -136,6 +281,29 @@ Default view: `source`, `type`, `size`, `used`, `available`, `target`
 | `available` | `bytesize` | — | nullable | Space available to this user. Distinct from `size - used`, because reserved blocks are counted as used space nobody unprivileged can have. |
 | `read_only` | `bool` | — | nullable | Whether the filesystem is currently mounted read-only; null when not mounted. |
 | `device` | `ref<ono.device/1>` | — | nullable | The backing device; null for network and pseudo-filesystems. |
+
+## Finding — `ono.finding/1`
+
+One conclusion an analysis or an assistant reached, with the evidence that produced it.
+
+Identity: `id`
+
+Default view: `severity`, `subject`, `title`, `confidence`, `source`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `uuid` | — | required | The finding's own identity, so it can be cited, revisited and compared across runs. |
+| `source` | `string` | — | required | The package that emitted it. Set by the host, never by the package — spec §31.80 lists forging provenance among the threats, and a finding is exactly where it would pay off. |
+| `subject` | `value` | — | nullable | A reference to the object the finding is about. Null for a finding about the system rather than about one object; `inspect` resolves it back to the full record. |
+| `severity` | `enum` | — | required | Spec §31.24's closed set. A package cannot add a level, which is what lets findings from unrelated packages be sorted against each other honestly. |
+| `confidence` | `float` | — | nullable | How sure the analysis is, from 0 to 1. Null means the package did not claim a confidence — which is different from claiming zero, and spec §10.5 requires the difference to survive. |
+| `title` | `string` | — | required | One line, what was found. Package-authored, sanitised before display (ADR-0015 T1). |
+| `summary` | `string` | — | required | A short explanation. Package-authored, sanitised. |
+| `evidence` | `list<ono.evidence/1>` | — | required | The observations behind the conclusion. Spec §31.25 requires evidence references rather than only prose, and `output.finding` rejects a finding whose references do not resolve — an empty list is accepted only for a finding that asserts nothing beyond an observation already carried by `subject`. |
+| `recommendations` | `list<ono.recommendation/1>` | — | required | What to do about it. Empty when the honest answer is that the finding is worth knowing and nothing follows from it yet. |
+| `created_at` | `timestamp` | — | required | When the finding was made. |
+| `expires_at` | `timestamp` | — | nullable | When it should no longer be believed, for a finding about a moving quantity. Null for one that does not expire. An expired finding is shown as expired rather than quietly kept. |
+| `tags` | `map` | — | required | Package-specific string labels, as spec §31.24's `tags: Map<String,String>`. An empty map when there are none — never absent, so a consumer can index on it unconditionally. |
 
 ## GraphEdge — `ono.graph-edge/1`
 
@@ -236,6 +404,32 @@ Default view: `id`, `state`, `kind`, `command`, `started`
 | `started` | `timestamp` | — | required | When the job was detached. |
 | `exit_status` | `int` | — | nullable | The exit status once the job finished; null while it is still running. A job terminated by a signal reports its status through the `external.signal` error, not as a fabricated number. |
 
+## ModelProvider — `ono.model-provider/1`
+
+One configured model provider, and the data boundary the operator set for it.
+
+Identity: `id`
+
+Default view: `name`, `kind`, `location`, `context_window`, `tools`, `data_policy`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The provider's configured id, e.g. `local-code`, `fast-remote`, `private-prod`. |
+| `name` | `string` | — | required | The display name. |
+| `kind` | `enum` | — | required | Whether inference happens on this machine or leaves it. The distinction the whole data policy hangs on (spec §31.43's `KIND` column). |
+| `location` | `string` | — | required | Where it runs, in the operator's own words — `workstation`, `configured`, `enterprise` (spec §31.43's `LOCATION` column). Descriptive; the enforceable part is `data_policy`. |
+| `endpoint` | `string` | — | nullable | The configured endpoint. Null for a local provider, and redacted for any provider whose endpoint carries credentials — a value marked secret is never rendered (spec §17.5). |
+| `context_window` | `int` | — | nullable | The usable context, in tokens (spec §31.43's `CONTEXT` column). Null when the provider does not report one, which is different from zero and disqualifies it from any `min_context` requirement. |
+| `tools` | `bool` | — | required | Whether it supports tool calling (spec §31.43's `TOOLS` column). An assistant needing tools is not offered a provider without them. |
+| `structured_output` | `bool` | — | required | Whether it supports schema-constrained output. Required by any assistant asking for a declared `output_schema`. |
+| `streaming` | `bool` | — | required | Whether partial responses are available. Relevant because an assistant must never block terminal input (spec §31.67). |
+| `data_policy` | `enum` | — | required | The policy name shown in spec §31.43's `DATA-POLICY` column. It is a summary of the three fields below, kept as its own field because it is what an operator recognises at a glance. |
+| `allowed_classes` | `list<string>` | — | required | The data classes that may be sent as they are, from `data_classes` in `docs/spec/kuang/assistants.v1.yaml` (spec §31.44). |
+| `transformed_classes` | `map` | — | required | Class to transformation, e.g. `{logs: redact}`. Applied by the host before the request leaves. An empty map when nothing is transformed. |
+| `denied_classes` | `list<string>` | — | required | Classes that may never be sent here. A request carrying one is refused with `model.policy_denied` rather than trimmed, so the boundary stays visible. |
+| `available` | `bool` | — | required | Whether the provider can answer right now. |
+| `unavailable_reason` | `string` | — | nullable | Why it cannot, when it cannot (spec §35.3). Null when it is available. |
+
 ## Mount — `ono.mount/1`
 
 A mounted filesystem, with its options kept as data rather than as one option string.
@@ -271,6 +465,151 @@ Default view: `address`, `mac`, `interface`, `state`
 | `router` | `bool` | — | nullable | Whether the neighbour advertises itself as a router; null outside NDP. |
 | `updated` | `timestamp` | — | nullable | When the entry was last confirmed; null when the provider keeps no timestamp. |
 
+## PluginAuditEvent — `ono.plugin-audit-event/1`
+
+One capability-sensitive action a KUANG/11 package took, or was refused.
+
+Identity: `id`
+
+Default view: `at`, `plugin`, `capability`, `action`, `target`, `result`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `uuid` | — | required | The record's own identity, so an event can be cited from a finding or an assistant answer. |
+| `plugin` | `ref<ono.plugin/1>` | — | required | The package that acted. Set by the host; a package cannot attribute an action to another. |
+| `invocation` | `string` | — | required | The invocation the action belonged to — the command, view, stream, analysis or assistant turn. It is what lets a trail be read as a story rather than as isolated calls. |
+| `capability` | `string` | — | required | The capability id the action was taken under, from `kuang_capabilities` in `docs/spec/capabilities.yaml`. |
+| `scope` | `value` | — | nullable | The scope in force, as spec §31.37 types it (`scope: Value`). Null when the capability declares no scope — which is different from an empty scope, and the difference matters when reading a trail back. |
+| `enforcement` | `enum` | — | required | Whether the scope was checked or merely recorded (`capabilities.v1.yaml`). An advisory scope in an audit record must never read as though it had been enforced (spec §31.16). |
+| `action` | `string` | — | required | What was attempted — a command id such as `ono.service.restart`, or a host call id such as `filesystem.read`. |
+| `target` | `value` | — | nullable | A reference to the object acted on. Null for an action about no object, e.g. a model request. |
+| `at` | `timestamp` | — | required | When it happened, by the host's clock. Not the plugin's — a package cannot backdate its own trail. |
+| `result` | `enum` | — | required | Spec §31.37's three outcomes. `denied` means policy refused it; `failed` means it was permitted and did not work. Conflating them would hide exactly the pattern this record exists to reveal. |
+| `user_confirmation` | `string` | — | nullable | The id of the confirmation that authorised the action, where one was required. Null where none was — which is itself the interesting answer for a mutating action. |
+| `lease` | `string` | — | nullable | The capability lease the action was taken under (spec §31.49). Null for a standing grant. |
+| `link` | `string` | — | nullable | The link the action crossed, for a remote action (spec §31.40). Null for a local one. Local and remote are separate scopes and the trail keeps them separate. |
+| `error` | `ono.error/1` | — | nullable | The structured error, for `denied` and `failed`. Null for `success`. |
+
+## PluginInspection — `ono.plugin-inspection/1`
+
+Everything Ono knows about one installed package — manifest, contributions, grants, health.
+
+Identity: `plugin`
+
+Default view: `plugin`, `origin`, `memory_current`, `open_streams`, `restart_count`, `last_error`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `plugin` | `ref<ono.plugin/1>` | — | required | The package version being inspected. |
+| `manifest` | `record` | — | required | The validated manifest, as parsed. Its shape is `docs/spec/kuang/manifest.v1.yaml`. Present even for a package that has never been loaded, which is the point of manifest-before-code. |
+| `origin` | `enum` | — | required | Where the contributions came from (spec §31.64). `plugin` for anything installed locally; `remote-provider` for a component projected across a link. |
+| `contributions` | `record` | — | required | What the package contributes, resolved: command ids, schema ids, target names, view ids, relation shapes and annotation keys. Spec §31.1: every line is backed by a manifest field or a resolved dependency, never by marketing metadata. |
+| `capability_grants` | `list<ono.capability-grant/1>` | — | required | Every grant and lease the package currently holds, with scope, duration and source. Empty when it holds none. |
+| `capability_requests` | `list<record>` | — | required | Every capability the package asks for, as `{capability, class, scope, roles, purpose, state}` where `state` is `granted`, `denied` or `not-requested-yet`. This is the display spec §31.1 shows under `requests` and `optional`. |
+| `verification` | `ono.verification-result/1` | — | required | The most recent verification: integrity, signature, publisher, transparency, compatibility, runtime. |
+| `runtime` | `ono.plugin-runtime/1` | — | nullable | The negotiated contract of the running instance. Null when nothing is loaded — not an empty record. |
+| `memory_current` | `bytesize` | — | nullable | Instance memory now. Null when nothing is loaded. |
+| `memory_limit` | `bytesize` | — | required | The effective memory ceiling, whether or not an instance exists. |
+| `cpu_time` | `duration` | — | nullable | CPU consumed by the current instance. Null when nothing is loaded. |
+| `host_calls` | `int` | — | required | Host calls made by the current instance, cumulative. Zero when nothing is loaded. |
+| `open_streams` | `int` | — | required | Streams the instance currently holds open (spec §31.33). |
+| `queued_events` | `int` | — | required | Events waiting in the instance's bounded queues (spec §31.15). |
+| `dropped_events` | `int` | — | required | Events lost to a lossy overflow policy, cumulative. Zero is a real answer and means nothing was lost; data loss is never invisible (spec §31.15, §31.33). |
+| `last_error` | `ono.error/1` | — | nullable | The most recent structured error from this package. Null when it has produced none. |
+| `restart_count` | `int` | — | required | How often the supervisor has restarted the instance in this session (spec §31.34). |
+| `network_destinations` | `list<record>` | — | required | Destinations the package has actually reached, as `{host, port, protocol, count, last_at}`, alongside what it declared. Spec §31.21 lists auditing destinations as one of the reasons network access is brokered at all. |
+| `state_usage` | `bytesize` | — | nullable | Persistent state in use. Null when the package declares no persistent state. |
+| `state_quota` | `bytesize` | — | nullable | The effective persistent-state ceiling. Null when the package declares no persistent state. |
+| `jobs` | `list<record>` | — | required | The invocations currently running, as `{invocation, kind, command, started_at}` where `kind` is `command`, `view`, `stream`, `analysis` or `assistant-turn`. Empty when idle. |
+
+## PluginPackage — `ono.plugin-package/1`
+
+A KUANG/11 package as an installation source describes it, before installing anything.
+
+Identity: `id`, `version`, `source`
+
+Default view: `name`, `version`, `publisher`, `signature`, `source`, `installed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The publisher-namespaced package id (spec §31.5). |
+| `name` | `string` | — | required | The display name the source advertises. |
+| `version` | `string` | — | required | The version this record describes. A source offering several versions yields several records. |
+| `publisher` | `string` | — | required | The publisher namespace `id` begins with. |
+| `summary` | `string` | — | required | One line, what the package is for. Package-authored text, sanitised before display (ADR-0015 T1). |
+| `source` | `string` | — | required | The resolved source reference, e.g. `registry:example/packet-eye@2.4.1` or `file:./packet-eye.k11` (spec §31.9). Part of the identity: the same package from two sources is two things worth telling apart. |
+| `license` | `string` | — | required | The SPDX identifier the manifest declares. |
+| `kuang_api` | `string` | — | required | The host API range the package declares (spec §31.7). |
+| `platforms` | `list<string>` | — | required | The platform tuples the package supports. A host not in the list cannot install it. |
+| `roles` | `list<string>` | — | required | The extension roles the package declares (spec §31.4). |
+| `contributions` | `record` | — | required | What the package says it contributes: counts and ids of commands, schemas, targets, views, relations and annotations. Spec §31.1 requires every displayed line to be backed by a manifest field, so this is read from the manifest and not from a description. |
+| `requested_capabilities` | `list<record>` | — | required | Every capability the package requests, as `{capability, class, scope, purpose}` with `class` one of `required`, `optional`, `runtime-requested` (spec §31.17). Empty when it asks for nothing. |
+| `network` | `record` | — | required | The declared outbound policy and destinations (spec §31.21). `outbound: none` is a stated answer, not an absent field. |
+| `integrity` | `string` | — | nullable | The content hash the source advertises, e.g. `sha256:...`. Null when the source offers none — which makes installing from it a decision rather than a formality. |
+| `signature` | `enum` | — | required | The signature state, as far as it can be judged without downloading the artifact. `unknown` is the honest answer for a source that does not say (spec §35.3). |
+| `trust` | `enum` | — | required | What is known about the publisher, using the same vocabulary as `ono.plugin/1.trust`. |
+| `installed` | `bool` | — | required | Whether this exact id and version is already installed on this host. |
+| `size` | `bytesize` | — | nullable | The artifact's size where the source reports it; null where it does not. |
+| `published_at` | `timestamp` | — | nullable | When the source says the version was published. Null where the source does not say. |
+
+## PluginRuntime — `ono.plugin-runtime/1`
+
+The contract negotiated when a package was loaded — what it may do, and within which limits.
+
+Identity: `instance`
+
+Default view: `plugin`, `host_api`, `isolation`, `degraded`, `started_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `instance` | `string` | — | required | The runtime instance's id. Identity is the instance rather than the package, because an upgrade and a restart both produce a new instance while the package id stays the same. |
+| `plugin` | `ref<ono.plugin/1>` | — | required | The installed package version this instance runs. |
+| `host_api` | `string` | — | required | The negotiated host API version, e.g. `kuang-host/11.1` — one version, not the range the package asked for (spec §31.63). |
+| `value_protocol` | `string` | — | required | The negotiated value protocol, e.g. `ono-value/1` (spec §31.62). |
+| `isolation` | `enum` | — | required | The tier this instance actually runs in (spec §31.10). |
+| `granted` | `list<record>` | — | required | Every granted capability as `{capability, class, scope, enforcement}`. `enforcement` is `broker` or `advisory` per `capabilities.v1.yaml`, so an advisory scope is visible as one in the contract and not only in the prompt. |
+| `denied` | `list<record>` | — | required | Every requested capability that was not granted, as `{capability, class, reason}`. Empty when everything was granted. A denied `required` capability means the load failed and no instance exists, so entries here are always `optional` or `runtime-requested`. |
+| `disabled_features` | `list<string>` | — | required | The features the package switched off because of a denial — spec §31.63's `model.infer denied -> feature disabled: explain-flow`. Empty when nothing was disabled. The package supplies this in its `lifecycle.init` answer; it is the plugin's own account of what it gave up. |
+| `limits` | `record` | — | required | The effective quotas of spec §31.15: memory, persistent state, event queue depth, call deadline, concurrent host calls, output rate. Each is the smaller of the package's declaration and host policy. |
+| `overflow` | `enum` | — | required | The effective default overflow policy for this instance's streams. The manifest may declare a preference; host policy decides (spec §31.15). |
+| `network` | `record` | — | required | The effective outbound policy and the destinations in scope. `{outbound: none}` when the package declared none. |
+| `degraded` | `bool` | — | required | Whether the instance is running with denied optional capabilities (spec §31.8). |
+| `started_at` | `timestamp` | — | required | When the instance was created. |
+| `development_mode` | `bool` | — | required | Whether the instance was loaded with `--dev` (spec §31.71). Development mode relaxes integrity, never authority, and it must remain visually marked for the whole session. |
+
+## Plugin — `ono.plugin/1`
+
+One installed version of a KUANG/11 package, and what it is currently doing.
+
+Identity: `id`, `version`
+
+Default view: `name`, `version`, `state`, `trust`, `jobs`, `memory`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The immutable, publisher-namespaced package id, e.g. `dev.example.packet-eye` (spec §31.5). |
+| `name` | `string` | — | required | The display name. Mutable between releases and not globally unique; `id` is what identifies. |
+| `version` | `string` | — | required | This installed version. Part of the identity, because several may be installed at once. |
+| `publisher` | `string` | — | required | The publisher namespace `id` begins with. |
+| `state` | `enum` | — | required | The lifecycle state of spec §31.8. `installed` and `enabled` mean no code of this package has run. See `docs/spec/kuang/lifecycle.v1.yaml` for the transitions. |
+| `trust` | `enum` | — | required | What is known about who produced the artifact (spec §31.8's table, §31.36). `signed` means a valid signature from a key this system does not vouch for; `verified` means a valid signature from a trusted publisher; `local` is an unsigned development package; `untrusted` is a package quarantined on trust grounds. It is a separate question from `isolation`, deliberately (spec §31.36). |
+| `isolation` | `enum` | — | required | What the code can do even if it is not trusted — the tiers of spec §31.10. A package cannot declare `core-built-in`. |
+| `roles` | `list<string>` | — | required | The extension roles of spec §31.4 the package declares, at least one. |
+| `enabled` | `bool` | — | required | Whether policy makes it eligible for loading. Distinct from `state`, which says what is happening now: a package can be enabled and unloaded, which is the normal resting state under lazy loading (spec §31.68). |
+| `active_version` | `bool` | — | required | Whether this is the version contributions currently resolve to. During an upgrade two versions are installed and exactly one is active (spec §31.35). |
+| `source` | `string` | — | required | The source reference the artifact was installed from, e.g. `registry:example/packet-eye@2.4.1` (spec §31.9). |
+| `integrity` | `string` | — | required | The content hash recorded at install, e.g. `sha256:...`. Re-verified at load. |
+| `kuang_api` | `string` | — | required | The host API range the package declares, e.g. `">=11.1 <12"` (spec §31.7, §31.62). |
+| `jobs` | `int` | — | required | How many invocations, streams, views or assistant turns are running. Zero for anything not `active`. A count, never null: the host always knows this. |
+| `memory` | `bytesize` | — | nullable | Current instance memory. Null when nothing is loaded — which is not zero, because an unloaded package has no instance to measure (spec §10.5). |
+| `state_usage` | `bytesize` | — | nullable | Persistent state in use. Null when the package declares no persistent state. |
+| `degraded_reason` | `string` | — | nullable | Why the package is `degraded` — the optional capability or dependency that was denied or is unavailable. Null in every other state. |
+| `quarantine_reason` | `string` | — | nullable | Why the package is `quarantined` — integrity, signature, publisher trust or policy. Null in every other state. |
+| `installed_at` | `timestamp` | — | required | When the artifact was installed and validated. |
+| `loaded_at` | `timestamp` | — | nullable | When the current instance was loaded. Null when nothing is loaded. |
+| `restart_count` | `int` | — | required | How often the supervisor has restarted this package's instance in this session (spec §31.34). A package that keeps restarting should be visible as one. |
+| `last_error` | `ono.error/1` | — | nullable | The most recent structured error from this package. Null when it has produced none. |
+
 ## Process — `ono.process/1`
 
 A running process as the process provider observes it.
@@ -297,6 +636,26 @@ Default view: `pid`, `name`, `cpu`, `memory`, `user`
 | `cwd` | `path` | — | nullable | Current working directory; null when not readable by this user. |
 | `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
+
+## Recommendation — `ono.recommendation/1`
+
+One suggested next step attached to a finding, with what it would cost to take it.
+
+Identity: 
+
+Default view: `title`, `horizon`, `mutating`, `risk`, `command`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `title` | `string` | — | required | One line, what to do. Package-authored text, sanitised before display. |
+| `detail` | `string` | — | nullable | Why it would help, at more length. Null when the title says everything. |
+| `horizon` | `enum` | — | required | What kind of remedy this is. Spec §31.53 distinguishes the temporary fix (`restart service checkout`) from the durable one (`raise LimitNOFILE and investigate socket retention`), and presenting them as interchangeable is how a workaround becomes the fix. |
+| `command` | `string` | — | nullable | The Ono command that would carry it out, e.g. `inspect process 4419 --field limits`. It must parse. Null when there is nothing to run — an `investigate` recommendation often has nothing. |
+| `mutating` | `bool` | — | required | Whether taking it would change anything outside the shell. Required even when false, so "this only looks" is a stated answer rather than an absent field. |
+| `risk` | `enum` | — | nullable | The risk of the suggested command, from `risk_levels` in `docs/spec/capabilities.yaml`. Null when there is no command. Required whenever `mutating` is true. |
+| `capability` | `string` | — | nullable | The capability the command would cost, so an operator can see the authority a suggestion implies before considering it. Null when there is no command. |
+| `subject` | `value` | — | nullable | A reference to the object the recommendation is about. Null when it is about the finding as a whole. |
+| `evidence` | `list<ono.evidence/1>` | — | required | What supports this being the right next step. Empty is allowed — a recommendation is advice, not a claim — but an empty list is visible as one, and spec §31.25 encourages conclusions that stay connected to the data that produced them. |
 
 ## Route — `ono.route/1`
 
@@ -374,3 +733,28 @@ Default view: `uid`, `name`, `home`, `shell`
 | `home` | `path` | — | nullable | The home directory as the account database records it; not checked for existence. |
 | `shell` | `path` | — | nullable | The login shell as the account database records it. |
 | `gecos` | `string` | — | nullable | The GECOS field, unparsed. |
+
+## VerificationResult — `ono.verification-result/1`
+
+What integrity, signature, publisher trust and compatibility say about one package.
+
+Identity: 
+
+Default view: `package`, `integrity`, `signature`, `trust`, `compatibility`, `runtime`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `package` | `string` | — | required | The package id and version verified, or the source reference where it is not yet installed. |
+| `source` | `string` | — | required | What was verified — an installed artifact, or a reference that has not been installed. |
+| `integrity` | `enum` | — | required | "Are these the exact bytes referenced?" (spec §31.36). `unknown` where the source offered no hash to compare against, which is a real answer and not a pass. |
+| `signature` | `enum` | — | required | "Did a key sign these bytes?" `absent` is not a failure: spec §31.36 requires unsigned local development packages to remain runnable in a visibly untrusted, capability-limited mode. |
+| `publisher` | `string` | — | nullable | The publisher the signature attests to. Null when there is no valid signature to attest anything. |
+| `key` | `string` | — | nullable | The signing key, e.g. `ed25519:AB12...`. Null when there is none. |
+| `trust` | `enum` | — | required | "Do I trust that key or publisher?" A valid signature from a key this system does not know is `unknown`, never `user-trusted` — the signature proves who signed, not whether to care. |
+| `transparency` | `enum` | — | required | Whether the signature appears in a transparency log. `unknown` where none is configured, which is what spec §31.36's own example prints. |
+| `compatibility` | `enum` | — | required | Whether `kuang_api`, `ono_language` and `platforms` admit this host (spec §31.7, §31.62). |
+| `manifest` | `enum` | — | required | Whether the manifest satisfies every rule in `docs/spec/kuang/manifest.v1.yaml` and every registration check. |
+| `runtime` | `enum` | — | required | "What can the code do even if I do not trust it?" (spec §31.36). Reported, never judged — it is the answer that makes the others survivable. |
+| `blocking_failures` | `list<string>` | — | required | The checks that failed and prevent installing or loading, by check id. Empty when nothing blocks. A blocking failure never produces a prompt offering to continue (ADR-0015 rule 4). |
+| `warnings` | `list<string>` | — | required | Non-blocking observations, such as an absent signature or an unknown transparency state. Empty when there are none. |
+| `verified_at` | `timestamp` | — | required | When the checks ran. Integrity is re-verified at load, so an old result is not a licence. |

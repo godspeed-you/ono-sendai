@@ -23,7 +23,7 @@ commands:
     selectors:
       - {name: id, type: string, doc: "Resolve one package by its publisher-namespaced id (spec §31.5)."}
     options:
-      - {name: state, type: string, doc: "Restrict to one of the states of spec §31.8: installed, enabled, loaded, running."}
+      - {name: state, type: string, doc: "Restrict to one of the six states of spec §31.8: installed, enabled, loaded, active, degraded, quarantined (ADR-0022: §31.8 defines `active`, never `running`)."}
     privilege: none
     streaming: true
     phase: I
@@ -144,6 +144,30 @@ commands:
     phase: I
     examples:
       - unload plugin dev.example.packet-eye
+
+  # Not in §9.1's table; spec §31.3 writes `set plugin pg-surgeon --enabled false` and §31.38
+  # writes `set plugin packet-eye --background true`. The enable/disable transitions of
+  # `docs/spec/kuang/lifecycle.v1.yaml` name this command (ADR-0022, Consequences item 3).
+  - id: ono.plugin.set
+    verb: set
+    target: plugin
+    summary: Change a package's management settings — enablement and background policy.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.plugin/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: plugin.set
+    selectors:
+      - {name: id, type: string, doc: "The package to configure."}
+    options:
+      - {name: enabled, type: bool, doc: "Make the package eligible for loading, or withdraw that eligibility (spec §31.3). Neither direction runs package code; disabling unloads a loaded instance first (lifecycle.v1.yaml, transitions `enable`/`disable`)."}
+      - {name: background, type: bool, doc: "Let a package that declares a background role run jobs no command, view or subscription created (spec §31.38). Job lifetime stays scoped to Ono; KUANG/11 never silently creates system services."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - set plugin dev.example.packet-eye --enabled false
+      - set plugin dev.example.packet-eye --background true
 
   - id: ono.plugin.verify
     verb: verify

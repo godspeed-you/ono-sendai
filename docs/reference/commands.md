@@ -1869,7 +1869,7 @@ Enumerate installed and loaded KUANG/11 packages and their runtime health.
 
 | name | type | meaning |
 |---|---|---|
-| `--state` | `string` | Restrict to one of the states of spec §31.8: installed, enabled, loaded, running. |
+| `--state` | `string` | Restrict to one of the six states of spec §31.8: installed, enabled, loaded, active, degraded, quarantined (ADR-0022: §31.8 defines `active`, never `running`). |
 
 **Examples**
 
@@ -2064,6 +2064,41 @@ Drain or cancel a package's jobs and withdraw its runtime contributions.
 
 ```text
 unload plugin dev.example.packet-eye
+```
+
+### `set plugin`
+
+Change a package's management settings — enablement and background policy.
+
+| | |
+|---|---|
+| id | `ono.plugin.set` |
+| stability | stable |
+| phase | I |
+| input | `null | stream<ono.plugin/1>` |
+| output | `stream<ono.action-result/1>` |
+| provider capability | `plugin.set` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `id` | `string` | The package to configure. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--enabled` | `bool` | Make the package eligible for loading, or withdraw that eligibility (spec §31.3). Neither direction runs package code; disabling unloads a loaded instance first (lifecycle.v1.yaml, transitions `enable`/`disable`). |
+| `--background` | `bool` | Let a package that declares a background role run jobs no command, view or subscription created (spec §31.38). Job lifetime stays scoped to Ono; KUANG/11 never silently creates system services. |
+
+**Examples**
+
+```text
+set plugin dev.example.packet-eye --enabled false
+set plugin dev.example.packet-eye --background true
 ```
 
 ### `verify plugin`

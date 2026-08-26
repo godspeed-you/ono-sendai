@@ -79,6 +79,7 @@ Two vocabularies that are not the same thing. A **provider capability** is what 
 | `plugin.remove` | destructive | none | Remove an installed package. |
 | `plugin.load` | mutate | none | Negotiate capabilities and instantiate a package's runtime. |
 | `plugin.unload` | mutate | none | Drain a package's jobs and withdraw its runtime contributions. |
+| `plugin.set` | mutate | none | Change a package's management settings, such as enablement and background policy. |
 | `capability.list` | read | none | Read capability definitions, requests, grants and leases. |
 | `capability.grant` | mutate | none | Create a scoped capability grant or lease, subject to policy. |
 | `capability.revoke` | mutate | none | Revoke a capability grant or lease. |
