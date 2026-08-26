@@ -1,0 +1,25 @@
+[package]
+name = "ono-value"
+description = "The value, record and schema model of the Ono-Sendai shell."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+bytes.workspace = true
+jiff.workspace = true
+regex.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+jiff.workspace = true
+ono-core.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
