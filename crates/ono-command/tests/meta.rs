@@ -58,6 +58,22 @@ async fn should_report_what_a_pipeline_would_produce_without_running_it() {
     assert_eq!(field(described, "schema"), &Value::string("ono.process/1"));
 }
 
+#[tokio::test]
+async fn should_accept_a_subject_written_as_bare_words() {
+    // The contract's own example is `type get socket` — no quotes. A subject of several words is
+    // the pipeline they spell, exactly as if it had been quoted.
+    let ran = run("type get process", &fixture::no_providers())
+        .await
+        .expect("the documented example runs");
+
+    let described = ran.only();
+    assert_eq!(
+        field(described, "type"),
+        &Value::string("stream<ono.process/1>")
+    );
+    assert_eq!(field(described, "schema"), &Value::string("ono.process/1"));
+}
+
 // --- inspect -----------------------------------------------------------------------------------
 
 #[tokio::test]

@@ -88,11 +88,8 @@ impl CommandImpl for MetaCommand {
 impl MetaCommand {
     /// `type` — the schema of what a pipeline produces, without producing it.
     fn describe_type(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
-        if let Some(subject) = ctx
-            .arguments()
-            .selector("subject")
-            .and_then(|value| value.as_str().ok())
-        {
+        if let Some(subject) = subject_text(ctx.arguments().selector("subject")) {
+            let subject = subject.as_str();
             let parsed = ono_parser::parse(subject);
             let pipeline = parsed
                 .program()
@@ -353,6 +350,20 @@ fn command_record(contract: &CommandContract) -> Value {
     match built {
         Ok(record) => record.build().into_value(),
         Err(error) => error.into_value(),
+    }
+}
+
+/// The subject as one line of source, however many words it was written as.
+///
+/// The contract's own example is `type get socket` — no quotes — so the selector is repeatable
+/// and a multi-word subject is the pipeline those words spell, exactly as if it had been quoted.
+fn subject_text(selector: Option<&Value>) -> Option<String> {
+    match selector? {
+        Value::List(words) => {
+            let words: Vec<&str> = words.iter().filter_map(|word| word.as_str().ok()).collect();
+            (!words.is_empty()).then(|| words.join(" "))
+        }
+        word => word.as_str().ok().map(str::to_owned),
     }
 }
 
