@@ -187,10 +187,10 @@ pub fn invoke(
                 ErrorCode::ResolveCommandNotFound,
                 format!("no loaded package answers to `{namespace}:`"),
             )
-            .with_help(format!(
+            .with_help(
                 "`load plugin` brings a package's commands in (spec §31.10); `get plugin` lists \
-                 what is installed"
-            )),
+                 what is installed",
+            ),
         ));
     };
 
