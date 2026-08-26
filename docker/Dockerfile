@@ -13,6 +13,11 @@ ENV CARGO_TERM_COLOR=never CARGO_INCREMENTAL=0
 COPY Cargo.toml Cargo.lock* rust-toolchain.toml clippy.toml rustfmt.toml ./
 COPY crates ./crates
 COPY xtask ./xtask
+# The machine-readable contracts are compile-time inputs, not documentation: `ono-value` and
+# `ono-command` embed them with `include_str!`, so there is exactly one definition of a schema or
+# a command in the process (spec section 27, section 36.4). Copying them here is what makes the
+# container prove that the contracts ship with the binary rather than sitting beside it.
+COPY docs/spec ./docs/spec
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
     cargo build --release --package ono-cli --locked \

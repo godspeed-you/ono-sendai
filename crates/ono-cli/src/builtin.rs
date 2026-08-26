@@ -343,9 +343,18 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         if registry.verb(name).is_some() || registry.get(name).is_some() {
             continue;
         }
+        // The registry does not know the shell's own commands, so without this `explain cd`
+        // would report that `cd` resolves to nothing — which is both false and exactly the kind
+        // of thing `explain` exists to get right (ADR-0011).
+        if crate::resolve::BUILTINS.contains(&name) {
+            print_safely(&format!(
+                "  `{name}` is a command the shell runs itself — step 4 of the resolution order"
+            ));
+            continue;
+        }
         match crate::resolve::find_on_path(session, name) {
             Some(path) => print_safely(&format!(
-                "  `{name}` is external and resolves to {}",
+                "  `{name}` is an external program and resolves to {}",
                 path.display()
             )),
             None => print_safely(&format!("  `{name}` resolves to nothing on PATH")),
