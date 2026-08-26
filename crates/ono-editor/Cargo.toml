@@ -1,0 +1,18 @@
+[package]
+name = "ono-editor"
+description = "The Ono-Sendai line editor: editing, keymap and syntax highlight for the interactive prompt."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-render.workspace = true
+crossterm.workspace = true
+unicode-width.workspace = true
+
+[lints]
+workspace = true
