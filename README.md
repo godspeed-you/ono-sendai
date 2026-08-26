@@ -123,15 +123,11 @@ Extensions contribute real objects and real relationships to the same typed pipe
 commands. A plugin that inspects Postgres internals produces `Stream<T>` you can filter, sort
 and pipe like anything else — not a wall of text with a nicer banner.
 
-## Cyberpunk without cosplay
-
-This project is unapologetically styled. It is also disciplined about it, and the distinction is
-the entire point.
+## House rules for the aesthetic
 
 **Allowed:** terse system vocabulary where the word is *accurate*; live tables whose movement
 comes from real events; graph views of real relationships; latency indicators on real links; a
-prompt that expresses real location; dark, restrained themes; information density that looks
-good because it *is* good.
+prompt that expresses real location; dark, restrained themes.
 
 **Forbidden by default:** `ACCESS GRANTED` on a successful `ls`. Fake scanning progress. Matrix
 rain. Random glitches. Boot animations. Hexadecimal noise. Artificial keystroke delay. Sound
@@ -139,13 +135,11 @@ effects. Failure messages written like a video game.
 
 > **The machine is already strange enough. Reveal it. Do not decorate it.**
 
-Coolness here is a product requirement, and it is earned by capability. A live object stream is
-useful *and* looks alive. A dependency trace is useful *and* feels like walking into a machine.
-A context-aware prompt is useful *and* creates a sense of place. Every one of those is real
-information doing the aesthetic work. Nothing is theatre.
-
-The measure of success: expert users keep it installed because it is genuinely useful, and show
-it to other people because it is unreasonably satisfying to use.
+A live object stream looks alive because processes are dying in it. A dependency trace feels
+like walking into a machine because the edges came from the kernel. The prompt creates a sense
+of place because you actually are somewhere. Every effect in this shell is a side effect of
+telling the truth about the system — which is also why none of it can be turned into a
+screensaver.
 
 ## Where this is going
 
@@ -166,7 +160,10 @@ production infrastructure for the next one.
 | **J** | Advanced TUI views — where the semantics actually justify them |
 
 Written in Rust, because this needs low-level Unix integration, async I/O, real concurrency
-safety, a recoverable parser, PTY and job-control work, and speed that never makes you wait.
+safety, a recoverable parser, and PTY and job-control work. Latency is treated as a product
+feature and specified like one: under 50 ms cold start, under 8 ms from keystroke to render,
+first rows of `get process` inside 50 ms — measured against machines with tens of thousands of
+processes, slow NSS and high-latency links.
 
 ## Repository
 
