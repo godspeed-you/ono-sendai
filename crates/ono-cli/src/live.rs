@@ -149,8 +149,7 @@ mod tests {
         let event_schema = schemas
             .get(&"ono.process-event/1".parse().expect("a schema id"))
             .expect("the event schema");
-        let provenance =
-            ono_value::Provenance::local("test", process_schema.id().clone());
+        let provenance = ono_value::Provenance::local("test", process_schema.id().clone());
         let process = ono_value::RecordValue::builder(process_schema, provenance.clone())
             .set("pid", Value::Int(pid))
             .and_then(|builder| builder.set("name", Value::string(name)))

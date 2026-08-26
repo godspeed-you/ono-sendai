@@ -42,7 +42,7 @@ use crate::registry::CommandRegistry;
 /// A command scheduled for a later phase is not registered, so the honesty of
 /// [`unbound_stable_commands`](crate::unbound_stable_commands) survives contact with a half-built
 /// shell.
-const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F', 'G', 'J'];
 
 /// The command table this build has: every implementation, registered against its contract id.
 ///
@@ -105,6 +105,9 @@ fn implementation_of(
         "ono.data.measure" => Arc::new(TransformCommand::new(id, Kind::Measure)),
 
         // --- the boundary of spec §12.3 -------------------------------------------------------
+        // `view` is the shell's to run (ADR-0050): the library implementation passes the stream
+        // through untouched, and the CLI intercepts the values at the sink to open the browser.
+        "ono.data.view" => Arc::new(transform::TransformCommand::new(id, Kind::Pass)),
         "ono.data.to" => Arc::new(ConversionCommand::new(id, Direction::Serialize)),
         "ono.data.from" => Arc::new(ConversionCommand::new(id, Direction::Deserialize)),
         "ono.data.format" => Arc::new(ConversionCommand::new(id, Direction::Render)),

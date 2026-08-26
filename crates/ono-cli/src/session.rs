@@ -50,6 +50,9 @@ pub struct Session {
     /// Backgrounded native pipelines (spec §18.4, ADR-0024): jobs in the same table as external
     /// commands, numbered from the executor's own sequence.
     native_jobs: Vec<NativeJob>,
+    /// What the last interactive view left selected — the referent of bare `@` (spec §6.4,
+    /// ADR-0033, ADR-0050).
+    selection: Option<Value>,
 }
 
 /// One backgrounded native pipeline.
@@ -120,6 +123,7 @@ impl Session {
             frames: Vec::new(),
             results: std::collections::VecDeque::new(),
             native_jobs: Vec::new(),
+            selection: None,
         }
     }
 
@@ -136,6 +140,17 @@ impl Session {
                 .ok();
         }
         self.runtime.as_ref()
+    }
+
+    /// Keeps `value` as the interactive selection bare `@` refers to (ADR-0050).
+    pub fn select(&mut self, value: Value) {
+        self.selection = Some(value);
+    }
+
+    /// The interactive selection, if a view has set one.
+    #[must_use]
+    pub fn selection(&self) -> Option<&Value> {
+        self.selection.as_ref()
     }
 
     /// Adds a backgrounded native pipeline to the job table.

@@ -237,6 +237,13 @@ verbs:
     stability: stable
 
   # --- rendering and serialization --------------------------------------------------------
+  - id: ono.verb.view
+    verb: view
+    semantics: Open a named interactive view over the values flowing in (spec §13.6, §31.53).
+    typical_targets: [any stream]
+    pipeline_role: consumer/view
+    mutating: false
+    stability: stable
   - id: ono.verb.format
     verb: format
     semantics: Render explicitly for a human.

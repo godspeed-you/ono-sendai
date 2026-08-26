@@ -987,16 +987,18 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
                         .with_help("`@N` names row N of the last shown result (spec §6.4)"),
                     )
                 }),
-            ono_parser::CurrentSelector::Current => Err(Flow::Failed(
-                ErrorValue::new(
-                    ErrorCode::ResolveTargetNotFound,
-                    format!("there is no current value at {}", current.span),
+            ono_parser::CurrentSelector::Current => session.selection().cloned().ok_or_else(|| {
+                Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::ResolveTargetNotFound,
+                        format!("there is no current value at {}", current.span),
+                    )
+                    .with_help(
+                        "`@` names the item a block is iterating, or the row a view left \
+                             selected; neither exists here (spec §6.4, §19.4, ADR-0050)",
+                    ),
                 )
-                .with_help(
-                    "`@` names the item a block is iterating, or the interactive selection; \
-                     neither exists here (spec §6.4, §19.4)",
-                ),
-            )),
+            }),
         },
         Expr::Block(_) => Ok(Value::Null),
         Expr::Error(span) => Err(Flow::Failed(ErrorValue::new(

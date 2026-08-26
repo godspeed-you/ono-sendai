@@ -22,6 +22,7 @@ pub mod report;
 pub mod resolve;
 pub mod session;
 pub mod sink;
+pub mod view;
 
 /// The usage text, shown by `--help` and by the `help` builtin.
 #[must_use]

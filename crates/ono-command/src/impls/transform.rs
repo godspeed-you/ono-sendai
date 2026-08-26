@@ -21,6 +21,8 @@ use crate::invoke::{CommandImpl, Invocation, Outcome};
 /// Which of spec §53's transforms an implementation is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
+    /// The identity transform: everything flows through untouched (`view`, ADR-0050).
+    Pass,
     Where,
     Select,
     Sort,
@@ -123,6 +125,7 @@ impl CommandImpl for TransformCommand {
                 };
                 input.transform(reduce)?
             }
+            Kind::Pass => input,
             Kind::Count => input.transform(Count::new())?,
             Kind::Measure => {
                 let key = key_function(arguments, "key", &spelling, &scope)?;

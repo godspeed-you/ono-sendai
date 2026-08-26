@@ -687,6 +687,33 @@ get process | format table
 get process | format table --columns [pid, name, memory]
 ```
 
+### `view`
+
+Browse the stream interactively — a cursor over the rows, a pane over one object.
+
+| | |
+|---|---|
+| id | `ono.data.view` |
+| stability | stable |
+| phase | J |
+| input | `any` |
+| output | `null` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `name` | `string` | `table` or `tree`. A KUANG/11 package may register more (spec §31.53). |
+
+**Examples**
+
+```text
+get process | view table
+trace process 1 | view tree
+```
+
 ### `tail`
 
 Emit the last N values of a finite stream, or follow an unbounded one.

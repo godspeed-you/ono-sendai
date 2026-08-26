@@ -35,6 +35,7 @@ The controlled vocabulary of spec §7. The registry is deliberately small: a mod
 | `tail` | Follow append-oriented content. | file, journal | stream | no |
 | `test` | Evaluate a condition or a capability. | port, path, permission | producer | no |
 | `resolve` | Map a name or identifier. | dns, user, path, command | producer | no |
+| `view` | Open a named interactive view over the values flowing in (spec §13.6, §31.53). | any stream | consumer/view | no |
 | `format` | Render explicitly for a human. | any value | transform | no |
 | `to` | Serialize or convert. | json, yaml, csv, text, bytes | transform | no |
 | `from` | Parse an explicit representation. | json, yaml, csv | transform | no |

@@ -653,6 +653,21 @@ fn run_native_segment(
         return Ok(Some(bytes_of(&values)));
     }
 
+    // `view` consumes the terminal instead of printing (ADR-0050): the browse loop owns the
+    // rows from here, and leaving it retains them and the selection.
+    if final_contract.id() == "ono.data.view" {
+        let name = bound
+            .last()
+            .and_then(|(_, arguments)| arguments.selector("name"))
+            .and_then(|value| value.as_str().ok())
+            .unwrap_or("table")
+            .to_owned();
+        return match crate::view::run(session, &name, values) {
+            Ok(_) => Ok(None),
+            Err(flow) => Err(flow),
+        };
+    }
+
     let stage = &list.stages[*indices.last().unwrap_or(&0)];
     write_result(
         session,

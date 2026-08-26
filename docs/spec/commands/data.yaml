@@ -287,6 +287,29 @@ commands:
       - get process | format table
       - get process | format table --columns [pid, name, memory]
 
+  - id: ono.data.view
+    verb: view
+    target: null
+    summary: Browse the stream interactively — a cursor over the rows, a pane over one object.
+    stability: stable
+    argument_mode: words                  # ADR-0009: a view name, never an expression
+    input: any
+    output: "null"
+    provider_capability: null
+    selectors:
+      - {name: name, type: string, doc: "`table` or `tree`. A KUANG/11 package may register more (spec §31.53)."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: J
+    note: >-
+      Selection never changes pipeline data (spec §13.5); leaving the view keeps the selected
+      row as the `@` reference (spec §6.4, ADR-0033), so the next command can act on what was
+      picked. Where output is not a terminal the view falls back to the plain rendering of the
+      same values (spec §31.55), deterministically.
+    examples:
+      - get process | view table
+      - trace process 1 | view tree
   - id: ono.data.tail
     verb: tail
     target: null
