@@ -27,9 +27,11 @@ ono-editor = { path = "crates/ono-editor", version = "0.0.1" }
 ono-graph = { path = "crates/ono-graph", version = "0.0.1" }
 ono-history = { path = "crates/ono-history", version = "0.0.1" }
 ono-protocol = { path = "crates/ono-protocol", version = "0.0.1" }
+ono-remote = { path = "crates/ono-remote", version = "0.0.1" }
 ono-kuang-protocol = { path = "crates/ono-kuang-protocol", version = "0.0.1" }
 ono-kuang-supervisor = { path = "crates/ono-kuang-supervisor", version = "0.0.1" }
 ono-kuang-sdk = { path = "crates/ono-kuang-sdk", version = "0.0.1" }
+ono-kuang-testhost = { path = "crates/ono-kuang-testhost", version = "0.0.1" }
 ono-model-broker = { path = "crates/ono-model-broker", version = "0.0.1" }
 ono-testkit = { path = "crates/ono-testkit", version = "0.0.1" }
 

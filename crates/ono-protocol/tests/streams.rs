@@ -387,3 +387,20 @@ async fn should_cap_the_credit_window_at_the_limit_however_much_is_asked_for() {
         "nothing is produced until something is asked for"
     );
 }
+
+#[tokio::test]
+async fn should_end_the_serving_side_cleanly_when_the_link_is_dropped() {
+    let fixture = connect().await;
+
+    drop(fixture.link);
+
+    let outcome = within(fixture.server)
+        .await
+        .expect("the serving task does not panic");
+    assert_eq!(
+        outcome,
+        Ok(()),
+        "dropping the local end hangs up the link, and a caller hanging up is a successful \
+         end of session for the remote end"
+    );
+}

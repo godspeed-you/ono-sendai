@@ -328,7 +328,9 @@ struct Opened {
 /// The local end of a remote link.
 ///
 /// A link is opened once, and then drives as many concurrent queries, subscriptions and actions
-/// as the peer's stream limit allows.
+/// as the peer's stream limit allows. Dropping it hangs up: pending control frames are flushed,
+/// the transport is shut down, and the remote end observes an ordinary end of session — which
+/// is what lets an agent loop finish with success when its caller simply goes away.
 #[derive(Debug)]
 pub struct Link {
     inner: Arc<LinkInner>,
@@ -496,6 +498,14 @@ impl Link {
             unacknowledged: 0,
             finished: false,
         })
+    }
+}
+
+impl Drop for Link {
+    fn drop(&mut self) {
+        // The reader task shares `LinkInner` (and with it the frame sink), so the sink cannot
+        // close by going out of scope; the link's owner is the one who says goodbye.
+        self.inner.frames.hangup();
     }
 }
 

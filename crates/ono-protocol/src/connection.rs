@@ -31,16 +31,34 @@ use crate::{FRAME_HEADER_LEN, Frame, Limits, decode, encode};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Gone;
 
+/// What the writer task is asked to do next.
+#[derive(Debug)]
+enum Outbound {
+    /// Put this frame on the wire.
+    Frame(Frame),
+    /// Flush what is queued ahead of this and shut the wire down.
+    ///
+    /// Hanging up is a queue entry rather than dropping the sink because the sink is shared:
+    /// the reader task holds it to grant credit and send cancels, so it going out of scope
+    /// cannot be the close signal — the owner of the link says goodbye explicitly.
+    Hangup,
+}
+
 /// Where every frame this end sends is queued for the writer task.
 #[derive(Debug, Clone)]
 pub(crate) struct FrameSink {
-    sender: mpsc::UnboundedSender<Frame>,
+    sender: mpsc::UnboundedSender<Outbound>,
 }
 
 impl FrameSink {
     /// Queues a frame. Never waits: see the module documentation.
     pub(crate) fn send(&self, frame: Frame) -> Result<(), Gone> {
-        self.sender.send(frame).map_err(|_| Gone)
+        self.sender.send(Outbound::Frame(frame)).map_err(|_| Gone)
+    }
+
+    /// Flushes everything queued so far, then shuts the transport down.
+    pub(crate) fn hangup(&self) {
+        let _ = self.sender.send(Outbound::Hangup);
     }
 }
 
@@ -49,11 +67,15 @@ pub(crate) fn spawn_writer<W>(writer: W, limits: Limits) -> FrameSink
 where
     W: AsyncWrite + Send + Unpin + 'static,
 {
-    let (sender, mut receiver) = mpsc::unbounded_channel::<Frame>();
+    let (sender, mut receiver) = mpsc::unbounded_channel::<Outbound>();
     tokio::spawn(async move {
         let mut writer = writer;
         let mut buffer = BytesMut::new();
-        while let Some(frame) = receiver.recv().await {
+        while let Some(outbound) = receiver.recv().await {
+            let frame = match outbound {
+                Outbound::Frame(frame) => frame,
+                Outbound::Hangup => break,
+            };
             buffer.clear();
             if encode(&frame, &limits, &mut buffer).is_err() {
                 // A frame this end built that this end would refuse to read is a bug here, not a

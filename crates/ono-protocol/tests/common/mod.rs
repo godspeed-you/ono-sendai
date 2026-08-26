@@ -163,7 +163,9 @@ pub fn server_config() -> ServerConfig {
             ProviderDescriptor::new("linux.procfs")
                 .with_targets(["process"])
                 .with_capabilities(["process.list"])
-                .with_capability(&Capability::new("process.signal", Risk::Mutate).needing_elevation()),
+                .with_capability(
+                    &Capability::new("process.signal", Risk::Mutate).needing_elevation(),
+                ),
         )
         .with_provider(
             ProviderDescriptor::new("linux.systemd")
