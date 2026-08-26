@@ -228,6 +228,16 @@ commands:
     privilege: none
     streaming: true
     phase: B
+    note: >-
+      Serialization emits canonical data values with no Ono envelope: a record is a plain object
+      of its fields (declared fields first, then the extensions a provider attached), a byte size
+      is its number of bytes, and a semantic scalar is its canonical form (spec §33.5). No schema
+      id and no provenance block reach the wire — spec §12.3 sends this document to a process
+      that has never heard of Ono, and provenance stays reachable through `inspect` (spec §10.7).
+      A value JSON has no form for — an integer beyond `i64`, a non-finite float, bytes that are
+      not text — is written as its canonical string rather than as a rounded number, so nothing
+      is silently lost (spec §12.2). The consequence is that `to` is one-way: `from json` reads
+      the document back as plain maps, which is what making the boundary explicit costs.
     examples:
       - get process | to json
       - get process | to json --pretty

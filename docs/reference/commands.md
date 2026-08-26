@@ -2383,7 +2383,7 @@ Show the type or schema of a value or a command's output.
 
 | name | type | meaning |
 |---|---|---|
-| `subject` | `string` | The command or expression to describe; omitted when a value arrives through the pipeline. |
+| `subject` | `string` | The command or expression to describe, written as words or quoted; omitted when a value arrives through the pipeline. |
 
 **Examples**
 

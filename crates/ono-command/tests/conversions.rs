@@ -24,12 +24,26 @@ async fn should_serialize_a_stream_as_one_json_document() {
 
     let json: serde_json::Value =
         serde_json::from_str(&ran.text()).expect("`to json` writes a JSON document");
-    let rows = json.as_array().expect("a stream serializes as an array");
-    assert_eq!(rows.len(), 3);
     assert_eq!(
-        rows[0]["$record"]["fields"]["name"],
-        serde_json::json!("alpha"),
-        "a record keeps its schema and its fields (ADR-0016 item 6)"
+        json,
+        serde_json::json!([{"name": "alpha"}, {"name": "beta"}, {"name": "gamma"}]),
+        "spec §33.5: the data, with no Ono envelope around it — an external tool reads this"
+    );
+}
+
+#[tokio::test]
+async fn should_write_an_empty_stream_as_an_empty_document() {
+    let ran = run(
+        "get process | where pid == 99 | to json",
+        &providers(FixtureProvider::new()),
+    )
+    .await
+    .expect("the pipeline runs");
+
+    assert_eq!(
+        ran.text().trim(),
+        "[]",
+        "a stream that held nothing is an empty array, not nothing at all"
     );
 }
 
@@ -65,13 +79,15 @@ async fn should_keep_a_semantic_scalar_canonical_unless_a_human_form_was_asked_f
     .expect("the pipeline runs")
     .text();
 
-    assert!(
-        canonical.contains("$bytesize"),
-        "spec §33.5: canonical unless a human format is explicitly requested — {canonical}"
+    assert_eq!(
+        canonical.trim(),
+        "[2048]",
+        "spec §33.5: the canonical value, not a display string and not a tagged envelope"
     );
-    assert!(
-        human.contains("2.00 KiB"),
-        "`--human` shows the display form — {human}"
+    assert_eq!(
+        human.trim(),
+        r#"["2.00 KiB"]"#,
+        "`--human` shows the display form, and only when it was asked for"
     );
 }
 
@@ -92,6 +108,46 @@ async fn should_round_trip_a_value_through_json() {
             Value::string("gamma")
         ],
         "spec §46: what `to json` wrote, `from json` reads back"
+    );
+}
+
+#[tokio::test]
+async fn should_read_back_what_to_json_wrote_as_ordinary_values() {
+    // Spec §12.3 makes the boundary explicit: the schema identity does not survive the crossing,
+    // which is the price of a document an external tool can read. What must survive is the data.
+    let ran = run(
+        "get process | select name size | to json | from json",
+        &providers(FixtureProvider::new()),
+    )
+    .await
+    .expect("the pipeline runs");
+
+    let row = ran.values()[1].as_map().expect("a row reads back as a map");
+    assert_eq!(
+        row.get("name"),
+        Some(&Value::string("beta")),
+        "a string comes back a string"
+    );
+    assert_eq!(
+        row.get("size"),
+        Some(&Value::Int(2048)),
+        "a number comes back a number, not a tagged object"
+    );
+}
+
+#[tokio::test]
+async fn should_write_a_yaml_document_without_an_ono_envelope() {
+    let ran = run(
+        "get process | select name | to yaml",
+        &providers(FixtureProvider::new()),
+    )
+    .await
+    .expect("the pipeline runs");
+
+    assert_eq!(
+        ran.text(),
+        "- name: alpha\n- name: beta\n- name: gamma\n",
+        "spec §33.5 applies to every serializer, not only to JSON"
     );
 }
 
@@ -118,6 +174,24 @@ async fn should_write_a_csv_with_one_header_row() {
     .expect("the pipeline runs");
 
     assert_eq!(ran.text(), "name,owner\nalpha,root\nbeta,ono\ngamma,root\n");
+}
+
+#[tokio::test]
+async fn should_write_a_csv_cell_as_a_canonical_scalar_with_no_envelope_around_it() {
+    // The other half of spec §33.5: a cell holds the value's canonical text — the form that
+    // parses back, keeping the unit — never a display string and never a tagged object.
+    let ran = run(
+        "get process | select name size | to csv",
+        &providers(FixtureProvider::new()),
+    )
+    .await
+    .expect("the pipeline runs");
+
+    assert_eq!(
+        ran.text(),
+        "name,size\nalpha,512B\nbeta,2048B\ngamma,null\n",
+        "spec §10.5 keeps `gamma`'s unknown size a `null` rather than an empty cell"
+    );
 }
 
 #[tokio::test]

@@ -162,6 +162,13 @@ async fn emit(sink: &StreamSink, produced: Result<Vec<Value>, ErrorValue>) {
 /// JSON array, a CSV with one header, one text line per value. A single-valued stream is not
 /// special-cased into a bare object: a script whose output shape depended on how many rows the
 /// machine happened to have would be a script that breaks on a quiet day.
+///
+/// Every format here writes the **data**, in the shape spec §33.5 prints: a record is a plain
+/// object of its fields, a byte size is its number of bytes, and no Ono envelope reaches the
+/// wire. Spec §12.3 sends this document to a process that has never heard of Ono, so a schema id
+/// or a provenance block in it would be noise the reader cannot use — provenance stays reachable
+/// through `inspect` (spec §10.7). The tagged codec of ADR-0016 item 6 keeps its own job: round
+/// trips inside the system, where a value must come back as the value it was.
 fn serialize(format: &str, values: &[Value], options: &Options) -> Result<Vec<Value>, ErrorValue> {
     let rendered: Vec<Value> = if options.human {
         values.iter().map(humanise).collect()
@@ -170,14 +177,14 @@ fn serialize(format: &str, values: &[Value], options: &Options) -> Result<Vec<Va
     };
     let text = match format {
         "json" => {
-            let json = ono_value::to_json(&Value::list(rendered));
+            let json = ono_value::to_json_data(&Value::list(rendered));
             if options.pretty {
                 serde_json::to_string_pretty(&json).map_err(json_failed)?
             } else {
                 serde_json::to_string(&json).map_err(json_failed)?
             }
         }
-        "yaml" => ono_value::to_yaml(&Value::list(rendered))?,
+        "yaml" => ono_value::to_yaml_data(&Value::list(rendered))?,
         "csv" => ono_value::to_csv(&rendered)?,
         "text" => ono_value::to_text(&rendered, options.field.as_deref())?,
         "bytes" => {

@@ -33,23 +33,10 @@ async fn should_carry_a_whole_pipeline_from_a_provider_to_json() {
 
     assert_eq!(
         json,
-        serde_json::json!([{
-            "$record": {
-                "schema": "ono.selection/1",
-                "fields": { "name": "beta" },
-                "extra": {},
-                "provenance": {
-                    "provider": "ono.pipeline",
-                    "observed": serde_json::Value::Null,
-                    "source": serde_json::Value::Null,
-                    "link": "local",
-                    "schema": "ono.selection/1",
-                    "confidence": serde_json::Value::Null
-                }
-            }
-        }]),
+        serde_json::json!([{ "name": "beta" }]),
         "one row survives the filter: `alpha` is under the threshold and `gamma`'s size is \
-         unknown, which ADR-0014 says is not the same as being over it"
+         unknown, which ADR-0014 says is not the same as being over it — and spec §33.5 writes \
+         it as the data alone, with no Ono envelope for an external tool to trip over"
     );
     assert!(
         ran.failures().is_empty(),

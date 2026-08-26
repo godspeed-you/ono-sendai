@@ -6,6 +6,10 @@
 //! rules, the same guarantees, the same accepted ambiguity around a foreign document whose map
 //! happens to have exactly one `$`-prefixed key.
 //!
+//! [`to_yaml_data`] is the other half of the pair, mirroring [`to_json_data`]: the interop
+//! encoding of spec §33.5, with no Ono envelope around the data, which is what the user-facing
+//! `to yaml` writes.
+//!
 //! ```text
 //! $record:
 //!   schema: ono.process/1
@@ -17,7 +21,7 @@
 
 use ono_core::ErrorCode;
 
-use crate::{ErrorValue, SchemaRegistry, Value, from_json, to_json};
+use crate::{ErrorValue, SchemaRegistry, Value, from_json, to_json, to_json_data};
 
 /// Serializes a value as a YAML document.
 ///
@@ -56,4 +60,24 @@ pub fn from_yaml(text: &str, schemas: &SchemaRegistry) -> Result<Value, ErrorVal
             .with_help(error.to_string())
     })?;
     from_json(&json, schemas)
+}
+
+/// Serializes a value as YAML for a reader that knows nothing about Ono (spec §33.5, §12.3).
+///
+/// This is what `to yaml` writes: the same interop job as [`to_json_data`], in YAML's syntax.
+///
+/// ```
+/// use ono_value::{ByteSize, Value, to_yaml_data};
+/// assert_eq!(to_yaml_data(&Value::ByteSize(ByteSize::from_bytes(1024)))?, "1024\n");
+/// # Ok::<(), ono_value::ErrorValue>(())
+/// ```
+///
+/// # Errors
+///
+/// Returns [`ErrorCode::TypeMismatch`] if the document cannot be emitted as YAML.
+pub fn to_yaml_data(value: &Value) -> Result<String, ErrorValue> {
+    serde_yaml_ng::to_string(&to_json_data(value)).map_err(|error| {
+        ErrorValue::new(ErrorCode::TypeMismatch, "the value could not be serialized")
+            .with_help(error.to_string())
+    })
 }

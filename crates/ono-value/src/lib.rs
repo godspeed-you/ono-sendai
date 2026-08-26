@@ -22,6 +22,9 @@
 //!   the serializations of spec §7.1, §12.2, §12.4 and §46. Each carries what its format can
 //!   carry and returns a structured error for what it cannot, so no conversion is ever a
 //!   silent lie.
+//! - [`to_json_data`] and [`to_yaml_data`] — the interop serializations of spec §33.5: the data
+//!   alone, for a tool that has never heard of Ono. `to json` and `to yaml` write these; the
+//!   tagged forms above stay for round trips inside the system.
 //!
 //! # The three meanings of "nothing"
 //!
@@ -82,7 +85,7 @@ pub use builtin::{action_result_schema, builtin_schemas};
 pub use csv::{from_csv, to_csv};
 pub use decimal::Decimal;
 pub use error::{ErrorValue, ValueRef};
-pub use json::{from_json, from_json_str, to_json, to_json_string};
+pub use json::{from_json, from_json_str, to_json, to_json_data, to_json_string};
 pub use map::MapValue;
 pub use net::IpNetwork;
 pub use provenance::{Link, Provenance};
@@ -97,4 +100,4 @@ pub use text::{canonical_text, to_text};
 pub use units::{ByteSize, ByteUnit, Duration, DurationUnit, Percent};
 pub use uuid::Uuid;
 pub use value::Value;
-pub use yaml::{from_yaml, to_yaml};
+pub use yaml::{from_yaml, to_yaml, to_yaml_data};

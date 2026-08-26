@@ -27,6 +27,31 @@
 //! The one ambiguity this design accepts: a foreign document whose object happens to have
 //! exactly one key named `$bytesize` decodes as a byte size. Tagging is what makes the round trip
 //! lossless, and no untagged encoding can be both lossless and natural.
+//!
+//! # Two encodings, two jobs
+//!
+//! The table above is the **lossless** encoding: the one the KUANG/11 protocol, a remote link and
+//! `from_json` read, where a value must come back as the value it was.
+//!
+//! [`to_json_data`] is the **interop** encoding of spec §33.5, and it is what the user-facing
+//! `to json` writes, because spec §12.3 sends that document to a tool that has never heard of
+//! Ono (`get process | to json | external-tool`). It is the data and nothing else:
+//!
+//! | Value | Interop JSON |
+//! |---|---|
+//! | `Record` | `{"pid": 812, "name": "postgres"}` — declared fields, then extensions |
+//! | `ByteSize(1288490188)` | `1288490188` |
+//! | `Percent(18.1)`, `Port(8080)` | `18.1`, `8080` |
+//! | `Duration`, `Timestamp`, `Uuid`, `Ip`, `IpNetwork`, `Regex`, `Path` | their canonical string |
+//! | `Decimal` | a number where JSON holds it exactly, else its canonical string |
+//! | `Bytes` | a hex string |
+//! | `Error` | `{"error": {"code": …, "message": …}}` |
+//!
+//! A record loses its schema id and its provenance on the way out, which is deliberate: spec
+//! §33.5 prints the fields alone, and provenance is reachable through `inspect` (spec §10.7)
+//! rather than through the wire format. That makes the interop encoding one-way — `from json`
+//! reads the document back as plain maps, which is exactly what spec §12.3 means by making the
+//! boundary explicit.
 
 use std::sync::Arc;
 
@@ -90,6 +115,117 @@ pub fn to_json(value: &Value) -> Json {
         Value::Record(record) => tagged("$record", record_to_json(record)),
         Value::Error(error) => tagged("$error", error_to_json(error)),
     }
+}
+
+/// Encodes a value as JSON for a reader that knows nothing about Ono (spec §33.5, §12.3).
+///
+/// This is what `to json` writes. A record becomes a plain object of its fields, a semantic
+/// scalar becomes its natural JSON form, and no Ono envelope reaches the wire.
+///
+/// ```
+/// use ono_value::{ByteSize, Value, to_json_data};
+/// let json = to_json_data(&Value::ByteSize(ByteSize::from_bytes(1024)));
+/// assert_eq!(json.to_string(), "1024");
+/// ```
+#[must_use]
+pub fn to_json_data(value: &Value) -> Json {
+    match value {
+        Value::Null => Json::Null,
+        Value::Bool(value) => Json::Bool(*value),
+        // An integer JSON cannot hold is written as its digits rather than as a rounded number:
+        // a wrong number is worse than a string a reader has to parse.
+        Value::Int(value) => i64::try_from(*value).map_or_else(
+            |_| Json::String(value.to_string()),
+            |small| Json::Number(Number::from(small)),
+        ),
+        Value::Float(value) => Number::from_f64(*value).map_or_else(
+            || Json::String(non_finite_name(*value).to_owned()),
+            Json::Number,
+        ),
+        Value::Decimal(value) => decimal_to_json_data(*value),
+        Value::String(value) => Json::String(value.to_string()),
+        // Hex, because spec §12.2 requires undecodable bytes never to be lost and JSON has no
+        // byte type to hold them in.
+        Value::Bytes(value) => Json::String(crate::hex::encode(value)),
+        Value::Path(value) => match value.to_str() {
+            Some(text) => Json::String(text.to_owned()),
+            // A path is bytes on Unix, so one that is not text falls back to the same hex form
+            // for the same reason.
+            None => Json::String(crate::hex::encode(std::os::unix::ffi::OsStrExt::as_bytes(
+                value.as_os_str(),
+            ))),
+        },
+        Value::Timestamp(value) => Json::String(value.to_string()),
+        Value::Duration(value) => Json::String(value.exact()),
+        Value::ByteSize(value) => byte_count(value.bytes()),
+        Value::Percent(value) => Number::from_f64(value.value()).map_or_else(
+            || Json::String(non_finite_name(value.value()).to_owned()),
+            Json::Number,
+        ),
+        Value::Regex(value) => Json::String(value.source().to_owned()),
+        Value::Uuid(value) => Json::String(value.to_string()),
+        Value::Ip(value) => Json::String(value.to_string()),
+        Value::IpNetwork(value) => Json::String(value.to_string()),
+        Value::Port(value) => Json::Number(Number::from(*value)),
+        Value::List(items) => Json::Array(items.iter().map(to_json_data).collect()),
+        Value::Map(map) => Json::Object(
+            map.iter()
+                .map(|(key, value)| (key.to_owned(), to_json_data(value)))
+                .collect(),
+        ),
+        Value::Record(record) => Json::Object(record_to_json_data(record)),
+        Value::Error(error) => tagged("error", error_to_json_data(error)),
+    }
+}
+
+/// The fields of a record, declared ones first, then the extensions a provider attached.
+///
+/// The extensions are merged rather than dropped: they are real values the provider carried, and
+/// losing them silently is the failure mode spec §35.3 exists to prevent. A declared field wins a
+/// name collision, because the schema is the contract.
+fn record_to_json_data(record: &RecordValue) -> Map<String, Json> {
+    let mut object = Map::new();
+    for (key, value) in record.extra().iter() {
+        object.insert(key.to_owned(), to_json_data(value));
+    }
+    for (index, field) in record.schema().fields().iter().enumerate() {
+        let value = record.field_at(index).unwrap_or(&Value::Null);
+        object.insert(field.name().to_owned(), to_json_data(value));
+    }
+    object
+}
+
+/// A decimal as a JSON number where that is exact, and as its canonical text where it is not.
+fn decimal_to_json_data(value: Decimal) -> Json {
+    if value.scale() == 0
+        && let Ok(whole) = i64::try_from(value.mantissa())
+    {
+        return Json::Number(Number::from(whole));
+    }
+    if let Some(number) = Number::from_f64(value.to_f64())
+        && Decimal::parse(&number.to_string()).is_ok_and(|back| back == value)
+    {
+        return Json::Number(number);
+    }
+    Json::String(value.to_string())
+}
+
+/// A failure, in the smallest shape that still shows a foreign reader that the value failed.
+///
+/// The `code` is the stable identifier of the spec §43 taxonomy, so a script can branch on it;
+/// the `message` is what a person reads. Everything else an [`ErrorValue`] carries — help, cause,
+/// metadata — is Ono's own diagnostic apparatus and belongs to `inspect`, not to interop.
+fn error_to_json_data(error: &ErrorValue) -> Json {
+    let mut object = Map::with_capacity(2);
+    object.insert(
+        "code".to_owned(),
+        Json::String(error.code().name().to_owned()),
+    );
+    object.insert(
+        "message".to_owned(),
+        Json::String(error.message().to_owned()),
+    );
+    Json::Object(object)
 }
 
 /// Encodes a value as a JSON document.
