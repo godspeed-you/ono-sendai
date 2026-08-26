@@ -426,8 +426,12 @@ fn run_stage_list(
 
     // A pipeline with a native command in it runs through the object pipeline of spec §5, which
     // threads bytes across the boundary of spec §12.3 where a child process sits on one side.
-    // Background is not offered there yet: a native stage has no process group to disown.
-    if !background && crate::native::claims(session, list) {
+    if crate::native::claims(session, list) {
+        if background {
+            // Spec §18.4: a backgrounded native pipeline is a job — listed, addressable,
+            // stoppable — never a hidden thread (ADR-0024).
+            return crate::native::run_background(session, list, source);
+        }
         return crate::native::run(session, list, source);
     }
 

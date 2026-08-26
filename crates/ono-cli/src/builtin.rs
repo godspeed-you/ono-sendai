@@ -178,8 +178,31 @@ fn jobs(session: &mut Session) -> Eval<ExitStatus> {
     // Reaping first, so what is printed is what is true now rather than what was true last time
     // the prompt was drawn.
     let _ = session.executor().poll_jobs();
-    for job in session.executor().jobs() {
-        println!("[{}] {} {}", job.id, describe(&job.state), job.command);
+    let mut lines: Vec<(u32, String)> = session
+        .executor()
+        .jobs()
+        .iter()
+        .map(|job| {
+            (
+                job.id.number(),
+                format!("[{}] {} {}", job.id, describe(&job.state), job.command),
+            )
+        })
+        .collect();
+    for job in session.native_jobs() {
+        let state = if job.handle.is_finished() {
+            "done"
+        } else {
+            "running"
+        };
+        lines.push((
+            job.number,
+            format!("[%{}] {} {}", job.number, state, job.command),
+        ));
+    }
+    lines.sort_by_key(|(number, _)| *number);
+    for (_, line) in lines {
+        print_safely(&line);
     }
     Ok(ExitStatus::SUCCESS)
 }
@@ -193,6 +216,17 @@ fn describe(state: &ono_process::JobState) -> &'static str {
 }
 
 fn foreground(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
+    // A native job answers to the same numbers (spec §18.4). Foregrounding one reattaches its
+    // rendering; Ctrl-C then ends it, exactly as it ends a foreground watch.
+    if let Some(number) = arguments.first().and_then(|text| {
+        text.to_string_lossy()
+            .trim_start_matches('%')
+            .parse::<u32>()
+            .ok()
+    }) && session.native_jobs().iter().any(|job| job.number == number)
+    {
+        return crate::context_jobs::attach(session, number);
+    }
     let id = job_id(session, arguments)?;
     let outcome = session
         .executor()

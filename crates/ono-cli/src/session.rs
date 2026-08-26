@@ -47,6 +47,26 @@ pub struct Session {
     /// Recent structured results, newest last (spec §20.2). Bounded, so a long session cannot
     /// hold every table it ever printed.
     results: std::collections::VecDeque<Vec<Value>>,
+    /// Backgrounded native pipelines (spec §18.4, ADR-0024): jobs in the same table as external
+    /// commands, numbered from the executor's own sequence.
+    native_jobs: Vec<NativeJob>,
+}
+
+/// One backgrounded native pipeline.
+#[derive(Debug)]
+pub struct NativeJob {
+    /// The number the user addresses it by, reserved from the executor's sequence.
+    pub number: u32,
+    /// The pipeline as it was typed.
+    pub command: String,
+    /// Rows keyed by identity — what a live view folds events into, and what `fg` repaints.
+    pub model: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, Value>>>,
+    /// Values a bounded pipeline produced, delivered when the job is foregrounded or reaped.
+    pub values: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    /// The failures the stream reported.
+    pub failures: std::sync::Arc<std::sync::Mutex<Vec<ono_value::ErrorValue>>>,
+    /// The task driving the stream; aborting it drops every receiver, which stops the producers.
+    pub handle: tokio::task::JoinHandle<()>,
 }
 
 /// One pushed frame, with the shell-side state `leave` restores.
@@ -99,6 +119,7 @@ impl Session {
             providers: None,
             frames: Vec::new(),
             results: std::collections::VecDeque::new(),
+            native_jobs: Vec::new(),
         }
     }
 
@@ -115,6 +136,28 @@ impl Session {
                 .ok();
         }
         self.runtime.as_ref()
+    }
+
+    /// Adds a backgrounded native pipeline to the job table.
+    pub fn push_native_job(&mut self, job: NativeJob) {
+        self.native_jobs.push(job);
+    }
+
+    /// The backgrounded native pipelines, oldest first.
+    #[must_use]
+    pub fn native_jobs(&self) -> &[NativeJob] {
+        &self.native_jobs
+    }
+
+    /// Removes and answers native job `number`, releasing its number.
+    pub fn take_native_job(&mut self, number: u32) -> Option<NativeJob> {
+        let index = self
+            .native_jobs
+            .iter()
+            .position(|job| job.number == number)?;
+        let job = self.native_jobs.remove(index);
+        self.executor.release_job_number(number);
+        Some(job)
     }
 
     /// Retains a finished pipeline's values for `@-1` and `@N` (spec §6.4, §20.2).

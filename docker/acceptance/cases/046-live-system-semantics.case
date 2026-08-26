@@ -1,0 +1,31 @@
+# Phase F (spec §37): live system semantics. `watch` turns a query into a stream of updates,
+# polling is explicit in every event (§18.2), a terminal renders in place while a pipe gets
+# ordinary serialised events (§18.3), and a backgrounded live view is a job — listed,
+# addressable, collectable — never a hidden thread (§18.4, ADR-0024).
+case: the machine is watched live, and live views are jobs
+pty: true
+columns: 100
+lines: 30
+timeout: 120
+stdin: |
+  watch process --every 100ms | take 3
+  echo live-done-$?
+  watch process --every 200ms &
+  jobs
+  get process | count &
+  exit
+run: |
+  echo "== piped mode: ordinary events through a serializer (spec 18.3) =="
+  ono -c 'watch process --every 100ms | take 2 | select kind source | to json'
+
+  echo "== an endless stream into a pipe is refused with the fix =="
+  ono -c 'watch process' 2>&1 | head -2
+
+  echo "== a live view at a real terminal, and background jobs =="
+  ono
+exit: 0
+stdout-contains: [{"kind":"snapshot","source":"poll"},{"kind":"snapshot","source":"poll"}]
+stdout-contains: to json
+stdout-contains: live-done-0
+stdout-contains: running watch process
+stdout-not-contains: panicked

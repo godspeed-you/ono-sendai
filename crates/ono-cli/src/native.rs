@@ -193,6 +193,149 @@ pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitSt
     run_from(session, list, source, 0, None)
 }
 
+/// Backgrounds a native pipeline as a job (spec §18.4, ADR-0024).
+///
+/// The stream chain is built exactly as a foreground run builds it, then driven by a task on the
+/// session runtime instead of being awaited: events fold into a row model the way the live view
+/// folds them, other values collect, and `fg` later repaints or prints whichever the pipeline
+/// produced. Aborting the task drops every receiver, which stops the producers — the same
+/// cancellation the foreground path uses.
+///
+/// # Errors
+///
+/// The structured error of whichever stage could not be resolved or bound, or a refusal when
+/// the pipeline mixes in external stages, which a job with no process group cannot carry yet.
+pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitStatus> {
+    let registry = registry().map_err(Flow::Failed)?;
+    let table = implementations().map_err(Flow::Failed)?;
+    let segments = segments(session, list, 0, false).ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::ResolveCommandNotFound,
+            "the command registry could not be read",
+        ))
+    })?;
+    let [Segment::Native(indices)] = segments.as_slice() else {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                "a background job cannot mix native stages with external programs yet",
+            )
+            .with_help("background the native part alone, or serialise into a file"),
+        ));
+    };
+
+    let mut bound: Vec<(&'static CommandContract, BoundArguments)> = Vec::new();
+    let mut structured = true;
+    for index in indices {
+        let stage = &list.stages[*index];
+        let contract = native_contract(session, registry, stage, structured).ok_or_else(|| {
+            Flow::Failed(ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                format!("`{}` is not a native command here", stage.span),
+            ))
+        })?;
+        let resolved = registry
+            .resolve(head_name(stage), &stage.arguments)
+            .map_err(Flow::Failed)?;
+        let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
+        structured = !produces_bytes(contract);
+        bound.push((contract, arguments));
+    }
+
+    let command_text = source
+        .get(list.span.start() as usize..list.span.end() as usize)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let scope = std::sync::Arc::new(Scope::new());
+    let context = session.context();
+    let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::IoPermissionDenied,
+            "the operating system refused to start the pipeline runtime",
+        ))
+    })?;
+    let providers = providers.clone();
+
+    let model = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let values = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let task_model = std::sync::Arc::clone(&model);
+    let task_values = std::sync::Arc::clone(&values);
+    let task_failures = std::sync::Arc::clone(&failures);
+    let handle = runtime.spawn(async move {
+        let mut stream: Option<ValueStream> = None;
+        for (contract, arguments) in &bound {
+            let started = std::time::Instant::now();
+            let mut invocation = Invocation::new(contract, arguments, &providers)
+                .with_scope(std::sync::Arc::clone(&scope))
+                .with_context(context.clone());
+            if let Some(previous) = stream.take() {
+                invocation = invocation.with_input(previous);
+            }
+            match table.run(contract.id(), &mut invocation).await {
+                Ok(Outcome::Values(produced)) => stream = Some(produced),
+                Ok(Outcome::Actions(outcomes)) => {
+                    let elapsed = ono_value::Duration::from_nanoseconds(
+                        i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),
+                    );
+                    stream = Some(ValueStream::from_values(
+                        outcomes
+                            .into_iter()
+                            .map(|outcome| outcome.into_record(elapsed).into_value()),
+                    ));
+                }
+                Err(error) => {
+                    task_failures
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(error);
+                    return;
+                }
+            }
+        }
+        let Some(mut stream) = stream else {
+            return;
+        };
+        while let Some(event) = stream.recv().await {
+            match event {
+                StreamEvent::Value(value) => {
+                    if !crate::live::apply(
+                        &mut task_model
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner),
+                        &value,
+                    ) {
+                        task_values
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(value);
+                    }
+                }
+                StreamEvent::Failure(error) => {
+                    task_failures
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(error);
+                }
+            }
+        }
+    });
+
+    let number = session.executor().reserve_job_number();
+    eprintln!("[%{number}]");
+    session.push_native_job(crate::session::NativeJob {
+        number,
+        command: command_text,
+        model,
+        values,
+        failures,
+        handle,
+    });
+    Ok(ExitStatus::SUCCESS)
+}
+
 /// Runs a stage list whose head has already produced values.
 ///
 /// A pipeline may start with a value instead of a command — `$hot | where …`, `@-1 | count` —
@@ -625,7 +768,7 @@ fn write_failed(error: std::io::Error) -> Flow {
 }
 
 /// The terminal's size for a live view, with the fallbacks the sink already uses.
-fn live_geometry() -> (usize, usize) {
+pub(crate) fn live_geometry() -> (usize, usize) {
     let (width, height) = ono_editor::terminal_size().unwrap_or((0, 0));
     (width.max(20), if height == 0 { 24 } else { height })
 }

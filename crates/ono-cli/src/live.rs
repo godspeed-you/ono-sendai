@@ -66,7 +66,10 @@ pub async fn show(stream: ValueStream, width: usize, height: usize) -> Vec<Error
 }
 
 /// Applies one event to the table model, answering whether anything changed.
-fn apply(rows: &mut BTreeMap<String, Value>, event: &Value) -> bool {
+///
+/// Answers `false` for a value that is not an event at all, which is how a caller folding a
+/// mixed stream tells events from ordinary values.
+pub(crate) fn apply(rows: &mut BTreeMap<String, Value>, event: &Value) -> bool {
     let Ok(record) = event.as_record() else {
         return false;
     };

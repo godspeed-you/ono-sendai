@@ -10,6 +10,7 @@
 pub mod builtin;
 pub mod config;
 pub mod context;
+pub mod context_jobs;
 pub mod eval;
 pub mod expand;
 pub mod invocation;

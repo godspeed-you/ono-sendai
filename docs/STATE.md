@@ -71,9 +71,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase F — live semantics per ADR-0024: `watch`, the
-  event/snapshot model, in-place rendering, native background jobs, stable object identity —
-  files: `crates/ono-pipeline/**`, `crates/ono-provider-*/**`, `crates/ono-cli/**`
+- [orchestrator | 2026-08-26] Phase F — remaining: acceptance case 046 green, tick the box,
+  tag `phase-f`. Delivered so far: Ctrl-C cancellation for native pipelines, `watch` as a
+  polling diff (ADR-0034), the live in-place table, `ono.process-event/1`, native background
+  jobs sharing the external job number sequence, `fg` reattaching a live view — files:
+  `crates/ono-cli/**`, `crates/ono-command/**`
 
 _No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
 KUANG/11 contracts, adversarial review, security review) have all reported and landed._
@@ -82,6 +84,13 @@ KUANG/11 contracts, adversarial review, security review) have all reported and l
 
 ## Next up (ordered)
 
+- [ ] Remaining `*-event/1` schemas (service, socket, interface, route, mount, file, user,
+  group, container, link, host) — each un-deferred as its watch is exercised; the watch runtime
+  is generic already — exit test: a watch.rs case per target
+- [ ] `kill %N` for a native job (today: `fg` then Ctrl-C collects it) — exit test: a
+  jobs_native.rs case
+- [ ] Provider-native subscriptions (netlink, D-Bus signals) switching `source` to
+  `subscription` (ADR-0034) — exit test: a watch.rs case against a subscribing fixture
 - [ ] Retained results and secrets: spec §17.5 policy must reach the retention of §20.2
   (ADR-0033 consequences) — exit test: a redacted field stays redacted in `@-1`
 - [ ] Provider options are silently ignored (`get process --user root` answers everything):

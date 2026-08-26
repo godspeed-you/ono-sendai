@@ -129,9 +129,12 @@ fn should_not_register_a_command_whose_phase_has_not_been_delivered() {
 async fn should_report_an_unimplemented_command_by_name_rather_than_failing_halfway() {
     // `resolve dns` is declared stable and nothing claims the `dns` target yet — the same shape
     // `watch process` had before phase F delivered it.
-    let error = run("resolve dns example.com", &providers(FixtureProvider::new()))
-        .await
-        .expect_err("`resolve dns` has no implementation yet");
+    let error = run(
+        "resolve dns example.com",
+        &providers(FixtureProvider::new()),
+    )
+    .await
+    .expect_err("`resolve dns` has no implementation yet");
 
     assert_eq!(error.code(), ErrorCode::ResolveCommandNotFound);
     assert!(

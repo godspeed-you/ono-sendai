@@ -129,6 +129,9 @@ pub struct Executor {
     terminal: Terminal,
     jobs: Vec<Tracked>,
     foreground: Arc<AtomicI32>,
+    /// Numbers handed to jobs this executor does not run — the shell's native pipelines — so
+    /// one sequence covers both kinds (spec §18.4).
+    reserved: std::collections::BTreeSet<u32>,
 }
 
 #[derive(Debug)]
@@ -167,6 +170,7 @@ impl Executor {
             terminal,
             jobs: Vec::new(),
             foreground: Arc::new(AtomicI32::new(0)),
+            reserved: std::collections::BTreeSet::new(),
         }
     }
 
@@ -564,17 +568,39 @@ impl Executor {
 
     /// Adds a pipeline to the job table under the lowest free job number.
     fn register(&mut self, running: Running) -> JobId {
+        let id = JobId::new(self.free_number());
+        self.jobs.push(Tracked { id, running });
+        id
+    }
+
+    /// The lowest job number neither tracked nor reserved.
+    fn free_number(&self) -> u32 {
         let mut number = 1;
         while self
             .jobs
             .iter()
             .any(|tracked| tracked.id.number() == number)
+            || self.reserved.contains(&number)
         {
             number += 1;
         }
-        let id = JobId::new(number);
-        self.jobs.push(Tracked { id, running });
-        id
+        number
+    }
+
+    /// Reserves the lowest free job number for a job this executor does not run.
+    ///
+    /// A native pipeline is not a process group, but its job lives in the same table the user
+    /// addresses with `fg %N` (spec §18.4) — so the numbers come from one sequence, and `fg 2`
+    /// can never be ambiguous between kinds.
+    pub fn reserve_job_number(&mut self) -> u32 {
+        let number = self.free_number();
+        self.reserved.insert(number);
+        number
+    }
+
+    /// Releases a number [`Executor::reserve_job_number`] handed out.
+    pub fn release_job_number(&mut self, number: u32) {
+        self.reserved.remove(&number);
     }
 
     fn locate(&self, id: JobId) -> Result<usize> {
