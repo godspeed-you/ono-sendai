@@ -368,6 +368,13 @@ fn run_stage_list(
         }
     }
 
+    // A pipeline with a native command in it runs through the object pipeline of spec §5, which
+    // threads bytes across the boundary of spec §12.3 where a child process sits on one side.
+    // Background is not offered there yet: a native stage has no process group to disown.
+    if !background && crate::native::claims(session, list) {
+        return crate::native::run(session, list, source);
+    }
+
     if session.mode() == Mode::Config {
         return Err(Flow::Failed(config_refusal("this command")));
     }
@@ -403,6 +410,114 @@ fn run_stage_list(
         ));
     }
     Ok(outcome.status())
+}
+
+/// Runs a run of adjacent external stages, threading bytes into and out of it.
+///
+/// Adjacent child processes are joined to each other by real pipes, exactly as before: ADR-0013
+/// keeps `yes | head -1` a genuine `SIGPIPE` rather than a buffer the shell drains. Bytes only
+/// pass through the shell where a native stage sits on one side of the boundary.
+///
+/// # Errors
+///
+/// The structured error of whichever stage could not be built or started.
+pub fn run_external_segment(
+    session: &mut Session,
+    list: &StageList,
+    indices: &[usize],
+    source: &str,
+    input: Option<Vec<u8>>,
+    last: bool,
+) -> Eval<(Option<Vec<u8>>, ExitStatus)> {
+    if session.mode() == Mode::Config {
+        return Err(Flow::Failed(config_refusal("this command")));
+    }
+
+    let capture = !last;
+    let mut built = ono_process::Pipeline::new();
+    for (position, index) in indices.iter().enumerate() {
+        let mut command = build_command(session, &list.stages[*index], source)?;
+        if position == 0
+            && let Some(bytes) = input.clone()
+        {
+            command = command.stdin(ono_process::Input::Bytes(bytes));
+        }
+        if position + 1 == indices.len() && capture {
+            command = command.stdout(ono_process::Output::Capture);
+        }
+        built = built.stage(command);
+    }
+
+    let outcome = session
+        .executor()
+        .run_foreground(&built)
+        .map_err(process_error)?;
+
+    if let ono_process::ForegroundOutcome::Completed(completed) = &outcome
+        && let Some(failure) = completed.failure()
+    {
+        return Err(Flow::FailedWith(
+            ErrorValue::new(failure.code(), failure.message().to_owned()),
+            outcome.status(),
+        ));
+    }
+
+    let bytes = capture.then(|| {
+        outcome
+            .completed()
+            .and_then(|completed| completed.stages().last())
+            .map(|stage| stage.stdout.clone())
+            .unwrap_or_default()
+    });
+    Ok((bytes, outcome.status()))
+}
+
+/// Opens the file a stage's redirections send its output to, if any.
+///
+/// A native stage writes through the shell rather than through a child, so its redirection has to
+/// be applied here. Only the output forms are meaningful: a native producer reads no bytes.
+///
+/// # Errors
+///
+/// The structured error of a redirection that cannot be understood or a file that cannot be
+/// opened.
+pub fn output_destination(
+    session: &mut Session,
+    stage: &Stage,
+    source: &str,
+) -> Eval<Option<std::fs::File>> {
+    let Some(redirection) = stage.redirections.last() else {
+        return Ok(None);
+    };
+    // The same reading of a redirection a child process gets, so `> f` means one thing in the
+    // shell however the stage on its left is run.
+    let (path, append) = match build_redirect(session, redirection, source)? {
+        Redirect::Write { path, .. } => (path, false),
+        Redirect::Append { path, .. } => (path, true),
+        Redirect::Read { .. } | Redirect::Duplicate { .. } => {
+            return Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    "a native command's output can only be sent to a file",
+                )
+                .with_help("send it through `to json` into a program to redirect it any other way"),
+            ));
+        }
+    };
+
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).write(true);
+    if append {
+        options.append(true);
+    } else {
+        options.truncate(true);
+    }
+    options.open(&path).map(Some).map_err(|error| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::IoNotFound,
+            format!("cannot open {}: {error}", path.display()),
+        ))
+    })
 }
 
 /// A redirection with no descriptor written means the obvious one: 0 for input, 1 for output.

@@ -35,6 +35,21 @@ impl Sink {
         }
     }
 
+    /// A sink for a file, laid out at the fixed width redirected output uses.
+    ///
+    /// Spec §4.6 requires deterministic bytes when the destination is not a terminal, so nothing
+    /// about this depends on the terminal that happens to be attached to the shell.
+    #[must_use]
+    pub fn for_file() -> Self {
+        Self {
+            width: terminal_width(false),
+            presentation: Presentation::Redirect,
+            theme: Theme::default(),
+            view: View::Table,
+            max_rows: None,
+        }
+    }
+
     /// Renders in a particular view rather than letting the values choose (spec §13.6).
     #[must_use]
     pub fn with_view(mut self, view: View) -> Self {
@@ -81,8 +96,22 @@ impl Sink {
     /// first. That is a property of tables, not of the pipeline: `to json` and the other
     /// serialising views stream, and a future in-place `watch` renderer (spec §18.3) will too.
     pub fn write(&self, values: &[Value]) {
-        if values.is_empty() {
+        let lines = self.render(values);
+        if lines.is_empty() {
             return;
+        }
+        let mut out = std::io::stdout().lock();
+        for line in lines {
+            let _ = writeln!(out, "{line}");
+        }
+        let _ = out.flush();
+    }
+
+    /// The lines this sink would write, for a caller that sends them somewhere else.
+    #[must_use]
+    pub fn render(&self, values: &[Value]) -> Vec<String> {
+        if values.is_empty() {
+            return Vec::new();
         }
         let renderer = Renderer::new();
         let mut layout = Layout::new(self.width);
@@ -90,14 +119,7 @@ impl Sink {
             layout = layout.max_rows(max_rows);
         }
 
-        let lines =
-            layout.render_view_styled(&renderer, values, self.view, &self.theme, self.presentation);
-
-        let mut out = std::io::stdout().lock();
-        for line in lines {
-            let _ = writeln!(out, "{line}");
-        }
-        let _ = out.flush();
+        layout.render_view_styled(&renderer, values, self.view, &self.theme, self.presentation)
     }
 }
 

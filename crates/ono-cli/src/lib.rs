@@ -12,6 +12,7 @@ pub mod config;
 pub mod eval;
 pub mod expand;
 pub mod invocation;
+pub mod native;
 pub mod providers;
 pub mod repl;
 pub mod report;

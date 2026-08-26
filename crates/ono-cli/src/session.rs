@@ -100,6 +100,22 @@ impl Session {
         self.runtime.as_ref()
     }
 
+    /// The runtime and the providers together, for a caller that needs both at once.
+    ///
+    /// Both are borrowed from the same `&mut self`, and a native pipeline needs to hold them for
+    /// as long as it runs. Asking for them one at a time would mean two overlapping borrows of the
+    /// session, so they are handed out together.
+    ///
+    /// Returns `None` only if the operating system refuses to start the runtime.
+    pub fn pipeline_context(&mut self) -> Option<(&tokio::runtime::Runtime, &ProviderRegistry)> {
+        self.runtime()?;
+        self.providers();
+        match (self.runtime.as_ref(), self.providers.as_ref()) {
+            (Some(runtime), Some(providers)) => Some((runtime, providers)),
+            _ => None,
+        }
+    }
+
     /// The providers this session can ask, built the first time one is needed.
     ///
     /// Building them opens sockets and speaks D-Bus, so it happens here rather than at startup.
