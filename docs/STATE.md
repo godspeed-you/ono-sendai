@@ -16,7 +16,12 @@ native object features yet becoming a dead end.* Exit test: acceptance case
 
 ## In progress
 
-_(empty — claim a task here before editing code: `[agent-id | timestamp] task — files: paths`)_
+- [orchestrator | 2026-08-26] Phase A integration: evaluator, resolution, REPL — files:
+  `crates/ono-cli/**`, `docs/decisions/**`, `docs/STATE.md`, `Cargo.toml`, `docker/**`
+- [agent:value | 2026-08-26] A-B1 value model — files: `crates/ono-value/**`
+- [agent:parser | 2026-08-26] A1–A3 lexer, AST, recoverable parser — files: `crates/ono-parser/**`
+- [agent:process | 2026-08-26] A4/A6–A9 external exec, redirection, PTY, job control —
+  files: `crates/ono-process/**`
 
 ---
 
@@ -121,6 +126,11 @@ not fix yet.
 - [x] Specification immutability enforced by checksum in `cargo xtask spec-check` — ADR-0003
 - [x] Branch policy: implementation on a disposable `implementation` branch, guarded in
       `scripts/gate.sh` — ADR-0004
+- [x] A0 — Shared vocabulary in `ono-core`: `Span`, the complete error taxonomy of spec §43,
+      the exit-status contract — ADR-0005/0006/0008 — commit 1012fea —
+      tests `crates/ono-core/tests/{error_taxonomy,exit_status,span}.rs`
+- [x] A0 — The concrete grammar: ADR-0009 and `docs/spec/grammar.ebnf`, resolving the
+      command/expression ambiguity of spec §26.1 with the two argument modes
 
 ---
 
