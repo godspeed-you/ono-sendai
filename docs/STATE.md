@@ -18,6 +18,14 @@ git switch --detach phase-a   # the tree exactly as that phase left it
 
 Tags so far: `phase-a`.
 
+**Push after every commit.** AGENTS.md §12.1 keeps `main` untouched and §12.2 asks that
+`implementation` be pushed freely so work is not lost; the branch and its phase tags live on
+`origin`. Never push `main`, never open a pull request unless asked.
+
+```bash
+git push origin implementation && git push origin --tags
+```
+
 Current phase: **A — Language and Unix shell foundation** (spec section 37)
 
 Phase A exit criterion: *Ono-Sendai can replace Bash for ordinary interactive execution without
