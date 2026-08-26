@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use xtask::{contracts, scan};
+use xtask::{contracts, reference, scan};
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -16,6 +16,7 @@ fn main() -> ExitCode {
         Some("gate") => run_script("gate.sh", &rest),
         Some("acceptance") => run_script("acceptance.sh", &rest),
         Some("spec-check") => spec_check(),
+        Some("docs") => generate_docs(),
         Some("release-check") => run_script("release-check.sh", &rest),
         Some(other) => {
             eprintln!("xtask: unknown task `{other}`");
@@ -35,6 +36,7 @@ fn usage() {
     eprintln!("tasks:");
     eprintln!("  gate           format, lint, test, contract check, docs (AGENTS.md section 10)");
     eprintln!("  spec-check     contract drift between docs/spec and the implementation");
+    eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!("  acceptance     build the container and run the acceptance suite");
     eprintln!("  release-check  the full release gate of docs/ACCEPTANCE.md");
 }
@@ -57,6 +59,22 @@ fn run_script(name: &str, args: &[String]) -> ExitCode {
         }
         Err(error) => {
             eprintln!("xtask: cannot run {}: {error}", script.display());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Regenerates `docs/reference/` from the machine-readable contracts (spec section 36.2).
+fn generate_docs() -> ExitCode {
+    match reference::write(&repo_root()) {
+        Ok(written) => {
+            for path in written {
+                println!("docs: wrote {path}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("docs: {error}");
             ExitCode::FAILURE
         }
     }
@@ -116,6 +134,7 @@ fn spec_check() -> ExitCode {
         problems.extend(
             contracts::check_contracts(&root)
                 .into_iter()
+                .chain(reference::check_committed(&root))
                 .map(|problem| format!("{} — {}", problem.location, problem.detail)),
         );
     } else {
