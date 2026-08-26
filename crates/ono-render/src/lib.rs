@@ -20,6 +20,10 @@
 
 #![forbid(unsafe_code)]
 
+mod presentation;
 mod table;
+mod theme;
 
+pub use presentation::Presentation;
 pub use table::{Align, Cell, Column, Layout, Table};
+pub use theme::{Color, Style, Theme, Token, sanitise};
