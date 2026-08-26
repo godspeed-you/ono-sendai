@@ -39,8 +39,9 @@ not fix yet.
 
 ### Phase A — Language and Unix shell foundation
 
-Delivered: A1–A7 and A10–A14. What remains is job control's user-visible surface, the phase gate,
-and the performance budget.
+**Phase A is complete.** Its exit criterion from spec §37 is proven by the acceptance case
+`010-replaces-bash-for-ordinary-work`, and `docs/ACCEPTANCE.md` §4.1 A is ticked. The performance
+budgets of §34 are tracked under *Cross-cutting*, not here.
 
 - [x] A1 — Lexer: tokens, spans, quoting and escaping corpus — spec sections 6, 26 —
       exit test: `crates/ono-parser/tests/lexer.rs` golden corpus
@@ -56,9 +57,9 @@ and the performance budget.
       spec sections 12, 29 — exit test: acceptance `022-redirection`
 - [x] A7 — External pipelines and exit status of a pipeline — spec section 11 —
       exit test: acceptance `023-external-pipelines`
-- [ ] A8 — PTY execution for full-screen programs — spec section 29 —
+- [x] A8 — PTY execution for full-screen programs — spec section 29 —
       exit test: acceptance `024-pty-applications`
-- [ ] A9 — Signals, process groups and foreground/background job control — spec section 18 —
+- [x] A9 — Signals, process groups and foreground/background job control — spec section 18 —
       exit test: acceptance `025-job-control`
 - [x] A10 — Line editor: keymap, editing, syntax highlight from the incremental parse —
       spec section 24.1 — exit test: editor behaviour tests + latency budget
@@ -71,8 +72,8 @@ and the performance budget.
       exit test: acceptance `028-prompt-shows-context`
 - [x] A14 — Structured error model and exit-status contract — spec sections 16, 43 —
       exit test: error taxonomy tests
-- [ ] A15 — Phase A gate: `ono` as a login shell doing a real working session —
-      exit test: acceptance `010-replaces-bash-for-ordinary-work`
+- [x] A15 — Phase A gate: `ono` as a login shell doing a real working session —
+      exit test: acceptance `010-replaces-bash-for-ordinary-work` — **Phase A complete**
 
 ### Phase B — Value system and native pipelines (spec §10, §11, §12, §13, §25)
 

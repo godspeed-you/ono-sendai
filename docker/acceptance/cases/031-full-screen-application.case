@@ -1,0 +1,25 @@
+# docs/ACCEPTANCE.md section 4.4 and spec section 29.3: "vim should behave like vim, not like
+# content inside a Ono-Sendai widget." A pager is the smallest honest test of that — it takes the
+# terminal into raw mode, switches to the alternate screen, draws, and puts everything back.
+case: a full-screen program run by ono takes and returns the terminal
+# A terminal type the pager's terminfo knows, so it draws rather than refusing to.
+env: TERM=xterm
+pty: true
+columns: 80
+lines: 24
+timeout: 60
+stdin: |
+  q
+run: |
+  printf 'line one\nline two\nline three\n' > /tmp/pager-input.txt
+  ono -c 'less /tmp/pager-input.txt'
+  echo "pager-exited=$?"
+  # The terminal must be usable afterwards: a program that left it in raw mode would break this.
+  stty -a | head -1 | grep -o 'rows [0-9]*'
+  echo shell-still-works
+exit: 0
+stdout-contains: line one
+stdout-contains: line three
+stdout-contains: pager-exited=0
+stdout-contains: rows 24
+stdout-contains: shell-still-works

@@ -26,6 +26,7 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install --yes --no-install-recommends \
         ca-certificates bash coreutils procps iproute2 util-linux \
         findutils grep sed gawk diffutils less file psmisc \
+        ncurses-base ncurses-bin \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/ono /usr/local/bin/ono

@@ -55,9 +55,13 @@ unticked box means `scripts/release-check.sh` fails, which means the run continu
 
 Each phase's success criterion from spec section 37, each proven by a named acceptance case.
 
-- [ ] **A — Unix shell foundation.** `ono` can be used interactively in place of Bash for
+- [x] **A — Unix shell foundation.** `ono` can be used interactively in place of Bash for
       ordinary work: parsing, quoting and escaping, environment variables, `cd`, redirection,
       external commands and pipelines, exit status, signals, job control, history, config.
+      Proven by `010-replaces-bash-for-ordinary-work`, with `020`–`029` covering each part:
+      external commands and status, cwd and environment, redirection, pipelines, PTY ownership,
+      quoting and expansion, an interactive session, job control, history across a restart,
+      quiet startup, restricted configuration, and the prompt.
 - [ ] **B — Value system and native pipelines.** Typed values flow end to end through `where`,
       `select`, `sort`, `take`, `skip`, `each`, `count`, `measure`, with JSON/YAML/CSV/text
       conversion, backpressure, and rendering separated from data.
@@ -99,17 +103,24 @@ For **every** advertised command, in the container:
 Measured in the container, on the pathological fixtures of spec section 34 — tens of thousands
 of processes and paths, slow NSS, high-latency links, huge stdout, unbounded streams:
 
-- [ ] cold start < 100 ms (target < 50 ms)
+- [x] cold start < 100 ms (target < 50 ms) — `060-performance-budgets`, measured as a median of
+      40 runs in the container and asserted against the 50 ms *target*, not the 100 ms cap
 - [ ] warm prompt < 30 ms
 - [ ] keystroke to render < 8 ms typical
 - [ ] first completion results < 50 ms from local metadata
-- [ ] parse and highlight update < 5 ms for ordinary command lines
+- [x] parse and highlight update < 5 ms for ordinary command lines — `060-performance-budgets`
+      bounds a whole pipeline run, startup included, at 50 ms; the parser's own measurement
+      (2.4 microseconds for a four-stage line) is in `crates/ono-parser/tests/robustness.rs` and
+      the editor's keystroke-to-frame budget in `crates/ono-editor/tests/latency.rs`
 - [ ] first rows of `get process` < 50 ms
 - [ ] renderer updates only when state changes
 
 ### 4.4 Interoperability and safety
 
-- [ ] External programs run correctly under a PTY, including full-screen applications.
+- [x] External programs run correctly under a PTY, including full-screen applications —
+      `024-pty-applications` proves the child owns the real terminal, and
+      `031-full-screen-application` runs a pager that takes the terminal into raw mode and the
+      alternate screen, draws, and gives it back with the shell still usable.
 - [ ] Signals, job control and process groups behave as they do under Bash for foreground work.
 - [ ] Text, bytes and objects are never silently confused at an interop boundary.
 - [ ] Destructive operations show scope before acting; privilege and remote target are visible.
@@ -119,9 +130,13 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
 
 ### 4.5 Delivery
 
-- [ ] `ono` installs and runs as a login shell in the container as an unprivileged user.
-- [ ] Startup loads no plugin eagerly and queries no network-backed configuration.
-- [ ] Generated documentation is reproducible from the registries and committed docs match it.
+- [x] `ono` installs and runs as a login shell in the container as an unprivileged user —
+      `003-login-shell` and every interactive case, which run as the unprivileged `case` user.
+- [x] Startup loads no plugin eagerly and queries no network-backed configuration —
+      `027-startup-is-quiet`, in a container with networking disabled.
+- [x] Generated documentation is reproducible from the registries and committed docs match it —
+      `xtask/tests/reference.rs` regenerates every page and requires the committed files to be
+      identical, and `spec-check` runs the same comparison in the gate (ADR-0018).
 - [ ] `docs/STATE.md` has an empty *In progress* section and no unexplained *Deferred* entries.
 - [ ] Every `#[ignore]`d test is either removed or justified in *Deferred* with an ADR.
 

@@ -58,11 +58,13 @@ impl Session {
     pub fn new(interactive: bool) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         let env = std::env::vars_os().collect();
-        let executor = if interactive {
-            Executor::new().unwrap_or_else(|_| Executor::detached())
-        } else {
-            Executor::detached()
-        };
+        // The executor attaches to the controlling terminal whenever there is one, whether or not
+        // the session is interactive. `ono -c 'less file'` typed at a terminal must hand that
+        // terminal to `less`, exactly as `bash -c` does — a child that is never given the
+        // terminal is stopped by SIGTTOU the moment it tries to configure it (spec §18.1,
+        // ADR-0013). With no controlling terminal there is nothing to hand over and the executor
+        // detaches.
+        let executor = Executor::new().unwrap_or_else(|_| Executor::detached());
         Self {
             cwd,
             env,
