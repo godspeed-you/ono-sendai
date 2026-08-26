@@ -638,3 +638,42 @@ fn is_root() -> bool {
     use std::os::unix::fs::MetadataExt as _;
     std::fs::metadata("/proc/self").is_ok_and(|meta| meta.uid() == 0)
 }
+
+#[tokio::test]
+async fn should_filter_by_any_field_the_schema_declares_rather_than_ignoring_the_selector() {
+    // Spec §27.1: a provider pushes a selector down or filters by it — it never ignores one.
+    // An ignored selector widens silently, which inside a context frame (spec §14.3) would mean
+    // `get process` answering with the whole machine while the prompt says `service/nginx`.
+    let fixture = ProcFixture::new();
+    fixture
+        .process(21)
+        .stat("in-service", StatFields::default())
+        .cgroup("0::/system.slice/nginx.service");
+    fixture
+        .process(22)
+        .stat("outside", StatFields::default())
+        .cgroup("0::/user.slice/user-1000.slice/session-2.scope");
+
+    let query = Query::target("process").with(Selector::field(
+        "service",
+        Value::String("nginx.service".into()),
+    ));
+    let collected = drain(provider(&fixture).snapshot(&query).expect("a snapshot")).await;
+
+    let names: Vec<String> = records(&collected)
+        .iter()
+        .map(|record| {
+            record
+                .get("name")
+                .and_then(|value| value.as_str().ok())
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        names,
+        ["in-service"],
+        "only the process in the service answers; the other was filtered, not the selector \
+         ignored"
+    );
+}

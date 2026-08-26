@@ -662,10 +662,14 @@ impl Provider for ProcessProvider {
 /// Selectors it does not understand are left to the pipeline, which is what [`Query`] permits:
 /// pushing a selector down is an optimisation, never a correctness condition.
 fn understood_selectors_match(query: &Query, record: &RecordValue) -> bool {
-    query.selectors().iter().all(|selector| match selector {
-        Selector::Field { name, .. } if name == "pid" || name == "name" => selector.matches(record),
-        Selector::Contains { name, .. } if name == "name" => selector.matches(record),
-        Selector::Identity(id) if id.schema() == &schemas::process_id() => selector.matches(record),
-        _ => true,
-    })
+    // Every selector filters. Spec §27.1 allows a provider to push a selector down or to filter
+    // by it afterwards; ignoring one is the one thing it may not do, because an ignored selector
+    // widens silently — inside a context frame (spec §14.3) that would mean `get process`
+    // answering with the whole machine while the prompt says `service/nginx`. `pid` is pushed
+    // down (the enumeration reads one directory); everything else filters here, against the
+    // record, which knows every field the schema declares.
+    query
+        .selectors()
+        .iter()
+        .all(|selector| selector.matches(record))
 }
