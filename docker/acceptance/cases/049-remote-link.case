@@ -7,6 +7,7 @@ pty: true
 columns: 100
 lines: 30
 timeout: 120
+env: NO_COLOR=1
 stdin: |
   link host testbox --transport local
   enter link testbox

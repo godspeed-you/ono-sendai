@@ -16,6 +16,7 @@ pub mod expand;
 pub mod invocation;
 pub mod live;
 pub mod native;
+pub mod plugins;
 pub mod providers;
 pub mod repl;
 pub mod report;

@@ -585,6 +585,8 @@ dependencies = [
  "ono-editor",
  "ono-graph",
  "ono-history",
+ "ono-kuang-protocol",
+ "ono-kuang-supervisor",
  "ono-parser",
  "ono-pipeline",
  "ono-process",
@@ -597,6 +599,7 @@ dependencies = [
  "ono-render",
  "ono-testkit",
  "ono-value",
+ "serde_json",
  "serde_yaml_ng",
  "tokio",
 ]

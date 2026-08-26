@@ -24,6 +24,10 @@ pub enum Request {
     Link,
     /// `get link` — the links this session holds.
     GetLink,
+    /// `get plugin` — the installed set with runtime states (spec §31.8).
+    GetPlugin,
+    /// `load plugin <id>` — negotiate and instantiate (spec §31.10).
+    LoadPlugin,
 }
 
 /// Whether `stage` is a context command this module runs.
@@ -51,6 +55,24 @@ pub fn claims(stage: &Stage) -> Option<Request> {
                 == Some("link") =>
         {
             Some(Request::GetLink)
+        }
+        "get"
+            if stage
+                .arguments
+                .first()
+                .and_then(ono_parser::Argument::as_word)
+                == Some("plugin") =>
+        {
+            Some(Request::GetPlugin)
+        }
+        "load"
+            if stage
+                .arguments
+                .first()
+                .and_then(ono_parser::Argument::as_word)
+                == Some("plugin") =>
+        {
+            Some(Request::LoadPlugin)
         }
         _ => None,
     }

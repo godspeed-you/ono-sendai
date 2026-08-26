@@ -55,6 +55,8 @@ pub struct Session {
     selection: Option<Value>,
     /// The remote links this session holds (spec §21.1), by the name the user gave them.
     links: Vec<SessionLink>,
+    /// The KUANG/11 packages this session loaded (spec §31.10), by their manifest ids.
+    plugins: Vec<(String, ono_kuang_supervisor::LoadedPlugin)>,
 }
 
 /// One held remote link: the connection, and the registry its providers are mounted in.
@@ -148,6 +150,7 @@ impl Session {
             native_jobs: Vec::new(),
             selection: None,
             links: Vec::new(),
+            plugins: Vec::new(),
         }
     }
 
@@ -164,6 +167,35 @@ impl Session {
                 .ok();
         }
         self.runtime.as_ref()
+    }
+
+    /// A handle to the runtime, cloneable and borrow-free, once it exists.
+    #[must_use]
+    pub fn runtime_handle(&self) -> Option<tokio::runtime::Handle> {
+        self.runtime
+            .as_ref()
+            .map(tokio::runtime::Runtime::handle)
+            .cloned()
+    }
+
+    /// Keeps a loaded KUANG/11 package on the session (spec §31.10).
+    pub fn add_plugin(&mut self, id: String, plugin: ono_kuang_supervisor::LoadedPlugin) {
+        self.plugins.retain(|(held, _)| held != &id);
+        self.plugins.push((id, plugin));
+    }
+
+    /// A loaded package by its manifest id.
+    #[must_use]
+    pub fn plugin(&self, id: &str) -> Option<&ono_kuang_supervisor::LoadedPlugin> {
+        self.plugins
+            .iter()
+            .find(|(held, _)| held == id)
+            .map(|(_, plugin)| plugin)
+    }
+
+    /// The ids of every loaded package.
+    pub fn plugin_ids(&self) -> impl Iterator<Item = &str> {
+        self.plugins.iter().map(|(id, _)| id.as_str())
     }
 
     /// Adds a remote link to the session's table.

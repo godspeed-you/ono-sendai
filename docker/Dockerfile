@@ -20,9 +20,10 @@ COPY xtask ./xtask
 COPY docs/spec ./docs/spec
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
-    cargo build --release --package ono-cli --locked \
-      || cargo build --release --package ono-cli \
-    && install -m 0755 target/release/ono /usr/local/bin/ono
+    cargo build --release --package ono-cli --package ono-kuang-sdk --locked \
+      || cargo build --release --package ono-cli --package ono-kuang-sdk \
+    && install -m 0755 target/release/ono /usr/local/bin/ono \
+    && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin
 
 FROM debian:bookworm-slim AS runtime
 
@@ -35,6 +36,7 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/ono /usr/local/bin/ono
+COPY --from=builder /usr/local/bin/kuang-example-plugin /usr/local/bin/kuang-example-plugin
 
 # A non-root user, so privilege boundaries are exercised the way real users meet them.
 RUN useradd --create-home --shell /usr/local/bin/ono case

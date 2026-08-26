@@ -407,7 +407,43 @@ fn run_stage_list(
             crate::context::Request::Leave => crate::context::leave(session, stage, source),
             crate::context::Request::Link => crate::context::link(session, stage, source),
             crate::context::Request::GetLink => crate::context::get_link(session),
+            crate::context::Request::GetPlugin => crate::plugins::get_plugin(session),
+            crate::context::Request::LoadPlugin => {
+                let words = stage_arguments(session, stage, source)?;
+                let id = words
+                    .iter()
+                    .map(|word| word.to_string_lossy())
+                    .find(|word| word != "plugin" && !word.starts_with("--"))
+                    .map(|word| word.into_owned());
+                match id {
+                    Some(id) => crate::plugins::load_plugin(session, &id),
+                    None => Err(Flow::Failed(
+                        ErrorValue::new(
+                            ErrorCode::ResolveTargetNotFound,
+                            "`load plugin` needs the package to load",
+                        )
+                        .with_help("`get plugin` lists the installed set (spec §31.8)"),
+                    )),
+                }
+            }
         };
+    }
+
+    // A `<package>:command` head invokes a loaded KUANG/11 package's contribution (spec §31.22,
+    // ADR-0011's module namespace). The values it streams seed the rest of the pipeline exactly
+    // as a native producer's would.
+    if !background
+        && let Some(stage) = list.stages.first()
+        && let StageHead::Command(name) = &stage.head
+        && let Some(namespace) = name.namespace.as_deref()
+        && Namespace::from_prefix(Some(namespace)).is_none()
+        && crate::plugins::loaded_package(session, namespace).is_some()
+    {
+        let words = stage_arguments(session, stage, source)?;
+        let command = name.name.clone();
+        let namespace = namespace.to_owned();
+        let values = crate::plugins::invoke(session, &namespace, &command, &words)?;
+        return crate::native::run_seeded(session, list, source, values);
     }
 
     // A pipeline may start with a value instead of a command: `$hot | where …`, `@-1 | count`
@@ -680,7 +716,10 @@ fn build_command(session: &mut Session, stage: &Stage, source: &str) -> Eval<Com
                     name.namespace.as_deref().unwrap_or_default()
                 ),
             )
-            .with_help("the namespaces are `ono:`, `exec:` and `fn:` (ADR-0011)"),
+            .with_help(
+                "the namespaces are `ono:`, `exec:`, `fn:` and a loaded package's name \
+                 (ADR-0011, spec §31.22)",
+            ),
         )
     })?;
 
