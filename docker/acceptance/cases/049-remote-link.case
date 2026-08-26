@@ -1,0 +1,31 @@
+# Phase H (spec §37): remote links. A link is created against a real second process — this very
+# binary as `ono --agent` over a pipe pair — negotiated, entered, asked and left. Inside the
+# frame the answers come from the other side, provenance says which host (spec §21.2), the
+# prompt makes the location unambiguous (§14.4), and a link never made is refused structurally.
+case: a remote link answers from the other side, visibly
+pty: true
+columns: 100
+lines: 30
+timeout: 120
+stdin: |
+  link host testbox --transport local
+  enter link testbox
+  get process | where pid == 1 | inspect
+  leave
+  exit
+run: |
+  echo "== the link table and the round trip =="
+  ono -c 'link host testbox --transport local; get link'
+
+  echo "== entering a link that was never made is refused =="
+  ono -c 'enter link nowhere' 2>&1 | head -1
+
+  echo "== the prompt names the host while the frame is active =="
+  ono
+exit: 0
+stdout-contains: linked testbox (local)
+stdout-contains: testbox  local  connected
+stdout-contains: Ono-Sendai-E
+stdout-contains: testbox://
+stdout-contains: PROVENANCE
+stdout-not-contains: panicked

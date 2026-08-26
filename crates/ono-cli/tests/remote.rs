@@ -13,12 +13,10 @@ fn ono(script: &str) -> ono_testkit::Run {
 
 #[test]
 fn should_link_a_host_and_answer_queries_from_the_other_side() {
-    let run = ono(
-        "link host testbox --transport local; \
+    let run = ono("link host testbox --transport local; \
          enter link testbox; \
          get process | where pid == 1 | inspect; \
-         leave",
-    );
+         leave");
     run.assert_success();
     let text = run.stdout();
     assert!(
@@ -42,11 +40,9 @@ fn should_list_the_links_the_session_holds() {
 fn should_leave_the_link_and_answer_locally_again() {
     // Inside the frame the provider set is the remote's; leaving restores the local one. The
     // context stack rules of ADR-0023 apply to links exactly as to objects.
-    let run = ono(
-        "link host testbox --transport local; \
+    let run = ono("link host testbox --transport local; \
          enter link testbox; leave; \
-         get process | where pid == 1 | inspect",
-    );
+         get process | where pid == 1 | inspect");
     run.assert_success();
     let answer = run
         .stdout()

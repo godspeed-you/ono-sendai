@@ -404,6 +404,21 @@ Default view: `id`, `state`, `kind`, `command`, `started`
 | `started` | `timestamp` | — | required | When the job was detached. |
 | `exit_status` | `int` | — | nullable | The exit status once the job finished; null while it is still running. A job terminated by a signal reports its status through the `external.signal` error, not as a fabricated number. |
 
+## Link — `ono.link/1`
+
+One remote Ono link this session holds.
+
+Identity: `name`
+
+Default view: `name`, `transport`, `state`, `targets`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `name` | `string` | — | required | The host as the user named it — the prompt's spelling, and `enter link`'s argument. |
+| `transport` | `enum` | — | required | How the bytes travel. `ssh` spawns the remote agent over OpenSSH; `local` spawns `ono --agent` as a child of this shell, which is how a link is exercised without a network. |
+| `state` | `enum` | — | required | Whether the link is usable now. |
+| `targets` | `list<string>` | — | required | The targets the remote negotiated (spec §21.2), which is what its context can answer. |
+
 ## ModelProvider — `ono.model-provider/1`
 
 One configured model provider, and the data boundary the operator set for it.

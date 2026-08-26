@@ -1,5 +1,10 @@
 //! `view` (spec §13.5, ADR-0050): the interactive browser, and the selection it leaves behind.
 
+#![allow(
+    clippy::expect_used,
+    reason = "a test states its preconditions directly (AGENTS.md section 16)"
+)]
+
 use std::time::{Duration, Instant};
 
 use ono_process::{Command, Executor, PtySession, WindowSize};

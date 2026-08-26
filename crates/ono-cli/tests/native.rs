@@ -204,7 +204,7 @@ fn should_walk_a_wide_tree_without_hoarding_descriptors() {
     // directory it is reading, never the frontier.
     let scratch = ono_testkit::scratch();
     for i in 0..500 {
-        scratch.write(&format!("wide/dir-{i:03}/leaf.txt"), "x");
+        scratch.write(format!("wide/dir-{i:03}/leaf.txt"), "x");
     }
 
     let run = Shell::program("/bin/bash")

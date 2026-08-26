@@ -43,15 +43,19 @@ fn main() -> ExitCode {
             {
                 Ok(runtime) => runtime,
                 Err(error) => {
-                    eprintln!("{}: cannot start the agent runtime: {error}", ono_core::SHORT_NAME);
+                    eprintln!(
+                        "{}: cannot start the agent runtime: {error}",
+                        ono_core::SHORT_NAME
+                    );
                     return ExitCode::from(ExitStatus::FAILURE);
                 }
             };
             runtime.block_on(ono_cli::providers::register_async(&mut registry));
-            let config = ono_remote::AgentConfig::new(std::sync::Arc::new(registry))
-                .with_identity(ono_protocol::Identity::new(
+            let config = ono_remote::AgentConfig::new(std::sync::Arc::new(registry)).with_identity(
+                ono_protocol::Identity::new(
                     std::env::var("USER").unwrap_or_else(|_| "ono".to_owned()),
-                ));
+                ),
+            );
             return runtime.block_on(ono_remote::agent_main(
                 tokio::io::stdin(),
                 tokio::io::stdout(),

@@ -71,14 +71,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [agent-H | 2026-08-26] Phase H machinery — `crates/ono-remote` (agent loop, RemoteProvider,
-  SSH-fallback transport, trust on connect) + `crates/ono-protocol` — exclusive scope, ADRs
-  0036–0039 reserved
-- [agent-I | 2026-08-26] Phase I runtime — `crates/ono-kuang-{protocol,supervisor,sdk}` + test
-  host per docs/spec/kuang and ADR-0022 — exclusive scope, ADRs 0040+ reserved
-- [orchestrator | 2026-08-26] §4.2/§4.3 quality bars: example binding sweep landed; budgets for
-  completion and first rows landed; next: tick the proven §4.3 boxes, then CLI wiring for H and
-  I when the agents report — files: `crates/ono-cli/**`, `crates/ono-command/**`, `docker/**`
+- [orchestrator | 2026-08-26] Phase I CLI wiring: `get/load/inspect plugin` over the supervisor,
+  registry integration of contributed commands/targets with origin `plugin(id, version)`
+  (§31.64), `get audit`, and folding the K11 error family into `ono_core::ErrorCode` so
+  `catch`/`where` can match K-codes (ADR-0040 §3) — files: `crates/ono-cli/**`,
+  `crates/ono-command/**`, `crates/ono-core/**`
 
 _No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
 KUANG/11 contracts, adversarial review, security review) have all reported and landed._
@@ -87,6 +84,14 @@ KUANG/11 contracts, adversarial review, security review) have all reported and l
 
 ## Next up (ordered)
 
+- [ ] Phase H remainder: agentless mode (spec §21.3), trust-store location + first-contact key
+  UX for a future authenticated transport (F12 rides along: TrustPolicy::Required records an
+  unknown key — TOFU — where ADR-0015 T5 wants refusal; decide when the TCP transport exists,
+  since both current transports are Unauthenticated-by-name per ADR-0037), eager surfacing of
+  remote watch refusals — ADR-0036/0037 carry the details
+- [ ] Phase I remainder (ADR-0040): wasm-component tier, objects/streams/views/models host
+  domains, install/verify/signing, on-disk state + migrations, hot reload, binary frame encoding
+  (a `perf` increment)
 - [ ] Remaining `*-event/1` schemas (service, socket, interface, route, mount, file, user,
   group, container, link, host) — each un-deferred as its watch is exercised; the watch runtime
   is generic already — exit test: a watch.rs case per target

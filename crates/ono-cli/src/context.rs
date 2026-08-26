@@ -43,11 +43,12 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         "enter" => Some(Request::Enter),
         "leave" => Some(Request::Leave),
         "link" => Some(Request::Link),
-        "get" if stage
-            .arguments
-            .first()
-            .and_then(ono_parser::Argument::as_word)
-            == Some("link") =>
+        "get"
+            if stage
+                .arguments
+                .first()
+                .and_then(ono_parser::Argument::as_word)
+                == Some("link") =>
         {
             Some(Request::GetLink)
         }
