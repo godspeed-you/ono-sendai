@@ -284,6 +284,16 @@ impl Value {
             (Value::String(a), Value::String(b)) => Ok(a.cmp(b)),
             (Value::Bytes(a), Value::Bytes(b)) => Ok(a.cmp(b)),
             (Value::Path(a), Value::Path(b)) => Ok(a.cmp(b)),
+            // A path and the string that spells it compare as their text. Expression mode has no
+            // path literal — `/proc` reads as a regex delimiter — so a quoted string is the only
+            // way a user can write a path in a comparison, and `where target == "/proc"` must
+            // mean what it says (ADR-0031). Text to text only: bytes stay bytes (spec §12.2).
+            (Value::Path(a), Value::String(b)) => {
+                Ok(a.as_os_str().cmp(std::ffi::OsStr::new(b.as_ref())))
+            }
+            (Value::String(a), Value::Path(b)) => {
+                Ok(std::ffi::OsStr::new(a.as_ref()).cmp(b.as_os_str()))
+            }
             (Value::Timestamp(a), Value::Timestamp(b)) => Ok(a.cmp(b)),
             (Value::Duration(a), Value::Duration(b)) => Ok(a.cmp(b)),
             (Value::ByteSize(a), Value::ByteSize(b)) => Ok(a.cmp(b)),

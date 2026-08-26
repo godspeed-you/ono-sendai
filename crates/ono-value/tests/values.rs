@@ -206,3 +206,34 @@ fn should_reject_an_invalid_regex_with_a_parse_error() {
 
     assert_eq!(error.code(), ErrorCode::ParseSyntax);
 }
+
+#[test]
+fn should_compare_a_path_with_the_string_that_spells_it() {
+    // Expression mode has no path literal — `/proc` reads as an unclosed regex — so a quoted
+    // string is the only way a user can write a path in a comparison. Both are text, and
+    // `where target == "/proc"` must mean what it says (ADR-0031).
+    let path = Value::Path(std::sync::Arc::from(std::path::Path::new("/proc")));
+
+    assert_eq!(
+        path.compare_to(&Value::string("/proc")).unwrap(),
+        std::cmp::Ordering::Equal
+    );
+    assert_eq!(
+        Value::string("/proc").compare_to(&path).unwrap(),
+        std::cmp::Ordering::Equal
+    );
+    assert_eq!(
+        path.compare_to(&Value::string("/sys")).unwrap(),
+        std::cmp::Ordering::Less,
+        "ordering follows the text, both ways round"
+    );
+}
+
+#[test]
+fn should_not_equate_a_path_with_bytes_that_happen_to_spell_one() {
+    // The coercion is text-to-text only: bytes stay bytes (spec §12.2).
+    let error = Value::Path(std::sync::Arc::from(std::path::Path::new("/proc")))
+        .compare_to(&Value::Bytes("/proc".as_bytes().to_vec().into()))
+        .expect_err("bytes are not text");
+    assert_eq!(error.code(), ErrorCode::TypeMismatch);
+}
