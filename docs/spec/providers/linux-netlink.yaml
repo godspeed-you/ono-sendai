@@ -1,0 +1,27 @@
+# The providers that answer from netlink sockets — structured kernel answers, never parsed tool
+# output (spec §50). See linux-procfs.yaml for what this registry is and what enforces it.
+
+providers:
+  - id: linux.netlink
+    doc: Network interfaces, from rtnetlink (RTM_GETLINK / RTM_GETADDR).
+    targets: [interface]
+    capabilities: [interface.list]
+    schemas: [ono.interface/1]
+
+  - id: linux.netlink
+    doc: Routes, from rtnetlink (RTM_GETROUTE).
+    targets: [route]
+    capabilities: [route.list]
+    schemas: [ono.route/1]
+
+  - id: linux.netlink
+    doc: Neighbors, from rtnetlink (RTM_GETNEIGH).
+    targets: [neighbor]
+    capabilities: [neighbor.list]
+    schemas: [ono.neighbor/1]
+
+  - id: linux.sock-diag
+    doc: Sockets and connections, from sock_diag; endpoints are ono.endpoint/1 records.
+    targets: [socket, connection]
+    capabilities: [socket.list, connection.list]
+    schemas: [ono.socket/1, ono.endpoint/1]

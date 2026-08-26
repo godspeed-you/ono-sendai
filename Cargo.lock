@@ -571,6 +571,7 @@ dependencies = [
  "ono-render",
  "ono-testkit",
  "ono-value",
+ "serde_yaml_ng",
  "tokio",
 ]
 
