@@ -73,8 +73,7 @@ states:
 # `command` names the Ono command that drives the transition, or null where the transition
 # happens as a consequence rather than by request. Two of them name `ono.plugin.set`, which spec
 # §31.3 writes as `set plugin pg-surgeon --enabled false` and §31.38 as
-# `set plugin packet-eye --background true`. `docs/spec/commands/kuang.yaml` carries no entry for
-# it yet; the registry needs one before Phase I, and ADR-0022 records the gap.
+# `set plugin packet-eye --background true`; `docs/spec/commands/kuang.yaml` carries its entry.
 # ---------------------------------------------------------------------------------------------
 transitions:
 

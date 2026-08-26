@@ -285,6 +285,76 @@ async fn should_answer_nothing_rather_than_a_stub_when_the_named_unit_does_not_e
 }
 
 #[tokio::test]
+async fn should_find_a_unit_on_disk_when_systemd_has_not_loaded_it() {
+    // systemd unloads inactive units from memory, so a disabled-but-present service is absent
+    // from `ListUnits` while `systemctl status` happily reports it. A name pins the unit, and a
+    // pinned unit is resolved through `LoadUnit` — not by filtering the enumeration.
+    let provider =
+        provider_over(RecordedSystemd::running().with_unit_file_on_disk(fixture::on_disk_only()))
+            .await;
+
+    let everything: Vec<String> = units(&provider, &Query::target("service"))
+        .await
+        .iter()
+        .map(|record| text(record, "name"))
+        .collect();
+    assert!(
+        !everything.contains(&"certbot.service".to_owned()),
+        "the fixture's premise: an unloaded unit is not enumerated"
+    );
+
+    let certbot = unit(&provider, "certbot.service").await;
+    assert_eq!(text(&certbot, "name"), "certbot.service");
+    assert_eq!(
+        text(&certbot, "state"),
+        "inactive",
+        "the state is what systemd says after loading the unit, not a guess"
+    );
+    assert_eq!(certbot.get("enabled"), Some(&Value::Bool(false)));
+    assert_eq!(text(&certbot, "provider"), PROVIDER_ID);
+    assert_eq!(
+        certbot.schema_id(),
+        service_schema().id(),
+        "a unit loaded on demand answers in the same shape as an enumerated one"
+    );
+    certbot
+        .validate()
+        .unwrap_or_else(|error| panic!("{} violates its own schema: {error}", certbot.schema_id()));
+}
+
+#[tokio::test]
+async fn should_report_no_service_when_a_listed_unit_is_only_a_dangling_reference() {
+    // Recorded from a real service manager: a unit whose file is gone stays in `ListUnits` as a
+    // `not-found` stub for as long as something references its name. The by-name path already
+    // refuses such stubs; the listing must agree, or a unit found by `get service` vanishes the
+    // moment it is asked for by name — the disagreement that made a CI round trip flaky.
+    let provider =
+        provider_over(RecordedSystemd::running().with_dangling_reference("hv_kvp_daemon.service"))
+            .await;
+
+    let names: Vec<String> = units(&provider, &Query::target("service"))
+        .await
+        .iter()
+        .map(|record| text(record, "name"))
+        .collect();
+    assert!(
+        !names.contains(&"hv_kvp_daemon.service".to_owned()),
+        "a stub with no unit file is not a service this machine has"
+    );
+    assert_eq!(names.len(), 4, "the four real units are still answered for");
+
+    let by_name = Query::target("service").with(Selector::field(
+        "name",
+        Value::String("hv_kvp_daemon.service".into()),
+    ));
+    let answer = collected(&provider, &by_name).await;
+    assert!(
+        answer.values().is_empty() && answer.errors().is_empty(),
+        "by name and by enumeration must give the same answer: no such service"
+    );
+}
+
+#[tokio::test]
 async fn should_resolve_a_named_unit_to_one_object_reference() {
     let provider = provider_over(RecordedSystemd::running()).await;
     let selector = Selector::field("name", Value::String("nginx.service".into()));

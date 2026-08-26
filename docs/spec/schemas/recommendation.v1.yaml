@@ -5,7 +5,7 @@
 #
 # ADR-0022: spec §31.24 names the type without giving its fields, and
 # `docs/spec/schemas/deferred.yaml` does not list it. It is written here rather than typed as a
-# bare `record` (ADR-0012 §13), and the report names it as one the orchestrator must un-defer.
+# bare `record` (ADR-0012 §13, ADR-0022 §12).
 #
 # A recommendation is advice, and advice that a shell can run is different from advice a person
 # has to translate. `command` is what makes the difference, and it is optional precisely because

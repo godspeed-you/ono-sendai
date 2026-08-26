@@ -6,7 +6,8 @@
 //! have systemd. This is the procfs-fixture pattern of AGENTS.md §11 — a fake of the system
 //! being read, not a mock of a layer this crate wrote — and the recorded units cover the shapes
 //! that break naive providers: a running unit, a failed unit with a result and an exit code, a
-//! masked unit, and a unit that has no main process at all.
+//! masked unit, a unit that has no main process at all, and — on demand — a unit file on disk
+//! that is not loaded, and a stub that is enumerated although its unit file is gone.
 
 #![allow(
     clippy::panic,
@@ -34,7 +35,12 @@ pub const NGINX_MEMORY_BYTES: u64 = 41_943_040;
 /// A systemd whose answers are recorded rather than observed.
 #[derive(Debug)]
 pub struct RecordedSystemd {
+    /// The units in memory: what `ListUnits` enumerates.
     units: Mutex<BTreeMap<String, UnitProperties>>,
+    /// The unit files on disk that are *not* loaded. systemd unloads inactive units from
+    /// memory, so a disabled-but-present service lives here: `ListUnits` never mentions it,
+    /// and only `LoadUnit` reaches it. Each entry is recorded as it reads once loaded.
+    unit_files: Mutex<BTreeMap<String, UnitProperties>>,
     version: Result<String, BusError>,
     authorised: bool,
 }
@@ -53,6 +59,7 @@ impl RecordedSystemd {
         .collect();
         Self {
             units: Mutex::new(units),
+            unit_files: Mutex::new(BTreeMap::new()),
             version: Ok("257 (257.5-1)".to_owned()),
             authorised: true,
         }
@@ -62,9 +69,35 @@ impl RecordedSystemd {
     pub fn absent(reason: &str) -> Self {
         Self {
             units: Mutex::new(BTreeMap::new()),
+            unit_files: Mutex::new(BTreeMap::new()),
             version: Err(BusError::Unavailable(reason.to_owned())),
             authorised: true,
         }
+    }
+
+    /// The same service manager, with one more unit file on disk that is not loaded.
+    ///
+    /// This is the shape `systemctl status` finds and a `ListUnits` filter misses: the unit
+    /// exists, systemd just has no reason to keep it in memory.
+    pub fn with_unit_file_on_disk(self, unit: UnitProperties) -> Self {
+        self.unit_files
+            .lock()
+            .expect("the recorded unit files are not poisoned")
+            .insert(unit.name.clone(), unit);
+        self
+    }
+
+    /// The same service manager, with a unit kept in memory that has no unit file at all.
+    ///
+    /// Recorded from a real service manager: when another unit references a name whose file is
+    /// gone, `ListUnits` enumerates a stub for it with `LoadState` `not-found` — the very stub
+    /// `LoadUnit` answers for a name it has never heard of. Such a stub is not a service.
+    pub fn with_dangling_reference(self, name: &str) -> Self {
+        self.units
+            .lock()
+            .expect("the recorded units are not poisoned")
+            .insert(name.to_owned(), not_found(name));
+        self
     }
 
     /// A service manager that answers queries and refuses every mutation, the way polkit
@@ -81,6 +114,16 @@ impl RecordedSystemd {
             .units
             .lock()
             .expect("the recorded units are not poisoned");
+        // Acting on an unloaded unit loads it: that is what `StartUnit` and its siblings do.
+        if !units.contains_key(unit) {
+            let mut unit_files = self
+                .unit_files
+                .lock()
+                .expect("the recorded unit files are not poisoned");
+            if let Some(loaded) = unit_files.remove(unit) {
+                units.insert(unit.to_owned(), loaded);
+            }
+        }
         units.get_mut(unit).map(act)
     }
 
@@ -94,7 +137,15 @@ impl RecordedSystemd {
             .units
             .lock()
             .expect("the recorded units are not poisoned");
-        if units.contains_key(unit) {
+        let on_disk = self
+            .unit_files
+            .lock()
+            .expect("the recorded unit files are not poisoned");
+        // A dangling reference is in memory but has no file; systemd refuses to act on it.
+        let real = units
+            .get(unit)
+            .is_some_and(|properties| properties.load_state.as_deref() != Some("not-found"));
+        if real || on_disk.contains_key(unit) {
             Ok(())
         } else {
             Err(BusError::NoSuchUnit(format!("Unit {unit} not found.")))
@@ -129,14 +180,27 @@ impl SystemdBus for RecordedSystemd {
             .units
             .lock()
             .expect("the recorded units are not poisoned");
-        match units.get(unit) {
-            Some(properties) => Ok(Some(properties.clone())),
-            // Also recorded from a real service manager: `LoadUnit` answers for a unit that does
-            // not exist with a stub whose `LoadState` is `not-found`, rather than with an error.
-            // A provider that took the stub at face value would report a service that is not
-            // there.
-            None => Ok(Some(not_found(unit))),
+        if let Some(properties) = units.get(unit) {
+            return Ok(Some(properties.clone()));
         }
+        // `GetUnit` would stop here: it answers only for loaded units. `LoadUnit` goes on to
+        // the disk and loads the unit file on demand — which is why the provider speaks
+        // `LoadUnit`, and why this fixture answers from the recorded unit files next. The
+        // loaded unit is answered without being kept in memory: a unit nothing holds a
+        // reference to is garbage-collected again straight away, so this is the steady state
+        // the next call observes.
+        let unit_files = self
+            .unit_files
+            .lock()
+            .expect("the recorded unit files are not poisoned");
+        if let Some(properties) = unit_files.get(unit) {
+            return Ok(Some(properties.clone()));
+        }
+        // Also recorded from a real service manager: `LoadUnit` answers for a unit that does
+        // not exist with a stub whose `LoadState` is `not-found`, rather than with an error.
+        // A provider that took the stub at face value would report a service that is not
+        // there.
+        Ok(Some(not_found(unit)))
     }
 
     async fn queue_job(&self, unit: &str, job: JobKind) -> Result<(), BusError> {
@@ -245,6 +309,28 @@ pub fn timer_without_main_process() -> UnitProperties {
         fragment_path: Some(String::new()),
         state_change_usec: Some(0),
         main_pid: None,
+        memory_current: None,
+        tasks_current: None,
+        result: None,
+        exec_main_status: None,
+    }
+}
+
+/// A disabled-but-present unit, as it reads once `LoadUnit` has loaded it from disk.
+///
+/// systemd keeps no inactive unit in memory that nothing references, so this is the unit
+/// `systemctl status certbot` finds and `ListUnits` does not: on disk, disabled, never run.
+pub fn on_disk_only() -> UnitProperties {
+    UnitProperties {
+        name: "certbot.service".to_owned(),
+        description: Some("Certbot".to_owned()),
+        load_state: Some("loaded".to_owned()),
+        active_state: Some("inactive".to_owned()),
+        sub_state: Some("dead".to_owned()),
+        unit_file_state: Some("disabled".to_owned()),
+        fragment_path: Some("/lib/systemd/system/certbot.service".to_owned()),
+        state_change_usec: Some(0),
+        main_pid: Some(0),
         memory_current: None,
         tasks_current: None,
         result: None,

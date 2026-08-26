@@ -12,9 +12,6 @@
 version: 1
 
 deferred:
-  - id: ono.context/1
-    phase: "A/E/H/planned"
-    required_by: [ono.container.enter, ono.context.get, ono.context.leave, ono.dir.enter, ono.file.enter, ono.group.enter, ono.interface.enter, ono.link.enter, ono.mount.enter, ono.process.enter, ono.service.enter, ono.socket.enter, ono.user.enter]
   - id: ono.measure/1
     phase: "B"
     required_by: [ono.data.measure]
@@ -72,36 +69,3 @@ deferred:
   - id: ono.host/1
     phase: "H/planned"
     required_by: [ono.host.get, ono.host.remove, ono.host.set, ono.host.trace]
-  - id: ono.assistant-turn/1
-    phase: "I"
-    required_by: [ono.assistant.ask]
-  - id: ono.assistant/1
-    phase: "I"
-    required_by: [ono.assistant.get]
-  - id: ono.capability-grant/1
-    phase: "I"
-    required_by: [ono.capability.get, ono.capability.grant, ono.capability.revoke]
-  - id: ono.finding/1
-    phase: "I"
-    required_by: [ono.finding.get]
-  - id: ono.model-provider/1
-    phase: "I"
-    required_by: [ono.model.get]
-  - id: ono.plugin-audit-event/1
-    phase: "I"
-    required_by: [ono.audit.get]
-  - id: ono.plugin-inspection/1
-    phase: "I"
-    required_by: [ono.plugin.inspect]
-  - id: ono.plugin-package/1
-    phase: "I"
-    required_by: [ono.plugin.find]
-  - id: ono.plugin-runtime/1
-    phase: "I"
-    required_by: [ono.plugin.load]
-  - id: ono.plugin/1
-    phase: "I"
-    required_by: [ono.plugin.get, ono.plugin.inspect, ono.plugin.load, ono.plugin.remove, ono.plugin.unload, ono.plugin.verify]
-  - id: ono.verification-result/1
-    phase: "I"
-    required_by: [ono.plugin.verify]

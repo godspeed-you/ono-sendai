@@ -136,7 +136,7 @@ annotation:
 
 # ---------------------------------------------------------------------------------------------
 # Findings — spec §31.24. A standard result model, so findings from unrelated packages compose.
-# The object schema is `docs/spec/kuang/schemas/finding.v1.yaml`.
+# The object schema is `docs/spec/schemas/finding.v1.yaml`.
 # ---------------------------------------------------------------------------------------------
 finding:
   schema: ono.finding/1

@@ -267,6 +267,16 @@ impl Provider for SystemdProvider {
                         return;
                     }
                     let properties = match bus.unit_properties(&name).await {
+                        // `ListUnits` enumerates a `not-found` stub for as long as some other
+                        // unit references a name whose file is gone. The by-name path refuses
+                        // such stubs as fabricated objects, and the listing must agree with it
+                        // — a unit the enumeration reports and a by-name query then denies is
+                        // the disagreement that made the CI round trip flaky.
+                        Ok(Some(properties))
+                            if properties.load_state.as_deref() == Some("not-found") =>
+                        {
+                            continue;
+                        }
                         Ok(Some(properties)) => properties,
                         // A unit that went away between the listing and the read is not a
                         // failure; it is what a snapshot of a moving system looks like.

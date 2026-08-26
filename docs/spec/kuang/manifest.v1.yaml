@@ -7,7 +7,7 @@
 #
 # KUANG/11 is Ono's extension runtime and nothing else (AGENTS.md §3). This file describes the
 # manifest a *package* ships; it is not an Ono object schema. The objects the shell shows for a
-# package are `docs/spec/kuang/schemas/plugin.v1.yaml` and `plugin-package.v1.yaml`.
+# package are `docs/spec/schemas/plugin.v1.yaml` and `plugin-package.v1.yaml`.
 #
 # Nothing here is implemented. These are the contracts spec §37 Phase I is built against.
 #
