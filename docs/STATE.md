@@ -424,10 +424,12 @@ Should-fix:
       20 000 deep in under 40 ms debug. The regression guard is
       `ono-parser/tests/robustness.rs::should_stay_linear_on_a_wall_of_unbalanced_parentheses`.
       Previously: **quadratic on unbalanced nesting** (24.8 s at 20 000).
-- [ ] **F11 — the directory walk holds one open descriptor per pending directory**, with
-      `--recursive` defaulting depth and limit to unbounded. A hostile tree exhausts the
-      descriptor table. `crates/ono-provider-linux/src/file.rs`. Proposed row: *unbounded resource
-      acquisition during traversal*.
+- [x] **F11 — fixed.** The frontier holds paths, not descriptors: each directory re-opens from
+      the held root through `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)`, so at most two
+      descriptors are ever open and the T14 no-redirect property survives the change — a
+      swapped component fails loudly instead of being followed. Pinned under a real 64-fd limit
+      in `ono-cli/tests/native.rs::should_walk_a_wide_tree_without_hoarding_descriptors`.
+      Previously: **one open descriptor per pending directory.**
 - [ ] **F12 — the trust store's default policy is trust-on-first-use**, which contradicts ADR-0015
       T5's "an unknown key is refused, not prompted past". `crates/ono-protocol/src/trust.rs`.
       Either the ADR or the default has to move.

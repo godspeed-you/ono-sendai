@@ -139,3 +139,28 @@ fn should_complete_a_multi_byte_candidate_without_splitting_a_character() {
     assert_eq!(editor.line(), "get 日本語ファイル");
     assert_eq!(editor.cursor(), editor.line().len());
 }
+
+#[test]
+fn should_sanitise_a_hostile_candidate_before_showing_it() {
+    // ADR-0015 T4: a completion source is data. A candidate carrying escape bytes — a poisoned
+    // history file, a filename — must not move the cursor or retitle the terminal from inside
+    // the candidate list.
+    let mut editor = Editor::new().with_completer(WordCompleter::new(vec![
+        "pro\u{1b}[2Jcess",
+        "pro\u{1b}]0;pwned\u{7}be",
+    ]));
+    type_text(&mut editor, "get pro");
+    tab(&mut editor);
+    tab(&mut editor);
+
+    let frame = editor.frame(80, Presentation::Terminal, &Theme::default());
+    let listed = frame.lines[1..].join(" ");
+    assert!(
+        !listed.contains('\u{1b}') && !listed.contains('\u{7}'),
+        "no candidate byte may reach the terminal as a control sequence, got {listed:?}"
+    );
+    assert!(
+        listed.contains("cess"),
+        "the candidate is still shown, as data: {listed:?}"
+    );
+}

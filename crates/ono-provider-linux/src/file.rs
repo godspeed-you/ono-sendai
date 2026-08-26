@@ -295,6 +295,21 @@ fn descend(parent: &OwnedFd, name: &OsStr) -> Result<OwnedFd, Errno> {
 
 /// Opens the root the user named. Following a symlink here is intended: `get dir /var/run` means
 /// the directory the user pointed at. Every descent below it uses `O_NOFOLLOW`.
+/// Re-opens a directory strictly beneath `root`, refusing symlinks anywhere in the path.
+///
+/// `RESOLVE_BENEATH` keeps the open inside the tree even against a hostile rename;
+/// `RESOLVE_NO_SYMLINKS` makes a component swapped for a symlink fail with `ELOOP` instead of
+/// being followed — the T14 property the descriptor-per-directory walk used to get from holding
+/// every directory open, kept without holding them.
+fn reopen_beneath(root: &OwnedFd, relative: &Path) -> Result<OwnedFd, Errno> {
+    let mut how = nix::fcntl::OpenHow::new()
+        .flags(OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC);
+    how = how.resolve(
+        nix::fcntl::ResolveFlag::RESOLVE_BENEATH | nix::fcntl::ResolveFlag::RESOLVE_NO_SYMLINKS,
+    );
+    nix::fcntl::openat2(root.as_fd(), relative, how)
+}
+
 fn open_root(path: &Path) -> Result<OwnedFd, ErrorValue> {
     openat(
         AT_FDCWD,
@@ -347,10 +362,43 @@ async fn walk(request: Request, describer: Describer, sink: StreamSink) {
         }
     };
 
-    let mut queue: VecDeque<(OwnedFd, PathBuf, usize)> = VecDeque::new();
-    queue.push_back((root, request.root.clone(), 0));
+    // The frontier holds *paths relative to the held root*, never descriptors: a tree wider
+    // than the descriptor table was unwalkable when every pending directory kept one open
+    // (ADR-0015, F11). Each directory is re-opened from the root when its turn comes, through
+    // `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` — so the walk still cannot be
+    // redirected out of the tree by a swapped component (T14): a symlink appearing anywhere in
+    // the recorded path makes the open fail loudly instead of following it. At most two
+    // descriptors are ever held: the root, and the directory being read.
+    let mut queue: VecDeque<(PathBuf, PathBuf, usize)> = VecDeque::new();
+    queue.push_back((PathBuf::new(), request.root.clone(), 0));
 
-    while let Some((fd, path, depth)) = queue.pop_front() {
+    while let Some((relative, path, depth)) = queue.pop_front() {
+        let fd = if relative.as_os_str().is_empty() {
+            match root.try_clone() {
+                Ok(fd) => fd,
+                Err(error) => {
+                    let _ = sink
+                        .fail(errno_error(
+                            Errno::from_raw(error.raw_os_error().unwrap_or(0)),
+                            &path,
+                        ))
+                        .await;
+                    return;
+                }
+            }
+        } else {
+            match reopen_beneath(&root, &relative) {
+                Ok(fd) => fd,
+                // The directory vanished or a component stopped being a plain directory between
+                // the listing and this turn — the swap of ADR-0015 T14. Reported, not followed.
+                Err(errno) => {
+                    if sink.fail(errno_error(errno, &path)).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+            }
+        };
         let names = match entry_names(&fd, &path) {
             Ok(names) => names,
             Err(error) => {
@@ -397,17 +445,7 @@ async fn walk(request: Request, describer: Describer, sink: StreamSink) {
                 }
             };
             if kind == "dir" && depth < request.max_depth {
-                match descend(&fd, name.as_os_str()) {
-                    Ok(child) => queue.push_back((child, child_path, depth + 1)),
-                    // `ELOOP` here means the entry stopped being a directory between the stat and
-                    // the open — the swap of ADR-0015 T14. The walk reports it and stays inside
-                    // the tree rather than following whatever took its place.
-                    Err(errno) => {
-                        if sink.fail(errno_error(errno, &child_path)).await.is_err() {
-                            return;
-                        }
-                    }
-                }
+                queue.push_back((relative.join(&name), child_path, depth + 1));
             }
         }
     }

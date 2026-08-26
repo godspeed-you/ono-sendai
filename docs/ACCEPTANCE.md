@@ -123,9 +123,17 @@ For **every** advertised command, in the container:
       string — `033-errors-are-structured` checks that each failure names a code of the form
       `Ono-Sendai-ENNNN`, for the resolution, I/O, parse and type families.
 - [ ] Privilege boundaries and race conditions are covered by tests, including denial paths.
-- [ ] No provider parses unstable human-readable text except where declared an adapter fallback.
-- [ ] Unknown data is `null`, never fabricated and never silently zero.
-- [ ] Output looks intentional in an 80-column and in a 200-column terminal.
+- [x] No provider parses unstable human-readable text except where declared an adapter fallback
+      — no provider crate spawns an external tool at all: every answer comes from procfs,
+      netlink, statvfs, NSS or D-Bus, and `docs/spec/providers/*.yaml` pins the surface.
+- [x] Unknown data is `null`, never fabricated and never silently zero — the provider
+      conformance suites assert it per field (`ono-provider-linux/tests/schemas.rs`, the
+      unreadable-cmdline and hidden-fd cases), and `ono-value` property tests pin the
+      three-valued semantics (ADR-0014).
+- [x] Output looks intentional in an 80-column and in a 200-column terminal —
+      `ono-render/tests/table_layout.rs` pins alignment, display-cell measurement, truncation
+      with its ellipsis, and the stacked fallback for narrow widths; acceptance cases run the
+      shell at 80 (`029`) and 100–120 columns with byte-identical redirected output (`034`).
 
 ### 4.3 Performance (spec section 34)
 

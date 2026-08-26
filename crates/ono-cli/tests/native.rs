@@ -195,3 +195,32 @@ fn should_carry_a_trace_through_the_pipeline_as_a_graph_value() {
     run.assert_success();
     run.assert_stdout_contains("ono.graph/1");
 }
+
+#[test]
+fn should_walk_a_wide_tree_without_hoarding_descriptors() {
+    // ADR-0015 (F11): the walk used to hold one open descriptor per *pending* directory, so a
+    // tree wider than the descriptor table killed it. Under a 64-descriptor limit, five hundred
+    // sibling directories must still be walkable — the walk may hold the root and the one
+    // directory it is reading, never the frontier.
+    let scratch = ono_testkit::scratch();
+    for i in 0..500 {
+        scratch.write(&format!("wide/dir-{i:03}/leaf.txt"), "x");
+    }
+
+    let run = Shell::program("/bin/bash")
+        .args([
+            "-c".to_owned(),
+            format!(
+                "ulimit -n 64 2>/dev/null; exec {} --no-config -c 'find file {}/wide | count | to json'",
+                ono_testkit::ono_binary().display(),
+                scratch.path().display(),
+            ),
+        ])
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[1001]",
+        "the root, five hundred directories and five hundred leaves, all reached"
+    );
+}
