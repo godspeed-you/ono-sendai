@@ -1,0 +1,22 @@
+[package]
+name = "ono-history"
+description = "Semantic command history: what was run, where, with what outcome."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+jiff.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true
