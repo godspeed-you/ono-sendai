@@ -1,0 +1,20 @@
+# Phase A: ono used the way a person uses it — as an interactive shell on a real terminal, not
+# as `-c`. The identity line of spec section 4.1, the prompt HUD of section 4.2, commands run,
+# output shown, and the exit status carried out.
+case: ono works as an interactive shell on a real terminal
+pty: true
+columns: 100
+lines: 30
+timeout: 60
+stdin: |
+  echo interactive-works
+  cd /etc
+  pwd
+  exit 3
+run: |
+  ono
+exit: 3
+stdout-contains: interactive-works
+stdout-contains: /etc
+stdout-contains: Ono-Sendai/
+stdout-contains: local

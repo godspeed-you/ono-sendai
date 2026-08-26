@@ -137,15 +137,13 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
         print_identity_line(session, &theme, presentation);
     }
 
-    // Raw mode is entered around reading and left around running, so a child program finds the
-    // terminal exactly as it would have under any other shell (ADR-0013, spec §29.3).
-    if ono_editor::RawMode::enter().is_err() {
-        return run_from_reader(session, reporter, &mut std::io::stdin().lock());
-    }
+    // The renderer is stateful: it remembers how tall the last frame was so it can paint over it.
+    // A fresh one per keystroke would leave every previous frame on the screen.
+    let mut renderer = ono_editor::Renderer::new(std::io::stdout());
 
     loop {
         editor.set_prompt(prompt_of(session));
-        let line = match read_line(&mut editor, &theme, presentation) {
+        let line = match read_line(&mut editor, &mut renderer, &theme, presentation) {
             Some(line) => line,
             None => break,
         };
@@ -175,35 +173,114 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
     session.status()
 }
 
-fn read_line(editor: &mut Editor, theme: &Theme, presentation: Presentation) -> Option<String> {
+/// Reads one line, in raw mode.
+///
+/// Raw mode is entered around reading and left around running, so a child program finds the
+/// terminal exactly as it would have under any other shell (ADR-0013, spec §29.3).
+fn read_line(
+    editor: &mut Editor,
+    renderer: &mut ono_editor::Renderer<std::io::Stdout>,
+    theme: &Theme,
+    presentation: Presentation,
+) -> Option<String> {
     let raw = ono_editor::RawMode::enter().ok()?;
+
     loop {
-        let width = ono_editor::terminal_size().map_or(80, |(columns, _)| columns);
-        let frame = editor.frame(width, presentation, theme);
-        let mut out = std::io::stdout().lock();
-        let mut renderer = ono_editor::Renderer::new(&mut out);
+        let frame = editor.frame(terminal_width(), presentation, theme);
         let _ = renderer.draw(&frame);
-        drop(out);
 
         let key = ono_editor::read_key().ok()?;
         match editor.feed(key) {
             Outcome::Submit(line) => {
-                let width = ono_editor::terminal_size().map_or(80, |(columns, _)| columns);
-                let frame = editor.frame(width, presentation, theme);
-                let mut out = std::io::stdout().lock();
-                let mut renderer = ono_editor::Renderer::new(&mut out);
+                let frame = editor.frame(terminal_width(), presentation, theme);
                 let _ = renderer.finish(&frame);
                 editor.reset();
                 drop(raw);
                 return Some(line);
             }
             Outcome::EndOfInput => {
+                let frame = editor.frame(terminal_width(), presentation, theme);
+                let _ = renderer.finish(&frame);
                 drop(raw);
                 return None;
             }
             Outcome::Cancelled | Outcome::Continue | Outcome::Redraw => {}
         }
     }
+}
+
+/// The path as a prompt should show it.
+///
+/// Spec §4.2 asks that the prompt stay short, and a prompt wider than the terminal wraps and
+/// takes the line the user is typing with it. Home becomes `~`, and once the path is long the
+/// leading components shrink to their first character — the last component, which is the one
+/// that tells you where you are, always stays whole.
+fn short_path(path: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    const BUDGET: usize = 32;
+
+    let mut shown = path.display().to_string();
+    if let Some(home) = home
+        && let Ok(rest) = path.strip_prefix(home)
+    {
+        shown = if rest.as_os_str().is_empty() {
+            "~".to_owned()
+        } else {
+            format!("~/{}", rest.display())
+        };
+    }
+    if shown.chars().count() <= BUDGET {
+        return shown;
+    }
+
+    let absolute = shown.starts_with('/');
+    let mut parts: Vec<String> = shown
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if parts.len() < 2 {
+        return shown;
+    }
+
+    // Shrink from the left, one component at a time, and stop as soon as it fits. The last
+    // component is the one that says where you are, so it is never touched.
+    let render = |parts: &[String]| {
+        let joined = parts.join("/");
+        if absolute { format!("/{joined}") } else { joined }
+    };
+    for index in 0..parts.len() - 1 {
+        parts[index] = match parts[index].chars().next() {
+            // A leading dot is part of the name, not decoration, so `.config` keeps two.
+            Some('.') => parts[index].chars().take(2).collect(),
+            Some(first) => first.to_string(),
+            None => String::new(),
+        };
+        if render(&parts).chars().count() <= BUDGET {
+            break;
+        }
+    }
+    render(&parts)
+}
+
+/// How wide the terminal is, with a usable answer when nobody can say.
+///
+/// A pseudo-terminal opened without a window size reports zero columns, and a zero-wide terminal
+/// wraps every single character onto its own line. Anything implausibly narrow is treated as
+/// unknown, and `COLUMNS` is honoured because that is how a caller says what the size is when the
+/// terminal itself cannot.
+fn terminal_width() -> usize {
+    const NARROWEST_USABLE: usize = 20;
+    const ASSUMED: usize = 80;
+
+    let reported = ono_editor::terminal_size().map_or(0, |(columns, _)| columns);
+    if reported >= NARROWEST_USABLE {
+        return reported;
+    }
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|columns| *columns >= NARROWEST_USABLE)
+        .unwrap_or(ASSUMED)
 }
 
 /// The one-line identifier of spec §4.1 — printed only to a terminal, and never before a pipe.
@@ -228,19 +305,10 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
     let mut prompt = ono_editor::Prompt::plain("").segment("local", Token::PromptLink);
     prompt = prompt.segment("://", Token::Dim);
 
-    let path = session.cwd().to_path_buf();
-    let shown = match session.home() {
-        Some(home) if path.starts_with(&home) => {
-            let rest = path.strip_prefix(&home).unwrap_or(&path);
-            if rest.as_os_str().is_empty() {
-                "~".to_owned()
-            } else {
-                format!("~/{}", rest.display())
-            }
-        }
-        _ => path.display().to_string(),
-    };
-    prompt = prompt.segment(shown, Token::PromptContext);
+    prompt = prompt.segment(
+        short_path(session.cwd(), session.home().as_deref()),
+        Token::PromptContext,
+    );
 
     let jobs = session.executor().jobs().len();
     if jobs > 0 {
@@ -312,4 +380,60 @@ pub fn run_from_reader(
         return ExitStatus::FAILURE;
     }
     run_source(session, &source, reporter)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::short_path;
+
+    #[test]
+    fn should_show_a_short_path_whole_when_it_already_fits() {
+        assert_eq!(short_path(Path::new("/etc"), None), "/etc");
+        assert_eq!(short_path(Path::new("/var/log/nginx"), None), "/var/log/nginx");
+    }
+
+    #[test]
+    fn should_write_the_home_directory_as_a_tilde_when_the_path_is_inside_it() {
+        let home = Path::new("/home/case");
+        assert_eq!(short_path(Path::new("/home/case"), Some(home)), "~");
+        assert_eq!(short_path(Path::new("/home/case/src"), Some(home)), "~/src");
+    }
+
+    #[test]
+    fn should_keep_the_last_component_whole_however_long_the_path_is() {
+        let shown = short_path(
+            Path::new("/home/case/projects/ono-sendai/crates/ono-cli/src"),
+            None,
+        );
+        assert!(shown.ends_with("/src"), "got {shown}");
+    }
+
+    #[test]
+    fn should_shrink_only_as_far_as_it_must_to_fit_the_prompt() {
+        // Spec §4.2 asks the prompt to stay short; a prompt wider than the terminal wraps and
+        // takes the line being typed with it.
+        let shown = short_path(Path::new("/home/case/projects/ono-sendai/crates"), None);
+        assert!(shown.chars().count() <= 32, "got {shown}");
+        assert!(
+            shown.contains("ono-sendai") || shown.contains("crates"),
+            "the components nearest the end must survive, got {shown}"
+        );
+    }
+
+    #[test]
+    fn should_keep_two_characters_of_a_dotted_component_so_it_stays_recognisable() {
+        let shown = short_path(
+            Path::new("/home/case/.config/some-application/with/a/deep/tree"),
+            None,
+        );
+        assert!(shown.contains(".c"), "got {shown}");
+    }
+
+    #[test]
+    fn should_leave_a_single_component_alone_however_long_it_is() {
+        let long = "/a-directory-with-an-unreasonably-long-single-name";
+        assert_eq!(short_path(Path::new(long), None), long);
+    }
 }

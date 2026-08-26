@@ -1,0 +1,19 @@
+# Phase A11 and spec section 20.1: history records semantics, not only strings, and it is still
+# there after the shell has been closed and started again.
+case: history survives a restart and remembers where a command ran
+pty: true
+columns: 100
+lines: 30
+timeout: 60
+stdin: |
+  echo first-session
+  exit 0
+run: |
+  export HOME=/home/case
+  ono
+  echo "--- second session ---"
+  cat "$HOME/.local/state/ono/history.jsonl"
+exit: 0
+stdout-contains: first-session
+stdout-contains: echo first-session
+stdout-contains: "cwd"
