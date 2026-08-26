@@ -18,9 +18,11 @@
     reason = "this crate is only ever linked into tests, where a failed precondition should abort loudly"
 )]
 
+mod rng;
 mod run;
 mod scratch;
 
+pub use rng::Rng;
 pub use run::{Run, RunError, Shell};
 pub use scratch::{Scratch, scratch};
 
