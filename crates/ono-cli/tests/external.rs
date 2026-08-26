@@ -195,3 +195,53 @@ fn should_not_fall_back_to_another_namespace_when_a_forced_one_misses() {
         run.stderr()
     );
 }
+
+#[test]
+fn should_run_no_stage_at_all_when_one_of_them_cannot_be_resolved() {
+    // Bash runs the stages it can, so `nonesuch | cat` succeeds and reports 0 — an empty result
+    // that looks like a real one. ADR-0008: a pipeline that cannot be built runs nothing.
+    let dir = scratch();
+    let marker = dir.path().join("ran");
+
+    let run = ono(&format!(
+        "sh -c 'touch {}' | definitely-not-a-command",
+        marker.display()
+    ));
+    assert_eq!(run.status().code(), 127);
+    assert!(!marker.exists(), "the resolvable stage must not have run");
+
+    let run = ono(&format!(
+        "definitely-not-a-command | sh -c 'touch {}'",
+        marker.display()
+    ));
+    assert_eq!(run.status().code(), 127);
+    assert!(!marker.exists(), "the resolvable stage must not have run");
+}
+
+#[test]
+fn should_run_no_stage_at_all_when_a_redirection_cannot_be_opened() {
+    let dir = scratch();
+    let marker = dir.path().join("ran");
+    let run = ono(&format!(
+        "sh -c 'touch {}' | cat < /definitely/not/here",
+        marker.display()
+    ));
+    assert!(!run.status().is_success());
+    assert!(
+        !marker.exists(),
+        "nothing runs when a redirection cannot be opened"
+    );
+}
+
+#[test]
+fn should_report_a_write_that_the_system_refused_rather_than_reporting_success() {
+    // A shell that reported success for a write that failed would lose data silently, which is
+    // the one thing a shell must never do.
+    let run = ono("echo x > /proc/version");
+    assert!(!run.status().is_success());
+    assert!(
+        run.stderr().contains("Ono-Sendai-E03"),
+        "{:?}",
+        run.stderr()
+    );
+}

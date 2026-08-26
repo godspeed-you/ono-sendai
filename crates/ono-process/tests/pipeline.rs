@@ -180,18 +180,47 @@ fn should_report_success_for_an_empty_pipeline() {
 }
 
 #[test]
-fn should_keep_running_the_remaining_stages_when_one_cannot_be_resolved() {
+fn should_run_no_stage_at_all_when_one_of_them_cannot_be_resolved() {
+    // ADR-0008: a pipeline that cannot be built runs nothing. Bash runs the stages it can, so
+    // `nonesuch | cat` reports success having produced an empty result that looks like a real
+    // one; a typo in the first stage of a long pipeline should not half-execute the rest.
+    let marker = tempfile::tempdir().expect("a scratch directory");
+    let ran = marker.path().join("ran");
+
     let outcome = run(Pipeline::new()
-        .stage(sh("echo upstream"))
+        .stage(sh(&format!("touch {}", ran.display())))
         .stage(Command::new("ono-no-such-program-42"))
         .stage(Command::new("cat").stdout(Output::Capture)));
 
-    assert_eq!(outcome.statuses()[1].code(), 127);
-    assert!(outcome.stages()[1].failure.is_some());
-    assert_eq!(outcome.status().code(), 0, "the last stage still ran");
-    assert_eq!(
-        text(outcome.stdout()),
-        "",
-        "the broken stage passed nothing on, and the last stage saw end of input"
+    assert!(
+        !ran.exists(),
+        "the resolvable stage must not have run once another could not be built"
     );
+    assert_eq!(
+        outcome.status().code(),
+        127,
+        "the pipeline reports the failure that stopped it, not the last stage's success"
+    );
+    assert!(
+        outcome.failure().is_some(),
+        "the reason must reach the caller, not only the status"
+    );
+    assert_eq!(text(outcome.stdout()), "");
+}
+
+#[test]
+fn should_run_no_stage_at_all_when_a_redirection_cannot_be_opened() {
+    let marker = tempfile::tempdir().expect("a scratch directory");
+    let ran = marker.path().join("ran");
+
+    let outcome = run(Pipeline::new()
+        .stage(sh(&format!("touch {}", ran.display())))
+        .stage(Command::new("cat").redirect(Redirect::read("/ono/definitely/not/here"))));
+
+    assert!(
+        !ran.exists(),
+        "nothing runs when a redirection cannot be opened"
+    );
+    assert!(!outcome.status().is_success());
+    assert!(outcome.failure().is_some());
 }

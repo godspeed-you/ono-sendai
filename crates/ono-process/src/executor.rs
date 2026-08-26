@@ -349,7 +349,39 @@ impl Executor {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+}
 
+/// A stage that has been resolved and had its descriptors opened, but not yet spawned.
+///
+/// Preparing every stage before spawning any is what lets a pipeline refuse to run at all when
+/// one of its parts cannot be built (ADR-0008).
+struct ReadyStage {
+    program: std::path::PathBuf,
+    args: Vec<std::ffi::OsString>,
+    env: Option<Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>>,
+    clear_env: bool,
+    cwd: Option<std::path::PathBuf>,
+    io: plan::StageIo,
+}
+
+/// The stage list for a pipeline that never ran, with the reason on the stage that caused it.
+///
+/// Every stage reports the same failing status, because none of them ran: reporting success for
+/// the others would say a stage finished that was never started.
+fn refuse(count: usize, at: usize, refusal: (ExitStatus, Error)) -> Vec<RunningStage> {
+    let (status, error) = refusal;
+    (0..count)
+        .map(|index| RunningStage {
+            pid: 0,
+            state: JobState::Exited(status),
+            failure: (index == at).then(|| error.clone()),
+            stdout: None,
+            stderr: None,
+        })
+        .collect()
+}
+
+impl Executor {
     /// Starts every stage of a pipeline in one new process group.
     fn start(&mut self, pipeline: &Pipeline) -> Result<Running> {
         let mut running = Running {
@@ -376,68 +408,93 @@ impl Executor {
         }
         write_ends.push(None);
 
+        // Everything that can fail without side effects is checked before anything is spawned:
+        // every program is resolved and every redirection is opened. A pipeline with a name that
+        // does not resolve, or a redirection that cannot be opened, therefore runs *nothing*
+        // rather than running the stages that happened to come first (ADR-0008). Bash runs what
+        // it can, so `nonesuch | cat` reports success having produced an empty result that looks
+        // like a real one; this is the same principle as spec §11.6 — know what will happen
+        // before any of it does — applied to the cheapest case there is.
+        let mut prepared = Vec::with_capacity(pipeline.len());
         for (index, command) in pipeline.stages().iter().enumerate() {
             let piped_input = read_ends[index].take();
             let piped_output = write_ends[index].take();
-            let stage = self.start_stage(command, piped_input, piped_output, &mut running);
-            running.stages.push(stage?);
+            match self.prepare_stage(command, piped_input, piped_output) {
+                Ok(ready) => prepared.push(ready),
+                Err(refusal) => {
+                    // Dropping the prepared stages closes every pipe end and every file opened so
+                    // far, so nothing is left half-open behind a pipeline that never ran.
+                    drop(prepared);
+                    running.stages = refuse(pipeline.len(), index, refusal);
+                    return Ok(running);
+                }
+            }
+        }
+
+        for ready in prepared {
+            let stage = self.spawn_stage(ready, &mut running);
+            running.stages.push(stage);
         }
         Ok(running)
     }
 
-    fn start_stage(
+    /// Resolves a stage and opens its redirections, without spawning anything.
+    fn prepare_stage(
         &mut self,
         command: &Command,
         piped_input: Option<OwnedFd>,
         piped_output: Option<OwnedFd>,
-        running: &mut Running,
-    ) -> Result<RunningStage> {
+    ) -> std::result::Result<ReadyStage, (ExitStatus, Error)> {
         let env = command.resolved_env();
         let path = resolve::effective_path(env.as_deref(), command.clears_env());
         let resolved = resolve::resolve(command.program(), path.as_deref(), command.directory());
         let program = match resolved {
             Resolution::Found(program) => program,
             other => {
-                // The stage cannot run, but the ones around it already have their pipes: they
-                // must still see a clean end of input rather than a hang.
+                // Dropping the pipe ends here means the stages around this one see a clean end of
+                // input rather than a hang — though none of them will be spawned at all.
                 drop(piped_input);
                 drop(piped_output);
-                let (status, error) = other.failure().unwrap_or((
+                return Err(other.failure().unwrap_or((
                     ExitStatus::NOT_FOUND,
                     Error::new(
                         ono_core::ErrorCode::ResolveCommandNotFound,
                         "command not found",
                     ),
-                ));
-                return Ok(RunningStage {
-                    pid: 0,
-                    state: JobState::Exited(status),
-                    failure: Some(error),
-                    stdout: None,
-                    stderr: None,
-                });
+                )));
             }
         };
 
-        let io = match plan::prepare(command, piped_input, piped_output) {
-            Ok(io) => io,
-            Err(error) => {
-                return Ok(RunningStage {
-                    pid: 0,
-                    state: JobState::Exited(ExitStatus::FAILURE),
-                    failure: Some(error),
-                    stdout: None,
-                    stderr: None,
-                });
-            }
-        };
+        let io = plan::prepare(command, piped_input, piped_output)
+            .map_err(|error| (ExitStatus::FAILURE, error))?;
+
+        Ok(ReadyStage {
+            program,
+            args: command.args_slice().to_vec(),
+            env,
+            clear_env: command.clears_env(),
+            cwd: command.directory().map(std::path::Path::to_path_buf),
+            io,
+        })
+    }
+
+    /// Spawns a stage that has already been resolved and had its descriptors opened.
+    fn spawn_stage(&mut self, ready: ReadyStage, running: &mut Running) -> RunningStage {
+        let ReadyStage {
+            program,
+            args,
+            env,
+            clear_env,
+            cwd,
+            io,
+        } = ready;
 
         let request = SpawnRequest {
             program: &program,
-            args: command.args_slice(),
+            args: &args,
             env: env.as_deref(),
-            clear_env: command.clears_env(),
-            cwd: command.directory(),
+            clear_env,
+            cwd: cwd.as_deref(),
             process_group: Some(running.pgid),
             controlling_terminal: None,
         };
@@ -448,13 +505,13 @@ impl Executor {
             Ok(pid) => pid,
             Err(error) => {
                 let (status, error) = spawn::exec_failure(&program, &error);
-                return Ok(RunningStage {
+                return RunningStage {
                     pid: 0,
                     state: JobState::Exited(status),
                     failure: Some(error),
                     stdout: None,
                     stderr: None,
-                });
+                };
             }
         };
         if running.pgid == 0 {
@@ -464,13 +521,13 @@ impl Executor {
         if let Some((sink, bytes)) = io.feed {
             feed(sink, bytes);
         }
-        Ok(RunningStage {
+        RunningStage {
             pid,
             state: JobState::Running,
             failure: None,
             stdout: io.stdout.map(Collector::start),
             stderr: io.stderr.map(Collector::start),
-        })
+        }
     }
 
     /// Turns a finished or stopped pipeline into the right kind of outcome.

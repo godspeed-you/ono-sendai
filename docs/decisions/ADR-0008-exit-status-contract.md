@@ -33,6 +33,18 @@ An external command's own status is passed through **unchanged**, including stat
 126/127/128+N that the program chose itself. Ono only originates those values when it is Ono
 that failed to execute or that observed the signal. This satisfies §16.4: no translation.
 
+### A pipeline that could not be built runs nothing
+
+A pipeline's status is the status of its **last** stage — of a pipeline that *ran*. If any stage
+cannot be resolved or its redirections cannot be opened, **no stage runs at all** and the status
+is that failure's: 127 for an unresolvable name, the matching `io.*` status for a redirection.
+
+Bash runs the stages it can and reports the last one's status, so `nonesuch | cat` succeeds: a
+pipeline whose first stage does not exist reports 0, having produced an empty result that looks
+like a real one. Ono refuses the whole pipeline instead. This is the same principle as spec §11.6
+and §17.3 — calculate what will happen before any of it does — applied to the cheapest case there
+is, and it means a typo in the first stage of a long pipeline cannot half-execute the rest.
+
 A pipeline's status is the status of its **last** stage. The full vector of stage statuses is
 retained on the history entry (§20.1) and is reachable as structured data; it is not collapsed
 into a single boolean (§16.5). Ono does not adopt `pipefail` as a mode: the structured record
