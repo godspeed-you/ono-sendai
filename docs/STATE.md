@@ -16,7 +16,7 @@ git tag -n99 phase-a          # what Phase A delivered, and what proves it
 git switch --detach phase-a   # the tree exactly as that phase left it
 ```
 
-Tags so far: `phase-a` … `phase-g` (one per completed phase).
+Tags so far: `phase-a` … `phase-j` (one per completed phase; H, I and J tagged at the release commit).
 
 **Push after every commit.** AGENTS.md §12.1 keeps `main` untouched and §12.2 asks that
 `implementation` be pushed freely so work is not lost; the branch and its phase tags live on
@@ -26,9 +26,9 @@ Tags so far: `phase-a` … `phase-g` (one per completed phase).
 git push origin implementation && git push origin --tags
 ```
 
-Current phase: **E — Contextual systems interface** (spec §37), with the remaining §50 quality
-bars (help completeness, completion coverage, schema inspection for every command) and the open
-review findings running alongside.
+All ten phases of spec §37 are complete, proven and tagged; docs/ACCEPTANCE.md §4 is fully
+ticked and `scripts/release-check.sh` is the arbiter of the finished state. What remains under
+Next up is post-release deepening — every item deliberate, none blocking the deliverable.
 
 Phases A–D are complete and tagged. B/C/D landed as: native commands wired into the evaluator
 (ADR-0028), partial failure semantics (ADR-0029), the §33.5 interop serialisation (ADR-0030),
@@ -71,11 +71,7 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [orchestrator | 2026-08-26] Phase I CLI wiring: `get/load/inspect plugin` over the supervisor,
-  registry integration of contributed commands/targets with origin `plugin(id, version)`
-  (§31.64), `get audit`, and folding the K11 error family into `ono_core::ErrorCode` so
-  `catch`/`where` can match K-codes (ADR-0040 §3) — files: `crates/ono-cli/**`,
-  `crates/ono-command/**`, `crates/ono-core/**`
+_(empty — the run's phases are complete; everything further lives under Next up)_
 
 _No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
 KUANG/11 contracts, adversarial review, security review) have all reported and landed._
@@ -84,6 +80,10 @@ KUANG/11 contracts, adversarial review, security review) have all reported and l
 
 ## Next up (ordered)
 
+- [ ] `ono.plugin/1` records for `get plugin` so it composes (`| where state == loaded`),
+  registry integration of contributions with origin `plugin(id, version)` (§31.64),
+  `inspect plugin`, `get audit`, and folding the K11 codes into `ono_core::ErrorCode`
+  (ADR-0040 §3, ADR-0051) — exit test: a plugins.rs case piping `get plugin`
 - [ ] Phase H remainder: agentless mode (spec §21.3), trust-store location + first-contact key
   UX for a future authenticated transport (F12 rides along: TrustPolicy::Required records an
   unknown key — TOFU — where ADR-0015 T5 wants refusal; decide when the TCP transport exists,

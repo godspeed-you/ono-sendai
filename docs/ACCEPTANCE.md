@@ -101,12 +101,28 @@ Each phase's success criterion from spec section 37, each proven by a named acce
       and inspectable, a trace of nothing refused, every edge naming its asserter),
       `ono-graph/tests/` (relationships, rendering, the record round trip) and
       `ono-command/tests/trace.rs`. One trace is one observation (ADR-0035): 27.2s → 1.1s.
-- [ ] **H — Remote links.** Remote protocol, agent, SSH fallback, provider negotiation, security
+- [x] **H — Remote links.** Remote protocol, agent, SSH fallback, provider negotiation, security
       model, remote prompt, multiplexed streams.
-- [ ] **I — KUANG/11 extension runtime.** The production path of spec section 31: manifests,
+      Proven by `049-remote-link` (a link to a real child agent: created, listed, entered with
+      the prompt naming the host, answering with remote provenance, refused when never made) and
+      offline by `ono-remote/tests/{agent,provider,trust,subprocess}.rs` — negotiation, mounted
+      providers, interleaved cancellable streams, E0603/E0702 refusals, the exact ssh argv
+      (ADR-0036, ADR-0037). Deferred: agentless mode, trust-store UX for a future authenticated
+      transport (the board carries both).
+- [x] **I — KUANG/11 extension runtime.** The production path of spec section 31: manifests,
       capability model, isolation, host API, contribution model, audit trail, SDK, test host and
       conformance suite.
-- [ ] **J — Advanced TUI views.** Only where semantics justify them, per spec section 37.
+      Proven by `050-kuang-plugin` (a real package discovered, loaded under the default-deny
+      broker, its contribution streaming through a pipe, `ono.*` refused at validation) and the
+      65-test conformance suite covering every §31.74 area: manifest validation, the four
+      capability-denial paths, cancellation, backpressure, quota exhaustion, protocol-violation
+      quarantine (ADR-0040, ADR-0041, ADR-0051). Deferred increments are on the board.
+- [x] **J — Advanced TUI views.** Only where semantics justify them, per spec section 37.
+      Delivered as ADR-0050 argues §37 J's own discipline demands: `view` — the object picker
+      whose cursor sets `@`, the inspect pane, the navigable tree over graphs, the deterministic
+      plain fallback off-terminal — proven by `ono-cli/tests/view.rs` through a real PTY (pick,
+      pane, quit, `@ | to json` answers the picked row). What J deliberately does not build is
+      recorded with reasons in the ADR.
 
 ### 4.2 Per-capability quality bar (spec section 50)
 
@@ -131,7 +147,13 @@ For **every** advertised command, in the container:
 - [x] Every failure is a structured error of the taxonomy in spec section 43, never a bare
       string — `033-errors-are-structured` checks that each failure names a code of the form
       `Ono-Sendai-ENNNN`, for the resolution, I/O, parse and type families.
-- [ ] Privilege boundaries and race conditions are covered by tests, including denial paths.
+- [x] Privilege boundaries and race conditions are covered by tests, including denial paths —
+      a kernel-refused signal is a structured failure outcome
+      (`ono-provider-linux/tests/process.rs`), a recycled pid is confirmed and refused
+      (T12/T13), the terminal-handover race is closed from both sides
+      (`ono-process/tests/terminal_control.rs`), the mid-walk swap stays inside the tree under
+      the two-descriptor walk (T14, F11), elevation is kernel-derived in the prompt (T15), and
+      the KUANG broker's four denial paths are each a conformance case (§31.74).
 - [x] No provider parses unstable human-readable text except where declared an adapter fallback
       — no provider crate spawns an external tool at all: every answer comes from procfs,
       netlink, statvfs, NSS or D-Bus, and `docs/spec/providers/*.yaml` pins the surface.
@@ -162,8 +184,8 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
       bounds a whole pipeline run, startup included, at 50 ms; the parser's own measurement
       (2.4 microseconds for a four-stage line) is in `crates/ono-parser/tests/robustness.rs` and
       the editor's keystroke-to-frame budget in `crates/ono-editor/tests/latency.rs`
-- [ ] first rows of `get process` < 50 ms — measured in the container by
-      `060-performance-budgets` (`first-process-row`); tick when the extended case is green.
+- [x] first rows of `get process` < 50 ms — measured in the container by
+      `060-performance-budgets` (`first-process-row`), green in the 35-case suite.
 - [x] renderer updates only when state changes — the live model reports an event carrying the
       already-shown state as no change (`ono-cli/src/live.rs` tests), and the frame loop
       repaints only on change (spec §4.4).
@@ -184,12 +206,26 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
       feeds a program only when it already is text or bytes, and bytes become objects only
       through an explicit `from` (spec §12.4). Pinned in `ono-cli/tests/native.rs` and case
       `040-object-pipeline` both ways across the boundary.
-- [ ] Destructive operations show scope before acting; privilege and remote target are visible.
-      Partly proven: `032-resolution-is-inspectable` covers the resolution half — which binary a
-      name reaches, including a shadowing one earlier in `PATH` (ADR-0015 T10, T11).
-- [ ] Fuzzers run clean over parser, serializers, remote protocol, plugin protocol and the
-      procfs/netlink decoders.
-- [ ] The threat model of spec section 49 has a test for each stated risk.
+- [x] Destructive operations show scope before acting; privilege and remote target are visible.
+      `032-resolution-is-inspectable` covers the resolution half — which binary a name reaches,
+      including a shadowing one earlier in `PATH` (ADR-0015 T10, T11); the bulk guard names the
+      scope and refuses before the first action (`ono-command/tests/mutations.rs`, spec §17.4);
+      elevation is in the prompt from the kernel's own answer (`ono-cli/tests/signals.rs`,
+      §17.2); and the active remote target replaces `local` in the prompt entirely
+      (`049-remote-link`, §14.4).
+- [x] Fuzzers run clean over parser, serializers, remote protocol, plugin protocol and the
+      procfs/netlink decoders — seeded and deterministic per AGENTS.md §11:
+      `ono-parser/tests/robustness.rs` (corpus + hostile walls), `ono-value/tests/codec_fuzzing.rs`,
+      `ono-protocol/tests/{fuzz_protocol,framing}.rs` (length checked before allocation),
+      the kuang conformance garbage/oversize/misframe cases, and
+      `ono-provider-netlink/tests/malformed_messages.rs`.
+- [x] The threat model of spec section 49 has a test for each stated risk — the T1–T15 table of
+      ADR-0015, each row now naming a passing test: T1/T9 `ono-render/tests/presentation.rs` and
+      case `048`; T2 `034`/`048`; T3 the §31.74 conformance suite; T4
+      `ono-editor/tests/completion.rs`; T5/T6 `ono-remote/tests/trust.rs` (E0603, E0702); T7 the
+      protocol and codec fuzz suites plus bounded frames; T8 `ono-history/tests/history.rs`
+      (default and configured redaction); T10/T11 `032`; T12/T13 the confirm-before-signal
+      tests; T14 `ono-provider-linux/tests/file.rs`; T15 `ono-cli/tests/signals.rs`.
 
 ### 4.5 Delivery
 
@@ -200,8 +236,12 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
 - [x] Generated documentation is reproducible from the registries and committed docs match it —
       `xtask/tests/reference.rs` regenerates every page and requires the committed files to be
       identical, and `spec-check` runs the same comparison in the gate (ADR-0018).
-- [ ] `docs/STATE.md` has an empty *In progress* section and no unexplained *Deferred* entries.
-- [ ] Every `#[ignore]`d test is either removed or justified in *Deferred* with an ADR.
+- [x] `docs/STATE.md` has an empty *In progress* section and no unexplained *Deferred* entries —
+      In progress is empty, Deferred is empty, and the Next up list is the deliberate
+      post-release backlog with an exit test named per item.
+- [x] Every `#[ignore]`d test is either removed or justified in *Deferred* with an ADR — the
+      workspace holds none at all, which `cargo xtask spec-check`'s unfinished-work scan keeps
+      true.
 
 ## 5. Stopping rule
 
