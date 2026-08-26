@@ -17,11 +17,17 @@ native object features yet becoming a dead end.* Exit test: acceptance case
 ## In progress
 
 - [orchestrator | 2026-08-26] Phase A integration: evaluator, resolution, REPL — files:
-  `crates/ono-cli/**`, `docs/decisions/**`, `docs/STATE.md`, `Cargo.toml`, `docker/**`
-- [agent:value | 2026-08-26] A-B1 value model — files: `crates/ono-value/**`
+  `crates/ono-cli/**`, `crates/ono-testkit/**`, `crates/ono-history/**`, `xtask/**`,
+  `docs/decisions/**`, `docs/STATE.md`, `Cargo.toml`, `docker/**`, `scripts/**`
 - [agent:parser | 2026-08-26] A1–A3 lexer, AST, recoverable parser — files: `crates/ono-parser/**`
 - [agent:process | 2026-08-26] A4/A6–A9 external exec, redirection, PTY, job control —
   files: `crates/ono-process/**`
+- [agent:editor | 2026-08-26] A10 line editor, keymap, highlight interface —
+  files: `crates/ono-editor/**`
+- [agent:pipeline | 2026-08-26] B3–B5 stream engine, backpressure, transforms —
+  files: `crates/ono-pipeline/**`
+- [agent:codec | 2026-08-26] B6–B7 yaml/csv/text/bytes codecs and the value-to-presentation
+  bridge — files: `crates/ono-value/**`, `crates/ono-render/**`
 
 ---
 
@@ -53,8 +59,9 @@ not fix yet.
       exit test: acceptance `025-job-control`
 - [ ] A10 — Line editor: keymap, editing, syntax highlight from the incremental parse —
       spec section 24.1 — exit test: editor behaviour tests + latency budget
-- [ ] A11 — History persistence and recall — spec section 20 —
-      exit test: acceptance `026-history-survives-restart`
+- [~] A11 — History persistence and recall — spec section 20 — library done
+      (`crates/ono-history/tests/history.rs`); wiring and acceptance case
+      `026-history-survives-restart` land with the REPL
 - [ ] A12 — Configuration loading, with no eager plugin load and no network at startup —
       spec section 30 — exit test: acceptance `027-startup-is-quiet`
 - [ ] A13 — Prompt with location URI and privilege indication — spec sections 4, 17 —
@@ -66,10 +73,10 @@ not fix yet.
 
 ### Phase B — Value system and native pipelines (spec §10, §11, §12, §13, §25)
 
-- [ ] B1 — Value model: scalars, semantic scalars, units, `Record`, `Map`, `List`, provenance —
-      exit test: `crates/ono-value/tests/` value semantics, unit arithmetic, null semantics
-- [ ] B2 — Schema model and registry, the canonical schemas of spec §28, compatibility rules —
-      exit test: `crates/ono-value/tests/{builtin_schemas,schema_compatibility}.rs`
+- [x] B1 — Value model: scalars, semantic scalars, units, `Record`, `Map`, `List`, provenance —
+      `crates/ono-value/tests/` — ADR-0016 — commit 05eb85a
+- [x] B2 — Schema model and registry, the canonical schemas of spec §28, compatibility rules —
+      `crates/ono-value/tests/{builtin_schemas,schema_compatibility}.rs` — commit 05eb85a
 - [ ] B3 — Stream engine: bounded channels, backpressure, cancellation, the
       streaming/blocking transform distinction of §11.1 — exit test: a slow consumer bounds a
       fast infinite producer's memory; `stream.unbounded_operation` on `sort` over an unbounded
@@ -80,7 +87,7 @@ not fix yet.
       spec §53 — exit test: acceptance `032-transforms-bounded`
 - [ ] B6 — Conversion `to`/`from` json, yaml, csv, text, bytes — spec §12.3, §12.4 —
       exit test: round-trip properties + acceptance `033-serialization-round-trip`
-- [ ] B7 — Renderer separated from data: table, list, stacked, json, yaml, raw, hex; width-aware
+- [~] B7 — Renderer separated from data: table, list, stacked, json, yaml, raw, hex; width-aware
       layout; visible truncation; human formatting of semantic scalars — spec §13 —
       exit test: `tests/render/` snapshots at 80 and 200 columns, and identical values through
       every renderer — acceptance `034-render-is-presentation-only`
@@ -120,6 +127,8 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ### Phase D — Language consistency and discoverability (spec §15, §27, §36, §47)
 
+- [~] D0 — The registries themselves: `docs/spec/{verbs,targets,errors,capabilities,language}.yaml`,
+      `schemas/*.v1.yaml`, `commands/*.yaml` — ADR-0012 — commit e1363de
 - [ ] D1 — `xtask spec-check` validates the registries and cross-checks them against the
       implementation: undocumented stable command, metadata without implementation, doc example
       that no longer parses, schema break without version bump, provider output outside its
@@ -218,6 +227,16 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] Specification immutability enforced by checksum in `cargo xtask spec-check` — ADR-0003
 - [x] Branch policy: implementation on a disposable `implementation` branch, guarded in
       `scripts/gate.sh` — ADR-0004
+- [x] Acceptance harness extended: `|` block scripts, stdin, `pty:`, `columns:`/`lines:`, `env:`,
+      `timeout:` and repeatable assertions, with a self-test case — commit 2001a1d
+- [x] The gate refuses untracked unfinished work: `todo!()`, `unimplemented!()`, untracked
+      `TODO`/`FIXME`, `#[ignore]` without a reason — `xtask/tests/scan.rs` — commit 6d855b1
+- [x] `ono-testkit`: real-binary runs with a deadline, scratch directories, and a reproducible
+      generator for fuzz-style tests — commits e27f481, 12b0a97
+- [x] `ono-render`: width-aware table and stacked-record layout, semantic theme tokens, the
+      presentation contract of spec §4.6, and the ASCII tree of §22.4 — commits f387b2c,
+      6f047a3, 22b2f22
+- [x] `ono-history`: semantic entries, restart survival, secret policy — commit 4d7d400
 - [x] A0 — Shared vocabulary in `ono-core`: `Span`, the complete error taxonomy of spec §43,
       the exit-status contract — ADR-0005/0006/0008 — commit 1012fea —
       tests `crates/ono-core/tests/{error_taxonomy,exit_status,span}.rs`
