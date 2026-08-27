@@ -4373,7 +4373,7 @@ Emit host reachability changes as a live stream.
 | | |
 |---|---|
 | id | `ono.host.watch` |
-| stability | planned |
+| stability | experimental |
 | phase | H |
 | input | `null` |
 | output | `stream<ono.host-event/1>` |
@@ -4499,7 +4499,7 @@ Show a link's transport, agent, negotiated providers and multiplexed streams.
 | | |
 |---|---|
 | id | `ono.link.trace` |
-| stability | planned |
+| stability | experimental |
 | phase | H |
 | input | `null | ono.link/1` |
 | output | `ono.graph/1` |

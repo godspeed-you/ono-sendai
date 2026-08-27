@@ -1,0 +1,24 @@
+# Provider. Spec §21.2 has a link negotiate the providers the far side offers, §33.4 prints them
+# in the link summary, and §22 draws them when a link is traced. A provider is identified by the
+# stable id every one of its records carries in its provenance (spec §25.2); it keeps that id
+# across a link (ADR-0036). Written for the graph (ADR-0105); no producer enumerates providers
+# yet.
+id: ono.provider/1
+name: Provider
+summary: One provider a shell or a linked host offers, by its stable id.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The provider's stable id, such as `linux.procfs`, as its records' provenance names it.
+  targets:
+    type: list<string>
+    nullable: true
+    doc: The targets it answers about; null when only the id is known.
+  available:
+    type: bool
+    nullable: true
+    doc: Whether it can answer where it lives; null when only the id is known.
+default_view:
+  columns: [id, targets, available]

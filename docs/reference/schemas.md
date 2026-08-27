@@ -484,6 +484,22 @@ Default view: `gid`, `name`, `members`
 | `name` | `string` | — | nullable | The group name; null when the identity provider cannot resolve the gid. |
 | `members` | `list<string>` | — | nullable | Login names listed as supplementary members. Names rather than user references, because the account database stores names and they need not resolve to an account. Users whose primary group this is are not listed here; null when the provider cannot enumerate them. |
 
+## HostEvent — `ono.host-event/1`
+
+One change to one known host, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `host`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `host` | `record` | — | optional | The host as it now is — or, for `removed`, as it last was. Identity is its name. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime re-read the host sources at the configured interval — explicit, as spec §18.2 requires. |
+
 ## Host — `ono.host/1`
 
 A known host from a configured source, reachable or not.
@@ -617,6 +633,22 @@ Default view: `timestamp`, `priority`, `identifier`, `message`
 | `boot_id` | `string` | — | required | The boot the entry belongs to. |
 | `host` | `string` | — | required | The hostname the entry was recorded on. |
 | `cursor` | `string` | — | required | The journal cursor, a stable continuation and provenance token (spec v0.3 §1.37). |
+
+## LinkEvent — `ono.link-event/1`
+
+One change to one link this session holds, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `link`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `link` | `record` | — | optional | The link as it now is — or, for `removed`, as it last was. Identity is its name. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime compared the link table at the configured interval — explicit, as spec §18.2 requires. |
 
 ## Link — `ono.link/1`
 
@@ -1011,6 +1043,20 @@ Default view: `pid`, `name`, `cpu`, `memory`, `user`
 | `cwd` | `path` | — | nullable | Current working directory; null when not readable by this user. |
 | `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
+
+## Provider — `ono.provider/1`
+
+One provider a shell or a linked host offers, by its stable id.
+
+Identity: `id`
+
+Default view: `id`, `targets`, `available`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The provider's stable id, such as `linux.procfs`, as its records' provenance names it. |
+| `targets` | `list<string>` | — | nullable | The targets it answers about; null when only the id is known. |
+| `available` | `bool` | — | nullable | Whether it can answer where it lives; null when only the id is known. |
 
 ## Recommendation — `ono.recommendation/1`
 

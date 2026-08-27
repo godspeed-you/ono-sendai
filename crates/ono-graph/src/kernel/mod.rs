@@ -15,6 +15,7 @@ mod mount;
 mod network;
 mod process;
 mod procfs;
+mod remote;
 mod service;
 
 pub use dns::{RemoteHosts, Resolver};
@@ -23,6 +24,7 @@ pub use identity::{ProcessUsers, UserGroups, UserProcesses};
 pub use mount::{MountDevices, MountFilesystems, MountUsers};
 pub use network::{InterfaceRoutes, InterfaceSockets, RouteInterfaces};
 pub use process::{OpenFiles, ProcessSockets, ProcessTree, SocketOwners};
+pub use remote::{HostLinks, LinkProviders};
 pub use service::ServiceProcesses;
 
 /// Every exact relationship provider, reading the running system.
@@ -77,6 +79,8 @@ pub fn rooted_relationships(
         Arc::new(InterfaceRoutes::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
         Arc::new(InterfaceSockets::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
         Arc::new(UserProcesses::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
-        Arc::new(UserGroups::new(registry).sharing(snapshots)),
+        Arc::new(UserGroups::new(Arc::clone(&registry)).sharing(snapshots)),
+        Arc::new(HostLinks::new(registry)),
+        Arc::new(LinkProviders::new()),
     ]
 }

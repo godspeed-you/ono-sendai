@@ -385,7 +385,6 @@ fn should_persist_no_link_when_connecting_to_a_host() {
 // --- trace ------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_a_host_to_its_link_and_negotiated_providers() {
     // remote.yaml: "Show a host's links, sessions, addresses and reachable services" as an
     // ono.graph/1 (spec §22.1): the host is a node, its link is a node, the edge joins them.
@@ -422,7 +421,6 @@ fn should_trace_a_host_to_its_link_and_negotiated_providers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_a_link_to_its_transport_agent_and_providers() {
     // remote.yaml: "Show a link's transport, agent, negotiated providers and multiplexed
     // streams" — the same facts §33.4's link summary prints, as a graph.
@@ -454,7 +452,6 @@ fn should_trace_a_link_to_its_transport_agent_and_providers() {
 // --- watch ------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_a_link_watch_with_a_snapshot() {
     // ADR-0024: a native live stream begins with the current state as `snapshot` events.
     let run = ono(&format!(
@@ -470,7 +467,6 @@ fn should_begin_a_link_watch_with_a_snapshot() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_the_held_link_in_the_watch_snapshot() {
     let run = ono(&format!("{LINK}; watch link | take 1 | to json"));
     run.assert_success();
@@ -482,7 +478,6 @@ fn should_list_the_held_link_in_the_watch_snapshot() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_a_host_watch_with_a_snapshot() {
     let home = scratch();
     let run = ono_at_home(

@@ -260,8 +260,7 @@ commands:
     verb: watch
     target: host
     summary: Emit host reachability changes as a live stream.
-    stability: planned                    # spec §52, host/watch = "L?"
-    validation_required: true
+    stability: experimental               # spec §52, host/watch = "L?"; delivered by ADR-0105
     argument_mode: words
     input: "null"
     output: stream<ono.host-event/1>
@@ -339,8 +338,7 @@ commands:
     verb: trace
     target: link
     summary: Show a link's transport, agent, negotiated providers and multiplexed streams.
-    stability: planned                    # spec §52, link/trace = "R?"
-    validation_required: true
+    stability: experimental               # spec §52, link/trace = "R?"; delivered by ADR-0105
     argument_mode: words
     input: "null | ono.link/1"
     output: ono.graph/1
