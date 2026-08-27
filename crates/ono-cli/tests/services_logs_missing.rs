@@ -187,7 +187,6 @@ fn should_restrict_journal_events_to_the_current_boot_when_boot_is_zero() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_only_emit_recent_events_when_since_is_a_relative_timestamp() {
     // The contract's own example (service.yaml `ono.journal.get`, spec §6.3 for `now() - 1h`).
     let bound = utc_iso_seconds_ago(3600);
@@ -336,7 +335,6 @@ fn should_restrict_log_records_to_one_unit_when_service_is_given() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_run_the_failed_service_example_when_a_level_threshold_composes() {
     // Spec §41.4 and the contract example: `get log --service <ref> | where level >= error |
     // take 20`. A documented example must parse and run (spec §50).
