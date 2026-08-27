@@ -371,7 +371,11 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         .head
         .stages
         .iter()
-        .filter_map(|stage| ono_command::raw_program(stage).or_else(|| stage.head.name()))
+        .filter_map(|stage| {
+            ono_command::raw_program(stage)
+                .or_else(|| ono_command::adapt_program(stage))
+                .or_else(|| stage.head.name())
+        })
         .map(|name| (name.to_owned(), crate::resolve::find_on_path(session, name)))
         .collect();
     let executables = |name: &str| resolved.get(name).cloned().flatten();
@@ -420,7 +424,10 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     // half of the answer the plan cannot give (ADR-0011 T11: a shadowing binary is only
     // defensible if the shell will say which one it picked).
     for stage in &pipeline.head.stages {
-        let Some(name) = ono_command::raw_program(stage).or_else(|| stage.head.name()) else {
+        let Some(name) = ono_command::raw_program(stage)
+            .or_else(|| ono_command::adapt_program(stage))
+            .or_else(|| stage.head.name())
+        else {
             continue;
         };
         // A head the registry knows as a verb or as a command id is native, and the plan above

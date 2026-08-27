@@ -798,3 +798,19 @@ fn should_record_the_adapter_in_history() {
         "the history entry names the adapter, got {found:?}"
     );
 }
+
+#[test]
+fn should_explain_the_adaptation_behind_the_adapt_keyword() {
+    // Spec v0.3 §1.18, §1.23: `adapt` forces structure, and `explain` names the adapter that
+    // gives it — the keyword is not a program, the word after it is.
+    let explained = ono("explain adapt ps aux | count");
+    explained.assert_success();
+    assert!(
+        explained
+            .stdout()
+            .contains("adapted by org.ono.compat.procps.ps")
+            && !explained.stdout().contains("`adapt` resolves to nothing"),
+        "the adapter behind `adapt ps aux` is named, got {:?}",
+        explained.stdout()
+    );
+}
