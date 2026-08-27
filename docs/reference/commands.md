@@ -3947,13 +3947,13 @@ set process 4419 --priority 10
 
 ### `send signal`
 
-Deliver a signal to a process or job.
+Deliver a signal to the processes arriving through the pipeline.
 
 | | |
 |---|---|
 | id | `ono.signal.send` |
-| stability | planned |
-| phase | planned |
+| stability | stable |
+| phase | C |
 | input | `null | stream<ono.process/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `process.signal` |
@@ -3964,7 +3964,7 @@ Deliver a signal to a process or job.
 
 | name | type | meaning |
 |---|---|---|
-| `signal` | `string` | The signal to deliver. |
+| `signal` | `string` | The signal to deliver, named as in signal(7): SIGHUP, TERM, 15. |
 
 **Examples**
 

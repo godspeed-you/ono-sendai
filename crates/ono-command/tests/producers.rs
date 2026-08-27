@@ -184,6 +184,9 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             // ADR-0092); a table built without providers binds only the verbs every `act`
             // speaks.
             "ono.process.set",
+            // Likewise `send signal`, delivered by the provider that claims `signal` and
+            // advertises `process.signal` (ADR-0092 §2).
+            "ono.signal.send",
         ]
         .iter()
         .copied()
