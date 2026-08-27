@@ -46,7 +46,7 @@ use crate::registry::CommandRegistry;
 /// A command scheduled for a later phase is not registered, so the honesty of
 /// [`unbound_stable_commands`](crate::unbound_stable_commands) survives contact with a half-built
 /// shell.
-const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J'];
+const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
 
 /// The command table this build has: every implementation, registered against its contract id.
 ///
@@ -61,8 +61,8 @@ const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J'];
 /// assert!(table.contains("ono.data.where"), "`where` is delivered by phase B");
 /// assert!(table.contains("ono.process.get"), "`get process` is delivered by phase C");
 /// assert!(
-///     !table.contains("ono.plugin.install"),
-///     "KUANG/11 arrives in phase I, and a stub would be worse than an honest absence"
+///     !table.contains("ono.plugin.remove"),
+///     "a mutating verb binds only where a provider advertises it, and none is given here"
 /// );
 /// # Ok::<(), ono_value::ErrorValue>(())
 /// ```
@@ -189,7 +189,7 @@ fn implementation_of(
         | "ono.host.trace"
         | "ono.link.trace"
         | "ono.container.trace" => Arc::new(trace::TraceCommand::new(id)),
-        "ono.process.inspect" => Arc::new(inspect::InspectCommand::new(id)),
+        "ono.process.inspect" | "ono.plugin.inspect" => Arc::new(inspect::InspectCommand::new(id)),
         "ono.context.get" => Arc::new(MetaCommand::new(id, meta::Kind::GetContext, registry)),
         "ono.meta.help" => Arc::new(MetaCommand::new(id, meta::Kind::Help, registry)),
         "ono.meta.explain" => Arc::new(MetaCommand::new(id, meta::Kind::Explain, registry)),

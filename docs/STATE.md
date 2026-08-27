@@ -141,6 +141,18 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   of polling; `enter container` as an execution context (`container.exec`); a root acceptance
   case for the package mutations' success path.
 
+- [plugins | 2026-08-27] **plugins family** (`crates/ono-cli/tests/plugins_missing.rs`) on
+  branch `implementation-plugins` — **all 32 tests green and un-ignored**; the gate is green at
+  every commit. Delivered: `ono.plugin/1` records from the session provider `ono.shell`
+  (ADR-0107); `verify`/`inspect`/`find plugin` and the K11 family folded into
+  `ono_core::ErrorCode` (ADR-0108); `install`/`remove plugin` (ADR-0109); `unload`/`set plugin`,
+  enablement on disk, hot reload (ADR-0110); `get/grant/revoke capability`, `get audit`, and the
+  typed empty `assistant`/`model`/`finding` tables (ADR-0111). Acceptance case
+  `docker/acceptance/cases/045-plugins-lifecycle.case` is written and dry-run against the
+  binary; **the integrator runs it in the container** when merging the branch. Left open (not in
+  the RED suite): `always` grants and leases on disk (spec §31.19), `--scope`/`--duration` on
+  `grant capability`, `capability_grants` inside `inspect plugin`, instance memory/cpu figures
+  (null today), the interactive install prompt under a PTY case.
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
   `implementation-meta` — files: `crates/ono-cli/src/{meta,resolve,settings,config,eval,native}.rs`,
@@ -315,10 +327,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   test: a cli case piping into head
 - [ ] `sort` over a stream of scalars requires a key; identity should be the default key so
   `from json | sort` works on numbers — exit test: a transforms case
-- [ ] `ono.plugin/1` records for `get plugin` so it composes (`| where state == loaded`),
-  registry integration of contributions with origin `plugin(id, version)` (§31.64),
-  `inspect plugin`, `get audit`, and folding the K11 codes into `ono_core::ErrorCode`
-  (ADR-0040 §3, ADR-0051) — exit test: a plugins.rs case piping `get plugin`
+- [ ] Registry integration of contributions with origin `plugin(id, version)` (§31.64) so
+  `get command` answers for a lazily loaded package; `always` grants and leases persisted under
+  spec §31.19's policy store; `--scope`/`--duration` on `grant capability` — exit test: a
+  plugins case granting with a scope and reading it back in a second session
 - [ ] Phase H remainder: agentless mode (spec §21.3), trust-store location + first-contact key
   UX for a future authenticated transport (F12 rides along: TrustPolicy::Required records an
   unknown key — TOFU — where ADR-0015 T5 wants refusal; decide when the TCP transport exists,
@@ -550,6 +562,11 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   (ADR-0105) — commit 5ced427; `--agentless` visible, `explain` context and mutation blocks
   (ADR-0106) — commit 91539b5; `add/set/remove host` and acceptance case 044 — see the
   `implementation-remote` log; `remote_missing.rs` (36) un-ignored
+- [x] plugins family — `get plugin` records (ADR-0107) — commit f7a487a; verify/inspect/find and
+  the K11 fold (ADR-0108) — commit 2cababb; install/remove (ADR-0109) — commit ca68ab0;
+  unload/set/enablement (ADR-0110) — commit 7757006; hot reload — commit 4835eae;
+  capabilities and audit (ADR-0111) — commit de2f831; assistants/models/findings and case 045
+  — this commit; `plugins_missing.rs` (32) un-ignored
 - [x] process family — `get job` (session provider, ADR-0090) — commit 0cc0730; `inspect process`
   (`ono.process-detail/1`, ADR-0091) — commit d512f03; `get process --tree` — commit b3f91a4;
   `set process --priority` (ADR-0092) — commit 730b1a3; `send signal` — commit d9cd7f8;

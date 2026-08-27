@@ -986,7 +986,6 @@ fn run_stage_list(
             crate::context::Request::Enter => crate::context::enter(session, stage, source),
             crate::context::Request::Leave => crate::context::leave(session, stage, source),
             crate::context::Request::Link => crate::context::link(session, stage, source),
-            crate::context::Request::GetPlugin => crate::plugins::get_plugin(session),
             crate::context::Request::LoadPlugin => {
                 let words: Vec<String> = stage_arguments(session, stage, source)?
                     .iter()
@@ -1011,6 +1010,32 @@ fn run_stage_list(
     // run a command, which the transform engine cannot (spec §19.4, ADR-0071 §1).
     if !background && let Some(index) = each_block_stage(list) {
         return run_each_block(session, list, source, index);
+    }
+
+    // A KUANG/11 management command that must both show its record and decide the run's status
+    // — `verify plugin` — runs in the shell and seeds the pipeline after it (ADR-0108 §2).
+    if !background
+        && let Some(stage) = list.stages.first()
+        && let Some(request) = crate::plugins::claims(stage)
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        let words: Vec<String> = stage_arguments(session, stage, source)?
+            .iter()
+            .map(|word| word.to_string_lossy().into_owned())
+            .collect();
+        let produced = crate::plugins::run(session, request, &words)?;
+        let status = crate::native::run_seeded(session, list, source, produced.values)?;
+        if let Some(failure) = produced.failure {
+            crate::report::Reporter::new(ono_render::Presentation::choose(
+                std::io::IsTerminal::is_terminal(&std::io::stderr()),
+                &[],
+            ))
+            .error(&failure);
+            return Ok(ExitStatus::FAILURE);
+        }
+        return Ok(status);
     }
 
     // A `<package>:command` head invokes a loaded KUANG/11 package's contribution (spec §31.22,

@@ -634,6 +634,21 @@ impl LoadedPlugin {
         receive.await.map_err(|_| self.gone())?
     }
 
+    /// Replaces the policy the broker evaluates from now on — a grant made or revoked at runtime
+    /// (spec §31.18, §31.19). The next capability check, at the next call, sees it; nothing
+    /// already granted to a running invocation is interrupted.
+    pub async fn update_policy(&self, policy: Policy) {
+        let (respond, receive) = oneshot::channel();
+        if self
+            .to_actor
+            .send(ActorMsg::SetPolicy { policy, respond })
+            .await
+            .is_ok()
+        {
+            let _ = receive.await;
+        }
+    }
+
     /// Shuts the instance down: `lifecycle.shutdown` with a drain deadline, then termination
     /// (spec §31.8's unload).
     pub async fn shutdown(&self, reason: ShutdownReason) {
@@ -749,6 +764,10 @@ enum ActorMsg {
     },
     Shutdown {
         reason: ShutdownReason,
+        respond: oneshot::Sender<()>,
+    },
+    SetPolicy {
+        policy: Policy,
         respond: oneshot::Sender<()>,
     },
 }
@@ -962,6 +981,11 @@ impl Actor {
                     .start_invocation(InvocationKind::Target(target), options)
                     .await;
                 let _ = respond.send(started);
+                LoopStep::Continue
+            }
+            ActorMsg::SetPolicy { policy, respond } => {
+                self.policy = policy;
+                let _ = respond.send(());
                 LoopStep::Continue
             }
             ActorMsg::Demand { handle, credit } => {

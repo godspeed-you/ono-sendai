@@ -21,8 +21,6 @@ pub enum Request {
     Leave,
     /// `link host <name>` — create a remote link (spec §21.1).
     Link,
-    /// `get plugin` — the installed set with runtime states (spec §31.8).
-    GetPlugin,
     /// `load plugin <id>` — negotiate and instantiate (spec §31.10).
     LoadPlugin,
 }
@@ -44,15 +42,6 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         "enter" => Some(Request::Enter),
         "leave" => Some(Request::Leave),
         "link" => Some(Request::Link),
-        "get"
-            if stage
-                .arguments
-                .first()
-                .and_then(ono_parser::Argument::as_word)
-                == Some("plugin") =>
-        {
-            Some(Request::GetPlugin)
-        }
         "load"
             if stage
                 .arguments

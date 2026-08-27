@@ -15,6 +15,7 @@ pub mod eval;
 pub mod expand;
 pub mod hosts;
 pub mod invocation;
+pub mod kuang_host;
 pub mod live;
 pub mod meta;
 pub mod native;

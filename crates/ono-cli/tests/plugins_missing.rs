@@ -191,7 +191,6 @@ fn assert_refused_with(run: &ono_testkit::Run, code: &str, why: &str) {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_plugin_records_when_get_plugin_is_piped() {
     let home = plugin_home();
     let run = ono(&home, "get plugin | to json");
@@ -254,7 +253,6 @@ fn should_emit_plugin_records_when_get_plugin_is_piped() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_count_loaded_packages_before_and_after_load() {
     let home = plugin_home();
     let run = ono(
@@ -279,7 +277,6 @@ fn should_count_loaded_packages_before_and_after_load() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_degraded_when_an_optional_capability_was_denied_at_load() {
     let home = plugin_home();
     let run = ono(
@@ -302,7 +299,6 @@ fn should_report_degraded_when_an_optional_capability_was_denied_at_load() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_one_package_by_its_id_selector() {
     let home = plugin_home();
     let run = ono(&home, &format!("get plugin {ECHO} | to json"));
@@ -324,7 +320,6 @@ fn should_resolve_one_package_by_its_id_selector() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_show_manifest_contributions_and_capability_requests_when_inspected() {
     let home = plugin_home();
     let run = ono(&home, &format!("inspect plugin {ECHO} | to json"));
@@ -388,7 +383,6 @@ fn should_show_manifest_contributions_and_capability_requests_when_inspected() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_find_an_installed_package_without_loading_it() {
     let home = plugin_home();
     let run = ono(
@@ -436,7 +430,6 @@ fn should_find_an_installed_package_without_loading_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_find_an_uninstalled_package_in_a_path_source() {
     let home = plugin_home();
     let elsewhere = ono_testkit::scratch();
@@ -478,7 +471,6 @@ fn should_find_an_uninstalled_package_in_a_path_source() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_an_unsigned_local_package_as_compatible_when_verified() {
     let home = plugin_home();
     let run = ono(&home, &format!("verify plugin {ECHO} | to json"));
@@ -522,7 +514,6 @@ fn should_report_an_unsigned_local_package_as_compatible_when_verified() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_incompatibility_when_the_kuang_api_range_excludes_the_host() {
     let home = plugin_home();
     home.write(
@@ -550,7 +541,6 @@ fn should_report_incompatibility_when_the_kuang_api_range_excludes_the_host() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_load_an_incompatible_package() {
     let home = plugin_home();
     home.write(
@@ -575,7 +565,6 @@ fn should_refuse_to_load_an_incompatible_package() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_install_a_package_from_a_path_reference_when_confirmed() {
     let home = plugin_home();
     let elsewhere = ono_testkit::scratch();
@@ -630,7 +619,6 @@ fn should_install_a_package_from_a_path_reference_when_confirmed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_install_without_confirmation_in_a_script() {
     let home = plugin_home();
     let elsewhere = ono_testkit::scratch();
@@ -658,7 +646,6 @@ fn should_refuse_to_install_without_confirmation_in_a_script() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_install_a_version_that_is_already_installed() {
     let home = plugin_home();
     let elsewhere = ono_testkit::scratch();
@@ -683,7 +670,6 @@ fn should_refuse_to_install_a_version_that_is_already_installed() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_withdraw_contributions_when_a_package_is_unloaded() {
     let home = plugin_home();
     let run = ono(
@@ -730,7 +716,6 @@ fn should_withdraw_contributions_when_a_package_is_unloaded() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_disable_a_package_and_refuse_to_load_it() {
     let home = plugin_home();
     let run = ono(
@@ -784,7 +769,6 @@ fn should_disable_a_package_and_refuse_to_load_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_persist_enablement_across_sessions() {
     let home = plugin_home();
     ono(&home, &format!("set plugin {ECHO} --enabled false")).assert_success();
@@ -806,7 +790,6 @@ fn should_persist_enablement_across_sessions() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_remove_the_package_directory_when_removed() {
     let home = plugin_home();
     let run = ono(&home, &format!("remove plugin {ECHO} | to json"));
@@ -838,7 +821,6 @@ fn should_remove_the_package_directory_when_removed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_unload_a_loaded_package_before_removing_it() {
     let home = plugin_home();
     let run = ono(
@@ -868,7 +850,6 @@ fn should_unload_a_loaded_package_before_removing_it() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_capability_definitions() {
     let home = plugin_home();
     let run = ono(&home, "get capability | to json");
@@ -881,7 +862,6 @@ fn should_list_capability_definitions() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_show_a_grant_made_at_load_for_the_package() {
     let home = plugin_home();
     let run = ono(
@@ -919,7 +899,6 @@ fn should_show_a_grant_made_at_load_for_the_package() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_grant_and_revoke_a_capability_at_runtime() {
     let home = plugin_home();
     let granted = ono(
@@ -979,7 +958,6 @@ fn should_grant_and_revoke_a_capability_at_runtime() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_grant_an_unknown_capability() {
     let home = plugin_home();
     let run = ono(
@@ -998,7 +976,6 @@ fn should_refuse_to_grant_an_unknown_capability() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_record_a_capability_use_in_the_audit_trail() {
     let home = plugin_home();
     let run = ono(
@@ -1036,7 +1013,6 @@ fn should_record_a_capability_use_in_the_audit_trail() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_record_a_denied_capability_use_in_the_audit_trail() {
     let home = plugin_home();
     let run = ono(
@@ -1056,7 +1032,6 @@ fn should_record_a_denied_capability_use_in_the_audit_trail() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_filter_the_audit_trail_by_package() {
     let home = plugin_home();
     let run = ono(
@@ -1075,7 +1050,6 @@ fn should_filter_the_audit_trail_by_package() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_reject_an_unknown_field_on_the_audit_stream() {
     let home = plugin_home();
     let run = ono(&home, "get audit | where plugn == \"x\"");
@@ -1096,7 +1070,6 @@ fn should_reject_an_unknown_field_on_the_audit_stream() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_show_the_new_version_when_a_loaded_package_is_reloaded() {
     let home = plugin_home();
     let manifest_path = format!("plugins/{ECHO}/manifest.yaml");
@@ -1148,7 +1121,6 @@ fn should_show_the_new_version_when_a_loaded_package_is_reloaded() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_no_assistants_when_none_is_loaded() {
     let home = plugin_home();
     let run = ono(&home, "get assistant | to json");
@@ -1162,7 +1134,6 @@ fn should_report_no_assistants_when_none_is_loaded() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_no_model_providers_when_none_is_configured() {
     let home = plugin_home();
     let run = ono(&home, "get model | to json");
@@ -1176,7 +1147,6 @@ fn should_report_no_model_providers_when_none_is_configured() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_structured_not_found_when_asking_an_unknown_assistant() {
     let home = plugin_home();
     let run = ono(&home, "ask assistant nobody \"hello\"");
@@ -1193,7 +1163,6 @@ fn should_report_a_structured_not_found_when_asking_an_unknown_assistant() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_no_findings_when_nothing_was_analysed() {
     let home = plugin_home();
     let run = ono(
@@ -1215,7 +1184,6 @@ fn should_report_no_findings_when_nothing_was_analysed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_reject_an_unknown_field_on_the_finding_stream() {
     let home = plugin_home();
     let run = ono(&home, "get finding | where sevrity == \"x\"");

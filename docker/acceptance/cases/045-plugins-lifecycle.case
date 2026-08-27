@@ -1,0 +1,91 @@
+# Phase I (spec §31): the KUANG/11 management surface as records. A package is verified,
+# inspected and found without running; installed from a path source only once the plan is
+# confirmed; loaded with a grant the capability table shows and the audit trail records;
+# granted and revoked at runtime; unloaded, disabled across sessions, and removed. Assistants,
+# models and findings are typed, empty tables. ADR-0107 … ADR-0111.
+case: a package is verified, installed, granted, audited, disabled and removed, all as records
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  lay_out() {
+    mkdir -p "$1/$2/runtime"
+    cp /usr/local/bin/kuang-example-plugin "$1/$2/runtime/echo"
+    cat > "$1/$2/manifest.yaml" <<MANIFEST
+  format: kuang-package/1
+  package:
+    id: $2
+    name: $3
+    version: $4
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: "$5"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - clock.read
+  network:
+    outbound: none
+  MANIFEST
+  }
+  lay_out "$home/plugins" dev.example.echo echo 0.1.0 ">=11.1 <12"
+  lay_out "$home/source" dev.example.other other 0.3.0 ">=11.1 <12"
+
+  echo "== records: state, verification, inspection, search =="
+  ono -c 'get plugin | where state == "installed" | select id state | to json'
+  ono -c 'verify plugin dev.example.echo | select manifest compatibility signature | to json'
+  ono -c 'inspect plugin dev.example.echo | select origin | to json'
+  ono -c 'find plugin echo | select id installed | to json'
+
+  echo "== install: the plan needs confirming, then the package is in the plugin home =="
+  ono -c "install plugin path:$home/source/dev.example.other" 2>&1 | head -1
+  ono -c "install plugin path:$home/source/dev.example.other --confirm | select status changed | to json"
+  ono -c 'get plugin | count | to json'
+
+  echo "== grants and the audit trail =="
+  ono -c 'load plugin dev.example.echo --grant clock.read; get capability --plugin dev.example.echo | where capability == "clock.read" | select decision class | to json'
+  ono -c 'load plugin dev.example.echo --grant clock.read; echo:clock | count | to json; get audit --plugin dev.example.echo | where result == "success" | count | to json'
+  ono -c 'load plugin dev.example.echo; grant capability clock.read --plugin dev.example.echo | select capability decision | to json; revoke capability clock.read --plugin dev.example.echo | select status | to json; echo:clock' 2>&1 | tail -4
+
+  echo "== unload, disable across sessions, remove =="
+  ono -c 'load plugin dev.example.echo; unload plugin dev.example.echo | select status | to json; get plugin | where state == "loaded" | count | to json'
+  ono -c 'set plugin dev.example.echo --enabled false | select status | to json'
+  ono -c 'get plugin dev.example.echo | select enabled | to json; load plugin dev.example.echo' 2>&1 | head -2
+  ono -c 'remove plugin dev.example.other | select status | to json; get plugin | count | to json'
+
+  echo "== assistants, models and findings are typed, empty tables =="
+  ono -c 'get assistant | to json; get model | to json; get finding | where severity == "high" | to json'
+  ono -c 'ask assistant nobody "hello"' 2>&1 | head -1
+
+  echo "== an incompatible package is refused with its K11 code =="
+  lay_out "$home/plugins" dev.example.old old 0.0.1 ">=99"
+  ono -c 'load plugin dev.example.old' 2>&1 | head -1
+exit: 0
+stdout-contains: {"id":"dev.example.echo","state":"installed"}
+stdout-contains: {"compatibility":"compatible","manifest":"valid","signature":"absent"}
+stdout-contains: {"origin":"plugin"}
+stdout-contains: {"id":"dev.example.echo","installed":true}
+stdout-contains: Ono-Sendai-E0701
+stdout-contains: {"changed":true,"status":"success"}
+stdout-contains: [2]
+stdout-contains: {"class":"optional","decision":"allow"}
+stdout-contains: {"capability":"clock.read","decision":"allow"}
+stdout-contains: Ono-Sendai-K11301
+stdout-contains: {"enabled":false}
+stdout-contains: Ono-Sendai-E0702
+stdout-contains: [1]
+stdout-contains: Ono-Sendai-E0102
+stdout-contains: Ono-Sendai-K11002
+stdout-not-contains: panicked

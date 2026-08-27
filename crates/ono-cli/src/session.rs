@@ -89,8 +89,6 @@ pub struct Session {
     selection: Option<Value>,
     /// The remote links this session holds (spec §21.1), by the name the user gave them.
     links: Vec<SessionLink>,
-    /// The KUANG/11 packages this session loaded (spec §31.10), by their manifest ids.
-    plugins: Vec<(String, ono_kuang_supervisor::LoadedPlugin)>,
     /// The external command adapters (spec v0.3 §1.24), built on first use: the registry holds
     /// the version probe cache, which is per session by design (§1.46).
     adapters: Option<std::sync::Arc<ono_adapter::Registry>>,
@@ -266,7 +264,6 @@ impl Session {
             job_started: BTreeMap::new(),
             selection: None,
             links: Vec::new(),
-            plugins: Vec::new(),
             adapters: None,
             adaptations: Vec::new(),
             definitions: vec![BTreeMap::new()],
@@ -355,24 +352,52 @@ impl Session {
             .cloned()
     }
 
-    /// Keeps a loaded KUANG/11 package on the session (spec §31.10).
-    pub fn add_plugin(&mut self, id: String, plugin: ono_kuang_supervisor::LoadedPlugin) {
-        self.plugins.retain(|(held, _)| held != &id);
-        self.plugins.push((id, plugin));
+    /// The tables the session shares with `ono.shell` — the job table and the KUANG/11 host
+    /// (ADR-0090, ADR-0107).
+    #[must_use]
+    pub fn tables(
+        &self,
+    ) -> &std::sync::Arc<std::sync::Mutex<crate::session_provider::SessionTables>> {
+        &self.tables
+    }
+
+    /// Runs `body` over the KUANG/11 host, locked for that one operation.
+    pub fn with_kuang<T>(&self, body: impl FnOnce(&mut crate::kuang_host::Host) -> T) -> T {
+        let mut tables = self
+            .tables
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        body(&mut tables.kuang)
+    }
+
+    /// Tells the host where this session's plugin home and state directory are, so the tables
+    /// it answers from follow the environment (spec §31.9, §31.31).
+    pub fn publish_host(&mut self) {
+        let plugin_path = crate::plugins::plugin_path(self);
+        let state_dir = crate::config::state_dir(self);
+        self.with_kuang(|host| host.configure(plugin_path, state_dir));
+    }
+
+    /// Keeps a loaded KUANG/11 package on the session (spec §31.10), answering the instance it
+    /// replaces so the caller can shut it down.
+    pub fn add_plugin(
+        &mut self,
+        id: String,
+        plugin: ono_kuang_supervisor::LoadedPlugin,
+    ) -> Option<crate::kuang_host::Instance> {
+        self.with_kuang(|host| host.add_instance(id, plugin))
     }
 
     /// A loaded package by its manifest id.
     #[must_use]
-    pub fn plugin(&self, id: &str) -> Option<&ono_kuang_supervisor::LoadedPlugin> {
-        self.plugins
-            .iter()
-            .find(|(held, _)| held == id)
-            .map(|(_, plugin)| plugin)
+    pub fn plugin(&self, id: &str) -> Option<std::sync::Arc<ono_kuang_supervisor::LoadedPlugin>> {
+        self.with_kuang(|host| host.plugin(id))
     }
 
     /// The ids of every loaded package.
-    pub fn plugin_ids(&self) -> impl Iterator<Item = &str> {
-        self.plugins.iter().map(|(id, _)| id.as_str())
+    #[must_use]
+    pub fn plugin_ids(&self) -> Vec<String> {
+        self.with_kuang(|host| host.plugin_ids().map(str::to_owned).collect())
     }
 
     /// Adds a remote link to the session's table.
@@ -644,10 +669,11 @@ impl Session {
     /// Returns `None` only if the operating system refuses to start the runtime.
     pub fn pipeline_context(&mut self) -> Option<(&tokio::runtime::Runtime, &ProviderRegistry)> {
         self.runtime()?;
-        // What `get job` and `get link` answer is what is true when the pipeline starts
-        // (ADR-0090, ADR-0103).
+        // What `get job`, `get link` and `get plugin` answer is what is true when the pipeline
+        // starts (ADR-0090, ADR-0103, ADR-0107).
         self.publish_jobs();
         self.publish_links();
+        self.publish_host();
         // Spec §14.4: the active link frame decides where provider calls run. The innermost
         // link frame wins; without one, the local registry answers.
         let remote = self.frames.iter().rev().find_map(|frame| {
