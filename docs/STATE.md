@@ -93,6 +93,13 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [plugins | 2026-08-27] **plugins family** (`crates/ono-cli/tests/plugins_missing.rs`, 32 tests)
+  on branch `implementation-plugins` — files: `crates/ono-cli/src/{plugins,kuang_host,
+  session_provider,session,context,eval,providers}.rs`, `crates/ono-command/src/impls/mod.rs`,
+  `crates/ono-kuang-supervisor/src/supervisor.rs` (policy updates), `crates/ono-core/src/error.rs`
+  + `docs/spec/errors.yaml` (K11 fold), `docs/spec/schemas/plugin.v1.yaml`, acceptance case
+  `045-plugins-lifecycle`. ADR-0107–0111.
+
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
   `implementation-meta` — files: `crates/ono-cli/src/{meta,resolve,settings,config,eval,native}.rs`,

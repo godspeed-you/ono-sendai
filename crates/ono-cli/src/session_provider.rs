@@ -6,9 +6,11 @@
 //! per job, refreshed before every native pipeline runs — and this provider answers from the
 //! published rows like any other provider answers from its system.
 //!
-//! The same seam is meant to carry the session's other tables later: the remote links of spec
-//! §21 and the hosts they reach are session state in exactly the same way, and each becomes one
-//! more target of this provider with one more table in [`SessionTables`].
+//! The same seam carries the KUANG/11 tables (ADR-0107): the packages of spec §31.8 are the
+//! plugin home on disk overlaid with the runtime instances this session started, and both live
+//! in the [`Host`](crate::kuang_host::Host) the tables hold. The remote links of spec §21 and the
+//! hosts they reach are session state in exactly the same way, and each becomes one more target
+//! here with one more table in [`SessionTables`].
 
 use std::sync::{Arc, Mutex};
 
@@ -45,6 +47,8 @@ pub struct JobRow {
 #[derive(Debug, Default)]
 pub struct SessionTables {
     jobs: Vec<JobRow>,
+    /// The KUANG/11 host: where packages are, and which of them run (ADR-0107).
+    pub kuang: crate::kuang_host::Host,
 }
 
 impl SessionTables {
@@ -75,6 +79,36 @@ impl SessionProvider {
                 format!("{PROVIDER_ID} advertises {id} but no contract defines it"),
             )
         })
+    }
+
+    /// The schemas of every table this provider answers, by the target's name.
+    fn schema_of(target: &str) -> Result<Arc<Schema>, ErrorValue> {
+        match target {
+            "job" => Self::schema(),
+            "plugin" => crate::kuang_host::schema("ono.plugin"),
+            other => Err(ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                format!("{PROVIDER_ID} has no table `{other}`"),
+            )),
+        }
+    }
+
+    /// The records of `target` as of now, and the per-object failures beside them.
+    fn table(&self, target: &str) -> Result<(Vec<RecordValue>, Vec<ErrorValue>), ErrorValue> {
+        match target {
+            "job" => Ok((self.jobs()?, Vec::new())),
+            "plugin" => self.lock().kuang.plugin_records(),
+            other => Err(ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                format!("{PROVIDER_ID} has no table `{other}`"),
+            )),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, SessionTables> {
+        self.tables
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The job records as of the last publication, oldest first.
@@ -128,15 +162,21 @@ impl Provider for SessionProvider {
     }
 
     fn targets(&self) -> &[&str] {
-        &["job"]
+        &["job", "plugin"]
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
-        Self::schema().into_iter().collect()
+        ["job", "plugin"]
+            .into_iter()
+            .filter_map(|target| Self::schema_of(target).ok())
+            .collect()
     }
 
     fn capabilities(&self) -> Vec<Capability> {
-        vec![Capability::new("job.list", Risk::Read)]
+        vec![
+            Capability::new("job.list", Risk::Read),
+            Capability::new("plugin.list", Risk::Read),
+        ]
     }
 
     fn availability(&self) -> Availability {
@@ -145,22 +185,59 @@ impl Provider for SessionProvider {
 
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         let limit = query.max().unwrap_or(usize::MAX);
-        let values: Vec<Value> = self
-            .jobs()?
+        let (records, failures) = self.table(query.target_name())?;
+        // `get plugin --state loaded`: the option is a filter on the state column (kuang.yaml).
+        let state = query
+            .option_value("state")
+            .and_then(|value| value.as_str().ok())
+            .map(str::to_owned);
+        let values: Vec<Value> = records
             .into_iter()
-            .filter(|job| query.matches(job))
+            .filter(|record| query.matches(record))
+            .filter(|record| {
+                state.as_deref().is_none_or(|wanted| {
+                    record.get("state").and_then(|value| value.as_str().ok()) == Some(wanted)
+                })
+            })
             .take(limit)
             .map(RecordValue::into_value)
             .collect();
-        Ok(ValueStream::from_values(values))
+        if failures.is_empty() {
+            return Ok(ValueStream::from_values(values));
+        }
+        // A package that cannot be read is one object's failure beside the others' records
+        // (spec §16.5): the stream carries both, and the run reports the failure.
+        Ok(ValueStream::spawn(
+            ono_pipeline::PipelineConfig::new(),
+            ono_pipeline::Boundedness::Bounded,
+            move |sink| async move {
+                for value in values {
+                    if sink.send(value).await.is_err() {
+                        return;
+                    }
+                }
+                for failure in failures {
+                    if sink.fail(failure).await.is_err() {
+                        return;
+                    }
+                }
+            },
+        ))
     }
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
-        Ok(self
-            .jobs()?
-            .iter()
-            .filter(|job| selector.matches(job))
-            .filter_map(ObjectRef::of)
-            .collect())
+        // A selector carries no target; every table is asked, which is unambiguous because the
+        // tables' identity fields are typed differently (a job's `id` is a number).
+        let mut found = Vec::new();
+        for target in ["job", "plugin"] {
+            let (records, _) = self.table(target)?;
+            found.extend(
+                records
+                    .iter()
+                    .filter(|record| selector.matches(record))
+                    .filter_map(ObjectRef::of),
+            );
+        }
+        Ok(found)
     }
 }

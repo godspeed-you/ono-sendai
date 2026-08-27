@@ -127,5 +127,7 @@ fields:
     type: ono.error/1
     nullable: true
     doc: The most recent structured error from this package. Null when it has produced none.
+# The id leads the table rather than spec §31.8's NAME: `name` is mutable and not unique, and the
+# id is what `load plugin` and every other command takes (ADR-0107).
 default_view:
-  columns: [name, version, state, trust, jobs, memory]
+  columns: [id, version, state, trust, jobs, memory]

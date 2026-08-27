@@ -869,7 +869,7 @@ One installed version of a KUANG/11 package, and what it is currently doing.
 
 Identity: `id`, `version`
 
-Default view: `name`, `version`, `state`, `trust`, `jobs`, `memory`
+Default view: `id`, `version`, `state`, `trust`, `jobs`, `memory`
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|

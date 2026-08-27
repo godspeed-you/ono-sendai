@@ -8,23 +8,18 @@
 use std::path::PathBuf;
 
 use ono_core::{ErrorCode, ExitStatus};
-use ono_kuang_protocol::Manifest;
+use ono_kuang_protocol::KuangError;
 use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Supervisor};
 use ono_value::{ErrorValue, Value};
+
+pub use crate::kuang_host::Installed;
 
 use crate::eval::{Eval, Flow};
 use crate::session::Session;
 
-/// One discovered package: its directory and its parsed manifest.
-pub struct Installed {
-    /// Where the package lives.
-    pub directory: PathBuf,
-    /// The validated manifest.
-    pub manifest: Manifest,
-}
-
 /// The directories `ONO_PLUGIN_PATH` names, or the user's plugin directory.
-fn plugin_path(session: &Session) -> Vec<PathBuf> {
+#[must_use]
+pub fn plugin_path(session: &Session) -> Vec<PathBuf> {
     if let Some(path) = session.env_var("ONO_PLUGIN_PATH") {
         return std::env::split_paths(path).collect();
     }
@@ -35,61 +30,27 @@ fn plugin_path(session: &Session) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Every package installed under the plugin path, in directory order.
-///
-/// A directory whose manifest does not validate is reported as a failure entry rather than
-/// silently skipped: an installed package that cannot load is a fact about this machine.
-pub fn installed(session: &Session) -> (Vec<Installed>, Vec<ErrorValue>) {
-    let mut found = Vec::new();
-    let mut failures = Vec::new();
-    for root in plugin_path(session) {
-        let Ok(entries) = std::fs::read_dir(&root) else {
-            continue;
-        };
-        let mut directories: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
-        directories.sort();
-        for directory in directories {
-            let manifest_path = directory.join("manifest.yaml");
-            let Ok(text) = std::fs::read_to_string(&manifest_path) else {
-                continue;
-            };
-            match Manifest::parse(&text) {
-                Ok(manifest) => found.push(Installed {
-                    directory,
-                    manifest,
-                }),
-                Err(error) => failures.push(ErrorValue::new(
-                    ErrorCode::ProviderSchemaViolation,
-                    format!(
-                        "{} holds a package that does not validate: {}",
-                        directory.display(),
-                        error
-                    ),
-                )),
-            }
-        }
-    }
-    (found, failures)
+/// Every package installed under the plugin path, in directory order, and the directories
+/// whose manifest does not validate (ADR-0051).
+pub fn installed(session: &mut Session) -> (Vec<Installed>, Vec<ErrorValue>) {
+    session.publish_host();
+    session.with_kuang(|host| host.installed())
 }
 
-/// Runs `get plugin`: the installed set, with the session's runtime states over it (spec §31.8).
+/// A supervisor error as the shell reports it.
 ///
-/// # Errors
-///
-/// None in practice; failures are reported per package.
-pub fn get_plugin(session: &mut Session) -> Eval<ExitStatus> {
-    let (packages, failures) = installed(session);
-    for failure in &failures {
-        eprintln!("ono: {failure}");
+/// The K11 code family folds into `ono_core::ErrorCode` in its own increment (ADR-0040 §3);
+/// until then the code travels in the message, never silently dropped.
+#[must_use]
+pub fn error_value(error: &KuangError) -> ErrorValue {
+    let mut value = ErrorValue::new(
+        ErrorCode::ProviderUnsupported,
+        format!("{}: {}", error.code().name(), error.message()),
+    );
+    if let Some(help) = error.help() {
+        value = value.with_help(help);
     }
-    for package in packages {
-        let id = package.manifest.package.id.clone();
-        let state = session
-            .plugin(&id)
-            .map_or("installed", |loaded| loaded.state().as_str());
-        println!("{id}  {}  {state}", package.manifest.package.version);
-    }
-    Ok(ExitStatus::SUCCESS)
+    value
 }
 
 /// Runs `load plugin <id>` (spec §31.10): negotiate, spawn, keep.
@@ -149,11 +110,8 @@ pub fn load_plugin_with(
     id: &str,
     options: &LoadOptions,
 ) -> Eval<ExitStatus> {
-    let (packages, _) = installed(session);
-    let Some(package) = packages
-        .into_iter()
-        .find(|package| package.manifest.package.id == id)
-    else {
+    session.publish_host();
+    let Some(package) = session.with_kuang(|host| host.installed_package(id)) else {
         return Err(Flow::Failed(
             ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
@@ -261,14 +219,7 @@ pub fn load_plugin_with(
     })?;
     let loaded = runtime
         .block_on(Supervisor::load(config))
-        .map_err(|error| {
-            // The K11 code family folds into ono_core::ErrorCode in its own increment (ADR-0040
-            // §3); until then the code travels in the message, never silently dropped.
-            Flow::Failed(ErrorValue::new(
-                ErrorCode::ProviderUnsupported,
-                format!("{error}"),
-            ))
-        })?;
+        .map_err(|error| Flow::Failed(error_value(&error)))?;
 
     println!(
         "loaded {id} ({}): {}",
@@ -290,10 +241,11 @@ pub fn load_plugin_with(
 
 /// Whether `namespace` names a loaded package, by full id or by its last segment.
 #[must_use]
-pub fn loaded_package<'a>(session: &'a Session, namespace: &str) -> Option<&'a str> {
+pub fn loaded_package(session: &Session, namespace: &str) -> Option<String> {
     session
         .plugin_ids()
-        .find(|id| *id == namespace || id.rsplit('.').next() == Some(namespace))
+        .into_iter()
+        .find(|id| id == namespace || id.rsplit('.').next() == Some(namespace))
 }
 
 /// Runs a contributed command: `<package>:<command> --name value …` (spec §31.22, ADR-0011).
@@ -308,7 +260,7 @@ pub fn invoke(
     command: &str,
     words: &[std::ffi::OsString],
 ) -> Eval<Vec<Value>> {
-    let Some(id) = loaded_package(session, namespace).map(str::to_owned) else {
+    let Some(id) = loaded_package(session, namespace) else {
         return Err(Flow::Failed(
             ErrorValue::new(
                 ErrorCode::ResolveCommandNotFound,
@@ -362,7 +314,7 @@ pub fn invoke(
                 format!("`{id}` is no longer loaded"),
             ))
         })?;
-        let full = contributed_id(plugin, command).ok_or_else(|| {
+        let full = contributed_id(&plugin, command).ok_or_else(|| {
             Flow::Failed(
                 ErrorValue::new(
                     ErrorCode::ResolveCommandNotFound,

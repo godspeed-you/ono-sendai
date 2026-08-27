@@ -191,7 +191,6 @@ fn assert_refused_with(run: &ono_testkit::Run, code: &str, why: &str) {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_plugin_records_when_get_plugin_is_piped() {
     let home = plugin_home();
     let run = ono(&home, "get plugin | to json");
@@ -254,7 +253,6 @@ fn should_emit_plugin_records_when_get_plugin_is_piped() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_count_loaded_packages_before_and_after_load() {
     let home = plugin_home();
     let run = ono(
@@ -279,7 +277,6 @@ fn should_count_loaded_packages_before_and_after_load() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_degraded_when_an_optional_capability_was_denied_at_load() {
     let home = plugin_home();
     let run = ono(
@@ -302,7 +299,6 @@ fn should_report_degraded_when_an_optional_capability_was_denied_at_load() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_one_package_by_its_id_selector() {
     let home = plugin_home();
     let run = ono(&home, &format!("get plugin {ECHO} | to json"));
