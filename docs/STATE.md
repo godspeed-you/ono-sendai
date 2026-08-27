@@ -987,9 +987,31 @@ requirements, not blocked work.
   startup horizon, prompt/HUD, ambiguity picker, full-screen map, focus vs place, Ctrl-C, resize,
   raw shell continuity (§5, §21, §23, §27, §39, §43.4, §44.10)
 
-The end-to-end half lives beside them as `docker/acceptance/cases/*.case.v04` — the ten §44
-scenarios, held out of the runner's `*.case` glob until the increment that delivers a scenario
-renames its file. `docker/acceptance/cases/README-v0.4.md` carries the mapping.
+The end-to-end half lives beside them as `docker/acceptance/cases/090…099-spatial-*.case.v04` —
+the ten §44 scenarios with 139 named assertions, held out of the runner's `*.case` glob until
+the increment that delivers a scenario renames its file. `docker/acceptance/cases/README-v0.4.md`
+carries the mapping, and `docker/acceptance/fixtures/spatial/` the deterministic fixture §43.3
+asks for (a listener holding a known file open and forking workers, its client, and a service
+manager stand-in in the shape the v0.3 systemd adapters decode).
+
+**Before the first increment, three decisions need an ADR** — the suites had to read the spec to
+write the tests, and these are what they could not settle:
+
+1. `find` and `look` are v0.4 spatial verbs (§6.1, §6.8) and existing Unix programs, and `find`
+   is already claimed by the v0.3 adapter `org.ono.compat.findutils.find`. The suites assume the
+   spatial verb wins the bare name while the program stays reachable (v0.2 §6.5 resolution
+   order, `exec:find`); that has to be decided, not assumed.
+2. The `spatial.*` error family of §40 has no numeric codes: the suites assert the dotted names
+   and name E10xx as the next free block after the v0.3 adapter family.
+3. §41's registry is written `docs/spec/spatial.yaml` flat while this repository nests by family;
+   the drift tests accept `docs/spec/spatial/<name>` first, then the flat spelling.
+
+Further readings the suites fixed, each written at its test: the `PlaceView`/`SpatialMap` field
+names §22 and §20.1 give verbatim are pinned, the nesting §6.1 leaves open is not; `map --zoom`,
+`map --expand`, `map --focus`, `map --live`, `map links` are the non-interactive spellings for
+§8.1, §8.3, §23.4, §25 and §19.3; the full-screen map is observable as the alternate screen
+buffer, with Enter/Backspace/Esc/Ctrl-C from §23.3 and §43.4; `spatial.landmark.*` and the
+eleven `spatial.*` settings of §47 ride the typed settings catalogue of ADR-0094.
 
 ---
 
