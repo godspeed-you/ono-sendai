@@ -84,7 +84,14 @@ pub(crate) fn addresses_of(name: &str) -> Result<Vec<IpAddr>, ErrorValue> {
     // SAFETY: `host` is a NUL-terminated string that outlives the call, `hints` is fully
     // initialised, `list` is a valid out-pointer, and the list the call allocates is released
     // with `freeaddrinfo` exactly once, below, on every path after a successful return.
-    let code = unsafe { libc::getaddrinfo(host.as_ptr(), std::ptr::null(), &raw const hints, &raw mut list) };
+    let code = unsafe {
+        libc::getaddrinfo(
+            host.as_ptr(),
+            std::ptr::null(),
+            &raw const hints,
+            &raw mut list,
+        )
+    };
     if code != 0 {
         return Err(lookup_error(code, name));
     }
@@ -95,7 +102,9 @@ pub(crate) fn addresses_of(name: &str) -> Result<Vec<IpAddr>, ErrorValue> {
         // SAFETY: `cursor` is a node of the list `getaddrinfo` returned, which stays allocated
         // until `freeaddrinfo` below; the walk only reads it.
         let node = unsafe { &*cursor };
-        if let Some(address) = address_of(node) && !addresses.contains(&address) {
+        if let Some(address) = address_of(node)
+            && !addresses.contains(&address)
+        {
             addresses.push(address);
         }
         cursor = node.ai_next;
@@ -116,14 +125,16 @@ fn address_of(node: &libc::addrinfo) -> Option<IpAddr> {
             // SAFETY: the resolver reports `AF_INET` with a length that covers a `sockaddr_in`,
             // which is the type it stores behind `ai_addr` for that family; the read is
             // unaligned-safe and copies the struct out.
-            let address = unsafe { std::ptr::read_unaligned(node.ai_addr.cast::<libc::sockaddr_in>()) };
+            let address =
+                unsafe { std::ptr::read_unaligned(node.ai_addr.cast::<libc::sockaddr_in>()) };
             Some(IpAddr::V4(Ipv4Addr::from(u32::from_be(
                 address.sin_addr.s_addr,
             ))))
         }
         libc::AF_INET6 if length >= std::mem::size_of::<libc::sockaddr_in6>() => {
             // SAFETY: as above, for `AF_INET6` and `sockaddr_in6`.
-            let address = unsafe { std::ptr::read_unaligned(node.ai_addr.cast::<libc::sockaddr_in6>()) };
+            let address =
+                unsafe { std::ptr::read_unaligned(node.ai_addr.cast::<libc::sockaddr_in6>()) };
             Some(IpAddr::V6(Ipv6Addr::from(address.sin6_addr.s6_addr)))
         }
         _ => None,
@@ -145,8 +156,8 @@ pub(crate) fn name_of(address: IpAddr) -> Result<String, ErrorValue> {
             let mut socket: libc::sockaddr_in = unsafe { std::mem::zeroed() };
             socket.sin_family = libc::sa_family_t::try_from(libc::AF_INET).unwrap_or(0);
             socket.sin_addr.s_addr = u32::from(v4).to_be();
-            let length = libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_in>())
-                .unwrap_or(0);
+            let length =
+                libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_in>()).unwrap_or(0);
             // SAFETY: `socket` is a fully initialised `sockaddr_in` whose length is passed
             // with it; `host` is a writable buffer whose length is passed with it; no service
             // buffer is requested (null pointer, zero length), which the call permits.
@@ -167,8 +178,8 @@ pub(crate) fn name_of(address: IpAddr) -> Result<String, ErrorValue> {
             let mut socket: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
             socket.sin6_family = libc::sa_family_t::try_from(libc::AF_INET6).unwrap_or(0);
             socket.sin6_addr.s6_addr = v6.octets();
-            let length = libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_in6>())
-                .unwrap_or(0);
+            let length =
+                libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_in6>()).unwrap_or(0);
             // SAFETY: as for IPv4, with a `sockaddr_in6`.
             unsafe {
                 libc::getnameinfo(

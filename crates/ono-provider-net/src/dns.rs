@@ -64,7 +64,7 @@ impl Lookup {
                 Selector::Field { name, value } if name == "query" => Some(value),
                 _ => None,
             })
-            .ok_or_else(|| missing_query())?;
+            .ok_or_else(missing_query)?;
         Self::of(subject, query.option_value("type"))
     }
 
