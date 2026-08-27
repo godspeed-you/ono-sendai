@@ -1032,6 +1032,31 @@ Default view: `name`, `state`, `substate`, `enabled`, `description`
 | `provider` | `string` | — | required | The service provider that produced this record; part of the identity. |
 | `unit_file` | `path` | — | nullable | The unit file backing the service; null for transient or generated units. |
 
+## Session — `ono.session/1`
+
+A login session as the session manager tracks it.
+
+Identity: `id`
+
+Default view: `id`, `user`, `seat`, `tty`, `type`, `state`, `since`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The session id the session manager assigned; stable for the session's lifetime. |
+| `user` | `ref<ono.user/1>` | — | required | The user holding the session, referenced by uid and, where it resolves, name. |
+| `seat` | `string` | — | nullable | The seat the session is attached to (`seat0`); null for a session with no seat, such as an SSH login. |
+| `tty` | `string` | — | nullable | The controlling terminal, where the session has one. |
+| `display` | `string` | — | nullable | The X11 display, where the session has one. |
+| `type` | `enum` | — | nullable | What kind of session it is; null when the session manager did not say. |
+| `class` | `string` | — | nullable | The session class the manager assigns — `user`, `greeter`, `lock-screen`, `background`, `manager`. A string rather than an enum because the set is the manager's, not Ono's. |
+| `state` | `enum` | — | nullable | `online` when logged in but not in the foreground, `active` when in the foreground of its seat, `closing` when the session is being torn down; `unknown` for a state the provider does not model. |
+| `remote` | `bool` | — | nullable | Whether the session was opened from another host. |
+| `remote_host` | `string` | — | nullable | The host a remote session came from, as the manager recorded it. |
+| `service` | `string` | — | nullable | The PAM service that opened the session (`sshd`, `login`, `gdm-password`). |
+| `leader` | `int` | — | nullable | The pid of the session leader; null when the manager reports none. |
+| `scope` | `string` | — | nullable | The service-manager scope unit the session's processes run in (`session-2.scope`). |
+| `since` | `timestamp` | — | nullable | When the session was opened. |
+
 ## SocketEvent — `ono.socket-event/1`
 
 One change to one socket, as a live stream emits it.

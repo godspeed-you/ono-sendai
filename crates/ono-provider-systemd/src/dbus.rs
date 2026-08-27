@@ -61,22 +61,7 @@ impl SystemBus {
     /// [`BusError::Unavailable`], naming what was missing, when there is no bus socket or the
     /// connection cannot be established.
     pub async fn connect() -> Result<Self, BusError> {
-        if let Some(expected) = missing_system_bus_socket() {
-            return Err(BusError::Unavailable(format!(
-                "the D-Bus system bus socket {} does not exist, so no service manager can be \
-                 asked here; this is normal in a container, under WSL, or on a machine that uses \
-                 another init",
-                expected.display()
-            )));
-        }
-        let connection = budgeted("connecting to the D-Bus system bus", Connection::system())
-            .await
-            .map_err(|error| {
-                BusError::Unavailable(format!(
-                    "the D-Bus system bus could not be opened: {}",
-                    error.message()
-                ))
-            })?;
+        let connection = open_system_bus().await?;
         let manager = budgeted(
             "building the org.freedesktop.systemd1.Manager proxy",
             Proxy::new(&connection, DESTINATION, MANAGER_PATH, MANAGER_INTERFACE),
@@ -249,6 +234,34 @@ impl SystemdBus for SystemBus {
     }
 }
 
+/// Opens the D-Bus system bus, or says which socket is missing.
+///
+/// Shared by every provider of this crate that lives behind the system bus, so that "no bus
+/// here" is one sentence rather than several.
+///
+/// # Errors
+///
+/// [`BusError::Unavailable`], naming what was missing, when there is no bus socket or the
+/// connection cannot be established.
+pub(crate) async fn open_system_bus() -> Result<Connection, BusError> {
+    if let Some(expected) = missing_system_bus_socket() {
+        return Err(BusError::Unavailable(format!(
+            "the D-Bus system bus socket {} does not exist, so no service manager can be \
+             asked here; this is normal in a container, under WSL, or on a machine that uses \
+             another init",
+            expected.display()
+        )));
+    }
+    budgeted("connecting to the D-Bus system bus", Connection::system())
+        .await
+        .map_err(|error| {
+            BusError::Unavailable(format!(
+                "the D-Bus system bus could not be opened: {}",
+                error.message()
+            ))
+        })
+}
+
 /// The system bus socket that ought to exist but does not, or `None` if one does.
 ///
 /// `DBUS_SYSTEM_BUS_ADDRESS` wins where it names a unix socket. Where it names anything else —
@@ -277,7 +290,7 @@ fn is_socket(path: &Path) -> bool {
 }
 
 /// Runs one bus call under [`CALL_BUDGET`], translating whatever comes back.
-async fn budgeted<T>(
+pub(crate) async fn budgeted<T>(
     what: &str,
     call: impl Future<Output = zbus::Result<T>>,
 ) -> Result<T, BusError> {
@@ -326,14 +339,14 @@ fn non_empty(text: String) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-fn text(properties: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
+pub(crate) fn text(properties: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
     properties
         .get(key)
         .and_then(|value| String::try_from(value.clone()).ok())
         .filter(|text| !text.is_empty())
 }
 
-fn number<T>(properties: &HashMap<String, OwnedValue>, key: &str) -> Option<T>
+pub(crate) fn number<T>(properties: &HashMap<String, OwnedValue>, key: &str) -> Option<T>
 where
     T: TryFrom<OwnedValue>,
 {

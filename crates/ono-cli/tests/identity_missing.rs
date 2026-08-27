@@ -130,7 +130,6 @@ fn assert_failed_for_lack_of_privilege(run: &ono_testkit::Run, operation: &str) 
 // --- get session ------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_enumerate_sessions_as_a_list_when_asked() {
     // Spec §9.1: `get session` enumerates local/login/session objects as `Stream<Session>`. An
     // unprivileged container may have none — the shape is asserted only for what is there, but
@@ -160,7 +159,6 @@ fn should_enumerate_sessions_as_a_list_when_asked() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restrict_sessions_to_one_user_when_the_user_option_is_given() {
     // identity.yaml `ono.session.get` option `--user ref<ono.user/1>`: only that user's sessions.
     let run = ono("get session --user root | to json");

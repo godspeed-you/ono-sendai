@@ -41,4 +41,7 @@ pub async fn register_async(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(
         ono_provider_systemd::SystemdProvider::connect().await,
     ));
+    registry.register(Arc::new(
+        ono_provider_systemd::SessionProvider::connect().await,
+    ));
 }

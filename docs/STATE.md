@@ -93,6 +93,14 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [identity | 2026-08-27] **identity family remainder** (`crates/ono-cli/tests/identity_missing.rs`:
+  `get session` ×2, `add/remove/set user` ×6, `add/remove/set group` ×5) on branch
+  `implementation-identity` — files: `crates/ono-provider-systemd/src/{logind,lib}.rs`,
+  `crates/ono-provider-linux/src/{identity,accounts}.rs`, `crates/ono-command/src/impls/mutate.rs`,
+  `crates/ono-cli/src/providers.rs`, `docs/spec/commands/identity.yaml`,
+  `docs/spec/schemas/{session.v1,deferred}.yaml`, `docs/spec/providers/{systemd,linux-procfs}.yaml`,
+  acceptance case `043-identity-sessions-and-accounts`. ADR-0100–0102.
+
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
   `implementation-meta` — files: `crates/ono-cli/src/{meta,resolve,settings,config,eval,native}.rs`,
@@ -445,6 +453,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Done
 
+- [x] identity 1 — `get session` from systemd-logind over D-Bus, `ono.session/1` written,
+  `--user` filter, E0401 where no login manager answers — ADR-0100;
+  `identity_missing.rs` (2 tests) un-ignored, `crates/ono-provider-systemd/tests/session.rs` (4)
 - [x] seams 1 — `set`/`remove` of system targets dispatch through the registry — commit 7ec0d83
   (ADR-0068 §1; `crates/ono-cli/tests/builtins.rs`)
 - [x] seams 2 — ActionResult contract: a failed row exits 1, a missing target is an E0301 row,
