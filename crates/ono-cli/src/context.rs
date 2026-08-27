@@ -21,8 +21,6 @@ pub enum Request {
     Leave,
     /// `link host <name>` — create a remote link (spec §21.1).
     Link,
-    /// `get link` — the links this session holds.
-    GetLink,
     /// `get plugin` — the installed set with runtime states (spec §31.8).
     GetPlugin,
     /// `load plugin <id>` — negotiate and instantiate (spec §31.10).
@@ -46,15 +44,6 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         "enter" => Some(Request::Enter),
         "leave" => Some(Request::Leave),
         "link" => Some(Request::Link),
-        "get"
-            if stage
-                .arguments
-                .first()
-                .and_then(ono_parser::Argument::as_word)
-                == Some("link") =>
-        {
-            Some(Request::GetLink)
-        }
         "get"
             if stage
                 .arguments
@@ -459,11 +448,11 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
 
     let mut registry = ono_provider_api::ProviderRegistry::new();
     link.register_into(&mut registry);
-    let targets: Vec<String> = registry
-        .providers()
-        .iter()
-        .flat_map(|provider| provider.targets().iter().map(|target| (*target).to_owned()))
-        .collect();
+    let connection = crate::session::LinkConnection {
+        link,
+        registry: std::sync::Arc::new(registry),
+    };
+    let targets = connection.targets();
 
     println!(
         "linked {host} ({transport}): {}",
@@ -474,34 +463,12 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
         }
     );
     session.add_link(crate::session::SessionLink {
-        name: host,
+        name: host.clone(),
+        host,
         transport,
-        link,
-        registry: std::sync::Arc::new(registry),
+        agentless: false,
+        connection: Some(connection),
     });
-    Ok(ExitStatus::SUCCESS)
-}
-
-/// Runs `get link`: the session's link table, one row per link (ono.link/1).
-///
-/// # Errors
-///
-/// None in practice; the signature matches its callers.
-pub fn get_link(session: &mut Session) -> Eval<ExitStatus> {
-    for held in session.links() {
-        let targets: Vec<String> = held
-            .registry
-            .providers()
-            .iter()
-            .flat_map(|provider| provider.targets().iter().map(|target| (*target).to_owned()))
-            .collect();
-        println!(
-            "{}  {}  connected  {}",
-            held.name,
-            held.transport,
-            targets.join(" ")
-        );
-    }
     Ok(ExitStatus::SUCCESS)
 }
 

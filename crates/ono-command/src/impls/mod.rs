@@ -45,7 +45,7 @@ use crate::registry::CommandRegistry;
 /// A command scheduled for a later phase is not registered, so the honesty of
 /// [`unbound_stable_commands`](crate::unbound_stable_commands) survives contact with a half-built
 /// shell.
-const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F', 'G', 'J'];
+const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J'];
 
 /// The command table this build has: every implementation, registered against its contract id.
 ///

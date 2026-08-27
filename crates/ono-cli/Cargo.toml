@@ -33,6 +33,7 @@ ono-provider-linux.workspace = true
 ono-provider-netlink.workspace = true
 ono-provider-systemd.workspace = true
 ono-value.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 

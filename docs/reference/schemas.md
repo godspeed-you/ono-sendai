@@ -484,6 +484,24 @@ Default view: `gid`, `name`, `members`
 | `name` | `string` | — | nullable | The group name; null when the identity provider cannot resolve the gid. |
 | `members` | `list<string>` | — | nullable | Login names listed as supplementary members. Names rather than user references, because the account database stores names and they need not resolve to an account. Users whose primary group this is are not listed here; null when the provider cannot enumerate them. |
 
+## Host — `ono.host/1`
+
+A known host from a configured source, reachable or not.
+
+Identity: `name`
+
+Default view: `name`, `address`, `source`, `link`, `transport`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `name` | `string` | — | required | The host as its source names it — the word `link host` and `test host` take. |
+| `address` | `string` | — | nullable | Where the source says the host lives: an address or a DNS name (`HostName` in the OpenSSH configuration, `--address` of `add host`). Null when the source records only the name. |
+| `port` | `port` | — | nullable | The port the source records for it; null when the source records none. |
+| `user` | `string` | — | nullable | The user the source logs in as; null when the source records none. |
+| `source` | `string` | — | required | Which source lists the host: `ono` for the shell's own host file, `ssh-config` for the OpenSSH client configuration, `link` for a host known only because this session holds a link to it. A host several sources list is one record, from the first of them in that order, and `get host --source` asks one source alone. |
+| `link` | `string` | — | nullable | The name of the link this session holds to the host; null when it holds none. |
+| `transport` | `enum` | — | nullable | How the held link reaches the host (ono.link/1 `transport`); null when no link is held, because how a host would be reached is not known until it is. |
+
 ## HttpExchange — `ono.http-exchange/1`
 
 One request and its response, as curl observed it.
@@ -606,14 +624,18 @@ One remote Ono link this session holds.
 
 Identity: `name`
 
-Default view: `name`, `transport`, `state`, `targets`
+Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `name` | `string` | — | required | The host as the user named it — the prompt's spelling, and `enter link`'s argument. |
+| `host` | `string` | — | required | The host the link points at. `link host prod-db` points at `prod-db` itself; a definition may point elsewhere (`add link prod-db --host 10.4.2.11`), and the table never hides where a link goes. |
 | `transport` | `enum` | — | required | How the bytes travel. `ssh` spawns the remote agent over OpenSSH; `local` spawns `ono --agent` as a child of this shell, which is how a link is exercised without a network. |
-| `state` | `enum` | — | required | Whether the link is usable now. |
-| `targets` | `list<string>` | — | required | The targets the remote negotiated (spec §21.2), which is what its context can answer. |
+| `mode` | `enum` | — | required | Whether the far side is the Ono agent of spec §21.4 or the agentless fallback of §21.3. The fallback MUST be visible because semantics and performance may differ, so the mode is part of the record wherever the link is described. |
+| `state` | `enum` | — | required | Whether the link is usable now: `connected` once the handshake succeeded, `defined` for a definition recorded with `add link` that was never established, `closed` once torn down. |
+| `targets` | `list<string>` | — | required | The targets the remote negotiated (spec §21.2), which is what its context can answer. Empty for a link that was never established: nothing was negotiated. |
+| `protocol` | `int` | — | nullable | The link protocol version the handshake settled on (spec §21.2); null until it did. |
+| `providers` | `list<string>` | — | nullable | The ids of the providers the remote offers (spec §21.2), which keep their ids across the link (ADR-0036); null until the handshake settled them. |
 
 ## LogRecord — `ono.log-record/1`
 

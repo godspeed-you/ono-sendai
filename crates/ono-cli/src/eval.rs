@@ -972,7 +972,6 @@ fn run_stage_list(
             crate::context::Request::Enter => crate::context::enter(session, stage, source),
             crate::context::Request::Leave => crate::context::leave(session, stage, source),
             crate::context::Request::Link => crate::context::link(session, stage, source),
-            crate::context::Request::GetLink => crate::context::get_link(session),
             crate::context::Request::GetPlugin => crate::plugins::get_plugin(session),
             crate::context::Request::LoadPlugin => {
                 let words: Vec<String> = stage_arguments(session, stage, source)?

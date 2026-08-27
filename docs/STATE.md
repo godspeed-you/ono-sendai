@@ -93,6 +93,14 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [remote | 2026-08-27] **remote family** (`crates/ono-cli/tests/remote_missing.rs`) on branch
+  `implementation-remote` — files: `crates/ono-cli/src/{session_provider,session,providers,
+  context,remote,eval,native,builtin}.rs`, `crates/ono-command/src/impls/{mod,mutate,trace}.rs`,
+  `crates/ono-graph/src/kernel/remote.rs`, `docs/spec/commands/remote.yaml`, schemas `link.v1`,
+  `host.v1`, `probe-result.v1`, `link-event.v1`, `host-event.v1`, `deferred.yaml`,
+  `docs/spec/providers/linux-procfs.yaml` (the `ono.shell` rows), acceptance case
+  `044-remote-links-as-objects`. ADR-0103–0106. Builds on the session provider of ADR-0090.
+
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
   `implementation-meta` — files: `crates/ono-cli/src/{meta,resolve,settings,config,eval,native}.rs`,

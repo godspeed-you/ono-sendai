@@ -137,7 +137,6 @@ fn any_file_mentions(root: &Path, needle: &str) -> bool {
 // --- get link as data -------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_serialise_a_held_link_as_a_typed_record() {
     // The link table is a stream<ono.link/1>, so it must cross `to json` like every other
     // stream (spec §33.5) — a table that exists only as rendered text is not a record.
@@ -171,7 +170,6 @@ fn should_serialise_a_held_link_as_a_typed_record() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_serialise_an_empty_link_table_when_nothing_is_linked() {
     let run = ono("get link | to json");
     run.assert_success();
@@ -185,7 +183,6 @@ fn should_serialise_an_empty_link_table_when_nothing_is_linked() {
 // --- get host ---------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_a_linked_host_among_the_known_hosts() {
     // Spec §9.1: `get host` enumerates known hosts from configured providers and sources. A host
     // this session holds a link to is the best-known host there is.
@@ -205,7 +202,6 @@ fn should_list_a_linked_host_among_the_known_hosts() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_a_host_from_the_ssh_client_configuration_with_its_source() {
     // The ssh transport of ADR-0037 runs `ssh <host>`, which reads `~/.ssh/config`; a `Host`
     // entry there is therefore a configured host source (spec §9.1), and the record says which.
@@ -230,7 +226,6 @@ fn should_list_a_host_from_the_ssh_client_configuration_with_its_source() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_one_configured_host_by_name() {
     let home = scratch();
     home.write(
@@ -248,7 +243,6 @@ fn should_resolve_one_configured_host_by_name() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_answer_an_empty_host_list_when_nothing_is_configured() {
     let home = scratch();
     let run = ono_at_home(&home, "get host | to json");

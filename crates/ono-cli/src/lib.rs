@@ -13,6 +13,7 @@ pub mod context;
 pub mod context_jobs;
 pub mod eval;
 pub mod expand;
+pub mod hosts;
 pub mod invocation;
 pub mod live;
 pub mod meta;
