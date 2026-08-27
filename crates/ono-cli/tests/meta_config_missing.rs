@@ -651,7 +651,6 @@ fn table_rows_and_marker(stdout: &str) -> (Vec<&str>, Option<&str>) {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_truncate_the_rendered_table_at_the_configured_row_count() {
     // `get process` sees far more than two rows on any machine; the shell itself is one of them.
     let run = ono("set config render.table.max_rows = 2\nget process");
@@ -672,7 +671,6 @@ fn should_truncate_the_rendered_table_at_the_configured_row_count() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_apply_the_configured_row_count_to_an_explicit_table_too() {
     let run = ono("set config render.table.max_rows = 2\nget process | format table");
     run.assert_success();
@@ -686,7 +684,6 @@ fn should_apply_the_configured_row_count_to_an_explicit_table_too() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_truncate_the_rendered_table_when_the_user_file_sets_the_row_count() {
     let dir = scratch();
     dir.write("ono/config.ono", "set config render.table.max_rows = 1\n");

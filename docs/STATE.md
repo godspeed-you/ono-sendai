@@ -100,7 +100,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   `docs/spec/commands/identity.yaml`, acceptance case `041-config-and-resolve`. ADR-0093–0095.
   Increment 1 done: `resolve command` (6 tests green, ADR-0093). Increment 2 done: the typed
   settings catalogue, `get config` with layers/source/line/`--overridden`/`--problems`, typed
-  `set config` with E0202/E0201 and its ActionResult (15 tests green, ADR-0094).
+  `set config` with E0202/E0201 and its ActionResult (15 tests green, ADR-0094). Increment 3
+  done: `render.table.max_rows` reaches the sink, redirected output and `format table`
+  (3 tests green; the file has no `#[ignore` left).
 
 - [language | 2026-08-27] **language family** (`crates/ono-cli/tests/language_missing.rs`) on
   branch `implementation-language` — **all 31 tests green and un-ignored**; the gate is green

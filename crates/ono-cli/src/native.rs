@@ -1300,7 +1300,14 @@ fn run_native_segment(
         let resolved = registry
             .resolve(head_name(stage), &stage.arguments)
             .map_err(Flow::Failed)?;
-        let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
+        let mut arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
+        // `format table` without `--max-rows` truncates where the sink would (spec §13.3,
+        // ADR-0094 §6): the setting is the session's, so the shell hands it in here.
+        if contract.id() == "ono.data.format"
+            && let Some(limit) = table_row_limit(session)
+        {
+            arguments = arguments.with_option("max-rows", Value::Int(limit as i128));
+        }
         structured = !produces_bytes(contract);
         bound.push((contract, arguments));
     }
@@ -1672,7 +1679,7 @@ fn write_result(
             let bytes = if serialised {
                 bytes_of(values)
             } else {
-                rendered_bytes(values)
+                rendered_bytes(values, table_row_limit(session))
             };
             file.write_all(&bytes).map_err(write_failed)?;
             file.flush().map_err(write_failed)
@@ -1697,16 +1704,34 @@ fn write_result(
                 .iter()
                 .map(|(name, value)| (name.as_str(), value.as_str()))
                 .collect();
-            Sink::for_stdout(&borrowed).write(values);
+            let mut sink = Sink::for_stdout(&borrowed);
+            if let Some(limit) = table_row_limit(session) {
+                sink = sink.with_max_rows(limit);
+            }
+            sink.write(values);
             Ok(())
         }
     }
 }
 
+/// The row limit a rendered table honours: `render.table.max_rows`, where 0 means every row
+/// (ADR-0094 §6).
+fn table_row_limit(session: &Session) -> Option<usize> {
+    session
+        .settings()
+        .int("render.table.max_rows")
+        .and_then(|rows| usize::try_from(rows).ok())
+        .filter(|rows| *rows > 0)
+}
+
 /// The rendered form, laid out at the fixed width a file gets (spec §4.6).
-fn rendered_bytes(values: &[Value]) -> Vec<u8> {
+fn rendered_bytes(values: &[Value], max_rows: Option<usize>) -> Vec<u8> {
     let mut bytes = Vec::new();
-    for line in Sink::for_file().render(values) {
+    let mut sink = Sink::for_file();
+    if let Some(limit) = max_rows {
+        sink = sink.with_max_rows(limit);
+    }
+    for line in sink.render(values) {
         bytes.extend_from_slice(line.as_bytes());
         bytes.push(b'\n');
     }
