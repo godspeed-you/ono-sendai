@@ -19,7 +19,8 @@ use std::sync::Arc;
 use ono_value::{Provenance, RecordValue, Value};
 
 /// Re-tags every record in `value`, recursing through lists, maps and nested records.
-pub(crate) fn retag_value(value: Value, host: &Arc<str>) -> Value {
+/// Marks every record inside `value` as observed across the link to `host` (spec §21.2).
+pub fn retag_value(value: Value, host: &Arc<str>) -> Value {
     match value {
         Value::Record(record) => Value::Record(Arc::new(retag_record(&record, host))),
         Value::List(items) => Value::List(

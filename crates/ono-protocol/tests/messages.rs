@@ -311,3 +311,31 @@ fn should_carry_every_argument_when_a_local_action_becomes_a_remote_request() {
     assert_eq!(replayed.operation(), "stop");
     assert_eq!(replayed.target(), &object);
 }
+
+#[test]
+fn should_round_trip_an_adapt_request_when_framed() {
+    // Spec v0.3 §1.54 (ADAPT-011): the agent is asked to adapt an invocation for a demand,
+    // or only to say what it would do.
+    let request =
+        ono_protocol::AdaptRequest::new(["findmnt".to_owned(), "/".to_owned()], "structured")
+            .explain_only(true);
+    let message = ono_protocol::Message::StartAdapt(request.clone());
+    assert_eq!(message.kind(), ono_protocol::FrameKind::StartAdapt);
+    let limits = ono_protocol::Limits::default();
+    let payload = ono_protocol::encode_message(&message, &limits).expect("encodes");
+    let decoded = ono_protocol::decode_message(
+        ono_protocol::FrameKind::StartAdapt,
+        &payload,
+        ono_value::builtin_schemas(),
+        &limits,
+    )
+    .expect("decodes");
+    match decoded {
+        ono_protocol::Message::StartAdapt(back) => {
+            assert_eq!(back.argv(), request.argv());
+            assert_eq!(back.demand(), "structured");
+            assert!(back.is_explain_only());
+        }
+        other => panic!("got {other:?}"),
+    }
+}

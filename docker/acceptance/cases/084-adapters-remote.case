@@ -1,0 +1,19 @@
+# v0.3 §1.54 (ADAPT-011): inside a link frame the adapter and the executable are evaluated on
+# the remote — here this very binary as `ono --agent` over a pipe pair — the records carry the
+# host, `explain` says where the negotiation happened, and what the remote cannot adapt is a
+# visible refusal, never a local table pretending to be remote.
+case: an adapted command inside a link frame runs on the remote side
+timeout: 120
+run: |
+  echo "== remote records =="
+  ono -c 'link host testbox --transport local; enter link testbox; findmnt | where target == "/" | select target filesystem | to json; leave'
+  ono -c 'link host testbox --transport local; enter link testbox; findmnt | where target == "/" | inspect | to json; leave' | grep -F '"link":"testbox"'
+  ono -c 'link host testbox --transport local; enter link testbox; findmnt | where target == "/" | inspect | to json; leave' | grep -F 'adapter:org.ono.compat.util-linux.findmnt'
+  echo "== explain says where =="
+  ono -c 'link host testbox --transport local; enter link testbox; explain findmnt | where target == "/"; leave' | grep -F 'on testbox'
+  echo "== bytes stay classic, refusals are visible =="
+  ono -c 'link host testbox --transport local; enter link testbox; getent passwd root | grep -c root; leave'
+  ono -c 'link host testbox --transport local; enter link testbox; grep root /etc/passwd | where a == 1; leave' 2>&1 | grep -c 'Ono-Sendai-E0'
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

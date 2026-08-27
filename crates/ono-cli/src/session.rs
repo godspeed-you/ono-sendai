@@ -357,7 +357,14 @@ impl Session {
             .iter()
             .rev()
             .find(|frame| matches!(frame.frame.kind(), ono_command::FrameKind::Link))
-            .map(|frame| frame.frame.target().to_owned())
+            .map(|frame| frame.frame.identity().to_string())
+    }
+
+    /// The link the innermost link frame stands on, when the session is inside one.
+    #[must_use]
+    pub fn remote_link(&self) -> Option<&SessionLink> {
+        let host = self.link_host()?;
+        self.links.iter().find(|link| link.name == host)
     }
 
     /// The adapter registry, to add a package's packs to (spec v0.3 §1.26).
@@ -542,7 +549,7 @@ impl Session {
 ///
 /// The probe is not a job: it has no terminal, no stdin and no place in the job table, so the
 /// standard library's process API is the right tool rather than the executor of spec §18.
-fn probe_version(executable: &std::path::Path, argv: &[String]) -> Option<String> {
+pub fn probe_version(executable: &std::path::Path, argv: &[String]) -> Option<String> {
     let output = std::process::Command::new(executable)
         .args(argv)
         .env("LC_ALL", "C")

@@ -75,6 +75,9 @@ pub enum FrameKind {
     Outcome,
     /// The stream produced everything it is going to.
     End,
+    /// Ask the agent to adapt an external invocation for a demand, or to say what it would do
+    /// (spec v0.3 §1.54).
+    StartAdapt,
 }
 
 impl FrameKind {
@@ -93,6 +96,7 @@ impl FrameKind {
         FrameKind::Failure,
         FrameKind::Outcome,
         FrameKind::End,
+        FrameKind::StartAdapt,
     ];
 
     /// The byte that stands for this kind on the wire.
@@ -112,6 +116,7 @@ impl FrameKind {
             FrameKind::Failure => 11,
             FrameKind::Outcome => 12,
             FrameKind::End => 13,
+            FrameKind::StartAdapt => 14,
         }
     }
 
@@ -138,6 +143,7 @@ impl FrameKind {
             FrameKind::Failure => "failure",
             FrameKind::Outcome => "outcome",
             FrameKind::End => "end",
+            FrameKind::StartAdapt => "start-adapt",
         }
     }
 

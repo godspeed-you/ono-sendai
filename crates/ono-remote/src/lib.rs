@@ -32,4 +32,5 @@ mod transport;
 
 pub use agent::{AgentConfig, agent_main, serve_registry};
 pub use client::{RemoteLink, RemoteProvider};
+pub use retag::retag_value;
 pub use transport::{SshTarget, StdioTransport, SubprocessTransport, ssh_command};

@@ -51,11 +51,16 @@ fn main() -> ExitCode {
                 }
             };
             runtime.block_on(ono_cli::providers::register_async(&mut registry));
-            let config = ono_remote::AgentConfig::new(std::sync::Arc::new(registry)).with_identity(
-                ono_protocol::Identity::new(
+            // The agent negotiates and runs adapters on its own side (spec v0.3 §1.54): the
+            // bundled packs, probing versions the way the shell does.
+            let adapters = std::sync::Arc::new(ono_adapter::Registry::bundled(Box::new(
+                ono_cli::session::probe_version,
+            )));
+            let config = ono_remote::AgentConfig::new(std::sync::Arc::new(registry))
+                .with_identity(ono_protocol::Identity::new(
                     std::env::var("USER").unwrap_or_else(|_| "ono".to_owned()),
-                ),
-            );
+                ))
+                .with_adapters(adapters);
             return runtime.block_on(ono_remote::agent_main(
                 tokio::io::stdin(),
                 tokio::io::stdout(),

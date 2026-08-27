@@ -290,6 +290,56 @@ pub enum Message {
     Outcome(ActionOutcome),
     /// The stream produced everything it is going to.
     End,
+    /// Adapt an external invocation on the agent's side and stream the records, or say what
+    /// would happen (spec v0.3 §1.54, ADR-0066).
+    StartAdapt(AdaptRequest),
+}
+
+/// An external invocation the agent is asked to adapt for a demand.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AdaptRequest {
+    argv: Vec<String>,
+    demand: String,
+    #[serde(default)]
+    explain_only: bool,
+}
+
+impl AdaptRequest {
+    /// A request to adapt `argv` (program first) for `demand` — `structured` or
+    /// `interactive`, as ADR-0052 names them.
+    #[must_use]
+    pub fn new(argv: impl IntoIterator<Item = String>, demand: &str) -> Self {
+        Self {
+            argv: argv.into_iter().collect(),
+            demand: demand.to_owned(),
+            explain_only: false,
+        }
+    }
+
+    /// Whether the agent should only negotiate and describe, running nothing.
+    #[must_use]
+    pub fn explain_only(mut self, explain_only: bool) -> Self {
+        self.explain_only = explain_only;
+        self
+    }
+
+    /// The invocation, program first.
+    #[must_use]
+    pub fn argv(&self) -> &[String] {
+        &self.argv
+    }
+
+    /// The demand, as ADR-0052 names it.
+    #[must_use]
+    pub fn demand(&self) -> &str {
+        &self.demand
+    }
+
+    /// Whether nothing is to be run.
+    #[must_use]
+    pub fn is_explain_only(&self) -> bool {
+        self.explain_only
+    }
 }
 
 impl Message {
@@ -310,6 +360,7 @@ impl Message {
             Message::Failure(_) => FrameKind::Failure,
             Message::Outcome(_) => FrameKind::Outcome,
             Message::End => FrameKind::End,
+            Message::StartAdapt(_) => FrameKind::StartAdapt,
         }
     }
 }
@@ -340,6 +391,7 @@ pub fn encode_message(message: &Message, limits: &Limits) -> Result<Vec<u8>, Pro
         Message::Reject(reject) => to_serde(kind, reject)?,
         Message::StartQuery(query) | Message::StartSubscribe(query) => query_to_json(query),
         Message::Act(request) => act_to_json(request),
+        Message::StartAdapt(request) => to_serde(kind, request)?,
         Message::Cancel | Message::End => Json::Null,
         Message::Credit(credit) => Json::from(*credit),
         Message::Value(value) => to_json(value),
@@ -387,6 +439,7 @@ pub fn decode_message(
             query_from_json(kind, &json, schemas).map(Message::StartSubscribe)
         }
         FrameKind::Act => act_from_json(kind, &json, schemas).map(Message::Act),
+        FrameKind::StartAdapt => from_serde(kind, json).map(Message::StartAdapt),
         FrameKind::Cancel => Ok(Message::Cancel),
         FrameKind::End => Ok(Message::End),
         FrameKind::Credit => json

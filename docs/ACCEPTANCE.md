@@ -331,10 +331,16 @@ release line again.
       version probe when it names a name — either way the raw path —
       `ono-adapter/tests/negotiation.rs` (`should_refuse_a_binary_that_is_not_the_one_the_contract_pins`,
       `plan.executable()` asserted), case `073` (a PATH-shadowed `lsblk` script).
-- [ ] **ADAPT-011 — remote negotiation.** Inside a link frame an adapted command is planned
-      and executed on the remote side against the remote executable, provenance carries the
-      host, and a host lacking the tool or version degrades to raw with a visible reason
-      (v0.3 §1.54). Exit test: a remote case against the child agent.
+- [x] **ADAPT-011 — remote negotiation.** Inside a link frame an adapted command is negotiated,
+      run and decoded on the remote side against the remote executable (the `start-adapt`
+      frame), provenance carries the host and the remote adapter, `explain` says
+      `adaptation on <host>`, and a host lacking the tool or the adapter degrades to the local
+      raw program with the reason printed — or, under a structured demand, refuses visibly
+      (v0.3 §1.54, ADR-0066) — `ono-protocol/tests/messages.rs`, `ono-cli/tests/remote.rs`
+      (`should_adapt_on_the_remote_side_inside_a_link_frame`,
+      `should_explain_that_a_remote_host_negotiates_its_own_adapters`,
+      `should_degrade_to_the_local_program_when_the_remote_has_no_adapter`), case `084`
+      (against the child agent).
 
 #### 4.6.2 Contracts, errors and KUANG/11 (v0.3 §2.2, §2.3, ADAPT-008 … ADAPT-010)
 

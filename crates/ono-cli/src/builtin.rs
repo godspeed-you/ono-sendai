@@ -375,7 +375,11 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         .map(|name| (name.to_owned(), crate::resolve::find_on_path(session, name)))
         .collect();
     let executables = |name: &str| resolved.get(name).cloned().flatten();
+    // Inside a link frame the remote negotiates (spec v0.3 §1.54): the local registry is not
+    // consulted for the plan, and the remote's answer is reported per stage below.
+    let remote_host = session.link_host();
     let (providers, adapters) = session.registries();
+    let adapters = remote_host.is_none().then_some(adapters);
     let plan = ono_command::plan_with(
         registry,
         Some(providers),
@@ -383,7 +387,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         &source,
         &ono_command::PlanContext {
             stdout,
-            adapters: Some(adapters),
+            adapters,
             executables: Some(&executables),
         },
     );
@@ -392,6 +396,25 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     // retitle the terminal from inside the command that exists to tell you about it, and the
     // bytes would survive into a file (ADR-0015 T1, T9, T11).
     print_safely(&plan.render());
+
+    if let Some(host) = remote_host {
+        for (stage, planned) in pipeline.head.stages.iter().zip(plan.stages()) {
+            let Some(demand) = planned.demand() else {
+                continue;
+            };
+            if ono_command::is_raw(stage) {
+                continue;
+            }
+            let Some(argv) = crate::native::literal_argv(stage) else {
+                continue;
+            };
+            let state = crate::native::remote_decision(session, &argv, demand).map_or_else(
+                || "raw (the remote agent cannot negotiate adapters)".to_owned(),
+                |decision| decision.state,
+            );
+            print_safely(&format!("  adaptation on {host}: {state}"));
+        }
+    }
 
     // A stage the registry does not know is an external program, and which one it will be is the
     // half of the answer the plan cannot give (ADR-0011 T11: a shadowing binary is only

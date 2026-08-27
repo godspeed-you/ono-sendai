@@ -16,6 +16,7 @@ name = "ono-remote-fixture-agent"
 path = "src/bin/fixture_agent.rs"
 
 [dependencies]
+ono-adapter.workspace = true
 ono-core.workspace = true
 ono-pipeline.workspace = true
 ono-protocol.workspace = true

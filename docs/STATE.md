@@ -93,9 +93,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 15 — `ADAPT-011` remote negotiation: an adapted
-  command inside a link frame runs on the remote side, provenance carries the host, a host
-  without the tool degrades to raw — files: `crates/ono-remote/`, `crates/ono-cli/src/native.rs`
+- [claude | 2026-08-27] v0.3 tranche, step 16 — integration surfaces (§4.6.3 text tools stay
+  raw, §4.6.4): the §1.71 session as an acceptance case, `type`/`inspect`/`explain` with the
+  adapter's schema, completion after adapted programs, history recording the adapter, script
+  determinism, the muscle-memory diff — files: `crates/ono-command/src/{check,explain}.rs`,
+  `crates/ono-editor/`, `crates/ono-history/`, `crates/ono-cli/src/`
 
 ---
 
@@ -382,6 +384,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   scope of `process.exec`, packs loaded disabled under default deny and enabled by
   `--grant process.exec` (experimental packs by `--allow-experimental` besides), the test
   host's `check_adapter_package`, the SDK's example package (ADR-0065) — case 083
+- [x] v0.3 step 15 — ADAPT-011: the `start-adapt` frame, the agent negotiating, running and
+  decoding on its side, records marked with the host, `explain … on <host>`, visible
+  degradation (ADR-0066) — case 084
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

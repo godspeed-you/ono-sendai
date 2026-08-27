@@ -22,7 +22,7 @@ use tokio::sync::Semaphore;
 use crate::connection::{FrameReader, FrameSink, spawn_writer};
 use crate::error::unreachable;
 use crate::handshake::{Identity, Offer, ProviderDescriptor, negotiate};
-use crate::message::{ActRequest, RemoteQuery};
+use crate::message::{ActRequest, AdaptRequest, RemoteQuery};
 use crate::{
     Frame, FrameKind, Limits, Message, PROTOCOL_VERSION, ProtocolError, Transport, decode_message,
     encode_message,
@@ -204,6 +204,22 @@ pub trait RemoteService: Send + Sync + 'static {
         Err(ErrorValue::new(
             ErrorCode::ProviderUnsupported,
             "this agent answers queries only; it does not change anything",
+        ))
+    }
+
+    /// Adapts an external invocation on this side and streams the records it decodes, or —
+    /// when the request says so — describes what would happen (spec v0.3 §1.54).
+    ///
+    /// The default refuses: an agent without adapters says so rather than running anything.
+    async fn adapt(
+        &self,
+        request: AdaptRequest,
+        responder: &StreamResponder,
+    ) -> Result<(), ErrorValue> {
+        let _ = (request, responder);
+        Err(ErrorValue::new(
+            ErrorCode::ProviderUnsupported,
+            "this agent does not adapt external commands",
         ))
     }
 }
@@ -407,6 +423,12 @@ where
                 start(&streams, &frames, &limits, id, window, |responder| {
                     let service = Arc::clone(&service);
                     async move { service.subscribe(query, &responder).await.err() }
+                });
+            }
+            Message::StartAdapt(request) => {
+                start(&streams, &frames, &limits, id, window, |responder| {
+                    let service = Arc::clone(&service);
+                    async move { service.adapt(request, &responder).await.err() }
                 });
             }
             Message::Act(request) => {

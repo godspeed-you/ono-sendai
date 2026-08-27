@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_protocol::{
     ActRequest, ClientConfig, Link, Negotiated, ProviderDescriptor, RemoteMessage, RemoteQuery,
-    Transport,
+    RemoteStream, Transport,
 };
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, EventStream, ObjectRef, Provider, Query,
@@ -127,6 +127,30 @@ impl RemoteLink {
     /// Whatever the remote refused with, or `remote.unreachable` when the link failed first.
     pub async fn act(&self, request: &ActRequest) -> Result<ActionOutcome, ErrorValue> {
         self.link.act(request).await
+    }
+
+    /// Asks the remote to adapt `argv` for `demand` (spec v0.3 §1.54): the stream carries the
+    /// records it decoded — retag them with [`RemoteLink::retag`] — or its refusal.
+    ///
+    /// # Errors
+    ///
+    /// As [`Link::adapt`].
+    pub fn adapt(
+        &self,
+        argv: &[String],
+        demand: &str,
+        explain_only: bool,
+    ) -> Result<RemoteStream, ErrorValue> {
+        self.link.adapt(
+            &ono_protocol::AdaptRequest::new(argv.iter().cloned(), demand)
+                .explain_only(explain_only),
+        )
+    }
+
+    /// Marks a value as observed across this link, the way every remote record is marked.
+    #[must_use]
+    pub fn retag(&self, value: Value) -> Value {
+        retag_value(value, &self.host)
     }
 
     /// The underlying protocol link, for callers that need raw streams.

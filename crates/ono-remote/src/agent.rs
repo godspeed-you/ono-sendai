@@ -15,13 +15,16 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use ono_adapter::OutputDemand;
+
+use ono_core::ErrorCode;
 use ono_pipeline::StreamEvent;
 use ono_protocol::{
-    ActRequest, Identity, Limits, ProviderDescriptor, RemoteQuery, RemoteService, ServerConfig,
-    StreamResponder, Transport,
+    ActRequest, AdaptRequest, Identity, Limits, ProviderDescriptor, RemoteQuery, RemoteService,
+    ServerConfig, StreamResponder, Transport,
 };
 use ono_provider_api::{ActionOutcome, Availability, ProviderRegistry};
-use ono_value::{ErrorValue, SchemaRegistry};
+use ono_value::{ErrorValue, SchemaRegistry, Value};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::transport::StdioTransport;
@@ -42,6 +45,7 @@ pub struct AgentConfig {
     registry: Arc<ProviderRegistry>,
     identity: Identity,
     limits: Limits,
+    adapters: Option<Arc<ono_adapter::Registry>>,
 }
 
 impl AgentConfig {
@@ -57,7 +61,15 @@ impl AgentConfig {
             registry,
             identity: Identity::new(user),
             limits: Limits::default(),
+            adapters: None,
         }
+    }
+
+    /// The adapters this agent negotiates and runs on its own side (spec v0.3 §1.54).
+    #[must_use]
+    pub fn with_adapters(mut self, adapters: Arc<ono_adapter::Registry>) -> Self {
+        self.adapters = Some(adapters);
+        self
     }
 
     /// Who the agent answers as (spec §21.5: least privilege, and visibly so).
@@ -122,6 +134,7 @@ pub async fn serve_registry<T: Transport>(
     let server = config.server_config();
     let service = RegistryService {
         registry: Arc::clone(&config.registry),
+        adapters: config.adapters.clone(),
     };
     ono_protocol::serve(transport, server, service).await
 }
@@ -150,6 +163,7 @@ where
 #[derive(Debug)]
 struct RegistryService {
     registry: Arc<ProviderRegistry>,
+    adapters: Option<Arc<ono_adapter::Registry>>,
 }
 
 #[async_trait::async_trait]
@@ -190,6 +204,68 @@ impl RemoteService for RegistryService {
         Ok(())
     }
 
+    async fn adapt(
+        &self,
+        request: AdaptRequest,
+        responder: &StreamResponder,
+    ) -> Result<(), ErrorValue> {
+        let Some(adapters) = &self.adapters else {
+            return Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                "this agent has no adapters",
+            ));
+        };
+        let Some(program) = request.argv().first() else {
+            return Err(ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                "nothing to adapt",
+            ));
+        };
+        let Some(path) = find_on_path(program) else {
+            return Err(ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                format!("`{program}` is not on this host's PATH"),
+            ));
+        };
+        let demand = match request.demand() {
+            "structured" => OutputDemand::Structured { schema: None },
+            "interactive" => OutputDemand::Interactive,
+            _ => OutputDemand::RawBytes,
+        };
+        let negotiation = adapters.negotiate(&path, request.argv(), &demand);
+        if request.is_explain_only() {
+            let mut map = ono_value::MapValue::new();
+            map.insert("adapted".into(), Value::Bool(negotiation.plan().is_some()));
+            map.insert(
+                "state".into(),
+                Value::string(&negotiation.describe(&demand)),
+            );
+            map.insert(
+                "argv".into(),
+                negotiation.plan().map_or(Value::Null, |plan| {
+                    Value::list(plan.argv().iter().map(|word| Value::string(word)))
+                }),
+            );
+            let _ = responder.send(Value::Map(Arc::new(map))).await;
+            return Ok(());
+        }
+        if let Some(error) = negotiation.refusal(&demand, &path, request.argv()) {
+            return Err(error);
+        }
+        let Some(plan) = negotiation.plan().cloned() else {
+            return Err(ErrorValue::new(
+                ErrorCode::AdapterNotAvailable,
+                format!(
+                    "no adapter on this host gives `{}` structured output",
+                    request.argv().join(" ")
+                ),
+            )
+            .with_metadata("invocation", Value::string(&request.argv().join(" ")))
+            .with_metadata("raw_fallback_safe", Value::Bool(true)));
+        };
+        run_plan(plan, request.argv().to_vec(), responder).await
+    }
+
     async fn subscribe(
         &self,
         query: RemoteQuery,
@@ -216,4 +292,132 @@ impl RemoteService for RegistryService {
     async fn act(&self, request: ActRequest) -> Result<ActionOutcome, ErrorValue> {
         self.registry.act(&request.to_action()).await
     }
+}
+
+/// The first executable named `program` on this process's `PATH`, or the path itself.
+fn find_on_path(program: &str) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let executable = |path: &std::path::Path| {
+        std::fs::metadata(path)
+            .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    };
+    if program.contains('/') {
+        let path = std::path::PathBuf::from(program);
+        return executable(&path).then_some(path);
+    }
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+        .map(|dir| dir.join(program))
+        .find(|candidate| executable(candidate))
+}
+
+/// Runs an adapter plan on this side and streams what it decodes (ADR-0066): the child is
+/// spawned with the plan's argv and environment, a reader thread decodes its stdout, values
+/// and failures go to the responder as they arrive, and a non-zero exit is reported after them.
+async fn run_plan(
+    plan: ono_adapter::AdapterPlan,
+    user_invocation: Vec<String>,
+    responder: &StreamResponder,
+) -> Result<(), ErrorValue> {
+    let trace = ono_adapter::Trace {
+        executable: plan.executable().to_path_buf(),
+        version: plan.version().cloned(),
+        user_invocation,
+        actual_invocation: plan.argv().to_vec(),
+        host: None,
+    };
+    let mut decoding =
+        ono_adapter::Decoding::for_plan(plan.clone(), trace, ono_value::builtin_schemas())?;
+    let mut command = std::process::Command::new(plan.executable());
+    command
+        .args(plan.argv().iter().skip(1))
+        .envs(plan.env())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit());
+    let mut child = command.spawn().map_err(|error| {
+        ErrorValue::new(
+            ErrorCode::IoPermissionDenied,
+            format!("running {}: {error}", plan.executable().display()),
+        )
+    })?;
+    let Some(mut stdout) = child.stdout.take() else {
+        return Err(ErrorValue::new(
+            ErrorCode::IoPermissionDenied,
+            "the child's stdout could not be captured",
+        ));
+    };
+    let (sender, mut receiver) = tokio::sync::mpsc::channel::<Result<Value, ErrorValue>>(256);
+    let reader = std::thread::spawn(move || {
+        let mut buffer = vec![0u8; 64 * 1024];
+        loop {
+            match std::io::Read::read(&mut stdout, &mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    for outcome in decoding.feed(&buffer[..count]) {
+                        if sender.blocking_send(outcome).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        for outcome in decoding.finish() {
+            if sender.blocking_send(outcome).is_err() {
+                return;
+            }
+        }
+    });
+    let mut cancelled = false;
+    loop {
+        let outcome = tokio::select! {
+            biased;
+            () = responder.cancel_token().cancelled() => {
+                cancelled = true;
+                break;
+            }
+            outcome = receiver.recv() => match outcome {
+                Some(outcome) => outcome,
+                None => break,
+            },
+        };
+        let delivered = match outcome {
+            Ok(value) => responder.send(value).await,
+            Err(error) => responder.fail(error).await,
+        };
+        if delivered.is_err() {
+            cancelled = true;
+            break;
+        }
+    }
+    if cancelled {
+        let _ = child.kill();
+    }
+    let status = tokio::task::spawn_blocking(move || child.wait())
+        .await
+        .map_err(|_| {
+            ErrorValue::new(
+                ErrorCode::IoPermissionDenied,
+                "the child could not be waited for",
+            )
+        })?
+        .map_err(|error| ErrorValue::new(ErrorCode::IoPermissionDenied, error.to_string()))?;
+    let _ = reader.join();
+    if !cancelled && !status.success() {
+        let program = plan
+            .executable()
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        return Err(ErrorValue::new(
+            ErrorCode::ExternalExitNonzero,
+            format!(
+                "{program} exited with status {}",
+                status.code().unwrap_or(-1)
+            ),
+        ));
+    }
+    Ok(())
 }

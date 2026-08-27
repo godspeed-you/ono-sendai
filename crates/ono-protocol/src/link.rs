@@ -45,7 +45,7 @@ use tokio::sync::mpsc;
 use crate::connection::{FrameReader, FrameSink, spawn_writer};
 use crate::error::unreachable;
 use crate::handshake::{Negotiated, hello};
-use crate::message::{ActRequest, RemoteQuery};
+use crate::message::{ActRequest, AdaptRequest, RemoteQuery};
 use crate::trust::{TrustPolicy, TrustStore, decide};
 use crate::{
     Frame, FrameKind, Identity, Limits, Message, PROTOCOL_VERSION, ProtocolError, Transport,
@@ -448,6 +448,16 @@ impl Link {
     /// the link already has as many streams open as it allows.
     pub fn query(&self, query: &RemoteQuery) -> Result<RemoteStream, ErrorValue> {
         self.start(FrameKind::StartQuery, Message::StartQuery(query.clone()))
+    }
+
+    /// Asks the agent to adapt an external invocation (spec v0.3 §1.54): the stream carries
+    /// the records the remote decoded, or its refusal as a failure.
+    ///
+    /// # Errors
+    ///
+    /// As [`Link::query`].
+    pub fn adapt(&self, request: &AdaptRequest) -> Result<RemoteStream, ErrorValue> {
+        self.start(FrameKind::StartAdapt, Message::StartAdapt(request.clone()))
     }
 
     /// Opens a stream of the changes to the objects `query` matches (spec §21.4).

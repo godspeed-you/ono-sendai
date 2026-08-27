@@ -76,7 +76,7 @@ pub use limits::{
     DEFAULT_CREDIT, Limits, MAX_CREDIT, MAX_FRAME_PAYLOAD, MAX_STREAMS, MAX_VALUE_DEPTH,
 };
 pub use link::{ClientConfig, Link, RemoteMessage, RemoteStream};
-pub use message::{ActRequest, Message, RemoteQuery, decode_message, encode_message};
+pub use message::{ActRequest, AdaptRequest, Message, RemoteQuery, decode_message, encode_message};
 pub use service::{RemoteService, ServerConfig, StreamResponder, serve};
 pub use transport::{PlainTransport, Transport};
 pub use trust::{Fingerprint, HostKey, TrustDecision, TrustEntry, TrustPolicy, TrustStore};

@@ -66,3 +66,73 @@ fn should_refuse_to_enter_a_link_that_was_never_made() {
         run.stderr()
     );
 }
+
+#[test]
+fn should_adapt_on_the_remote_side_inside_a_link_frame() {
+    // Spec v0.3 §1.54 (ADAPT-011): inside a link frame the adapter and the executable are the
+    // remote's, and the records say so. The local transport's agent is this binary, so the
+    // remote has the bundled packs and the same tools.
+    let run = ono("link host testbox --transport local; \
+         enter link testbox; \
+         findmnt | where target == \"/\" | select target filesystem | to json; \
+         leave");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("\"target\":\"/\""),
+        "typed records came back over the link: {:?}",
+        run.stdout()
+    );
+    let provenance = ono("link host testbox --transport local; \
+         enter link testbox; \
+         findmnt | where target == \"/\" | inspect | to json; \
+         leave");
+    provenance.assert_success();
+    let text = provenance.stdout();
+    assert!(
+        text.contains("\"link\":\"testbox\"")
+            && text.contains("adapter:org.ono.compat.util-linux.findmnt"),
+        "provenance carries the host and the adapter (spec v0.3 §1.54): {text:?}"
+    );
+}
+
+#[test]
+fn should_explain_that_a_remote_host_negotiates_its_own_adapters() {
+    let run = ono("link host testbox --transport local; \
+         enter link testbox; \
+         explain findmnt | where target == \"/\"; \
+         leave");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("on testbox")
+            && run
+                .stdout()
+                .contains("adapted by org.ono.compat.util-linux.findmnt"),
+        "explain says where the negotiation happened: {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_degrade_to_the_local_program_when_the_remote_has_no_adapter() {
+    // A byte consumer keeps the classic pipeline, locally, as v0.2 did; a structured demand
+    // the remote cannot meet is a visible refusal, never a silent local table.
+    let bytes = ono(
+        "link host testbox --transport local; enter link testbox; grep -c root /etc/passwd; leave",
+    );
+    bytes.assert_success();
+    assert!(
+        bytes.stdout().trim().ends_with(char::is_numeric),
+        "got {:?}",
+        bytes.stdout()
+    );
+    // The refused pipeline is the last statement, so its status is the run's.
+    let refused = ono(
+        "link host testbox --transport local; enter link testbox; grep root /etc/passwd | where a == 1",
+    );
+    assert_ne!(refused.status().code(), 0);
+    assert!(
+        refused.stderr().contains("testbox") || refused.stderr().contains("Ono-Sendai-E0"),
+        "the refusal names the host or the structured error: {:?}",
+        refused.stderr()
+    );
+}

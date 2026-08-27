@@ -189,6 +189,12 @@ pub enum Negotiation {
         /// The claimants.
         candidates: Vec<String>,
     },
+    /// A remote agent answered that it adapts the invocation on its side (spec v0.3 §1.54);
+    /// the plan is the remote's and never reaches this side.
+    RemoteAdapted {
+        /// The remote's own description of what it will do.
+        state: String,
+    },
     /// The adapter exists but its pack may not influence structured output here.
     Disabled {
         /// The adapter that would have answered.
@@ -214,7 +220,9 @@ impl Negotiation {
     pub fn runs_raw(&self, demand: &OutputDemand) -> bool {
         match self {
             Self::NotApplicable | Self::RawPreferred { .. } => true,
-            Self::StructuredSupported { .. } | Self::StructuredSupportedWithLimits { .. } => false,
+            Self::StructuredSupported { .. }
+            | Self::StructuredSupportedWithLimits { .. }
+            | Self::RemoteAdapted { .. } => false,
             Self::UnsupportedInvocation { fallback, .. }
             | Self::IncompatibleVersion { fallback, .. } => {
                 !matches!(demand, OutputDemand::Structured { .. }) && *fallback == Fallback::Raw
@@ -329,7 +337,8 @@ impl Negotiation {
             Self::NotApplicable
             | Self::RawPreferred { .. }
             | Self::StructuredSupported { .. }
-            | Self::StructuredSupportedWithLimits { .. } => return None,
+            | Self::StructuredSupportedWithLimits { .. }
+            | Self::RemoteAdapted { .. } => return None,
             Self::Disabled { adapter, reason } => payload(
                 ErrorValue::new(
                     ErrorCode::AdapterDisabled,
@@ -415,6 +424,7 @@ impl Negotiation {
             Self::Conflict { candidates } => {
                 format!("conflict: {} cannot be separated", candidates.join(" and "))
             }
+            Self::RemoteAdapted { state } => state.clone(),
             Self::Disabled { adapter, reason } => {
                 let state = format!("adapter disabled: {adapter}, {reason}");
                 if structured {
