@@ -493,6 +493,32 @@ fn should_begin_a_host_watch_with_a_snapshot() {
     );
 }
 
+#[test]
+fn should_begin_a_host_watch_with_an_empty_snapshot_when_no_host_is_known() {
+    // ADR-0024: the first event is the current state — and "no hosts" is a state. Without it
+    // `watch host | take 1` waits forever for a host to appear.
+    let home = scratch();
+    let run = Shell::new()
+        .env("HOME", home.path().to_string_lossy().into_owned())
+        .env(
+            "XDG_CONFIG_HOME",
+            home.path().to_string_lossy().into_owned(),
+        )
+        .args([
+            "-c",
+            "watch host --every 1s | take 1 | select kind | to json",
+        ])
+        .timeout(Duration::from_secs(20))
+        .run();
+    run.assert_success();
+    assert_eq!(
+        last_line(&run),
+        r#"[{"kind":"snapshot"}]"#,
+        "an empty listing still begins with its snapshot (ADR-0024), got {:?}",
+        run.stdout()
+    );
+}
+
 // --- link definitions: add, set, rename, remove, detach ---------------------------------------
 
 #[test]

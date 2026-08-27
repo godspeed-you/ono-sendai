@@ -14,7 +14,7 @@ use std::time::Duration;
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{ProviderRegistry, Query, Selector};
-use ono_value::{ErrorValue, RecordValue, Schema, SchemaId, Value};
+use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
 use crate::invoke::{CommandImpl, Invocation, Outcome};
 
@@ -180,6 +180,15 @@ fn poll(
                     seen.insert(identity_key(&record), record);
                 }
 
+                // ADR-0024: the stream begins with the current state — and when that state is
+                // "nothing", the snapshot is still an event, or `watch x | take 1` never returns.
+                if first
+                    && seen.is_empty()
+                    && sink.send(empty_snapshot(&event_schema)).await.is_err()
+                {
+                    return;
+                }
+
                 // What changed, in identity order — deterministic however the provider answered.
                 for (key, record) in &seen {
                     let event = match known.get(key) {
@@ -239,6 +248,19 @@ fn changed_fields(previous: &Arc<RecordValue>, current: &Arc<RecordValue>) -> Ve
         .filter(|field| previous.get(field.name()) != current.get(field.name()))
         .map(|field| Value::string(field.name()))
         .collect()
+}
+
+/// The snapshot of a listing with nothing in it: `kind: snapshot` carrying no object.
+fn empty_snapshot(schema: &Arc<Schema>) -> Value {
+    let provenance = Provenance::local("ono.runtime", schema.id().clone()).from_source("watch");
+    let built = RecordValue::builder(Arc::clone(schema), provenance)
+        .set("kind", Value::string("snapshot"))
+        .and_then(|builder| builder.set("at", Value::Timestamp(jiff::Timestamp::now())))
+        .and_then(|builder| builder.set("source", Value::string("poll")));
+    match built {
+        Ok(builder) => Value::Record(Arc::new(builder.build())),
+        Err(error) => error.into_value(),
+    }
 }
 
 /// One event, in the envelope the event schema declares (spec §31.14).

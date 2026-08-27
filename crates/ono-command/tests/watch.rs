@@ -86,3 +86,37 @@ async fn should_begin_a_watch_with_the_current_state_and_then_the_changes() {
         "the changed event names the fields that moved"
     );
 }
+
+#[tokio::test]
+async fn should_emit_an_empty_snapshot_when_the_watched_listing_has_nothing_in_it() {
+    // ADR-0024: a subscription always begins with the current state — and when the current
+    // state is "nothing", that is still an event, or `watch x | take 1` never returns.
+    let provider = FixtureProvider::live();
+    let handle = provider.handle();
+    handle.remove(1);
+    handle.remove(2);
+    handle.remove(3);
+    let registry = providers(provider);
+
+    let ran = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        fixture::run("watch process --every 30ms | take 1", &registry),
+    )
+    .await
+    .expect("an empty listing still yields its first snapshot (ADR-0024)")
+    .expect("the pipeline runs");
+
+    let event = ran.only().as_record().expect("an event record");
+    assert_eq!(
+        event
+            .get("kind")
+            .and_then(|kind| kind.as_str().ok().map(str::to_owned)),
+        Some("snapshot".to_owned()),
+        "the first event is a snapshot even when it carries nothing"
+    );
+    assert!(
+        event.get("process").is_none_or(|process| process.is_null()),
+        "an empty snapshot carries no object, got {:?}",
+        event.get("process")
+    );
+}
