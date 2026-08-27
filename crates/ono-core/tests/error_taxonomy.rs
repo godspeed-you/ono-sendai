@@ -147,3 +147,73 @@ fn should_name_every_kind_as_the_specification_spells_it_when_rendered() {
         assert_eq!(ErrorKind::from_name(name), Some(kind));
     }
 }
+
+#[test]
+fn should_carry_the_adapter_family_of_the_v03_specification_when_enumerated() {
+    // Spec v0.3 §1.65 names the eleven structured errors of the adapter layer; they join the
+    // closed taxonomy as the E09xx block, each mapped onto one of the twelve kinds (ADR-0053).
+    let expected = [
+        (
+            "Ono-Sendai-E0901",
+            "adapter.not_available",
+            ErrorKind::Resolution,
+        ),
+        (
+            "Ono-Sendai-E0902",
+            "adapter.disabled",
+            ErrorKind::Permission,
+        ),
+        (
+            "Ono-Sendai-E0903",
+            "adapter.unsupported_invocation",
+            ErrorKind::Provider,
+        ),
+        (
+            "Ono-Sendai-E0904",
+            "adapter.version_incompatible",
+            ErrorKind::Provider,
+        ),
+        (
+            "Ono-Sendai-E0905",
+            "adapter.executable_mismatch",
+            ErrorKind::Resolution,
+        ),
+        (
+            "Ono-Sendai-E0906",
+            "adapter.rewrite_failed",
+            ErrorKind::Provider,
+        ),
+        (
+            "Ono-Sendai-E0907",
+            "adapter.decode_failed",
+            ErrorKind::Provider,
+        ),
+        (
+            "Ono-Sendai-E0908",
+            "adapter.schema_violation",
+            ErrorKind::Provider,
+        ),
+        (
+            "Ono-Sendai-E0909",
+            "adapter.capability_denied",
+            ErrorKind::Permission,
+        ),
+        ("Ono-Sendai-E0910", "adapter.conflict", ErrorKind::Conflict),
+        (
+            "Ono-Sendai-E0911",
+            "adapter.required_for_structured_pipeline",
+            ErrorKind::Type,
+        ),
+    ];
+    for (code, name, kind) in expected {
+        let found = ErrorCode::from_name(name)
+            .unwrap_or_else(|| panic!("spec v0.3 §1.65 requires the error `{name}`"));
+        assert_eq!(found.code(), code, "{name} keeps its number");
+        assert_eq!(
+            found.kind(),
+            kind,
+            "{name} maps onto the kind ADR-0053 assigns"
+        );
+        assert_eq!(ErrorCode::from_code(code), Some(found));
+    }
+}

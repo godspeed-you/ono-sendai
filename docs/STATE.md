@@ -93,9 +93,8 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 2 — the `adapter.*` error family (E09xx) in
-  `docs/spec/errors.yaml` and `ono-core` — files: `docs/spec/errors.yaml`,
-  `crates/ono-core/src/error.rs`, `docs/reference/errors.md`
+- [claude | 2026-08-27] v0.3 tranche, step 3 — `ADAPT-003` the `raw` keyword (ADR-0054) —
+  files: `crates/ono-cli/src/{eval,native,builtin,resolve}.rs`, `crates/ono-command/src/{explain,help}.rs`
 
 ---
 
@@ -335,6 +334,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 - [x] v0.3 step 1 — ADAPT-001 OutputDemand computed backwards from the consumer, reported
   by `explain` (ADR-0052) — cases 070, 071
+- [x] v0.3 step 2 — the `adapter.*` error family E0901–E0911 in `docs/spec/errors.yaml` and
+  `ono_core::ErrorCode` (ADR-0053) — `error_taxonomy.rs`; the box in ACCEPTANCE §4.6.2 stays
+  open until an adapter emits one with the §1.65 payload
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

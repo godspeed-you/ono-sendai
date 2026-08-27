@@ -230,3 +230,86 @@ errors:
     help: >-
       The slow stage is named in the error metadata. Raise the budget, or insert a bounded stage
       such as `take` ahead of the consumer.
+
+  # --- adapter (spec v0.3 §1.65, ADR-0053) -------------------------------------------------
+  - code: Ono-Sendai-E0901
+    name: adapter.not_available
+    kind: resolution
+    summary: No adapter answers to this invocation, and structured output was required.
+    help: >-
+      Only an explicit structured demand raises this (`adapt …`, or a pipeline whose consumer
+      needs objects). Drop the demand to run the program raw, or decode its output yourself with
+      `from json`; `explain` names the adapters that were considered.
+  - code: Ono-Sendai-E0902
+    name: adapter.disabled
+    kind: permission
+    summary: An adapter exists for this invocation but is switched off in this context.
+    help: >-
+      The error metadata names the adapter and the setting that disabled it. The raw program is
+      still one `raw` away.
+  - code: Ono-Sendai-E0903
+    name: adapter.unsupported_invocation
+    kind: provider
+    summary: The adapter knows the executable but not this combination of options.
+    help: >-
+      `help adapter <id>` lists the invocations the adapter supports. Where the pipeline did not
+      require structure the program already ran raw; the metadata says whether it did.
+  - code: Ono-Sendai-E0904
+    name: adapter.version_incompatible
+    kind: provider
+    summary: The executable's version is outside the range the adapter was tested with.
+    help: >-
+      The metadata carries the version found and the range supported. A machine-format adapter
+      may still work — `adapt` forces it — but a version-constrained parser refuses by design
+      (spec v0.3 §1.46).
+  - code: Ono-Sendai-E0905
+    name: adapter.executable_mismatch
+    kind: resolution
+    summary: The executable that resolved is not the one the adapter's contract names.
+    help: >-
+      A program earlier on PATH shadows the one the adapter was written for; `explain` shows the
+      path that resolved. The program ran raw, or will if you drop the structured demand.
+  - code: Ono-Sendai-E0906
+    name: adapter.rewrite_failed
+    kind: provider
+    summary: The adapter could not turn the invocation into its machine-oriented form.
+    help: >-
+      This is an adapter defect; the metadata names the adapter and its version so it can be
+      reported. `raw <command>` runs the program as typed.
+  - code: Ono-Sendai-E0907
+    name: adapter.decode_failed
+    kind: provider
+    summary: The executable's output was not what the adapter's decoder expects.
+    help: >-
+      The raw bytes are kept in the error metadata and nothing was fabricated. Check the
+      executable's version against the adapter's range, and run the program `raw` to see its
+      output as it is.
+  - code: Ono-Sendai-E0908
+    name: adapter.schema_violation
+    kind: provider
+    summary: The adapter decoded a value outside the schema it advertises.
+    help: >-
+      The offending field and the schema are in the metadata. This is an adapter defect; report
+      it with the executable version, and use the raw program meanwhile.
+  - code: Ono-Sendai-E0909
+    name: adapter.capability_denied
+    kind: permission
+    summary: The adapter's package is not allowed to run this executable.
+    help: >-
+      `process.exec` grants a package exactly the executables its manifest declares
+      (spec v0.3 §1.22). `get plugin` shows the grant; the raw program is unaffected.
+  - code: Ono-Sendai-E0910
+    name: adapter.conflict
+    kind: conflict
+    summary: More than one adapter claims the invocation and the resolution rules cannot separate them.
+    help: >-
+      The metadata lists the candidates. Prefer one in the adapter configuration, or disable
+      the other; until then the program runs raw.
+  - code: Ono-Sendai-E0911
+    name: adapter.required_for_structured_pipeline
+    kind: type
+    summary: A consumer demanded objects and no adapter can provide them for this invocation.
+    help: >-
+      A forced structured invocation fails rather than silently downgrading to text
+      (spec v0.3 §1.18). Decode the output yourself (`| from json`), or drop the structured
+      consumer.

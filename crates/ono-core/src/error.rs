@@ -188,6 +188,28 @@ error_codes! {
         "The stream was cancelled before it completed.";
     StreamBackpressureTimeout => "Ono-Sendai-E0803", "stream.backpressure_timeout", Timeout,
         "A consumer did not accept values within the configured budget.";
+    AdapterNotAvailable => "Ono-Sendai-E0901", "adapter.not_available", Resolution,
+        "No adapter answers to this invocation, and structured output was required.";
+    AdapterDisabled => "Ono-Sendai-E0902", "adapter.disabled", Permission,
+        "An adapter exists for this invocation but is switched off in this context.";
+    AdapterUnsupportedInvocation => "Ono-Sendai-E0903", "adapter.unsupported_invocation", Provider,
+        "The adapter knows the executable but not this combination of options.";
+    AdapterVersionIncompatible => "Ono-Sendai-E0904", "adapter.version_incompatible", Provider,
+        "The executable's version is outside the range the adapter was tested with.";
+    AdapterExecutableMismatch => "Ono-Sendai-E0905", "adapter.executable_mismatch", Resolution,
+        "The executable that resolved is not the one the adapter's contract names.";
+    AdapterRewriteFailed => "Ono-Sendai-E0906", "adapter.rewrite_failed", Provider,
+        "The adapter could not turn the invocation into its machine-oriented form.";
+    AdapterDecodeFailed => "Ono-Sendai-E0907", "adapter.decode_failed", Provider,
+        "The executable's output was not what the adapter's decoder expects.";
+    AdapterSchemaViolation => "Ono-Sendai-E0908", "adapter.schema_violation", Provider,
+        "The adapter decoded a value outside the schema it advertises.";
+    AdapterCapabilityDenied => "Ono-Sendai-E0909", "adapter.capability_denied", Permission,
+        "The adapter's package is not allowed to run this executable.";
+    AdapterConflict => "Ono-Sendai-E0910", "adapter.conflict", Conflict,
+        "More than one adapter claims the invocation and the resolution rules cannot separate them.";
+    AdapterRequiredForStructuredPipeline => "Ono-Sendai-E0911", "adapter.required_for_structured_pipeline", Type,
+        "A consumer demanded objects and no adapter can provide them for this invocation.";
 }
 
 impl ErrorCode {
