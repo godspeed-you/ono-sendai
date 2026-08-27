@@ -15,7 +15,9 @@ use std::sync::{Arc, Mutex};
 
 use ono_core::{ErrorCode, ExitStatus};
 use ono_pipeline::ValueStream;
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+};
 use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
 use crate::hosts::{HostEntry, HostSources};
@@ -275,6 +277,15 @@ fn host_record(
     .build())
 }
 
+/// The name a `host` action names, from the selector the user wrote or the object's identity.
+fn host_name(action: &Action) -> Option<String> {
+    action
+        .argument("name")
+        .or_else(|| action.target().values().first())
+        .and_then(|value| value.as_str().ok())
+        .map(str::to_owned)
+}
+
 #[async_trait::async_trait]
 impl Provider for SessionProvider {
     fn id(&self) -> &str {
@@ -346,5 +357,116 @@ impl Provider for SessionProvider {
             .filter(|record| selector.matches(record))
             .filter_map(ObjectRef::of)
             .collect())
+    }
+
+    /// `add`, `set` and `remove` of a host, against the shell's own host file (ADR-0103 §2,
+    /// ADR-0104). The OpenSSH configuration is never written: a host it lists cannot be changed
+    /// from here.
+    async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        if action.target_name() != "host" {
+            return Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!(
+                    "{PROVIDER_ID} does not implement `{}` for `{}`",
+                    action.operation(),
+                    action.target_name()
+                ),
+            ));
+        }
+        let Some(name) = host_name(action) else {
+            return Ok(ActionOutcome::failed(
+                action,
+                ErrorValue::new(ErrorCode::TypeMismatch, "a host is named by its `name`"),
+            ));
+        };
+        let mut hosts = match self.sources.own_hosts() {
+            Ok(hosts) => hosts,
+            Err(error) => return Ok(ActionOutcome::failed(action, error)),
+        };
+        let address = action
+            .argument("address")
+            .and_then(|value| ono_value::canonical_text(value).ok());
+        let position = hosts.iter().position(|host| host.name == name);
+        let changed = match action.operation() {
+            "add" => {
+                if position.is_some() {
+                    return Ok(ActionOutcome::failed(
+                        action,
+                        ErrorValue::new(
+                            ErrorCode::IoAlreadyExists,
+                            format!("the host file already records `{name}`"),
+                        )
+                        .with_help(format!("`set host {name} --address …` changes it")),
+                    ));
+                }
+                hosts.push(HostEntry {
+                    name: name.clone(),
+                    address,
+                    port: None,
+                    user: None,
+                });
+                true
+            }
+            "set" => {
+                let Some(index) = position else {
+                    return Ok(ActionOutcome::failed(
+                        action,
+                        ErrorValue::new(
+                            ErrorCode::IoNotFound,
+                            format!("the host file does not record `{name}`"),
+                        )
+                        .with_help(
+                            "only hosts in the shell's own file can be changed; the OpenSSH \
+                             configuration is read, never written",
+                        ),
+                    ));
+                };
+                let Some(address) = address else {
+                    return Ok(ActionOutcome::failed(
+                        action,
+                        ErrorValue::new(
+                            ErrorCode::TypeMismatch,
+                            "`set host` needs a property to set, and none was given",
+                        )
+                        .with_help("name what should change: --address"),
+                    ));
+                };
+                let before = hosts[index].address.replace(address);
+                before != hosts[index].address
+            }
+            "remove" => {
+                let Some(index) = position else {
+                    return Ok(ActionOutcome::failed(
+                        action,
+                        ErrorValue::new(
+                            ErrorCode::IoNotFound,
+                            format!("the host file does not record `{name}`"),
+                        )
+                        .with_help("`get host` shows every source; only the `ono` one is written"),
+                    ));
+                };
+                hosts.remove(index);
+                true
+            }
+            other => {
+                return Err(ErrorValue::new(
+                    ErrorCode::ProviderUnsupported,
+                    format!("{PROVIDER_ID} does not implement `{other}` for a host"),
+                ));
+            }
+        };
+        if action.is_dry_run() {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!(
+                    "dry run: would {} `{name}` in the host file",
+                    action.operation()
+                ),
+            ));
+        }
+        if changed && let Err(error) = self.sources.write_own(hosts) {
+            return Ok(ActionOutcome::failed(action, error));
+        }
+        Ok(ActionOutcome::succeeded(action, changed))
     }
 }

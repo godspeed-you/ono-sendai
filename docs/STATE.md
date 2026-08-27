@@ -94,12 +94,19 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 ## In progress
 
 - [remote | 2026-08-27] **remote family** (`crates/ono-cli/tests/remote_missing.rs`) on branch
-  `implementation-remote` — files: `crates/ono-cli/src/{session_provider,session,providers,
-  context,remote,eval,native,builtin}.rs`, `crates/ono-command/src/impls/{mod,mutate,trace}.rs`,
-  `crates/ono-graph/src/kernel/remote.rs`, `docs/spec/commands/remote.yaml`, schemas `link.v1`,
-  `host.v1`, `probe-result.v1`, `link-event.v1`, `host-event.v1`, `deferred.yaml`,
-  `docs/spec/providers/linux-procfs.yaml` (the `ono.shell` rows), acceptance case
-  `044-remote-links-as-objects`. ADR-0103–0106. Builds on the session provider of ADR-0090.
+  `implementation-remote` — **all 36 tests green and un-ignored**; the gate is green at every
+  commit. Delivered: `link`/`host` as tables of the session provider, `ono.host/1` and its
+  three sources (ADR-0103); `add/set/rename/remove/detach link`, `connect host`, `test host`
+  and `add/set/remove host` (ADR-0104); `watch`/`trace` for link and host with
+  `ono.link-event/1`, `ono.host-event/1`, `ono.provider/1` (ADR-0105); `--agentless` recorded
+  and visible, `explain`'s EXECUTION CONTEXT and MUTATION blocks (ADR-0106). Acceptance case
+  `docker/acceptance/cases/044-remote-links-as-objects.case` is written and dry-run against the
+  binary; **the integrator runs it in the container** when merging the branch. Case 049 now
+  matches the typed `get link` table by regular expression. Left open (not in the RED suite):
+  the piped forms `get link | remove link` / `… | detach link`; the agentless provider set of
+  ADR-0037 §6 (today `mode: agentless` is recorded and the agent answers, visibly); a
+  `watch host` that probes reachability; the multiplexed streams of `trace link`; the
+  execution context in the `ono.execution-plan/1` value.
 
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
@@ -176,7 +183,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
     — **done** by [data | 2026-08-27] on branch `implementation-data` (ADR-0072–0074); no
     `#[ignore` left in either file
   - `crates/ono-cli/tests/remote_missing.rs` (36) — `get link` as data, host commands, link
-    definitions, detach/rename, agentless visibility, mutations across a link
+    definitions, detach/rename, agentless visibility, mutations across a link — **done** by
+    [remote | 2026-08-27] on branch `implementation-remote` (ADR-0103–0106, case 044); no
+    `#[ignore` left
   - `crates/ono-cli/tests/plugins_missing.rs` (32) — `ono.plugin/1` records, inspect/find/
     verify/install/unload/set/remove plugin, capabilities, audit, reload, assistants/models
   - `crates/ono-cli/tests/containers_packages_missing.rs` (25) — a fake engine-API socket and
@@ -465,6 +474,12 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Done
 
+- [x] remote family — `get link`/`get host` from the session provider (ADR-0103) — commit
+  19dce98; link definitions add/set/rename/remove/detach (ADR-0104) — commit fb10641;
+  `connect host`, `test host`, ssh `-F` — commit 89879f3; watch/trace link and host
+  (ADR-0105) — commit 5ced427; `--agentless` visible, `explain` context and mutation blocks
+  (ADR-0106) — commit 91539b5; `add/set/remove host` and acceptance case 044 — see the
+  `implementation-remote` log; `remote_missing.rs` (36) un-ignored
 - [x] process family — `get job` (session provider, ADR-0090) — commit 0cc0730; `inspect process`
   (`ono.process-detail/1`, ADR-0091) — commit d512f03; `get process --tree` — commit b3f91a4;
   `set process --priority` (ADR-0092) — commit 730b1a3; `send signal` — commit d9cd7f8;

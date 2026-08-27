@@ -85,6 +85,21 @@ transport), and the fields the handshake negotiates — `transport`, `protocol_v
   `error` field is not the better answer for — a script gating on `test host` needs the exit
   status, not a row it has to inspect.
 
+### 5. Host records are the provider's: `add`, `set`, `remove host` act on the shell's host file
+
+Unlike a link, a recorded host is not session state — it is a line in the shell's own host
+file (ADR-0103 §2) — so these three go the ordinary way: `ProviderMutation` over `ono.shell`,
+which advertises `host.list` (the capability the contracts name) and answers `add`, `set` and
+`remove` in `act` by rewriting the file whole. The OpenSSH configuration is never written: a
+host it lists cannot be changed from here, and `set`/`remove` of one is `io.not_found` with the
+help saying why. `--dry-run` answers `skipped` with what would have happened.
+
+`ProviderMutation` gains one rule for it: a selector that resolves to nothing is, for the verb
+`add`, the target itself — a creation names what does not exist yet, and whether it may be
+created is the provider's to say — where every other verb keeps ADR-0068 §2's "it is not
+there" outcome. (The network family generalises the same rule to every verb in ADR-0088 §2;
+the two agree on `add`.)
+
 ## Consequences
 
 - `remote_missing.rs`: the link-definition tests (`should_record_a_link_definition_without_establishing_it`,
@@ -95,7 +110,10 @@ transport), and the fields the handshake negotiates — `transport`, `protocol_v
   `should_refuse_to_enter_a_link_that_was_removed`, `should_pop_the_link_frame_when_detaching`,
   `should_keep_the_link_when_detaching`,
   `should_answer_again_from_a_detached_link_when_it_is_entered_again`), the `connect host`
-  tests and the `test host` tests are green.
+  tests, the `test host` tests and the host-record tests
+  (`should_record_a_host_in_the_shells_own_source`, `should_modify_a_recorded_host`,
+  `should_remove_a_recorded_host`) are green; acceptance case
+  `044-remote-links-as-objects` exercises the family end to end in the container.
 - A link mutation alone at the prompt renders its ActionResult row, as every mutation does;
   `set config` alone stays silent (ADR-0094) — the two families differ deliberately: a
   settings line is declarative, a link teardown is an event worth a line.

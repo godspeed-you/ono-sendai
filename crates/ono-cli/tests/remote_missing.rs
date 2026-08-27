@@ -809,7 +809,6 @@ fn should_explain_the_effect_of_a_remote_mutation() {
 // --- host records: add, set, remove -----------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_record_a_host_in_the_shells_own_source() {
     // remote.yaml: "Record a host in a configured host source." The shell's own source lives
     // under its config directory (AGENTS.md §3: `~/.config/ono/`), so the record outlives the
@@ -837,7 +836,6 @@ fn should_record_a_host_in_the_shells_own_source() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_modify_a_recorded_host() {
     let home = scratch();
     ono_at_home(&home, "add host devbox --address 10.4.2.11").assert_success();
@@ -859,7 +857,6 @@ fn should_modify_a_recorded_host() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_remove_a_recorded_host() {
     let home = scratch();
     ono_at_home(&home, "add host devbox --address 10.4.2.11").assert_success();

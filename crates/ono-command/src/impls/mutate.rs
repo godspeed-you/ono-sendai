@@ -227,13 +227,22 @@ impl ProviderMutation {
                 ))
             })?;
 
-        let objects: Vec<ObjectId> = ctx
+        let mut objects: Vec<ObjectId> = ctx
             .providers()
             .resolve(target, &Selector::field(name, value.clone()))
             .await?
             .iter()
             .map(|reference| reference.id().clone())
             .collect();
+        // `add` names what does not exist yet: the object as the user named it is the target,
+        // and whether it may be created is the provider's to say (ADR-0104).
+        if objects.is_empty() && ctx.contract().verb() == "add" {
+            objects.push(ObjectId::new(
+                ono_value::SchemaId::new(&format!("ono.{target}"), 1),
+                [value.clone()],
+            ));
+            return Ok(objects);
+        }
         // A selector that names nothing is not an empty selection: the user asked to act on
         // one particular thing, and "it is not there" is that thing's outcome (spec §16.5,
         // ADR-0068 §2). An empty stream would be the answer to a filter that matched nothing.
