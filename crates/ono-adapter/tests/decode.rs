@@ -341,3 +341,89 @@ fn should_derive_records_from_children_with_templates_literals_and_inference() {
         routes[0].get("destination")
     );
 }
+
+fn ps_adapter() -> &'static Adapter {
+    ono_adapter::first_party()
+        .iter()
+        .find(|pack| pack.id() == "org.ono.compat.procps")
+        .expect("spec v0.3 §1.69 step 6: ps is bundled")
+        .adapters()
+        .iter()
+        .find(|adapter| adapter.id() == "ps")
+        .unwrap()
+}
+
+#[test]
+fn should_split_whitespace_columns_with_a_greedy_last_field_and_derive_process_fields() {
+    let bytes = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/spec/adapters/fixtures/procps/ps/three-processes.out"),
+    )
+    .unwrap();
+    let rows = records(
+        ono_adapter::decode(ps_adapter(), &bytes, &trace("ps"), builtin_schemas()).unwrap(),
+    );
+    assert_eq!(rows.len(), 3);
+    let systemd = &rows[0];
+    assert_eq!(
+        systemd.get("name"),
+        Some(&Value::string("systemd")),
+        "program name from args"
+    );
+    assert!(
+        matches!(systemd.get("command"), Some(Value::List(words)) if words.len() == 5),
+        "args keep their spaces through the greedy last column, got {:?}",
+        systemd.get("command")
+    );
+    assert_eq!(
+        systemd.get("state"),
+        Some(&Value::string("sleeping")),
+        "first letter of `Ss`"
+    );
+    assert!(
+        matches!(systemd.get("memory"), Some(Value::ByteSize(size)) if size.bytes() == 17_264 * 1024),
+        "rss is KiB, got {:?}",
+        systemd.get("memory")
+    );
+    let started = systemd.get("started").cloned().unwrap_or(Value::Null);
+    assert!(
+        matches!(started, Value::Timestamp(_)),
+        "started is inferred from elapsed seconds, got {started:?}"
+    );
+    let exactness = systemd.provenance().adapter().unwrap().exactness().clone();
+    assert_eq!(
+        exactness.get("started").map(String::as_str),
+        Some("inferred")
+    );
+    assert_eq!(exactness.get("name").map(String::as_str), Some("inferred"));
+    assert_eq!(
+        rows[1].get("name"),
+        Some(&Value::string("kthreadd")),
+        "brackets stripped for a kernel thread"
+    );
+}
+
+#[test]
+fn should_stream_a_lines_decoder_record_by_record() {
+    let bytes = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/spec/adapters/fixtures/procps/ps/three-processes.out"),
+    )
+    .unwrap();
+    let mut decoding =
+        ono_adapter::Decoding::borrowed(ps_adapter(), trace("ps"), builtin_schemas()).unwrap();
+    assert!(
+        decoding.streams(),
+        "a newline-separated protocol streams (ADR-0060)"
+    );
+    let first_line = bytes.iter().position(|b| *b == b'\n').unwrap() + 1;
+    let early = decoding.feed(&bytes[..first_line]);
+    assert_eq!(
+        early.len(),
+        1,
+        "one complete line is one record before the rest arrives"
+    );
+    let rest = decoding.feed(&bytes[first_line..]);
+    assert_eq!(rest.len(), 2);
+    assert!(decoding.finish().is_empty());
+}

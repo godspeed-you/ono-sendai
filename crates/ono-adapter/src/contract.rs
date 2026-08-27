@@ -18,6 +18,7 @@ const FIRST_PARTY: &[&str] = &[
     include_str!("../../../docs/spec/adapters/first-party/util-linux.yaml"),
     include_str!("../../../docs/spec/adapters/first-party/iproute2.yaml"),
     include_str!("../../../docs/spec/adapters/first-party/systemd.yaml"),
+    include_str!("../../../docs/spec/adapters/first-party/procps.yaml"),
 ];
 
 /// The decoders implemented in Rust that a `builtin` decoder may name.
@@ -94,10 +95,11 @@ pub enum DecoderKind {
 }
 
 impl DecoderKind {
-    /// Whether records can be decoded while the child still runs.
+    /// Whether records can be decoded while the child still runs: one document or record per
+    /// line arrives whole, a document or a block does not.
     #[must_use]
     pub fn streams(self) -> bool {
-        matches!(self, Self::Jsonl)
+        matches!(self, Self::Jsonl | Self::Lines)
     }
 }
 
@@ -149,6 +151,11 @@ pub enum Exactness {
 pub enum Inference {
     /// `inet` or `inet6` from an IP address or network.
     IpFamily,
+    /// The program's name from a command line: the basename of its first word, brackets
+    /// stripped for a kernel thread.
+    ProgramName,
+    /// An instant: the moment of decoding minus this many elapsed seconds.
+    StartedFromElapsed,
 }
 
 /// Whether further positional words may follow the matched ones.

@@ -1,0 +1,5 @@
+invocation: [ps, -u, nonesuch]
+tool_version: "4.0.4"
+distro: ubuntu
+expect:
+  records: []

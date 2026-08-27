@@ -145,8 +145,9 @@ impl<'a> Decoding<'a> {
         if !self.streams() {
             return Vec::new();
         }
+        let separator = self.record_separator();
         let mut outcomes = Vec::new();
-        while let Some(end) = self.buffer.iter().position(|byte| *byte == b'\n') {
+        while let Some(end) = self.buffer.iter().position(|byte| *byte == separator) {
             let line: Vec<u8> = self.buffer.drain(..=end).collect();
             self.line += 1;
             let line = &line[..line.len() - 1];
@@ -214,8 +215,36 @@ impl<'a> Decoding<'a> {
         outcomes
     }
 
+    /// The byte that ends a record of a streaming kind: a newline for `jsonl`, the contract's
+    /// record separator for `lines` (`\n` or `\0`).
+    fn record_separator(&self) -> u8 {
+        match self.adapter().decoder().kind() {
+            DecoderKind::Lines => self
+                .adapter()
+                .decoder()
+                .record_separator()
+                .map(unescape)
+                .and_then(|bytes| bytes.first().copied())
+                .unwrap_or(b'\n'),
+            _ => b'\n',
+        }
+    }
+
     fn decode_line(&self, line: &[u8]) -> Result<Value, ErrorValue> {
         let adapter = self.adapter();
+        if adapter.decoder().kind() == DecoderKind::Lines {
+            let item = line_item(adapter, line, self.line)
+                .map_err(|reason| decode_failed(adapter, &self.trace, line, reason))?;
+            return build_record(adapter, &self.schema, &item, &self.trace, self.observed).map_err(
+                |reason| {
+                    violation(
+                        adapter,
+                        &self.trace,
+                        format!("record {}: {reason}", self.line),
+                    )
+                },
+            );
+        }
         let document: Json = serde_json::from_slice(line).map_err(|error| {
             decode_failed(
                 adapter,
@@ -410,11 +439,7 @@ fn flatten(
 
 fn line_records(adapter: &Adapter, bytes: &[u8], trace: &Trace) -> Result<Vec<Item>, ErrorValue> {
     let decoder = adapter.decoder();
-    let (Some(field_separator), Some(record_separator), Some(columns)) = (
-        decoder.field_separator(),
-        decoder.record_separator(),
-        decoder.columns(),
-    ) else {
+    let Some(record_separator) = decoder.record_separator() else {
         return Err(decode_failed(
             adapter,
             trace,
@@ -422,45 +447,72 @@ fn line_records(adapter: &Adapter, bytes: &[u8], trace: &Trace) -> Result<Vec<It
             "the lines decoder is incomplete".to_owned(),
         ));
     };
-    let field_separator = unescape(field_separator);
     let record_separator = unescape(record_separator);
     let mut items = Vec::new();
     for (index, record) in bytes
         .split(|byte| record_separator.contains(byte))
         .enumerate()
     {
-        if record.is_empty() {
+        if record.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let parts: Vec<&[u8]> = record
-            .split(|byte| field_separator.contains(byte))
-            .collect();
-        if parts.len() != columns.len() {
-            return Err(decode_failed(
-                adapter,
-                trace,
-                bytes,
-                format!(
-                    "record {} has {} fields where the contract expects {}",
-                    index + 1,
-                    parts.len(),
-                    columns.len()
-                ),
-            ));
-        }
-        let mut fields = serde_json::Map::new();
-        for (column, part) in columns.iter().zip(parts) {
-            fields.insert(
-                column.clone(),
-                Json::String(String::from_utf8_lossy(part).into_owned()),
-            );
-        }
-        items.push(Item {
-            fields,
-            parent: None,
-        });
+        items.push(
+            line_item(adapter, record, index + 1)
+                .map_err(|reason| decode_failed(adapter, trace, bytes, reason))?,
+        );
     }
     Ok(items)
+}
+
+/// One record of an explicit field protocol: the contract's columns, in order.
+///
+/// `whitespace` splits on runs of spaces or tabs and hands the rest of the record to the last
+/// column — `args` for `ps` — so a field that may hold spaces is declared last and stays whole
+/// (ADR-0060). A record with fewer fields than columns is refused, never padded.
+fn line_item(adapter: &Adapter, record: &[u8], number: usize) -> Result<Item, String> {
+    let decoder = adapter.decoder();
+    let (Some(field_separator), Some(columns)) = (decoder.field_separator(), decoder.columns())
+    else {
+        return Err("the lines decoder is incomplete".to_owned());
+    };
+    let parts: Vec<String> = if field_separator == "whitespace" {
+        let text = String::from_utf8_lossy(record);
+        let mut rest = text.trim_start();
+        let mut parts = Vec::with_capacity(columns.len());
+        while parts.len() + 1 < columns.len() {
+            let end = rest.find([' ', '\t']).unwrap_or(rest.len());
+            parts.push(rest[..end].to_owned());
+            rest = rest[end..].trim_start();
+            if rest.is_empty() {
+                break;
+            }
+        }
+        if !rest.is_empty() {
+            parts.push(rest.trim_end().to_owned());
+        }
+        parts
+    } else {
+        let separator = unescape(field_separator);
+        record
+            .split(|byte| separator.contains(byte))
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect()
+    };
+    if parts.len() != columns.len() {
+        return Err(format!(
+            "record {number} has {} fields where the contract expects {}",
+            parts.len(),
+            columns.len()
+        ));
+    }
+    let mut fields = serde_json::Map::new();
+    for (column, part) in columns.iter().zip(parts) {
+        fields.insert(column.clone(), Json::String(part));
+    }
+    Ok(Item {
+        fields,
+        parent: None,
+    })
 }
 
 fn unescape(text: &str) -> Vec<u8> {
@@ -722,6 +774,10 @@ fn coerce_mapped(raw: &Json, map: &FieldMap, ty: &FieldType) -> Result<Value, St
     if map.takes_first() {
         current = match &current {
             Json::Array(items) => items.first().cloned().unwrap_or(Json::Null),
+            Json::String(text) => text
+                .chars()
+                .next()
+                .map_or(Json::Null, |c| Json::String(c.to_string())),
             other => return Err(format!("cannot take the first of {}", json_kind(other))),
         };
         if current.is_null() {
@@ -748,6 +804,47 @@ fn coerce_mapped(raw: &Json, map: &FieldMap, ty: &FieldType) -> Result<Value, St
                     ));
                 }
             },
+            crate::contract::Inference::ProgramName => match &current {
+                Json::String(text) => {
+                    let first = text.split_whitespace().next().unwrap_or("");
+                    let name = first
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or("");
+                    if name.is_empty() {
+                        return Err(format!("cannot infer a program name from `{text}`"));
+                    }
+                    Json::String(name.to_owned())
+                }
+                other => {
+                    return Err(format!(
+                        "cannot infer a program name from {}",
+                        json_kind(other)
+                    ));
+                }
+            },
+            crate::contract::Inference::StartedFromElapsed => {
+                let elapsed = match &current {
+                    Json::Number(number) => number.as_i64(),
+                    Json::String(text) => text.trim().parse::<i64>().ok(),
+                    _ => None,
+                };
+                let Some(elapsed) = elapsed else {
+                    return Err(format!("cannot infer a start from {}", describe(&current)));
+                };
+                let started = jiff::Timestamp::now()
+                    .checked_sub(jiff::SignedDuration::from_secs(elapsed))
+                    .map_err(|_| format!("cannot infer a start {elapsed} seconds ago"))?;
+                // To the second: the elapsed time is whole seconds, and a start time with
+                // sub-second precision would claim more than ps reported.
+                Json::String(
+                    jiff::Timestamp::from_second(started.as_second())
+                        .map_err(|_| "cannot infer a start".to_owned())?
+                        .to_string(),
+                )
+            }
         };
     }
     if let Some(translations) = map.map()
@@ -788,6 +885,12 @@ fn coerce_mapped(raw: &Json, map: &FieldMap, ty: &FieldType) -> Result<Value, St
 
 /// Coerces a decoded value into the declared type, or says why it cannot.
 fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, String> {
+    // A field protocol reports everything as text; a number in a declared unit is a number.
+    if let (Some(_), Json::String(text)) = (unit, raw)
+        && let Ok(number) = serde_json::from_str::<serde_json::Number>(text.trim())
+    {
+        return coerce(&Json::Number(number), ty, unit);
+    }
     let wrong =
         |expected: &str| format!("must be {expected} but the tool reported {}", describe(raw));
     match ty {

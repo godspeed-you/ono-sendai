@@ -84,7 +84,7 @@ decoder:
     records:   {type: string, nullable: true, doc: "json: the key holding the record list; absent when the document is the list or a single record."}
     nested:    {type: string, nullable: true, doc: "json: a key whose children are records too; they are flattened with the parent's identity field carried as `$parent.<field>`."}
     children:  {type: string, nullable: true, doc: "json: the records are the entries of this key inside each element of the list, and the element is their parent (`$parent.<field>`); an element without entries contributes nothing."}
-    field_separator:  {type: string, nullable: true, doc: "lines: the byte between fields (`\\t`, `\\0`, …); properties: the text between key and value (`=`). Required for both."}
+    field_separator:  {type: string, nullable: true, doc: "lines: the byte between fields (`\\t`, `\\0`, …), or `whitespace` — runs of spaces or tabs, with the last column taking the rest of the record (`ps`); properties: the text between key and value (`=`). Required for both."}
     record_separator: {type: string, nullable: true, doc: "lines: `\\n` or `\\0`; properties: the text between records (`\\n\\n`). Required for both."}
     columns:   {type: list<string>, nullable: true, doc: "lines: the decoded names of the fields, in the order the plan requests them. Required for `lines`."}
     id:        {type: string, nullable: true, doc: "builtin: the decoder's stable id, which must exist in the binary. Required for `builtin`."}
@@ -95,8 +95,8 @@ field:
   fields:
     from:      {type: string, required: true, doc: "The decoded field name, or `$parent.<field>` for a nested tree's parent; empty when `template` reads the whole record."}
     template:  {type: string, nullable: true, doc: "A text with `{field}` placeholders filled from the decoded record (`from` empty) or from each object in the list at `from`; the result is coerced like any string. Exactness `normalized`."}
-    first:     {type: bool, nullable: true, doc: "Take the first element of the list at `from`. Exactness `normalized`."}
-    infer:     {type: "enum[ip-family]", nullable: true, doc: "Derive the field: `ip-family` yields `inet` or `inet6` from an address at `from`. Exactness `inferred`."}
+    first:     {type: bool, nullable: true, doc: "Take the first element of the list at `from`, or the first character of the string there. Exactness `normalized`."}
+    infer:     {type: "enum[ip-family, program-name, started-from-elapsed]", nullable: true, doc: "Derive the field: `ip-family` yields `inet` or `inet6` from an address at `from`; `program-name` the basename of the first word of a command line, brackets stripped; `started-from-elapsed` the instant this many seconds before the decoding. Exactness `inferred`."}
     unit:      {type: "enum[bytes, kib, mib, seconds, milliseconds, microseconds, percent]", nullable: true, doc: "How a bare number is to be read — for a timestamp, seconds/milliseconds/microseconds since the epoch; sets exactness to `normalized` when it converts."}
     split:     {type: string, nullable: true, doc: "Split a string on this separator into `list<string>`."}
     contains:  {type: string, nullable: true, doc: "After `split`: the field is `true` when the list holds this literal. Exactness `normalized`."}

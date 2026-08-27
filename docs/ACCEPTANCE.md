@@ -412,8 +412,14 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       key=value protocol (the `properties` decoder) → `ono.service/1`, never the human table;
       mutations stay external (v0.3 §1.36) — the systemd pack's fixtures through the harness,
       case `077` (fixture replay through a shim: the container is not booted with systemd).
-- [ ] **COMPAT-PS-001** — `ps` with explicit `-o` field lists → `ono.process/1`, so that
-      `ps aux | where cpu > 20` composes and `ps aux | grep x` stays text (v0.3 §1.34, §1.71).
+- [x] **COMPAT-PS-001** — `ps` with an explicit `-o` field list → `ono.process/1`, so that
+      `ps aux | where cpu > 20 | sort memory desc` composes and `ps aux | grep x` stays text;
+      `ps` keeps its own selection semantics and `-o`/`-L`/`-T` run raw (v0.3 §1.34, §1.71,
+      ADR-0060: whitespace columns with a greedy `args`, `program-name` and
+      `started-from-elapsed` inferred and said so, streaming per line) —
+      `docs/spec/adapters/first-party/procps.yaml` with fixtures, `ono-adapter/tests/decode.rs`,
+      `ono-cli/tests/adapters.rs` (`should_make_ps_compose_while_keeping_its_selection_and_its_bytes`),
+      case `078`.
 - [ ] **COMPAT-STAT / DF / FIND-001** — `stat --printf`, `df --output`, `find -printf … \0`
       into `ono.file/1` and `ono.filesystem/1`, NUL-safe for hostile names (v0.3 §1.38, §1.39).
 - [ ] **COMPAT-GIT-001/002** — `git status --porcelain=v2 -z` and `git log` with an explicit

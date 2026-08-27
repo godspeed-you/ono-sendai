@@ -93,9 +93,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 9 — Tier B: `ps` explicit fields → `ono.process/1`
-  (COMPAT-PS-001) and the `lines` decoder streaming per record — files:
-  `docs/spec/adapters/first-party/procps.yaml`, `crates/ono-adapter/src/decode.rs`
+- [claude | 2026-08-27] v0.3 tranche, step 10 — Tier B: `stat --printf`, `df --output`,
+  `find -printf … \0` → `ono.file/1` / `ono.filesystem/1` (COMPAT-STAT/DF/FIND-001) — files:
+  `docs/spec/adapters/first-party/coreutils.yaml`, `docs/spec/adapters/first-party/findutils.yaml`
 
 ---
 
@@ -362,6 +362,8 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   (journalctl jsonl, systemctl list-units/show with the `properties` decoder),
   `ono.journal-event/1`, the live view absorbing plain records; the image gains git, curl,
   lsof (ADR-0059) — case 077
+- [x] v0.3 step 9 — COMPAT-PS: the procps pack, whitespace columns, `first` on strings,
+  `program-name`/`started-from-elapsed` inferences, streaming `lines` (ADR-0060) — case 078
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

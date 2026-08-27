@@ -1,0 +1,12 @@
+# Whitespace-separated columns, the last one greedy so `args` keeps its spaces. The state is
+# the first letter of `stat`; the name is inferred from the program in `args` (brackets are a
+# kernel thread's); memory sizes are KiB; `started` is inferred from the elapsed seconds and
+# therefore not compared here — it depends on when the decoder runs.
+invocation: [ps, aux]
+tool_version: "4.0.4"
+distro: ubuntu
+expect:
+  records:
+    - {pid: 1, ppid: 0, name: systemd, command: [/usr/lib/systemd/systemd, --switched-root, --system, --deserialize=52, splash], user: root, state: sleeping, cpu: 0.7, memory: "17678336B", virtual_mem: "27938816B", threads: 1, executable: null, cwd: null}
+    - {pid: 2, ppid: 0, name: kthreadd, command: ["[kthreadd]"], user: root, state: sleeping, cpu: 0, memory: "0B", virtual_mem: "0B", threads: 1}
+    - {pid: 2120, ppid: 2098, name: dbus-daemon, user: william, state: sleeping, cpu: 0, memory: "7045120B", threads: 2}

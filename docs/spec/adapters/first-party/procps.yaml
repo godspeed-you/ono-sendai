@@ -1,0 +1,110 @@
+# procps compatibility pack: `ps` (spec v0.3 §1.34, §1.69 step 6). ps has no machine format,
+# but an explicit field list with empty headers is a stable protocol (tier B): the adapter
+# owns the columns, and `args` — the only field that can hold spaces — comes last.
+format: ono-adapter-pack/1
+package:
+  id: org.ono.compat.procps
+  name: procps compatibility
+  version: 0.1.0
+  publisher: org.ono
+  tier: first-party
+roles: [adapter]
+capabilities:
+  process.exec:
+    executables: [ps]
+    argv_policy: declared-invocations-only
+
+adapters:
+  - id: ps
+    summary: Processes as `ono.process/1` records, from `ps -o` with an explicit field list.
+    executable:
+      names: [ps]
+      versions: ">=3.3"
+      version_probe:
+        argv: ["--version"]
+        pattern: "procps-ng ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: B
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.process/1
+    decoder:
+      kind: lines
+      field_separator: whitespace
+      record_separator: "\n"
+      columns: [pid, ppid, user, stat, pcpu, rss, vsz, nlwp, etimes, args]
+    fields:
+      pid: {from: pid}
+      ppid: {from: ppid}
+      name: {from: args, infer: program-name}
+      command: {from: args, split: " "}
+      user: {from: user}
+      state:
+        from: stat
+        first: true
+        map: {R: running, S: sleeping, D: disk-sleep, T: stopped, t: tracing-stop, Z: zombie, X: dead, I: idle}
+      cpu: {from: pcpu}
+      memory: {from: rss, unit: kib}
+      virtual_mem: {from: vsz, unit: kib}
+      threads: {from: nlwp}
+      started: {from: etimes, infer: started-from-elapsed}
+    invocations:
+      - id: every-bsd
+        summary: "ps aux|ax|axu — every process"
+        match:
+          words: [[aux], [ax], [axu], [axj], [axl]]
+          flags:
+            allow: []
+            allow_with_value: []
+          positionals: forbid
+        plan:
+          argv: [ps, -e, -o, "pid=,ppid=,user=,stat=,pcpu=,rss=,vsz=,nlwp=,etimes=,args="]
+          append_user_flags: false
+          env: {LC_ALL: C, COLUMNS: "10000"}
+          stdin: "null"
+      - id: every
+        summary: "ps -e|-A|-ef|-ejH — every process"
+        match:
+          words: [[]]
+          flags:
+            allow: [-e, -A, -ef, -f, -F, -l, -j, -H, --forest, -w, -ww]
+            allow_with_value: []
+            require: [-e]
+          positionals: forbid
+        plan:
+          argv: [ps, -e, -o, "pid=,ppid=,user=,stat=,pcpu=,rss=,vsz=,nlwp=,etimes=,args="]
+          append_user_flags: false
+          env: {LC_ALL: C, COLUMNS: "10000"}
+          stdin: "null"
+      - id: every-A
+        summary: "ps -A — every process"
+        match:
+          words: [[]]
+          flags:
+            allow: [-A, -f, -F, -l, -j, -H, --forest, -w, -ww]
+            allow_with_value: []
+            require: [-A]
+          positionals: forbid
+        plan:
+          argv: [ps, -e, -o, "pid=,ppid=,user=,stat=,pcpu=,rss=,vsz=,nlwp=,etimes=,args="]
+          append_user_flags: false
+          env: {LC_ALL: C, COLUMNS: "10000"}
+          stdin: "null"
+      - id: selected
+        summary: "ps [-u|-U <user>] [-p|--pid <pid,…>] [-C <name>] [-t <tty>] [-g|-G <group>] — a selection"
+        match:
+          words: [[]]
+          flags:
+            allow: [-f, -F, -l, -j, -H, --forest, -w, -ww]
+            allow_with_value: [-u, -U, --user, -p, --pid, --ppid, -C, -t, --tty, -g, -G, --group, -s, --sid]
+          positionals: forbid
+        plan:
+          argv: [ps, -o, "pid=,ppid=,user=,stat=,pcpu=,rss=,vsz=,nlwp=,etimes=,args="]
+          append_user_flags: true
+          env: {LC_ALL: C, COLUMNS: "10000"}
+          stdin: "null"
+    limits:
+      - "`-o/--format`, `-L/-T` (threads) and `-O` change what a row is and are not adapted; the invocation runs raw."
+      - "`name` is the program name inferred from `args`, not the kernel's `comm`; `executable`, `cwd`, `group`, `service` and `container` are not reported — `get process` answers them."
+      - "`started` is inferred from the elapsed time ps reports, to the second."
+    fixtures: procps/ps

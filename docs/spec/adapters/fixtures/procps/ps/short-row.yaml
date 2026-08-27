@@ -1,0 +1,6 @@
+# A row with fewer columns than the contract requests is not guessed at (spec v0.3 §1.10).
+invocation: [ps, aux]
+tool_version: "4.0.4"
+distro: ubuntu
+expect:
+  error: adapter.decode_failed

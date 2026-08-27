@@ -415,3 +415,57 @@ fn should_follow_the_journal_live_at_the_terminal_until_interrupted() {
         "the prompt is back after Ctrl-C and the follower is gone, got {after:?}"
     );
 }
+
+#[test]
+fn should_make_ps_compose_while_keeping_its_selection_and_its_bytes() {
+    // Spec v0.3 §1.71 opens with `ps aux | where cpu > 20`; pid 1 exists everywhere.
+    let one = ono("ps aux | where pid == 1 | select pid name user state | to json");
+    one.assert_success();
+    assert!(
+        one.stdout().contains("\"pid\": 1") || one.stdout().contains("\"pid\":1"),
+        "got {:?}",
+        one.stdout()
+    );
+    assert!(
+        one.stdout().contains("\"state\""),
+        "canonical Process fields, got {:?}",
+        one.stdout()
+    );
+
+    let sorted = ono("ps aux | sort memory desc | take 3 | count | to text");
+    sorted.assert_success();
+    assert_eq!(
+        sorted.stdout().trim(),
+        "3",
+        "`sort memory desc` over typed byte sizes"
+    );
+
+    // A bare `ps` keeps ps's own selection (this terminal's processes), which under a test
+    // harness is nothing or next to nothing — but never every process.
+    let own = ono("ps | count | to text");
+    own.assert_success();
+    let every = ono("ps -e | count | to text");
+    every.assert_success();
+    let own: u64 = own.stdout().trim().parse().unwrap_or(0);
+    let every: u64 = every.stdout().trim().parse().unwrap_or(0);
+    assert!(
+        every > own,
+        "spec v0.3 §1.14: `ps` is not widened into `ps -e` (own={own}, every={every})"
+    );
+
+    let raw = ono("raw ps -o pid= -p 1");
+    let bytes = ono("ps -o pid= -p 1 | cat");
+    assert_eq!(
+        raw.stdout(),
+        bytes.stdout(),
+        "bytes downstream are ps's own"
+    );
+
+    let refused = ono("ps -o pid= | where pid == 1");
+    assert_ne!(refused.status().code(), 0);
+    assert!(
+        refused.stderr().contains("Ono-Sendai-E0903"),
+        "`-o` changes what a row is, got {:?}",
+        refused.stderr()
+    );
+}

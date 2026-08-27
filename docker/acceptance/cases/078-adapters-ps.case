@@ -1,0 +1,21 @@
+# v0.3 §1.34, §1.71 (COMPAT-PS-001): `ps aux | where cpu > 20 | sort memory desc` composes —
+# ps's explicit field protocol becomes canonical Process records — while `ps` keeps its own
+# selection semantics, `ps aux | grep` stays bytes, and a row-changing flag runs raw.
+case: ps aux composes as Process records and keeps its Unix identity
+run: |
+  ono -c 'ps aux | where pid == 1 | select pid name user state memory | to json'
+  ono -c 'ps aux | where cpu >= 0 | sort memory desc | take 2 | select pid name | to json'
+  ono -c 'ps aux | count | to text'
+  echo "== selection semantics =="
+  ono -c 'ps -u case | select pid user | count | to text'
+  ono -c 'ps -p 1 | select pid name | to json'
+  echo "== bytes and raw =="
+  ono -c 'ps aux | grep -c PID'
+  ono -c 'raw ps -o pid= -p 1' > /tmp/raw.out; bash -c 'ps -o pid= -p 1' > /tmp/bash.out; cmp /tmp/raw.out /tmp/bash.out && echo raw=identical
+  ono -c 'ps -o pid= | where pid == 1' 2>&1 | grep -c 'Ono-Sendai-E0903'
+  echo "== provenance says what was inferred =="
+  ono -c 'ps -p 1 | inspect | to json' | grep -F '"started": "inferred"'
+  ono -c 'ps -p 1 | inspect | to json' | grep -F 'ps -e -o pid=,ppid=' || ono -c 'ps -p 1 | inspect | to json' | grep -F 'ps -o pid=,ppid='
+  echo done=ok
+exit: 0
+stdout-contains: done=ok
