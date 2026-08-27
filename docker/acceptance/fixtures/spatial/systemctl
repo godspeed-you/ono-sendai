@@ -1,0 +1,63 @@
+#!/bin/sh
+# A `systemctl` stand-in for the v0.4 spatial cases, in the shape the v0.3 systemd adapters
+# decode (`org.ono.compat.systemd.systemctl-list-units`, `...systemctl-show`).
+#
+# The acceptance image runs neither systemd as pid 1 nor a session bus, so `get service` there
+# is honestly unavailable (E0401, case 038). The service half of §44.2, §44.5, §44.6 and §44.7
+# needs a service manager that answers, and this is the smallest honest one: two units — one
+# running web service and one failed backup job (§43.3: "2 services", "one failed/restarting
+# service fixture") — whose main pid is a real process the case started.
+#
+# State is read from `$FIXTURE_SPATIAL_STATE` (default /tmp/fixture-spatial.state), a file of
+# shell assignments, so a case can restart the fixture and change what the manager reports the
+# way a real restart would (§44.7).
+
+FIXTURE_WEB_ACTIVE=active
+FIXTURE_WEB_SUB=running
+FIXTURE_WEB_MAIN=0
+FIXTURE_WEB_SINCE='Fri 2026-08-21 12:01:25 UTC'
+FIXTURE_BACKUP_ACTIVE=failed
+FIXTURE_BACKUP_SUB=failed
+
+state="${FIXTURE_SPATIAL_STATE:-/tmp/fixture-spatial.state}"
+if [ -r "$state" ]; then . "$state"; fi
+
+case "$1" in
+  --version)
+    echo 'systemd 259 (259.5)'
+    exit 0
+    ;;
+  list-units)
+    printf '[{"unit":"fixture-web.service","load":"loaded","active":"%s","sub":"%s","description":"Fixture web service"},{"unit":"fixture-backup.service","load":"loaded","active":"%s","sub":"%s","description":"Fixture backup job"}]\n' \
+      "$FIXTURE_WEB_ACTIVE" "$FIXTURE_WEB_SUB" "$FIXTURE_BACKUP_ACTIVE" "$FIXTURE_BACKUP_SUB"
+    exit 0
+    ;;
+  show)
+    cat <<EOF
+Id=fixture-web.service
+Description=Fixture web service
+LoadState=loaded
+ActiveState=$FIXTURE_WEB_ACTIVE
+SubState=$FIXTURE_WEB_SUB
+UnitFileState=enabled
+MainPID=$FIXTURE_WEB_MAIN
+ActiveEnterTimestamp=$FIXTURE_WEB_SINCE
+FragmentPath=/etc/systemd/system/fixture-web.service
+
+Id=fixture-backup.service
+Description=Fixture backup job
+LoadState=loaded
+ActiveState=$FIXTURE_BACKUP_ACTIVE
+SubState=$FIXTURE_BACKUP_SUB
+UnitFileState=enabled
+MainPID=0
+ActiveEnterTimestamp=
+FragmentPath=/etc/systemd/system/fixture-backup.service
+EOF
+    exit 0
+    ;;
+  *)
+    echo "fixture systemctl: unsupported invocation: $*" >&2
+    exit 2
+    ;;
+esac
