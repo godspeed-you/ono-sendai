@@ -10,6 +10,7 @@ Derived from the machine-readable contracts in `docs/spec/`, which are the publi
 | [Verbs](verbs.md) | `docs/spec/verbs.yaml` — the controlled vocabulary of spec §7 |
 | [Targets](targets.md) | `docs/spec/targets.yaml` — the nouns of spec §8 |
 | [Schemas](schemas.md) | `docs/spec/schemas/*.v1.yaml` — the object contracts of spec §28 |
+| [Adapters](adapters/README.md) | `docs/spec/adapters/first-party/*.yaml` — what each external tool adapts, at which versions, through which invocations (spec v0.3 §1.66) |
 | [Errors](errors.md) | `docs/spec/errors.yaml` — the stable taxonomy of spec §43 |
 | [Capabilities](capabilities.md) | `docs/spec/capabilities.yaml` — provider and KUANG/11 capabilities |
 

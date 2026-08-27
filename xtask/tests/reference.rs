@@ -194,3 +194,67 @@ fn should_find_this_repositorys_committed_reference_docs_up_to_date_when_checked
             .join("\n")
     );
 }
+
+fn adapter_registries() -> Scratch {
+    let repo = registries();
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../docs/spec/adapters/first-party/util-linux.yaml");
+    repo.write(
+        "docs/spec/adapters/first-party/util-linux.yaml",
+        &std::fs::read_to_string(pack).expect("the util-linux pack is part of the repository"),
+    );
+    repo
+}
+
+#[test]
+fn should_publish_a_page_per_adapter_pack_and_a_compatibility_matrix_when_generated() {
+    // Spec v0.3 §1.66, §2.6: adapter reference pages and the compatibility matrix are derived
+    // from the contracts, so a support claim is a contract line, never a hand-written promise.
+    let repo = adapter_registries();
+    let written = generate(repo.path()).expect("generation must succeed");
+    let page = |path: &str| {
+        written
+            .iter()
+            .find(|page| page.path == path)
+            .unwrap_or_else(|| panic!("{path} missing from {:?}", written.iter().map(|p| &p.path).collect::<Vec<_>>()))
+            .contents
+            .clone()
+    };
+    let matrix = page("docs/reference/adapters/README.md");
+    for expected in [
+        "org.ono.compat.util-linux",
+        "lsblk",
+        "findmnt",
+        "lsns",
+        ">=2.37",
+        "ono.block-device/1",
+        "ono.mount/1",
+    ] {
+        assert!(matrix.contains(expected), "the matrix names {expected}; got:\n{matrix}");
+    }
+    let pack = page("docs/reference/adapters/org.ono.compat.util-linux.md");
+    for expected in [
+        "org.ono.compat.util-linux.lsblk",
+        "lsblk [-a\\|--all] [-d\\|--nodeps] [device …]",
+        "are not adapted",
+        "ono.block-device/1",
+        "raw",
+        "util-linux/lsblk",
+    ] {
+        assert!(pack.contains(expected), "the pack page states {expected}; got:\n{pack}");
+    }
+    assert!(
+        matrix.contains("org.ono.compat.util-linux.md"),
+        "the matrix links every pack page; got:\n{matrix}"
+    );
+}
+
+#[test]
+fn should_publish_no_adapter_pages_when_no_pack_is_declared() {
+    let repo = registries();
+    let written = generate(repo.path()).expect("generation must succeed");
+    assert!(
+        written.iter().all(|page| !page.path.contains("/adapters/")),
+        "a repository without packs has no adapter pages to keep up to date"
+    );
+}

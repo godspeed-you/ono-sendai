@@ -499,10 +499,13 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
 
 #### 4.6.5 Release evidence (v0.3 §2.6, §1.68)
 
-- [ ] **Support claims are machine-readable and published.** `docs/reference/adapters/` — a
+- [x] **Support claims are machine-readable and published.** `docs/reference/adapters/` — a
       page per adapter and a compatibility matrix (tool, versions, invocations, schema, tier,
       limits) — is generated from the contracts and identical to the committed files (§1.66).
-      Exit test: `xtask/tests/reference.rs` extended to the adapter pages.
+      Exit test: `xtask/tests/reference.rs` extended to the adapter pages. — `xtask/tests/reference.rs`
+      (`should_publish_a_page_per_adapter_pack_and_a_compatibility_matrix_when_generated`,
+      `should_find_this_repositorys_committed_reference_docs_up_to_date_when_checked`),
+      `spec-check` on every gate run.
 - [ ] **Live conformance in the container.** The acceptance image installs every Tier A/B/C
       tool, and each adapter has at least one live case against the real executable
       (v0.3 §1.48); adapters for tools absent on a host degrade to raw with a visible reason.

@@ -61,8 +61,9 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
     let capabilities = load(&spec.join("capabilities.yaml"))?;
     let schemas = load_directory(&spec.join("schemas"))?;
     let commands = load_directory(&spec.join("commands"))?;
+    let packs = load_packs(&spec.join("adapters").join("first-party"))?;
 
-    let pages = vec![
+    let mut pages = vec![
         Page {
             path: "docs/reference/README.md".to_owned(),
             contents: index_page(),
@@ -92,6 +93,18 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
             contents: capabilities_page(capabilities.as_ref()),
         },
     ];
+    if !packs.is_empty() {
+        pages.push(Page {
+            path: "docs/reference/adapters/README.md".to_owned(),
+            contents: adapters_matrix_page(&packs),
+        });
+        for pack in &packs {
+            pages.push(Page {
+                path: format!("docs/reference/adapters/{}.md", pack.id()),
+                contents: adapter_pack_page(pack),
+            });
+        }
+    }
     Ok(pages)
 }
 
@@ -167,6 +180,8 @@ fn index_page() -> String {
          | [Verbs](verbs.md) | `docs/spec/verbs.yaml` — the controlled vocabulary of spec §7 |\n\
          | [Targets](targets.md) | `docs/spec/targets.yaml` — the nouns of spec §8 |\n\
          | [Schemas](schemas.md) | `docs/spec/schemas/*.v1.yaml` — the object contracts of spec §28 |\n\
+         | [Adapters](adapters/README.md) | `docs/spec/adapters/first-party/*.yaml` — what each \
+         external tool adapts, at which versions, through which invocations (spec v0.3 §1.66) |\n\
          | [Errors](errors.md) | `docs/spec/errors.yaml` — the stable taxonomy of spec §43 |\n\
          | [Capabilities](capabilities.md) | `docs/spec/capabilities.yaml` — provider and KUANG/11 \
          capabilities |\n\
@@ -455,6 +470,202 @@ fn capabilities_page(document: Option<&Yaml>) -> String {
 }
 
 // --- reading ---------------------------------------------------------------------------------
+
+/// Loads every adapter pack contract, in path order, so pages come out in one order.
+fn load_packs(directory: &Path) -> Result<Vec<ono_adapter::AdapterPack>, GenerateError> {
+    let mut packs = Vec::new();
+    for (file, _) in load_directory(directory)? {
+        let path = directory.join(&file);
+        let text = std::fs::read_to_string(&path).map_err(|error| GenerateError {
+            detail: format!("cannot read {}: {error}", path.display()),
+        })?;
+        packs.push(
+            ono_adapter::AdapterPack::parse(&text).map_err(|error| GenerateError {
+                detail: format!("{} is not a valid adapter pack: {error}", path.display()),
+            })?,
+        );
+    }
+    packs.sort_by(|left, right| left.id().cmp(right.id()));
+    Ok(packs)
+}
+
+/// Text inside a table cell: a `|` in an invocation summary would otherwise split the row.
+fn cell(text: &str) -> String {
+    text.replace('|', "\\|")
+}
+
+fn tier_name(tier: ono_adapter::StrategyTier) -> &'static str {
+    match tier {
+        ono_adapter::StrategyTier::A => "A — structured native output",
+        ono_adapter::StrategyTier::B => "B — stable machine-readable format",
+        ono_adapter::StrategyTier::C => "C — version-constrained parser",
+    }
+}
+
+fn tier_letter(tier: ono_adapter::StrategyTier) -> &'static str {
+    match tier {
+        ono_adapter::StrategyTier::A => "A",
+        ono_adapter::StrategyTier::B => "B",
+        ono_adapter::StrategyTier::C => "C",
+    }
+}
+
+fn demand_names(adapter: &ono_adapter::Adapter) -> String {
+    adapter
+        .output_demand()
+        .iter()
+        .map(|demand| match demand {
+            ono_adapter::DemandKind::Structured => "structured",
+            ono_adapter::DemandKind::Interactive => "interactive",
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn fallback_name(fallback: ono_adapter::Fallback) -> &'static str {
+    match fallback {
+        ono_adapter::Fallback::Raw => "raw",
+        ono_adapter::Fallback::Error => "error",
+    }
+}
+
+/// The compatibility matrix of spec v0.3 §1.66: one row per adapter, every claim a contract
+/// line.
+fn adapters_matrix_page(packs: &[ono_adapter::AdapterPack]) -> String {
+    let mut page = header(
+        "External command adapters",
+        "The compatibility matrix of spec v0.3 §1.66, derived from `docs/spec/adapters/first-party/*.yaml`. \
+         A tool not listed here runs raw, exactly as typed; a listed tool runs raw too whenever \
+         the typed invocation is not one its adapter declares, or the installed version is outside \
+         the declared range — `explain <command>` says which. `raw <command>` bypasses the layer \
+         unconditionally (spec v0.3 §1.2).",
+    );
+    page.push_str(
+        "\n| tool | adapter | versions | tier | invocations | schema | demand | fallback |\n\
+         |---|---|---|---|---|---|---|---|\n",
+    );
+    for pack in packs {
+        for adapter in pack.adapters() {
+            let invocations = adapter
+                .invocations()
+                .iter()
+                .map(|invocation| format!("`{}`", cell(invocation.summary())))
+                .collect::<Vec<_>>()
+                .join("<br>");
+            let _ = writeln!(
+                page,
+                "| `{}` | [`{}`]({}.md#{}) | `{}` | {} | {} | `{}` | {} | {} |",
+                adapter.executable().names().join("`, `"),
+                adapter.full_id(),
+                pack.id(),
+                adapter.id(),
+                adapter.executable().versions(),
+                tier_letter(adapter.tier()),
+                invocations,
+                adapter.schema(),
+                demand_names(adapter),
+                fallback_name(adapter.fallback()),
+            );
+        }
+    }
+    page.push_str("\n## Packs\n\n| pack | version | tier | executables |\n|---|---|---|---|\n");
+    for pack in packs {
+        let _ = writeln!(
+            page,
+            "| [{}]({}.md) | `{}` | {} | `{}` |",
+            pack.name(),
+            pack.id(),
+            pack.version(),
+            match pack.tier() {
+                ono_adapter::Tier::FirstParty => "first-party",
+                ono_adapter::Tier::Recommended => "recommended",
+                ono_adapter::Tier::Community => "community",
+                ono_adapter::Tier::Experimental => "experimental",
+            },
+            pack.executables().join("`, `"),
+        );
+    }
+    page
+}
+
+/// One pack's page: every adapter with its invocations, its field map, its limits — what is
+/// supported and, just as visibly, what is not (spec v0.3 §1.68 item 14).
+fn adapter_pack_page(pack: &ono_adapter::AdapterPack) -> String {
+    let mut page = header(
+        &format!("{} — `{}`", pack.name(), pack.id()),
+        &format!(
+            "Version `{}`; process.exec executables: `{}`. Everything below is the pack's \
+             contract; an invocation not listed under an adapter runs raw, and the limits state \
+             what the adapted form does not carry.",
+            pack.version(),
+            pack.executables().join("`, `")
+        ),
+    );
+    for adapter in pack.adapters() {
+        let _ = write!(page, "\n## {} — `{}`\n\n{}\n\n", adapter.id(), adapter.full_id(), adapter.summary());
+        let _ = writeln!(
+            page,
+            "| | |\n|---|---|\n| executable | `{}` |\n| versions | `{}` |\n| tier | {} |\n\
+             | schema | `{}` |\n| decoder | `{}` |\n| demand | {} |\n| fallback | {} |\n| fixtures | `{}` |",
+            adapter.executable().names().join("`, `"),
+            adapter.executable().versions(),
+            tier_name(adapter.tier()),
+            adapter.schema(),
+            adapter.decoder().id().unwrap_or(match adapter.decoder().kind() {
+                ono_adapter::DecoderKind::Json => "json",
+                ono_adapter::DecoderKind::Jsonl => "jsonl",
+                ono_adapter::DecoderKind::Lines => "lines",
+                ono_adapter::DecoderKind::Properties => "properties",
+                ono_adapter::DecoderKind::Builtin => "builtin",
+            }),
+            demand_names(adapter),
+            fallback_name(adapter.fallback()),
+            adapter.fixtures(),
+        );
+        page.push_str("\n### Supported invocations\n\n| invocation | runs as | flags allowed | flags required |\n|---|---|---|---|\n");
+        for invocation in adapter.invocations() {
+            let matcher = invocation.matcher();
+            let mut allowed: Vec<String> = matcher.allowed_flags().to_vec();
+            allowed.extend(
+                matcher
+                    .allowed_flags_with_value()
+                    .iter()
+                    .map(|flag| format!("{flag} <value>")),
+            );
+            let _ = writeln!(
+                page,
+                "| `{}` | `{}` | {} | {} |",
+                cell(invocation.summary()),
+                cell(&invocation.plan().argv().join(" ")),
+                if allowed.is_empty() { "—".to_owned() } else { format!("`{}`", allowed.join("`, `")) },
+                if matcher.required_flags().is_empty() {
+                    "—".to_owned()
+                } else {
+                    format!("`{}`", matcher.required_flags().join("`, `"))
+                },
+            );
+        }
+        page.push_str("\n### Fields\n\n| field | from |\n|---|---|\n");
+        for (name, map) in adapter.fields() {
+            let mut from = format!("`{}`", map.from());
+            if let Some(unit) = map.unit() {
+                let _ = write!(from, ", unit {unit:?}");
+            }
+            if let Some(template) = map.template() {
+                let _ = write!(from, ", template `{template}`");
+            }
+            let _ = writeln!(page, "| `{name}` | {from} |");
+        }
+        page.push_str("\n### Limits\n\n");
+        if adapter.limits().is_empty() {
+            page.push_str("None declared.\n");
+        }
+        for limit in adapter.limits() {
+            let _ = writeln!(page, "- {limit}");
+        }
+    }
+    page
+}
 
 fn load(path: &Path) -> Result<Option<Yaml>, GenerateError> {
     match std::fs::read_to_string(path) {
