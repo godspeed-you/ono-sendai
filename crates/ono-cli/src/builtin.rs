@@ -123,19 +123,9 @@ fn set(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             session.set_env(name, value);
             Ok(ExitStatus::SUCCESS)
         }
-        "config" => {
-            // Configuration is read into the session in ADR-0010's layers; a `set config` in a
-            // running shell records the value at the invocation layer.
-            let name = rest.first().copied().unwrap_or_default();
-            let value = rest.get(1).copied().unwrap_or_default();
-            session.bind(
-                format!("config.{name}"),
-                ono_value::Value::String(value.into()),
-            );
-            Ok(ExitStatus::SUCCESS)
-        }
-        // Every other target reaches the registry before this runs (ADR-0068); only a target
-        // that is not a literal word — `set $what …` — can still arrive here.
+        // `set config` is answered before this runs (ADR-0094), and every other target reaches
+        // the registry first (ADR-0068); only a target that is not a literal word — `set $what …`
+        // — can still arrive here.
         other => Err(Flow::Failed(
             ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,

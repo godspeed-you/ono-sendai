@@ -364,7 +364,7 @@ pub fn suggestions(session: &Session, name: &str) -> Vec<String> {
 }
 
 /// Levenshtein distance, two rows at a time.
-fn edit_distance(left: &str, right: &str) -> usize {
+pub(crate) fn edit_distance(left: &str, right: &str) -> usize {
     let right_chars: Vec<char> = right.chars().collect();
     let mut previous: Vec<usize> = (0..=right_chars.len()).collect();
     let mut current = vec![0usize; right_chars.len() + 1];

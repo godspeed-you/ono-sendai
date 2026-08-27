@@ -11,18 +11,23 @@
 use std::ffi::OsString;
 
 use ono_core::ErrorCode;
-use ono_parser::{Stage, StageHead};
-use ono_value::{ErrorValue, Value};
+use ono_parser::{Argument, Stage, StageHead};
+use ono_value::{ActionResult, ActionStatus, ErrorValue, MapValue, SchemaId, Value, ValueRef};
 
 use crate::eval::{Eval, Flow};
 use crate::resolve::Namespace;
 use crate::session::Session;
+use crate::settings::{Given, Layer};
 
 /// What a stage asks the shell to answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Request {
     /// `resolve command <word>` — what the word resolves to (spec §6.5).
     ResolveCommand,
+    /// `get config [key]` — the settings with their provenance (spec §30).
+    GetConfig,
+    /// `set config key = value` — one typed assignment (spec §30).
+    SetConfig,
 }
 
 /// Whether `stage` is one of the commands this module answers.
@@ -44,6 +49,8 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         .and_then(ono_parser::Argument::as_word);
     match (name.name.as_str(), target) {
         ("resolve", Some("command")) => Some(Request::ResolveCommand),
+        ("get", Some("config")) => Some(Request::GetConfig),
+        ("set", Some("config")) => Some(Request::SetConfig),
         _ => None,
     }
 }
@@ -65,6 +72,11 @@ pub fn answer(
             let words = crate::eval::stage_arguments(session, stage, source)?;
             resolve_command(session, &words).map_err(Flow::Failed)
         }
+        Request::GetConfig => {
+            let words = crate::eval::stage_arguments(session, stage, source)?;
+            get_config(session, &words).map_err(Flow::Failed)
+        }
+        Request::SetConfig => set_config(session, stage, source),
     }
 }
 
@@ -89,4 +101,119 @@ fn resolve_command(session: &Session, words: &[OsString]) -> Result<Vec<Value>, 
         _ => (Namespace::Any, word.as_ref()),
     };
     crate::resolve::describe(session, namespace, name).map(|record| vec![record])
+}
+
+/// `get config [key|prefix.] [--problems] [--overridden]` (spec §30, ADR-0094).
+fn get_config(session: &Session, words: &[OsString]) -> Result<Vec<Value>, ErrorValue> {
+    let mut selector: Option<String> = None;
+    let mut problems = false;
+    let mut overridden = false;
+    // The first word is the target, `config`.
+    for word in words.iter().skip(1) {
+        let word = word.to_string_lossy();
+        match word.as_ref() {
+            "--problems" => problems = true,
+            "--overridden" => overridden = true,
+            option if option.starts_with("--") => {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeUnknownField,
+                    format!("`get config` has no option `{option}`"),
+                )
+                .with_help("`get config` takes `--problems` and `--overridden`"));
+            }
+            key => {
+                if selector.replace(key.to_owned()).is_some() {
+                    return Err(ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        "`get config` takes one key or prefix",
+                    ));
+                }
+            }
+        }
+    }
+    if problems {
+        return Ok(session.settings().problems().to_vec());
+    }
+    session.settings().records(selector.as_deref(), overridden)
+}
+
+/// `set config <key> = <value>`: one typed assignment at the layer being read — the file's
+/// while a configuration file loads, the invocation's at the prompt (ADR-0010, ADR-0094).
+fn set_config(session: &mut Session, stage: &Stage, source: &str) -> Eval<Vec<Value>> {
+    let started = std::time::Instant::now();
+    let usage = |what: &str| {
+        Flow::Failed(
+            ErrorValue::new(ErrorCode::TypeMismatch, format!("`set config` {what}"))
+                .with_help("`set config render.table.max_rows = 200` (spec §30)"),
+        )
+    };
+    // The first argument is the target, `config`.
+    let mut arguments = stage.arguments.iter().skip(1);
+    let key = match arguments.next() {
+        Some(Argument::Word(word)) => word.text.clone(),
+        _ => return Err(usage("needs the dotted key of a setting")),
+    };
+    let mut argument = arguments.next();
+    // The `=` is punctuation, not a value.
+    if let Some(Argument::Word(word)) = argument
+        && word.text == "="
+    {
+        argument = arguments.next();
+    }
+    let given = match argument {
+        Some(Argument::Word(word)) => {
+            let expanded = crate::expand::expand_word(session, &word.text)?;
+            let text = expanded
+                .iter()
+                .map(|word| word.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ");
+            Given::Word(text)
+        }
+        Some(Argument::Value(expression)) => {
+            Given::Value(crate::eval::eval_expr(session, expression, source)?)
+        }
+        Some(Argument::Option(_) | Argument::Error(_)) | None => {
+            return Err(usage("needs a value after the key"));
+        }
+    };
+    if arguments.next().is_some() {
+        return Err(usage("takes one value"));
+    }
+
+    let (layer, file, line) = match session.settings().reading() {
+        Some(reading) => (
+            reading.layer,
+            Some(reading.path.clone()),
+            Some(stage.span.line_column(source).0),
+        ),
+        None => (Layer::Invocation, None, None),
+    };
+    let in_file = file.is_some();
+    let changed = match session
+        .settings_mut()
+        .assign(&key, given, layer, file, line)
+    {
+        Ok(changed) => changed,
+        Err(error) => {
+            // A bad setting never stops the shell from starting: the failure is reported by the
+            // loader and kept for `get config --problems` (ADR-0010).
+            if in_file {
+                session.settings_mut().note_problem(&error);
+            }
+            return Err(Flow::Failed(error));
+        }
+    };
+
+    let mut identity = MapValue::new();
+    identity.insert("key".into(), Value::string(&key));
+    let target = ValueRef::object(SchemaId::new("ono.config-setting", 1), identity);
+    let elapsed = ono_value::Duration::from_nanoseconds(
+        i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),
+    );
+    let result = ActionResult::new(target, "ono.config.set", ActionStatus::Success)
+        .changed(changed)
+        .with_message(&format!("{key} set at the {} layer", layer.name()))
+        .with_duration(elapsed);
+    Ok(vec![result.into_value()])
 }

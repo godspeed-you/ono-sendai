@@ -96,6 +96,8 @@ pub struct Session {
     /// The aliases being expanded right now, so an expansion is never expanded again
     /// (ADR-0011 step 3, ADR-0070).
     expanding: Vec<String>,
+    /// The layered configuration of ADR-0010, with the provenance of every value (ADR-0094).
+    settings: crate::settings::Settings,
 }
 
 /// One held remote link: the connection, and the registry its providers are mounted in.
@@ -195,7 +197,19 @@ impl Session {
             adaptations: Vec::new(),
             definitions: vec![BTreeMap::new()],
             expanding: Vec::new(),
+            settings: crate::settings::Settings::new(),
         }
+    }
+
+    /// The configuration settings, with the layer that set each one (spec §30).
+    #[must_use]
+    pub fn settings(&self) -> &crate::settings::Settings {
+        &self.settings
+    }
+
+    /// The configuration settings, for a layer that sets one.
+    pub fn settings_mut(&mut self) -> &mut crate::settings::Settings {
+        &mut self.settings
     }
 
     /// Defines `name` as a function or an alias in the innermost scope (ADR-0070).
