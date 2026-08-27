@@ -13,11 +13,10 @@ That is the whole idea here, minus the fiction:
 
 The command is `ono`. The deck is real this time.
 
-> **Status: release-ready.** `scripts/release-check.sh` prints `the shell is release-ready`:
-> all ten phases of the specification are implemented, every box of `docs/ACCEPTANCE.md` is
-> ticked by a named automated proof, and the containerised acceptance suite — 35 cases against
-> the real binary as a login shell, network cut — is green, as is CI. What follows describes
-> what was built and how it behaves; every example below runs.
+> **Status: released — v0.2.0.** All ten phases of the specification are implemented; every box
+> of `docs/ACCEPTANCE.md` is ticked by a named automated proof; the containerised acceptance
+> suite — 35 cases against the real binary installed as a login shell, network cut — is green,
+> as is CI. Every example below runs.
 
 ---
 
@@ -166,39 +165,74 @@ Written in Rust — 21 crates, ~1 400 outcome tests. Latency is treated as a pro
 first rows of `get process` all inside their spec §34 budgets, with the keystroke-to-render
 path bounded in the editor's own suite.
 
-## Building and running it
+## Installing it
+
+Requirements: Linux, and Rust 1.94+ if you build from source (the pinned toolchain in
+`rust-toolchain.toml` is picked up automatically).
 
 ```bash
-cargo build --release -p ono-cli     # the shell: target/release/ono
-./target/release/ono                  # a conversation, if stdin is a terminal
-./target/release/ono -c 'get process | where cpu > 20'
-./target/release/ono --agent          # the remote end of a link, over stdin/stdout
+git clone https://github.com/godspeed-you/ono-sendai
+cd ono-sendai
+cargo build --release -p ono-cli
+install -m 0755 target/release/ono ~/.local/bin/ono   # or anywhere on your PATH
 ```
 
-Try the parts that only exist because the machine is typed: `watch process` at a terminal and
-watch the table update in place; `trace process 1` and walk the tree; `get process | view table`,
-pick a row with the arrows, quit, and `@ | inspect` the thing you picked; `enter service nginx`
-and ask `get process` inside the frame. `help` is generated from the same registries the
-commands are — the shell is its own manual.
+A prebuilt Linux x86-64 binary is attached to each
+[GitHub release](https://github.com/godspeed-you/ono-sendai/releases).
+
+To make it your login shell, add the binary's path to `/etc/shells` and `chsh -s` to it — the
+acceptance suite does exactly that in a container on every run, so this path is tested, not
+aspirational. Configuration lives at `~/.config/ono/config.ono` and is deliberately
+restricted: it sets values, functions and aliases, and cannot run commands at startup.
+
+## Running it
+
+```bash
+ono                                   # a conversation, if stdin is a terminal
+ono -c 'get process | where cpu > 20' # one pipeline, then exit
+ono script.ono arg1 arg2              # a script, with $args bound
+ono --agent                           # the remote end of a link, over stdin/stdout
+```
+
+Ten things to try, roughly in order of how quickly they change your idea of a shell:
+
+```text
+help                                    the whole surface, generated from the registries
+get process | sort memory desc          a typed table — no awk, no column guessing
+get process | where pid == 1 | inspect  every field, its type, and where it came from
+explain get file /tmp | remove file     what would happen, without it happening
+watch process                           the table updates in place; Ctrl-C ends it
+watch process --every 1s &              …or park it as a job and fg it back later
+trace process 1                         the relationship tree the kernel actually asserts
+get process | view table                pick a row with the arrows; then:  @ | inspect
+enter service nginx                     get process now means that service's processes
+link host prod-db                       remote hosts become places; the prompt says where
+```
 
 KUANG/11 packages install as files: a directory under `~/.config/ono/plugins` (or
 `$ONO_PLUGIN_PATH`) holding a `manifest.yaml` and its runtime. `get plugin` lists them,
 `load plugin <id>` negotiates capabilities before the binary ever starts, and a loaded
 package's commands run as `<name>:<command>` in ordinary pipelines.
 
-## Repository
+## Documentation
 
-```
-docs/ono_sendai_shell_spec_v0.2.md   the immutable base specification — product, language, KUANG/11
-docs/*_shell_spec_*.md               enhancement specs, layered on the base (AGENTS.md §5.2)
-docs/ACCEPTANCE.md                   what "finished" means, in boxes a script can check — all ticked
-docs/STATE.md                        the work board: the release verdict, and what comes next
-docs/decisions/                      41 architecture decision records
-AGENTS.md                            operating instructions for autonomous agents
-crates/                              21 crates: the shell, the engine, the providers, the runtimes
-docker/, scripts/                    the container and the three gates
-docs/spec/                           machine-readable contracts: commands, schemas, verbs, errors
-```
+Everything is in-repo and cross-checked by the gate — the reference pages are *generated* from
+the same registries the shell answers `help` from, so they cannot drift:
+
+| | |
+|---|---|
+| `docs/reference/` | generated reference: every command, verb, target, schema, error, capability |
+| `docs/ono_sendai_shell_spec_v0.2.md` | the immutable base specification — product, language, KUANG/11 |
+| `docs/*_shell_spec_*.md` | enhancement specifications, layered on the base (AGENTS.md §5.2) |
+| `docs/spec/` | machine-readable contracts: commands, schemas, verbs, errors, providers |
+| `docs/ACCEPTANCE.md` | what "finished" means, in boxes a script can check — all ticked |
+| `docs/decisions/` | 40+ architecture decision records, including every deliberate spec deviation |
+| `docs/STATE.md` | the work board: the release verdict, and the post-release backlog |
+
+And inside the shell itself: `help`, `help <command>`, `type <pipeline>`, `inspect`, and
+`explain <pipeline>` — all answered from the registries, never from prose that can rot.
+
+## Development
 
 ### Verifying it
 
@@ -220,20 +254,20 @@ that has not survived that is not a feature yet.
 it was reached — not declared.
 
 The specification is the source of truth and is deliberately more detailed than a pitch:
-command metadata, object schemas, error taxonomy, grammar and test matrices are meant to be
-*derivable* from it rather than reinvented per feature.
+command metadata, object schemas, error taxonomy, grammar and test matrices are *derivable*
+from it rather than reinvented per feature. It is immutable and checksummed — where it was
+ambiguous or wrong, the deviation is recorded in an ADR and the document stays exactly as
+written, so the complete list of divergences is one grep away.
 
-Development is test-driven and largely agent-driven. `AGENTS.md` is the contract those agents
-work under — tests are the referee for whether a goal is reached, and every decision the spec
-does not fix is made autonomously and recorded as an ADR. If you are an agent reading this:
-`AGENTS.md` is your entry point, not this file.
+Development is strictly test-driven and largely agent-driven. `AGENTS.md` is the contract the
+agents work under — tests are the referee for whether a goal is reached, and every decision the
+spec does not fix is made autonomously and recorded as an ADR. If you are an agent reading
+this: `AGENTS.md` is your entry point, not this file.
 
-`main` carries the specification, the instructions and the harness — the state a run starts
-from. The finished implementation lives on the `implementation` branch, phase-tagged from
-`phase-a` to `phase-j`; promoting it is the user's deliberate act, not an agent's. The
-specification is immutable and checksummed — where it was ambiguous or wrong, the deviation is
-recorded in an ADR (two of the forty-one carry a `Spec deviation` heading) and the document
-stays exactly as written.
+`main` carries the released product together with the specification and the verification
+harness; each finished phase is tagged `phase-a` … `phase-j`, and releases are tagged from
+`main`. Ongoing implementation work happens on the `implementation` branch and is promoted only
+by the user, deliberately, when the release gate passes.
 
 ## License
 
