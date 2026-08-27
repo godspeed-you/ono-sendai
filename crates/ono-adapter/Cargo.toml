@@ -12,7 +12,9 @@ authors.workspace = true
 ono-core.workspace = true
 ono-value.workspace = true
 
+jiff.workspace = true
 regex.workspace = true
+serde_json.workspace = true
 serde = { workspace = true }
 serde_yaml_ng.workspace = true
 

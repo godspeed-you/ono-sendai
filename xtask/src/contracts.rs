@@ -129,7 +129,10 @@ pub fn check_adapter_packs(root: &Path) -> Vec<Problem> {
                 ),
             });
         }
-        for problem in ono_adapter::validate(&pack, ono_value::builtin_schemas(), &fixtures) {
+        for problem in ono_adapter::validate(&pack, ono_value::builtin_schemas(), &fixtures)
+            .into_iter()
+            .chain(ono_adapter::conformance::check_pack(&pack, &fixtures))
+        {
             problems.push(Problem {
                 location: format!("{location} ({})", problem.location),
                 detail: problem.detail,

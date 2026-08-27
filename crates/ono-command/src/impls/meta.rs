@@ -483,6 +483,44 @@ fn provenance_map(provenance: &Provenance) -> Value {
         "confidence".into(),
         provenance.confidence().map_or(Value::Null, Value::Float),
     );
+    // An adapted value answers the ten questions of spec v0.3 §1.8 here, under the same keys
+    // the rendered block uses, so a script and a person read the same names.
+    if let Some(adapter) = provenance.adapter() {
+        described.insert("adapter".into(), Value::string(adapter.adapter()));
+        described.insert(
+            "adapter_version".into(),
+            Value::string(adapter.adapter_version()),
+        );
+        described.insert(
+            "executable".into(),
+            Value::string(&adapter.executable().display().to_string()),
+        );
+        described.insert(
+            "executable_version".into(),
+            adapter
+                .executable_version()
+                .map_or(Value::Null, Value::string),
+        );
+        described.insert(
+            "user_invocation".into(),
+            Value::string(adapter.user_invocation()),
+        );
+        described.insert(
+            "actual_invocation".into(),
+            Value::string(adapter.actual_invocation()),
+        );
+        described.insert("decoder".into(), Value::string(adapter.decoder()));
+        described.insert("stability".into(), Value::string(adapter.stability()));
+        let mut exactness = MapValue::new();
+        for (field, how) in adapter.exactness() {
+            exactness.insert(field.as_str().into(), Value::string(how));
+        }
+        described.insert("exactness".into(), Value::Map(Arc::new(exactness)));
+        described.insert(
+            "limits".into(),
+            Value::list(adapter.limits().iter().map(|limit| Value::string(limit))),
+        );
+    }
     Value::Map(Arc::new(described))
 }
 

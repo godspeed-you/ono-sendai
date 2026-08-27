@@ -6,6 +6,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use ono_core::ErrorCode;
+use ono_value::{ErrorValue, Value};
+
 use crate::contract::{Adapter, AdapterPack, DemandKind, Fallback, Positionals, StdinMode, Tier};
 use crate::demand::OutputDemand;
 use crate::version::{Version, VersionRange};
@@ -213,6 +216,114 @@ impl Negotiation {
                 !matches!(demand, OutputDemand::Structured { .. })
             }
         }
+    }
+
+    /// The structured error a refusal becomes under a demand it cannot satisfy (spec v0.3
+    /// §1.16, §1.18, §1.65), or `None` when the invocation runs raw or is adapted.
+    ///
+    /// `executable` and `argv` are what was asked for; the payload carries them under the
+    /// keys of ADR-0053 so every emitter agrees.
+    #[must_use]
+    pub fn refusal(
+        &self,
+        demand: &OutputDemand,
+        executable: &Path,
+        argv: &[String],
+    ) -> Option<ErrorValue> {
+        if self.runs_raw(demand) || self.plan().is_some() {
+            return None;
+        }
+        let invocation = argv.join(" ");
+        let payload = |error: ErrorValue, adapter: &str| {
+            error
+                .with_metadata("adapter", Value::string(adapter))
+                .with_metadata(
+                    "executable",
+                    Value::string(&executable.display().to_string()),
+                )
+                .with_metadata("invocation", Value::string(&invocation))
+                .with_metadata("raw_fallback_safe", Value::Bool(true))
+                .with_metadata("recovery", Value::string(&format!("raw {invocation}")))
+        };
+        let help = format!(
+            "`raw {invocation}` runs the program as typed; `{invocation} | from <format>` decodes \
+             its output yourself (spec v0.3 §1.16)"
+        );
+        Some(match self {
+            Self::UnsupportedInvocation {
+                adapter, reason, ..
+            } => payload(
+                ErrorValue::new(
+                    ErrorCode::AdapterUnsupportedInvocation,
+                    format!(
+                        "adapter {adapter} recognizes `{}` but cannot guarantee structured \
+                         semantics for {reason}",
+                        argv.first().map_or("", String::as_str)
+                    ),
+                )
+                .with_help(help),
+                adapter,
+            ),
+            Self::IncompatibleVersion {
+                adapter,
+                found,
+                supported,
+                ..
+            } => payload(
+                ErrorValue::new(
+                    ErrorCode::AdapterVersionIncompatible,
+                    format!(
+                        "adapter {adapter} supports {supported}, found {}",
+                        found
+                            .as_ref()
+                            .map_or_else(|| "no detectable version".to_owned(), Version::to_string)
+                    ),
+                )
+                .with_help(help)
+                .with_metadata(
+                    "executable_version",
+                    found
+                        .as_ref()
+                        .map_or(Value::Null, |version| Value::string(&version.to_string())),
+                )
+                .with_metadata("supported", Value::string(supported)),
+                adapter,
+            ),
+            Self::ExecutableMismatch {
+                adapter,
+                expected,
+                found,
+            } => payload(
+                ErrorValue::new(
+                    ErrorCode::AdapterExecutableMismatch,
+                    format!(
+                        "adapter {adapter} is written for {expected}, and {} resolved instead",
+                        found.display()
+                    ),
+                )
+                .with_help(help),
+                adapter,
+            ),
+            Self::Conflict { candidates } => payload(
+                ErrorValue::new(
+                    ErrorCode::AdapterConflict,
+                    format!(
+                        "{} claim this invocation and cannot be separated",
+                        candidates.join(" and ")
+                    ),
+                )
+                .with_help("disable one of the installed copies; until then the program runs raw")
+                .with_metadata(
+                    "candidates",
+                    Value::list(candidates.iter().map(|candidate| Value::string(candidate))),
+                ),
+                candidates.first().map_or("", String::as_str),
+            ),
+            Self::NotApplicable
+            | Self::RawPreferred { .. }
+            | Self::StructuredSupported { .. }
+            | Self::StructuredSupportedWithLimits { .. } => return None,
+        })
     }
 
     /// The state in the words of spec v0.3 §1.57, for `explain`, history and diagnostics.

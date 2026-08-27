@@ -1,0 +1,26 @@
+# v0.3 §1.35, §1.69 step 2, §1.71 (ADAPT-004/005/007, COMPAT-LSBLK/FINDMNT/LSNS): the first
+# adapted tools run for real, as an unprivileged user. Structured downstream gets canonical
+# records with adapter provenance; bytes downstream and `raw` keep the tool's own output; an
+# undeclared flag under a structured demand fails structurally with the raw recovery named.
+case: util-linux tools compose as typed records and stay raw when asked
+run: |
+  echo "== structured: findmnt =="
+  ono -c 'findmnt | where target == "/" | select target filesystem | to json'
+  ono -c 'findmnt | where target == "/" | count | to text'
+  echo "== structured: lsns =="
+  ono -c 'lsns | where type == "mnt" | select type processes | to json'
+  echo "== provenance =="
+  ono -c 'findmnt | take 1 | inspect | to json' | grep -F 'adapter:org.ono.compat.util-linux.findmnt'
+  ono -c 'findmnt | take 1 | inspect | to json' | grep -F 'actual_invocation'
+  echo "== raw stays raw =="
+  ono -c 'raw findmnt --json --list --output TARGET /' > /tmp/raw.out
+  ono -c 'findmnt --json --list --output TARGET / | cat' > /tmp/bytes.out
+  bash -c 'findmnt --json --list --output TARGET /' > /tmp/bash.out
+  cmp /tmp/raw.out /tmp/bash.out && cmp /tmp/bytes.out /tmp/bash.out && echo raw=identical
+  echo "== refusals =="
+  ono -c 'findmnt --poll | where target == "/"' 2>&1 | grep -c 'Ono-Sendai-E0903'
+  echo "== lsblk, where the container lets it =="
+  if lsblk --json >/dev/null 2>&1; then ono -c 'lsblk | select name type size | count | to text'; else echo 'lsblk: no sysfs here'; fi
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

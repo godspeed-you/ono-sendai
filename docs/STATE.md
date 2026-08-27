@@ -93,16 +93,20 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 6 — `ADAPT-004`/`005`/`007`/`010`: adapted
-  execution through `ono-process`, the json decoder with schema-driven coercion, adapter
-  provenance, the fixture conformance harness, `lsblk`/`findmnt`/`lsns` end to end (ADR-0057)
-  — files: `crates/ono-adapter/src/{decode,conformance}.rs`, `crates/ono-value/src/provenance.rs`,
-  `crates/ono-cli/src/native.rs`, `crates/ono-command/src/impls/meta.rs`
+- [claude | 2026-08-27] v0.3 tranche, step 7 — the `ip` pack (COMPAT-IP-001…003 + neigh):
+  contract, schemas (`ono.interface-address/1`), fixtures, acceptance — files:
+  `docs/spec/adapters/first-party/iproute2.yaml`, `docs/spec/adapters/fixtures/iproute2/`,
+  `docs/spec/schemas/interface-address.v1.yaml`
 
 ---
 
 ## Next up (ordered)
 
+- [ ] The pre-flight field check (spec §11.3) and `type` do not know an adapted stage's
+  schema: `lsblk | where colour == 1` runs lsblk before failing per record, and `type lsblk`
+  says bytes. The plan already knows the adapter's schema (ADR-0056) — thread it into
+  `check_pipeline` and `type` with the integration-surfaces step — exit test: a builtins.rs
+  case for `type lsblk | where type == "disk"` and an adapters.rs case for the pre-flight
 - [ ] `explain` resolves a head by the registry alone, so `printf x | sort` is planned as
   `ono.data.sort` while the executor runs `/usr/bin/sort` (ADR-0028); the plan must use the
   executor's resolution — fixed with ADAPT-002, which needs it anyway (ADR-0052) — exit test:
@@ -348,6 +352,10 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] v0.3 step 5 — ADAPT-002 registry, negotiation states, identity pinning, conflict
   resolution, the probe cache of ADAPT-006, and `explain`'s `adaptation`/`argv`/`candidates`
   rows (ADR-0056) — `ono-adapter/tests/negotiation.rs`, case 073
+- [x] v0.3 step 6 — ADAPT-004/007/010 and COMPAT-LSBLK/FINDMNT/LSNS: adapted execution
+  through `ono-process`, the json decoder, adapter provenance in `inspect`, the fixture
+  harness in `spec-check`, util-linux end to end (ADR-0057) — `ono-cli/tests/adapters.rs`,
+  cases 074, 075. ADAPT-005's streaming half waits for the first line-protocol tool.
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

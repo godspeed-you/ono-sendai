@@ -45,6 +45,144 @@ pub struct Provenance {
     link: Link,
     schema: SchemaId,
     confidence: Option<f64>,
+    adapter: Option<Arc<AdapterTrace>>,
+}
+
+/// How an adapted record came to be: the external executable, the invocations, the adapter
+/// and the decoder that produced it (spec v0.3 §1.8, ADR-0057).
+///
+/// Everything a person needs to answer "which program produced this, run how, read by what,
+/// and how faithfully" — the ten questions of spec v0.3 §1.8. Exactness is recorded per field,
+/// but only for fields that are not exact, so the common case costs nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdapterTrace {
+    adapter: Arc<str>,
+    adapter_version: Arc<str>,
+    executable: Arc<std::path::Path>,
+    executable_version: Option<Arc<str>>,
+    user_invocation: Arc<str>,
+    actual_invocation: Arc<str>,
+    decoder: Arc<str>,
+    stability: Arc<str>,
+    exactness: std::collections::BTreeMap<String, String>,
+    limits: Vec<String>,
+}
+
+impl AdapterTrace {
+    /// Starts a trace for `adapter` at `adapter_version`, run as `executable`.
+    #[must_use]
+    pub fn new(adapter: &str, adapter_version: &str, executable: &std::path::Path) -> Self {
+        Self {
+            adapter: adapter.into(),
+            adapter_version: adapter_version.into(),
+            executable: Arc::from(executable),
+            executable_version: None,
+            user_invocation: "".into(),
+            actual_invocation: "".into(),
+            decoder: "".into(),
+            stability: "stable".into(),
+            exactness: std::collections::BTreeMap::new(),
+            limits: Vec::new(),
+        }
+    }
+
+    /// Records the executable's version, when it was detected.
+    #[must_use]
+    pub fn executable_version_of(mut self, version: Option<&str>) -> Self {
+        self.executable_version = version.map(Into::into);
+        self
+    }
+
+    /// Records the invocation as the user typed it and the one that actually ran.
+    #[must_use]
+    pub fn invocations(mut self, user: &str, actual: &str) -> Self {
+        self.user_invocation = user.into();
+        self.actual_invocation = actual.into();
+        self
+    }
+
+    /// Records the decoder and whether its format is stable or version-constrained.
+    #[must_use]
+    pub fn decoded_by(mut self, decoder: &str, stability: &str) -> Self {
+        self.decoder = decoder.into();
+        self.stability = stability.into();
+        self
+    }
+
+    /// Records that `field` is not exact — `normalized` or `inferred`.
+    #[must_use]
+    pub fn field_exactness(mut self, field: &str, exactness: &str) -> Self {
+        self.exactness
+            .insert(field.to_owned(), exactness.to_owned());
+        self
+    }
+
+    /// Records what the adapter could not provide.
+    #[must_use]
+    pub fn with_limits(mut self, limits: Vec<String>) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// The adapter's full id.
+    #[must_use]
+    pub fn adapter(&self) -> &str {
+        &self.adapter
+    }
+
+    /// The adapter package's version.
+    #[must_use]
+    pub fn adapter_version(&self) -> &str {
+        &self.adapter_version
+    }
+
+    /// The executable that ran.
+    #[must_use]
+    pub fn executable(&self) -> &std::path::Path {
+        &self.executable
+    }
+
+    /// The executable's version, when it was detected.
+    #[must_use]
+    pub fn executable_version(&self) -> Option<&str> {
+        self.executable_version.as_deref()
+    }
+
+    /// The invocation as the user typed it.
+    #[must_use]
+    pub fn user_invocation(&self) -> &str {
+        &self.user_invocation
+    }
+
+    /// The invocation that actually ran.
+    #[must_use]
+    pub fn actual_invocation(&self) -> &str {
+        &self.actual_invocation
+    }
+
+    /// The decoder that read the output.
+    #[must_use]
+    pub fn decoder(&self) -> &str {
+        &self.decoder
+    }
+
+    /// `stable` for a documented machine format, `version-constrained` for a human-output parser.
+    #[must_use]
+    pub fn stability(&self) -> &str {
+        &self.stability
+    }
+
+    /// The fields that are not exact, and how they are not.
+    #[must_use]
+    pub fn exactness(&self) -> &std::collections::BTreeMap<String, String> {
+        &self.exactness
+    }
+
+    /// What the adapter could not provide.
+    #[must_use]
+    pub fn limits(&self) -> &[String] {
+        &self.limits
+    }
 }
 
 impl Provenance {
@@ -58,6 +196,7 @@ impl Provenance {
             link: Link::Local,
             schema,
             confidence: None,
+            adapter: None,
         }
     }
 
@@ -92,6 +231,19 @@ impl Provenance {
     pub fn with_confidence(mut self, confidence: f64) -> Self {
         self.confidence = Some(confidence);
         self
+    }
+
+    /// Records that the value was adapted from an external command's output (spec v0.3 §1.8).
+    #[must_use]
+    pub fn adapted_by(mut self, trace: AdapterTrace) -> Self {
+        self.adapter = Some(Arc::new(trace));
+        self
+    }
+
+    /// The adapter trace, for a value that came from an external command.
+    #[must_use]
+    pub fn adapter(&self) -> Option<&AdapterTrace> {
+        self.adapter.as_deref()
     }
 
     /// The provider that produced the record, such as `linux.procfs`.
@@ -139,7 +291,7 @@ impl Provenance {
         let mut out = String::new();
         let mut line = |key: &str, value: &str| {
             // Writing into a String cannot fail; the result is discarded for that reason.
-            let _ = writeln!(out, "{key:<13}{value}");
+            let _ = writeln!(out, "{key:<19}{value}");
         };
         line("provider", &self.provider);
         line(
@@ -153,6 +305,30 @@ impl Provenance {
         line("schema", &self.schema.to_string());
         if let Some(confidence) = self.confidence {
             line("confidence", &confidence.to_string());
+        }
+        if let Some(adapter) = &self.adapter {
+            line("adapter", &adapter.adapter);
+            line("adapter_version", &adapter.adapter_version);
+            line("executable", &adapter.executable.display().to_string());
+            line(
+                "executable_version",
+                adapter.executable_version.as_deref().unwrap_or("null"),
+            );
+            line("user_invocation", &adapter.user_invocation);
+            line("actual_invocation", &adapter.actual_invocation);
+            line("decoder", &adapter.decoder);
+            line("stability", &adapter.stability);
+            if !adapter.exactness.is_empty() {
+                let listed: Vec<String> = adapter
+                    .exactness
+                    .iter()
+                    .map(|(field, how)| format!("{field}={how}"))
+                    .collect();
+                line("exactness", &listed.join(", "));
+            }
+            for limit in &adapter.limits {
+                line("limit", limit);
+            }
         }
         out
     }

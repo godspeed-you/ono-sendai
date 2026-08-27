@@ -1,0 +1,13 @@
+# v0.3 §1.4, §1.60 (ADAPT-004): at the terminal an adapted command renders as a typed table
+# with the canonical default view, `raw` keeps the tool's own table, and a redirection or a
+# byte consumer never sees the renderer.
+case: at the terminal findmnt renders as a typed table and raw findmnt as itself
+pty: true
+env: NO_COLOR=1
+columns: 120
+run: |
+  ono -c 'findmnt | where target == "/"' | grep -c 'FILESYSTEM'
+  ono -c 'raw findmnt' | grep -c 'FSTYPE'
+  ono -c 'findmnt > /tmp/redirected.out'; grep -c 'FSTYPE' /tmp/redirected.out
+exit: 0
+stdout-contains: 1

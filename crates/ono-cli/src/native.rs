@@ -12,6 +12,7 @@
 use std::io::Write;
 use std::sync::OnceLock;
 
+use ono_adapter::{AdapterPlan, Consumer, OutputDemand};
 use ono_command::{
     BoundArguments, CommandContract, CommandRegistry, CommandTable, Invocation, Outcome, Scope,
 };
@@ -60,7 +61,7 @@ enum Segment {
 /// Deciding this needs the whole list rather than one stage: a transform binds where structure
 /// reaches it, and nowhere else (ADR-0028).
 #[must_use]
-pub fn claims(session: &Session, list: &StageList) -> bool {
+pub fn claims(session: &mut Session, list: &StageList) -> bool {
     segments(session, list, 0, false).is_some_and(|segments| {
         segments
             .iter()
@@ -68,12 +69,99 @@ pub fn claims(session: &Session, list: &StageList) -> bool {
     })
 }
 
+/// Whether an all-external pipeline ends in a stage an adapter renders at the terminal.
+///
+/// Spec v0.3 §1.4: at a terminal a high-confidence adapter may produce values and let the
+/// renderer display them. That is only ever the last stage, only with stdout on a terminal and
+/// not redirected, and never for a background job (ADR-0057 point 2).
+#[must_use]
+pub fn adapts_at_terminal(session: &mut Session, list: &StageList) -> bool {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        return false;
+    }
+    let Some(stage) = list.stages.last() else {
+        return false;
+    };
+    if redirects_stdout(stage) {
+        return false;
+    }
+    negotiate_literally(session, stage, &OutputDemand::Interactive)
+        .is_some_and(|negotiation| negotiation.plan().is_some())
+}
+
+/// Whether the stage sends its stdout somewhere other than the pipe or the terminal.
+fn redirects_stdout(stage: &Stage) -> bool {
+    stage.redirections.iter().any(|redirection| {
+        matches!(redirection.fd, None | Some(1))
+            && matches!(
+                redirection.op,
+                ono_parser::RedirectOp::Write
+                    | ono_parser::RedirectOp::Append
+                    | ono_parser::RedirectOp::DupWrite
+            )
+    })
+}
+
+/// The program a stage would run through an adapter, if it is that kind of stage at all.
+///
+/// `raw` never adapts (ADR-0054); `exec:` and a bare head do; a native, function or value head
+/// is not a program.
+fn adaptable_program(session: &Session, stage: &Stage) -> Option<(String, std::path::PathBuf)> {
+    if ono_command::is_raw(stage) {
+        return None;
+    }
+    let StageHead::Command(name) = &stage.head else {
+        return None;
+    };
+    if !matches!(
+        Namespace::from_prefix(name.namespace.as_deref()),
+        Some(Namespace::Any | Namespace::External)
+    ) {
+        return None;
+    }
+    let path = crate::resolve::find_on_path(session, &name.name)?;
+    Some((name.name.clone(), path))
+}
+
+/// Negotiates a stage from its source text alone, for decisions made before anything runs.
+///
+/// Segmentation and the terminal check cannot evaluate arguments — a `$(…)` argument would run
+/// twice — so they ask with the words as written. Execution asks again with the expanded words;
+/// where the two differ, the run's answer is the one that counts.
+fn negotiate_literally(
+    session: &mut Session,
+    stage: &Stage,
+    demand: &OutputDemand,
+) -> Option<ono_adapter::Negotiation> {
+    let (name, path) = adaptable_program(session, stage)?;
+    let mut argv = vec![name];
+    argv.extend(literal_words(stage));
+    Some(session.adapters().negotiate(&path, &argv, demand))
+}
+
+/// A stage's arguments as written, where the source text is not at hand: words and options
+/// are themselves; an expression is a placeholder the matcher treats as a positional.
+fn literal_words(stage: &Stage) -> Vec<String> {
+    stage
+        .arguments
+        .iter()
+        .map(|argument| match argument {
+            ono_parser::Argument::Word(word) => word.text.clone(),
+            ono_parser::Argument::Option(option) => match &option.value {
+                Some(_) => format!("--{}=", option.name),
+                None => format!("--{}", option.name),
+            },
+            _ => "$expression".to_owned(),
+        })
+        .collect()
+}
+
 /// Splits `list` into runs of native and external stages.
 ///
 /// Returns `None` when the registry itself cannot be read, which leaves the caller on the
 /// external path it would have taken before native commands existed.
 fn segments(
-    session: &Session,
+    session: &mut Session,
     list: &StageList,
     start: usize,
     seeded: bool,
@@ -84,9 +172,15 @@ fn segments(
 
     for (index, stage) in list.stages.iter().enumerate().skip(start) {
         let native = native_contract(session, registry, stage, structured).is_some();
-        structured = native
-            && native_contract(session, registry, stage, structured)
-                .is_some_and(|contract| !produces_bytes(contract));
+        structured = if native {
+            native_contract(session, registry, stage, structured)
+                .is_some_and(|contract| !produces_bytes(contract))
+        } else {
+            // An adapted program hands structure on (spec v0.3 §1.4), so `lsblk | sort size`
+            // is the transform where `printf x | sort` is the program (ADR-0028, ADR-0057).
+            negotiate_literally(session, stage, &OutputDemand::Structured { schema: None })
+                .is_some_and(|negotiation| negotiation.plan().is_some())
+        };
 
         match segments.last_mut() {
             Some(Segment::Native(indices)) if native => indices.push(index),
@@ -394,6 +488,73 @@ fn run_from(
                     // representation. Text and bytes already are one.
                     carried = Some(seed_bytes(values)?);
                 }
+                let demand = external_demand(
+                    session,
+                    registry,
+                    list,
+                    indices,
+                    segments.get(position + 1),
+                    last,
+                );
+                if let Some((plan, argv, demand)) =
+                    negotiate_stage(session, list, indices, source, demand)?
+                {
+                    let (bytes, external_status) = crate::eval::run_adapted_segment(
+                        session,
+                        list,
+                        indices,
+                        source,
+                        carried.take(),
+                        &plan,
+                    )?;
+                    status = external_status;
+                    let stage = &list.stages[*indices.last().unwrap_or(&0)];
+                    // A child that failed has failed, whatever it wrote (spec v0.3 §1.20,
+                    // ADR-0057 point 3): its output is not decoded, its status stands.
+                    if external_status != ExitStatus::SUCCESS {
+                        let program = plan
+                            .executable()
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        return Err(Flow::FailedWith(
+                            ErrorValue::new(
+                                ErrorCode::ExternalExitNonzero,
+                                format!("{program} exited with status {}", external_status.code()),
+                            )
+                            .with_help(format!(
+                                "its stderr above says why; `raw {}` runs it as typed",
+                                argv.join(" ")
+                            )),
+                            external_status,
+                        ));
+                    }
+                    match decode_adapted(session, &plan, &argv, &bytes) {
+                        Ok(values) => {
+                            if last {
+                                write_result(session, stage, &values, false, source)?;
+                            } else {
+                                seed = Some(values);
+                            }
+                        }
+                        Err(error) => {
+                            // At the terminal a decode failure falls back to the bytes the
+                            // tool already wrote, never to a second run (spec v0.3 §1.57,
+                            // ADR-0057 point 7). A structured consumer gets the error.
+                            if demand == OutputDemand::Interactive
+                                && plan.adapter().fallback() == ono_adapter::Fallback::Raw
+                            {
+                                report_fallback(&plan, &error);
+                                let mut out = std::io::stdout().lock();
+                                out.write_all(&bytes).map_err(write_failed)?;
+                                out.flush().map_err(write_failed)?;
+                            } else {
+                                return Err(Flow::Failed(error));
+                            }
+                        }
+                    }
+                    continue;
+                }
                 let (bytes, external_status) = crate::eval::run_external_segment(
                     session, list, indices, source, carried, last,
                 )?;
@@ -417,6 +578,110 @@ fn run_from(
         }
     }
     Ok(status)
+}
+
+/// What the last stage of an external segment is asked to produce (ADR-0052, ADR-0057 point 2).
+///
+/// `None` when nothing downstream could take structure: the stage then runs as it always has,
+/// without even asking the registry.
+fn external_demand(
+    session: &Session,
+    registry: &'static CommandRegistry,
+    list: &StageList,
+    indices: &[usize],
+    next: Option<&Segment>,
+    last: bool,
+) -> Option<OutputDemand> {
+    let stage = &list.stages[*indices.last()?];
+    if redirects_stdout(stage) {
+        return None;
+    }
+    match next {
+        Some(Segment::Native(following)) => {
+            let consumer = &list.stages[*following.first()?];
+            let contract = native_contract(session, registry, consumer, true)?;
+            let demand = OutputDemand::for_consumer(Consumer::Native {
+                input: contract.input().text(),
+            });
+            matches!(demand, OutputDemand::Structured { .. }).then_some(demand)
+        }
+        Some(Segment::External(_)) => None,
+        None if last && std::io::IsTerminal::is_terminal(&std::io::stdout()) => {
+            Some(OutputDemand::Interactive)
+        }
+        None => None,
+    }
+}
+
+/// Asks the registry about the segment's last stage with its arguments expanded.
+///
+/// # Errors
+///
+/// A refusal under a demand the program cannot satisfy raw — `adapter.unsupported_invocation`,
+/// `adapter.version_incompatible`, `adapter.executable_mismatch`, `adapter.conflict` — with the
+/// payload of spec v0.3 §1.65.
+fn negotiate_stage(
+    session: &mut Session,
+    list: &StageList,
+    indices: &[usize],
+    source: &str,
+    demand: Option<OutputDemand>,
+) -> Eval<Option<(AdapterPlan, Vec<String>, OutputDemand)>> {
+    let Some(demand) = demand else {
+        return Ok(None);
+    };
+    let stage = &list.stages[*indices.last().unwrap_or(&0)];
+    let Some((name, path)) = adaptable_program(session, stage) else {
+        return Ok(None);
+    };
+    let mut argv = vec![name];
+    argv.extend(
+        crate::eval::stage_arguments(session, stage, source)?
+            .into_iter()
+            .map(|word| word.to_string_lossy().into_owned()),
+    );
+    let negotiation = session.adapters().negotiate(&path, &argv, &demand);
+    if let Some(error) = negotiation.refusal(&demand, &path, &argv) {
+        return Err(Flow::Failed(error));
+    }
+    Ok(negotiation.plan().cloned().map(|plan| (plan, argv, demand)))
+}
+
+/// Decodes what an adapted child wrote, with the provenance of spec v0.3 §1.8.
+fn decode_adapted(
+    session: &Session,
+    plan: &AdapterPlan,
+    argv: &[String],
+    bytes: &[u8],
+) -> Result<Vec<Value>, ErrorValue> {
+    let trace = ono_adapter::Trace {
+        executable: plan.executable().to_path_buf(),
+        version: plan.version().cloned(),
+        user_invocation: argv.to_vec(),
+        actual_invocation: plan.argv().to_vec(),
+        host: session.link_host(),
+    };
+    ono_adapter::decode(plan.adapter(), bytes, &trace, ono_value::builtin_schemas())
+}
+
+/// The diagnostic of spec v0.3 §1.57 for a decode failure at the terminal.
+fn report_fallback(plan: &AdapterPlan, error: &ErrorValue) {
+    let mut err = std::io::stderr().lock();
+    let _ = writeln!(
+        err,
+        "{}",
+        ono_render::sanitise(&format!(
+            "adapter {} failed to decode {} output",
+            plan.adapter().full_id(),
+            plan.executable()
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        ))
+    );
+    let _ = writeln!(err, "{}", ono_render::sanitise(error.message()));
+    let _ = writeln!(err);
+    let _ = writeln!(err, "falling back to raw output");
 }
 
 /// The bytes a seed of values hands a child process: text and bytes pass, objects are refused.

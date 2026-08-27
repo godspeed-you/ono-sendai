@@ -282,16 +282,23 @@ release line again.
       (`should_resolve_two_adapters_claiming_one_invocation_the_same_way_every_time`,
       `should_report_a_conflict_when_one_adapter_is_installed_twice`), `ono-cli/tests/builtins.rs`,
       case `073`.
-- [ ] **Negotiation states are explicit.** An adapter answers `NotApplicable`, `RawPreferred`,
+- [x] **Negotiation states are explicit.** An adapter answers `NotApplicable`, `RawPreferred`,
       `StructuredSupported`, `StructuredSupportedWithLimits`, `UnsupportedInvocation` or
-      `IncompatibleVersion` (v0.3 §1.6); unsupported invocations and incompatible versions
-      demonstrably fall back to raw or fail structured with the matching `adapter.*` error, and
-      limits are visible in provenance (§1.16). Exit test: one case per state.
-- [ ] **ADAPT-004 — the process subsystem executes the plan.** Adapters compile to an
-      `ExternalAdapterPlan` (v0.3 §1.7) and the existing spawn/PTY/signal/job machinery runs it —
-      adapters never spawn; exit status and stderr keep Unix semantics (§1.20): a failing child
-      never becomes success because its output decoded. Exit test: a case where the tool exits
-      non-zero with decodable stdout.
+      `IncompatibleVersion` (v0.3 §1.6, ADR-0056); unsupported invocations and incompatible
+      versions fall back to raw under an interactive demand and fail a structured pipeline with
+      the matching `adapter.*` error, and limits are visible in `explain` and provenance (§1.16)
+      — `ono-adapter/tests/negotiation.rs` (one case per state and `describe` in the words of
+      §1.57), `ono-cli/tests/adapters.rs` (`should_fail_a_structured_pipeline_on_an_undeclared_flag`
+      → E0903 with the raw recovery), cases `073` and `074`.
+- [x] **ADAPT-004 — the process subsystem executes the plan.** Adapters compile to an
+      `AdapterPlan` (v0.3 §1.7) and `ono-process` runs it as the pipeline it would have been with
+      the last command replaced — adapters never spawn; exit status and stderr keep Unix
+      semantics (§1.20): a failing child never becomes success because its output decoded —
+      ADR-0057; `ono-cli/tests/adapters.rs`
+      (`should_never_turn_a_failing_child_into_success`: valid JSON, exit 2 → E0501 and nothing
+      shown; `should_render_an_adapted_command_as_a_table_at_the_terminal`;
+      `should_fall_back_to_the_captured_bytes_at_the_terminal_when_decoding_fails`: the tool
+      ran exactly once), cases `074` and `075`.
 - [ ] **ADAPT-005 — streaming decoders that cannot crash the shell.** Decoded values flow
       while the child runs; malformed, truncated, non-UTF-8 and hostile output produce
       `adapter.decode_failed` (with the raw bytes retained and inspectable), never a panic —
@@ -304,11 +311,13 @@ release line again.
       second after the binary changes; `should_refuse_when_the_version_cannot_be_detected`;
       `should_refuse_an_executable_outside_the_supported_versions`), and case `073`'s shadowed
       `lsblk` that answers no version.
-- [ ] **ADAPT-007 — provenance on every adapted value.** `inspect … --provenance` answers all
-      ten questions of v0.3 §1.8 (executable, version, user and actual invocation, adapter
-      id/version, decoder, timestamp, host, per-field exactness, source stability) and
-      partial/limited semantics are explicit (§2.2). Exit test: a provenance case asserting each
-      field on an adapted record.
+- [x] **ADAPT-007 — provenance on every adapted value.** `inspect` answers all ten questions
+      of v0.3 §1.8 on an adapted record (executable, version, user and actual invocation, adapter
+      id/version, decoder, timestamp, host via the link, per-field exactness, source stability)
+      and limits are explicit (§2.2) — `ono_value::AdapterTrace` (ADR-0057 point 6);
+      `ono-adapter/tests/decode.rs` (`should_attach_adapter_provenance_to_every_record`, each
+      field asserted), `ono-cli/tests/adapters.rs`
+      (`should_expose_adapter_provenance_through_inspect`), case `074`.
 - [x] **Executable identity is pinned.** An adapter matches only executables whose resolved
       identity satisfies its contract (names/paths, version range — v0.3 §1.14, §1.44, ADR-0056
       point 2) and the plan pins the resolved path; a shadowing binary of the same name is
@@ -323,11 +332,13 @@ release line again.
 
 #### 4.6.2 Contracts, errors and KUANG/11 (v0.3 §2.2, §2.3, ADAPT-008 … ADAPT-010)
 
-- [ ] **`adapter.*` error family.** The eleven codes of v0.3 §1.65 exist in
-      `docs/spec/errors.yaml` as a new block mapped onto the spec §43 kinds (ADR-0006), and each
-      emitted error carries adapter id/version, executable identity/version, the original
-      invocation, whether raw fallback is safe, and a recovery. Exit test: `errors.rs` coverage
-      plus a rendered `adapter.unsupported_invocation`.
+- [x] **`adapter.*` error family.** The eleven codes of v0.3 §1.65 exist in
+      `docs/spec/errors.yaml` as the E09xx block mapped onto the spec §43 kinds (ADR-0053), and
+      each emitted error carries adapter id/version, executable identity/version, the original
+      invocation, whether raw fallback is safe, and a recovery under fixed metadata keys —
+      `ono-core/tests/error_taxonomy.rs`, `ono-adapter/tests/decode.rs`
+      (`should_fail_structurally_on_truncated_output_and_keep_the_bytes` asserts the payload),
+      `ono-cli/tests/adapters.rs` (a rendered E0903 naming `raw lsblk -p`), case `074`.
 - [x] **ADAPT-009 — declarative manifest schema.** `docs/spec/adapters/schema.yaml` is versioned
       (`ono-adapter-pack/1`) and machine-validated by `ono_adapter::validate`, the code the shell
       loads a pack with; every first-party contract lives under
@@ -337,15 +348,20 @@ release line again.
       first-party id outside `org.ono.compat.*`, a tier C adapter without a builtin decoder, a
       probe pattern without a capture, or a pack file the binary does not bundle — ADR-0055;
       `ono-adapter/tests/contracts.rs` (eleven cases) and `xtask/tests/contracts.rs`.
-- [ ] **Canonical schemas are reused.** Adapted values conform to the existing `ono.*/1`
-      schemas wherever an equivalent exists; adapter-specific schemas are added only where none
-      does and are registered like every other schema (v0.3 §1.11, §2.2). Exit test: the
-      conformance harness checks every contract's `schema:` against the registry.
-- [ ] **ADAPT-010 — fixture conformance harness.** Generated from the contracts: fixture bytes
-      → decoder → canonical value → schema conformance → provenance assertions, and exact argv
-      for every rewrite (v0.3 §1.47); every first-party adapter ships fixtures for each
-      supported output family, including empty, error, permission-limited, unknown-field and
-      malformed cases. Exit test: the harness itself, one generated case per fixture.
+- [x] **Canonical schemas are reused.** Adapted values conform to the existing `ono.*/1`
+      schemas wherever an equivalent exists (`findmnt` → `ono.mount/1`); adapter-specific
+      schemas are added only where none does (`ono.block-device/1`, `ono.namespace/1`) and are
+      registered like every other schema (v0.3 §1.11, §2.2) — `ono_adapter::validate` refuses an
+      unregistered `schema:`, every decoded record passes the schema's own `validate`, and
+      unmapped tool fields land in the extension map — `ono-adapter/tests/contracts.rs`,
+      `decode.rs` (`should_keep_fields_the_map_does_not_name_as_extensions`), `conformance.rs`.
+- [x] **ADAPT-010 — fixture conformance harness.** `ono_adapter::conformance::check_pack`
+      runs fixture bytes → decoder → canonical value → schema conformance → provenance for every
+      fixture of every first-party adapter, in the crate's tests and in `spec-check`, and
+      `negotiation.rs` asserts the exact argv of every rewrite (v0.3 §1.47); every adapter ships
+      fixtures for its output families (basic, empty, truncated, not-JSON, newer fields, wrong
+      type) — `ono-adapter/tests/conformance.rs` (including a deliberately wrong sidecar that
+      must be reported), `xtask/src/contracts.rs`.
 - [ ] **ADAPT-008 — capability mapping.** `process.exec` with `executables` and
       `argv_policy: declared-invocations-only` exists in `docs/spec/capabilities.yaml` and
       `docs/spec/kuang/`, `roles: [adapter]` and `adapters:` are part of the manifest contract,
@@ -367,8 +383,12 @@ Each tool box requires, in one increment: a first-party contract, fixtures, the 
 the raw pipeline acceptance-tested in the container against the real executable, an
 unsupported-flag case that falls back safely, and `explain` showing the plan (v0.3 §1.68).
 
-- [ ] **COMPAT-LSBLK / FINDMNT / LSNS** — util-linux JSON: `lsblk` → block-device records,
-      `findmnt` → `ono.mount/1`, `lsns` → namespace records (v0.3 §1.35).
+- [x] **COMPAT-LSBLK / FINDMNT / LSNS** — util-linux JSON: `lsblk` → `ono.block-device/1`,
+      `findmnt` → `ono.mount/1`, `lsns` → `ono.namespace/1` (v0.3 §1.35) —
+      `docs/spec/adapters/first-party/util-linux.yaml` with fixtures, `ono-cli/tests/adapters.rs`
+      (the real tools, structured and raw, the undeclared flag), cases `073` (the plan), `074`
+      (structured, provenance, raw byte-identical to bash, `--poll` refused) and `075` (the
+      typed table at a PTY, `raw` keeps findmnt's own, a redirection keeps bytes).
 - [ ] **COMPAT-IP-001…003 + neigh** — `ip address` → `ono.interface-address/1`, `ip link` →
       `ono.interface/1`, `ip route` → `ono.route/1`, `ip neigh` → `ono.neighbor/1`, all via
       `-j` (v0.3 §1.33).

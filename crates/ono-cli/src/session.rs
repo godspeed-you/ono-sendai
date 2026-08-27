@@ -350,6 +350,16 @@ impl Session {
             .unwrap_or_else(|| unreachable!("just constructed"))
     }
 
+    /// The host of the innermost link frame, when the session is inside one (spec §21.2).
+    #[must_use]
+    pub fn link_host(&self) -> Option<String> {
+        self.frames
+            .iter()
+            .rev()
+            .find(|frame| matches!(frame.frame.kind(), ono_command::FrameKind::Link))
+            .map(|frame| frame.frame.target().to_owned())
+    }
+
     /// Both registries a plan consults, borrowed together.
     pub fn registries(&mut self) -> (&ProviderRegistry, &ono_adapter::Registry) {
         let _ = self.providers();

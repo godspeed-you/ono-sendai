@@ -464,7 +464,11 @@ fn run_stage_list(
 
     // A pipeline with a native command in it runs through the object pipeline of spec §5, which
     // threads bytes across the boundary of spec §12.3 where a child process sits on one side.
-    if crate::native::claims(session, list) {
+    // So does an all-external pipeline whose last stage an adapter renders at the terminal
+    // (spec v0.3 §1.4), which is what makes `lsblk` typed at the prompt a table.
+    if crate::native::claims(session, list)
+        || (!background && crate::native::adapts_at_terminal(session, list))
+    {
         if background {
             // Spec §18.4: a backgrounded native pipeline is a job — listed, addressable,
             // stoppable — never a hidden thread (ADR-0024).
@@ -568,6 +572,90 @@ pub fn run_external_segment(
             .unwrap_or_default()
     });
     Ok((bytes, outcome.status()))
+}
+
+/// Runs an external segment whose last stage is adapted: the same pipeline, with the last
+/// command replaced by the adapter's plan and its stdout captured for decoding (ADR-0057).
+///
+/// # Errors
+///
+/// As [`run_external_segment`]: the child's own failure, with its status (spec v0.3 §1.20).
+pub fn run_adapted_segment(
+    session: &mut Session,
+    list: &StageList,
+    indices: &[usize],
+    source: &str,
+    input: Option<Vec<u8>>,
+    plan: &ono_adapter::AdapterPlan,
+) -> Eval<(Vec<u8>, ExitStatus)> {
+    if session.mode() == Mode::Config {
+        return Err(Flow::Failed(config_refusal("this command")));
+    }
+
+    let mut built = ono_process::Pipeline::new();
+    for (position, index) in indices.iter().enumerate() {
+        let stage = &list.stages[*index];
+        let adapted = position + 1 == indices.len();
+        let mut command = if adapted {
+            adapted_command(session, stage, plan, source)?
+        } else {
+            build_command(session, stage, source)?
+        };
+        if position == 0 {
+            if let Some(bytes) = input.clone() {
+                command = command.stdin(ono_process::Input::Bytes(bytes));
+            } else if adapted && plan.stdin() == ono_adapter::StdinMode::Null {
+                command = command.stdin(ono_process::Input::Null);
+            }
+        }
+        if adapted {
+            command = command.stdout(ono_process::Output::Capture);
+        }
+        built = built.stage(command);
+    }
+
+    let outcome = session
+        .executor()
+        .run_foreground(&built)
+        .map_err(process_error)?;
+    if let ono_process::ForegroundOutcome::Completed(completed) = &outcome
+        && let Some(failure) = completed.failure()
+    {
+        return Err(Flow::FailedWith(
+            ErrorValue::new(failure.code(), failure.message().to_owned()),
+            outcome.status(),
+        ));
+    }
+    let bytes = outcome
+        .completed()
+        .and_then(|completed| completed.stages().last())
+        .map(|stage| stage.stdout.clone())
+        .unwrap_or_default();
+    Ok((bytes, outcome.status()))
+}
+
+/// The command an adapter's plan describes: the pinned executable, the plan's argv, the plan's
+/// environment on top of the session's, and the stage's own redirections (spec v0.3 §1.7).
+fn adapted_command(
+    session: &mut Session,
+    stage: &Stage,
+    plan: &ono_adapter::AdapterPlan,
+    source: &str,
+) -> Eval<Command> {
+    let mut command = Command::new(plan.executable().as_os_str())
+        .args(plan.argv().iter().skip(1).map(OsString::from))
+        .current_dir(session.cwd())
+        .env_clear();
+    for (name, value) in session.env() {
+        command = command.env(name, value);
+    }
+    for (name, value) in plan.env() {
+        command = command.env(OsString::from(name), OsString::from(value));
+    }
+    for redirection in &stage.redirections {
+        command = command.redirect(build_redirect(session, redirection, source)?);
+    }
+    Ok(command)
 }
 
 /// Opens the file a stage's redirections send its output to, if any.

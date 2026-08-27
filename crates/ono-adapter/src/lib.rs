@@ -31,3 +31,8 @@ pub use version::{Version, VersionRange};
 mod registry;
 
 pub use registry::{AdapterPlan, Negotiation, Prober, Registry};
+
+pub mod conformance;
+mod decode;
+
+pub use decode::{Trace, decode, exactness_name, field_types};

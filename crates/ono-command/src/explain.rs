@@ -596,7 +596,8 @@ fn plan_adaptations(
 /// The stage's arguments as the words the program would see, as far as the source can say
 /// without evaluating anything: a word is itself, an option is its spelling, a value is its
 /// source text.
-fn literal_arguments(stage: &Stage, source: &str) -> Vec<String> {
+#[must_use]
+pub fn literal_arguments(stage: &Stage, source: &str) -> Vec<String> {
     stage
         .arguments
         .iter()
