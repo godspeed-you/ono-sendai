@@ -768,7 +768,9 @@ impl Provider for ProcessProvider {
     }
 
     fn targets(&self) -> &[&str] {
-        &["process"]
+        // `signal` is the target of `send signal`, whose objects are the processes that arrive
+        // through the pipeline (ADR-0092 §2); nothing enumerates it.
+        &["process", "signal"]
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
@@ -905,7 +907,7 @@ impl Provider for ProcessProvider {
 
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let operation = action.operation();
-        if !matches!(operation, "signal" | "kill" | "stop" | "set") {
+        if !matches!(operation, "signal" | "send" | "kill" | "stop" | "set") {
             return Err(ErrorValue::new(
                 ErrorCode::ProviderUnsupported,
                 format!("{PROVIDER_ID} has no operation `{operation}`"),

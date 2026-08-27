@@ -549,7 +549,6 @@ fn should_report_a_denied_priority_raise_as_a_failed_result() {
 // --- send signal -----------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_deliver_a_signal_to_the_process_arriving_through_the_pipeline() {
     // process.yaml: `get process 4419 | send signal SIGHUP` — the signal is the selector, the
     // process comes through the pipeline.
