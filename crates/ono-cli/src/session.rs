@@ -54,6 +54,12 @@ pub enum Definition {
 pub struct Session {
     cwd: PathBuf,
     env: BTreeMap<OsString, OsString>,
+    /// The environment as the process that started the shell handed it over — what tells an
+    /// `inherited` binding from one the session bound (`ono.env-var/1`'s `source`).
+    inherited_env: BTreeMap<OsString, OsString>,
+    /// The `env` provider registered in `providers()`, handed the session's bindings before
+    /// each pipeline runs so `get env` sees what `set env` bound.
+    env_provider: std::sync::Arc<ono_provider_linux::EnvProvider>,
     scopes: Vec<Scope>,
     status: ExitStatus,
     executor: Executor,
@@ -237,7 +243,15 @@ impl Session {
     #[must_use]
     pub fn new(interactive: bool) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-        let env = std::env::vars_os().collect();
+        let env: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
+        let env_provider = std::sync::Arc::new(ono_provider_linux::EnvProvider::new(
+            env.iter().map(|(name, value)| {
+                ono_provider_linux::EnvBinding::inherited(
+                    name.to_string_lossy(),
+                    value.to_string_lossy(),
+                )
+            }),
+        ));
         // The executor attaches to the controlling terminal whenever there is one, whether or not
         // the session is interactive. `ono -c 'less file'` typed at a terminal must hand that
         // terminal to `less`, exactly as `bash -c` does — a child that is never given the
@@ -247,7 +261,9 @@ impl Session {
         let executor = Executor::new().unwrap_or_else(|_| Executor::detached());
         Self {
             cwd,
+            inherited_env: env.clone(),
             env,
+            env_provider,
             scopes: vec![Scope::new()],
             status: ExitStatus::SUCCESS,
             executor,
@@ -674,6 +690,7 @@ impl Session {
         self.publish_jobs();
         self.publish_links();
         self.publish_host();
+        self.publish_env();
         // Spec §14.4: the active link frame decides where provider calls run. The innermost
         // link frame wins; without one, the local registry answers.
         let remote = self.frames.iter().rev().find_map(|frame| {
@@ -781,6 +798,7 @@ impl Session {
             let mut registry = crate::providers::registry_with_tables(
                 environment,
                 std::sync::Arc::clone(&self.tables),
+                std::sync::Arc::clone(&self.env_provider),
             );
             if let Some(runtime) = self.runtime() {
                 runtime.block_on(crate::providers::register_async(&mut registry));
@@ -790,6 +808,22 @@ impl Session {
         self.providers
             .as_ref()
             .unwrap_or_else(|| unreachable!("just constructed"))
+    }
+
+    /// Hands the `env` provider what the session holds now, so `get env` answers for this
+    /// session rather than for the environment the shell was started with.
+    pub fn publish_env(&self) {
+        self.env_provider
+            .publish(self.env.iter().map(|(name, value)| {
+                let inherited = self.inherited_env.get(name) == Some(value);
+                let name = name.to_string_lossy();
+                let value = value.to_string_lossy();
+                if inherited {
+                    ono_provider_linux::EnvBinding::inherited(name, value)
+                } else {
+                    ono_provider_linux::EnvBinding::shell(name, value, true)
+                }
+            }));
     }
 
     /// The environment pairs the presentation choice consults (spec §4.3, §4.6).

@@ -364,3 +364,33 @@ fn should_keep_set_env_and_remove_env_in_the_shell_itself() {
         "`set env` binds and `remove env` withdraws in the running shell"
     );
 }
+
+#[test]
+fn should_answer_get_env_with_a_variable_set_env_bound_in_the_same_session() {
+    // `get env` describes the session's environment, so what `set env` just bound is in it —
+    // exactly as `$NAME` and a child's `printenv` already see it.
+    let run =
+        ono("set env LIVE_PROBE = live; get env LIVE_PROBE | select name value source | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        r#"[{"name":"LIVE_PROBE","source":"shell","value":"live"}]"#,
+        "ono.env-var/1: the variable bound this session is listed, with its source, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_not_list_a_variable_remove_env_withdrew_in_the_same_session() {
+    let run = Shell::new()
+        .env("STALE_PROBE", "inherited")
+        .args(["-c", "remove env STALE_PROBE; get env STALE_PROBE | count"])
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "VALUE\n0",
+        "a withdrawn variable is no longer in the session's environment, got {:?}",
+        run.stdout()
+    );
+}

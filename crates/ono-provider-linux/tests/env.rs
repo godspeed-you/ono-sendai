@@ -124,8 +124,8 @@ async fn should_restrict_to_the_exported_bindings_when_asked() {
 #[tokio::test]
 async fn should_answer_for_the_session_it_was_given_rather_than_for_the_process_environment() {
     let provider = provider();
-    let bound: Vec<&str> = provider
-        .bindings()
+    let bindings = provider.bindings();
+    let bound: Vec<&str> = bindings
         .iter()
         .map(|binding| binding.name.as_str())
         .collect();

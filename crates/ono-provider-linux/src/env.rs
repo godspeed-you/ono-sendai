@@ -3,9 +3,11 @@
 //! The session owns the environment — `let`, `set env` and the inherited block all live in the
 //! evaluator's scopes — so this provider is *given* the bindings rather than reading the shell
 //! process's own. That is what lets `get env` answer for the scope the user is in rather than
-//! for whatever `execve` happened to hand the binary.
+//! for whatever `execve` happened to hand the binary. The session publishes its current
+//! bindings before each pipeline runs ([`EnvProvider::publish`]), so what `set env` bound a
+//! statement ago is what `get env` lists now.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
@@ -91,7 +93,7 @@ impl EnvBinding {
 /// ```
 #[derive(Debug, Default)]
 pub struct EnvProvider {
-    bindings: Vec<EnvBinding>,
+    bindings: Mutex<Vec<EnvBinding>>,
 }
 
 impl EnvProvider {
@@ -101,15 +103,25 @@ impl EnvProvider {
     /// determinism spec §50 requires of redirected output.
     #[must_use]
     pub fn new(bindings: impl IntoIterator<Item = EnvBinding>) -> Self {
-        let mut bindings: Vec<EnvBinding> = bindings.into_iter().collect();
-        bindings.sort_by(|left, right| left.name.cmp(&right.name));
-        Self { bindings }
+        let provider = Self::default();
+        provider.publish(bindings);
+        provider
     }
 
-    /// The bindings the provider answers with.
+    /// Replaces the bindings with what the session holds now.
+    pub fn publish(&self, bindings: impl IntoIterator<Item = EnvBinding>) {
+        let mut bindings: Vec<EnvBinding> = bindings.into_iter().collect();
+        bindings.sort_by(|left, right| left.name.cmp(&right.name));
+        *self.bindings.lock().unwrap_or_else(PoisonError::into_inner) = bindings;
+    }
+
+    /// The bindings the provider answers with, in name order.
     #[must_use]
-    pub fn bindings(&self) -> &[EnvBinding] {
-        &self.bindings
+    pub fn bindings(&self) -> Vec<EnvBinding> {
+        self.bindings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn record(binding: &EnvBinding, schema: &Arc<Schema>) -> Result<RecordValue, ErrorValue> {
@@ -135,12 +147,11 @@ impl EnvProvider {
         let exported = query
             .option_value("exported")
             .and_then(|value| value.as_bool().ok());
-        self.bindings
-            .iter()
+        self.bindings()
+            .into_iter()
             .filter(|binding| wanted.is_none_or(|name| binding.name == name))
             .filter(|binding| exported.is_none_or(|wanted| binding.exported == wanted))
             .take(query.max().unwrap_or(usize::MAX))
-            .cloned()
             .collect()
     }
 }
@@ -200,8 +211,8 @@ impl Provider for EnvProvider {
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
         let schema = schemas::require(&schemas::env_var_id())?;
         let mut found = Vec::new();
-        for binding in &self.bindings {
-            let record = Self::record(binding, &schema)?;
+        for binding in self.bindings() {
+            let record = Self::record(&binding, &schema)?;
             if selector.matches(&record)
                 && let Some(reference) = ObjectRef::of(&record)
             {

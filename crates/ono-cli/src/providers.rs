@@ -14,15 +14,23 @@ use ono_provider_api::ProviderRegistry;
 /// KUANG/11 package will later extend a target without displacing what is already there
 /// (spec §31.23).
 pub fn registry(environment: impl IntoIterator<Item = (String, String)>) -> ProviderRegistry {
-    registry_with_tables(environment, Arc::default())
+    let environment: Vec<(String, String)> = environment.into_iter().collect();
+    let env = Arc::new(ono_provider_linux::EnvProvider::new(
+        environment
+            .iter()
+            .map(|(name, value)| ono_provider_linux::EnvBinding::inherited(name, value)),
+    ));
+    registry_with_tables(environment, Arc::default(), env)
 }
 
 /// The same registry, with the shell's own tables (`ono.shell`) answering from `tables` — the
 /// job and link tables the session publishes before each pipeline runs (spec §18.4, §21;
-/// ADR-0090, ADR-0103) and the host sources the environment points at.
+/// ADR-0090, ADR-0103), the host sources the environment points at, and `env` answering `get env`
+/// from the bindings the session publishes to it.
 pub fn registry_with_tables(
     environment: impl IntoIterator<Item = (String, String)>,
     tables: Arc<std::sync::Mutex<crate::session_provider::SessionTables>>,
+    env: Arc<ono_provider_linux::EnvProvider>,
 ) -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
     let environment: Vec<(String, String)> = environment.into_iter().collect();
@@ -33,12 +41,7 @@ pub fn registry_with_tables(
             .map(|(name, value)| (name.as_str(), value.as_str())),
     );
 
-    ono_provider_linux::register(
-        &mut registry,
-        environment
-            .iter()
-            .map(|(name, value)| ono_provider_linux::EnvBinding::inherited(name, value)),
-    );
+    ono_provider_linux::register_with_env(&mut registry, env);
     // The container runtime is found the way `docker` and `podman` find it: through
     // DOCKER_HOST / CONTAINER_HOST, or the well-known sockets (ADR-0112).
     registry.register(Arc::new(

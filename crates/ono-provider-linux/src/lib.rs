@@ -84,10 +84,16 @@ pub fn register(
     registry: &mut ProviderRegistry,
     environment: impl IntoIterator<Item = EnvBinding>,
 ) {
+    register_with_env(registry, Arc::new(EnvProvider::new(environment)));
+}
+
+/// The same providers, with an `env` provider the caller keeps a handle on — so the session can
+/// [`EnvProvider::publish`] its bindings as they change.
+pub fn register_with_env(registry: &mut ProviderRegistry, env: Arc<EnvProvider>) {
     registry.register(Arc::new(ProcessProvider::new()));
     registry.register(Arc::new(FileProvider::new()));
     registry.register(Arc::new(IdentityProvider::new()));
-    registry.register(Arc::new(EnvProvider::new(environment)));
+    registry.register(env);
     registry.register(Arc::new(StorageProvider::new()));
     registry.register(Arc::new(DeviceProvider::new()));
     registry.register(Arc::new(PackageProvider::new()));
