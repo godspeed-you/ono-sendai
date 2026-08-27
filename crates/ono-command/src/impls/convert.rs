@@ -301,6 +301,20 @@ fn humanise(value: &Value) -> Value {
             Value::string(renderer.cell(value).text())
         }
         Value::List(items) => Value::list(items.iter().map(humanise)),
+        // A record's fields are where the byte sizes and durations actually live; the display
+        // forms replace them in a plain map of the same fields, declared ones first, exactly
+        // as the record would have been written (spec §33.5).
+        Value::Record(record) => {
+            let mut humanised = ono_value::MapValue::new();
+            for field in record.schema().fields() {
+                let value = record.get(field.name()).cloned().unwrap_or(Value::Null);
+                humanised.insert(field.name().into(), humanise(&value));
+            }
+            for (key, item) in record.extra().iter() {
+                humanised.insert(key.into(), humanise(item));
+            }
+            Value::Map(Arc::new(humanised))
+        }
         Value::Map(map) => {
             let mut humanised = ono_value::MapValue::new();
             for (key, item) in map.iter() {
