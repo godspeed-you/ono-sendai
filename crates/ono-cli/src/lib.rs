@@ -20,6 +20,7 @@ pub mod meta;
 pub mod native;
 pub mod plugins;
 pub mod providers;
+pub mod remote;
 pub mod repl;
 pub mod report;
 pub mod resolve;

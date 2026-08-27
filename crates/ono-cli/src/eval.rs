@@ -852,6 +852,20 @@ fn run_stage_list(
         return crate::native::run_seeded(session, list, source, values);
     }
 
+    // The link definitions of spec §21 are the session's too (ADR-0104): `add`, `set`, `rename`,
+    // `remove` and `detach link` change the link table and the frame stack, and their
+    // ActionResult seeds whatever follows.
+    if !background
+        && let Some(stage) = list.stages.first()
+        && let Some(request) = crate::remote::claims(stage)
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        let values = crate::remote::answer(session, stage, source, request)?;
+        return crate::native::run_seeded(session, list, source, values);
+    }
+
     // A single builtin stage runs in the shell itself: `cd` in a child moves a directory nobody
     // is standing in.
     if list.stages.len() == 1

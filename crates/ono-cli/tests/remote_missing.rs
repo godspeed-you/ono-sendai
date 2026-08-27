@@ -506,7 +506,6 @@ fn should_begin_a_host_watch_with_a_snapshot() {
 // --- link definitions: add, set, rename, remove, detach ---------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_record_a_link_definition_without_establishing_it() {
     // remote.yaml: "Record a link definition without establishing it" — nothing is spawned, so
     // the record exists and is visibly not connected.
@@ -531,7 +530,6 @@ fn should_record_a_link_definition_without_establishing_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_show_which_host_a_link_definition_points_at() {
     // remote.yaml `add link --host`: the definition points at a host that may differ from its
     // name (`add link prod-db --host 10.4.2.11`), and `get link` must not hide where it goes.
@@ -545,7 +543,6 @@ fn should_show_which_host_a_link_definition_points_at() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_change_a_link_definition_when_set() {
     let run = ono("add link devbox --host devbox.example --transport ssh; \
          set link devbox --transport local; \
@@ -560,7 +557,6 @@ fn should_change_a_link_definition_when_set() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_the_change_when_a_link_definition_is_set() {
     let run = ono("add link devbox --host devbox.example --transport ssh; \
          set link devbox --transport local | to json");
@@ -579,7 +575,6 @@ fn should_report_the_change_when_a_link_definition_is_set() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_rename_a_link_definition() {
     let run = ono("add link devbox --host devbox.example --transport ssh; \
          rename link devbox prodbox; \
@@ -594,7 +589,6 @@ fn should_rename_a_link_definition() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_forget_a_link_definition_when_removed() {
     let run = ono("add link devbox --host devbox.example --transport ssh; \
          remove link devbox; \
@@ -608,7 +602,6 @@ fn should_forget_a_link_definition_when_removed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_the_teardown_when_an_established_link_is_removed() {
     // remote.yaml: "Remove a link definition, tearing the link down if it is established."
     let run = ono(&format!("{LINK}; remove link testbox | to json"));
@@ -627,7 +620,6 @@ fn should_report_the_teardown_when_an_established_link_is_removed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_enter_a_link_that_was_removed() {
     let run = ono(&format!("{LINK}; remove link testbox; enter link testbox"));
     assert!(
@@ -643,7 +635,6 @@ fn should_refuse_to_enter_a_link_that_was_removed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pop_the_link_frame_when_detaching() {
     // Spec §9.1: "Detach active link/context." The frame goes; the stack is back on the ground.
     let run = ono(&format!(
@@ -660,7 +651,6 @@ fn should_pop_the_link_frame_when_detaching() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_the_link_when_detaching() {
     // remote.yaml: "Detach from an active link without tearing it down" — unlike `remove link`,
     // the link stays in the table for a later `enter link`.
@@ -677,7 +667,6 @@ fn should_keep_the_link_when_detaching() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_answer_again_from_a_detached_link_when_it_is_entered_again() {
     let run = ono(&format!(
         "{LINK}; enter link testbox; \

@@ -118,6 +118,9 @@ pub struct SessionLink {
     pub transport: String,
     /// Whether the agentless fallback of spec §21.3 was asked for.
     pub agentless: bool,
+    /// Whether the link outlives its frame: `link host` and `add link` persist, `connect host`
+    /// is one-shot and goes when its frame is left (ADR-0104).
+    pub persistent: bool,
     /// The connection, once the handshake succeeded.
     pub connection: Option<LinkConnection>,
 }
@@ -205,6 +208,15 @@ pub struct ShellFrame {
     pub frame: ono_command::ContextFrame,
     /// Where the session stood before a filesystem frame moved it (spec §14.2).
     pub restore_cwd: Option<PathBuf>,
+}
+
+impl ShellFrame {
+    /// Whether this frame stands on the link named `name` (spec §14.4).
+    #[must_use]
+    pub fn is_link(&self, name: &str) -> bool {
+        matches!(self.frame.kind(), ono_command::FrameKind::Link)
+            && self.frame.identity().to_string() == name
+    }
 }
 
 impl std::fmt::Debug for Session {
@@ -373,6 +385,42 @@ impl Session {
     #[must_use]
     pub fn links(&self) -> &[SessionLink] {
         &self.links
+    }
+
+    /// The named link, if the session knows it.
+    #[must_use]
+    pub fn link(&self, name: &str) -> Option<&SessionLink> {
+        self.links.iter().find(|link| link.name == name)
+    }
+
+    /// The named link, to change its definition.
+    pub fn link_mut(&mut self, name: &str) -> Option<&mut SessionLink> {
+        self.links.iter_mut().find(|link| link.name == name)
+    }
+
+    /// Forgets the named link and hands it back, so the caller decides when the connection
+    /// drops — and with it, hangs up (ADR-0036 §8).
+    pub fn remove_link(&mut self, name: &str) -> Option<SessionLink> {
+        let index = self.links.iter().position(|link| link.name == name)?;
+        Some(self.links.remove(index))
+    }
+
+    /// How many frames on the stack stand on the named link.
+    #[must_use]
+    pub fn link_frames(&self, name: &str) -> usize {
+        self.frames
+            .iter()
+            .filter(|frame| frame.is_link(name))
+            .count()
+    }
+
+    /// Pops every frame standing on the named link, wherever it is in the stack, and answers
+    /// how many went. Frames above it stay: an entered directory inside a link is still the
+    /// directory (spec §14.1 nests frames; only the link's own are the link's).
+    pub fn pop_link_frames(&mut self, name: &str) -> usize {
+        let before = self.frames.len();
+        self.frames.retain(|frame| !frame.is_link(name));
+        before - self.frames.len()
     }
 
     /// The mounted registry of the named link, if the session holds it established.

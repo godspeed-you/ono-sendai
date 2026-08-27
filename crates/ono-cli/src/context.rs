@@ -467,6 +467,7 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
         host,
         transport,
         agentless: false,
+        persistent: true,
         connection: Some(connection),
     });
     Ok(ExitStatus::SUCCESS)
