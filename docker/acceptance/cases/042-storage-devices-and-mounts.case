@@ -1,0 +1,51 @@
+# Storage family (spec §9.1, §23.5, §28.6; ADR-0097..0099): devices are enumerated from /dev
+# and sysfs, filesystems answer whether or not they are mounted, and every mount mutation is
+# attempted for real. The container runs unprivileged, so each mutation is one structured
+# `failed` row with the code the kernel, the file or the service manager gave — never
+# E0101 "not implemented", never a bare exit code — and the pipeline exits 1 (spec §16.5).
+case: devices and mounts are typed objects, and mount mutations refuse structurally
+timeout: 120
+run: |
+  echo "== /dev/null is character device 1:3 everywhere =="
+  ono -c 'get device | where path == "/dev/null" | select kind major minor | to json'
+  echo "not-char-among-char=$(ono -c 'get device --kind char | where kind != "char" | count | to json')"
+
+  echo "== a filesystem that is not mounted has no target =="
+  echo "unmounted-with-target=$(ono -c 'get filesystem --mounted false | where target != null | count | to json')"
+  echo "mounted-without-target=$(ono -c 'get filesystem --mounted true | where target == null | count | to json')"
+
+  echo "== mount(2) unprivileged: one failed row, io.permission_denied, exit 1 =="
+  mkdir -p /tmp/mnt-case
+  ono -c 'mount filesystem tmpfs /tmp/mnt-case --type tmpfs --option size=1m --read-only | select operation status changed error | to json'; echo "mount-exit-$?"
+
+  echo "== umount2(2) on / unprivileged, and on a directory that is no mount point =="
+  ono -c 'unmount filesystem / | select operation status error | to json'; echo "unmount-exit-$?"
+  ono -c 'unmount filesystem /tmp/mnt-case | select operation status error | to json'
+  ono -c 'get mount / | unmount filesystem | select target | to json'
+
+  echo "== remount, persistent definitions, mount units =="
+  ono -c 'set mount / --read-only | select operation status error | to json'
+  ono -c 'add mount tmpfs /tmp/mnt-case --type tmpfs | select operation status error | to json'
+  ono -c 'remove mount / | select operation status error | to json'
+  ono -c 'start mount / | select operation status error | to json'; echo "start-exit-$?"
+  ono -c 'stop mount / | select operation status error | to json'
+  ono -c 'get mount / | select target | to json'
+exit: 0
+stdout-contains: [{"kind":"char","major":1,"minor":3}]
+stdout-contains: not-char-among-char=[0]
+stdout-contains: unmounted-with-target=[0]
+stdout-contains: mounted-without-target=[0]
+stdout-matches: ^\[\{"changed":false,"error":\{"code":"Ono-Sendai-E0302",[^\n]*"name":"io\.permission_denied",[^\n]*"operation":"ono\.filesystem\.mount","status":"failed"\}\]$
+stdout-contains: mount-exit-1
+stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0302",[^\n]*"operation":"ono\.filesystem\.unmount","status":"failed"\}\]$
+stdout-contains: unmount-exit-1
+stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0301",[^\n]*"operation":"ono\.filesystem\.unmount","status":"failed"\}\]$
+stdout-contains: [{"target":"ono.mount/1[/]"}]
+stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0302",[^\n]*"operation":"ono\.mount\.set","status":"failed"\}\]$
+stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0302",[^\n]*"operation":"ono\.mount\.add","status":"failed"\}\]$
+stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E030[12]",[^\n]*"operation":"ono\.mount\.remove","status":"failed"\}\]$
+stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0(302|401)",[^\n]*"operation":"ono\.mount\.start","status":"failed"\}\]$
+stdout-contains: start-exit-1
+stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0(302|401)",[^\n]*"operation":"ono\.mount\.stop","status":"failed"\}\]$
+stdout-not-contains: Ono-Sendai-E0101
+stdout-contains: [{"target":"/"}]

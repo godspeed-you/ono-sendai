@@ -93,12 +93,6 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [storage | 2026-08-27] **storage family** (`crates/ono-cli/tests/storage_missing.rs` remainder +
-  `get filesystem --mounted false` in `options_and_selectors_missing.rs`) on branch
-  `implementation-storage` — files: `crates/ono-provider-linux/src/{storage,device,lib,schemas}.rs`,
-  `crates/ono-command/src/impls/mutate.rs`, `docs/spec/schemas/{device.v1,deferred}.yaml`,
-  `docs/spec/providers/linux-procfs.yaml`, `docker/acceptance/cases/042-storage-devices-and-mounts.case`,
-  ADR-0097..0099.
 - [language | 2026-08-27] **language family** (`crates/ono-cli/tests/language_missing.rs`) on
   branch `implementation-language` — **all 31 tests green and un-ignored**; the gate is green
   at every commit. Delivered: `let`/`( … )`/`$( … )` capture (ADR-0069); callable functions and
@@ -142,7 +136,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
     `implementation-services` (ADR-0084–0086, case 038); the two still ignored wait on the
     language (`now()`, bare words compared against a string field), see Deferred
   - `crates/ono-cli/tests/storage_missing.rs` (22) — `get device`, mount/unmount, mount verbs,
-    watch/trace/enter mount
+    watch/trace/enter mount — **done** by [storage | 2026-08-27] on branch
+    `implementation-storage` (ADR-0097–0099, case 042-storage-devices-and-mounts); nothing left
+    ignored. `should_return_only_unmounted_filesystems_when_mounted_is_false` in
+    `options_and_selectors_missing.rs` is green on the same branch.
   - `crates/ono-cli/tests/data_missing.rs` (15) + `crates/ono-command/tests/completion_missing.rs`
     (6) — `tail`, `join`, `diff`, stacked records on narrow terminals, fields after `where`
     — **done** by [data | 2026-08-27] on branch `implementation-data` (ADR-0072–0074); no
@@ -174,6 +171,15 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## Next up (ordered)
 
+- [ ] `select error.name` on an `ono.action-result/1` row yields the whole `ono.error/1` under
+  the key `name` instead of the string — a dotted path does not descend into an error value
+  (seen while writing case 042; the case selects `error` whole instead). Reproduce:
+  `unmount filesystem / | select error.name | to json`. `fix` candidate in `ono-command`'s
+  `select`. Exit test: a `data_missing`-style outcome test on the projection.
+- [ ] `unmount filesystem <dir>` for a directory that is no mount point answers E0301 with the
+  seam's wording "no filesystem answers to target …" (ProviderMutation resolving the `filesystem`
+  target); the provider's own "nothing is mounted at …" only reaches piped input. Cosmetic;
+  the code is right (ADR-0098 §1).
 - [ ] Acceptance case 049 (`a remote link answers from the other side, visibly`) ended with
   exit 129 (128+SIGHUP) three times in full-suite runs on 2026-08-27 while five agent builds
   loaded the machine, and passes alone and through the harness in isolation: `exit` with a live
@@ -437,6 +443,14 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Done
 
+- [x] storage 1 — `get device` from /dev + sysfs, `ono.device/1` written — commit 0f9a36a
+  (ADR-0097; `storage_missing.rs` ×4)
+- [x] storage 2 — `get filesystem --mounted`, unmounted filesystems from udev's probe — commit
+  2e588f4 (ADR-0097 §3; `options_and_selectors_missing.rs` ×1, provider fixture ×3)
+- [x] storage 3 — `mount`/`unmount filesystem` through mount(2)/umount2(2); creating verbs name
+  their object — commits e818770 (test form), 5a90ea8 (ADR-0098; `storage_missing.rs` ×5)
+- [x] storage 4 — `set`/`add`/`remove`/`start`/`stop mount`: remount, fstab definitions, systemd
+  mount units — commit e2e2f03 (ADR-0099; `storage_missing.rs` ×5, provider fixture ×5)
 - [x] seams 1 — `set`/`remove` of system targets dispatch through the registry — commit 7ec0d83
   (ADR-0068 §1; `crates/ono-cli/tests/builtins.rs`)
 - [x] seams 2 — ActionResult contract: a failed row exits 1, a missing target is an E0301 row,
