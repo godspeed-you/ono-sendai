@@ -8,7 +8,7 @@ use std::sync::Arc;
 use ono_core::ErrorCode;
 use ono_pipeline::{CancelToken, ValueStream};
 use ono_provider_api::{ActionOutcome, ProviderRegistry};
-use ono_value::{ErrorValue, Value};
+use ono_value::{ErrorValue, RecordValue, Value};
 
 use crate::bind::BoundArguments;
 use crate::contract::CommandContract;
@@ -27,6 +27,10 @@ pub struct ContextFrame {
     kind: FrameKind,
     target: String,
     identity: Value,
+    /// The handles the entered object answers to — `pid 1`, `name root`, `port 8080` — by the
+    /// parameter names commands declare (ADR-0076). Empty for a frame that carries only its
+    /// identity.
+    handles: Vec<(String, Value)>,
 }
 
 /// What sort of frame this is (spec §14.1). Only an object frame narrows queries; a filesystem
@@ -50,7 +54,58 @@ impl ContextFrame {
             kind: FrameKind::Object,
             target: target.into(),
             identity,
+            handles: Vec::new(),
         }
+    }
+
+    /// An object frame that knows the handles of the entered object (ADR-0076).
+    ///
+    /// The handles are the record's scalar fields by name, plus the scalar fields of its
+    /// structural sub-records under their own names where nothing at the top level claims the
+    /// name — so a socket's `local.port` answers to `port`, the parameter `get socket` and
+    /// `trace socket --port` declare. A later command of the same target takes the first of its
+    /// declared parameters that the frame has a handle for.
+    #[must_use]
+    pub fn of_record(target: impl Into<String>, identity: Value, record: &RecordValue) -> Self {
+        let fields = |record: &RecordValue| -> Vec<(String, Value)> {
+            record
+                .schema()
+                .fields()
+                .iter()
+                .filter_map(|field| {
+                    Some((field.name().to_owned(), record.get(field.name())?.clone()))
+                })
+                .collect()
+        };
+        let top = fields(record);
+        let mut handles: Vec<(String, Value)> = top
+            .iter()
+            .filter(|(_, value)| is_handle(value))
+            .cloned()
+            .collect();
+        for (_, value) in &top {
+            if let Value::Record(nested) = value {
+                for (name, value) in fields(nested) {
+                    if is_handle(&value) && !handles.iter().any(|(held, _)| *held == name) {
+                        handles.push((name, value));
+                    }
+                }
+            }
+        }
+        Self {
+            kind: FrameKind::Object,
+            target: target.into(),
+            identity,
+            handles,
+        }
+    }
+
+    /// The value the entered object answers to under `parameter`, if it has one.
+    #[must_use]
+    pub fn handle(&self, parameter: &str) -> Option<&Value> {
+        self.handles
+            .iter()
+            .find_map(|(name, value)| (name == parameter).then_some(value))
     }
 
     /// A frame for an entered directory (spec §14.2).
@@ -60,6 +115,7 @@ impl ContextFrame {
             kind: FrameKind::Filesystem,
             target: "dir".to_owned(),
             identity: path,
+            handles: Vec::new(),
         }
     }
 
@@ -70,6 +126,7 @@ impl ContextFrame {
             kind: FrameKind::Link,
             target: "link".to_owned(),
             identity: host,
+            handles: Vec::new(),
         }
     }
 
@@ -96,6 +153,15 @@ impl ContextFrame {
     pub fn spelling(&self) -> String {
         format!("{} {}", self.target, self.identity)
     }
+}
+
+/// Whether a field value can stand for the object in a selector: a scalar, never a structure,
+/// a null or a carried error.
+fn is_handle(value: &Value) -> bool {
+    !matches!(
+        value,
+        Value::Null | Value::Record(_) | Value::List(_) | Value::Map(_) | Value::Error(_)
+    )
 }
 
 /// What a command produced.
@@ -269,6 +335,28 @@ impl<'a> Invocation<'a> {
     pub fn context(&self) -> &[ContextFrame] {
         &self.context
     }
+
+    /// The same invocation over `arguments` instead of the ones it was built with.
+    ///
+    /// The input stream moves — a stream is consumed once — and everything else is shared, so
+    /// the implementation that runs sees exactly the pipeline it belonged to, with the arguments
+    /// the context filled in (ADR-0076).
+    fn rebind<'b>(&mut self, arguments: &'b BoundArguments) -> Invocation<'b>
+    where
+        'a: 'b,
+    {
+        Invocation {
+            contract: self.contract,
+            arguments,
+            providers: self.providers,
+            input: self.input.take(),
+            cancel: self.cancel.clone(),
+            scope: Arc::clone(&self.scope),
+            context: self.context.clone(),
+            adapters: self.adapters.clone(),
+            resolver: self.resolver.clone(),
+        }
+    }
 }
 
 /// The result of a command that had to await something, boxed so the trait stays object-safe.
@@ -388,7 +476,22 @@ impl CommandTable {
             )
             .with_help("`help` lists what this shell can do; the rest is scheduled, not hidden")
         })?;
-        implementation.invoke_async(ctx).await
+        // Spec §14.3: the context frames fill in the arguments the user did not type. That
+        // happens here, at the one seam every implementation runs through, so a producer, a
+        // trace, a watch and a mutation all see the same narrowed arguments (ADR-0076).
+        let narrowed = crate::narrow::narrow(
+            ctx.contract(),
+            ctx.providers(),
+            ctx.context(),
+            ctx.arguments(),
+        )?;
+        match narrowed {
+            Some(arguments) => {
+                let mut inner = ctx.rebind(&arguments);
+                implementation.invoke_async(&mut inner).await
+            }
+            None => implementation.invoke_async(ctx).await,
+        }
     }
 }
 

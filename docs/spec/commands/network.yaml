@@ -92,6 +92,7 @@ commands:
     options:
       - {name: table, type: string, doc: "Query one routing table instead of the main one."}
       - {name: family, type: string, doc: "Restrict to one address family."}
+      - {name: interface, type: string, doc: "Restrict to routes over this interface — what `enter interface` fills in (spec §14.3)."}
     privilege: none
     streaming: true
     phase: C
@@ -457,8 +458,7 @@ commands:
     verb: enter
     target: interface
     summary: Push an interface onto the context stack.
-    stability: planned                    # spec §52, interface/enter = "C?"
-    validation_required: true
+    stability: stable                     # spec §52, interface/enter = "C?"; delivered by ADR-0075
     argument_mode: words
     input: "null | ono.interface/1"
     output: ono.context/1
@@ -495,16 +495,17 @@ commands:
     verb: enter
     target: socket
     summary: Push a socket onto the context stack.
-    stability: planned                    # spec §52, socket/enter = "C?"
-    validation_required: true
+    stability: stable                     # spec §52, socket/enter = "C?"; delivered by ADR-0075
     argument_mode: words
     input: "null | ono.socket/1"
     output: ono.context/1
     provider_capability: socket.list
-    selectors: []
+    selectors:
+      - {name: port, type: port, doc: "The socket bound to or connected on this port; the first that answers is entered."}
     options: []
     privilege: conditional
     streaming: false
     phase: E
     examples:
       - get socket | take 1 | enter socket
+      - enter socket 443

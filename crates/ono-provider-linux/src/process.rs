@@ -672,4 +672,31 @@ fn understood_selectors_match(query: &Query, record: &RecordValue) -> bool {
         .selectors()
         .iter()
         .all(|selector| selector.matches(record))
+        && ownership_matches(query, "user", "uid", record)
+        && ownership_matches(query, "group", "gid", record)
+}
+
+/// Whether the `--user` / `--group` option, if given, accepts `record`.
+///
+/// The option is a `ref<ono.user/1>` written as a word — `root` or `0` — and the record carries
+/// the reference with both the name and the numeric id, so either spelling matches. A process
+/// whose ownership could not be read matches nothing: unknown is not equal to anything
+/// (ADR-0014).
+fn ownership_matches(query: &Query, option: &str, id_field: &str, record: &RecordValue) -> bool {
+    let Some(wanted) = query.option_value(option) else {
+        return true;
+    };
+    let Some(Value::Record(reference)) = record.get(option) else {
+        return false;
+    };
+    match wanted {
+        Value::Int(id) => reference.get(id_field) == Some(&Value::Int(*id)),
+        Value::String(text) => {
+            reference.get("name") == Some(&Value::String(text.clone()))
+                || text
+                    .parse::<i128>()
+                    .is_ok_and(|id| reference.get(id_field) == Some(&Value::Int(id)))
+        }
+        _ => false,
+    }
 }

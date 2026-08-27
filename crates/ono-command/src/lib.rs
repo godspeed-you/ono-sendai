@@ -58,6 +58,7 @@ mod expr;
 mod help;
 mod impls;
 mod invoke;
+mod narrow;
 mod registry;
 mod suggest;
 

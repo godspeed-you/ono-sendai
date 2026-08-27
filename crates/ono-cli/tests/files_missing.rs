@@ -773,7 +773,6 @@ fn should_include_the_users_behind_the_holders_when_asked() {
 // --- enter file (spec §14.3) --------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_push_a_file_frame_when_entering_a_file() {
     let directory = scratch();
     let file = directory.write("Cargo.toml", "[package]\n");
@@ -808,7 +807,6 @@ fn should_push_a_file_frame_when_entering_a_file() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pop_the_file_frame_when_leaving() {
     let directory = scratch();
     directory.write("Cargo.toml", "[package]\n");

@@ -452,7 +452,6 @@ fn should_refuse_to_trace_a_user_that_does_not_exist() {
 // --- enter user / enter group --------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_enter_a_user_and_show_it_on_the_context_stack() {
     // Spec §14.3 and context.v1.yaml: an entered object is a frame of kind `object` naming its
     // target and identity, with the explicit spelling it stands for (ADR-0023).
@@ -492,7 +491,6 @@ fn should_enter_a_user_and_show_it_on_the_context_stack() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_narrow_processes_to_the_entered_user() {
     // Spec §14.3: the frame is an implicit selector — `get process` inside `enter user root` is
     // `get process --user root`, so every process it returns belongs to uid 0 and pid 1 is one.
@@ -518,7 +516,6 @@ fn should_narrow_processes_to_the_entered_user() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pop_the_user_frame_when_leaving() {
     let run = ono(
         "enter user root; get context | select depth | to json; leave; get context | select depth | to json",
@@ -544,7 +541,6 @@ fn should_pop_the_user_frame_when_leaving() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_enter_a_group_and_show_it_on_the_context_stack() {
     let run = ono("enter group root; get context | to json");
     assert_not_unimplemented(&run);
@@ -575,7 +571,6 @@ fn should_enter_a_group_and_show_it_on_the_context_stack() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_narrow_processes_to_the_entered_group() {
     // process.v1.yaml `group`: the effective group. Inside `enter group root` every process has
     // gid 0, and pid 1 is among them.
@@ -601,7 +596,6 @@ fn should_narrow_processes_to_the_entered_group() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_enter_a_user_that_does_not_exist() {
     let run = ono("enter user nobody-such-user-ono");
     assert_not_unimplemented(&run);
@@ -618,7 +612,6 @@ fn should_refuse_to_enter_a_user_that_does_not_exist() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_the_stack_unchanged_when_entering_a_user_fails() {
     let run = ono("enter user nobody-such-user-ono; get context | to json");
     assert!(

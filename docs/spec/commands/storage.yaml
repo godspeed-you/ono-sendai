@@ -249,8 +249,7 @@ commands:
     verb: enter
     target: mount
     summary: Push a mount onto the context stack.
-    stability: planned                    # spec §52, mount/enter = "C?"
-    validation_required: true
+    stability: stable                     # spec §52, mount/enter = "C?"; delivered by ADR-0075
     note: Overlaps `enter dir <mount point>`, which changes the working directory instead.
     argument_mode: words
     input: "null | ono.mount/1"

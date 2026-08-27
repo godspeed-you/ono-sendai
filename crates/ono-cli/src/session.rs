@@ -47,6 +47,9 @@ pub struct Session {
     /// Recent structured results, newest last (spec §20.2). Bounded, so a long session cannot
     /// hold every table it ever printed.
     results: std::collections::VecDeque<Vec<Value>>,
+    /// Where a pipeline's values go instead of the screen while `… | enter <target>` runs its
+    /// head (ADR-0075). `None` outside such a run.
+    capture: Option<Vec<Value>>,
     /// Backgrounded native pipelines (spec §18.4, ADR-0024): jobs in the same table as external
     /// commands, numbered from the executor's own sequence.
     native_jobs: Vec<NativeJob>,
@@ -153,6 +156,7 @@ impl Session {
             providers: None,
             frames: Vec::new(),
             results: std::collections::VecDeque::new(),
+            capture: None,
             native_jobs: Vec::new(),
             selection: None,
             links: Vec::new(),
@@ -277,6 +281,27 @@ impl Session {
             self.results.pop_front();
         }
         self.results.push_back(values);
+    }
+
+    /// Starts keeping pipeline results instead of showing them.
+    pub fn begin_capture(&mut self) {
+        self.capture = Some(Vec::new());
+    }
+
+    /// Stops keeping results and answers what was kept.
+    pub fn end_capture(&mut self) -> Vec<Value> {
+        self.capture.take().unwrap_or_default()
+    }
+
+    /// Keeps `values` if a capture is running; answers whether it did.
+    pub fn capture(&mut self, values: &[Value]) -> bool {
+        match self.capture.as_mut() {
+            Some(kept) => {
+                kept.extend(values.iter().cloned());
+                true
+            }
+            None => false,
+        }
     }
 
     /// The `n`th previous result, `1` for the most recent (spec §6.4 `@-1`).

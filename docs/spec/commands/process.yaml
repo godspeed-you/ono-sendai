@@ -32,6 +32,7 @@ commands:
       - {name: name, type: string, doc: "Resolve processes whose name matches exactly."}
     options:
       - {name: user, type: "ref<ono.user/1>", repeatable: false, doc: "Restrict to processes of one user."}
+      - {name: group, type: "ref<ono.group/1>", repeatable: false, doc: "Restrict to processes whose effective group is this one."}
       - {name: tree, type: bool, doc: "Emit the parent/child structure rather than a flat stream."}
     privilege: none
     streaming: true
@@ -167,8 +168,7 @@ commands:
     verb: enter
     target: process
     summary: Push a process onto the context stack so later commands need no selector.
-    stability: planned                    # spec §52, process/enter = "C?"
-    validation_required: true
+    stability: stable                     # spec §52, process/enter = "C?"; delivered by ADR-0075
     argument_mode: words
     input: "null | ono.process/1"
     output: ono.context/1

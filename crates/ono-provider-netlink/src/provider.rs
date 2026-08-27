@@ -309,6 +309,14 @@ fn keep(record: &RecordValue, query: &Query) -> bool {
     {
         return false;
     }
+    // `trace socket --port 443` (spec §22.3) spells the port as an option; it means the same
+    // as the selector below — either end of the socket.
+    if let Some(Value::Port(port)) = query.option_value("port")
+        && endpoint_port(record, "local") != Some(*port)
+        && endpoint_port(record, "remote") != Some(*port)
+    {
+        return false;
+    }
     query.selectors().iter().all(|selector| match selector {
         // A port is not a field of `ono.socket/1`; it lives inside either endpoint, and a user
         // asking for port 443 means "either end of this socket", which is what `trace socket

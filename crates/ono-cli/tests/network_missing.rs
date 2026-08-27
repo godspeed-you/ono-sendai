@@ -571,7 +571,6 @@ fn should_include_the_listening_socket_when_tracing_its_interface() {
 // --- enter interface / enter socket -----------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_push_an_object_frame_when_entering_an_interface() {
     // Spec §14.1: a frame has a kind from the fixed set and the identity of the entered object;
     // §14.3 makes an entered object an object context.
@@ -606,7 +605,6 @@ fn should_push_an_object_frame_when_entering_an_interface() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_narrow_routes_to_the_entered_interface() {
     // Spec §14.3: the object context provides an implicit selector. Inside `lo`, the local
     // table shows only the loopback routes — never every route on the machine.
@@ -630,7 +628,6 @@ fn should_narrow_routes_to_the_entered_interface() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pop_the_interface_frame_when_leaving() {
     // Two documents: the stack with the frame on it, then the stack after `leave`. A `leave`
     // with nothing to pop prints a diagnostic (ADR-0023), so a quiet run proves a frame was
@@ -706,7 +703,6 @@ fn should_refuse_to_enter_an_interface_that_does_not_exist() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_push_a_socket_frame_when_entering_the_listening_socket() {
     let (_listener, port) = listener();
     // network.yaml: `enter socket` takes no selector; the socket arrives as input, as in the
@@ -742,7 +738,6 @@ fn should_push_a_socket_frame_when_entering_the_listening_socket() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_the_entered_socket_without_a_selector() {
     let (_listener, port) = listener();
     // Spec §14.3: inside the socket frame, `trace socket` needs no `--port` — the frame's
