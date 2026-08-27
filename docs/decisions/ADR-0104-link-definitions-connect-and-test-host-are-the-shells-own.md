@@ -60,8 +60,8 @@ contract says "without persisting a link". So `connect host N [--transport T]` e
 connection exactly as `link host` does, records it with `persistent: false`, and pushes the
 link frame itself. `leave` and `detach link` pop the frame and, for a non-persistent link,
 forget it and hang up: after `connect host testbox; leave`, `get link` is empty. `link host`
-prints its summary and pushes nothing; `connect host` prints the same summary and stands
-inside.
+prints its summary line and pushes nothing; `connect host` answers the `ono.link/1` record its
+contract declares — the same row `get link` would show — and stands inside.
 
 ### 4. `test host` probes over the held link, or over the transport, and reports E0601
 
@@ -75,6 +75,10 @@ transport), and the fields the handshake negotiates — `transport`, `protocol_v
 - Otherwise it connects the way `link host` would — over a link definition's transport if one
   names the host, else over ssh — bounded by `--timeout` (default 10 s), hangs up, and reports
   what it negotiated.
+- Over ssh, the shell hands its own `~/.ssh/config` to ssh as `-F` when the file exists
+  (`SshTarget::with_config`, an amendment to ADR-0037's one spelling): the file `get host`
+  lists hosts from is then the file ssh resolves them with, whatever the account's home
+  directory is — which is also what keeps the probe offline in a test with a scratch `HOME`.
 - A host that does not answer is `remote.unreachable` (E0601) carrying the transport's reason,
   and the run fails: the errors registry says "`test host <name>` probes reachability and
   reports where the attempt failed", and a probe that failed is the one case the schema's

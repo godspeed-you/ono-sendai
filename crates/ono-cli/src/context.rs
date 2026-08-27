@@ -358,6 +358,15 @@ pub fn leave(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
         if let Some(previous) = popped.restore_cwd {
             session.set_cwd(previous);
         }
+        // A one-shot connection (`connect host`) exists for its frame and goes with it
+        // (ADR-0104 §3): leaving hangs up.
+        if matches!(popped.frame.kind(), ono_command::FrameKind::Link) {
+            let name = popped.frame.identity().to_string();
+            let one_shot = session.link(&name).is_some_and(|link| !link.persistent);
+            if one_shot && session.link_frames(&name) == 0 {
+                drop(session.remove_link(&name));
+            }
+        }
         if !all {
             break;
         }
@@ -401,9 +410,58 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
         ));
     };
 
-    let command = match transport.as_str() {
+    let connection = establish(session, &host, &transport, None)?;
+    let targets = connection.targets();
+
+    println!(
+        "linked {host} ({transport}): {}",
+        if targets.is_empty() {
+            "no targets negotiated".to_owned()
+        } else {
+            targets.join(" ")
+        }
+    );
+    session.add_link(crate::session::SessionLink {
+        name: host.clone(),
+        host,
+        transport,
+        agentless: false,
+        persistent: true,
+        connection: Some(connection),
+    });
+    Ok(ExitStatus::SUCCESS)
+}
+
+/// Connects to `host` over `transport`, negotiates and mounts (spec §21.2): the connection
+/// behind `link host`, `connect host` and an unlinked `test host` (ADR-0104). `timeout` bounds
+/// the whole of it; without one the transport's own limits apply.
+///
+/// # Errors
+///
+/// The structured refusals of the handshake and the trust decision — `remote.host_key_changed`,
+/// `safety.policy_denied`, `remote.unreachable` — exactly as the protocol raises them; a
+/// timeout is `remote.unreachable` naming the bound.
+pub fn establish(
+    session: &mut Session,
+    host: &str,
+    transport: &str,
+    timeout: Option<std::time::Duration>,
+) -> Eval<crate::session::LinkConnection> {
+    let command = match transport {
         // The agent over OpenSSH, which also did the authenticating (ADR-0037).
-        "ssh" => ono_remote::ssh_command(&ono_remote::SshTarget::new(&host)),
+        "ssh" => {
+            let mut target = ono_remote::SshTarget::new(host);
+            // The file `get host` lists hosts from is the file ssh resolves them with
+            // (ADR-0103, ADR-0104): the shell's `~` is `HOME`, and ssh's own is the account's.
+            if let Some(config) = session
+                .host_sources()
+                .ssh_config
+                .filter(|path| path.is_file())
+            {
+                target = target.with_config(config);
+            }
+            ono_remote::ssh_command(&target)
+        }
         // This very binary as a child: the whole path over a pipe pair, no network. It is how
         // a link is exercised in a test, a container, or on the machine itself.
         "local" => {
@@ -424,7 +482,7 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
         }
     };
 
-    let (runtime, _) = session.pipeline_context().ok_or_else(|| {
+    let runtime = session.runtime().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
             "the operating system refused to start the runtime",
@@ -436,41 +494,35 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
     // verified the host before the agent ever spoke; `local` is a child of this very process.
     // The protocol-level policy is therefore unauthenticated *by name* — an explicit statement,
     // never a silent default, and a future TCP transport gets `Required` with the trust store.
-    let config = ono_protocol::ClientConfig::new(&host)
+    let config = ono_protocol::ClientConfig::new(host)
         .with_schemas(schemas)
         .with_trust_policy(ono_protocol::TrustPolicy::Unauthenticated)
         .with_identity(ono_protocol::Identity::new(whoami()));
     let connected = runtime.block_on(async {
-        let transport = ono_remote::SubprocessTransport::spawn(command)?;
-        ono_remote::RemoteLink::connect(transport, config).await
+        let connect = async {
+            let transport = ono_remote::SubprocessTransport::spawn(command)?;
+            ono_remote::RemoteLink::connect(transport, config).await
+        };
+        match timeout {
+            Some(bound) => match tokio::time::timeout(bound, connect).await {
+                Ok(outcome) => outcome,
+                Err(_) => Err(ErrorValue::new(
+                    ErrorCode::RemoteUnreachable,
+                    format!("{host} did not answer the handshake within {bound:?}"),
+                )
+                .with_help("`--timeout` bounds how long a probe waits (spec §21.2)")),
+            },
+            None => connect.await,
+        }
     });
     let link = connected.map_err(Flow::Failed)?;
 
     let mut registry = ono_provider_api::ProviderRegistry::new();
     link.register_into(&mut registry);
-    let connection = crate::session::LinkConnection {
+    Ok(crate::session::LinkConnection {
         link,
         registry: std::sync::Arc::new(registry),
-    };
-    let targets = connection.targets();
-
-    println!(
-        "linked {host} ({transport}): {}",
-        if targets.is_empty() {
-            "no targets negotiated".to_owned()
-        } else {
-            targets.join(" ")
-        }
-    );
-    session.add_link(crate::session::SessionLink {
-        name: host.clone(),
-        host,
-        transport,
-        agentless: false,
-        persistent: true,
-        connection: Some(connection),
-    });
-    Ok(ExitStatus::SUCCESS)
+    })
 }
 
 /// The user this side identifies as, for the handshake.

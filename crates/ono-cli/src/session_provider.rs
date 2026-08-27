@@ -214,6 +214,13 @@ fn job_record(
     .build())
 }
 
+/// The `ono.link/1` record of one published row, for a command that answers with the link it
+/// just made (`connect host`, ADR-0104).
+pub fn link_value(link: &LinkRow) -> Result<Value, ErrorValue> {
+    let schema = SessionProvider::schema("ono.link")?;
+    link_record(link, &schema).map(RecordValue::into_value)
+}
+
 fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, ErrorValue> {
     let strings = |items: &[String]| Value::list(items.iter().map(|item| Value::string(item)));
     Ok(RecordValue::builder(

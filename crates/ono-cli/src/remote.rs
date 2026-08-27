@@ -1,5 +1,6 @@
 //! The remote commands the shell answers itself: the link definitions of spec §9.1 and §21
-//! (`add`, `set`, `rename`, `remove`, `detach link`).
+//! (`add`, `set`, `rename`, `remove`, `detach link`), the one-shot `connect host` of spec §6.1,
+//! and the probe `test host`.
 //!
 //! A link is session state — the definition, the connection once it is established, and the
 //! frame that stands on it — and none of it can live in a provider: a provider is what a link
@@ -29,6 +30,10 @@ pub enum Request {
     RemoveLink,
     /// `detach link <name>` — pop the link's frame, keep the link.
     DetachLink,
+    /// `connect host <name> [--transport t]` — connect, enter, and forget on leaving.
+    ConnectHost,
+    /// `test host <name> [--timeout d]` — probe reachability and what the handshake negotiates.
+    TestHost,
 }
 
 impl Request {
@@ -39,6 +44,8 @@ impl Request {
             Self::RenameLink => "rename",
             Self::RemoveLink => "remove",
             Self::DetachLink => "detach",
+            Self::ConnectHost => "connect",
+            Self::TestHost => "test",
         }
     }
 
@@ -49,6 +56,8 @@ impl Request {
             Self::RenameLink => "ono.link.rename",
             Self::RemoveLink => "ono.link.remove",
             Self::DetachLink => "ono.link.detach",
+            Self::ConnectHost => "ono.host.connect",
+            Self::TestHost => "ono.host.test",
         }
     }
 }
@@ -74,6 +83,8 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         ("rename", Some("link")) => Some(Request::RenameLink),
         ("remove", Some("link")) => Some(Request::RemoveLink),
         ("detach", Some("link")) => Some(Request::DetachLink),
+        ("connect", Some("host")) => Some(Request::ConnectHost),
+        ("test", Some("host")) => Some(Request::TestHost),
         _ => None,
     }
 }
@@ -114,6 +125,16 @@ pub fn answer(
     };
 
     let (changed, message) = match request {
+        Request::ConnectHost => return connect_host(session, &name, option("transport")),
+        Request::TestHost => {
+            let timeout = bound.option("timeout").and_then(|value| match value {
+                Value::Duration(duration) => u64::try_from(duration.nanoseconds())
+                    .ok()
+                    .map(std::time::Duration::from_nanos),
+                _ => None,
+            });
+            return test_host(session, &name, timeout);
+        }
         Request::AddLink => add_link(session, &name, option("host"), option("transport"))?,
         Request::SetLink => set_link(session, &name, option("host"), option("transport"))?,
         Request::RenameLink => {
@@ -293,6 +314,140 @@ fn remove_link(session: &mut Session, name: &str) -> Eval<(bool, String)> {
     // Dropping the connection hangs up (ADR-0036 §8).
     drop(link);
     Ok((true, message))
+}
+
+/// `connect host`: `link host` plus the frame, minus the persistence (ADR-0104 §3). The value
+/// is the link as `get link` would show it.
+fn connect_host(session: &mut Session, name: &str, transport: Option<String>) -> Eval<Vec<Value>> {
+    if session
+        .link(name)
+        .is_some_and(|link| link.connection.is_some())
+    {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::IoAlreadyExists,
+                format!("this session already holds an established link named `{name}`"),
+            )
+            .with_help(format!("`enter link {name}` stands on it")),
+        ));
+    }
+    let transport = transport.unwrap_or_else(|| "ssh".to_owned());
+    check_transport(&transport)?;
+    let connection = crate::context::establish(session, name, &transport, None)?;
+    let link = SessionLink {
+        name: name.to_owned(),
+        host: name.to_owned(),
+        transport,
+        agentless: false,
+        persistent: false,
+        connection: Some(connection),
+    };
+    let value = crate::session_provider::link_value(&link.row()).map_err(Flow::Failed)?;
+    session.add_link(link);
+    session.push_frame(crate::session::ShellFrame {
+        frame: ono_command::ContextFrame::link(Value::string(name)),
+        restore_cwd: None,
+    });
+    Ok(vec![value])
+}
+
+/// How long `test host` waits when `--timeout` is not written.
+const DEFAULT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What spec §21.2 says a handshake negotiates, as `test host` reports it: the transport, the
+/// protocol version, the far side's agent, the provider ids.
+fn negotiated_facts(
+    transport: &str,
+    connection: &crate::session::LinkConnection,
+) -> (String, u16, String, Vec<Value>) {
+    let negotiated = connection.link.negotiated();
+    let providers: Vec<Value> = negotiated
+        .providers()
+        .iter()
+        .map(|descriptor| Value::string(descriptor.id()))
+        .collect();
+    (
+        transport.to_owned(),
+        negotiated.version(),
+        negotiated.peer().agent().to_owned(),
+        providers,
+    )
+}
+
+/// `test host`: the handshake's facts for a held link, or one connection made and hung up
+/// (ADR-0104 §4).
+fn test_host(
+    session: &mut Session,
+    name: &str,
+    timeout: Option<std::time::Duration>,
+) -> Eval<Vec<Value>> {
+    let started = std::time::Instant::now();
+    let held = session.link(name).and_then(|link| {
+        link.connection
+            .as_ref()
+            .map(|connection| negotiated_facts(&link.transport, connection))
+    });
+    let (transport, version, agent, providers) = match held {
+        Some(facts) => facts,
+        None => {
+            // A definition says how the host is reached; otherwise the host is reached the way
+            // `link host` reaches it by default.
+            let (host, transport) = session.link(name).map_or_else(
+                || (name.to_owned(), "ssh".to_owned()),
+                |link| (link.host.clone(), link.transport.clone()),
+            );
+            let connection = crate::context::establish(
+                session,
+                &host,
+                &transport,
+                Some(timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT)),
+            )
+            .map_err(|flow| match flow {
+                Flow::Failed(error) if error.code() != ErrorCode::RemoteUnreachable => {
+                    Flow::Failed(
+                        ErrorValue::new(
+                            ErrorCode::RemoteUnreachable,
+                            format!("{name} is not reachable: {}", error.message()),
+                        )
+                        .with_help(error.help().unwrap_or_default()),
+                    )
+                }
+                other => other,
+            })?;
+            let facts = negotiated_facts(&transport, &connection);
+            // Hanging up is what a probe does with the link it made (ADR-0036 §8).
+            drop(connection);
+            facts
+        }
+    };
+
+    let elapsed = ono_value::Duration::from_nanoseconds(
+        i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),
+    );
+    let schema = ono_value::builtin_schemas()
+        .get(&SchemaId::new("ono.probe-result", 1))
+        .ok_or_else(|| {
+            Flow::Failed(ErrorValue::new(
+                ErrorCode::ProviderSchemaViolation,
+                "`test host` advertises ono.probe-result/1 but no contract defines it",
+            ))
+        })?;
+    let provenance =
+        ono_value::Provenance::local(crate::session_provider::PROVIDER_ID, schema.id().clone());
+    let record = ono_value::RecordValue::builder(schema, provenance)
+        .set("host", Value::string(name))
+        .and_then(|builder| builder.set("port", Value::Null))
+        .and_then(|builder| builder.set("protocol", Value::string("ono")))
+        .and_then(|builder| builder.set("reachable", Value::Bool(true)))
+        .and_then(|builder| builder.set("duration", Value::Duration(elapsed)))
+        .and_then(|builder| builder.set("error", Value::Null))
+        .and_then(|builder| builder.set("transport", Value::string(&transport)))
+        .and_then(|builder| builder.set("protocol_version", Value::Int(i128::from(version))))
+        .and_then(|builder| builder.set("agent", Value::string(&agent)))
+        .and_then(|builder| builder.set("providers", Value::list(providers)))
+        .map_err(Flow::Failed)?
+        .build();
+    Ok(vec![record.into_value()])
 }
 
 fn detach_link(session: &mut Session, name: &str) -> Eval<(bool, String)> {

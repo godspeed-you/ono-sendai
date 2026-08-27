@@ -433,6 +433,26 @@ impl Session {
             .map(|held| std::sync::Arc::clone(&held.registry))
     }
 
+    /// Where the host sources of spec §9.1 live for this session's environment (ADR-0103).
+    #[must_use]
+    pub fn host_sources(&self) -> crate::hosts::HostSources {
+        let pairs: Vec<(String, String)> = self
+            .env
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        crate::hosts::HostSources::from_environment(
+            pairs
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        )
+    }
+
     /// Publishes the link table as it is now, for `get link` and `get host` (ADR-0103).
     pub fn publish_links(&mut self) {
         let rows = self.links.iter().map(SessionLink::row).collect();

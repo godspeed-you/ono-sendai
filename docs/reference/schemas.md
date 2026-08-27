@@ -918,6 +918,27 @@ Default view: `name`, `version`, `state`, `trust`, `jobs`, `memory`
 | `restart_count` | `int` | — | required | How often the supervisor has restarted this package's instance in this session (spec §31.34). A package that keeps restarting should be visible as one. |
 | `last_error` | `ono.error/1` | — | nullable | The most recent structured error from this package. Null when it has produced none. |
 
+## ProbeResult — `ono.probe-result/1`
+
+What one reachability probe found — whether the peer answered, how long it took, and why not.
+
+Identity: 
+
+Default view: `host`, `port`, `protocol`, `reachable`, `duration`, `error`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `host` | `string` | — | required | The host that was probed, as it was given. |
+| `port` | `port` | — | nullable | The port that was probed; null for a probe of a host as a whole. |
+| `protocol` | `enum` | — | required | The protocol the probe spoke: a transport protocol for a port probe, `ono` — the link protocol of spec §21.2 over the link's transport — for a host probe. |
+| `reachable` | `bool` | — | nullable | `true` when the peer answered, `false` when the peer or the network refused, and null when nothing answered before the timeout — silence is not a refusal (spec §10.5). |
+| `duration` | `duration` | — | required | How long the attempt took, whatever it found. |
+| `error` | `string` | — | nullable | The operating system's reason when `reachable` is not `true` — the refusal, the timeout, the unreachable network; null when the peer answered. |
+| `transport` | `enum` | — | nullable | For a host probe, the transport the link protocol travelled over; null for a port probe. |
+| `protocol_version` | `int` | — | nullable | For a host probe, the link protocol version the handshake settled on (spec §21.2). |
+| `agent` | `string` | — | nullable | For a host probe, how the far side named itself — `ono/<version>` for the agent of spec §21.4; the agentless fallback of §21.3 names itself too, so the fallback is visible. |
+| `providers` | `list<string>` | — | nullable | For a host probe, the ids of the providers the far side offers (spec §21.2). |
+
 ## ProcessDetail — `ono.process-detail/1`
 
 One process in detail — its Process fields, parent, cgroup, open files and sockets.

@@ -257,7 +257,6 @@ fn should_answer_an_empty_host_list_when_nothing_is_configured() {
 // --- test host --------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_linked_host_as_reachable_with_what_it_negotiated() {
     // Spec §21.2 lists what a handshake negotiates: protocol version, agent present, available
     // providers. `test host` reports that for a host the session already holds a link to.
@@ -291,7 +290,6 @@ fn should_report_a_linked_host_as_reachable_with_what_it_negotiated() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_an_unreachable_host_within_the_timeout() {
     // A closed loopback port stands in for a host that does not answer; `~/.ssh/config` is how
     // the ssh transport learns where `nowhere` lives, so no name resolution and no network.
@@ -339,7 +337,6 @@ fn should_report_an_unreachable_host_within_the_timeout() {
 // --- connect host -----------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_enter_the_remote_context_when_connecting_to_a_host() {
     // remote.yaml: `connect host` opens a protocol connection and, unlike `link host`, is
     // itself the switch of context (spec §6.1 `connect host prod-db` → `prod-db://~ >`).
@@ -360,7 +357,6 @@ fn should_enter_the_remote_context_when_connecting_to_a_host() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_answer_from_the_host_after_connecting_to_it() {
     let run = ono("connect host testbox --transport local; \
          get process | where pid == 1 | inspect | to json");
@@ -374,7 +370,6 @@ fn should_answer_from_the_host_after_connecting_to_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_persist_no_link_when_connecting_to_a_host() {
     // remote.yaml: "Open a protocol connection to a host without persisting a link" — once the
     // frame is left, nothing remains in the link table.
