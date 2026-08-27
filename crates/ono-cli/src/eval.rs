@@ -829,6 +829,29 @@ fn run_stage_list(
         return builtin::kill_jobs(session, &arguments);
     }
 
+    // `resolve command`, `get config` and `set config` are answered by the shell, which alone
+    // sees every stage of the order and every configuration layer (ADR-0011, ADR-0093,
+    // ADR-0094). Their values seed whatever follows, as a producer's stream would.
+    if !background
+        && let Some(stage) = list.stages.first()
+        && let Some(request) = crate::meta::claims(stage)
+    {
+        let alone = list.stages.len() == 1;
+        // A configuration file may set a value and nothing more: `get config` in one would
+        // print, and a `set config` with stages after it would run them (ADR-0010).
+        if session.mode() == Mode::Config && !(request == crate::meta::Request::SetConfig && alone)
+        {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        let values = crate::meta::answer(session, stage, source, request)?;
+        // `set config` on its own is as quiet as `set env`: a settings line prints nothing at
+        // the prompt or in a file. Its ActionResult flows when something consumes it.
+        if request == crate::meta::Request::SetConfig && alone && !session.capturing() {
+            return Ok(ExitStatus::SUCCESS);
+        }
+        return crate::native::run_seeded(session, list, source, values);
+    }
+
     // A single builtin stage runs in the shell itself: `cd` in a child moves a directory nobody
     // is standing in.
     if list.stages.len() == 1

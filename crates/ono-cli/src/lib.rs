@@ -15,6 +15,7 @@ pub mod eval;
 pub mod expand;
 pub mod invocation;
 pub mod live;
+pub mod meta;
 pub mod native;
 pub mod plugins;
 pub mod providers;
@@ -22,6 +23,7 @@ pub mod repl;
 pub mod report;
 pub mod resolve;
 pub mod session;
+pub mod settings;
 pub mod sink;
 pub mod view;
 

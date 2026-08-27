@@ -93,6 +93,20 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
+  `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
+  `implementation-meta` — files: `crates/ono-cli/src/{meta,resolve,settings,config,eval,native}.rs`,
+  `crates/ono-command/src/impls/{meta,convert}.rs`, `docs/spec/schemas/command.v1.yaml`,
+  `docs/spec/commands/identity.yaml`, acceptance case `041-config-and-resolve`. ADR-0093–0095.
+  Increment 1 done: `resolve command` (6 tests green, ADR-0093). Increment 2 done: the typed
+  settings catalogue, `get config` with layers/source/line/`--overridden`/`--problems`, typed
+  `set config` with E0202/E0201 and its ActionResult (15 tests green, ADR-0094). Increment 3
+  done: `render.table.max_rows` reaches the sink, redirected output and `format table`
+  (3 tests green; the file has no `#[ignore` left). Increments 4–5 done: `--human` reaches
+  record fields (2 tests), `uid`/`gid` declared before `name` so numeric selectors bind
+  (2 tests, ADR-0095). Acceptance case `041-config-and-resolve` written and dry-run against the
+  binary; **the integrator runs it in the container** when merging.
+
 - [language | 2026-08-27] **language family** (`crates/ono-cli/tests/language_missing.rs`) on
   branch `implementation-language` — **all 31 tests green and un-ignored**; the gate is green
   at every commit. Delivered: `let`/`( … )`/`$( … )` capture (ADR-0069); callable functions and

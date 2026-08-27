@@ -1408,8 +1408,8 @@ Enumerate or resolve user accounts.
 
 | name | type | meaning |
 |---|---|---|
+| `uid` | `int` | Resolve one account by numeric id. Declared before `name` so that `get user 0` binds the number (ADR-0095). |
 | `name` | `string` | Resolve one account by login name. |
-| `uid` | `int` | Resolve one account by numeric id. |
 
 **Examples**
 
@@ -1437,8 +1437,8 @@ Enumerate or resolve group accounts.
 
 | name | type | meaning |
 |---|---|---|
+| `gid` | `int` | Resolve one group by numeric id. Declared before `name` so that `get group 0` binds the number (ADR-0095). |
 | `name` | `string` | Resolve one group by name. |
-| `gid` | `int` | Resolve one group by numeric id. |
 
 **Examples**
 

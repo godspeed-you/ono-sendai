@@ -7,22 +7,13 @@
 
 use std::path::PathBuf;
 
+use ono_core::ErrorCode;
 use ono_value::ErrorValue;
 
 use crate::invocation::Options;
 use crate::report::Reporter;
 use crate::session::{Mode, Session};
-
-/// Where a setting came from, so `get config` can say (spec §30).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Layer {
-    /// The system-wide file.
-    System,
-    /// The user's file.
-    User,
-    /// A file named by `ONO_CONFIG`, replacing the two above.
-    Explicit,
-}
+pub use crate::settings::Layer;
 
 /// The files this invocation should read, in order.
 #[must_use]
@@ -30,11 +21,13 @@ pub fn layers(session: &Session, options: &Options) -> Vec<(Layer, PathBuf)> {
     if options.no_config {
         return Vec::new();
     }
+    // The one file `--config` or `ONO_CONFIG` names replaces the system and user files, and its
+    // settings are the user's (ADR-0094).
     if let Some(path) = options.config.clone() {
-        return vec![(Layer::Explicit, path)];
+        return vec![(Layer::User, path)];
     }
     if let Some(path) = session.env_var("ONO_CONFIG") {
-        return vec![(Layer::Explicit, PathBuf::from(path))];
+        return vec![(Layer::User, PathBuf::from(path))];
     }
 
     let mut found = vec![(Layer::System, PathBuf::from("/etc/ono/config.ono"))];
@@ -69,17 +62,21 @@ pub fn state_dir(session: &Session) -> Option<PathBuf> {
         .map(|home| home.join(".local").join("state").join(ono_core::SHORT_NAME))
 }
 
-/// Reads every configuration layer into `session`.
+/// Reads every configuration layer into `session`: the files, then the `ONO_*` variables
+/// (ADR-0010).
 ///
-/// Problems are reported and never fatal.
+/// Problems are reported and never fatal, and they stay available as values through
+/// `get config --problems`.
 pub fn load(session: &mut Session, options: &Options, reporter: &Reporter) {
-    for (_, path) in layers(session, options) {
+    for (layer, path) in layers(session, options) {
         let source = match std::fs::read_to_string(&path) {
             Ok(source) => source,
             // A file that is simply not there is the ordinary case, not a problem.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
-                reporter.error(&crate::builtin::io_error(&path, &error));
+                let error = crate::builtin::io_error(&path, &error);
+                reporter.error(&error);
+                session.settings_mut().note_problem(&error);
                 continue;
             }
         };
@@ -89,13 +86,26 @@ pub fn load(session: &mut Session, options: &Options, reporter: &Reporter) {
             reporter.diagnostic(&source, diagnostic);
         }
         if parsed.has_errors() {
+            let first = parsed.diagnostics().first().map_or_else(
+                || "the file could not be parsed".to_owned(),
+                |diagnostic| {
+                    let (line, column) = diagnostic.span().line_column(&source);
+                    format!("{} (line {line}, column {column})", diagnostic.message())
+                },
+            );
+            session.settings_mut().note_problem(&ErrorValue::new(
+                ErrorCode::ParseSyntax,
+                format!("{}: {first}", path.display()),
+            ));
             continue;
         }
 
+        session.settings_mut().begin_file(layer, path.clone());
         session.in_mode(Mode::Config, |session| {
             let mut report = |error: &ErrorValue| reporter.error(error);
             crate::eval::run_program(session, parsed.program(), &source, &mut report);
         });
+        session.settings_mut().end_file();
 
         // A configuration file cannot end the session. `exit` in one is already refused as a
         // policy violation, but a request to leave must not survive the load under any
@@ -104,5 +114,15 @@ pub fn load(session: &mut Session, options: &Options, reporter: &Reporter) {
         // never stops the shell from starting, and that promise has to hold for a *hostile*
         // setting too.
         session.stay();
+    }
+
+    // Layer 4: `ONO_RENDER_TABLE_MAX_ROWS` sets `render.table.max_rows` (ADR-0010). Skipped
+    // with `--no-config`, which reads no configuration at all.
+    if !options.no_config {
+        let environment = session.env().clone();
+        let mut report = |error: &ErrorValue| reporter.error(error);
+        session
+            .settings_mut()
+            .apply_environment(&environment, &mut report);
     }
 }

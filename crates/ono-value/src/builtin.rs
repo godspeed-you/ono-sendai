@@ -28,6 +28,7 @@ use crate::schema::{FieldDef, FieldType, Schema, SchemaId, SchemaRegistry, Unit}
 const CONTRACTS: &[&str] = &[
     include_str!("../../../docs/spec/schemas/action-result.v1.yaml"),
     include_str!("../../../docs/spec/schemas/block-device.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/command.v1.yaml"),
     include_str!("../../../docs/spec/schemas/commit.v1.yaml"),
     include_str!("../../../docs/spec/schemas/config-setting.v1.yaml"),
     include_str!("../../../docs/spec/schemas/context.v1.yaml"),

@@ -122,7 +122,6 @@ fn assert_not_the_placeholder(run: &ono_testkit::Run) {
 // --- resolve command, spec §6.5 and ADR-0011 ----------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_an_external_program_to_its_path_when_nothing_earlier_claims_the_name() {
     let run = ono("resolve command ls | to json");
     assert_not_the_placeholder(&run);
@@ -145,7 +144,6 @@ fn should_resolve_an_external_program_to_its_path_when_nothing_earlier_claims_th
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_native_verb_to_the_registry_when_the_head_word_is_one() {
     let run = ono("resolve command get | to json");
     assert_not_the_placeholder(&run);
@@ -165,7 +163,6 @@ fn should_resolve_a_native_verb_to_the_registry_when_the_head_word_is_one() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_language_keyword_before_anything_else() {
     let run = ono("resolve command if | to json");
     assert_not_the_placeholder(&run);
@@ -180,7 +177,6 @@ fn should_resolve_a_language_keyword_before_anything_else() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_function_declared_in_the_same_script_before_the_registry_and_path() {
     let run = ono("fn hi() { echo hi }\nresolve command hi | to json");
     assert_not_the_placeholder(&run);
@@ -195,7 +191,6 @@ fn should_resolve_a_function_declared_in_the_same_script_before_the_registry_and
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_command_not_found_with_suggestions_when_no_stage_answers() {
     let run = ono("resolve command lss | to json");
     assert_not_the_placeholder(&run);
@@ -227,7 +222,6 @@ fn should_report_command_not_found_with_suggestions_when_no_stage_answers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_not_retry_another_namespace_when_the_head_word_forces_one() {
     // `ono:ls` asks for a native command only; ADR-0011 forbids falling back to PATH.
     let run = ono("resolve command ono:ls | to json");
@@ -249,7 +243,6 @@ fn should_not_retry_another_namespace_when_the_head_word_forces_one() {
 const LAYERS: [&str; 5] = ["default", "system", "user", "environment", "invocation"];
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_every_setting_at_the_default_layer_when_no_config_file_exists() {
     let run = ono("get config | to json");
     assert_not_the_placeholder(&run);
@@ -293,7 +286,6 @@ fn should_list_every_setting_at_the_default_layer_when_no_config_file_exists() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_one_typed_setting_when_given_an_exact_key() {
     let run = ono("get config render.table.max_rows | to json");
     assert_not_the_placeholder(&run);
@@ -312,7 +304,6 @@ fn should_return_one_typed_setting_when_given_an_exact_key() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_the_settings_under_a_dotted_prefix() {
     let run = ono("get config safety. | to json");
     assert_not_the_placeholder(&run);
@@ -338,7 +329,6 @@ fn should_return_the_settings_under_a_dotted_prefix() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_the_user_file_and_line_that_set_a_value() {
     let dir = scratch();
     let file = dir.write(
@@ -375,7 +365,6 @@ fn should_report_the_user_file_and_line_that_set_a_value() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_the_environment_layer_when_an_ono_variable_sets_a_value() {
     let dir = scratch();
     let run = isolated(&dir)
@@ -403,7 +392,6 @@ fn should_report_the_environment_layer_when_an_ono_variable_sets_a_value() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_the_invocation_layer_after_set_config_in_the_same_script() {
     let run =
         ono("set config render.table.max_rows = 2\nget config render.table.max_rows | to json");
@@ -428,7 +416,6 @@ fn should_report_the_invocation_layer_after_set_config_in_the_same_script() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_let_a_later_layer_override_an_earlier_one_and_show_the_overridden_value_when_asked() {
     let dir = scratch();
     dir.write("ono/config.ono", "set config render.table.max_rows = 3\n");
@@ -461,7 +448,6 @@ fn should_let_a_later_layer_override_an_earlier_one_and_show_the_overridden_valu
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_start_anyway_and_expose_the_problem_when_a_config_file_sets_an_unknown_key() {
     let dir = scratch();
     dir.write("ono/config.ono", "set config no.such.key = 1\n");
@@ -496,7 +482,6 @@ fn should_start_anyway_and_expose_the_problem_when_a_config_file_sets_an_unknown
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_the_earlier_layers_value_when_a_config_file_gives_the_wrong_type() {
     let dir = scratch();
     dir.write(
@@ -529,7 +514,6 @@ fn should_keep_the_earlier_layers_value_when_a_config_file_gives_the_wrong_type(
 // --- set config, spec §30 and meta.yaml ----------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_answer_set_config_with_an_action_result() {
     let run = ono("set config render.table.max_rows = 2 | to json");
     assert_not_the_placeholder(&run);
@@ -554,7 +538,6 @@ fn should_answer_set_config_with_an_action_result() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_reject_an_unknown_key_with_a_structured_error() {
     let run = ono("set config no.such.key = 1");
     run.assert_status(1);
@@ -575,7 +558,6 @@ fn should_reject_an_unknown_key_with_a_structured_error() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_reject_a_value_of_the_wrong_type_with_type_mismatch() {
     let run = ono("set config render.table.max_rows = \"many\"");
     run.assert_status(1);
@@ -592,7 +574,6 @@ fn should_reject_a_value_of_the_wrong_type_with_type_mismatch() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_leave_the_setting_untouched_when_an_assignment_is_rejected() {
     let run = ono(
         "set config render.table.max_rows = \"many\"\nget config render.table.max_rows | to json",
@@ -612,7 +593,6 @@ fn should_leave_the_setting_untouched_when_an_assignment_is_rejected() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_store_a_bytesize_setting_as_a_bytesize() {
     let run =
         ono("set config history.result_cache = 64MiB\nget config history.result_cache | to json");
@@ -632,7 +612,6 @@ fn should_store_a_bytesize_setting_as_a_bytesize() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_store_a_string_setting_as_a_string() {
     let run = ono("set config prompt.path = \"smart\"\nget config prompt.path | to json");
     assert_not_the_placeholder(&run);
@@ -672,7 +651,6 @@ fn table_rows_and_marker(stdout: &str) -> (Vec<&str>, Option<&str>) {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_truncate_the_rendered_table_at_the_configured_row_count() {
     // `get process` sees far more than two rows on any machine; the shell itself is one of them.
     let run = ono("set config render.table.max_rows = 2\nget process");
@@ -693,7 +671,6 @@ fn should_truncate_the_rendered_table_at_the_configured_row_count() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_apply_the_configured_row_count_to_an_explicit_table_too() {
     let run = ono("set config render.table.max_rows = 2\nget process | format table");
     run.assert_success();
@@ -707,7 +684,6 @@ fn should_apply_the_configured_row_count_to_an_explicit_table_too() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_truncate_the_rendered_table_when_the_user_file_sets_the_row_count() {
     let dir = scratch();
     dir.write("ono/config.ono", "set config render.table.max_rows = 1\n");

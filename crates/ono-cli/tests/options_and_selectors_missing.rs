@@ -393,7 +393,6 @@ fn assert_human_megabytes(rendered: &str, what: &str) {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_render_a_byte_size_for_a_human_when_to_json_has_human() {
     let dir = scratch();
     let path = sparse_megabyte_file(&dir);
@@ -412,7 +411,6 @@ fn should_render_a_byte_size_for_a_human_when_to_json_has_human() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_render_a_byte_size_for_a_human_when_to_text_has_human() {
     let dir = scratch();
     let path = sparse_megabyte_file(&dir);
@@ -427,7 +425,6 @@ fn should_render_a_byte_size_for_a_human_when_to_text_has_human() {
 // --- numeric selectors -------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_user_by_uid_when_the_selector_is_numeric() {
     // identity.yaml: `get user` has a `uid: int` selector beside `name`, and spec §6.1 resolves
     // a selector to the one object it names — never to nothing.
@@ -441,7 +438,6 @@ fn should_resolve_a_user_by_uid_when_the_selector_is_numeric() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_group_by_gid_when_the_selector_is_numeric() {
     let run = ono("get group 0 | select name | to json");
     run.assert_success();
