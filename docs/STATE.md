@@ -98,7 +98,7 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   builtin,context_jobs}.rs`, `crates/ono-parser/src/{lexer,parser,ast}.rs`,
   `crates/ono-command/src/{expr,impls/transform}.rs`, `crates/ono-value/src/arith.rs`,
   `docs/spec/{grammar.ebnf,language.yaml}`, `docker/acceptance/cases/035-scripting-language.case`.
-  Landed so far: `let`/`( … )`/`$( … )` capture (ADR-0069); callable functions and `alias` (ADR-0070); `now()` and the RFC 3339 timestamp literal (ADR-0071 §5); prefix assignment `NAME=value cmd` (ADR-0071 §2); `each { … }` blocks (ADR-0071 §1); string `+` (ADR-0071 §6).
+  Landed so far: `let`/`( … )`/`$( … )` capture (ADR-0069); callable functions and `alias` (ADR-0070); `now()` and the RFC 3339 timestamp literal (ADR-0071 §5); prefix assignment `NAME=value cmd` (ADR-0071 §2); `each { … }` blocks (ADR-0071 §1); string `+` (ADR-0071 §6); keyless `sort` (ADR-0071 §3).
 
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every

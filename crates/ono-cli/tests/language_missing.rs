@@ -422,7 +422,6 @@ fn should_concatenate_strings_when_let_adds_two_of_them() {
 // --- sort without a key (ono.data.sort) -----------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_sort_scalars_by_themselves_when_no_key_is_given() {
     let run = ono("echo '[3,1,2]' | from json | sort | to json");
     run.assert_success();
@@ -437,7 +436,6 @@ fn should_sort_scalars_by_themselves_when_no_key_is_given() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_sort_strings_by_themselves_when_no_key_is_given() {
     let run = ono(r#"echo '["b","a"]' | from json | sort | to json"#);
     run.assert_success();
@@ -451,7 +449,6 @@ fn should_sort_strings_by_themselves_when_no_key_is_given() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_sort_scalars_descending_when_only_the_direction_is_given() {
     let run = ono("echo '[3,1,2]' | from json | sort desc | to json");
     run.assert_success();

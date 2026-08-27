@@ -81,13 +81,11 @@ impl CommandImpl for TransformCommand {
                 input.transform(Select::new(fields)?)?
             }
             Kind::Sort => {
-                let key = key_function(arguments, "key", &spelling, &scope)?;
+                // Without a key the values order by themselves, and a bare `desc` or `asc` is
+                // the direction over that identity rather than a field (ADR-0071 §3).
+                let (key, direction) = sort_arguments(arguments, &spelling, &scope)?;
                 let sort = Sort::new(key);
-                let sort = if descending(arguments, &spelling)? {
-                    sort.descending()
-                } else {
-                    sort
-                };
+                let sort = if direction { sort.descending() } else { sort };
                 input.transform(sort)?
             }
             Kind::Group => {
@@ -169,6 +167,40 @@ fn expression(arguments: &BoundArguments, name: &str, spelling: &str) -> Result<
         )
         .with_help(format!("`help {spelling}` shows what it accepts"))
     })
+}
+
+/// `sort`'s key and whether it descends: the key expression, or the identity when none was
+/// written; the direction word, which may stand alone where the key would be (ADR-0071 §3).
+fn sort_arguments(
+    arguments: &BoundArguments,
+    spelling: &str,
+    scope: &Arc<Scope>,
+) -> Result<(impl ono_pipeline::KeyFn + use<>, bool), ErrorValue> {
+    let key = arguments.selector_expression("key").cloned();
+    // A direction the user wrote arrives as an expression; the declared default arrives as a
+    // value. Only an unwritten direction lets a bare `desc` move over from the key.
+    let direction_written = matches!(
+        arguments.selector_binding("direction"),
+        Some(Binding::Expressions(_))
+    );
+    let bare_direction = match &key {
+        Some(Expr::Path(path)) if !direction_written => match path.name.as_str() {
+            "asc" => Some(false),
+            "desc" => Some(true),
+            _ => None,
+        },
+        _ => None,
+    };
+    let (key, descends) = match bare_direction {
+        Some(descends) => (None, descends),
+        None => (key, descending(arguments, spelling)?),
+    };
+    let scope = Arc::clone(scope);
+    let function = move |value: &Value| match &key {
+        Some(key) => evaluate(key, value, &scope),
+        None => Ok(value.clone()),
+    };
+    Ok((function, descends))
 }
 
 /// A key function over the expression bound to `name`.
