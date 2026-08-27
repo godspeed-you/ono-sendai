@@ -129,6 +129,11 @@ struct Request {
     include_hidden: bool,
     max_depth: usize,
     limit: usize,
+    /// `find file --name <glob>`: only entries whose name matches are emitted.
+    name: Option<globset::GlobMatcher>,
+    /// `find file --kind <kind>`: only entries of this kind are emitted; directories of
+    /// another kind are still descended into.
+    kind: Option<String>,
 }
 
 impl Request {
@@ -156,6 +161,20 @@ impl Request {
             .option_value("depth")
             .and_then(|value| value.as_int().ok())
             .and_then(|depth| usize::try_from(depth).ok());
+        let name = query
+            .option_value("name")
+            .and_then(|value| value.as_str().ok())
+            .and_then(|pattern| {
+                globset::GlobBuilder::new(pattern)
+                    .literal_separator(true)
+                    .build()
+                    .ok()
+            })
+            .map(|glob| glob.compile_matcher());
+        let kind = query
+            .option_value("kind")
+            .and_then(|value| value.as_str().ok())
+            .map(str::to_owned);
         Self {
             roots,
             list_contents: listing,
@@ -164,9 +183,21 @@ impl Request {
             // `docs/spec/commands/file.yaml` gives `--all` to `get dir` only, so a `file` walk
             // reports every entry it reaches and a `dir` listing hides dot entries by default.
             include_hidden: !listing || query.flag("all"),
-            max_depth: depth.unwrap_or(if recursive { usize::MAX } else { 0 }),
+            // The root's direct entries are depth 1: `--depth 1` lists them and descends no
+            // further. Without a bound a recursive walk has none.
+            max_depth: depth.unwrap_or(if recursive { usize::MAX } else { 1 }),
             limit: query.max().unwrap_or(usize::MAX),
+            name,
+            kind,
         }
+    }
+
+    /// Whether `--name` and `--kind` let this entry through.
+    fn admits(&self, name: &OsStr, kind: &str) -> bool {
+        self.name
+            .as_ref()
+            .is_none_or(|glob| glob.is_match(Path::new(name)))
+            && self.kind.as_deref().is_none_or(|wanted| wanted == kind)
     }
 }
 
@@ -398,8 +429,16 @@ async fn walk_root(
             .await
         {
             Ok(record) => {
-                sink.send(record.into_value()).await.map_err(|_| Closed)?;
-                *sent += 1;
+                let kind = record
+                    .get("kind")
+                    .and_then(|value| value.as_str().ok())
+                    .unwrap_or("other")
+                    .to_owned();
+                let name = root_path.file_name().unwrap_or(root_path.as_os_str());
+                if request.admits(name, &kind) {
+                    sink.send(record.into_value()).await.map_err(|_| Closed)?;
+                    *sent += 1;
+                }
             }
             // One root that is not there is that root's answer, not the walk's: the other
             // roots a glob resolved to are still described (spec §16.5).
@@ -434,6 +473,9 @@ async fn walk_root(
     // descriptors are ever held: the root, and the directory being read.
     let mut queue: VecDeque<(PathBuf, PathBuf, usize)> = VecDeque::new();
     queue.push_back((PathBuf::new(), root_path.to_path_buf(), 0));
+    // With `--follow-symlinks` a directory can be reached by more than one name, and a link
+    // can point at its own ancestor: each directory is listed once, by `(device, inode)`.
+    let mut visited: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::new();
 
     while let Some((relative, path, depth)) = queue.pop_front() {
         let fd = if relative.as_os_str().is_empty() {
@@ -449,6 +491,17 @@ async fn walk_root(
                     return Ok(());
                 }
             }
+        } else if request.follow_symlinks {
+            // Following means following: the directory is opened by the name it was reached
+            // by, symlinks included. The T14 guarantee is deliberately given up here, which is
+            // why the contract keeps this off by default (ADR-0083 §3).
+            match open_root(&path) {
+                Ok(fd) => fd,
+                Err(error) => {
+                    sink.fail(error).await.map_err(|_| Closed)?;
+                    continue;
+                }
+            }
         } else {
             match reopen_beneath(&root, &relative) {
                 Ok(fd) => fd,
@@ -462,6 +515,12 @@ async fn walk_root(
                 }
             }
         };
+        if request.follow_symlinks
+            && let Ok(stat) = nix::sys::stat::fstat(&fd)
+            && !visited.insert((stat.st_dev, stat.st_ino))
+        {
+            continue;
+        }
         let names = match entry_names(&fd, &path) {
             Ok(names) => names,
             Err(error) => {
@@ -492,8 +551,10 @@ async fn walk_root(
                         .and_then(|value| value.as_str().ok())
                         .unwrap_or("other")
                         .to_owned();
-                    sink.send(record.into_value()).await.map_err(|_| Closed)?;
-                    *sent += 1;
+                    if request.admits(&name, &kind) {
+                        sink.send(record.into_value()).await.map_err(|_| Closed)?;
+                        *sent += 1;
+                    }
                     kind
                 }
                 Err(error) => {
@@ -501,7 +562,7 @@ async fn walk_root(
                     continue;
                 }
             };
-            if kind == "dir" && depth < request.max_depth {
+            if kind == "dir" && depth + 1 < request.max_depth {
                 queue.push_back((relative.join(&name), child_path, depth + 1));
             }
         }
