@@ -45,12 +45,6 @@ deferred:
   - id: ono.type-info/1
     phase: "D"
     required_by: [ono.meta.type]
-  - id: ono.interface-event/1
-    phase: "F"
-    required_by: [ono.interface.watch]
-  - id: ono.route-event/1
-    phase: "F"
-    required_by: [ono.route.watch]
   - id: ono.link-event/1
     phase: "H"
     required_by: [ono.link.watch]

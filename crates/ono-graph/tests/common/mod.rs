@@ -531,3 +531,62 @@ pub fn filesystem(source: &str, target: &str, kind: &str, uuid: &str) -> RecordV
         .expect("the fixture filesystem record")
         .build()
 }
+
+/// An interface record with its addresses, as the netlink provider answers.
+pub fn interface(index: i64, name: &str, addresses: &[&str]) -> RecordValue {
+    let addresses: Vec<Value> = addresses
+        .iter()
+        .map(|address| {
+            Value::IpNetwork(ono_value::IpNetwork::parse(address).expect("a fixture network"))
+        })
+        .collect();
+    RecordValue::builder(schema("ono.interface"), provenance("ono.interface"))
+        .set("name", Value::String(name.into()))
+        .and_then(|builder| builder.set("index", Value::Int(i128::from(index))))
+        .and_then(|builder| builder.set("state", Value::String("up".into())))
+        .and_then(|builder| builder.set("addresses", Value::List(addresses.into())))
+        .expect("the fixture interface record")
+        .build()
+}
+
+/// A route record.
+pub fn route(
+    table: &str,
+    destination: &str,
+    gateway: Option<&str>,
+    interface: &str,
+) -> RecordValue {
+    RecordValue::builder(schema("ono.route"), provenance("ono.route"))
+        .set(
+            "destination",
+            Value::IpNetwork(ono_value::IpNetwork::parse(destination).expect("a fixture network")),
+        )
+        .and_then(|builder| {
+            builder.set(
+                "gateway",
+                gateway.map_or(Value::Null, |gateway| {
+                    Value::Ip(gateway.parse().expect("a fixture address"))
+                }),
+            )
+        })
+        .and_then(|builder| builder.set("interface", Value::String(interface.into())))
+        .and_then(|builder| builder.set("family", Value::String("inet".into())))
+        .and_then(|builder| builder.set("table", Value::String(table.into())))
+        .expect("the fixture route record")
+        .build()
+}
+
+/// A neighbour record.
+pub fn neighbor(address: &str, mac: &str, interface: &str) -> RecordValue {
+    RecordValue::builder(schema("ono.neighbor"), provenance("ono.neighbor"))
+        .set(
+            "address",
+            Value::Ip(address.parse().expect("a fixture address")),
+        )
+        .and_then(|builder| builder.set("mac", Value::String(mac.into())))
+        .and_then(|builder| builder.set("interface", Value::String(interface.into())))
+        .and_then(|builder| builder.set("family", Value::String("inet".into())))
+        .and_then(|builder| builder.set("state", Value::String("reachable".into())))
+        .expect("the fixture neighbor record")
+        .build()
+}

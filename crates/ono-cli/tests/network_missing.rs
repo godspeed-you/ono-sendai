@@ -398,7 +398,6 @@ fn should_accept_the_timeout_and_protocol_options_when_probing() {
 // --- watch interface / watch route ------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_with_a_snapshot_when_watching_interfaces() {
     // Spec §18.2/§18.3: piped `watch` emits ordinary event values, and the stream begins with the
     // current state (ADR-0024, ADR-0034). `take 1` bounds it so the document can end.
@@ -412,7 +411,6 @@ fn should_begin_with_a_snapshot_when_watching_interfaces() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_carry_the_loopback_interface_in_the_snapshot_when_watching_it() {
     // network.yaml: the `name` selector watches one interface. `lo` exists everywhere.
     let run = ono("watch interface lo | take 1 | to json");
@@ -436,7 +434,6 @@ fn should_carry_the_loopback_interface_in_the_snapshot_when_watching_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_with_a_snapshot_when_watching_routes() {
     // `--table local` names the one table every Linux machine populates: the loopback routes.
     let run = ono("watch route --table local | take 1 | select kind | to json");
@@ -449,7 +446,6 @@ fn should_begin_with_a_snapshot_when_watching_routes() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_carry_the_loopback_route_in_the_snapshot_when_watching_the_local_table() {
     let run = ono("watch route --table local | where route.interface == \"lo\" | take 1 | to json");
     run.assert_success();
@@ -474,7 +470,6 @@ fn should_carry_the_loopback_route_in_the_snapshot_when_watching_the_local_table
 // --- trace route / trace interface -----------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_name_the_loopback_interface_when_tracing_the_loopback_route() {
     // network.yaml: `trace route <destination>` shows "which interface, gateway and neighbour a
     // route depends on". 127.0.0.0/8 is the loopback route the kernel installs in the local
@@ -504,7 +499,6 @@ fn should_name_the_loopback_interface_when_tracing_the_loopback_route() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_the_route_that_arrives_through_the_pipeline() {
     // network.yaml: `input: null | ono.route/1` — the route to trace may come from `get route`.
     let run = ono(
@@ -520,7 +514,6 @@ fn should_trace_the_route_that_arrives_through_the_pipeline() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_show_the_interface_and_its_address_when_tracing_an_interface() {
     // network.yaml: `trace interface` shows "the routes, addresses, neighbours and sockets bound
     // to an interface". `lo` carries 127.0.0.1/8 and the kernel's loopback routes everywhere.
@@ -551,7 +544,6 @@ fn should_show_the_interface_and_its_address_when_tracing_an_interface() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_include_the_listening_socket_when_tracing_its_interface() {
     let (_listener, port) = listener();
     // A socket bound to 127.0.0.1 is bound to the interface that owns that address.

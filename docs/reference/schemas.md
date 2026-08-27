@@ -481,6 +481,22 @@ Default view: `interface`, `family`, `address`, `scope`
 | `label` | `string` | — | nullable | The address label, where one is set; null otherwise. |
 | `dynamic` | `bool` | — | nullable | Whether the address was configured dynamically (DHCP, SLAAC); null when the tool does not say. |
 
+## InterfaceEvent — `ono.interface-event/1`
+
+One change to one network interface, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `interface`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024). An address added or removed is the interface `changed`, with `addresses` named; link state moving is `changed` with `state` named. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `interface` | `record` | — | optional | The interface as it now is — or, for `removed`, as it last was. Identity is the netlink index (interface.v1.yaml), so a renamed interface is the same object changing. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime compared rtnetlink dumps at the configured interval — explicit, as spec §18.2 requires. |
+
 ## Interface — `ono.interface/1`
 
 A network interface with its addresses, operational state and counters.
@@ -877,6 +893,22 @@ Default view: `title`, `horizon`, `mutating`, `risk`, `command`
 | `capability` | `string` | — | nullable | The capability the command would cost, so an operator can see the authority a suggestion implies before considering it. Null when there is no command. |
 | `subject` | `value` | — | nullable | A reference to the object the recommendation is about. Null when it is about the finding as a whole. |
 | `evidence` | `list<ono.evidence/1>` | — | required | What supports this being the right next step. Empty is allowed — a recommendation is advice, not a claim — but an empty list is visible as one, and spec §31.25 encourages conclusions that stay connected to the data that produced them. |
+
+## RouteEvent — `ono.route-event/1`
+
+One routing table change, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `route`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024). A route's identity is its table, family, destination, gateway and interface (route.v1.yaml), so a route re-pointed at another gateway is `removed` + `added`, and a metric change is `changed`. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `route` | `record` | — | optional | The route as it now is — or, for `removed`, as it last was. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime compared rtnetlink dumps at the configured interval — explicit, as spec §18.2 requires. |
 
 ## Route — `ono.route/1`
 

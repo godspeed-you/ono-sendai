@@ -438,8 +438,7 @@ commands:
     verb: trace
     target: interface
     summary: Show the routes, addresses, neighbours and sockets bound to an interface.
-    stability: planned                    # spec §52, interface/trace = "R?"
-    validation_required: true
+    stability: experimental               # spec §52, interface/trace = "R?" — delivered by ADR-0080
     argument_mode: words
     input: "null | ono.interface/1"
     output: ono.graph/1

@@ -3377,7 +3377,7 @@ Show the routes, addresses, neighbours and sockets bound to an interface.
 | | |
 |---|---|
 | id | `ono.interface.trace` |
-| stability | planned |
+| stability | experimental |
 | phase | G |
 | input | `null | ono.interface/1` |
 | output | `ono.graph/1` |

@@ -7,15 +7,17 @@ use std::sync::Arc;
 
 use common::{
     FixtureProvider, ProcFixture, TableResolver, edges, endpoint, file, filesystem, group,
-    make_readable, mount, node, owned_process, process, registry, service, socket, trace_with,
-    user,
+    interface, make_readable, mount, neighbor, node, owned_process, process, registry, route,
+    service, socket, trace_with, user,
 };
 use ono_core::ErrorCode;
 use ono_graph::{
-    Confidence, MountDevices, MountFilesystems, MountUsers, OpenFiles, ProcessSockets, ProcessTree,
-    RemoteHosts, ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
+    Confidence, InterfaceSockets, MountDevices, MountFilesystems, MountUsers, OpenFiles,
+    ProcessSockets, ProcessTree, RemoteHosts, RouteInterfaces, ServiceProcesses, SocketOwners,
+    TraceOptions, UserGroups, UserProcesses,
 };
 use ono_provider_api::Provider;
+use ono_value::Value;
 
 /// One hop, so a test about one relationship sees only that relationship.
 fn one_hop() -> TraceOptions {
@@ -593,5 +595,139 @@ async fn should_link_a_mount_to_the_processes_rooted_or_working_on_it() {
             "/srv/data/pg"
         )))),
         "the edge names the path it was read from"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_route_to_its_interface_and_to_the_neighbour_that_is_its_gateway() {
+    let providers: Vec<Arc<dyn Provider>> = vec![
+        Arc::new(FixtureProvider::new(
+            "fixture.interface",
+            &["interface"],
+            vec![
+                interface(1, "lo", &["127.0.0.1/8"]),
+                interface(2, "eth0", &["192.168.1.20/24"]),
+            ],
+        )),
+        Arc::new(FixtureProvider::new(
+            "fixture.neighbor",
+            &["neighbor"],
+            vec![
+                neighbor("192.168.1.1", "aa:bb:cc:dd:ee:01", "eth0"),
+                // The same address seen on another interface is another neighbour.
+                neighbor("192.168.1.1", "aa:bb:cc:dd:ee:02", "wlan0"),
+            ],
+        )),
+    ];
+    let registry = registry(providers);
+    let subject = route("main", "0.0.0.0/0", Some("192.168.1.1"), "eth0");
+
+    let graph = trace_with(
+        vec![Arc::new(RouteInterfaces::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["via -> eth0", "gateway -> neighbor/192.168.1.1"],
+        "the route leaves through its interface and via the neighbour on that interface"
+    );
+    let gateway = graph
+        .nodes()
+        .iter()
+        .find(|node| node.kind().to_string() == "ono.neighbor/1")
+        .expect("the gateway neighbour node");
+    assert_eq!(
+        gateway.text("mac").as_deref(),
+        Some("aa:bb:cc:dd:ee:01"),
+        "the neighbour is the one on the route's interface, not a lookalike elsewhere"
+    );
+}
+
+#[tokio::test]
+async fn should_not_invent_a_gateway_neighbour_the_kernel_has_not_resolved() {
+    let providers: Vec<Arc<dyn Provider>> = vec![
+        Arc::new(FixtureProvider::new(
+            "fixture.interface",
+            &["interface"],
+            vec![interface(2, "eth0", &["192.168.1.20/24"])],
+        )),
+        Arc::new(FixtureProvider::new(
+            "fixture.neighbor",
+            &["neighbor"],
+            vec![],
+        )),
+    ];
+    let registry = registry(providers);
+    let subject = route("main", "0.0.0.0/0", Some("192.168.1.1"), "eth0");
+
+    let graph = trace_with(
+        vec![Arc::new(RouteInterfaces::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["via -> eth0"],
+        "spec §22.4: an unresolved gateway is absence, not a made-up neighbour"
+    );
+    assert!(graph.failures().is_empty(), "absence is not a failed read");
+}
+
+#[tokio::test]
+async fn should_link_an_interface_to_sockets_bound_to_its_addresses_and_mark_wildcards_inferred() {
+    let sockets: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.socket",
+        &["socket"],
+        vec![
+            socket(
+                11,
+                "tcp",
+                endpoint(Some("127.0.0.1"), Some(631)),
+                Value::Null,
+                "listen",
+            ),
+            socket(
+                12,
+                "tcp",
+                endpoint(Some("0.0.0.0"), Some(22)),
+                Value::Null,
+                "listen",
+            ),
+            socket(
+                13,
+                "tcp",
+                endpoint(Some("192.168.1.20"), Some(443)),
+                Value::Null,
+                "listen",
+            ),
+        ],
+    ))];
+    let registry = registry(sockets);
+    let subject = interface(1, "lo", &["127.0.0.1/8", "::1/128"]);
+
+    let graph = trace_with(
+        vec![Arc::new(InterfaceSockets::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["bound -> tcp/127.0.0.1:631", "bound -> tcp/:22"],
+        "the loopback listener and the wildcard listener are bound to `lo`; the one on another \
+         interface's address is not"
+    );
+    let confidences: Vec<Confidence> = graph.edges().iter().map(|e| e.confidence()).collect();
+    assert_eq!(
+        confidences,
+        [Confidence::Exact, Confidence::Inferred],
+        "spec §22.2: a socket on the interface's own address is observed; a wildcard binding is \
+         inferred and says so"
     );
 }

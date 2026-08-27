@@ -113,14 +113,22 @@ fn implementation_of(
         "ono.data.format" => Arc::new(ConversionCommand::new(id, Direction::Render)),
 
         // --- the commands that describe the shell ----------------------------------------------
-        "ono.process.watch" | "ono.socket.watch" | "ono.service.watch" | "ono.user.watch"
-        | "ono.group.watch" | "ono.mount.watch" => Arc::new(watch::WatchCommand::new(id)),
+        "ono.process.watch"
+        | "ono.socket.watch"
+        | "ono.service.watch"
+        | "ono.user.watch"
+        | "ono.group.watch"
+        | "ono.mount.watch"
+        | "ono.interface.watch"
+        | "ono.route.watch" => Arc::new(watch::WatchCommand::new(id)),
         "ono.process.trace"
         | "ono.service.trace"
         | "ono.socket.trace"
         | "ono.connection.trace"
         | "ono.user.trace"
-        | "ono.mount.trace" => Arc::new(trace::TraceCommand::new(id)),
+        | "ono.mount.trace"
+        | "ono.interface.trace"
+        | "ono.route.trace" => Arc::new(trace::TraceCommand::new(id)),
         "ono.context.get" => Arc::new(MetaCommand::new(id, meta::Kind::GetContext, registry)),
         "ono.meta.help" => Arc::new(MetaCommand::new(id, meta::Kind::Help, registry)),
         "ono.meta.explain" => Arc::new(MetaCommand::new(id, meta::Kind::Explain, registry)),
