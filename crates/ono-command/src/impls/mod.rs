@@ -33,7 +33,9 @@ mod watch;
 
 use std::sync::Arc;
 
-use crate::contract::{CommandContract, Phase};
+use ono_provider_api::ProviderRegistry;
+
+use crate::contract::{CommandContract, Phase, VerbSpec};
 use crate::invoke::CommandTable;
 use crate::registry::CommandRegistry;
 
@@ -64,16 +66,60 @@ const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F', 'G', 'J'];
 /// ```
 #[must_use]
 pub fn builtin_commands(registry: &'static CommandRegistry) -> CommandTable {
+    assemble(registry, None)
+}
+
+/// The command table this build has for `providers`: everything [`builtin_commands`] binds, and
+/// every delivered mutating command whose target a registered provider serves *and* whose
+/// `provider_capability` that provider advertises (ADR-0068 §3).
+///
+/// A provider delivers `set service` by advertising `service.manage` and answering `set` in its
+/// `act`; nothing here names the verb. A mutating command no provider advertises stays unbound,
+/// so the shell answers E0101 rather than running a stub that fails halfway (spec §50).
+///
+/// ```
+/// use ono_command::{CommandRegistry, builtin_commands_for};
+/// use ono_provider_api::ProviderRegistry;
+///
+/// let registry = CommandRegistry::embedded()?;
+/// let table = builtin_commands_for(registry, &ProviderRegistry::new());
+///
+/// assert!(table.contains("ono.data.where"), "a transform needs no provider");
+/// assert!(!table.contains("ono.process.kill"), "no provider here advertises `process.signal`");
+/// # Ok::<(), ono_value::ErrorValue>(())
+/// ```
+#[must_use]
+pub fn builtin_commands_for(
+    registry: &'static CommandRegistry,
+    providers: &ProviderRegistry,
+) -> CommandTable {
+    assemble(registry, Some(providers))
+}
+
+fn assemble(
+    registry: &'static CommandRegistry,
+    providers: Option<&ProviderRegistry>,
+) -> CommandTable {
     let mut table = CommandTable::new();
     for contract in registry.commands() {
         if !delivered(contract) {
             continue;
         }
-        if let Some(implementation) = implementation_of(contract, registry) {
+        if let Some(implementation) = implementation_of(contract, registry, providers) {
             table.register(implementation);
         }
     }
     table
+}
+
+/// Whether a provider registered for `target` advertises `capability`.
+fn advertised(providers: &ProviderRegistry, target: &str, capability: &str) -> bool {
+    providers.for_target(target).iter().any(|provider| {
+        provider
+            .capabilities()
+            .iter()
+            .any(|advertised| advertised.id() == capability)
+    })
 }
 
 fn delivered(contract: &CommandContract) -> bool {
@@ -83,6 +129,7 @@ fn delivered(contract: &CommandContract) -> bool {
 fn implementation_of(
     contract: &CommandContract,
     registry: &'static CommandRegistry,
+    providers: Option<&ProviderRegistry>,
 ) -> Option<Arc<dyn crate::invoke::CommandImpl>> {
     use convert::{ConversionCommand, Direction};
     use meta::MetaCommand;
@@ -130,7 +177,7 @@ fn implementation_of(
         // --- everything a provider answers ------------------------------------------------------
         _ => {
             let target = contract.target()?;
-            contract.provider_capability()?;
+            let capability = contract.provider_capability()?;
             // `command` and `config` are answered above and by the evaluator; a generic producer
             // over them would ask a provider that does not and should not exist.
             if matches!(target, "command" | "config" | "context") {
@@ -138,9 +185,21 @@ fn implementation_of(
             }
             match contract.verb() {
                 "get" | "find" => Arc::new(ProviderProducer::new(id)),
-                // The verbs every provider's `act` already speaks. A mutating verb no provider
-                // implements is left unregistered rather than registered to fail (spec §50).
-                "start" | "stop" | "restart" | "kill" => Arc::new(ProviderMutation::new(id)),
+                verb if registry.verb(verb).is_some_and(VerbSpec::is_mutating) => {
+                    // With a provider set, a mutating verb is bound exactly when a provider for
+                    // the target advertises the capability the contract names (ADR-0068 §3).
+                    // Without one, only the verbs every provider's `act` already speaks are
+                    // bound. A mutating verb nothing implements is left unregistered rather
+                    // than registered to fail (spec §50).
+                    let bound = match providers {
+                        Some(providers) => advertised(providers, target, capability),
+                        None => matches!(verb, "start" | "stop" | "restart" | "kill"),
+                    };
+                    if !bound {
+                        return None;
+                    }
+                    Arc::new(ProviderMutation::new(id))
+                }
                 _ => return None,
             }
         }

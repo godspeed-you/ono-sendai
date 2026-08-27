@@ -93,11 +93,6 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [seams | 2026-08-27] **cross-cutting mutation seams**: registry-dispatched `set`/`remove`
-  (`crates/ono-cli/src/{resolve,eval,native,builtin}.rs`), ActionResult exit status + error shape
-  (`crates/ono-command/src/impls/mutate.rs`, `crates/ono-cli/src/native.rs`,
-  `crates/ono-value/src/json.rs`, `crates/ono-remote/src/client.rs`), generic mutation-verb
-  binding (`crates/ono-command/src/impls/mod.rs`).
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
   one `#[ignore = "REASON: …"]` (AGENTS.md §7) so the tree stays green; **the increment that
@@ -394,6 +389,13 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] seams 2 — ActionResult contract: a failed row exits 1, a missing target is an E0301 row,
   `operation` is the command id, `error` is a flat `ono.error/1` — ADR-0068 §2;
   `processes_missing.rs` (3 tests), `remote_missing.rs` (2 tests) un-ignored
+- [x] seams 3 — a mutating verb binds when a provider advertises its capability
+  (`builtin_commands_for`, ADR-0068 §3); `crates/ono-command/tests/mutations.rs` (4 tests).
+  Families deliver a mutation by advertising the capability and answering the verb in `act`:
+  `set service` now reaches the systemd provider, which reports it has no `set` operation
+  (E0402 row) until the services family maps `--enabled` onto enable/disable and reports a
+  missing property as E0201 naming `--enabled`
+  (`services_logs_missing.rs::should_refuse_set_service_without_a_property…` stays ignored).
 
 - [x] v0.3 step 1 — ADAPT-001 OutputDemand computed backwards from the consumer, reported
   by `explain` (ADR-0052) — cases 070, 071

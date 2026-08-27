@@ -37,13 +37,17 @@ pub fn registry() -> Result<&'static CommandRegistry, ErrorValue> {
     CommandRegistry::embedded()
 }
 
-/// The native implementations, built once against the registry.
-fn implementations() -> Result<&'static CommandTable, ErrorValue> {
+/// The native implementations, built once against the registry and the shell's own providers.
+///
+/// A mutating command is bound when a local provider advertises its capability (ADR-0068 §3).
+/// The table is built from the local providers whatever frame the shell is in, so a link frame
+/// neither adds nor removes commands; the mutation asks the provider that actually acts.
+fn implementations(session: &mut Session) -> Result<&'static CommandTable, ErrorValue> {
     static TABLE: OnceLock<CommandTable> = OnceLock::new();
     if let Some(table) = TABLE.get() {
         return Ok(table);
     }
-    let built = ono_command::builtin_commands(registry()?);
+    let built = ono_command::builtin_commands_for(registry()?, session.providers());
     Ok(TABLE.get_or_init(|| built))
 }
 
@@ -432,7 +436,7 @@ pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitSt
 /// the pipeline mixes in external stages, which a job with no process group cannot carry yet.
 pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitStatus> {
     let registry = registry().map_err(Flow::Failed)?;
-    let table = implementations().map_err(Flow::Failed)?;
+    let table = implementations(session).map_err(Flow::Failed)?;
     let segments = segments(session, list, 0, false).ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::ResolveCommandNotFound,
@@ -1246,7 +1250,7 @@ fn run_native_segment(
     first: bool,
     last: bool,
 ) -> Eval<(Option<Vec<u8>>, ExitStatus)> {
-    let table = implementations().map_err(Flow::Failed)?;
+    let table = implementations(session).map_err(Flow::Failed)?;
 
     // Everything is bound before anything runs. A pipeline that cannot be built runs no part of
     // itself, so a typo in the third stage never leaves the first two half-done.

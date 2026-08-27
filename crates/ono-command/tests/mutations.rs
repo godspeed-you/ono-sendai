@@ -208,3 +208,227 @@ async fn should_act_on_every_object_when_the_bulk_was_confirmed() {
         "spec §11.5: one outcome per confirmed target"
     );
 }
+
+// --- generic verb binding: a provider's capability decides what is bound (ADR-0068 §3) --------
+
+/// A provider for `service` that advertises `service.manage` and answers `set` — the verb the
+/// registry declares for `ono.service.set` and that no code in the command crate names.
+#[derive(Debug)]
+struct ServiceFixture;
+
+fn service_schema() -> std::sync::Arc<ono_value::Schema> {
+    std::sync::Arc::new(
+        ono_value::Schema::builder(ono_value::SchemaId::new("ono.unit-fixture", 1), "Unit")
+            .field(ono_value::FieldDef::new("name", ono_value::FieldType::String).required())
+            .identity(["name"])
+            .default_view(["name"])
+            .build()
+            .expect("the fixture schema is valid"),
+    )
+}
+
+fn unit(name: &str) -> ono_value::RecordValue {
+    let schema = service_schema();
+    let provenance = ono_value::Provenance::local("test.service", schema.id().clone());
+    ono_value::RecordValue::builder(schema, provenance)
+        .set("name", ono_value::Value::string(name))
+        .map(ono_value::RecordBuilder::build)
+        .expect("the fixture record is valid")
+}
+
+#[async_trait::async_trait]
+impl ono_provider_api::Provider for ServiceFixture {
+    fn id(&self) -> &str {
+        "test.service"
+    }
+
+    fn targets(&self) -> &[&str] {
+        &["service"]
+    }
+
+    fn schemas(&self) -> Vec<std::sync::Arc<ono_value::Schema>> {
+        vec![service_schema()]
+    }
+
+    fn capabilities(&self) -> Vec<ono_provider_api::Capability> {
+        vec![
+            ono_provider_api::Capability::new("service.list", ono_provider_api::Risk::Read),
+            ono_provider_api::Capability::new("service.manage", ono_provider_api::Risk::Mutate),
+        ]
+    }
+
+    fn snapshot(
+        &self,
+        _query: &ono_provider_api::Query,
+    ) -> Result<ono_pipeline::ValueStream, ono_value::ErrorValue> {
+        Ok(ono_pipeline::ValueStream::from_values([
+            unit("nginx").into_value()
+        ]))
+    }
+
+    async fn resolve(
+        &self,
+        selector: &ono_provider_api::Selector,
+    ) -> Result<Vec<ono_provider_api::ObjectRef>, ono_value::ErrorValue> {
+        Ok([unit("nginx")]
+            .iter()
+            .filter(|record| selector.matches(record))
+            .filter_map(ono_provider_api::ObjectRef::of)
+            .collect())
+    }
+
+    async fn act(
+        &self,
+        action: &ono_provider_api::Action,
+    ) -> Result<ono_provider_api::ActionOutcome, ono_value::ErrorValue> {
+        // The verb and the option arrive as the contract spells them; the outcome echoes them
+        // so the test can see what reached the provider.
+        Ok(ono_provider_api::ActionOutcome::skipped(
+            action,
+            format!(
+                "{} enabled={:?} on {}",
+                action.operation(),
+                action.argument("enabled"),
+                action.target()
+            ),
+        ))
+    }
+}
+
+fn service_and_process() -> ono_provider_api::ProviderRegistry {
+    let mut registry = providers(FixtureProvider::new());
+    registry.register(std::sync::Arc::new(ServiceFixture));
+    registry
+}
+
+#[tokio::test]
+async fn should_bind_a_mutating_verb_when_a_provider_advertises_its_capability() {
+    // `ono.service.set` names `service.manage`; the fixture advertises it, so `set service`
+    // reaches `act` with the verb, the selector resolved to an identity, and the option.
+    let ran = fixture::run_bound("set service nginx --enabled false", &service_and_process())
+        .await
+        .expect("the pipeline runs");
+
+    assert_eq!(ran.actions().len(), 1, "one target, one outcome");
+    let outcome = &ran.actions()[0];
+    assert_eq!(
+        outcome.operation(),
+        "set",
+        "the provider is asked in the verb's own name"
+    );
+    assert_eq!(
+        outcome.status(),
+        ActionStatus::Skipped,
+        "the outcome is the provider's own answer"
+    );
+    let echoed = outcome_message(outcome);
+    assert!(
+        echoed.contains("enabled=Some(Bool(false))") && echoed.contains("nginx"),
+        "the option and the resolved target reached `act`, got {echoed:?}"
+    );
+}
+
+#[tokio::test]
+async fn should_carry_piped_objects_into_a_generically_bound_verb() {
+    let ran = fixture::run_bound(
+        "get service | set service --enabled true",
+        &service_and_process(),
+    )
+    .await
+    .expect("the pipeline runs");
+
+    assert_eq!(ran.actions().len(), 1);
+    assert!(
+        outcome_message(&ran.actions()[0]).contains("enabled=Some(Bool(true))"),
+        "the piped unit and the option both reached `act`"
+    );
+}
+
+#[tokio::test]
+async fn should_leave_a_mutating_verb_unbound_when_no_provider_advertises_its_capability() {
+    // Nothing here advertises `file.set` or `mount.manage`: the contracts stay unbound, so the
+    // shell answers E0101 rather than running a stub that fails halfway (spec §50).
+    let table = ono_command::builtin_commands_for(fixture::registry(), &service_and_process());
+
+    assert!(table.contains("ono.service.set"), "advertised, so bound");
+    assert!(table.contains("ono.process.kill"), "advertised, so bound");
+    assert!(
+        !table.contains("ono.file.set"),
+        "no provider advertises `file.set`"
+    );
+    assert!(
+        !table.contains("ono.filesystem.unmount"),
+        "no provider advertises `mount.manage`"
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_before_acting_when_the_provider_that_would_act_lacks_the_capability() {
+    // The table was built for a registry that advertised `service.manage`; the registry the
+    // pipeline runs against does not. The mutation refuses before resolving anything, with the
+    // same E0101 an unbound command answers, instead of asking a provider that cannot do it.
+    let table = ono_command::builtin_commands_for(fixture::registry(), &service_and_process());
+    let mut without = providers(FixtureProvider::new());
+    without.register(std::sync::Arc::new(ReadOnlyService));
+
+    let error = fixture::run_with_table(&table, "set service nginx --enabled false", &without)
+        .await
+        .expect_err("the provider that would act does not advertise `service.manage`");
+    assert_eq!(error.code(), ErrorCode::ResolveCommandNotFound);
+    assert!(
+        error.message().contains("ono.service.set") && error.message().contains("service.manage"),
+        "the refusal names the command and the capability, got {}",
+        error.message()
+    );
+}
+
+/// A `service` provider that only lists.
+#[derive(Debug)]
+struct ReadOnlyService;
+
+#[async_trait::async_trait]
+impl ono_provider_api::Provider for ReadOnlyService {
+    fn id(&self) -> &str {
+        "test.service-readonly"
+    }
+
+    fn targets(&self) -> &[&str] {
+        &["service"]
+    }
+
+    fn schemas(&self) -> Vec<std::sync::Arc<ono_value::Schema>> {
+        vec![service_schema()]
+    }
+
+    fn capabilities(&self) -> Vec<ono_provider_api::Capability> {
+        vec![ono_provider_api::Capability::new(
+            "service.list",
+            ono_provider_api::Risk::Read,
+        )]
+    }
+
+    fn snapshot(
+        &self,
+        _query: &ono_provider_api::Query,
+    ) -> Result<ono_pipeline::ValueStream, ono_value::ErrorValue> {
+        Ok(ono_pipeline::ValueStream::from_values([
+            unit("nginx").into_value()
+        ]))
+    }
+
+    async fn resolve(
+        &self,
+        _selector: &ono_provider_api::Selector,
+    ) -> Result<Vec<ono_provider_api::ObjectRef>, ono_value::ErrorValue> {
+        panic!("a provider without the capability must never be asked to resolve for a mutation")
+    }
+}
+
+fn outcome_message(outcome: &ono_provider_api::ActionOutcome) -> String {
+    outcome
+        .clone()
+        .into_record(ono_value::Duration::ZERO)
+        .message()
+        .unwrap_or_default()
+        .to_owned()
+}

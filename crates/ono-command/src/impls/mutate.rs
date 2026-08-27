@@ -41,8 +41,30 @@ impl ProviderMutation {
                 format!("`{spelling}` names no target to act on"),
             )
         })?;
+        // The table bound this command because a provider advertised the capability; the
+        // provider that will act now may be another one — a link frame mounts a remote's
+        // (ADR-0036) — so the same question is asked of it, before anything is resolved. A
+        // refusal here is the E0101 an unbound command answers, never a half-run.
+        if let Some(capability) = contract.provider_capability()
+            && let Ok(provider) = ctx.providers().provider_for(target)
+            && !provider
+                .capabilities()
+                .iter()
+                .any(|advertised| advertised.id() == capability)
+        {
+            return Err(ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                format!(
+                    "`{}` is declared but the provider for `{target}` here ({}) does not \
+                     implement `{capability}`",
+                    contract.id(),
+                    provider.id()
+                ),
+            )
+            .with_help("`help` lists what this shell can do; the rest is scheduled, not hidden"));
+        }
         // The operation is the verb the user typed, which is the vocabulary every provider's
-        // `act` already speaks: `kill`, `stop`, `start`, `restart`.
+        // `act` already speaks: `kill`, `stop`, `start`, `restart`, `set`.
         let operation = contract.verb().to_owned();
         let arguments: Vec<(String, Value)> = contract
             .options()

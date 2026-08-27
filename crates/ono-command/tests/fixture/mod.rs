@@ -389,6 +389,20 @@ pub async fn run(source: &str, providers: &ProviderRegistry) -> Result<Ran, Erro
     run_full(source, providers, Scope::new(), Vec::new()).await
 }
 
+/// Runs `source` with the table the shell builds for `providers` — the one where a mutating
+/// verb is bound exactly when a provider advertises its capability (ADR-0068 §3).
+pub async fn run_bound(source: &str, providers: &ProviderRegistry) -> Result<Ran, ErrorValue> {
+    let table = ono_command::builtin_commands_for(registry(), providers);
+    run_table(
+        &table,
+        source,
+        providers,
+        Arc::new(Scope::new()),
+        Vec::new(),
+    )
+    .await
+}
+
 /// Runs `source` inside the given context frames (spec §14.3).
 pub async fn run_with_context(
     source: &str,
@@ -414,8 +428,25 @@ pub async fn run_full(
     scope: Scope,
     context: Vec<ono_command::ContextFrame>,
 ) -> Result<Ran, ErrorValue> {
-    let table = table();
-    let scope = Arc::new(scope);
+    run_table(&table(), source, providers, Arc::new(scope), context).await
+}
+
+/// Runs `source` with an explicit table against `providers`.
+pub async fn run_with_table(
+    table: &CommandTable,
+    source: &str,
+    providers: &ProviderRegistry,
+) -> Result<Ran, ErrorValue> {
+    run_table(table, source, providers, Arc::new(Scope::new()), Vec::new()).await
+}
+
+async fn run_table(
+    table: &CommandTable,
+    source: &str,
+    providers: &ProviderRegistry,
+    scope: Arc<Scope>,
+    context: Vec<ono_command::ContextFrame>,
+) -> Result<Ran, ErrorValue> {
     let parsed = ono_parser::parse(source);
     assert!(
         parsed.diagnostics().is_empty(),
