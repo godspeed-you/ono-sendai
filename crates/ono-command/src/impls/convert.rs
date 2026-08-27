@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use ono_core::ErrorCode;
-use ono_pipeline::{Boundedness, StreamSink};
+use ono_pipeline::{Boundedness, StreamEvent, StreamSink};
 use ono_render::{Cell, Column, Layout, Renderer, Table, View};
 use ono_value::{ErrorValue, Value};
 
@@ -95,8 +95,24 @@ impl CommandImpl for ConversionCommand {
         let direction = self.direction;
         let output = input.stage(Boundedness::Bounded, move |mut input, sink| async move {
             let mut values = Vec::new();
-            while let Some(value) = input.next_value(&sink).await {
-                values.push(value);
+            let mut failed = false;
+            while let Some(event) = input.recv().await {
+                match event {
+                    StreamEvent::Value(value) => values.push(value),
+                    StreamEvent::Failure(error) => {
+                        failed = true;
+                        if sink.fail(error).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+            // A serializer represents what arrived; it is not a source. A stream that failed
+            // before its first value has nothing to represent, and writing `[]` for it would
+            // turn "no answer" into "an empty answer" — the one case the run's status reports
+            // (ADR-0028). A stream that ended empty without failing is an empty answer.
+            if failed && values.is_empty() && direction == Direction::Serialize {
+                return;
             }
             let produced = match direction {
                 Direction::Serialize => serialize(&name, &values, &options),
