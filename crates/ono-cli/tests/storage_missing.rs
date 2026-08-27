@@ -249,7 +249,6 @@ fn should_carry_a_size_for_every_block_device() {
 // --- mount filesystem -------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_and_leave_the_target_unmounted_when_mounting_unprivileged() {
     if !unprivileged() {
         return;
@@ -283,7 +282,6 @@ fn should_report_a_failed_row_and_leave_the_target_unmounted_when_mounting_unpri
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_accept_one_mount_option_per_occurrence_when_mounting() {
     // Spec §23.5: options are structure, one `--option` each — never a joined string. The
     // attempt is still refused unprivileged, which is how an accepted option list is observable.
@@ -310,7 +308,6 @@ fn should_accept_one_mount_option_per_occurrence_when_mounting() {
 // --- unmount filesystem -----------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_unmounting_the_root_filesystem_unprivileged() {
     if !unprivileged() {
         return;
@@ -331,7 +328,6 @@ fn should_report_a_failed_row_when_unmounting_the_root_filesystem_unprivileged()
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_not_found_when_unmounting_a_path_that_is_no_mount_point() {
     // A directory that is not a mount point is decidable from /proc/self/mountinfo (§23.5)
     // before any privileged call: there is no mount at that path, so the error is io.not_found
@@ -347,7 +343,6 @@ fn should_report_not_found_when_unmounting_a_path_that_is_no_mount_point() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_unmount_the_mounts_piped_in_from_get_mount() {
     // storage.yaml: input `null | stream<ono.mount/1>`. The piped mount is the target — and the
     // attempt on `/` is refused unprivileged, which is how the piped target is observable.

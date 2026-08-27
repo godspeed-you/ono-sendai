@@ -373,7 +373,7 @@ fn should_claim_the_mount_and_filesystem_targets_with_the_registry_capability_id
         .iter()
         .map(|capability| capability.id().to_owned())
         .collect();
-    assert_eq!(ids, ["mount.list", "filesystem.list"]);
+    assert_eq!(ids, ["mount.list", "filesystem.list", "mount.manage"]);
 }
 
 // --- filesystems that are not mounted (storage.yaml `--mounted`, ADR-0097) -------------------

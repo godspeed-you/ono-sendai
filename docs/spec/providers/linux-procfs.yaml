@@ -31,9 +31,11 @@ providers:
     schemas: [ono.env-var/1]
 
   - id: linux.mountinfo
-    doc: Mounts and filesystems, from /proc/self/mountinfo and statvfs.
+    doc: >-
+      Mounts and filesystems, from /proc/self/mountinfo and statvfs; mounting, unmounting and
+      remounting through mount(2) and umount2(2) (ADR-0098).
     targets: [mount, filesystem]
-    capabilities: [mount.list, filesystem.list]
+    capabilities: [mount.list, filesystem.list, mount.manage]
     schemas: [ono.mount/1, ono.filesystem/1]
 
   - id: linux.sysfs

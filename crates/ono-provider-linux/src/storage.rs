@@ -17,9 +17,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use nix::mount::{MntFlags, MsFlags};
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+};
 use ono_value::{ByteSize, ErrorValue, RecordValue, Schema, Uuid, Value};
 
 use crate::common::{errno_error, io_error, provenance};
@@ -506,6 +509,9 @@ impl Provider for StorageProvider {
         vec![
             Capability::new("mount.list", Risk::Read),
             Capability::new("filesystem.list", Risk::Read),
+            // `docs/spec/capabilities.yaml` gives `mount.manage` elevation `required`: mount(2)
+            // and umount2(2) need CAP_SYS_ADMIN.
+            Capability::new("mount.manage", Risk::Mutate).needing_elevation(),
         ]
     }
 
@@ -577,6 +583,221 @@ impl Provider for StorageProvider {
             }
         }
         Ok(found)
+    }
+
+    async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        match action.operation() {
+            "mount" => Ok(self.mount(action)),
+            "unmount" => Ok(self.unmount(action)),
+            other => Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!("{PROVIDER_ID} does not implement `{other}`"),
+            )),
+        }
+    }
+}
+
+// --- the mutations: mount(2) and umount2(2), asked for real (ADR-0098) --------------------------
+
+/// The mount options that are flags to the kernel rather than data for the filesystem, as
+/// `mount(8)` spells them. Everything else travels in the data string, one option per element
+/// of the list the user gave — never re-split from a joined string (spec §23.5).
+fn mount_flag(option: &str) -> Option<MsFlags> {
+    Some(match option {
+        "ro" => MsFlags::MS_RDONLY,
+        "nosuid" => MsFlags::MS_NOSUID,
+        "nodev" => MsFlags::MS_NODEV,
+        "noexec" => MsFlags::MS_NOEXEC,
+        "sync" => MsFlags::MS_SYNCHRONOUS,
+        "dirsync" => MsFlags::MS_DIRSYNC,
+        "noatime" => MsFlags::MS_NOATIME,
+        "nodiratime" => MsFlags::MS_NODIRATIME,
+        "relatime" => MsFlags::MS_RELATIME,
+        "strictatime" => MsFlags::MS_STRICTATIME,
+        "lazytime" => MsFlags::MS_LAZYTIME,
+        "bind" => MsFlags::MS_BIND,
+        "rbind" => MsFlags::MS_BIND | MsFlags::MS_REC,
+        "remount" => MsFlags::MS_REMOUNT,
+        "silent" => MsFlags::MS_SILENT,
+        "mand" => MsFlags::MS_MANDLOCK,
+        // `rw`, `defaults`, `async`, `atime`, `dev`, `exec`, `suid` name the absence of a flag.
+        "rw" | "defaults" | "async" | "atime" | "dev" | "exec" | "suid" | "diratime" | "nomand"
+        | "nolazytime" | "loud" => MsFlags::empty(),
+        _ => return None,
+    })
+}
+
+/// Splits a list of options into the kernel's flags and the filesystem's data string.
+fn split_options(options: &[String]) -> (MsFlags, String) {
+    let mut flags = MsFlags::empty();
+    let mut data = Vec::new();
+    for option in options {
+        match mount_flag(option) {
+            Some(flag) => flags |= flag,
+            None => data.push(option.as_str()),
+        }
+    }
+    (flags, data.join(","))
+}
+
+/// The path a value names, whether it arrived typed or as text.
+fn path_of(value: &Value) -> Option<PathBuf> {
+    match value {
+        Value::Path(path) => Some(path.to_path_buf()),
+        Value::String(text) => Some(PathBuf::from(text.as_ref())),
+        _ => None,
+    }
+}
+
+/// The text a value carries, for a source that may be a path or a name.
+fn text_of(value: &Value) -> Option<String> {
+    match value {
+        Value::Path(path) => Some(path.display().to_string()),
+        Value::String(text) => Some(text.to_string()),
+        _ => None,
+    }
+}
+
+/// The elements of a repeatable option: a list when it was written more than once, one value
+/// when once, nothing when never.
+fn list_of(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::List(items)) => items.iter().filter_map(text_of).collect(),
+        Some(other) => text_of(other).into_iter().collect(),
+        None => Vec::new(),
+    }
+}
+
+fn flag_of(action: &Action, name: &str) -> bool {
+    matches!(action.argument(name), Some(Value::Bool(true)))
+}
+
+fn missing(action: &Action, what: &str) -> ActionOutcome {
+    ActionOutcome::failed(
+        action,
+        ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            format!(
+                "`{}` needs a {what}, and none was given",
+                action.operation()
+            ),
+        ),
+    )
+}
+
+impl StorageProvider {
+    /// The mount point an action is about: its `target` argument, or the identity of the
+    /// `ono.mount/1` it was resolved from or piped in as.
+    fn action_target(action: &Action) -> Option<PathBuf> {
+        action
+            .argument("target")
+            .and_then(path_of)
+            .or_else(|| action.target().values().first().and_then(path_of))
+    }
+
+    /// The filesystem type of a block device, as udev recorded it — for a `mount` that named
+    /// no `--type`.
+    fn detect_type(&self, source: &str) -> Option<String> {
+        let name = Path::new(source).file_name()?;
+        let number = fs::read_to_string(self.sys_class_block.join(name).join("dev")).ok()?;
+        self.udev_property(number.trim(), "ID_FS_TYPE")
+    }
+
+    fn mount(&self, action: &Action) -> ActionOutcome {
+        let Some(source) = action.argument("source").and_then(text_of) else {
+            return missing(action, "source");
+        };
+        let Some(target) = Self::action_target(action) else {
+            return missing(action, "target");
+        };
+        let fs_type = match action.argument("type").and_then(text_of) {
+            Some(fs_type) => fs_type,
+            None => {
+                match self.detect_type(&source) {
+                    Some(fs_type) => fs_type,
+                    None => {
+                        return ActionOutcome::failed(
+                        action,
+                        ErrorValue::new(
+                            ErrorCode::TypeMismatch,
+                            format!("no filesystem type was given and none is recorded for `{source}`"),
+                        )
+                        .with_help("name it with `--type`, as in `--type ext4`"),
+                    );
+                    }
+                }
+            }
+        };
+        let (mut flags, data) = split_options(&list_of(action.argument("option")));
+        if flag_of(action, "read-only") {
+            flags |= MsFlags::MS_RDONLY;
+        }
+        if action.is_dry_run() {
+            return ActionOutcome::skipped(
+                action,
+                format!("would mount {source} ({fs_type}) at {}", target.display()),
+            );
+        }
+        match nix::mount::mount(
+            Some(source.as_str()),
+            &target,
+            Some(fs_type.as_str()),
+            flags,
+            Some(data.as_str()),
+        ) {
+            Ok(()) => ActionOutcome::succeeded(action, true),
+            Err(errno) => ActionOutcome::failed(action, mount_error(errno, &target)),
+        }
+    }
+
+    fn unmount(&self, action: &Action) -> ActionOutcome {
+        let Some(target) = Self::action_target(action) else {
+            return missing(action, "mount point");
+        };
+        // Decidable before any privileged call: the kernel's own table says whether there is
+        // a mount at that path. A directory that is no mount point is `io.not_found` — the
+        // mount is the resource, and it does not exist.
+        match self.mounts() {
+            Ok(mounts) if mounts.iter().any(|mount| mount.target == target) => {}
+            Ok(_) => {
+                return ActionOutcome::failed(
+                    action,
+                    ErrorValue::new(
+                        ErrorCode::IoNotFound,
+                        format!("nothing is mounted at {}", target.display()),
+                    )
+                    .with_target(ono_value::ValueRef::path(&target))
+                    .with_help("`get mount` lists the mount points there are"),
+                );
+            }
+            Err(error) => return ActionOutcome::failed(action, error),
+        }
+        let mut flags = MntFlags::empty();
+        if flag_of(action, "lazy") {
+            flags |= MntFlags::MNT_DETACH;
+        }
+        if flag_of(action, "force") {
+            flags |= MntFlags::MNT_FORCE;
+        }
+        if action.is_dry_run() {
+            return ActionOutcome::skipped(action, format!("would unmount {}", target.display()));
+        }
+        match nix::mount::umount2(&target, flags) {
+            Ok(()) => ActionOutcome::succeeded(action, true),
+            Err(errno) => ActionOutcome::failed(action, mount_error(errno, &target)),
+        }
+    }
+}
+
+/// A refused mount call, with the one help line every unprivileged user needs.
+fn mount_error(errno: nix::errno::Errno, target: &Path) -> ErrorValue {
+    let error = errno_error(errno, target);
+    match errno {
+        nix::errno::Errno::EPERM | nix::errno::Errno::EACCES => error.with_help(
+            "mounting and unmounting need CAP_SYS_ADMIN; run this as root, or through a \
+             privilege broker the policy admits",
+        ),
+        _ => error,
     }
 }
 

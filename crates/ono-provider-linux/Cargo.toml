@@ -15,7 +15,7 @@ ono-provider-api.workspace = true
 ono-value.workspace = true
 async-trait.workspace = true
 jiff.workspace = true
-nix = { workspace = true, features = ["dir", "feature", "fs", "process", "signal", "user"] }
+nix = { workspace = true, features = ["dir", "feature", "fs", "mount", "process", "signal", "user"] }
 tokio.workspace = true
 
 [dev-dependencies]

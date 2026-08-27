@@ -98,6 +98,13 @@ impl ProviderMutation {
 
         let mut failures = Vec::new();
         let targets = self.targets(ctx, target, &spelling, &mut failures).await?;
+        // A creating verb's selectors describe the object, and the provider needs them by name
+        // — `mount filesystem <source> <target>` is a source and a target, not two anonymous
+        // identity values.
+        let mut arguments = arguments;
+        if creates(contract.verb()) {
+            arguments.extend(named_selectors(ctx));
+        }
 
         // The bulk guard of spec §11.6 and §17.4: a selection above the threshold mutates
         // nothing unless the confirmation was written. The refusal names the scope — the count
@@ -196,6 +203,25 @@ impl ProviderMutation {
             return Ok(objects);
         }
 
+        // A verb that creates what it names has nothing to resolve: the object does not exist
+        // yet, and asking the provider for it would answer "not found" to every request. Its
+        // identity is the selectors as written, in contract order (ADR-0098 §1).
+        if creates(ctx.contract().verb()) {
+            let named = named_selectors(ctx);
+            if named.is_empty() {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`{spelling}` needs something to create, and none was given"),
+                )
+                .with_help(format!("name it, as in `{spelling} <selector>`")));
+            }
+            let object = ObjectId::new(
+                ono_value::SchemaId::new(&format!("ono.{target}"), 1),
+                named.into_iter().map(|(_, value)| value),
+            );
+            return Ok(vec![object]);
+        }
+
         let (name, value) = ctx
             .contract()
             .selectors()
@@ -242,6 +268,27 @@ impl ProviderMutation {
         }
         Ok(objects)
     }
+}
+
+/// Whether a verb creates the object it names rather than acting on one that exists.
+///
+/// `docs/spec/verbs.yaml`: `add` is "Create a membership or association", `mount` is "Attach a
+/// filesystem or resource" — both name something that is not there yet.
+fn creates(verb: &str) -> bool {
+    matches!(verb, "add" | "mount")
+}
+
+/// The selectors that were written, by the names the contract gives them, in contract order.
+fn named_selectors(ctx: &Invocation<'_>) -> Vec<(String, Value)> {
+    ctx.contract()
+        .selectors()
+        .iter()
+        .filter_map(|spec| {
+            ctx.arguments()
+                .selector(spec.name())
+                .map(|value| (spec.name().to_owned(), value.clone()))
+        })
+        .collect()
 }
 
 /// An upstream failure, carried through as the outcome of a target that was never acted on.
