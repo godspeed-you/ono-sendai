@@ -384,12 +384,17 @@ impl Plan {
     }
 }
 
-/// The package name an identity refers to: `ono.package/1` is `provider + name`.
+/// The package name an identity refers to: `ono.package/1` is `provider + name`, and a creating
+/// verb names a package by its selector alone (ADR-0098 §1), so a one-value identity is the
+/// name without a provider.
 pub(crate) fn package_name(id: &ObjectId) -> Result<&str, ErrorValue> {
     let expected = SchemaId::new("ono.package", 1);
-    id.values()
-        .get(1)
-        .and_then(|value| value.as_str().ok())
+    let name = match id.values() {
+        [name] => Some(name),
+        [_, name, ..] => Some(name),
+        [] => None,
+    };
+    name.and_then(|value| value.as_str().ok())
         .filter(|_| id.schema() == &expected)
         .ok_or_else(|| {
             ErrorValue::new(
