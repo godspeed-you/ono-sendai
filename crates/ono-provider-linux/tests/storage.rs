@@ -375,3 +375,127 @@ fn should_claim_the_mount_and_filesystem_targets_with_the_registry_capability_id
         .collect();
     assert_eq!(ids, ["mount.list", "filesystem.list"]);
 }
+
+// --- filesystems that are not mounted (storage.yaml `--mounted`, ADR-0097) -------------------
+
+impl StorageFixture {
+    /// Records what the kernel and udev know about a block device that carries a filesystem
+    /// signature: its number under `sys/class/block`, and udev's probe result in its database.
+    fn block_device(&self, device: &str, number: &str, fs_type: &str) -> &Self {
+        let class = self.root.path().join("sys/class/block").join(device);
+        fs::create_dir_all(&class).expect("the sysfs class entry");
+        fs::write(class.join("dev"), format!("{number}\n")).expect("the device number");
+        let udev = self.root.path().join("run/udev/data");
+        fs::create_dir_all(&udev).expect("the udev database");
+        fs::write(
+            udev.join(format!("b{number}")),
+            format!("S:disk/by-uuid/x\nE:ID_FS_TYPE={fs_type}\nE:ID_FS_USAGE=filesystem\n"),
+        )
+        .expect("the udev record");
+        self
+    }
+}
+
+#[tokio::test]
+async fn should_list_an_unmounted_filesystem_with_a_null_target() {
+    let fixture = StorageFixture::new("");
+    let target = fixture.mount_point("data");
+    fixture
+        .uuid("sdb1", "b0f1a2c3-1111-2222-3333-444455556666")
+        .block_device("sdb1", "8:17", "ext4")
+        .uuid("sdc1", "c0f1a2c3-1111-2222-3333-444455556666")
+        .label("sdc1", "spare")
+        .block_device("sdc1", "8:33", "xfs");
+    fs::write(
+        fixture.path().join("proc/self/mountinfo"),
+        format!(
+            "36 35 8:17 / {} rw,noatime - ext4 /dev/sdb1 rw\n",
+            target.display()
+        ),
+    )
+    .expect("the mount table");
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("filesystem"))
+            .expect("a snapshot"),
+    )
+    .await;
+    let records = records(&collected);
+    assert_eq!(
+        records.len(),
+        2,
+        "one mounted and one unmounted filesystem, got {records:?}"
+    );
+    let spare =
+        find(&records, "source", "/dev/sdc1").expect("the unmounted device is a filesystem too");
+    assert_eq!(spare.get("type"), Some(&Value::string("xfs")));
+    assert_eq!(spare.get("label"), Some(&Value::string("spare")));
+    assert_eq!(
+        spare.get("uuid"),
+        Some(&Value::Uuid(
+            ono_value::Uuid::parse("c0f1a2c3-1111-2222-3333-444455556666").expect("a uuid")
+        ))
+    );
+    assert_eq!(spare.access("target"), FieldAccess::Unknown);
+    assert_eq!(spare.access("size"), FieldAccess::Unknown);
+    assert_eq!(spare.access("read_only"), FieldAccess::Unknown);
+    assert_eq!(spare.get("device"), Some(&Value::string("/dev/sdc1")));
+}
+
+#[tokio::test]
+async fn should_restrict_to_mounted_or_unmounted_filesystems_when_asked() {
+    let fixture = StorageFixture::new("");
+    let target = fixture.mount_point("data");
+    fixture
+        .uuid("sdb1", "b0f1a2c3-1111-2222-3333-444455556666")
+        .block_device("sdb1", "8:17", "ext4")
+        .uuid("sdc1", "c0f1a2c3-1111-2222-3333-444455556666")
+        .block_device("sdc1", "8:33", "xfs");
+    fs::write(
+        fixture.path().join("proc/self/mountinfo"),
+        format!(
+            "36 35 8:17 / {} rw,noatime - ext4 /dev/sdb1 rw\n",
+            target.display()
+        ),
+    )
+    .expect("the mount table");
+
+    let unmounted = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("filesystem").option("mounted", Value::Bool(false)))
+            .expect("a snapshot"),
+    )
+    .await;
+    let unmounted = records(&unmounted);
+    assert_eq!(unmounted.len(), 1, "got {unmounted:?}");
+    assert_eq!(
+        unmounted[0].get("source"),
+        Some(&Value::string("/dev/sdc1"))
+    );
+
+    let mounted = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("filesystem").option("mounted", Value::Bool(true)))
+            .expect("a snapshot"),
+    )
+    .await;
+    let mounted = records(&mounted);
+    assert_eq!(mounted.len(), 1, "got {mounted:?}");
+    assert_eq!(mounted[0].get("source"), Some(&Value::string("/dev/sdb1")));
+}
+
+#[tokio::test]
+async fn should_not_report_a_device_whose_filesystem_type_udev_did_not_record() {
+    // `type` is required: a device with a uuid link but no udev record is not described, rather
+    // than described with an invented type (spec §35.3).
+    let fixture = StorageFixture::new("");
+    fixture.uuid("sdd1", "d0f1a2c3-1111-2222-3333-444455556666");
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("filesystem"))
+            .expect("a snapshot"),
+    )
+    .await;
+    assert!(records(&collected).is_empty(), "got {collected:?}");
+}

@@ -280,7 +280,6 @@ fn should_descend_through_a_symlinked_directory_when_follow_symlinks_is_set() {
 // --- get filesystem --mounted ----------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_only_unmounted_filesystems_when_mounted_is_false() {
     // storage.yaml: `--mounted` "Restrict to filesystems that are or are not currently mounted";
     // language.yaml spells a bool as `true`/`false`. filesystem.v1: `target` is "the mount point,

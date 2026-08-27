@@ -7,7 +7,10 @@
 //! the kernel rather than reading `mount(8)`'s output.
 //!
 //! Capacity comes from `statvfs(3)`. A `ono.filesystem/1` is the thing a `ono.mount/1` mounts:
-//! the mount says *where*, the filesystem says *what and how full*.
+//! the mount says *where*, the filesystem says *what and how full*. A filesystem that is not
+//! mounted is still a filesystem: a block device udev found a signature on — linked from
+//! `/dev/disk/by-uuid` or `by-label`, typed in udev's database under `/run/udev/data` — whose
+//! device number (`/sys/class/block/<name>/dev`) is the source of no mount (ADR-0097).
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -137,6 +140,13 @@ fn capacity(target: &Path) -> Result<Capacity, ErrorValue> {
     })
 }
 
+/// A block device carrying a filesystem signature that is not the source of any mount.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UnmountedFilesystem {
+    device: PathBuf,
+    fs_type: String,
+}
+
 /// Mounts and filesystems.
 #[derive(Debug)]
 pub struct StorageProvider {
@@ -144,6 +154,8 @@ pub struct StorageProvider {
     mountinfo: PathBuf,
     disk_by_uuid: PathBuf,
     disk_by_label: PathBuf,
+    sys_class_block: PathBuf,
+    udev_data: PathBuf,
 }
 
 impl Default for StorageProvider {
@@ -171,6 +183,8 @@ impl StorageProvider {
             mountinfo: root.join("proc/self/mountinfo"),
             disk_by_uuid: root.join("dev/disk/by-uuid"),
             disk_by_label: root.join("dev/disk/by-label"),
+            sys_class_block: root.join("sys/class/block"),
+            udev_data: root.join("run/udev/data"),
         }
     }
 
@@ -300,6 +314,95 @@ impl StorageProvider {
         .build())
     }
 
+    /// The block devices udev recorded a filesystem on that no mount uses.
+    ///
+    /// A device counts as mounted when its number (`sys/class/block/<name>/dev`) is a mount's
+    /// device, or its path is a mount's source — the number is what makes `/dev/mapper/x` and
+    /// `/dev/dm-0` one device. The type comes from udev's database; a device without a record
+    /// there has no known type and, `type` being required, is not reported (spec §35.3).
+    fn unmounted(
+        &self,
+        mounts: &[MountInfo],
+        uuids: &HashMap<PathBuf, String>,
+        labels: &HashMap<PathBuf, String>,
+    ) -> Vec<UnmountedFilesystem> {
+        let mut devices: Vec<&PathBuf> = uuids.keys().chain(labels.keys()).collect();
+        devices.sort();
+        devices.dedup();
+        let mut found = Vec::new();
+        for device in devices {
+            let Some(name) = device.file_name() else {
+                continue;
+            };
+            let number = fs::read_to_string(self.sys_class_block.join(name).join("dev"))
+                .ok()
+                .map(|text| text.trim().to_owned());
+            let source = device.display().to_string();
+            let mounted = mounts.iter().any(|mount| {
+                mount.source == source || (number.is_some() && mount.device == number)
+            });
+            if mounted {
+                continue;
+            }
+            let Some(fs_type) = number
+                .as_deref()
+                .and_then(|number| self.udev_property(number, "ID_FS_TYPE"))
+            else {
+                continue;
+            };
+            found.push(UnmountedFilesystem {
+                device: device.clone(),
+                fs_type,
+            });
+        }
+        found
+    }
+
+    /// One `E:<key>=<value>` property of a block device's udev database record.
+    fn udev_property(&self, number: &str, key: &str) -> Option<String> {
+        let text = fs::read_to_string(self.udev_data.join(format!("b{number}"))).ok()?;
+        let prefix = format!("E:{key}=");
+        text.lines()
+            .find_map(|line| line.strip_prefix(prefix.as_str()))
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    }
+
+    fn unmounted_record(
+        filesystem: &UnmountedFilesystem,
+        schema: &Arc<Schema>,
+        uuids: &HashMap<PathBuf, String>,
+        labels: &HashMap<PathBuf, String>,
+    ) -> Result<RecordValue, ErrorValue> {
+        let uuid = uuids
+            .get(&filesystem.device)
+            .and_then(|text| Uuid::parse(text).ok())
+            .map_or(Value::Null, Value::Uuid);
+        let label = labels
+            .get(&filesystem.device)
+            .map_or(Value::Null, |label| Value::string(label));
+        let device = filesystem.device.display().to_string();
+        Ok(RecordValue::builder(
+            Arc::clone(schema),
+            provenance(
+                PROVIDER_ID,
+                schema.id(),
+                "/dev/disk/by-uuid + /sys/class/block + /run/udev/data",
+            ),
+        )
+        .set("source", Value::string(&device))?
+        .set("type", Value::string(&filesystem.fs_type))?
+        .set("uuid", uuid)?
+        .set("label", label)?
+        .set("target", Value::Null)?
+        .set("size", Value::Null)?
+        .set("used", Value::Null)?
+        .set("available", Value::Null)?
+        .set("read_only", Value::Null)?
+        .set("device", Value::string(&device))?
+        .build())
+    }
+
     /// The mount point a selector pins the query to, when one does.
     fn wanted_target(query: &Query) -> Option<PathBuf> {
         query
@@ -350,6 +453,7 @@ async fn stream_mounts(mounts: Vec<MountInfo>, schema: Arc<Schema>, sink: Stream
 
 async fn stream_filesystems(
     mounts: Vec<MountInfo>,
+    unmounted: Vec<UnmountedFilesystem>,
     schema: Arc<Schema>,
     uuids: HashMap<PathBuf, String>,
     labels: HashMap<PathBuf, String>,
@@ -358,11 +462,15 @@ async fn stream_filesystems(
     // One filesystem can be mounted at several points — a bind mount is the everyday case — and
     // `get filesystem` should answer once per filesystem, not once per mount.
     let mut seen: HashSet<(String, String)> = HashSet::new();
-    for mount in mounts {
-        if !seen.insert((mount.source.clone(), mount.filesystem.clone())) {
-            continue;
-        }
-        match StorageProvider::filesystem_record(&mount, &schema, &uuids, &labels) {
+    let records = mounts
+        .iter()
+        .filter(|mount| seen.insert((mount.source.clone(), mount.filesystem.clone())))
+        .map(|mount| StorageProvider::filesystem_record(mount, &schema, &uuids, &labels))
+        .chain(unmounted.iter().map(|filesystem| {
+            StorageProvider::unmounted_record(filesystem, &schema, &uuids, &labels)
+        }));
+    for record in records {
+        match record {
             Ok(record) => {
                 if sink.send(record.into_value()).await.is_err() {
                     return;
@@ -428,11 +536,25 @@ impl Provider for StorageProvider {
                 let schema = schemas::require(&schemas::filesystem_id())?;
                 let uuids = self.by_link(&self.disk_by_uuid);
                 let labels = self.by_link(&self.disk_by_label);
+                // `--mounted` restricts to one side; without it a filesystem is listed whether
+                // or not it is mounted, which is what the contract's summary says.
+                let wanted_mounted = match query.option_value("mounted") {
+                    Some(Value::Bool(mounted)) => Some(*mounted),
+                    _ => None,
+                };
+                let unmounted = if wanted_mounted == Some(true) {
+                    Vec::new()
+                } else {
+                    self.unmounted(&mounts, &uuids, &labels)
+                };
+                if wanted_mounted == Some(false) {
+                    mounts.clear();
+                }
                 Ok(ValueStream::spawn(
                     PipelineConfig::new(),
                     Boundedness::Bounded,
                     move |sink| async move {
-                        stream_filesystems(mounts, schema, uuids, labels, sink).await;
+                        stream_filesystems(mounts, unmounted, schema, uuids, labels, sink).await;
                     },
                 ))
             }
