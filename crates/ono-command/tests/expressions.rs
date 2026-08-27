@@ -340,3 +340,61 @@ fn should_check_the_second_transform_of_a_pipeline_too() {
         .expect_err("`sort` is checked as well as `where`");
     assert_eq!(error.code(), ErrorCode::TypeUnknownField);
 }
+
+// --- a bare word compared against an enum field is that enum's value (ADR-0096) -------------------
+
+/// A record whose `state` is an enum, as `ono.service/1` and `ono.process/1` declare theirs.
+fn unit() -> Value {
+    let schema = Arc::new(
+        Schema::builder(SchemaId::new("ono.unit", 1), "Unit")
+            .field(
+                FieldDef::new(
+                    "state",
+                    FieldType::enumeration(&["active", "inactive", "failed"]),
+                )
+                .required(),
+            )
+            .field(FieldDef::new("name", FieldType::String).required())
+            .build()
+            .expect("the unit schema is valid"),
+    );
+    RecordValue::builder(
+        schema.clone(),
+        Provenance::local("test", schema.id().clone()),
+    )
+    .set("state", Value::string("failed"))
+    .and_then(|record| record.set("name", Value::string("nginx.service")))
+    .expect("the unit record is valid")
+    .build()
+    .into_value()
+}
+
+#[test]
+fn should_accept_a_bare_word_naming_an_enum_value_when_it_is_compared_with_the_enum_field() {
+    // Spec §33.2 and §41.4 write `where state == failed`: the word is one of the field's declared
+    // values, so it is that value, not a field that does not exist.
+    let record = unit();
+    let schema = record.as_record().expect("a record").schema().clone();
+    ono_command::check_fields(&expression("state == failed"), &schema)
+        .expect("`failed` is a value of `state`, so the check passes");
+    assert_eq!(
+        evaluate(&expression("state == failed"), &record, &Scope::new()).expect("evaluates"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        evaluate(&expression("active != state"), &record, &Scope::new()).expect("either side"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn should_still_reject_a_bare_word_that_names_neither_a_field_nor_a_value_of_the_enum() {
+    let record = unit();
+    let schema = record.as_record().expect("a record").schema().clone();
+    let error = ono_command::check_fields(&expression("state == broken"), &schema)
+        .expect_err("`broken` is not a value of `state`");
+    assert_eq!(error.code(), ErrorCode::TypeUnknownField);
+    let error = ono_command::check_fields(&expression("name == failed"), &schema)
+        .expect_err("`name` is a string, not an enum, so `failed` is a field lookup");
+    assert_eq!(error.code(), ErrorCode::TypeUnknownField);
+}

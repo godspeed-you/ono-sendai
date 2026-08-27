@@ -405,6 +405,16 @@ pub fn check_fields(expression: &Expr, schema: &Schema) -> Result<(), ErrorValue
         }
         Expr::Unary(unary) => check_fields(&unary.operand, schema),
         Expr::Binary(binary) => {
+            // `where state == failed`: a bare word that is one of the other side's declared
+            // enum values is that value, not a field (ADR-0096).
+            if let Some((_, word)) = enum_word(binary, schema) {
+                let field = if std::ptr::eq(word, &binary.lhs) {
+                    &binary.rhs
+                } else {
+                    &binary.lhs
+                };
+                return check_fields(field, schema);
+            }
             check_fields(&binary.lhs, schema)?;
             check_fields(&binary.rhs, schema)
         }
@@ -440,6 +450,50 @@ pub fn check_fields(expression: &Expr, schema: &Schema) -> Result<(), ErrorValue
         | Expr::Block(_)
         | Expr::Error(_) => Ok(()),
     }
+}
+
+/// The bare word of a comparison that names one of the other side's declared enum values, with
+/// that value — `failed` in `state == failed` over a schema whose `state` is an enum with
+/// `failed` among its values (ADR-0096).
+///
+/// Only a comparison qualifies, only when the word is not itself a field of the schema (a field
+/// wins, as spec §10.3 says), and only for a field declared `enum`: a string field's comparand
+/// stays a field lookup, so `where name == foo` still reports `foo` as unknown.
+fn enum_word<'e>(
+    binary: &'e ono_parser::BinaryExpr,
+    schema: &Schema,
+) -> Option<(&'e str, &'e Expr)> {
+    if !matches!(
+        binary.op,
+        BinaryOp::Eq
+            | BinaryOp::NotEq
+            | BinaryOp::Lt
+            | BinaryOp::LtEq
+            | BinaryOp::Gt
+            | BinaryOp::GtEq
+    ) {
+        return None;
+    }
+    let variants_of = |expression: &Expr| match expression {
+        Expr::Path(path) => match schema.field(&path.name).map(ono_value::FieldDef::ty) {
+            Some(ono_value::FieldType::Enum(variants)) => Some(variants.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    let word_of = |expression: &'e Expr| match expression {
+        Expr::Path(path) if schema.field(&path.name).is_none() => Some(path.name.as_str()),
+        _ => None,
+    };
+    let candidate = |field: &Expr, word: &'e Expr| {
+        let variants = variants_of(field)?;
+        let name = word_of(word)?;
+        variants
+            .iter()
+            .any(|variant| &**variant == name)
+            .then_some((name, word))
+    };
+    candidate(&binary.lhs, &binary.rhs).or_else(|| candidate(&binary.rhs, &binary.lhs))
 }
 
 fn unknown_field(name: &str, schema: &Schema) -> ErrorValue {
@@ -537,8 +591,20 @@ fn binary_op(
         _ => {}
     }
 
-    let left = evaluate(&binary.lhs, current, scope)?;
-    let right = evaluate(&binary.rhs, current, scope)?;
+    // The record's own schema decides whether a bare word is one of an enum field's values
+    // (ADR-0096), exactly as the pre-flight check decided it against the advertised schema.
+    let enum_value = match current {
+        Value::Record(record) => enum_word(binary, record.schema()),
+        _ => None,
+    };
+    let operand = |side: &Expr| -> Result<Value, ErrorValue> {
+        match enum_value {
+            Some((value, word)) if std::ptr::eq(word, side) => Ok(Value::string(value)),
+            _ => evaluate(side, current, scope),
+        }
+    };
+    let left = operand(&binary.lhs)?;
+    let right = operand(&binary.rhs)?;
 
     // `x == null` is an identity test rather than a three-valued comparison (ADR-0014): without
     // the exception the commonest question anyone asks would silently match nothing.

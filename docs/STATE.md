@@ -132,9 +132,8 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   - `crates/ono-cli/tests/network_missing.rs` (31) — `resolve dns`, `test port`, watch/trace/
     enter interface|route|socket, route/interface/socket mutations
   - `crates/ono-cli/tests/services_logs_missing.rs` (15) — `set service`, `get journal`,
-    `tail journal`, `get log` — **13/15 done** by [services | 2026-08-27] on branch
-    `implementation-services` (ADR-0084–0086, case 038); the two still ignored wait on the
-    language (`now()`, bare words compared against a string field), see Deferred
+    `tail journal`, `get log` — **done, 15/15** by [services | 2026-08-27] on branch
+    `implementation-services` (ADR-0084–0086, ADR-0096, case 038)
   - `crates/ono-cli/tests/storage_missing.rs` (22) — `get device`, mount/unmount, mount verbs,
     watch/trace/enter mount
   - `crates/ono-cli/tests/data_missing.rs` (15) + `crates/ono-command/tests/completion_missing.rs`
@@ -174,13 +173,6 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   link races the hangup `script` sends when its piped stdin reaches EOF. Confirm under low load;
   if it recurs, make link teardown at exit not wait on the agent — exit test: the case green in
   three consecutive full runs
-- [ ] The specification's `where state == failed` (§33.2, §41.4), `where status == failed`
-  (§16.5) and `where level >= error` (§41.4) all fail with E0202: ADR-0009 makes a bare
-  identifier in expression mode a field path, so the word is looked up as a field. Decide —
-  an ADR superseding ADR-0009 in part — whether an unknown bare word compared against a string
-  field is that word (the check of spec §11.3 knows the schema, so it can tell), then un-ignore
-  `services_logs_missing.rs::should_run_the_failed_service_example…` — exit test: a
-  language case running `get service | where state == failed`
 
 - [ ] `explain get process` inside a frame prints the narrowed spelling (`get process 1`,
   `get process --user root`) — ADR-0023 promised it, ADR-0076 made the arguments available —
@@ -454,10 +446,13 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   decoder (ADR-0085); a provider-kind stream failure exits 1; `StreamSink::closed()` lets a
   following producer stop when `take` is satisfied; the decoder reads journalctl's byte-array
   and multi-valued strings (fix); `services_logs_missing.rs` (6 journal tests un-ignored)
+- [x] services 4 — expression-valued options reach the provider query (`--since (now() - 1h)`
+  evaluated in the producer, fix); a bare word compared with an enum field is that field's
+  value — `where state == failed`, `where level >= error` run (ADR-0096); `services_logs_missing.rs`
+  15/15, `ono-command/tests/expressions.rs`, `ono-cli/tests/native.rs`
 - [x] services 3 — `get log [--service <ref>] [--level <name>] [--since --until]` as
   `ono.log-record/1` (journal-event plus `level`, the severity name) from the same journal
-  provider (ADR-0086); case 038; `services_logs_missing.rs` 13/15 green — the two ignored
-  cases wait on the language (`now()`, bare words as strings), see Deferred
+  provider (ADR-0086); case 038
 - [x] data family (ADR-0072) — `tail N [--follow]` (commit 0f68fe0), `join <right> --on key
   --kind inner|left|right|outer` with `$variables` and pre-run `(pipelines)` visible to native
   stages (1616fe1), `diff <right> [--identity [fields]]` by schema identity (1761cc9),
@@ -736,15 +731,8 @@ security review — and because re-testing these later costs nothing if they are
 
 ## Deferred / blocked
 
-- `get journal --since (now() - 1h)` — needs `now()`, which the language family delivers
-  (`language_missing.rs`); the option itself is delivered — ignored test:
-  `crates/ono-cli/tests/services_logs_missing.rs::should_only_emit_recent_events_when_since_is_a_relative_timestamp`
-  — ADR-0085
-- `get log --service X | where level >= error | take 20` (spec §41.4) — the command runs; the
-  bare word `error` is a field path under ADR-0009 and E0202 before execution, as the spec's
-  `where state == failed` examples are — ignored test:
-  `crates/ono-cli/tests/services_logs_missing.rs::should_run_the_failed_service_example_when_a_level_threshold_composes`
-  — ADR-0086
+_(empty — an entry here needs a reason, the ignored test's path, and the ADR that states the
+assumption)_
 
 ---
 

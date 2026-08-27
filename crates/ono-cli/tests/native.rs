@@ -274,3 +274,29 @@ fn should_not_wait_on_stdin_when_a_seeded_pipeline_starts_with_a_serializer() {
     assert!(status.success(), "the shell failed: {status}");
     assert_eq!(stdout, "[\"x\"]\n");
 }
+
+#[test]
+fn should_compare_an_enum_field_with_its_bare_value_when_the_spec_example_is_written() {
+    // Spec §33.2 / §41.4 spell it `where state == failed`; `ono.process/1`'s `state` is an enum
+    // with `running` among its values (ADR-0096). PID 1 is always there and never zombie.
+    let run = Shell::new()
+        .args([
+            "-c",
+            "get process | where pid == 1 | where state != zombie | count | to json",
+        ])
+        .run();
+    assert!(
+        run.status().is_success(),
+        "a bare word naming a value of the enum field is that value, got {:?}",
+        run.output()
+    );
+    assert_eq!(run.stdout().trim(), "[1]");
+    let typo = Shell::new()
+        .args(["-c", "get process | where state == sleping | count"])
+        .run();
+    assert!(
+        !typo.status().is_success() && typo.stderr().contains("Ono-Sendai-E0202"),
+        "a word that is neither a field nor a value is still E0202, got {:?}",
+        typo.output()
+    );
+}
