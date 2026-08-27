@@ -1,0 +1,74 @@
+# Spec §30 (configuration is declarative, layered and inspectable; `get config` returns the
+# source of every value), §6.5 (the resolution order is explicit and inspectable), §13.3
+# (truncation is visible), §13.4 (human formatting on request) and §6.1 (a numeric selector
+# resolves the object it names), through the real binary as an unprivileged user
+# (ADR-0010, ADR-0011, ADR-0093, ADR-0094, ADR-0095).
+case: configuration has provenance, resolution names its stage, settings take effect
+timeout: 120
+run: |
+  export ONO_CONFIG_DIR="$HOME/.config/ono-case-041"
+  mkdir -p "$ONO_CONFIG_DIR"
+  printf '# case 041\nset config render.table.max_rows = 3\n' > "$ONO_CONFIG_DIR/config.ono"
+
+  echo "== resolution names its stage (spec 6.5, ADR-0011) =="
+  ono -c 'resolve command ls | select kind | to json'
+  ono -c 'resolve command get | select kind verb | to json'
+  ono -c 'resolve command if | select kind | to json'
+  ono -c 'fn hi() { echo hi }; resolve command hi | select kind | to json'
+  ono -c 'resolve command definitely-not-a-command' 2>&1 | head -1
+  ono -c 'resolve command ono:ls' 2>&1 | head -1
+
+  echo "== every layer with its provenance (spec 30, ADR-0010) =="
+  ono -c 'get config render.table.max_rows | select value layer line | to json'
+  ono -c 'get config render.table.max_rows | select source | to json' | sed 's#.*/##'
+  ONO_RENDER_TABLE_MAX_ROWS=4 ono -c 'get config render.table.max_rows | select value layer | to json'
+  ono -c 'set config render.table.max_rows = 2; get config render.table.max_rows | select value layer | to json'
+  ono -c 'get config safety. | select key | to json'
+  ono --no-config -c 'get config render.table.max_rows | select value layer | to json'
+
+  echo "== set config is typed (ADR-0094) =="
+  ono -c 'set config render.table.max_rows = "many"' 2>&1 | head -1
+  ono -c 'set config no.such.key = 1' 2>&1 | head -1
+  ono -c 'set config history.result_cache = 64MiB; get config history.result_cache | select value type | to json'
+  ono -c 'set config render.table.max_rows = 2 | select status changed | to json'
+
+  echo "== the row limit reaches the renderer (spec 13.3) =="
+  ono -c 'set config render.table.max_rows = 2; get process' | tail -1 | sed 's/[0-9][0-9]*/N/'
+  ono -c 'set config render.table.max_rows = 2; get process' | wc -l
+  ono -c 'set config render.table.max_rows = 1; get process | format table' | tail -1 | sed 's/[0-9][0-9]*/N/'
+
+  echo "== human formatting on request, numeric selectors resolve (spec 13.4, 6.1) =="
+  truncate -s 1258292 "$HOME/sparse-041.bin"
+  ono -c "get file $HOME/sparse-041.bin | select size | to json"
+  ono -c "get file $HOME/sparse-041.bin | select size | to json --human"
+  ono -c 'get user 0 | select name | to json'
+  ono -c 'get group 0 | select name | to json'
+
+  echo "== a bad setting never stops the shell, and stays visible (ADR-0010) =="
+  printf 'set config no.such.key = 1\n' >> "$ONO_CONFIG_DIR/config.ono"
+  ono -c 'echo started' 2>/dev/null
+  ono -c 'echo probe' 2>&1 >/dev/null | head -1
+  ono -c 'get config --problems | count | to json' 2>/dev/null
+exit: 0
+stdout-contains: [{"kind":"external"}]
+stdout-contains: [{"kind":"native","verb":"get"}]
+stdout-contains: [{"kind":"keyword"}]
+stdout-contains: [{"kind":"function"}]
+stdout-contains: Ono-Sendai-E0101 command not found: definitely-not-a-command
+stdout-contains: Ono-Sendai-E0101 command not found: ono:ls
+stdout-contains: [{"layer":"user","line":2,"value":3}]
+stdout-contains: config.ono"}]
+stdout-contains: [{"layer":"environment","value":4}]
+stdout-contains: [{"layer":"invocation","value":2}]
+stdout-contains: [{"key":"safety.confirm.remote_destructive"},{"key":"safety.confirm.bulk_threshold"}]
+stdout-contains: [{"layer":"default","value":1000}]
+stdout-contains: Ono-Sendai-E0201 `render.table.max_rows` is an int
+stdout-contains: Ono-Sendai-E0202 there is no setting `no.such.key`
+stdout-contains: [{"type":"bytesize","value":67108864}]
+stdout-contains: [{"changed":true,"status":"success"}]
+stdout-contains: ... N more
+stdout-contains: [{"size":1258292}]
+stdout-contains: [{"size":"1.20 MiB"}]
+stdout-contains: [{"name":"root"}]
+stdout-contains: started
+stdout-contains: [1]
