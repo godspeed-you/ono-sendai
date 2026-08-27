@@ -93,13 +93,14 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [identity | 2026-08-27] **identity family remainder** (`crates/ono-cli/tests/identity_missing.rs`:
-  `get session` ×2, `add/remove/set user` ×6, `add/remove/set group` ×5) on branch
-  `implementation-identity` — files: `crates/ono-provider-systemd/src/{logind,lib}.rs`,
-  `crates/ono-provider-linux/src/{identity,accounts}.rs`, `crates/ono-command/src/impls/mutate.rs`,
-  `crates/ono-cli/src/providers.rs`, `docs/spec/commands/identity.yaml`,
-  `docs/spec/schemas/{session.v1,deferred}.yaml`, `docs/spec/providers/{systemd,linux-procfs}.yaml`,
-  acceptance case `043-identity-sessions-and-accounts`. ADR-0100–0102.
+- [identity | 2026-08-27] **identity family remainder** — **all 25 tests of
+  `crates/ono-cli/tests/identity_missing.rs` green and un-ignored** on branch
+  `implementation-identity` (ADR-0100–0102). Acceptance case
+  `docker/acceptance/cases/043-identity-sessions-and-accounts.case` is written and dry-run
+  against the binary; **the integrator runs it in the container** when merging. Left open (not
+  in the RED suite): a privileged conformance run of the account tools (the workspace's tests
+  never change the developer's accounts); `select error.code` on an ActionResult row projects
+  the whole error under `code` instead of its field.
 
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
@@ -459,6 +460,10 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] identity 2 — `add`/`remove`/`set user` through shadow-utils by exit status, E0302 from the
   euid check before any tool runs; `add` acts unresolved and an ambiguous name is narrowed by
   the input type — ADR-0101, ADR-0102; `identity_missing.rs` (6 tests) un-ignored
+- [x] identity 3 — `add`/`remove`/`set group` and `--member` membership through
+  `groupadd`/`groupdel`/`groupmod`/`gpasswd`, same privilege gate — ADR-0101;
+  `identity_missing.rs` (5 tests) un-ignored; the file has no `#[ignore` left; acceptance case
+  `043-identity-sessions-and-accounts` written
 - [x] seams 1 — `set`/`remove` of system targets dispatch through the registry — commit 7ec0d83
   (ADR-0068 §1; `crates/ono-cli/tests/builtins.rs`)
 - [x] seams 2 — ActionResult contract: a failed row exits 1, a missing target is an E0301 row,

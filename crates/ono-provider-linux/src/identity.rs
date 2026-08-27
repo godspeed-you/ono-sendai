@@ -235,6 +235,7 @@ impl Provider for IdentityProvider {
             // `docs/spec/capabilities.yaml` gives both elevation `required`: only root may
             // change the account database, and the provider says so before trying (ADR-0101).
             Capability::new("user.manage", Risk::Mutate).needing_elevation(),
+            Capability::new("group.manage", Risk::Mutate).needing_elevation(),
         ]
     }
 
@@ -319,26 +320,29 @@ impl Provider for IdentityProvider {
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let change = match action.target_name() {
             "user" => self.user_change(action).await,
+            "group" => self.group_change(action).await,
             other => {
                 return Err(ErrorValue::new(
                     ErrorCode::ProviderUnsupported,
-                    format!("{PROVIDER_ID} changes `user` accounts, not `{other}`"),
+                    format!("{PROVIDER_ID} changes `user` and `group` accounts, not `{other}`"),
                 ));
             }
         };
-        let command = match change {
-            Ok(command) => command,
+        let commands = match change {
+            Ok(commands) => commands,
             // The provider could not even say what to run — the account is not there, or an
             // option is not one it understands. That is this target's outcome (spec §16.5).
             Err(error) => return Ok(ActionOutcome::failed(action, error)),
         };
+        let plan = commands
+            .iter()
+            .map(|command| format!("`{command}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
         // Spec §11.6: asked without being obeyed. The plan is the exact invocation, so a user
         // sees what elevation would buy before paying for it.
         if action.is_dry_run() {
-            return Ok(ActionOutcome::skipped(
-                action,
-                format!("would run `{command}`"),
-            ));
+            return Ok(ActionOutcome::skipped(action, format!("would run {plan}")));
         }
         // The tools refuse an unprivileged caller with the same status they use for a locked
         // database, so the shell asks the kernel first and answers with the code that is true:
@@ -354,36 +358,44 @@ impl Provider for IdentityProvider {
                     ),
                 )
                 .with_help(format!(
-                    "`{}` is what would run; elevate explicitly (spec §17.2) rather than \
-                     re-running blind",
-                    command.program()
+                    "{plan} is what would run; elevate explicitly (spec §17.2) rather than \
+                     re-running blind"
                 )),
             ));
         }
-        match command.run().await {
-            Ok(()) => Ok(ActionOutcome::succeeded(action, true)),
-            Err(error) => Ok(ActionOutcome::failed(action, error)),
+        // A membership change is one tool run per member; the row is the group's, so the first
+        // member the tool refuses is the group's outcome, and the members before it stay
+        // changed — which the error says.
+        for (index, command) in commands.iter().enumerate() {
+            if let Err(error) = command.run().await {
+                let error = if index == 0 {
+                    error
+                } else {
+                    error.with_help(format!(
+                        "{index} of {} changes were made before this one failed",
+                        commands.len()
+                    ))
+                };
+                return Ok(ActionOutcome::failed(action, error));
+            }
         }
+        Ok(ActionOutcome::succeeded(action, true))
     }
 }
 
 /// The login name an action's object refers to: the name itself when it arrived unresolved
 /// (`add`), or the account behind a resolved uid (`remove`, `set`).
 async fn user_name_of(accounts: &Arc<dyn Accounts>, action: &Action) -> Result<String, ErrorValue> {
-    let first = action.target().values().first().cloned();
-    match first {
+    match action.target().values().first().cloned() {
         Some(Value::String(name)) => Ok(name.to_string()),
         Some(Value::Int(uid)) => {
-            let uid = u32::try_from(uid).map_err(|_| {
+            let found = match u32::try_from(uid) {
+                Ok(uid) => accounts.user(uid).await.map(|account| account.name),
+                Err(_) => None,
+            };
+            found.ok_or_else(|| {
                 ErrorValue::new(ErrorCode::IoNotFound, format!("no user has the uid {uid}"))
-            })?;
-            accounts
-                .user(uid)
-                .await
-                .map(|account| account.name)
-                .ok_or_else(|| {
-                    ErrorValue::new(ErrorCode::IoNotFound, format!("no user has the uid {uid}"))
-                })
+            })
         }
         other => Err(ErrorValue::new(
             ErrorCode::ResolveTargetNotFound,
@@ -393,6 +405,67 @@ async fn user_name_of(accounts: &Arc<dyn Accounts>, action: &Action) -> Result<S
             ),
         )),
     }
+}
+
+/// The group name an action's object refers to, on the same terms as [`user_name_of`].
+async fn group_name_of(
+    accounts: &Arc<dyn Accounts>,
+    action: &Action,
+) -> Result<String, ErrorValue> {
+    match action.target().values().first().cloned() {
+        Some(Value::String(name)) => Ok(name.to_string()),
+        Some(Value::Int(gid)) => {
+            let found = match u32::try_from(gid) {
+                Ok(gid) => accounts.group(gid).await.map(|account| account.name),
+                Err(_) => None,
+            };
+            found.ok_or_else(|| {
+                ErrorValue::new(ErrorCode::IoNotFound, format!("no group has the gid {gid}"))
+            })
+        }
+        other => Err(ErrorValue::new(
+            ErrorCode::ResolveTargetNotFound,
+            format!("`{}` does not name a group", describe(other.as_ref())),
+        )),
+    }
+}
+
+/// The members a repeatable `--member ref<ono.user/1>` names: login names, or uids as text,
+/// either of which `gpasswd` accepts.
+fn member_arguments(action: &Action) -> Result<Vec<String>, ErrorValue> {
+    let mut members = Vec::new();
+    for (name, value) in action.arguments() {
+        if name != "member" {
+            continue;
+        }
+        let values: Vec<&Value> = match value {
+            Value::List(items) => items.iter().collect(),
+            single => vec![single],
+        };
+        for value in values {
+            match value {
+                Value::Null => {}
+                Value::String(text) => members.push(text.to_string()),
+                Value::Int(uid) => members.push(uid.to_string()),
+                Value::Record(record) => {
+                    if let Some(name) = record.get("name").and_then(|value| value.as_str().ok()) {
+                        members.push(name.to_owned());
+                    } else if let Some(uid) =
+                        record.get("uid").and_then(|value| value.as_int().ok())
+                    {
+                        members.push(uid.to_string());
+                    }
+                }
+                other => {
+                    return Err(ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!("`--member` names a user, not a {}", other.type_name()),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(members)
 }
 
 fn describe(value: Option<&Value>) -> String {
@@ -460,20 +533,20 @@ fn bool_argument(action: &Action, name: &str) -> Result<bool, ErrorValue> {
 
 impl IdentityProvider {
     /// What a `user` action asks to run, or why nothing can be run for it.
-    async fn user_change(&self, action: &Action) -> Result<AccountCommand, ErrorValue> {
+    async fn user_change(&self, action: &Action) -> Result<Vec<AccountCommand>, ErrorValue> {
         let name = user_name_of(&self.accounts, action).await?;
         match action.operation() {
-            "add" => Ok(AccountCommand::add_user(
+            "add" => Ok(vec![AccountCommand::add_user(
                 &name,
                 id_argument(action, "uid")?,
                 path_argument(action, "home")?.as_deref(),
                 path_argument(action, "shell")?.as_deref(),
                 group_argument(action, "group")?.as_deref(),
-            )),
-            "remove" => Ok(AccountCommand::remove_user(
+            )]),
+            "remove" => Ok(vec![AccountCommand::remove_user(
                 &name,
                 bool_argument(action, "remove-home")?,
-            )),
+            )]),
             "set" => {
                 let shell = path_argument(action, "shell")?;
                 let home = path_argument(action, "home")?;
@@ -485,18 +558,55 @@ impl IdentityProvider {
                             .to_owned(),
                     ));
                 }
-                Ok(AccountCommand::set_user(
+                Ok(vec![AccountCommand::set_user(
                     &name,
                     shell.as_deref(),
                     home.as_deref(),
                     group.as_deref(),
-                ))
+                )])
             }
             other => Err(ErrorValue::new(
                 ErrorCode::ProviderUnsupported,
                 format!("{PROVIDER_ID} has no operation `{other}` for a user"),
             )
             .with_help("it can `add`, `remove` and `set` a user account")),
+        }
+    }
+
+    /// What a `group` action asks to run, or why nothing can be run for it.
+    ///
+    /// `--member` turns `add` and `remove` from creating or deleting the group into changing
+    /// its membership — §7.1's "membership/association" sense of `add`, as `identity.yaml`
+    /// documents it.
+    async fn group_change(&self, action: &Action) -> Result<Vec<AccountCommand>, ErrorValue> {
+        let name = group_name_of(&self.accounts, action).await?;
+        let members = member_arguments(action)?;
+        match action.operation() {
+            "add" if !members.is_empty() => Ok(members
+                .iter()
+                .map(|member| AccountCommand::add_member(&name, member))
+                .collect()),
+            "add" => Ok(vec![AccountCommand::add_group(
+                &name,
+                id_argument(action, "gid")?,
+            )]),
+            "remove" if !members.is_empty() => Ok(members
+                .iter()
+                .map(|member| AccountCommand::remove_member(&name, member))
+                .collect()),
+            "remove" => Ok(vec![AccountCommand::remove_group(&name)]),
+            "set" => match id_argument(action, "gid")? {
+                Some(gid) => Ok(vec![AccountCommand::set_group(&name, gid)]),
+                None => Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    "`set group` changes `--gid`, and none was given".to_owned(),
+                )),
+            },
+            other => Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!("{PROVIDER_ID} has no operation `{other}` for a group"),
+            )
+            .with_help("it can `add`, `remove` and `set` a group, and add or remove members")),
         }
     }
 }

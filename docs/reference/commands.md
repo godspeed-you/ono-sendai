@@ -1654,7 +1654,7 @@ Create a group, or add a member to one.
 |---|---|
 | id | `ono.group.add` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `group.manage` |
@@ -1688,7 +1688,7 @@ Remove a group, or remove a member from one.
 |---|---|
 | id | `ono.group.remove` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.group/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `group.manage` |
@@ -1721,7 +1721,7 @@ Modify a group.
 |---|---|
 | id | `ono.group.set` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.group/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `group.manage` |

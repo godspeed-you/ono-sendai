@@ -261,7 +261,6 @@ fn should_leave_the_account_unchanged_when_setting_a_user_fails() {
 // --- add / remove / set group --------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_adding_a_group_unprivileged() {
     require_unprivileged();
     let run = ono("add group testgroup-ono | to json");
@@ -269,7 +268,6 @@ fn should_report_a_failed_action_result_when_adding_a_group_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_adding_a_member_to_a_group_unprivileged() {
     require_unprivileged();
     // identity.yaml `ono.group.add --member`: extends an existing group instead of creating one.
@@ -287,7 +285,6 @@ fn should_report_a_failed_action_result_when_adding_a_member_to_a_group_unprivil
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_removing_a_group_unprivileged() {
     require_unprivileged();
     let run = ono("remove group root | to json");
@@ -295,7 +292,6 @@ fn should_report_a_failed_action_result_when_removing_a_group_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_setting_a_group_id_unprivileged() {
     require_unprivileged();
     let run = ono("set group root --gid 999 | to json");
@@ -303,7 +299,6 @@ fn should_report_a_failed_action_result_when_setting_a_group_id_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_leave_the_group_unchanged_when_setting_a_group_fails() {
     require_unprivileged();
     let run = ono("set group root --gid 999 | to json; get group root | select gid | to json");

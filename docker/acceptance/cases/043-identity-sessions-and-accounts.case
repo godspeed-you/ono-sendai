@@ -1,0 +1,77 @@
+# Identity family remainder (spec §9.1 Identity, §23.6, §52 `user`/`group` rows; ADR-0100–0102):
+# `get session` answers from systemd-logind over D-Bus, and `add`/`remove`/`set` on `user` and
+# `group` change the account database through the shadow-utils tools, read by exit status only.
+# The container runs no logind and this case runs as the unprivileged user `case`, so the honest
+# answers here are E0401 with a reason for sessions — never "nobody is logged in" — and, for every
+# mutation, one `ono.action-result/1` row that is `failed`, `changed: false`, E0302, with exit
+# status 1 and the account database provably untouched afterwards. A `remove` of an account that
+# is not there is the structured not-found naming it, and `set` with nothing to set is refused
+# before anything is resolved.
+case: sessions answer or refuse honestly, and account mutations fail structurally when unprivileged
+timeout: 120
+run: |
+  echo "== sessions: no login manager here, and said so =="
+  ono -c 'get session | to json' 2>&1 | grep -o 'Ono-Sendai-E0401' | head -1
+  ono -c 'get session | to json' 2>&1 | grep -c 'no provider answers' || true
+  ono -c 'get session --user root | to json' > /dev/null 2>&1; echo "session-status=$?"
+  echo "== the session contract is declared, typed and optioned =="
+  ono -c 'get command | where id == "ono.session.get" | select output | to json'
+  ono -c 'get session --user root' 2>&1 | grep -c 'no option' || true
+  echo "== add/remove/set user: one failed row, permission, nothing changed, exit 1 =="
+  ono -c 'add user testuser-ono --shell /bin/false | select status changed operation | to json'; echo "add-user-status=$?"
+  ono -c 'add user testuser-ono --uid 4242 | to json' | grep -o 'Ono-Sendai-E0302' | head -1
+  ono -c 'get user testuser-ono | to json'
+  ono -c 'remove user root | select status changed operation | to json'; echo "remove-user-status=$?"
+  ono -c 'remove user root | to json' | grep -o '"name":"io.permission_denied"' | head -1
+  before=$(ono -c 'get user root | select shell | to json')
+  ono -c 'set user root --shell /bin/false | select status changed operation | to json'; echo "set-user-status=$?"
+  after=$(ono -c 'get user root | select shell | to json')
+  [ "$before" = "$after" ] && [ "$after" != '[{"shell":"/bin/false"}]' ] && echo "root-shell-unchanged"
+  echo "== an account that is not there is a structured not-found naming it =="
+  ono -c 'remove user nobody-such-user-ono | to json' | grep -o 'Ono-Sendai-E0301[^}]*nobody-such-user-ono' | head -1 | grep -o 'Ono-Sendai-E0301\|nobody-such-user-ono' | sort -u
+  ono -c 'remove user nobody-such-user-ono | to json' > /dev/null 2>&1; echo "remove-missing-status=$?"
+  echo "== set with nothing to set is refused before anything is resolved =="
+  ono -c 'set user root' 2>&1 | grep -o 'Ono-Sendai-E0201' | head -1
+  ono -c 'set group root' 2>&1 | grep -c -- '--gid'
+  echo "== add/remove/set group, and membership: the same honest row =="
+  ono -c 'add group testgroup-ono | select status operation target | to json'; echo "add-group-status=$?"
+  ono -c 'add group root --member case | select status changed operation | to json'; echo "add-member-status=$?"
+  ono -c 'add group root --member case | to json' | grep -o 'gpasswd --add case root' | head -1
+  ono -c 'remove group root | select status operation | to json'; echo "remove-group-status=$?"
+  ono -c 'remove group root --member case | to json' | grep -o 'gpasswd --delete case root' | head -1
+  ono -c 'set group root --gid 999 | select status changed operation | to json'; echo "set-group-status=$?"
+  ono -c 'get group root | select gid | to json'
+  ono -c 'get group testgroup-ono | to json'
+  echo "== every mutation is the provider command the contract declares =="
+  ono -c 'get command | where target == "user" or target == "group" | where verb == "add" or verb == "remove" or verb == "set" | select id | to json'
+exit: 0
+stdout-contains: Ono-Sendai-E0401
+stdout-contains: session-status=1
+stdout-contains: [{"output":"stream<ono.session/1>"}]
+stdout-contains: [{"changed":false,"operation":"ono.user.add","status":"failed"}]
+stdout-contains: add-user-status=1
+stdout-contains: Ono-Sendai-E0302
+stdout-contains: [{"changed":false,"operation":"ono.user.remove","status":"failed"}]
+stdout-contains: "name":"io.permission_denied"
+stdout-contains: remove-user-status=1
+stdout-contains: [{"changed":false,"operation":"ono.user.set","status":"failed"}]
+stdout-contains: set-user-status=1
+stdout-contains: root-shell-unchanged
+stdout-contains: Ono-Sendai-E0301
+stdout-contains: nobody-such-user-ono
+stdout-contains: remove-missing-status=1
+stdout-contains: Ono-Sendai-E0201
+stdout-contains: [{"operation":"ono.group.add","status":"failed","target":"ono.group/1[testgroup-ono]"}]
+stdout-contains: add-group-status=1
+stdout-contains: [{"changed":false,"operation":"ono.group.add","status":"failed"}]
+stdout-contains: add-member-status=1
+stdout-contains: gpasswd --add case root
+stdout-contains: [{"operation":"ono.group.remove","status":"failed"}]
+stdout-contains: remove-group-status=1
+stdout-contains: gpasswd --delete case root
+stdout-contains: [{"changed":false,"operation":"ono.group.set","status":"failed"}]
+stdout-contains: set-group-status=1
+stdout-contains: [{"gid":0}]
+stdout-contains: [{"id":"ono.user.add"},{"id":"ono.user.remove"},{"id":"ono.user.set"},{"id":"ono.group.add"},{"id":"ono.group.remove"},{"id":"ono.group.set"}]
+stdout-not-contains: Ono-Sendai-E0101
+stdout-not-contains: [{"uid":4242

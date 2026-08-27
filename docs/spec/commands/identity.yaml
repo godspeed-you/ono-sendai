@@ -184,7 +184,7 @@ commands:
       - {name: member, type: "ref<ono.user/1>", repeatable: true, doc: "Add this user as a member instead of creating the group."}
     privilege: elevated
     streaming: false
-    phase: planned
+    phase: C                           # delivered by ADR-0101
     examples:
       - add group docker --member deploy
 
@@ -203,7 +203,7 @@ commands:
       - {name: member, type: "ref<ono.user/1>", repeatable: true, doc: "Remove this member instead of the group."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C                           # delivered by ADR-0101
     examples:
       - remove group docker --member deploy
 
@@ -222,7 +222,7 @@ commands:
       - {name: gid, type: int, doc: "New numeric id."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C                           # delivered by ADR-0101
     examples:
       - set group docker --gid 999
 
