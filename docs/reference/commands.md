@@ -4774,7 +4774,7 @@ Query log records as structured values rather than as parsed text.
 |---|---|
 | id | `ono.log.get` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | ono.service/1` |
 | output | `stream<ono.log-record/1>` |
 | provider capability | `log.read` |
@@ -4788,13 +4788,14 @@ Query log records as structured values rather than as parsed text.
 | `--service` | `ref<ono.service/1>` | Restrict to one service unit's records (spec §33.2). |
 | `--since` | `timestamp` | Only records at or after this time. |
 | `--until` | `timestamp` | Only records at or before this time. |
-| `--level` | `string` | Minimum severity. |
+| `--level` | `string` | Minimum severity: emerg, alert, crit, error, warning, notice, info or debug (ADR-0086). |
 
 **Examples**
 
 ```text
 get log --service nginx | tail 30
 get log --service @1 | where level >= error | take 20
+get log --level error | take 20
 ```
 
 ### `get journal`

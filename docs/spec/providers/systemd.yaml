@@ -16,4 +16,4 @@ providers:
       journal files exist: that is `provider.unavailable` with the reason, not an empty journal.
     targets: [journal, log]
     capabilities: [log.read]
-    schemas: [ono.journal-event/1]
+    schemas: [ono.journal-event/1, ono.log-record/1]

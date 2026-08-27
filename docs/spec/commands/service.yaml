@@ -178,13 +178,14 @@ commands:
       - {name: service, type: "ref<ono.service/1>", doc: "Restrict to one service unit's records (spec §33.2)."}
       - {name: since, type: timestamp, doc: "Only records at or after this time."}
       - {name: until, type: timestamp, doc: "Only records at or before this time."}
-      - {name: level, type: string, doc: "Minimum severity."}
+      - {name: level, type: string, doc: "Minimum severity: emerg, alert, crit, error, warning, notice, info or debug (ADR-0086)."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - get log --service nginx | tail 30
       - get log --service @1 | where level >= error | take 20
+      - get log --level error | take 20
 
   - id: ono.journal.get
     verb: get

@@ -1,0 +1,57 @@
+# Canonical LogRecord schema. Source: spec §33.2 and §41.4 — `get log --service <ref> | where
+# level >= error | take 20` — over the target `log` of §8.1 (ADR-0086). A log record is a journal
+# entry (`ono.journal-event/1`, spec v0.3 §1.37) seen as a log line: the same fields, plus `level`,
+# the severity name of `priority`, which is what the specification's examples filter on.
+id: ono.log-record/1
+name: LogRecord
+summary: One log record, as the journal holds it, with its severity named.
+identity: [cursor]
+fields:
+  timestamp:
+    type: timestamp
+    required: true
+    doc: When the record was received by the journal (the realtime clock).
+  level:
+    type: string
+    nullable: true
+    doc: >-
+      The severity name of `priority`: emerg, alert, crit, error, warning, notice, info, debug.
+      Null when the journal reported no priority.
+  priority:
+    type: int
+    required: true
+    doc: The syslog priority, 0 (emergency) to 7 (debug).
+  message:
+    type: string
+    required: true
+    doc: The record's message.
+  identifier:
+    type: string
+    nullable: true
+    doc: The syslog identifier — the program name as the record names itself.
+  unit:
+    type: string
+    nullable: true
+    doc: The systemd unit the record belongs to; null for the kernel and for processes outside units.
+  pid:
+    type: int
+    nullable: true
+    doc: The process that produced the record; null for the kernel.
+  uid:
+    type: int
+    nullable: true
+    doc: The user the producing process ran as.
+  boot_id:
+    type: string
+    required: true
+    doc: The boot the record belongs to.
+  host:
+    type: string
+    required: true
+    doc: The hostname the record was recorded on.
+  cursor:
+    type: string
+    required: true
+    doc: The journal cursor, a stable continuation and provenance token.
+default_view:
+  columns: [timestamp, level, unit, message]

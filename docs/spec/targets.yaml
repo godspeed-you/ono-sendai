@@ -207,8 +207,8 @@ targets:
     name: log
     category: system
     summary: A log source, queried as records rather than parsed as text.
-    schema: null
-    phase: planned
+    schema: ono.log-record/1
+    phase: C
   - id: ono.target.port
     name: port
     category: system

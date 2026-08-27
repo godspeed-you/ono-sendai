@@ -540,6 +540,28 @@ Default view: `name`, `transport`, `state`, `targets`
 | `state` | `enum` | — | required | Whether the link is usable now. |
 | `targets` | `list<string>` | — | required | The targets the remote negotiated (spec §21.2), which is what its context can answer. |
 
+## LogRecord — `ono.log-record/1`
+
+One log record, as the journal holds it, with its severity named.
+
+Identity: `cursor`
+
+Default view: `timestamp`, `level`, `unit`, `message`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `timestamp` | `timestamp` | — | required | When the record was received by the journal (the realtime clock). |
+| `level` | `string` | — | nullable | The severity name of `priority`: emerg, alert, crit, error, warning, notice, info, debug. Null when the journal reported no priority. |
+| `priority` | `int` | — | required | The syslog priority, 0 (emergency) to 7 (debug). |
+| `message` | `string` | — | required | The record's message. |
+| `identifier` | `string` | — | nullable | The syslog identifier — the program name as the record names itself. |
+| `unit` | `string` | — | nullable | The systemd unit the record belongs to; null for the kernel and for processes outside units. |
+| `pid` | `int` | — | nullable | The process that produced the record; null for the kernel. |
+| `uid` | `int` | — | nullable | The user the producing process ran as. |
+| `boot_id` | `string` | — | required | The boot the record belongs to. |
+| `host` | `string` | — | required | The hostname the record was recorded on. |
+| `cursor` | `string` | — | required | The journal cursor, a stable continuation and provenance token. |
+
 ## ModelProvider — `ono.model-provider/1`
 
 One configured model provider, and the data boundary the operator set for it.

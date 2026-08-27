@@ -293,7 +293,6 @@ fn should_emit_existing_records_in_order_before_following_when_lines_is_given() 
 // --- get log -------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_structured_log_records_when_the_log_is_queried() {
     let run = ono("get log | take 1 | to json");
     let Some(rows) = records_or_unavailable(&run, "`get log | take 1`") else {
@@ -317,7 +316,6 @@ fn should_emit_structured_log_records_when_the_log_is_queried() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restrict_log_records_to_one_unit_when_service_is_given() {
     let run = ono(&format!("get log --service {JOURNALD} | take 2 | to json"));
     let Some(rows) = records_or_unavailable(&run, "`get log --service`") else {
@@ -354,7 +352,6 @@ fn should_run_the_failed_service_example_when_a_level_threshold_composes() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restrict_log_records_by_minimum_severity_when_level_is_given() {
     let run = ono("get log --level error | take 3 | to json");
     let Some(rows) = records_or_unavailable(&run, "`get log --level error`") else {

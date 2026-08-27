@@ -1,0 +1,61 @@
+# Services family (spec §9.1, §23.3, §33.2, §41.4; ADR-0084–0086): `set service --enabled`
+# changes what starts at boot through the service manager, and `get journal`, `tail journal`
+# and `get log` answer the journal as typed records. The container runs neither systemd nor
+# journald, so the honest answers here are E0401 with a reason — never an empty journal and
+# never "unimplemented" — while the pre-flight checks that need no system at all (a `set` with
+# nothing to set, an unknown field before the journal is read) answer the same as on any box.
+# A shim `journalctl` replaying the recorded fixture then proves the positive path: the same
+# decoder the adapted `journalctl` runs, records that stream before the child ends, and the
+# `log` view's severity names.
+case: set service refuses honestly, and the journal answers as records or as E0401 with a reason
+timeout: 120
+run: |
+  echo "== set service: no service manager here =="
+  ono -c 'set service systemd-journald.service --enabled false | to json' 2>&1 | grep -o 'Ono-Sendai-E0401' | head -1
+  ono -c 'get service | where state == "failed" | set service --enabled false' 2>&1 | grep -o 'Ono-Sendai-E0401' | head -1
+  echo "== set service: a property is required before anything is resolved =="
+  ono -c 'set service systemd-journald.service' 2>&1 | grep -o 'Ono-Sendai-E020[12]' | head -1
+  ono -c 'set service systemd-journald.service' 2>&1 | grep -c -- '--enabled'
+  echo "== the journal: absent, and said so =="
+  ono -c 'get journal | take 1 | to json' 2>&1 | grep -o 'Ono-Sendai-E0401' | head -1
+  ono -c 'get journal | take 1 | to json' > /dev/null 2>&1; echo "status=$?"
+  ono -c 'get log --level error | take 1 | to json' 2>&1 | grep -o 'Ono-Sendai-E0401' | head -1
+  echo "== typed before execution, with or without a journal =="
+  ono -c 'get journal | where prio == 1 | take 1' 2>&1 | grep -o 'Ono-Sendai-E0202.*' | head -1
+  ono -c 'get log --service ssh.service | where lvl == error | take 1' 2>&1 | grep -o 'Ono-Sendai-E0202.*' | head -1
+  echo "== a journal that answers: the records of the recorded fixture =="
+  mkdir -p /tmp/shim
+  cat > /tmp/shim/journalctl <<'SH'
+  #!/bin/sh
+  if [ "$1" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi
+  case " $* " in
+    *" --follow "*) sed -n 1p /opt/ono-fixtures/adapters/journalctl.jsonl; sleep 5; sed -n 2p /opt/ono-fixtures/adapters/journalctl.jsonl ;;
+    *) cat /opt/ono-fixtures/adapters/journalctl.jsonl ;;
+  esac
+  SH
+  chmod +x /tmp/shim/journalctl
+  export PATH=/tmp/shim:$PATH
+  ono -c 'get journal | select identifier priority | to json'
+  ono -c 'get journal --boot 0 | where priority <= 5 | select message | to json'
+  ono -c 'get log --service init.scope | where unit == "init.scope" | select level unit | to json'
+  ono -c 'get journal | take 1 | inspect | to json' | grep -o 'journalctl --output=json --no-pager --quiet' | head -1
+  echo "== tail journal returns as soon as take is satisfied =="
+  start=$(date +%s)
+  ono -c 'tail journal --lines 1 | take 1 | select identifier | to json'
+  end=$(date +%s); test $((end - start)) -lt 4 && echo followed=early
+  echo done=ok
+exit: 0
+stdout-contains: Ono-Sendai-E0401
+stdout-contains: status=1
+stdout-contains: Ono-Sendai-E0201
+stdout-contains: Ono-Sendai-E0202 unknown field `prio`
+stdout-contains: Ono-Sendai-E0202 unknown field `lvl`
+stdout-contains: [{"identifier":"kernel","priority":5},{"identifier":"systemd","priority":6}]
+stdout-contains: [{"message":"ptrace attach was attempted"}]
+stdout-contains: [{"level":"info","unit":"init.scope"}]
+stdout-contains: journalctl --output=json --no-pager --quiet
+stdout-contains: [{"identifier":"kernel"}]
+stdout-contains: followed=early
+stdout-contains: done=ok
+stdout-not-contains: Ono-Sendai-E0101
+stdout-not-contains: Ono-Sendai-E0102

@@ -93,10 +93,6 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [services | 2026-08-27] **services family** — `crates/ono-cli/tests/services_logs_missing.rs`
-  on branch `implementation-services`; files: `crates/ono-provider-systemd/`,
-  `crates/ono-command/src/impls/{mutate,mod,producer}.rs`, `docs/spec/commands/service.yaml`,
-  `docs/spec/schemas/log-record.v1.yaml`, case 038. ADR-0084–0086.
 
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
@@ -122,7 +118,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   - `crates/ono-cli/tests/network_missing.rs` (31) — `resolve dns`, `test port`, watch/trace/
     enter interface|route|socket, route/interface/socket mutations
   - `crates/ono-cli/tests/services_logs_missing.rs` (15) — `set service`, `get journal`,
-    `tail journal`, `get log`
+    `tail journal`, `get log` — **13/15 done** by [services | 2026-08-27] on branch
+    `implementation-services` (ADR-0084–0086, case 038); the two still ignored wait on the
+    language (`now()`, bare words compared against a string field), see Deferred
   - `crates/ono-cli/tests/storage_missing.rs` (22) — `get device`, mount/unmount, mount verbs,
     watch/trace/enter mount
   - `crates/ono-cli/tests/data_missing.rs` (15) + `crates/ono-command/tests/completion_missing.rs`
@@ -144,8 +142,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   `ono.command/1` resolution `kind` field; `set config` unknown key ⇒ E0202; `ono.device/1`
   shape (path/kind/major/minor); `ono.session/1` fields; `ono.link/1` lacks a `host` field;
   `ono.container/1`, `ono.image/1`, `ono.package/1` schemas and the runtime knobs
-  (`DOCKER_HOST`/`CONTAINER_HOST`, managers found on PATH); `get journal`/`get log` reference
-  `ono.log-record/1` which neither exists nor is deferred; `join`/`diff` output shape and
+  (`DOCKER_HOST`/`CONTAINER_HOST`, managers found on PATH); `get journal`/`get log` referenced
+  `ono.log-record/1` which neither existed nor was deferred (resolved: ADR-0085/0086);
+  `join`/`diff` output shape and
   `--identity [pid]` spelling; failed ActionResult rows nest the error as
   `error.error.code = "io.permission_denied"` instead of `error.code = "Ono-Sendai-E…"`, and
   `operation` carries the bare verb instead of the command id; K11 codes not folded into
@@ -154,6 +153,14 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 ---
 
 ## Next up (ordered)
+
+- [ ] The specification's `where state == failed` (§33.2, §41.4), `where status == failed`
+  (§16.5) and `where level >= error` (§41.4) all fail with E0202: ADR-0009 makes a bare
+  identifier in expression mode a field path, so the word is looked up as a field. Decide —
+  an ADR superseding ADR-0009 in part — whether an unknown bare word compared against a string
+  field is that word (the check of spec §11.3 knows the schema, so it can tell), then un-ignore
+  `services_logs_missing.rs::should_run_the_failed_service_example…` — exit test: a
+  language case running `get service | where state == failed`
 
 - [ ] `explain get process` inside a frame prints the narrowed spelling (`get process 1`,
   `get process --user root`) — ADR-0023 promised it, ADR-0076 made the arguments available —
@@ -421,6 +428,10 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   decoder (ADR-0085); a provider-kind stream failure exits 1; `StreamSink::closed()` lets a
   following producer stop when `take` is satisfied; the decoder reads journalctl's byte-array
   and multi-valued strings (fix); `services_logs_missing.rs` (6 journal tests un-ignored)
+- [x] services 3 — `get log [--service <ref>] [--level <name>] [--since --until]` as
+  `ono.log-record/1` (journal-event plus `level`, the severity name) from the same journal
+  provider (ADR-0086); case 038; `services_logs_missing.rs` 13/15 green — the two ignored
+  cases wait on the language (`now()`, bare words as strings), see Deferred
 - [x] data family (ADR-0072) — `tail N [--follow]` (commit 0f68fe0), `join <right> --on key
   --kind inner|left|right|outer` with `$variables` and pre-run `(pipelines)` visible to native
   stages (1616fe1), `diff <right> [--identity [fields]]` by schema identity (1761cc9),
@@ -703,6 +714,11 @@ security review — and because re-testing these later costs nothing if they are
   (`language_missing.rs`); the option itself is delivered — ignored test:
   `crates/ono-cli/tests/services_logs_missing.rs::should_only_emit_recent_events_when_since_is_a_relative_timestamp`
   — ADR-0085
+- `get log --service X | where level >= error | take 20` (spec §41.4) — the command runs; the
+  bare word `error` is a field path under ADR-0009 and E0202 before execution, as the spec's
+  `where state == failed` examples are — ignored test:
+  `crates/ono-cli/tests/services_logs_missing.rs::should_run_the_failed_service_example_when_a_level_threshold_composes`
+  — ADR-0086
 
 ---
 
