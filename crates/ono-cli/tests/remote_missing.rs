@@ -137,7 +137,6 @@ fn any_file_mentions(root: &Path, needle: &str) -> bool {
 // --- get link as data -------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_serialise_a_held_link_as_a_typed_record() {
     // The link table is a stream<ono.link/1>, so it must cross `to json` like every other
     // stream (spec §33.5) — a table that exists only as rendered text is not a record.
@@ -171,7 +170,6 @@ fn should_serialise_a_held_link_as_a_typed_record() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_serialise_an_empty_link_table_when_nothing_is_linked() {
     let run = ono("get link | to json");
     run.assert_success();
@@ -185,7 +183,6 @@ fn should_serialise_an_empty_link_table_when_nothing_is_linked() {
 // --- get host ---------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_a_linked_host_among_the_known_hosts() {
     // Spec §9.1: `get host` enumerates known hosts from configured providers and sources. A host
     // this session holds a link to is the best-known host there is.
@@ -205,7 +202,6 @@ fn should_list_a_linked_host_among_the_known_hosts() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_a_host_from_the_ssh_client_configuration_with_its_source() {
     // The ssh transport of ADR-0037 runs `ssh <host>`, which reads `~/.ssh/config`; a `Host`
     // entry there is therefore a configured host source (spec §9.1), and the record says which.
@@ -230,7 +226,6 @@ fn should_list_a_host_from_the_ssh_client_configuration_with_its_source() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_one_configured_host_by_name() {
     let home = scratch();
     home.write(
@@ -248,7 +243,6 @@ fn should_resolve_one_configured_host_by_name() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_answer_an_empty_host_list_when_nothing_is_configured() {
     let home = scratch();
     let run = ono_at_home(&home, "get host | to json");
@@ -263,7 +257,6 @@ fn should_answer_an_empty_host_list_when_nothing_is_configured() {
 // --- test host --------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_linked_host_as_reachable_with_what_it_negotiated() {
     // Spec §21.2 lists what a handshake negotiates: protocol version, agent present, available
     // providers. `test host` reports that for a host the session already holds a link to.
@@ -297,7 +290,6 @@ fn should_report_a_linked_host_as_reachable_with_what_it_negotiated() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_an_unreachable_host_within_the_timeout() {
     // A closed loopback port stands in for a host that does not answer; `~/.ssh/config` is how
     // the ssh transport learns where `nowhere` lives, so no name resolution and no network.
@@ -345,7 +337,6 @@ fn should_report_an_unreachable_host_within_the_timeout() {
 // --- connect host -----------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_enter_the_remote_context_when_connecting_to_a_host() {
     // remote.yaml: `connect host` opens a protocol connection and, unlike `link host`, is
     // itself the switch of context (spec §6.1 `connect host prod-db` → `prod-db://~ >`).
@@ -366,7 +357,6 @@ fn should_enter_the_remote_context_when_connecting_to_a_host() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_answer_from_the_host_after_connecting_to_it() {
     let run = ono("connect host testbox --transport local; \
          get process | where pid == 1 | inspect | to json");
@@ -380,7 +370,6 @@ fn should_answer_from_the_host_after_connecting_to_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_persist_no_link_when_connecting_to_a_host() {
     // remote.yaml: "Open a protocol connection to a host without persisting a link" — once the
     // frame is left, nothing remains in the link table.
@@ -396,7 +385,6 @@ fn should_persist_no_link_when_connecting_to_a_host() {
 // --- trace ------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_a_host_to_its_link_and_negotiated_providers() {
     // remote.yaml: "Show a host's links, sessions, addresses and reachable services" as an
     // ono.graph/1 (spec §22.1): the host is a node, its link is a node, the edge joins them.
@@ -433,7 +421,6 @@ fn should_trace_a_host_to_its_link_and_negotiated_providers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_a_link_to_its_transport_agent_and_providers() {
     // remote.yaml: "Show a link's transport, agent, negotiated providers and multiplexed
     // streams" — the same facts §33.4's link summary prints, as a graph.
@@ -465,7 +452,6 @@ fn should_trace_a_link_to_its_transport_agent_and_providers() {
 // --- watch ------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_a_link_watch_with_a_snapshot() {
     // ADR-0024: a native live stream begins with the current state as `snapshot` events.
     let run = ono(&format!(
@@ -481,7 +467,6 @@ fn should_begin_a_link_watch_with_a_snapshot() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_the_held_link_in_the_watch_snapshot() {
     let run = ono(&format!("{LINK}; watch link | take 1 | to json"));
     run.assert_success();
@@ -493,7 +478,6 @@ fn should_list_the_held_link_in_the_watch_snapshot() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_a_host_watch_with_a_snapshot() {
     let home = scratch();
     let run = ono_at_home(
@@ -512,7 +496,6 @@ fn should_begin_a_host_watch_with_a_snapshot() {
 // --- link definitions: add, set, rename, remove, detach ---------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_record_a_link_definition_without_establishing_it() {
     // remote.yaml: "Record a link definition without establishing it" — nothing is spawned, so
     // the record exists and is visibly not connected.
@@ -537,7 +520,6 @@ fn should_record_a_link_definition_without_establishing_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_show_which_host_a_link_definition_points_at() {
     // remote.yaml `add link --host`: the definition points at a host that may differ from its
     // name (`add link prod-db --host 10.4.2.11`), and `get link` must not hide where it goes.
@@ -551,7 +533,6 @@ fn should_show_which_host_a_link_definition_points_at() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_change_a_link_definition_when_set() {
     let run = ono("add link devbox --host devbox.example --transport ssh; \
          set link devbox --transport local; \
@@ -566,7 +547,6 @@ fn should_change_a_link_definition_when_set() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_the_change_when_a_link_definition_is_set() {
     let run = ono("add link devbox --host devbox.example --transport ssh; \
          set link devbox --transport local | to json");
@@ -585,7 +565,6 @@ fn should_report_the_change_when_a_link_definition_is_set() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_rename_a_link_definition() {
     let run = ono("add link devbox --host devbox.example --transport ssh; \
          rename link devbox prodbox; \
@@ -600,7 +579,6 @@ fn should_rename_a_link_definition() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_forget_a_link_definition_when_removed() {
     let run = ono("add link devbox --host devbox.example --transport ssh; \
          remove link devbox; \
@@ -614,7 +592,6 @@ fn should_forget_a_link_definition_when_removed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_the_teardown_when_an_established_link_is_removed() {
     // remote.yaml: "Remove a link definition, tearing the link down if it is established."
     let run = ono(&format!("{LINK}; remove link testbox | to json"));
@@ -633,7 +610,6 @@ fn should_report_the_teardown_when_an_established_link_is_removed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_enter_a_link_that_was_removed() {
     let run = ono(&format!("{LINK}; remove link testbox; enter link testbox"));
     assert!(
@@ -649,7 +625,6 @@ fn should_refuse_to_enter_a_link_that_was_removed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pop_the_link_frame_when_detaching() {
     // Spec §9.1: "Detach active link/context." The frame goes; the stack is back on the ground.
     let run = ono(&format!(
@@ -666,7 +641,6 @@ fn should_pop_the_link_frame_when_detaching() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_the_link_when_detaching() {
     // remote.yaml: "Detach from an active link without tearing it down" — unlike `remove link`,
     // the link stays in the table for a later `enter link`.
@@ -683,7 +657,6 @@ fn should_keep_the_link_when_detaching() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_answer_again_from_a_detached_link_when_it_is_entered_again() {
     let run = ono(&format!(
         "{LINK}; enter link testbox; \
@@ -706,7 +679,6 @@ fn should_answer_again_from_a_detached_link_when_it_is_entered_again() {
 // --- agentless mode ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_the_agentless_mode_visible_in_the_link_table() {
     // Spec §21.3: "Fallback MUST be visible because semantics and performance may differ." A
     // link asked for in agentless mode says so wherever the link is described.
@@ -720,7 +692,6 @@ fn should_keep_the_agentless_mode_visible_in_the_link_table() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_explain_that_a_query_runs_in_agentless_mode() {
     let run = ono("link host testbox --transport local --agentless; \
          enter link testbox; explain get process");
@@ -798,7 +769,6 @@ fn should_fail_the_run_when_a_remote_mutation_fails() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_explain_the_remote_context_of_a_mutation() {
     // Spec §42.2: while connected, the plan of a mutation shows the execution context —
     // `link prod-app (remote)` — so the risk of acting on the wrong machine is inspectable.
@@ -818,7 +788,6 @@ fn should_explain_the_remote_context_of_a_mutation() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_explain_the_effect_of_a_remote_mutation() {
     // Spec §42.2: `operation signal TERM` — the plan says what the mutation does, not only
     // which capability it needs.
@@ -840,7 +809,6 @@ fn should_explain_the_effect_of_a_remote_mutation() {
 // --- host records: add, set, remove -----------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_record_a_host_in_the_shells_own_source() {
     // remote.yaml: "Record a host in a configured host source." The shell's own source lives
     // under its config directory (AGENTS.md §3: `~/.config/ono/`), so the record outlives the
@@ -868,7 +836,6 @@ fn should_record_a_host_in_the_shells_own_source() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_modify_a_recorded_host() {
     let home = scratch();
     ono_at_home(&home, "add host devbox --address 10.4.2.11").assert_success();
@@ -890,7 +857,6 @@ fn should_modify_a_recorded_host() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_remove_a_recorded_host() {
     let home = scratch();
     ono_at_home(&home, "add host devbox --address 10.4.2.11").assert_success();

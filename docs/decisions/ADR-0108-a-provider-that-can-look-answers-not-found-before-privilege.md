@@ -1,4 +1,4 @@
-# ADR-0104: A provider that can look answers not-found before it asks for privilege
+# ADR-0108: A provider that can look answers not-found before it asks for privilege
 
 - Status: accepted
 - Date: 2026-08-27

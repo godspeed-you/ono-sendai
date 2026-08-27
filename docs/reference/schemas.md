@@ -516,6 +516,40 @@ Default view: `gid`, `name`, `members`
 | `name` | `string` | — | nullable | The group name; null when the identity provider cannot resolve the gid. |
 | `members` | `list<string>` | — | nullable | Login names listed as supplementary members. Names rather than user references, because the account database stores names and they need not resolve to an account. Users whose primary group this is are not listed here; null when the provider cannot enumerate them. |
 
+## HostEvent — `ono.host-event/1`
+
+One change to one known host, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `host`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `host` | `record` | — | optional | The host as it now is — or, for `removed`, as it last was. Identity is its name. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime re-read the host sources at the configured interval — explicit, as spec §18.2 requires. |
+
+## Host — `ono.host/1`
+
+A known host from a configured source, reachable or not.
+
+Identity: `name`
+
+Default view: `name`, `address`, `source`, `link`, `transport`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `name` | `string` | — | required | The host as its source names it — the word `link host` and `test host` take. |
+| `address` | `string` | — | nullable | Where the source says the host lives: an address or a DNS name (`HostName` in the OpenSSH configuration, `--address` of `add host`). Null when the source records only the name. |
+| `port` | `port` | — | nullable | The port the source records for it; null when the source records none. |
+| `user` | `string` | — | nullable | The user the source logs in as; null when the source records none. |
+| `source` | `string` | — | required | Which source lists the host: `ono` for the shell's own host file, `ssh-config` for the OpenSSH client configuration, `link` for a host known only because this session holds a link to it. A host several sources list is one record, from the first of them in that order, and `get host --source` asks one source alone. |
+| `link` | `string` | — | nullable | The name of the link this session holds to the host; null when it holds none. |
+| `transport` | `enum` | — | nullable | How the held link reaches the host (ono.link/1 `transport`); null when no link is held, because how a host would be reached is not known until it is. |
+
 ## HttpExchange — `ono.http-exchange/1`
 
 One request and its response, as curl observed it.
@@ -632,20 +666,40 @@ Default view: `timestamp`, `priority`, `identifier`, `message`
 | `host` | `string` | — | required | The hostname the entry was recorded on. |
 | `cursor` | `string` | — | required | The journal cursor, a stable continuation and provenance token (spec v0.3 §1.37). |
 
+## LinkEvent — `ono.link-event/1`
+
+One change to one link this session holds, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `link`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `link` | `record` | — | optional | The link as it now is — or, for `removed`, as it last was. Identity is its name. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime compared the link table at the configured interval — explicit, as spec §18.2 requires. |
+
 ## Link — `ono.link/1`
 
 One remote Ono link this session holds.
 
 Identity: `name`
 
-Default view: `name`, `transport`, `state`, `targets`
+Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `name` | `string` | — | required | The host as the user named it — the prompt's spelling, and `enter link`'s argument. |
+| `host` | `string` | — | required | The host the link points at. `link host prod-db` points at `prod-db` itself; a definition may point elsewhere (`add link prod-db --host 10.4.2.11`), and the table never hides where a link goes. |
 | `transport` | `enum` | — | required | How the bytes travel. `ssh` spawns the remote agent over OpenSSH; `local` spawns `ono --agent` as a child of this shell, which is how a link is exercised without a network. |
-| `state` | `enum` | — | required | Whether the link is usable now. |
-| `targets` | `list<string>` | — | required | The targets the remote negotiated (spec §21.2), which is what its context can answer. |
+| `mode` | `enum` | — | required | Whether the far side is the Ono agent of spec §21.4 or the agentless fallback of §21.3. The fallback MUST be visible because semantics and performance may differ, so the mode is part of the record wherever the link is described. |
+| `state` | `enum` | — | required | Whether the link is usable now: `connected` once the handshake succeeded, `defined` for a definition recorded with `add link` that was never established, `closed` once torn down. |
+| `targets` | `list<string>` | — | required | The targets the remote negotiated (spec §21.2), which is what its context can answer. Empty for a link that was never established: nothing was negotiated. |
+| `protocol` | `int` | — | nullable | The link protocol version the handshake settled on (spec §21.2); null until it did. |
+| `providers` | `list<string>` | — | nullable | The ids of the providers the remote offers (spec §21.2), which keep their ids across the link (ADR-0036); null until the handshake settled them. |
 
 ## LogRecord — `ono.log-record/1`
 
@@ -940,10 +994,14 @@ Default view: `host`, `port`, `protocol`, `reachable`, `duration`, `error`
 |---|---|---|---|---|
 | `host` | `string` | — | required | The host that was probed, as it was given. |
 | `port` | `port` | — | nullable | The port that was probed; null for a probe of a host as a whole. |
-| `protocol` | `enum` | — | required | The transport the probe used. |
+| `protocol` | `enum` | — | required | The protocol the probe spoke: a transport protocol for a port probe, `ono` — the link protocol of spec §21.2 over the link's transport — for a host probe. |
 | `reachable` | `bool` | — | nullable | `true` when the peer answered, `false` when the peer or the network refused, and null when nothing answered before the timeout — silence is not a refusal (spec §10.5). |
 | `duration` | `duration` | — | required | How long the attempt took, whatever it found. |
 | `error` | `string` | — | nullable | The operating system's reason when `reachable` is not `true` — the refusal, the timeout, the unreachable network; null when the peer answered. |
+| `transport` | `enum` | — | nullable | For a host probe, the transport the link protocol travelled over; null for a port probe. |
+| `protocol_version` | `int` | — | nullable | For a host probe, the link protocol version the handshake settled on (spec §21.2). |
+| `agent` | `string` | — | nullable | For a host probe, how the far side named itself — `ono/<version>` for the agent of spec §21.4; the agentless fallback of §21.3 names itself too, so the fallback is visible. |
+| `providers` | `list<string>` | — | nullable | For a host probe, the ids of the providers the far side offers (spec §21.2). |
 
 ## ProcessDetail — `ono.process-detail/1`
 
@@ -1017,6 +1075,20 @@ Default view: `pid`, `name`, `cpu`, `memory`, `user`
 | `cwd` | `path` | — | nullable | Current working directory; null when not readable by this user. |
 | `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
+
+## Provider — `ono.provider/1`
+
+One provider a shell or a linked host offers, by its stable id.
+
+Identity: `id`
+
+Default view: `id`, `targets`, `available`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The provider's stable id, such as `linux.procfs`, as its records' provenance names it. |
+| `targets` | `list<string>` | — | nullable | The targets it answers about; null when only the id is known. |
+| `available` | `bool` | — | nullable | Whether it can answer where it lives; null when only the id is known. |
 
 ## Recommendation — `ono.recommendation/1`
 

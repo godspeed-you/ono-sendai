@@ -27,9 +27,3 @@ deferred:
   - id: ono.type-info/1
     phase: "D"
     required_by: [ono.meta.type]
-  - id: ono.link-event/1
-    phase: "H"
-    required_by: [ono.link.watch]
-  - id: ono.host/1
-    phase: "H/planned"
-    required_by: [ono.host.get, ono.host.remove, ono.host.set, ono.host.trace]

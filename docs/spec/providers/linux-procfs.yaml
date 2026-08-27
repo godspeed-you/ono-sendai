@@ -33,11 +33,11 @@ providers:
   - id: ono.shell
     doc: >-
       The shell's own tables, published by the session before each pipeline runs: the job table
-      of spec §18.4 today; the links and hosts of spec §21 when the remote family publishes them
-      (ADR-0090).
-    targets: [job]
-    capabilities: [job.list]
-    schemas: [ono.job/1]
+      of spec §18.4, and the links of spec §21 with the hosts they reach and the hosts the
+      configured sources list (ADR-0090, ADR-0103).
+    targets: [job, link, host]
+    capabilities: [job.list, link.list, host.list]
+    schemas: [ono.job/1, ono.link/1, ono.host/1]
 
   - id: linux.mountinfo
     doc: >-

@@ -260,8 +260,7 @@ commands:
     verb: watch
     target: host
     summary: Emit host reachability changes as a live stream.
-    stability: planned                    # spec §52, host/watch = "L?"
-    validation_required: true
+    stability: experimental               # spec §52, host/watch = "L?"; delivered by ADR-0105
     argument_mode: words
     input: "null"
     output: stream<ono.host-event/1>
@@ -280,8 +279,7 @@ commands:
     verb: add
     target: host
     summary: Record a host in a configured host source.
-    stability: planned                    # spec §52, host/add = "M?"
-    validation_required: true
+    stability: experimental               # spec §52, host/add = "M?"; delivered by ADR-0104
     argument_mode: words
     input: "null"
     output: ono.action-result/1
@@ -292,7 +290,7 @@ commands:
       - {name: address, type: ip, doc: "The address to record for it."}
     privilege: none
     streaming: false
-    phase: planned
+    phase: H
     examples:
       - add host prod-db --address 10.4.2.11
 
@@ -300,8 +298,7 @@ commands:
     verb: remove
     target: host
     summary: Remove a host from a configured host source.
-    stability: planned                    # spec §52, host/remove = "M?"
-    validation_required: true
+    stability: experimental               # spec §52, host/remove = "M?"; delivered by ADR-0104
     argument_mode: words
     input: "null | stream<ono.host/1>"
     output: stream<ono.action-result/1>
@@ -311,7 +308,7 @@ commands:
     options: []
     privilege: none
     streaming: true
-    phase: planned
+    phase: H
     examples:
       - remove host prod-db
 
@@ -319,8 +316,7 @@ commands:
     verb: set
     target: host
     summary: Modify a recorded host.
-    stability: planned                    # spec §52, host/set = "M?"
-    validation_required: true
+    stability: experimental               # spec §52, host/set = "M?"; delivered by ADR-0104
     argument_mode: words
     input: "null | stream<ono.host/1>"
     output: stream<ono.action-result/1>
@@ -331,7 +327,7 @@ commands:
       - {name: address, type: ip, doc: "New address."}
     privilege: none
     streaming: true
-    phase: planned
+    phase: H
     examples:
       - set host prod-db --address 10.4.2.12
 
@@ -339,8 +335,7 @@ commands:
     verb: trace
     target: link
     summary: Show a link's transport, agent, negotiated providers and multiplexed streams.
-    stability: planned                    # spec §52, link/trace = "R?"
-    validation_required: true
+    stability: experimental               # spec §52, link/trace = "R?"; delivered by ADR-0105
     argument_mode: words
     input: "null | ono.link/1"
     output: ono.graph/1

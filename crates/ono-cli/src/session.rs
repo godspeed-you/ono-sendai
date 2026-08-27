@@ -106,23 +106,78 @@ pub struct Session {
     settings: crate::settings::Settings,
 }
 
-/// One held remote link: the connection, and the registry its providers are mounted in.
+/// One remote link the session knows: a definition, established or not (spec §21.1, ADR-0103).
+#[derive(Debug)]
 pub struct SessionLink {
-    /// The host as the user named it.
+    /// The link's name, as the user gave it: the prompt's spelling, `enter link`'s argument.
     pub name: String,
+    /// The host the link points at — the name itself for `link host`, whatever `--host` said
+    /// for a definition.
+    pub host: String,
     /// How the bytes travel, for `get link`.
     pub transport: String,
+    /// Whether the agentless fallback of spec §21.3 was asked for.
+    pub agentless: bool,
+    /// Whether the link outlives its frame: `link host` and `add link` persist, `connect host`
+    /// is one-shot and goes when its frame is left (ADR-0104).
+    pub persistent: bool,
+    /// The connection, once the handshake succeeded.
+    pub connection: Option<LinkConnection>,
+}
+
+impl SessionLink {
+    /// The row `get link` shows for this link (ADR-0090 §3).
+    #[must_use]
+    pub fn row(&self) -> crate::session_provider::LinkRow {
+        let connection = self.connection.as_ref();
+        crate::session_provider::LinkRow {
+            name: self.name.clone(),
+            host: self.host.clone(),
+            transport: self.transport.clone(),
+            agentless: self.agentless,
+            state: if connection.is_some() {
+                "connected"
+            } else {
+                "defined"
+            },
+            targets: connection.map_or_else(Vec::new, LinkConnection::targets),
+            protocol: connection.map(|held| held.link.negotiated().version()),
+            providers: connection.map(|held| {
+                held.link
+                    .negotiated()
+                    .providers()
+                    .iter()
+                    .map(|descriptor| descriptor.id().to_owned())
+                    .collect()
+            }),
+        }
+    }
+}
+
+/// An established link: the connection, and the registry its providers are mounted in.
+pub struct LinkConnection {
     /// The link itself, kept so dropping the session hangs up.
     pub link: ono_remote::RemoteLink,
     /// The mounted registry an active link frame answers from (spec §14.4).
     pub registry: std::sync::Arc<ProviderRegistry>,
 }
 
-impl std::fmt::Debug for SessionLink {
+impl LinkConnection {
+    /// The targets the remote negotiated, in mount order.
+    #[must_use]
+    pub fn targets(&self) -> Vec<String> {
+        self.registry
+            .providers()
+            .iter()
+            .flat_map(|provider| provider.targets().iter().map(|target| (*target).to_owned()))
+            .collect()
+    }
+}
+
+impl std::fmt::Debug for LinkConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SessionLink")
-            .field("name", &self.name)
-            .field("transport", &self.transport)
+        f.debug_struct("LinkConnection")
+            .field("host", &self.link.host())
             .finish_non_exhaustive()
     }
 }
@@ -153,6 +208,15 @@ pub struct ShellFrame {
     pub frame: ono_command::ContextFrame,
     /// Where the session stood before a filesystem frame moved it (spec §14.2).
     pub restore_cwd: Option<PathBuf>,
+}
+
+impl ShellFrame {
+    /// Whether this frame stands on the link named `name` (spec §14.4).
+    #[must_use]
+    pub fn is_link(&self, name: &str) -> bool {
+        matches!(self.frame.kind(), ono_command::FrameKind::Link)
+            && self.frame.identity().to_string() == name
+    }
 }
 
 impl std::fmt::Debug for Session {
@@ -323,13 +387,79 @@ impl Session {
         &self.links
     }
 
-    /// The mounted registry of the named link, if the session holds it.
+    /// The named link, if the session knows it.
+    #[must_use]
+    pub fn link(&self, name: &str) -> Option<&SessionLink> {
+        self.links.iter().find(|link| link.name == name)
+    }
+
+    /// The named link, to change its definition.
+    pub fn link_mut(&mut self, name: &str) -> Option<&mut SessionLink> {
+        self.links.iter_mut().find(|link| link.name == name)
+    }
+
+    /// Forgets the named link and hands it back, so the caller decides when the connection
+    /// drops — and with it, hangs up (ADR-0036 §8).
+    pub fn remove_link(&mut self, name: &str) -> Option<SessionLink> {
+        let index = self.links.iter().position(|link| link.name == name)?;
+        Some(self.links.remove(index))
+    }
+
+    /// How many frames on the stack stand on the named link.
+    #[must_use]
+    pub fn link_frames(&self, name: &str) -> usize {
+        self.frames
+            .iter()
+            .filter(|frame| frame.is_link(name))
+            .count()
+    }
+
+    /// Pops every frame standing on the named link, wherever it is in the stack, and answers
+    /// how many went. Frames above it stay: an entered directory inside a link is still the
+    /// directory (spec §14.1 nests frames; only the link's own are the link's).
+    pub fn pop_link_frames(&mut self, name: &str) -> usize {
+        let before = self.frames.len();
+        self.frames.retain(|frame| !frame.is_link(name));
+        before - self.frames.len()
+    }
+
+    /// The mounted registry of the named link, if the session holds it established.
     #[must_use]
     pub fn link_registry(&self, name: &str) -> Option<std::sync::Arc<ProviderRegistry>> {
         self.links
             .iter()
             .find(|link| link.name == name)
-            .map(|link| std::sync::Arc::clone(&link.registry))
+            .and_then(|link| link.connection.as_ref())
+            .map(|held| std::sync::Arc::clone(&held.registry))
+    }
+
+    /// Where the host sources of spec §9.1 live for this session's environment (ADR-0103).
+    #[must_use]
+    pub fn host_sources(&self) -> crate::hosts::HostSources {
+        let pairs: Vec<(String, String)> = self
+            .env
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        crate::hosts::HostSources::from_environment(
+            pairs
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        )
+    }
+
+    /// Publishes the link table as it is now, for `get link` and `get host` (ADR-0103).
+    pub fn publish_links(&mut self) {
+        let rows = self.links.iter().map(SessionLink::row).collect();
+        self.tables
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .publish_links(rows);
     }
 
     /// Keeps `value` as the interactive selection bare `@` refers to (ADR-0050).
@@ -514,8 +644,10 @@ impl Session {
     /// Returns `None` only if the operating system refuses to start the runtime.
     pub fn pipeline_context(&mut self) -> Option<(&tokio::runtime::Runtime, &ProviderRegistry)> {
         self.runtime()?;
-        // What `get job` answers is what is true when the pipeline starts (ADR-0090).
+        // What `get job` and `get link` answer is what is true when the pipeline starts
+        // (ADR-0090, ADR-0103).
         self.publish_jobs();
+        self.publish_links();
         // Spec §14.4: the active link frame decides where provider calls run. The innermost
         // link frame wins; without one, the local registry answers.
         let remote = self.frames.iter().rev().find_map(|frame| {
@@ -523,10 +655,14 @@ impl Session {
                 .then(|| frame.frame.identity().to_string())
         });
         if let Some(host) = remote
-            && let Some(index) = self.links.iter().position(|link| link.name == host)
+            && let Some(index) = self
+                .links
+                .iter()
+                .position(|link| link.name == host && link.connection.is_some())
         {
             let runtime = self.runtime.as_ref()?;
-            return Some((runtime, &self.links[index].registry));
+            let held = self.links[index].connection.as_ref()?;
+            return Some((runtime, &held.registry));
         }
         self.providers();
         match (self.runtime.as_ref(), self.providers.as_ref()) {
@@ -581,11 +717,14 @@ impl Session {
             .map(|frame| frame.frame.identity().to_string())
     }
 
-    /// The link the innermost link frame stands on, when the session is inside one.
+    /// The connection the innermost link frame stands on, when the session is inside one.
     #[must_use]
-    pub fn remote_link(&self) -> Option<&SessionLink> {
+    pub fn remote_link(&self) -> Option<&LinkConnection> {
         let host = self.link_host()?;
-        self.links.iter().find(|link| link.name == host)
+        self.links
+            .iter()
+            .find(|link| link.name == host)
+            .and_then(|link| link.connection.as_ref())
     }
 
     /// Both registries a plan consults, borrowed together.

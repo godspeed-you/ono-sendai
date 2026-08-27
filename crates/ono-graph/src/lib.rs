@@ -16,7 +16,8 @@
 //!   [`FileHolders`], [`MountDevices`], [`MountFilesystems`], [`MountUsers`],
 //!   [`RouteInterfaces`], [`InterfaceRoutes`], [`InterfaceSockets`], [`UserProcesses`],
 //!   [`UserGroups`], [`ProcessUsers`] — the exact relationships of spec §22.2 and §22.3, each
-//!   read from the kernel or the account database.
+//!   read from the kernel or the account database; [`HostLinks`] and [`LinkProviders`] — the
+//!   links of spec §21 and what they negotiated, read from the shell's own tables.
 //! - [`RemoteHosts`] with [`Resolver`] — the derived one, marked as derived.
 //! - [`Tracer`] with [`TraceOptions`] — the bounded walk of spec §22.3.
 //! - [`Graph::trees`] — the ASCII shape of spec §22.4, through `ono-render`'s tree renderer.
@@ -75,10 +76,10 @@ pub use graph::{
     Direction, Edge, Graph, GraphFailure, Node, TRACE_PROVIDER, Truncation, confidence_name,
 };
 pub use kernel::{
-    FileHolders, InterfaceRoutes, InterfaceSockets, MountDevices, MountFilesystems, MountUsers,
-    OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, Resolver, RouteInterfaces,
-    ServiceProcesses, SocketOwners, UserGroups, UserProcesses, kernel_relationships,
-    rooted_relationships,
+    FileHolders, HostLinks, InterfaceRoutes, InterfaceSockets, LinkProviders, MountDevices,
+    MountFilesystems, MountUsers, OpenFiles, ProcessSockets, ProcessTree, ProcessUsers,
+    RemoteHosts, Resolver, RouteInterfaces, ServiceProcesses, SocketOwners, UserGroups,
+    UserProcesses, kernel_relationships, rooted_relationships,
 };
 pub use label::label_of;
 pub use provider::{Relationship, RelationshipProvider, Relationships};

@@ -1,9 +1,10 @@
 # ProbeResult. Derived from spec §9.1 Network — `test port <host> <port>` yields `ProbeResult`,
 # "probe reachability with timing and error detail" — and §9.1 Remote's `test host <name>`.
-# §28 defines no ProbeResult; the field set is decided here (ADR-0012, ADR-0087).
+# §28 defines no ProbeResult; the field set is decided here (ADR-0012, ADR-0087, ADR-0104).
 #
 # A probe's finding is data, not a failure of the shell: a refused port answers the question
-# that was asked. Only a probe that could not be made at all is an error.
+# that was asked. Only a probe that could not be made at all is an error. A host probe
+# (`test host`) additionally reports what the link handshake negotiated (spec §21.2).
 id: ono.probe-result/1
 name: ProbeResult
 summary: What one reachability probe found — whether the peer answered, how long it took, and why not.
@@ -20,8 +21,10 @@ fields:
   protocol:
     type: enum
     required: true
-    values: [tcp, udp, icmp]
-    doc: The transport the probe used.
+    values: [tcp, udp, icmp, ono]
+    doc: >-
+      The protocol the probe spoke: a transport protocol for a port probe, `ono` — the link
+      protocol of spec §21.2 over the link's transport — for a host probe.
   reachable:
     type: bool
     nullable: true
@@ -38,5 +41,24 @@ fields:
     doc: >-
       The operating system's reason when `reachable` is not `true` — the refusal, the timeout,
       the unreachable network; null when the peer answered.
+  transport:
+    type: enum
+    nullable: true
+    values: [ssh, local]
+    doc: For a host probe, the transport the link protocol travelled over; null for a port probe.
+  protocol_version:
+    type: int
+    nullable: true
+    doc: For a host probe, the link protocol version the handshake settled on (spec §21.2).
+  agent:
+    type: string
+    nullable: true
+    doc: >-
+      For a host probe, how the far side named itself — `ono/<version>` for the agent of spec
+      §21.4; the agentless fallback of §21.3 names itself too, so the fallback is visible.
+  providers:
+    type: list<string>
+    nullable: true
+    doc: For a host probe, the ids of the providers the far side offers (spec §21.2).
 default_view:
   columns: [host, port, protocol, reachable, duration, error]

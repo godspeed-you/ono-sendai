@@ -10,6 +10,13 @@ fields:
     type: string
     required: true
     doc: The host as the user named it — the prompt's spelling, and `enter link`'s argument.
+  host:
+    type: string
+    required: true
+    doc: >-
+      The host the link points at. `link host prod-db` points at `prod-db` itself; a definition
+      may point elsewhere (`add link prod-db --host 10.4.2.11`), and the table never hides where
+      a link goes.
   transport:
     type: enum
     required: true
@@ -18,14 +25,36 @@ fields:
       How the bytes travel. `ssh` spawns the remote agent over OpenSSH; `local` spawns
       `ono --agent` as a child of this shell, which is how a link is exercised without a
       network.
+  mode:
+    type: enum
+    required: true
+    values: [agent, agentless]
+    doc: >-
+      Whether the far side is the Ono agent of spec §21.4 or the agentless fallback of §21.3.
+      The fallback MUST be visible because semantics and performance may differ, so the mode is
+      part of the record wherever the link is described.
   state:
     type: enum
     required: true
-    values: [connected, closed]
-    doc: Whether the link is usable now.
+    values: [defined, connected, closed]
+    doc: >-
+      Whether the link is usable now: `connected` once the handshake succeeded, `defined` for a
+      definition recorded with `add link` that was never established, `closed` once torn down.
   targets:
     type: list<string>
     required: true
-    doc: The targets the remote negotiated (spec §21.2), which is what its context can answer.
+    doc: >-
+      The targets the remote negotiated (spec §21.2), which is what its context can answer.
+      Empty for a link that was never established: nothing was negotiated.
+  protocol:
+    type: int
+    nullable: true
+    doc: The link protocol version the handshake settled on (spec §21.2); null until it did.
+  providers:
+    type: list<string>
+    nullable: true
+    doc: >-
+      The ids of the providers the remote offers (spec §21.2), which keep their ids across the
+      link (ADR-0036); null until the handshake settled them.
 default_view:
-  columns: [name, transport, state, targets]
+  columns: [name, host, transport, mode, state, targets]

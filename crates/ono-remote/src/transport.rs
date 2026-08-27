@@ -104,6 +104,7 @@ pub struct SshTarget {
     host: String,
     user: Option<String>,
     port: Option<u16>,
+    config: Option<std::path::PathBuf>,
 }
 
 impl SshTarget {
@@ -114,7 +115,17 @@ impl SshTarget {
             host: host.into(),
             user: None,
             port: None,
+            config: None,
         }
+    }
+
+    /// Reads `config` as the client configuration (`ssh -F`) rather than the files ssh finds
+    /// on its own — so the file the shell lists hosts from (ADR-0103) is the file ssh resolves
+    /// them with, whatever the account's home directory is.
+    #[must_use]
+    pub fn with_config(mut self, config: impl Into<std::path::PathBuf>) -> Self {
+        self.config = Some(config.into());
+        self
     }
 
     /// Logs in as `user` rather than as the local user.
@@ -153,6 +164,9 @@ impl SshTarget {
 pub fn ssh_command(target: &SshTarget) -> Command {
     let mut command = Command::new("ssh");
     command.arg("-o").arg("BatchMode=yes").arg("-T");
+    if let Some(config) = &target.config {
+        command.arg("-F").arg(config);
+    }
     if let Some(port) = target.port {
         command.arg("-p").arg(port.to_string());
     }

@@ -18,12 +18,20 @@ pub fn registry(environment: impl IntoIterator<Item = (String, String)>) -> Prov
 }
 
 /// The same registry, with the shell's own tables (`ono.shell`) answering from `tables` — the
-/// job table the session publishes before each pipeline runs (spec §18.4, ADR-0090).
+/// job and link tables the session publishes before each pipeline runs (spec §18.4, §21;
+/// ADR-0090, ADR-0103) and the host sources the environment points at.
 pub fn registry_with_tables(
     environment: impl IntoIterator<Item = (String, String)>,
     tables: Arc<std::sync::Mutex<crate::session_provider::SessionTables>>,
 ) -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
+    let environment: Vec<(String, String)> = environment.into_iter().collect();
+    // The host sources of spec §9.1 are where the environment says they are (ADR-0103).
+    let sources = crate::hosts::HostSources::from_environment(
+        environment
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+    );
 
     ono_provider_linux::register(
         &mut registry,
@@ -39,7 +47,7 @@ pub fn registry_with_tables(
     registry.register(Arc::new(ono_provider_systemd::JournalProvider::new()));
 
     registry.register(Arc::new(crate::session_provider::SessionProvider::new(
-        tables,
+        tables, sources,
     )));
     registry.register(Arc::new(ono_provider_net::DnsProvider::new()));
     registry.register(Arc::new(ono_provider_net::PortProvider::new()));

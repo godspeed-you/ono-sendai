@@ -1,0 +1,82 @@
+# The remote family as objects (spec §9.1 Remote, §21, §33.4, §42.2): the link table is a
+# stream<ono.link/1>, hosts are enumerated from configured sources (the shell's own host file,
+# ~/.ssh/config, the links held), a link definition is recorded, changed, renamed and
+# forgotten without connecting, `detach link` pops the frame and keeps the link, `remove link`
+# tears an established one down, `connect host` is one-shot, `test host` reports what the
+# handshake negotiated, `watch`/`trace` reach links and hosts, `--agentless` is visible, and
+# `explain` inside a link names the host, the effect and the privilege. The far side is this
+# very binary as `ono --agent` over a pipe pair (`--transport local`), so no network is needed
+# (ADR-0037, ADR-0103–0106).
+case: links and hosts are objects, and the remote context is inspectable
+timeout: 180
+env: NO_COLOR=1
+run: |
+  export HOME=$(mktemp -d) XDG_CONFIG_HOME=$HOME
+  mkdir -p "$HOME/.ssh"
+  printf 'Host devbox\n    HostName 10.4.2.11\n    User deploy\n' > "$HOME/.ssh/config"
+
+  echo "== the link table is data =="
+  ono -c 'get link | to json'
+  ono -c 'link host testbox --transport local; get link | select name transport mode state | to json' | tail -1
+
+  echo "== hosts come from configured sources =="
+  ono -c 'get host devbox | select name address source | to json'
+  ono -c 'link host testbox --transport local; get host testbox | select name source transport | to json' | tail -1
+  ono -c 'add host prod-db --address 10.4.2.12 | select status | to json'
+  ono -c 'get host prod-db | select address source | to json'
+  ono -c 'set host prod-db --address 10.4.2.13 | select status changed | to json'
+  ono -c 'get host prod-db | select address | to json'
+  ono -c 'remove host prod-db | select status | to json'
+  ono -c 'get host --source ono | to json'
+
+  echo "== link definitions =="
+  ono -c 'add link staging --host 10.4.2.20 --transport ssh; get link | select name host transport state | to json' | tail -1
+  ono -c 'add link staging --host 10.4.2.20; set link staging --transport local | select status changed | to json' | tail -1
+  ono -c 'add link staging --host 10.4.2.20; rename link staging preprod; get link | select name | to json' | tail -1
+  ono -c 'add link staging --host 10.4.2.20; remove link staging; get link | to json' | tail -1
+
+  echo "== detach keeps, remove tears down =="
+  ono -c 'link host testbox --transport local; enter link testbox; detach link testbox | select status | to json; get context | to json; get link | select name state | to json'
+  ono -c 'link host testbox --transport local; remove link testbox | select operation status | to json; enter link testbox' 2>&1 | tail -3
+
+  echo "== connect host is one-shot =="
+  ono -c 'connect host testbox --transport local | select name state | to json; get context | select kind identity | to json; leave; get link | to json'
+
+  echo "== test host reports the handshake =="
+  ono -c 'link host testbox --transport local; test host testbox | select host reachable transport agent | to json' | tail -1
+  ono -c 'test host nowhere --timeout 2s | to json' 2>&1 | grep -o 'Ono-Sendai-E0601' | head -1
+
+  echo "== watch and trace =="
+  ono -c 'link host testbox --transport local; watch link | take 1 | select kind | to json' | tail -1
+  ono -c 'watch host --every 1s | take 1 | select kind | to json'
+  ono -c 'link host testbox --transport local; trace host testbox | to json' | grep -o 'linux.procfs' | head -1
+  ono -c 'link host testbox --transport local; trace link testbox' | tail -n +2 | head -3
+
+  echo "== agentless is visible; explain shows the remote context =="
+  ono -c 'link host testbox --transport local --agentless; get link | select mode | to json' | tail -1
+  ono -c 'link host testbox --transport local; enter link testbox; explain stop process 1' | grep -E 'link |operation|privilege|risk'
+exit: 0
+stdout-contains: []
+stdout-contains: [{"mode":"agent","name":"testbox","state":"connected","transport":"local"}]
+stdout-contains: [{"address":"10.4.2.11","name":"devbox","source":"ssh-config"}]
+stdout-contains: [{"name":"testbox","source":"link","transport":"local"}]
+stdout-contains: [{"address":"10.4.2.12","source":"ono"}]
+stdout-contains: [{"changed":true,"status":"success"}]
+stdout-contains: [{"address":"10.4.2.13"}]
+stdout-contains: [{"host":"10.4.2.20","name":"staging","state":"defined","transport":"ssh"}]
+stdout-contains: [{"name":"preprod"}]
+stdout-contains: {"identity":"testbox","kind":"link"}
+stdout-contains: [{"name":"testbox","state":"connected"}]
+stdout-contains: [{"operation":"ono.link.remove","status":"success"}]
+stdout-contains: Ono-Sendai-E0102
+stdout-contains: Ono-Sendai-E0601
+stdout-contains: "agent":"ono/
+stdout-contains: "reachable":true
+stdout-contains: [{"kind":"snapshot"}]
+stdout-contains: linux.procfs
+stdout-contains: offers -> linux.procfs
+stdout-contains: [{"mode":"agentless"}]
+stdout-contains: testbox (remote)
+stdout-contains: operation    signal TERM
+stdout-contains: risk         mutate + remote
+stdout-not-contains: panicked

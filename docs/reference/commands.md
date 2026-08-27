@@ -4373,7 +4373,7 @@ Emit host reachability changes as a live stream.
 | | |
 |---|---|
 | id | `ono.host.watch` |
-| stability | planned |
+| stability | experimental |
 | phase | H |
 | input | `null` |
 | output | `stream<ono.host-event/1>` |
@@ -4406,8 +4406,8 @@ Record a host in a configured host source.
 | | |
 |---|---|
 | id | `ono.host.add` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | H |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `host.list` |
@@ -4439,8 +4439,8 @@ Remove a host from a configured host source.
 | | |
 |---|---|
 | id | `ono.host.remove` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | H |
 | input | `null | stream<ono.host/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `host.list` |
@@ -4466,8 +4466,8 @@ Modify a recorded host.
 | | |
 |---|---|
 | id | `ono.host.set` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | H |
 | input | `null | stream<ono.host/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `host.list` |
@@ -4499,7 +4499,7 @@ Show a link's transport, agent, negotiated providers and multiplexed streams.
 | | |
 |---|---|
 | id | `ono.link.trace` |
-| stability | planned |
+| stability | experimental |
 | phase | H |
 | input | `null | ono.link/1` |
 | output | `ono.graph/1` |

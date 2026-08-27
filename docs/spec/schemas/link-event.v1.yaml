@@ -1,0 +1,36 @@
+# LinkEvent. Spec §18.2 turns a query into a stream of updates and §31.14 fixes the event
+# envelope; spec §52 lists link/watch. The envelope of ono.process-event/1, carrying the link
+# (ADR-0078, ADR-0105).
+id: ono.link-event/1
+name: LinkEvent
+summary: One change to one link this session holds, as a live stream emits it.
+identity: []
+fields:
+  kind:
+    type: enum
+    required: true
+    values: [snapshot, added, changed, removed]
+    doc: >-
+      What happened. A subscription always begins with `snapshot` events carrying the current
+      state (ADR-0024), so no consumer has to reconstruct the starting point.
+  at:
+    type: timestamp
+    required: true
+    doc: When the change was observed.
+  link:
+    type: record
+    required: false
+    doc: The link as it now is — or, for `removed`, as it last was. Identity is its name.
+  changed:
+    type: list<string>
+    required: false
+    doc: For `changed`, the names of the fields whose values moved. Null for every other kind.
+  source:
+    type: enum
+    required: true
+    values: [subscription, poll]
+    doc: >-
+      How the change was observed. `poll` means the runtime compared the link table at the
+      configured interval — explicit, as spec §18.2 requires.
+default_view:
+  columns: [kind, at, link, changed]

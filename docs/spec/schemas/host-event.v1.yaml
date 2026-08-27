@@ -1,0 +1,36 @@
+# HostEvent. Spec §18.2 turns a query into a stream of updates and §31.14 fixes the event
+# envelope; spec §52 lists host/watch. The envelope of ono.process-event/1, carrying the host
+# (ADR-0078, ADR-0105).
+id: ono.host-event/1
+name: HostEvent
+summary: One change to one known host, as a live stream emits it.
+identity: []
+fields:
+  kind:
+    type: enum
+    required: true
+    values: [snapshot, added, changed, removed]
+    doc: >-
+      What happened. A subscription always begins with `snapshot` events carrying the current
+      state (ADR-0024), so no consumer has to reconstruct the starting point.
+  at:
+    type: timestamp
+    required: true
+    doc: When the change was observed.
+  host:
+    type: record
+    required: false
+    doc: The host as it now is — or, for `removed`, as it last was. Identity is its name.
+  changed:
+    type: list<string>
+    required: false
+    doc: For `changed`, the names of the fields whose values moved. Null for every other kind.
+  source:
+    type: enum
+    required: true
+    values: [subscription, poll]
+    doc: >-
+      How the change was observed. `poll` means the runtime re-read the host sources at the
+      configured interval — explicit, as spec §18.2 requires.
+default_view:
+  columns: [kind, at, host, changed]

@@ -1,0 +1,50 @@
+# Host. Spec §9.1 Remote: "`get host` — enumerate known hosts from configured providers and
+# sources", and §21 makes a host the far end of a link. §28 defines no Host; the field set is
+# decided here (ADR-0012, ADR-0103): a host is whatever a source says about it plus, when this
+# session holds a link to it, how the link reaches it. The sources are the session's own link
+# table, the shell's own host file under its configuration directory, and the OpenSSH client
+# configuration the ssh transport reads (ADR-0037).
+id: ono.host/1
+name: Host
+summary: A known host from a configured source, reachable or not.
+identity: [name]
+fields:
+  name:
+    type: string
+    required: true
+    doc: The host as its source names it — the word `link host` and `test host` take.
+  address:
+    type: string
+    nullable: true
+    doc: >-
+      Where the source says the host lives: an address or a DNS name (`HostName` in the OpenSSH
+      configuration, `--address` of `add host`). Null when the source records only the name.
+  port:
+    type: port
+    nullable: true
+    doc: The port the source records for it; null when the source records none.
+  user:
+    type: string
+    nullable: true
+    doc: The user the source logs in as; null when the source records none.
+  source:
+    type: string
+    required: true
+    doc: >-
+      Which source lists the host: `ono` for the shell's own host file, `ssh-config` for the
+      OpenSSH client configuration, `link` for a host known only because this session holds a
+      link to it. A host several sources list is one record, from the first of them in that
+      order, and `get host --source` asks one source alone.
+  link:
+    type: string
+    nullable: true
+    doc: The name of the link this session holds to the host; null when it holds none.
+  transport:
+    type: enum
+    nullable: true
+    values: [ssh, local]
+    doc: >-
+      How the held link reaches the host (ono.link/1 `transport`); null when no link is held,
+      because how a host would be reached is not known until it is.
+default_view:
+  columns: [name, address, source, link, transport]

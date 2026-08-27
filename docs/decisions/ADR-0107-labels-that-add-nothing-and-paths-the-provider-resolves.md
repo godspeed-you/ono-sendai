@@ -1,4 +1,4 @@
-# ADR-0103: A label the identity already shows is left off; a path the command does not act on is resolved
+# ADR-0107: A label the identity already shows is left off; a path the command does not act on is resolved
 
 - Status: accepted
 - Date: 2026-08-27
