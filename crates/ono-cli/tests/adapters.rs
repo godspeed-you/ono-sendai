@@ -516,3 +516,83 @@ fn should_adapt_gnu_stat_and_find_or_say_why_not() {
         }
     }
 }
+
+#[test]
+fn should_adapt_git_status_and_log_in_a_repository() {
+    // Spec v0.3 §1.42: `git status | where state != …`, `git log | where author_email == …`.
+    let repo = scratch();
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo.path())
+            .env("GIT_AUTHOR_NAME", "Case")
+            .env("GIT_AUTHOR_EMAIL", "case@example.org")
+            .env("GIT_COMMITTER_NAME", "Case")
+            .env("GIT_COMMITTER_EMAIL", "case@example.org")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    repo.write("tracked.txt", "one\n");
+    git(&["add", "tracked.txt"]);
+    git(&["commit", "-q", "-m", "first commit"]);
+    repo.write("tracked.txt", "two\n");
+    repo.write("new file.txt", "x");
+
+    let in_repo = |source: &str| Shell::new().args(["-c", source]).cwd(repo.path()).run();
+    let status = in_repo("git status | select path state index worktree | to json");
+    status.assert_success();
+    assert!(
+        status.stdout().contains("\"state\":\"modified\"")
+            && status.stdout().contains("\"state\":\"untracked\""),
+        "porcelain v2 became typed entries, got {:?}",
+        status.stdout()
+    );
+    assert!(
+        status.stdout().contains("new file.txt"),
+        "a name with a space survives -z, got {:?}",
+        status.stdout()
+    );
+
+    let log = in_repo(
+        "git log | where author_email == \"case@example.org\" | select subject parents | to json",
+    );
+    log.assert_success();
+    assert!(
+        log.stdout().contains("\"subject\":\"first commit\"")
+            && log.stdout().contains("\"parents\":[]"),
+        "the explicit format became Commit records, got {:?}",
+        log.stdout()
+    );
+
+    let raw = in_repo("git status --short | grep -c txt");
+    raw.assert_success();
+    assert_eq!(
+        raw.stdout().trim(),
+        "2",
+        "`--short` is git's own format and stays bytes"
+    );
+}
+
+#[test]
+fn should_adapt_lsof_for_the_callers_own_process() {
+    let run =
+        ono("lsof -c ono | where fd == \"cwd\" | take 1 | select process fd kind path | to json");
+    if run.status().code() != 0 {
+        // lsof is optional on a developer machine; the container has it (case 080).
+        assert!(
+            run.stderr().contains("Ono-Sendai-E0101") || run.stderr().contains("Ono-Sendai-E0904"),
+            "got {:?}",
+            run.stderr()
+        );
+        return;
+    }
+    assert!(
+        run.stdout().contains("\"fd\":\"cwd\"") && run.stdout().contains("\"kind\":\"DIR\""),
+        "lsof's field protocol became OpenFile records, got {:?}",
+        run.stdout()
+    );
+}

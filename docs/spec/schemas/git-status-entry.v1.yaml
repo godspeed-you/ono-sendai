@@ -1,0 +1,35 @@
+# Canonical GitStatusEntry schema. Source: spec v0.3 §1.42 (`git status | where state !=
+# unmodified` yields `Stream<GitStatusEntry>`), from `git status --porcelain=v2 -z`, the one
+# status format git documents as stable.
+id: ono.git-status-entry/1
+name: GitStatusEntry
+summary: One path in a git working tree and how it differs from the index and HEAD.
+identity: [path]
+fields:
+  path:
+    type: path
+    required: true
+    doc: The path relative to the repository root.
+  state:
+    type: enum
+    required: true
+    values: [modified, added, deleted, renamed, copied, type-changed, unmerged, untracked, ignored]
+    doc: What happened to the path, summarised across index and working tree.
+  index:
+    type: string
+    required: true
+    doc: The index side of git's two-letter status — `.` for unchanged, `M`, `A`, `D`, `R`, `C`, `T`, `U`.
+  worktree:
+    type: string
+    required: true
+    doc: The working-tree side of the status, same letters.
+  original_path:
+    type: path
+    nullable: true
+    doc: Where a renamed or copied path came from; null otherwise.
+  submodule:
+    type: bool
+    nullable: true
+    doc: Whether the path is a submodule; null for an untracked or ignored path.
+default_view:
+  columns: [state, index, worktree, path]

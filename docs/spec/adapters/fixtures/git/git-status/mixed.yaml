@@ -1,0 +1,15 @@
+# Every entry kind of porcelain v2: ordinary, rename (with its origin in the next NUL field),
+# deletion, unmerged, a submodule, untracked and ignored; the branch headers are not records.
+invocation: [git, status]
+tool_version: "2.53.0"
+distro: debian
+expect:
+  records:
+    - {path: src/contract.rs, state: modified, index: ".", worktree: M, original_path: null, submodule: false}
+    - {path: docs/new.md, state: added, index: A, worktree: ".", submodule: false}
+    - {path: new/name.rs, state: renamed, index: R, worktree: ".", original_path: old/name.rs, submodule: false}
+    - {path: gone.txt, state: deleted, index: ".", worktree: D}
+    - {path: conflict.txt, state: unmerged, index: U, worktree: U}
+    - {path: vendor/sub, state: modified, index: ".", worktree: M, submodule: true}
+    - {path: "untracked with space.txt", state: untracked, index: "?", worktree: "?", submodule: null}
+    - {path: build/ignored.o, state: ignored, index: "!", worktree: "!", submodule: null}

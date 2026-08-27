@@ -185,15 +185,21 @@ impl<'a> Decoding<'a> {
             DecoderKind::Lines => line_records(adapter, &bytes, &self.trace),
             DecoderKind::Properties => property_records(adapter, &bytes, &self.trace),
             DecoderKind::Jsonl => Ok(Vec::new()),
-            DecoderKind::Builtin => Err(decode_failed(
-                adapter,
-                &self.trace,
-                &bytes,
-                format!(
-                    "builtin decoder `{}` is not available in this binary",
-                    adapter.decoder().id().unwrap_or("?")
-                ),
-            )),
+            DecoderKind::Builtin => match adapter.decoder().id() {
+                Some("git-status-v2") => git_status_v2(&bytes)
+                    .map_err(|reason| decode_failed(adapter, &self.trace, &bytes, reason)),
+                Some("lsof-fields-v1") => lsof_fields_v1(&bytes)
+                    .map_err(|reason| decode_failed(adapter, &self.trace, &bytes, reason)),
+                other => Err(decode_failed(
+                    adapter,
+                    &self.trace,
+                    &bytes,
+                    format!(
+                        "builtin decoder `{}` is not available in this binary",
+                        other.unwrap_or("?")
+                    ),
+                )),
+            },
         };
         let items = match items {
             Ok(items) => items,
@@ -522,6 +528,184 @@ fn line_item(adapter: &Adapter, record: &[u8], number: usize) -> Result<Item, St
     })
 }
 
+/// `git status --porcelain=v2 -z` (ADR-0062): NUL-terminated entries whose first character says
+/// what follows — `#` a header, `1` an ordinary change, `2` a rename or copy with the original
+/// path in the next NUL field, `u` an unmerged path, `?` untracked, `!` ignored.
+fn git_status_v2(bytes: &[u8]) -> Result<Vec<Item>, String> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut tokens = text
+        .split('\0')
+        .filter(|token| !token.is_empty())
+        .peekable();
+    let mut items = Vec::new();
+    let mut number = 0;
+    let letter_state = |letter: char| -> Result<&'static str, String> {
+        Ok(match letter {
+            'M' => "modified",
+            'A' => "added",
+            'D' => "deleted",
+            'R' => "renamed",
+            'C' => "copied",
+            'T' => "type-changed",
+            'U' => "unmerged",
+            '.' => "modified",
+            other => return Err(format!("unknown status letter `{other}`")),
+        })
+    };
+    while let Some(token) = tokens.next() {
+        number += 1;
+        let mut fields = serde_json::Map::new();
+        let kind = token.chars().next().unwrap_or(' ');
+        match kind {
+            '#' => continue,
+            '1' | '2' | 'u' => {
+                let expected = match kind {
+                    '1' => 9,
+                    '2' => 10,
+                    _ => 11,
+                };
+                let parts: Vec<&str> = token.splitn(expected, ' ').collect();
+                if parts.len() != expected {
+                    return Err(format!(
+                        "entry {number} has {} fields where porcelain v2 has {expected}",
+                        parts.len()
+                    ));
+                }
+                let mut xy = parts[1].chars();
+                let index = xy.next().unwrap_or('.');
+                let worktree = xy.next().unwrap_or('.');
+                let submodule = parts[2].starts_with('S');
+                let path = parts[expected - 1];
+                let state = if kind == 'u' {
+                    "unmerged"
+                } else if kind == '2' {
+                    if parts[8].starts_with('C') {
+                        "copied"
+                    } else {
+                        "renamed"
+                    }
+                } else if index != '.' {
+                    letter_state(index)?
+                } else {
+                    letter_state(worktree)?
+                };
+                fields.insert("path".into(), Json::String(path.to_owned()));
+                fields.insert("state".into(), Json::String(state.to_owned()));
+                fields.insert("index".into(), Json::String(index.to_string()));
+                fields.insert("worktree".into(), Json::String(worktree.to_string()));
+                fields.insert("submodule".into(), Json::Bool(submodule));
+                if kind == '2' {
+                    let original = tokens.next().ok_or_else(|| {
+                        format!("entry {number} is a rename without its original path")
+                    })?;
+                    fields.insert("original_path".into(), Json::String(original.to_owned()));
+                } else {
+                    fields.insert("original_path".into(), Json::Null);
+                }
+            }
+            '?' | '!' => {
+                let path = token.get(2..).unwrap_or("");
+                if path.is_empty() {
+                    return Err(format!("entry {number} names no path"));
+                }
+                fields.insert("path".into(), Json::String(path.to_owned()));
+                fields.insert(
+                    "state".into(),
+                    Json::String(if kind == '?' { "untracked" } else { "ignored" }.to_owned()),
+                );
+                fields.insert("index".into(), Json::String(kind.to_string()));
+                fields.insert("worktree".into(), Json::String(kind.to_string()));
+                fields.insert("submodule".into(), Json::Null);
+                fields.insert("original_path".into(), Json::Null);
+            }
+            _ => {
+                return Err(format!(
+                    "entry {number} is not porcelain v2: `{}`",
+                    token.chars().take(48).collect::<String>()
+                ));
+            }
+        }
+        items.push(Item {
+            fields,
+            parent: None,
+        });
+    }
+    Ok(items)
+}
+
+/// `lsof -F pcuftn` (ADR-0062): one field per line, the first character its tag. A `p` line
+/// opens a process (`c` command, `u` uid follow); each `f` opens a file (`t` type, `n` name
+/// follow) that inherits the process. A file before any process is not the protocol.
+fn lsof_fields_v1(bytes: &[u8]) -> Result<Vec<Item>, String> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut items = Vec::new();
+    let mut process: Option<(String, Json, Json)> = None;
+    let mut file: Option<serde_json::Map<String, Json>> = None;
+    let filesystem_kinds = ["REG", "DIR", "CHR", "BLK", "FIFO", "LINK"];
+    let flush = |file: &mut Option<serde_json::Map<String, Json>>, items: &mut Vec<Item>| {
+        if let Some(mut fields) = file.take() {
+            let path = match (fields.get("type"), fields.get("name")) {
+                (Some(Json::String(kind)), Some(Json::String(name)))
+                    if filesystem_kinds.contains(&kind.as_str()) && name.starts_with('/') =>
+                {
+                    Json::String(name.clone())
+                }
+                _ => Json::Null,
+            };
+            fields.insert("path".into(), path);
+            items.push(Item {
+                fields,
+                parent: None,
+            });
+        }
+    };
+    for (number, line) in text.lines().enumerate() {
+        let Some(tag) = line.chars().next() else {
+            continue;
+        };
+        let value = &line[tag.len_utf8()..];
+        match tag {
+            'p' => {
+                flush(&mut file, &mut items);
+                process = Some((value.to_owned(), Json::Null, Json::Null));
+            }
+            'c' => {
+                if let Some(current) = process.as_mut() {
+                    current.1 = Json::String(value.to_owned());
+                }
+            }
+            'u' => {
+                if let Some(current) = process.as_mut() {
+                    current.2 = Json::String(value.to_owned());
+                }
+            }
+            'f' => {
+                flush(&mut file, &mut items);
+                let Some((pid, command, uid)) = process.as_ref() else {
+                    return Err(format!("line {}: a file before any process", number + 1));
+                };
+                let mut fields = serde_json::Map::new();
+                fields.insert("pid".into(), Json::String(pid.clone()));
+                fields.insert("command".into(), command.clone());
+                fields.insert("uid".into(), uid.clone());
+                fields.insert("fd".into(), Json::String(value.to_owned()));
+                fields.insert("type".into(), Json::Null);
+                fields.insert("name".into(), Json::Null);
+                file = Some(fields);
+            }
+            't' | 'n' => {
+                if let Some(fields) = file.as_mut() {
+                    let key = if tag == 't' { "type" } else { "name" };
+                    fields.insert(key.into(), Json::String(value.to_owned()));
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut file, &mut items);
+    Ok(items)
+}
+
 fn unescape(text: &str) -> Vec<u8> {
     let mut out = Vec::new();
     let mut chars = text.chars();
@@ -531,6 +715,13 @@ fn unescape(text: &str) -> Vec<u8> {
                 Some('t') => out.push(b'\t'),
                 Some('n') => out.push(b'\n'),
                 Some('0') => out.push(0),
+                Some('x') => {
+                    let hex: String = chars.by_ref().take(2).collect();
+                    match u8::from_str_radix(&hex, 16) {
+                        Ok(byte) => out.push(byte),
+                        Err(_) => out.extend_from_slice(format!("\\x{hex}").as_bytes()),
+                    }
+                }
                 Some(other) => {
                     let mut buf = [0u8; 4];
                     out.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());

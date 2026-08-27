@@ -1,0 +1,5 @@
+invocation: [lsof, -p, "999999"]
+tool_version: "4.99.4"
+distro: debian
+expect:
+  records: []

@@ -1,0 +1,5 @@
+invocation: [git, log, --author, nonesuch]
+tool_version: "2.53.0"
+distro: debian
+expect:
+  records: []

@@ -1,0 +1,38 @@
+# Canonical OpenFile schema. Source: spec v0.3 §1.40 (`Stream<OpenFile>` with references to
+# canonical objects), from `lsof -F`'s field protocol. Visibility depends on privilege
+# (§1.40: "provenance MUST state observation limitations"), which the adapter's limits record.
+id: ono.open-file/1
+name: OpenFile
+summary: One file descriptor a process holds open, as lsof reports it.
+identity: [pid, fd]
+fields:
+  pid:
+    type: int
+    required: true
+    doc: The process holding the descriptor.
+  process:
+    type: ref<ono.process/1>
+    required: true
+    doc: The process, by name as lsof prints it.
+  user:
+    type: ref<ono.user/1>
+    nullable: true
+    doc: The user the process runs as, by id.
+  fd:
+    type: string
+    required: true
+    doc: The descriptor — a number, or `cwd`, `rtd`, `txt`, `mem`, `DEL`.
+  kind:
+    type: string
+    required: true
+    doc: What is open, as lsof classifies it — `REG`, `DIR`, `CHR`, `FIFO`, `unix`, `IPv4`, `IPv6`, ….
+  name:
+    type: string
+    required: true
+    doc: What lsof prints in its NAME column — a path, a socket endpoint, a device.
+  path:
+    type: path
+    nullable: true
+    doc: The name as a path, when the kind is a filesystem object.
+default_view:
+  columns: [pid, process, fd, kind, name]

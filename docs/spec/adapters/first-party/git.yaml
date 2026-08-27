@@ -1,0 +1,107 @@
+# git compatibility pack: `git status` and `git log` (spec v0.3 §1.42, §1.69 step 8). Both use
+# the machine surfaces git documents as stable — porcelain v2 with NUL terminators, and an
+# explicit log format with NUL fields and a record-separator byte — and leave `git diff`,
+# `git add -p` and every other surface as the git they are.
+format: ono-adapter-pack/1
+package:
+  id: org.ono.compat.git
+  name: git compatibility
+  version: 0.1.0
+  publisher: org.ono
+  tier: first-party
+roles: [adapter]
+capabilities:
+  process.exec:
+    executables: [git]
+    argv_policy: declared-invocations-only
+
+adapters:
+  - id: git-status
+    summary: Working-tree status as `ono.git-status-entry/1` records, from `git status --porcelain=v2 -z`.
+    executable:
+      names: [git]
+      versions: ">=2.11"
+      version_probe:
+        argv: ["--version"]
+        pattern: "git version ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: B
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.git-status-entry/1
+    decoder:
+      kind: builtin
+      id: git-status-v2
+      stability: stable
+    fields:
+      path: {from: path}
+      state: {from: state}
+      index: {from: index}
+      worktree: {from: worktree}
+      original_path: {from: original_path}
+      submodule: {from: submodule}
+    invocations:
+      - id: status
+        summary: "git status [-uall|-uno|-unormal] [--ignored] [pathspec …]"
+        match:
+          words: [[status]]
+          flags:
+            allow: [-uall, -uno, -unormal, --ignored, --no-renames, --renames]
+            allow_with_value: [--untracked-files, -C]
+          positionals: allow
+        plan:
+          argv: [git, status, --porcelain=v2, -z, --untracked-files=all]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`-s`, `--short`, `-b`, `--branch`, `--long`, `--porcelain` and `-v` choose a human format and run raw; the branch header of porcelain v2 is not a record."
+      - "Unmerged paths are reported with `index`/`worktree` as git's conflict letters and `state: unmerged`."
+    fixtures: git/git-status
+
+  - id: git-log
+    summary: History as `ono.commit/1` records, from `git log` with an explicit NUL-separated format.
+    executable:
+      names: [git]
+      versions: ">=2.11"
+      version_probe:
+        argv: ["--version"]
+        pattern: "git version ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: B
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.commit/1
+    decoder:
+      kind: lines
+      field_separator: "\\0"
+      record_separator: "\\x1e"
+      columns: [hash, short_hash, author, author_email, authored, committer, committed, subject, parents]
+    fields:
+      hash: {from: hash}
+      short_hash: {from: short_hash}
+      author: {from: author}
+      author_email: {from: author_email}
+      authored: {from: authored}
+      committer: {from: committer}
+      committed: {from: committed}
+      subject: {from: subject}
+      parents: {from: parents, split: " "}
+    invocations:
+      - id: log
+        summary: "git log [-n <count>] [--since <time>] [--until <time>] [--author <pattern>] [--grep <pattern>] [--all] [--merges|--no-merges] [--first-parent] [<revision …>] [-- <path …>]"
+        match:
+          words: [[log]]
+          flags:
+            allow: [--all, --merges, --no-merges, --first-parent, --reverse, --no-decorate, --]
+            allow_with_value: [-n, --max-count, --since, --until, --after, --before, --author, --committer, --grep, --skip]
+          positionals: allow
+        plan:
+          argv: [git, log, "--format=%H%x00%h%x00%an%x00%ae%x00%aI%x00%cn%x00%cI%x00%s%x00%P%x1e"]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`-p`, `--stat`, `--oneline`, `--graph`, `--format` and `--pretty` choose the output and run raw."
+      - "`author` and `committer` are flat fields (`author_email`), not nested records."
+    fixtures: git/git-log

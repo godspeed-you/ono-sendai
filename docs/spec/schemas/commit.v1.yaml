@@ -1,0 +1,47 @@
+# Canonical Commit schema. Source: spec v0.3 §1.42 (`git log | where author.email == …` yields
+# `Stream<Commit>`), from `git log` with an explicit format and NUL-separated fields. Author and
+# committer are flattened (`author_email`), because a nested record would need a schema of its
+# own for four strings.
+id: ono.commit/1
+name: Commit
+summary: One commit of a git history.
+identity: [hash]
+fields:
+  hash:
+    type: string
+    required: true
+    doc: The full object name.
+  short_hash:
+    type: string
+    required: true
+    doc: The abbreviated object name, as git abbreviates it.
+  author:
+    type: string
+    required: true
+    doc: The author's name.
+  author_email:
+    type: string
+    required: true
+    doc: The author's email address.
+  authored:
+    type: timestamp
+    required: true
+    doc: When the commit was authored.
+  committer:
+    type: string
+    required: true
+    doc: The committer's name.
+  committed:
+    type: timestamp
+    required: true
+    doc: When the commit was committed.
+  subject:
+    type: string
+    required: true
+    doc: The first line of the message.
+  parents:
+    type: list<string>
+    required: true
+    doc: The parents' full object names; empty for a root commit.
+default_view:
+  columns: [short_hash, authored, author, subject]

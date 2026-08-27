@@ -152,6 +152,26 @@ Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_
 | `purpose` | `string` | — | nullable | What the package said it needed the capability for, as shown in the prompt (spec §31.18). Package-authored, sanitised, and attributed to the package rather than to Ono. |
 | `revoked_at` | `timestamp` | — | nullable | When it was revoked. Null while it stands. A revoked grant is retained rather than deleted, so the record of what was once permitted survives. |
 
+## Commit — `ono.commit/1`
+
+One commit of a git history.
+
+Identity: `hash`
+
+Default view: `short_hash`, `authored`, `author`, `subject`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `hash` | `string` | — | required | The full object name. |
+| `short_hash` | `string` | — | required | The abbreviated object name, as git abbreviates it. |
+| `author` | `string` | — | required | The author's name. |
+| `author_email` | `string` | — | required | The author's email address. |
+| `authored` | `timestamp` | — | required | When the commit was authored. |
+| `committer` | `string` | — | required | The committer's name. |
+| `committed` | `timestamp` | — | required | When the commit was committed. |
+| `subject` | `string` | — | required | The first line of the message. |
+| `parents` | `list<string>` | — | required | The parents' full object names; empty for a root commit. |
+
 ## ConfigSetting — `ono.config-setting/1`
 
 One resolved configuration setting together with the layer that set it.
@@ -327,6 +347,23 @@ Default view: `severity`, `subject`, `title`, `confidence`, `source`
 | `created_at` | `timestamp` | — | required | When the finding was made. |
 | `expires_at` | `timestamp` | — | nullable | When it should no longer be believed, for a finding about a moving quantity. Null for one that does not expire. An expired finding is shown as expired rather than quietly kept. |
 | `tags` | `map` | — | required | Package-specific string labels, as spec §31.24's `tags: Map<String,String>`. An empty map when there are none — never absent, so a consumer can index on it unconditionally. |
+
+## GitStatusEntry — `ono.git-status-entry/1`
+
+One path in a git working tree and how it differs from the index and HEAD.
+
+Identity: `path`
+
+Default view: `state`, `index`, `worktree`, `path`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `path` | `path` | — | required | The path relative to the repository root. |
+| `state` | `enum` | — | required | What happened to the path, summarised across index and working tree. |
+| `index` | `string` | — | required | The index side of git's two-letter status — `.` for unchanged, `M`, `A`, `D`, `R`, `C`, `T`, `U`. |
+| `worktree` | `string` | — | required | The working-tree side of the status, same letters. |
+| `original_path` | `path` | — | nullable | Where a renamed or copied path came from; null otherwise. |
+| `submodule` | `bool` | — | nullable | Whether the path is a submodule; null for an untracked or ignored path. |
 
 ## GraphEdge — `ono.graph-edge/1`
 
@@ -560,6 +597,24 @@ Default view: `address`, `mac`, `interface`, `state`
 | `state` | `enum` | — | required | The neighbour cache state as the kernel reports it. |
 | `router` | `bool` | — | nullable | Whether the neighbour advertises itself as a router; null outside NDP. |
 | `updated` | `timestamp` | — | nullable | When the entry was last confirmed; null when the provider keeps no timestamp. |
+
+## OpenFile — `ono.open-file/1`
+
+One file descriptor a process holds open, as lsof reports it.
+
+Identity: `pid`, `fd`
+
+Default view: `pid`, `process`, `fd`, `kind`, `name`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `pid` | `int` | — | required | The process holding the descriptor. |
+| `process` | `ref<ono.process/1>` | — | required | The process, by name as lsof prints it. |
+| `user` | `ref<ono.user/1>` | — | nullable | The user the process runs as, by id. |
+| `fd` | `string` | — | required | The descriptor — a number, or `cwd`, `rtd`, `txt`, `mem`, `DEL`. |
+| `kind` | `string` | — | required | What is open, as lsof classifies it — `REG`, `DIR`, `CHR`, `FIFO`, `unix`, `IPv4`, `IPv6`, …. |
+| `name` | `string` | — | required | What lsof prints in its NAME column — a path, a socket endpoint, a device. |
+| `path` | `path` | — | nullable | The name as a path, when the kind is a filesystem object. |
 
 ## PluginAuditEvent — `ono.plugin-audit-event/1`
 

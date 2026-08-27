@@ -1,0 +1,24 @@
+# v0.3 §1.40, §1.42, §1.69 steps 8–9 (COMPAT-GIT-001/002, COMPAT-LSOF): git's stable machine
+# surfaces become GitStatusEntry and Commit records in a real repository, lsof's field protocol
+# becomes OpenFile records for the caller's own shell, and the human formats stay bytes.
+case: git status and log, and lsof, compose as typed records
+run: |
+  export GIT_AUTHOR_NAME=Case GIT_AUTHOR_EMAIL=case@example.org GIT_COMMITTER_NAME=Case GIT_COMMITTER_EMAIL=case@example.org
+  mkdir -p /tmp/repo && cd /tmp/repo && git init -q && printf 'one\n' > tracked.txt && git add tracked.txt && git commit -q -m 'first commit' && printf 'two\n' > tracked.txt && printf 'x' > 'new file.txt'
+  echo "== status =="
+  ono -c 'git status | select path state index worktree | to json'
+  ono -c 'git status | where state == "untracked" | count | to text'
+  echo "== log =="
+  ono -c 'git log | where author_email == "case@example.org" | select short_hash subject parents | to json'
+  ono -c 'git log -n 1 | count | to text'
+  echo "== human formats stay bytes =="
+  ono -c 'git status --short | grep -c txt'
+  ono -c 'raw git log --oneline | grep -c first'
+  ono -c 'git log -p | where subject == "x"' 2>&1 | grep -c 'Ono-Sendai-E0903'
+  echo "== lsof =="
+  ono -c 'lsof -c ono | where fd == "cwd" | take 1 | select process fd kind path | to json'
+  ono -c 'lsof -c ono | count | to text'
+  ono -c 'explain lsof -p 1 | where kind == "REG"' | grep -F 'adapted by org.ono.compat.lsof.lsof'
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

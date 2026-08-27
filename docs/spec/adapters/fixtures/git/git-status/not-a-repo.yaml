@@ -1,0 +1,5 @@
+invocation: [git, status]
+tool_version: "2.53.0"
+distro: debian
+expect:
+  error: adapter.decode_failed

@@ -1,0 +1,61 @@
+# lsof compatibility pack (spec v0.3 §1.40, §1.69 step 9): `lsof -F` is a field-per-line
+# protocol — a process line followed by its files — which a small decoder turns into one record
+# per open file. What lsof can see depends on who asks (§1.40), and the adapter's limits say so.
+format: ono-adapter-pack/1
+package:
+  id: org.ono.compat.lsof
+  name: lsof compatibility
+  version: 0.1.0
+  publisher: org.ono
+  tier: first-party
+roles: [adapter]
+capabilities:
+  process.exec:
+    executables: [lsof]
+    argv_policy: declared-invocations-only
+
+adapters:
+  - id: lsof
+    summary: Open files as `ono.open-file/1` records, from `lsof -F`.
+    executable:
+      names: [lsof]
+      versions: ">=4.89"
+      version_probe:
+        argv: ["-v"]
+        pattern: "revision: ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: B
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.open-file/1
+    decoder:
+      kind: builtin
+      id: lsof-fields-v1
+      stability: stable
+    fields:
+      pid: {from: pid}
+      process: {from: command}
+      user: {from: uid}
+      fd: {from: fd}
+      kind: {from: type}
+      name: {from: name}
+      path: {from: path}
+    invocations:
+      - id: list
+        summary: "lsof [-n] [-P] [-i] [-U] [-p <pids>] [-u <users>] [-c <command>] [-d <fds>] [path …]"
+        match:
+          words: [[]]
+          flags:
+            allow: [-n, -P, -i, -U, -l, -b, -w]
+            allow_with_value: [-p, -u, -c, -d, -a]
+          positionals: allow
+        plan:
+          argv: [lsof, -w, -n, -F, pcuftn]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "Only the processes the caller may inspect appear; lsof warns on stderr about what it cannot stat, and those files are absent, not fabricated (spec v0.3 §1.40)."
+      - "`-F` with other fields, `-t`, `-r` and `+D` change the protocol or the shape and run raw."
+      - "`path` is set when the kind is a filesystem object (`REG`, `DIR`, `CHR`, `BLK`, `FIFO`, `LINK`); sockets and devices keep their `name` only."
+    fixtures: lsof/lsof

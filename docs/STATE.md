@@ -93,10 +93,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 11 — Tier B: `git status --porcelain=v2 -z` and
-  `git log` with an explicit format (COMPAT-GIT-001/002), `lsof -F` (COMPAT-LSOF) — files:
-  `docs/spec/adapters/first-party/git.yaml`, `docs/spec/adapters/first-party/lsof.yaml`,
-  new schemas under `docs/spec/schemas/`
+- [claude | 2026-08-27] v0.3 tranche, step 12 — Tier C: `ss` with an invocation matcher and a
+  version-constrained decoder (COMPAT-SS-001/002), `curl` metadata split from the body
+  (COMPAT-CURL-001) — files: `docs/spec/adapters/first-party/{iproute2-ss,curl}.yaml`,
+  `crates/ono-adapter/src/decode.rs`
 
 ---
 
@@ -368,6 +368,8 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] v0.3 step 10 — COMPAT-STAT/DF/FIND: the coreutils and findutils packs, trailing argv,
   header lines, basename, NUL records with the path last, typed-order pass-through
   (ADR-0061) — case 079
+- [x] v0.3 step 11 — COMPAT-GIT/LSOF: builtin decoders `git-status-v2` and `lsof-fields-v1`,
+  `ono.git-status-entry/1`, `ono.commit/1`, `ono.open-file/1`, hex escapes (ADR-0062) — case 080
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

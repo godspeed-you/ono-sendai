@@ -1,0 +1,14 @@
+# A process line (`p`) opens a group; every `f` starts a file whose `t` and `n` follow; the
+# process's command and user apply to each of its files. A path is only a path for a
+# filesystem kind.
+invocation: [lsof, -p, "2930789,2930790"]
+tool_version: "4.99.4"
+distro: debian
+expect:
+  records:
+    - {pid: 2930789, process: bash, user: 1000, fd: cwd, kind: DIR, name: /home/william/git/ono-sendai, path: /home/william/git/ono-sendai}
+    - {pid: 2930789, process: bash, fd: rtd, kind: DIR, name: /, path: /}
+    - {pid: 2930789, process: bash, fd: txt, kind: REG, name: /usr/bin/bash, path: /usr/bin/bash}
+    - {pid: 2930789, process: bash, fd: "0", kind: CHR, name: /dev/pts/3, path: /dev/pts/3}
+    - {pid: 2930789, process: bash, fd: "3", kind: unix, name: type=STREAM, path: null}
+    - {pid: 2930790, process: sleep, user: 1000, fd: "1", kind: FIFO, name: pipe, path: null}

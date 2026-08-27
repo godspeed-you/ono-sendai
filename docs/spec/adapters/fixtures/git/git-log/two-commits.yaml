@@ -1,0 +1,8 @@
+# NUL between fields, the record-separator byte between commits; a root commit has no parents.
+invocation: [git, log, -n, "2"]
+tool_version: "2.53.0"
+distro: debian
+expect:
+  records:
+    - {hash: 2680cad4de909e7c1f353e431856dc994d203e74, short_hash: 2680cad, author: "Marcel Arentz", author_email: gdspd_you@open-one.de, authored: "2026-08-27T09:25:54Z", subject: "feat(adapter): the procps pack", parents: [4fbbd57febf7078152c73b089588fe0e38d76ebf]}
+    - {hash: "0000000000000000000000000000000000000001", short_hash: "0000000", author: "Root Author", subject: initial, parents: []}

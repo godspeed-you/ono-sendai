@@ -28,6 +28,7 @@ use crate::schema::{FieldDef, FieldType, Schema, SchemaId, SchemaRegistry, Unit}
 const CONTRACTS: &[&str] = &[
     include_str!("../../../docs/spec/schemas/action-result.v1.yaml"),
     include_str!("../../../docs/spec/schemas/block-device.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/commit.v1.yaml"),
     include_str!("../../../docs/spec/schemas/config-setting.v1.yaml"),
     include_str!("../../../docs/spec/schemas/context.v1.yaml"),
     include_str!("../../../docs/spec/schemas/endpoint.v1.yaml"),
@@ -35,6 +36,7 @@ const CONTRACTS: &[&str] = &[
     include_str!("../../../docs/spec/schemas/error.v1.yaml"),
     include_str!("../../../docs/spec/schemas/file.v1.yaml"),
     include_str!("../../../docs/spec/schemas/filesystem.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/git-status-entry.v1.yaml"),
     include_str!("../../../docs/spec/schemas/graph-edge.v1.yaml"),
     include_str!("../../../docs/spec/schemas/graph-node.v1.yaml"),
     include_str!("../../../docs/spec/schemas/graph.v1.yaml"),
@@ -47,6 +49,7 @@ const CONTRACTS: &[&str] = &[
     include_str!("../../../docs/spec/schemas/mount.v1.yaml"),
     include_str!("../../../docs/spec/schemas/namespace.v1.yaml"),
     include_str!("../../../docs/spec/schemas/neighbor.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/open-file.v1.yaml"),
     include_str!("../../../docs/spec/schemas/process-event.v1.yaml"),
     include_str!("../../../docs/spec/schemas/process.v1.yaml"),
     include_str!("../../../docs/spec/schemas/route.v1.yaml"),

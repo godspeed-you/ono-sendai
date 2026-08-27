@@ -1,0 +1,6 @@
+# A file line before any process line has no owner; the protocol was not what lsof promised.
+invocation: [lsof]
+tool_version: "4.99.4"
+distro: debian
+expect:
+  error: adapter.decode_failed

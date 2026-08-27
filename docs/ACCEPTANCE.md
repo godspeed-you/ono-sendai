@@ -426,9 +426,15 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       run raw (v0.3 §1.38, §1.39, ADR-0061) — `docs/spec/adapters/first-party/{coreutils,findutils}.yaml`
       with fixtures (a tab and a newline in a name), `ono-adapter/tests/negotiation.rs`,
       `ono-cli/tests/adapters.rs`, case `079`.
-- [ ] **COMPAT-GIT-001/002** — `git status --porcelain=v2 -z` and `git log` with an explicit
-      format into repository records (v0.3 §1.42).
-- [ ] **COMPAT-LSOF** — `lsof -F` field mode into open-file records (v0.3 §1.40).
+- [x] **COMPAT-GIT-001/002** — `git status --porcelain=v2 -z` → `ono.git-status-entry/1`
+      through the `git-status-v2` builtin decoder, `git log` with an explicit NUL/RS format →
+      `ono.commit/1`; human formats stay git (v0.3 §1.42, ADR-0062) —
+      `docs/spec/adapters/first-party/git.yaml` with fixtures for every porcelain entry kind,
+      `ono-cli/tests/adapters.rs` (`should_adapt_git_status_and_log_in_a_repository`), case `080`.
+- [x] **COMPAT-LSOF** — `lsof -F pcuftn` → `ono.open-file/1` through the `lsof-fields-v1`
+      builtin decoder, with the visibility limits stated (v0.3 §1.40, ADR-0062) —
+      `docs/spec/adapters/first-party/lsof.yaml` with fixtures, `ono-cli/tests/adapters.rs`,
+      case `080`.
 - [ ] **COMPAT-SS-001/002** — an invocation matcher and a version-constrained decoder for `ss`
       into `ono.socket/1`, with locale forced and the brittle-parser metadata visible
       (v0.3 §1.32, §1.9 Tier C).
