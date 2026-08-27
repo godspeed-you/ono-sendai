@@ -12,11 +12,13 @@ authors.workspace = true
 ono-core.workspace = true
 ono-pipeline.workspace = true
 ono-provider-api.workspace = true
+# Mount units are started and stopped through the service manager (ADR-0099).
+ono-provider-systemd.workspace = true
 ono-value.workspace = true
 async-trait.workspace = true
 jiff.workspace = true
 globset.workspace = true
-nix = { workspace = true, features = ["dir", "feature", "fs", "process", "signal", "user"] }
+nix = { workspace = true, features = ["dir", "feature", "fs", "mount", "process", "signal", "user"] }
 rustix.workspace = true
 tokio.workspace = true
 

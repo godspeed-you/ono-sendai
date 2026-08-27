@@ -121,7 +121,7 @@ commands:
       - {name: read-only, type: bool, doc: "Switch the mount between read-only and read-write."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C                              # delivered by ADR-0098/ADR-0099
     examples:
       - set mount /mnt/data --read-only false
 
@@ -142,7 +142,7 @@ commands:
       - {name: option, type: string, repeatable: true, doc: "One mount option per occurrence."}
     privilege: elevated
     streaming: false
-    phase: planned
+    phase: C                              # delivered by ADR-0098/ADR-0099
     examples:
       - add mount /dev/sdb1 /mnt/data --type ext4
 
@@ -160,7 +160,7 @@ commands:
     options: []
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C                              # delivered by ADR-0098/ADR-0099
     examples:
       - remove mount /mnt/data
 
@@ -169,7 +169,7 @@ commands:
     verb: start
     target: mount
     summary: Activate a mount definition.
-    stability: planned                    # spec §52, mount/start = "M"
+    stability: experimental               # spec §52, mount/start = "M"; delivered by ADR-0099, §52 validation still owed
     validation_required: true
     note: >-
       Duplicates `mount filesystem`. §7.1 assigns this operation to the `mount` verb, so one of
@@ -184,7 +184,7 @@ commands:
     options: []
     privilege: elevated
     streaming: false
-    phase: planned
+    phase: C                              # delivered by ADR-0099
     examples:
       - start mount /mnt/data
 
@@ -192,7 +192,7 @@ commands:
     verb: stop
     target: mount
     summary: Deactivate a mount.
-    stability: planned                    # spec §52, mount/stop = "M"
+    stability: experimental               # spec §52, mount/stop = "M"; delivered by ADR-0099, §52 validation still owed
     validation_required: true
     note: Duplicates `unmount filesystem`; see `ono.mount.start`.
     argument_mode: words
@@ -204,7 +204,7 @@ commands:
     options: []
     privilege: elevated
     streaming: false
-    phase: planned
+    phase: C                              # delivered by ADR-0099
     examples:
       - stop mount /mnt/data
 

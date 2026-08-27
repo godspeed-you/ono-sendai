@@ -234,6 +234,24 @@ Default view: `depth`, `kind`, `target`, `identity`
 | `identity` | `string` | — | optional | The identity of the entered object — `nginx.service`, `/etc`, `prod-db` — rendered the way the prompt shows it. Null for the ground frame. |
 | `selector` | `string` | — | optional | The explicit spelling of what the frame contributes, such as `--service nginx.service` (spec §14.5, ADR-0023): every context is expressible without entering it. |
 
+## Device — `ono.device/1`
+
+A block or character device node under /dev, with the numbers the kernel identifies it by.
+
+Identity: `path`
+
+Default view: `path`, `kind`, `major`, `minor`, `size`, `subsystem`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `path` | `path` | — | required | The device node under `/dev`, `/dev/sda2`, `/dev/null`. |
+| `name` | `string` | — | required | The node's name, `sda2`, `null` — the last component of `path`. |
+| `kind` | `enum` | — | required | Whether the node is a block device or a character device. |
+| `major` | `int` | — | required | The kernel's major device number. |
+| `minor` | `int` | — | required | The kernel's minor device number. |
+| `size` | `bytesize` | — | nullable | The device's size, for a block device sysfs reports one for. Null for a character device, and for a block device whose sysfs entry is not visible here. |
+| `subsystem` | `string` | — | nullable | The kernel subsystem the device belongs to as sysfs names it — `block`, `tty`, `mem`, `input` — or null when sysfs does not show the device. |
+
 ## DnsRecord — `ono.dns-record/1`
 
 One answer of a name resolution — an address for a name, or a name for an address.

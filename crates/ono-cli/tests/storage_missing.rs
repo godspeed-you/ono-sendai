@@ -162,7 +162,6 @@ fn integer(row: &Value, field: &str) -> i64 {
 // (block-device.v1.yaml); character devices have none.
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_devices_with_their_node_kind_and_numbers() {
     let run = ono("get device | to json");
     run.assert_success();
@@ -189,7 +188,6 @@ fn should_list_devices_with_their_node_kind_and_numbers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_describe_dev_null_as_character_device_one_three() {
     // The one device every Linux system has, with numbers fixed by Documentation/admin-guide/
     // devices.txt — so the assertion is deterministic on a host and in an empty container alike.
@@ -216,7 +214,6 @@ fn should_describe_dev_null_as_character_device_one_three() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restrict_to_character_devices_when_kind_char_is_given() {
     let run = ono("get device --kind char | to json");
     run.assert_success();
@@ -232,7 +229,6 @@ fn should_restrict_to_character_devices_when_kind_char_is_given() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_carry_a_size_for_every_block_device() {
     let run = ono("get device --kind block | to json");
     run.assert_success();
@@ -253,7 +249,6 @@ fn should_carry_a_size_for_every_block_device() {
 // --- mount filesystem -------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_and_leave_the_target_unmounted_when_mounting_unprivileged() {
     if !unprivileged() {
         return;
@@ -287,7 +282,6 @@ fn should_report_a_failed_row_and_leave_the_target_unmounted_when_mounting_unpri
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_accept_one_mount_option_per_occurrence_when_mounting() {
     // Spec §23.5: options are structure, one `--option` each — never a joined string. The
     // attempt is still refused unprivileged, which is how an accepted option list is observable.
@@ -314,7 +308,6 @@ fn should_accept_one_mount_option_per_occurrence_when_mounting() {
 // --- unmount filesystem -----------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_unmounting_the_root_filesystem_unprivileged() {
     if !unprivileged() {
         return;
@@ -322,11 +315,12 @@ fn should_report_a_failed_row_when_unmounting_the_root_filesystem_unprivileged()
     let run = ono("unmount filesystem / | to json");
     let row = assert_refused(&run, "ono.filesystem.unmount", &[PERMISSION_DENIED]);
     // storage.yaml declares no confirmation for `unmount filesystem`, so the only thing standing
-    // between an unprivileged user and the root mount is the kernel's EPERM.
-    assert_eq!(
-        text(&row, "target"),
-        "/",
-        "spec §11.5: the row names the mount point it acted on, got {row:?}"
+    // between an unprivileged user and the root mount is the kernel's EPERM. A resolved
+    // selector's row may carry the label the provider knows the mount by after the identity
+    // (ADR-0088 §4); the identity is what names the mount.
+    assert!(
+        text(&row, "target").starts_with("ono.mount/1[/]"),
+        "spec §11.5 / ADR-0068 §2: the row names the mount it acted on by its identity, got {row:?}"
     );
     assert!(
         is_mounted(std::path::Path::new("/")),
@@ -335,7 +329,6 @@ fn should_report_a_failed_row_when_unmounting_the_root_filesystem_unprivileged()
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_not_found_when_unmounting_a_path_that_is_no_mount_point() {
     // A directory that is not a mount point is decidable from /proc/self/mountinfo (§23.5)
     // before any privileged call: there is no mount at that path, so the error is io.not_found
@@ -351,7 +344,6 @@ fn should_report_not_found_when_unmounting_a_path_that_is_no_mount_point() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_unmount_the_mounts_piped_in_from_get_mount() {
     // storage.yaml: input `null | stream<ono.mount/1>`. The piped mount is the target — and the
     // attempt on `/` is refused unprivileged, which is how the piped target is observable.
@@ -362,15 +354,14 @@ fn should_unmount_the_mounts_piped_in_from_get_mount() {
     let row = assert_refused(&run, "ono.filesystem.unmount", &[PERMISSION_DENIED]);
     assert_eq!(
         text(&row, "target"),
-        "/",
-        "the piped `ono.mount/1` record is the target, got {row:?}"
+        "ono.mount/1[/]",
+        "the piped `ono.mount/1` record is the target (ADR-0068 §2 form), got {row:?}"
     );
 }
 
 // --- set / add / remove / start / stop mount (phase: planned, still delivered as behaviour) ----
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_remounting_unprivileged() {
     if !unprivileged() {
         return;
@@ -391,7 +382,6 @@ fn should_report_a_failed_row_when_remounting_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_adding_a_persistent_mount_unprivileged() {
     if !unprivileged() {
         return;
@@ -417,7 +407,6 @@ fn should_report_a_failed_row_when_adding_a_persistent_mount_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_removing_a_persistent_mount_unprivileged() {
     if !unprivileged() {
         return;
@@ -433,7 +422,6 @@ fn should_report_a_failed_row_when_removing_a_persistent_mount_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_starting_a_mount_unprivileged() {
     if !unprivileged() {
         return;
@@ -449,7 +437,6 @@ fn should_report_a_failed_row_when_starting_a_mount_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_stopping_a_mount_unprivileged() {
     if !unprivileged() {
         return;

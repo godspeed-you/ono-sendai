@@ -96,6 +96,19 @@ impl ObjectId {
     }
 }
 
+impl ObjectId {
+    /// Whether `text` is already visible in the identity: the whole rendering, or one of the
+    /// identity values as written — a mount point, a path, a unit name.
+    #[must_use]
+    pub fn shows(&self, text: &str) -> bool {
+        self.to_string() == text
+            || self
+                .values
+                .iter()
+                .any(|value| ono_value::canonical_text(value).is_ok_and(|shown| shown == text))
+    }
+}
+
 impl fmt::Display for ObjectId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}[", self.schema)?;

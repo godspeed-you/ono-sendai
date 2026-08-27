@@ -129,6 +129,12 @@ impl ProviderMutation {
         let mut failures = Vec::new();
         let targets = self.targets(ctx, target, &spelling, &mut failures).await?;
         let mut arguments = arguments;
+        // A creating verb's selectors describe the object, and the provider needs them by name
+        // — `mount filesystem <source> <target>` is a source and a target, not two anonymous
+        // identity values (ADR-0098 §1).
+        if creates(contract.verb()) {
+            arguments.extend(named_selectors(ctx));
+        }
         // The selectors that did not supply the targets — a `destination` — travel with the
         // action under their own names (ADR-0082 §2).
         let supplied = self.target_selector(ctx);
@@ -288,6 +294,34 @@ impl ProviderMutation {
             return Ok(objects);
         }
 
+        // A verb that creates what it names has nothing to resolve: the object does not exist
+        // yet, and asking the provider for it would answer "not found" to every request. Its
+        // identity is the selectors as written, in contract order (ADR-0098 §1).
+        if creates(ctx.contract().verb()) {
+            let named = named_selectors(ctx);
+            if named.is_empty() {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`{spelling}` needs something to create, and none was given"),
+                )
+                .with_help(format!("name it, as in `{spelling} <selector>`")));
+            }
+            let label = named
+                .iter()
+                .map(|(_, value)| value.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            return Ok(vec![Target {
+                id: ObjectId::new(
+                    schema_of(ctx, target),
+                    named.into_iter().map(|(_, value)| value),
+                ),
+                source: None,
+                label: Some(label),
+                unresolved: None,
+            }]);
+        }
+
         let (spec, value) = ctx
             .contract()
             .selectors()
@@ -310,8 +344,11 @@ impl ProviderMutation {
         let name = spec.name();
         // A `path` selector is acted on, not resolved: every filesystem call takes a path, and
         // a file `write` is about to create has nothing to resolve. "It is not there" is then
-        // the outcome of the act (ADR-0082 §1).
-        if matches!(spec.declared_type(), DeclaredType::Path) {
+        // the outcome of the act (ADR-0082 §1). That holds for a command acting on the
+        // target's own objects; one whose input names another schema — `unmount filesystem`
+        // acts on `ono.mount/1` — has the provider resolve the path to that object
+        // (ADR-0103 §2).
+        if matches!(spec.declared_type(), DeclaredType::Path) && acts_on_own_objects(ctx, target) {
             let schema = schema_of(ctx, target);
             return Ok(paths_of(&value)
                 .into_iter()
@@ -367,6 +404,18 @@ fn schema_of(ctx: &Invocation<'_>, target: &str) -> SchemaId {
         .unwrap_or_else(|| SchemaId::new(&name, 1))
 }
 
+/// Whether the command acts on objects of its target's own schema: its input names no stream of
+/// another schema. `remove file` takes `stream<ono.file/1>`; `unmount filesystem` takes
+/// `stream<ono.mount/1>` and acts on mounts (ADR-0103 §2).
+fn acts_on_own_objects(ctx: &Invocation<'_>, target: &str) -> bool {
+    let own = format!("ono.{target}/");
+    ctx.contract()
+        .input()
+        .schema_references()
+        .iter()
+        .all(|schema| schema.starts_with(&own))
+}
+
 /// The paths a `path` selector's value names: one, or each of the list a glob resolved to.
 fn paths_of(value: &Value) -> Vec<std::path::PathBuf> {
     match value {
@@ -413,6 +462,27 @@ async fn collect_content(mut input: ValueStream, spelling: &str) -> Result<Value
         }
     }
     Ok(Value::Bytes(content.into()))
+}
+
+/// Whether a verb creates the object it names rather than acting on one that exists.
+///
+/// `docs/spec/verbs.yaml`: `add` is "Create a membership or association", `mount` is "Attach a
+/// filesystem or resource" — both name something that is not there yet.
+fn creates(verb: &str) -> bool {
+    matches!(verb, "add" | "mount")
+}
+
+/// The selectors that were written, by the names the contract gives them, in contract order.
+fn named_selectors(ctx: &Invocation<'_>) -> Vec<(String, Value)> {
+    ctx.contract()
+        .selectors()
+        .iter()
+        .filter_map(|spec| {
+            ctx.arguments()
+                .selector(spec.name())
+                .map(|value| (spec.name().to_owned(), value.clone()))
+        })
+        .collect()
 }
 
 /// An upstream failure, carried through as the outcome of a target that was never acted on.
