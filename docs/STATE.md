@@ -93,25 +93,20 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- (empty — every family of the RED suites is merged into `implementation`;
-  `scripts/release-check.sh` printed `release-check: the shell is release-ready` at 8d4a3f4 on
-  2026-08-27: gate green, acceptance 67/67, all 329 RED tests green and un-ignored)
+- (empty — the wiki-verification defects (1)–(4) and the CI-red symlink walk are fixed, see
+  *Done*; `scripts/gate.sh` green at 1e98be0 on 2026-08-27)
 
 ---
 
 ## Next up (ordered)
 
-- [ ] **Found by the wiki verification pass (2026-08-27), each reproducible with `ono -c`:**
-  (1) piped forms of shell-answered commands fall through to the registry and answer E0101
-  "implements nothing": `get link | remove|detach|set|rename link`, `get host | connect|link
-  host`, `get plugin | verify|load plugin`, `get assistant | ask assistant` — the head forms
-  work — exit test: a remote_missing/plugins_missing case per piped form; (2) `set env FOO =
-  bar` is invisible to `get env FOO` in the same session while `$FOO`/`printenv` see it —
-  exit test: a builtins case; (3) `watch container | take 1` / `watch host … | take 1` never
-  return when the listing is empty — an empty snapshot must still be an event (ADR-0024) —
-  exit test: a watch case over an empty provider; (4) `let` inside `while`/`if` is
-  block-scoped, so `let i = 0; while $i < 3 { …; let i = $i + 1 }` loops forever — decide the
-  scoping rule (ADR) — exit test: a language case; (5) `diff` of two fresh provider snapshots
+- [ ] Inside a link frame `get link` is sent to the other side (spec §14.4) and lists the
+  remote agent's empty link table, so `get link | detach link` cannot be spelled from inside the
+  link it would detach (seen while writing ADR-0118's detach case). Decide whether `get link`,
+  `get job`, `get context` always describe *this* session — exit test: `link host x; enter link
+  x; get link | count` answers 1
+- [ ] **Found by the wiki verification pass (2026-08-27), each reproducible with `ono -c`**
+  ((1)–(4) fixed, see *Done*): (5) `diff` of two fresh provider snapshots
   of the same object reports `changed` (user, group, file, mount, service) although nothing
   changed — volatile fields need excluding from the comparison — exit test: a data case;
   (6) `get process <gone-pid> | count` prints E0301 *and* `VALUE 0` with exit 0; `each {
@@ -411,6 +406,14 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 ---
 
 ## Done
+
+- [x] wiki-verification defect (1): piped forms of shell-answered commands answered by their
+  seams, `input: null` refused with the head form named (ADR-0118) — commit 1e98be0
+- [x] wiki-verification defect (2): `get env` reads the session's live environment — commit 8ca9aa7
+- [x] wiki-verification defect (3): a watch over an empty listing begins with its snapshot — commit ed75190
+- [x] wiki-verification defect (4): `let` in a block rebinds the enclosing binding (ADR-0119) — commit cc339ee
+- [x] CI-red symlink walk: `--follow-symlinks` lists a directory under every name that reaches it;
+  a cycle is an ancestor on the walk path (ADR-0120) — commit 25c1985
 
 ### The RED-suite run (2026-08-27): per-family notes, kept for their open items
 
