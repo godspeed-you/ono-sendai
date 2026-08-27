@@ -1,0 +1,49 @@
+# Spec §19 (variables, functions, blocks), §6.5 (resolution: functions and aliases before
+# native and PATH), §6.3 (`now()`, dates) and §54 (Unix escape hatches): the scripting surface
+# the language contract declares, run end to end through the real binary. Nothing here is a
+# demonstration of a feature; it is what a person writes in a config file and at the prompt.
+case: the scripting language runs as spec §19 and §6.5 write it
+timeout: 120
+run: |
+  echo "== let binds a pipeline's value, not its exit status (spec 19.2) =="
+  ono -c 'let n = get process | where pid == 1 | count; $n | to json'
+  ono -c 'let hot = get process | where pid == 1; $hot | select pid | to json'
+
+  echo "== ( … ) is the value of a nested pipeline (grammar paren_value) =="
+  ono -c 'echo (get process | where pid == 1 | count)'
+  ono -c 'echo "one is $(echo pid-1)"'
+
+  echo "== a function is callable and resolves before PATH (spec 19.3, 6.5 step 2) =="
+  ono -c 'fn twice(n: Int = 1) { ($n * 2) }; twice 4 | to json'
+  ono -c 'fn ls() { echo shadowed-ls }; ls'
+  ono -c 'fn one() { get process | where pid == 1 }; one | select pid | to json'
+
+  echo "== an alias expands once and explains itself (ADR-0011 step 3) =="
+  ono -c 'alias hi = echo hello; hi there'
+  ono -c 'alias echo = echo prefixed; echo x'
+  ono -c 'alias hi = echo hello; explain hi' | head -1
+
+  echo "== now() is a timestamp and a file is newer than the year 2000 (spec 6.3) =="
+  ono -c 'let t = (now()); $t | type | to json'
+  touch /tmp/scripting-now.txt
+  ono -c 'get file /tmp/scripting-now.txt | where modified > 2000-01-01T00:00:00Z | where modified < now() + 1d | count | to json'
+
+  echo "== a prefix assignment is scoped to its command (spec 54) =="
+  ono -c 'FOO=bar sh -c "echo FOO=\$FOO"; get env FOO | count | to json'
+
+  echo "== each runs its block per item with @ bound (spec 19.4) =="
+  ono -c 'echo "[1,2,3]" | from json | each { @ * 2 } | to json'
+exit: 0
+stdout-contains: [1]
+stdout-contains: [{"pid":1}]
+stdout-contains: one is pid-1
+stdout-contains: [8]
+stdout-contains: shadowed-ls
+stdout-contains: hello there
+stdout-contains: prefixed x
+stdout-contains: is an alias for `echo hello`
+stdout-contains: "type":"timestamp"
+stdout-contains: FOO=bar
+stdout-contains: [0]
+stdout-contains: [2,4,6]
+stdout-not-contains: Ono-Sendai-E

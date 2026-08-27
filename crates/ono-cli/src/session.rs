@@ -25,6 +25,31 @@ pub enum Mode {
 /// One lexical scope's bindings.
 type Scope = BTreeMap<String, Value>;
 
+/// A function the user declared with `fn` (spec §19.3, ADR-0070).
+#[derive(Debug)]
+pub struct Function {
+    /// The declaration, whose spans index `source`.
+    pub declaration: ono_parser::FnDecl,
+    /// The whole source the declaration was read from, so its body can be run later.
+    pub source: std::sync::Arc<str>,
+}
+
+/// An alias the user declared with `alias` (spec §6.5, ADR-0070).
+#[derive(Debug)]
+pub struct Alias {
+    /// The pipeline text the alias stands for, exactly as written after the `=`.
+    pub expansion: String,
+}
+
+/// What a name can be defined as, beside the values `let` binds.
+#[derive(Debug, Clone)]
+pub enum Definition {
+    /// A user function, resolution step 2 (ADR-0011).
+    Function(std::sync::Arc<Function>),
+    /// An alias, resolution step 3.
+    Alias(std::sync::Arc<Alias>),
+}
+
 /// Everything a running shell knows.
 pub struct Session {
     cwd: PathBuf,
@@ -66,6 +91,11 @@ pub struct Session {
     /// The adapters that shaped the statement being run, with the argv each one planned —
     /// what history records about it (spec v0.3 §1.62).
     adaptations: Vec<(String, String)>,
+    /// Functions and aliases, one map per lexical scope, innermost last (ADR-0070).
+    definitions: Vec<BTreeMap<String, Definition>>,
+    /// The aliases being expanded right now, so an expansion is never expanded again
+    /// (ADR-0011 step 3, ADR-0070).
+    expanding: Vec<String>,
 }
 
 /// One held remote link: the connection, and the registry its providers are mounted in.
@@ -163,7 +193,54 @@ impl Session {
             plugins: Vec::new(),
             adapters: None,
             adaptations: Vec::new(),
+            definitions: vec![BTreeMap::new()],
+            expanding: Vec::new(),
         }
+    }
+
+    /// Defines `name` as a function or an alias in the innermost scope (ADR-0070).
+    pub fn define(&mut self, name: impl Into<String>, definition: Definition) {
+        if let Some(scope) = self.definitions.last_mut() {
+            scope.insert(name.into(), definition);
+        }
+    }
+
+    /// The user function `name`, from the innermost scope that defines one.
+    #[must_use]
+    pub fn function(&self, name: &str) -> Option<std::sync::Arc<Function>> {
+        self.definitions
+            .iter()
+            .rev()
+            .find_map(|scope| match scope.get(name) {
+                Some(Definition::Function(function)) => Some(std::sync::Arc::clone(function)),
+                _ => None,
+            })
+    }
+
+    /// The alias `name`, from the innermost scope that defines one — unless it is being
+    /// expanded right now, in which case it is not an alias for the head it produced.
+    #[must_use]
+    pub fn alias(&self, name: &str) -> Option<std::sync::Arc<Alias>> {
+        if self.expanding.iter().any(|expanding| expanding == name) {
+            return None;
+        }
+        self.definitions
+            .iter()
+            .rev()
+            .find_map(|scope| match scope.get(name) {
+                Some(Definition::Alias(alias)) => Some(std::sync::Arc::clone(alias)),
+                _ => None,
+            })
+    }
+
+    /// Marks `name` as being expanded, until [`Session::finish_expanding`].
+    pub fn begin_expanding(&mut self, name: impl Into<String>) {
+        self.expanding.push(name.into());
+    }
+
+    /// Ends the innermost alias expansion.
+    pub fn finish_expanding(&mut self) {
+        self.expanding.pop();
     }
 
     /// The async runtime native pipelines run on, built the first time one is needed.
@@ -516,6 +593,12 @@ impl Session {
         self.captures.pop().unwrap_or_default()
     }
 
+    /// Whether a pipeline's result is currently being captured rather than shown.
+    #[must_use]
+    pub fn capturing(&self) -> bool {
+        !self.captures.is_empty()
+    }
+
     /// Hands finished values to the innermost capture, if one is open.
     ///
     /// Returns whether they were taken; when they were not, they are the terminal's to show.
@@ -539,12 +622,14 @@ impl Session {
     /// Enters a nested scope, for a block or a function body.
     pub fn push_scope(&mut self) {
         self.scopes.push(Scope::new());
+        self.definitions.push(BTreeMap::new());
     }
 
     /// Leaves the innermost scope. The outermost scope is never popped.
     pub fn pop_scope(&mut self) {
         if self.scopes.len() > 1 {
             self.scopes.pop();
+            self.definitions.pop();
         }
     }
 

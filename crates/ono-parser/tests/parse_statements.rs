@@ -170,6 +170,35 @@ fn should_parse_jump_statements_when_they_appear_in_a_block() {
 }
 
 #[test]
+fn should_declare_an_alias_for_a_pipeline_when_the_statement_is_an_alias() {
+    let Statement::Alias(alias) = only("alias failed = get service | where state == failed") else {
+        panic!("expected an alias statement");
+    };
+    assert_eq!(alias.name, "failed");
+    assert_eq!(
+        alias.value.head.stages.len(),
+        2,
+        "the alias stands for the whole pipeline after the `=` (ADR-0070)"
+    );
+    let source = "alias failed = get service | where state == failed";
+    assert_eq!(
+        alias.value.span.of(source),
+        "get service | where state == failed",
+        "the pipeline's span is the text an expansion substitutes"
+    );
+}
+
+#[test]
+fn should_report_a_missing_equals_sign_when_an_alias_has_none() {
+    let parsed = parse("alias ll ls -la");
+    assert!(
+        parsed.has_errors(),
+        "an alias without `=` is a syntax error, got {:?}",
+        parsed.diagnostics()
+    );
+}
+
+#[test]
 fn should_import_a_module_when_the_statement_is_a_use() {
     let Statement::Use(import) = only("use ono:process") else {
         panic!("expected a use statement");
@@ -191,6 +220,47 @@ fn should_read_a_brace_as_a_block_when_the_first_token_is_not_a_key() {
         );
     };
     assert_eq!(block.statements.len(), 1);
+}
+
+#[test]
+fn should_read_a_value_followed_by_an_operator_as_one_expression_statement() {
+    let statements = statements("each { @ * 2 }");
+    let Statement::Pipeline(pipeline) = &statements[0] else {
+        panic!("expected a pipeline");
+    };
+    let Argument::Value(Expr::Block(block)) = &pipeline.head.stages[0].arguments[0] else {
+        panic!("expected a block argument");
+    };
+    let Some(Statement::Pipeline(inner)) = block.statements.first() else {
+        panic!(
+            "expected a statement in the block, got {:?}",
+            block.statements
+        );
+    };
+    let stage = &inner.head.stages[0];
+    assert!(
+        matches!(stage.head, ono_parser::StageHead::Value(Expr::Binary(_))),
+        "spec §19.4 / ADR-0071 §1: `@ * 2` is one expression, not `@` with two words, got {:?}",
+        stage.head
+    );
+    assert!(stage.arguments.is_empty());
+}
+
+#[test]
+fn should_keep_a_variable_head_followed_by_a_pipe_as_a_pipeline_seed() {
+    let statements = statements("$hot | select pid");
+    let Statement::Pipeline(pipeline) = &statements[0] else {
+        panic!("expected a pipeline");
+    };
+    assert_eq!(pipeline.head.stages.len(), 2);
+    assert!(
+        matches!(
+            pipeline.head.stages[0].head,
+            ono_parser::StageHead::Value(Expr::Variable(_))
+        ),
+        "`$hot | …` seeds the pipeline with the variable (spec §19.2), got {:?}",
+        pipeline.head.stages[0].head
+    );
 }
 
 #[test]

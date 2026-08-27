@@ -246,6 +246,49 @@ fn background(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus>
     Ok(ExitStatus::SUCCESS)
 }
 
+/// `kill %N …` — ends the named jobs (spec §18.1, §18.4; ADR-0071 §4).
+///
+/// An external job's process group gets `SIGTERM`, exactly as `fg`/`bg` address it; a
+/// backgrounded native pipeline's task is aborted, which drops every receiver and stops the
+/// producers. Either way the job leaves the table.
+///
+/// # Errors
+///
+/// A structured error naming the first specifier that is not a job.
+pub fn kill_jobs(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
+    for argument in arguments {
+        let text = argument.to_string_lossy();
+        let Some(number) = text
+            .strip_prefix('%')
+            .and_then(|digits| digits.parse::<u32>().ok())
+        else {
+            return Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`{text}` is not a job specifier"),
+                )
+                .with_help(
+                    "a job is `%N`, as `jobs` lists it; `kill process <pid>` signals a process",
+                ),
+            ));
+        };
+        if session.native_jobs().iter().any(|job| job.number == number) {
+            crate::context_jobs::stop(session, number)?;
+            continue;
+        }
+        let id = job_id(session, &[OsString::from(format!("%{number}"))])?;
+        session
+            .executor()
+            .signal_job(id, ono_process::Signal::TERM)
+            .map_err(|error| {
+                Flow::Failed(ErrorValue::new(error.code(), error.message().to_owned()))
+            })?;
+    }
+    // What was signalled may already be gone; reaping now keeps the next `jobs` truthful.
+    let _ = session.executor().poll_jobs();
+    Ok(ExitStatus::SUCCESS)
+}
+
 fn job_id(session: &mut Session, arguments: &[OsString]) -> Eval<ono_process::JobId> {
     if let Some(text) = arguments.first() {
         let text = text.to_string_lossy();
@@ -346,7 +389,31 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         ));
     }
 
-    let parsed = ono_parser::parse(&source);
+    let mut source = source;
+    let mut parsed = ono_parser::parse(&source);
+    // Step 3 of the resolution order (ADR-0011, ADR-0070): an alias is reported as one, with
+    // its expansion, and the expansion is what gets explained — it is what would run.
+    let mut expanded: Vec<String> = Vec::new();
+    while let Some(pipeline) = parsed
+        .program()
+        .statements
+        .first()
+        .and_then(ono_parser::Statement::as_pipeline)
+        && let Some((name, text)) = crate::eval::expand_alias(session, &pipeline.head, &source)
+        && !expanded.contains(&name)
+    {
+        print_safely(&format!(
+            "  `{name}` is an alias for `{}` — step 3 of the resolution order; explaining the \
+             expansion",
+            session
+                .alias(&name)
+                .map(|alias| alias.expansion.clone())
+                .unwrap_or_default()
+        ));
+        expanded.push(name);
+        source = text;
+        parsed = ono_parser::parse(&source);
+    }
     let Some(pipeline) = parsed
         .program()
         .statements
@@ -435,6 +502,15 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         // A head the registry knows as a verb or as a command id is native, and the plan above
         // already said everything there is to say about it.
         if registry.verb(name).is_some() || registry.get(name).is_some() {
+            continue;
+        }
+        // A user function is step 2 of the order (ADR-0011, ADR-0070): it wins over the
+        // registry and over PATH, and the report says so instead of describing what it shadows.
+        if let Some(function) = session.function(name) {
+            print_safely(&format!(
+                "  `{name}` is a user function declared at {} — step 2 of the resolution order",
+                function.declaration.span
+            ));
             continue;
         }
         // The registry does not know the shell's own commands, so without this `explain cd`

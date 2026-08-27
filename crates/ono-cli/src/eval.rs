@@ -4,7 +4,7 @@
 //! an `ono_process::Pipeline` and runs in the foreground; the native stages of phase B slot in
 //! beside them without changing the shape of anything here.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
 use ono_core::{ErrorCode, ExitStatus, Span};
@@ -18,7 +18,7 @@ use ono_value::{ByteSize, Duration as OnoDuration, ErrorValue, MapValue, Percent
 use crate::builtin;
 use crate::expand;
 use crate::resolve::{self, Namespace, Resolution};
-use crate::session::{Mode, Session};
+use crate::session::{Alias, Definition, Function, Mode, Session};
 
 /// Why evaluation of a statement stopped early.
 #[derive(Debug)]
@@ -104,9 +104,9 @@ pub fn run_statement(
     match statement {
         Statement::Pipeline(pipeline) => run_pipeline(session, pipeline, source),
         Statement::Let(binding) => {
-            let value = value_of_pipeline(session, &binding.value, source)?;
+            let (value, status) = binding_value(session, &binding.value, source)?;
             session.bind(binding.name.clone(), value);
-            Ok(ExitStatus::SUCCESS)
+            Ok(status)
         }
         Statement::If(branch) => run_if(session, branch, source),
         Statement::While(loop_) => run_while(session, loop_, source),
@@ -114,11 +114,25 @@ pub fn run_statement(
         Statement::Match(match_) => run_match(session, match_, source),
         Statement::Try(try_) => run_try(session, try_, source),
         Statement::Fn(declaration) => {
-            // A function is a binding whose value is its body, so it lives in the same scope
-            // chain as everything else and `fn:` resolution has one place to look.
-            session.bind(
-                format!("fn:{}", declaration.name),
-                Value::String(source_of(source, declaration.span).into()),
+            // A function lives in the scope chain beside the `let` bindings, so a call finds the
+            // innermost scope that defines one (ADR-0011 step 2, ADR-0070).
+            session.define(
+                declaration.name.clone(),
+                Definition::Function(std::sync::Arc::new(Function {
+                    declaration: declaration.clone(),
+                    source: source.into(),
+                })),
+            );
+            Ok(ExitStatus::SUCCESS)
+        }
+        Statement::Alias(alias) => {
+            // An alias is its text: expansion re-parses it in place of the head word, so the
+            // pipeline is kept as written rather than as a tree (ADR-0070).
+            session.define(
+                alias.name.clone(),
+                Definition::Alias(std::sync::Arc::new(Alias {
+                    expansion: alias.value.span.of(source).to_owned(),
+                })),
             );
             Ok(ExitStatus::SUCCESS)
         }
@@ -139,8 +153,440 @@ pub fn run_statement(
     }
 }
 
-fn source_of(source: &str, span: Span) -> &str {
-    span.of(source)
+// --- kill %N (spec §18.1, §18.4, ADR-0071 §4) --------------------------------------------------
+
+/// Whether a stage is `kill %N …`: the bare `kill` with a job specifier as its first word.
+fn is_job_kill(stage: &Stage) -> bool {
+    let StageHead::Command(name) = &stage.head else {
+        return false;
+    };
+    name.namespace.is_none()
+        && name.name == "kill"
+        && matches!(
+            stage.arguments.first(),
+            Some(Argument::Word(word)) if word.text.starts_with('%')
+        )
+}
+
+// --- each { … } (spec §19.4, ADR-0071 §1) -----------------------------------------------------
+
+/// The index of the `each` stage whose body is a block, if `list` has one.
+fn each_block_stage(list: &StageList) -> Option<usize> {
+    list.stages.iter().position(|stage| {
+        let StageHead::Command(name) = &stage.head else {
+            return false;
+        };
+        matches!(name.namespace.as_deref(), None | Some("ono"))
+            && name.name == "each"
+            && matches!(
+                stage.arguments.as_slice(),
+                [Argument::Value(Expr::Block(_))]
+            )
+    })
+}
+
+/// Runs the stages before `index` for their values, the block once per value with `@` bound to
+/// it, and the stages after it over what the blocks produced.
+fn run_each_block(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+    index: usize,
+) -> Eval<ExitStatus> {
+    let stage = &list.stages[index];
+    let Some(Argument::Value(Expr::Block(block))) = stage.arguments.first() else {
+        return Ok(ExitStatus::SUCCESS);
+    };
+    if index == 0 {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                "`each` needs a stream of values to run its block over, and none reaches it",
+            )
+            .with_help("put a producer in front of it: `get service | where … | each { … }`"),
+        ));
+    }
+
+    let upstream = StageList {
+        stages: list.stages[..index].to_vec(),
+        span: list.stages[0].span.join(list.stages[index - 1].span),
+    };
+    session.begin_capture();
+    let outcome = run_stage_list(session, &upstream, source, false);
+    let items = session.end_capture();
+    outcome?;
+
+    // The block runs in the caller's output context (ADR-0070 point 3): captured when stages
+    // follow, shown as it goes when nothing does.
+    let consumed = index + 1 < list.stages.len();
+    let mut produced = Vec::new();
+    for item in items {
+        session.push_scope();
+        session.bind("@", item);
+        if consumed {
+            session.begin_capture();
+        }
+        let outcome = run_block(session, block, source);
+        if consumed {
+            produced.extend(session.end_capture());
+        }
+        session.pop_scope();
+        match outcome {
+            Ok(_) | Err(Flow::Continue) => {}
+            Err(Flow::Break) => break,
+            Err(other) => return Err(other),
+        }
+    }
+    if consumed {
+        return crate::native::run_seeded_from(session, list, source, index + 1, produced);
+    }
+    Ok(ExitStatus::SUCCESS)
+}
+
+// --- prefix assignment (spec §54, ADR-0071 §2) ------------------------------------------------
+
+/// The `NAME=value` words that lead a stage of `list`, with the list as it reads without them.
+///
+/// `None` when no stage starts with an assignment. A stage that is nothing but assignments is
+/// refused: a lasting binding has two explicit spellings already.
+fn prefix_assignments(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+) -> Eval<Option<(Vec<(String, OsString)>, StageList)>> {
+    let Some((index, stage)) = list
+        .stages
+        .iter()
+        .enumerate()
+        .find(|(_, stage)| stage.head.name().is_some_and(is_assignment_word))
+    else {
+        return Ok(None);
+    };
+    let StageHead::Command(head) = &stage.head else {
+        return Ok(None);
+    };
+    if head.namespace.is_some() {
+        return Ok(None);
+    }
+
+    let mut assignments = Vec::new();
+    let mut arguments = stage.arguments.iter().peekable();
+    let mut pending: Option<(String, Span)> = Some((head.name.clone(), head.span));
+    loop {
+        let Some((word, span)) = pending.take() else {
+            break;
+        };
+        let (name, value) = word.split_once('=').unwrap_or((&word, ""));
+        let value = if value.is_empty()
+            && let Some(Argument::Value(expression)) = arguments.peek()
+            && expression.span().start() == span.end()
+        {
+            // `NAME="a b"`: the lexer ends the word at the quote, so the string that follows
+            // without a gap is the value.
+            let expression = expression.clone();
+            arguments.next();
+            OsString::from(text_of(&eval_expr(session, &expression, source)?)?)
+        } else {
+            expand::expand_to_one(session, value)?
+        };
+        assignments.push((name.to_owned(), value));
+        if let Some(Argument::Word(next)) = arguments.peek()
+            && is_assignment_word(&next.text)
+        {
+            pending = Some((next.text.clone(), next.span));
+            arguments.next();
+        }
+    }
+
+    let Some(Argument::Word(command)) = arguments.next() else {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                format!(
+                    "`{}` names no command to run with that environment",
+                    head.name
+                ),
+            )
+            .with_help(
+                "a prefix assignment is scoped to the command after it (spec §54); for a lasting \
+                 binding write `set env NAME = value` or `let name = value`",
+            ),
+        ));
+    };
+    let (namespace, name) = match command.text.split_once(':') {
+        Some((namespace, name))
+            if !namespace.is_empty()
+                && !name.is_empty()
+                && !name.contains(['/', ':'])
+                && namespace
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-') =>
+        {
+            (Some(namespace.to_owned()), name.to_owned())
+        }
+        _ => (None, command.text.clone()),
+    };
+    let mut rewritten = stage.clone();
+    rewritten.head = StageHead::Command(ono_parser::QualifiedName {
+        namespace,
+        name,
+        span: command.span,
+    });
+    rewritten.arguments = arguments.cloned().collect();
+    let mut stripped = list.clone();
+    stripped.stages[index] = rewritten;
+    Ok(Some((assignments, stripped)))
+}
+
+/// Whether a word spells `NAME=…` with an environment variable's name before the `=`.
+fn is_assignment_word(word: &str) -> bool {
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+// --- aliases (spec §6.5, ADR-0070) ------------------------------------------------------------
+
+/// The text `list` becomes when its head word is an alias: the alias's expansion, then the rest
+/// of the list exactly as written. `None` when the head is not an alias, or is the alias being
+/// expanded right now.
+#[must_use]
+pub fn expand_alias(session: &Session, list: &StageList, source: &str) -> Option<(String, String)> {
+    let stage = list.stages.first()?;
+    let StageHead::Command(name) = &stage.head else {
+        return None;
+    };
+    if name.namespace.is_some() {
+        return None;
+    }
+    let alias = session.alias(&name.name)?;
+    let rest = source
+        .get(name.span.end() as usize..list.span.end() as usize)
+        .unwrap_or_default();
+    Some((name.name.clone(), format!("{}{rest}", alias.expansion)))
+}
+
+// --- functions (spec §19.3, ADR-0070) ---------------------------------------------------------
+
+/// The user function a stage's head names, if that is what the head resolves to.
+///
+/// Step 2 of the resolution order (ADR-0011): a bare head or a `fn:` head, before an alias, the
+/// native registry and `PATH`.
+fn called_function(session: &Session, stage: &Stage) -> Option<std::sync::Arc<Function>> {
+    let StageHead::Command(name) = &stage.head else {
+        return None;
+    };
+    if !matches!(name.namespace.as_deref(), None | Some("fn")) {
+        return None;
+    }
+    session.function(&name.name)
+}
+
+/// Calls `function` as the head of `list`: binds the stage's arguments to its parameters and
+/// runs its body, whose results are what the rest of the pipeline consumes (ADR-0070).
+fn call_function(
+    session: &mut Session,
+    function: &Function,
+    list: &StageList,
+    source: &str,
+) -> Eval<ExitStatus> {
+    let stage = &list.stages[0];
+    let declaration = &function.declaration;
+    let body_source: &str = &function.source;
+
+    // Arguments are read before the callee's scope exists, so `$x` in an argument is the
+    // caller's `x`.
+    let arguments = call_arguments(session, stage, source)?;
+    if arguments.len() > declaration.parameters.len() {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!(
+                    "`{}` takes {} argument(s), and {} were given",
+                    declaration.name,
+                    declaration.parameters.len(),
+                    arguments.len()
+                ),
+            )
+            .with_help(format!(
+                "declared at {} as `fn {}({})`",
+                declaration.span,
+                declaration.name,
+                declaration
+                    .parameters
+                    .iter()
+                    .map(|parameter| parameter.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        ));
+    }
+
+    session.push_scope();
+    let bound = bind_parameters(session, declaration, arguments, body_source);
+    let outcome = match bound {
+        Ok(()) => run_function_body(session, declaration, list, source, body_source),
+        Err(flow) => Err(flow),
+    };
+    session.pop_scope();
+    outcome
+}
+
+/// The argument values a call site supplies, in order: words expanded and lists spliced as for
+/// any command (ADR-0019), values as themselves.
+fn call_arguments(session: &mut Session, stage: &Stage, source: &str) -> Eval<Vec<CallArgument>> {
+    let mut arguments = Vec::new();
+    for argument in &stage.arguments {
+        match argument {
+            Argument::Word(word) => {
+                for expanded in expand::expand_word(session, &word.text)? {
+                    arguments.push(CallArgument::Word(expanded.to_string_lossy().into_owned()));
+                }
+            }
+            Argument::Option(option) => {
+                let text = match &option.value {
+                    Some(value) => format!(
+                        "--{}={}",
+                        option.name,
+                        text_of(&eval_expr(session, value, source)?)?
+                    ),
+                    None => format!("--{}", option.name),
+                };
+                arguments.push(CallArgument::Word(text));
+            }
+            Argument::Value(expression) => match eval_expr(session, expression, source)? {
+                Value::List(items) => {
+                    arguments.extend(items.iter().cloned().map(CallArgument::Value));
+                }
+                single => arguments.push(CallArgument::Value(single)),
+            },
+            Argument::Error(_) => {
+                return Err(Flow::Failed(ErrorValue::new(
+                    ErrorCode::ParseSyntax,
+                    "this argument could not be read",
+                )));
+            }
+        }
+    }
+    Ok(arguments)
+}
+
+/// One argument at a call site.
+enum CallArgument {
+    /// A bare word: a string, unless the parameter declares a type to read it as.
+    Word(String),
+    /// A value, bound as it is.
+    Value(Value),
+}
+
+/// Binds the parameters in the callee's (already pushed) scope: an argument in order, else the
+/// default, else `null` (ADR-0070).
+fn bind_parameters(
+    session: &mut Session,
+    declaration: &ono_parser::FnDecl,
+    arguments: Vec<CallArgument>,
+    body_source: &str,
+) -> Eval<()> {
+    let mut arguments = arguments.into_iter();
+    for parameter in &declaration.parameters {
+        let value = match arguments.next() {
+            Some(CallArgument::Value(value)) => value,
+            Some(CallArgument::Word(word)) => {
+                coerce_word(word, parameter.ty.as_ref(), &parameter.name)?
+            }
+            None => match &parameter.default {
+                Some(default) => eval_expr(session, default, body_source)?,
+                None => Value::Null,
+            },
+        };
+        session.bind(parameter.name.clone(), value);
+    }
+    Ok(())
+}
+
+/// Reads a word as the type its parameter declares. Without a declared type the word is a
+/// string: a shell never guesses what a word means (ADR-0019, ADR-0070).
+fn coerce_word(word: String, ty: Option<&ono_parser::TypeRef>, parameter: &str) -> Eval<Value> {
+    let Some(ty) = ty else {
+        return Ok(Value::String(word.into()));
+    };
+    let mismatch = |wanted: &str| {
+        Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("`{word}` is not {wanted}, which parameter `{parameter}` expects"),
+            )
+            .with_help(format!(
+                "parameter `{parameter}` is declared as `{}`",
+                ty.name
+            )),
+        )
+    };
+    Ok(match ty.name.to_ascii_lowercase().as_str() {
+        "int" => Value::Int(word.trim().parse().map_err(|_| mismatch("an integer"))?),
+        "float" | "decimal" => Value::Float(word.trim().parse().map_err(|_| mismatch("a number"))?),
+        "bool" => match word.trim() {
+            "true" => Value::Bool(true),
+            "false" => Value::Bool(false),
+            _ => return Err(mismatch("`true` or `false`")),
+        },
+        "path" => Value::Path(std::sync::Arc::from(std::path::Path::new(&word))),
+        _ => Value::String(word.into()),
+    })
+}
+
+/// Runs a function's body in the caller's output context (ADR-0070).
+///
+/// With stages after the call, the body's results are captured and stream into them, exactly
+/// as a producer's would. With nothing after it the body's statements show their results as
+/// they would at the prompt, and a `return` value is shown the same way — or handed to the
+/// enclosing capture when the call itself is being bound.
+fn run_function_body(
+    session: &mut Session,
+    declaration: &ono_parser::FnDecl,
+    list: &StageList,
+    source: &str,
+    body_source: &str,
+) -> Eval<ExitStatus> {
+    let consumed = list.stages.len() > 1;
+    if consumed {
+        session.begin_capture();
+    }
+    let outcome = run_block(session, &declaration.body, body_source);
+    let mut values = if consumed {
+        session.end_capture()
+    } else {
+        Vec::new()
+    };
+    let status = match outcome {
+        Ok(status) => status,
+        Err(Flow::Return(value)) => {
+            if !matches!(value, Value::Null) {
+                values.push(value);
+            }
+            ExitStatus::SUCCESS
+        }
+        Err(other) => return Err(other),
+    };
+    if consumed {
+        return crate::native::run_seeded(session, list, source, values);
+    }
+    if !values.is_empty() {
+        if session.capturing() {
+            session.capture(&values);
+        } else {
+            return crate::native::run_seeded(session, list, source, values);
+        }
+    }
+    Ok(status)
 }
 
 fn run_block(session: &mut Session, block: &Block, source: &str) -> Eval<ExitStatus> {
@@ -312,6 +758,77 @@ fn run_stage_list(
     source: &str,
     background: bool,
 ) -> Eval<ExitStatus> {
+    // Step 2 of the resolution order (ADR-0011): a user function wins over everything but a
+    // keyword, and the keywords were the parser's.
+    if !background
+        && let Some(stage) = list.stages.first()
+        && let Some(function) = called_function(session, stage)
+    {
+        return call_function(session, &function, list, source);
+    }
+
+    // Spec §54: `NAME=value command …` sets the variable for this pipeline alone (ADR-0071 §2).
+    if let Some((assignments, stripped)) = prefix_assignments(session, list, source)? {
+        let previous: Vec<(String, Option<OsString>)> = assignments
+            .iter()
+            .map(|(name, _)| (name.clone(), session.env_var(name).map(OsStr::to_os_string)))
+            .collect();
+        for (name, value) in &assignments {
+            session.set_env(name.as_str(), value.clone());
+        }
+        let outcome = run_stage_list(session, &stripped, source, background);
+        for (name, value) in previous {
+            match value {
+                Some(value) => session.set_env(name, value),
+                None => session.remove_env(&name),
+            }
+        }
+        return outcome;
+    }
+
+    // Step 3: an alias is expanded exactly once and the result resolved again from the top
+    // (ADR-0011, ADR-0070).
+    if let Some((name, expanded)) = expand_alias(session, list, source) {
+        let expanded = if background {
+            format!("{expanded} &")
+        } else {
+            expanded
+        };
+        let parsed = ono_parser::parse(&expanded);
+        let pipeline = parsed
+            .program()
+            .statements
+            .first()
+            .and_then(Statement::as_pipeline)
+            .cloned()
+            .ok_or_else(|| {
+                Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::ParseSyntax,
+                        format!("the expansion of alias `{name}` is not a pipeline"),
+                    )
+                    .with_help(format!("`{name}` expands to `{expanded}`")),
+                )
+            })?;
+        session.begin_expanding(name);
+        let outcome = run_pipeline(session, &pipeline, &expanded);
+        session.finish_expanding();
+        return outcome;
+    }
+
+    // `kill %N` names a job, and a job is the shell's (spec §18.1, §18.4; ADR-0071 §4). Any
+    // other `kill` is the program or the native verb, untouched.
+    if list.stages.len() == 1
+        && let Some(stage) = list.stages.first()
+        && is_job_kill(stage)
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("kill")));
+        }
+        let arguments = stage_arguments(session, stage, source)?;
+        return builtin::kill_jobs(session, &arguments);
+    }
+
     // A single builtin stage runs in the shell itself: `cd` in a child moves a directory nobody
     // is standing in.
     if list.stages.len() == 1
@@ -454,6 +971,12 @@ fn run_stage_list(
         };
     }
 
+    // `each { … }` with a block runs in the shell: a block holds statements, and a statement may
+    // run a command, which the transform engine cannot (spec §19.4, ADR-0071 §1).
+    if !background && let Some(index) = each_block_stage(list) {
+        return run_each_block(session, list, source, index);
+    }
+
     // A `<package>:command` head invokes a loaded KUANG/11 package's contribution (spec §31.22,
     // ADR-0011's module namespace). The values it streams seed the rest of the pipeline exactly
     // as a native producer's would.
@@ -492,7 +1015,7 @@ fn run_stage_list(
     // So does an all-external pipeline whose last stage an adapter renders at the terminal
     // (spec v0.3 §1.4), which is what makes `lsblk` typed at the prompt a table.
     if crate::native::claims(session, list)
-        || (!background && crate::native::adapts_at_terminal(session, list))
+        || (!background && !session.capturing() && crate::native::adapts_at_terminal(session, list))
     {
         // A native command is as much "running something" as a child process is: `set file`
         // reaches the registry now (ADR-0068), and a configuration file that could change a
@@ -510,6 +1033,14 @@ fn run_stage_list(
 
     if session.mode() == Mode::Config {
         return Err(Flow::Failed(config_refusal("this command")));
+    }
+
+    // A pipeline being captured hands its stdout to the capture rather than the terminal: the
+    // text is the value of `(echo hi)` (ADR-0069).
+    if !background && session.capturing() {
+        let indices: Vec<usize> = (0..list.stages.len()).collect();
+        let (_, status) = run_external_segment(session, list, &indices, source, None, true)?;
+        return Ok(status);
     }
 
     let mut built = ono_process::Pipeline::new();
@@ -566,7 +1097,8 @@ pub fn run_external_segment(
         return Err(Flow::Failed(config_refusal("this command")));
     }
 
-    let capture = !last;
+    let captured = last && session.capturing();
+    let capture = !last || captured;
     let mut built = ono_process::Pipeline::new();
     for (position, index) in indices.iter().enumerate() {
         let mut command = build_command(session, &list.stages[*index], source)?;
@@ -602,6 +1134,10 @@ pub fn run_external_segment(
             .map(|stage| stage.stdout.clone())
             .unwrap_or_default()
     });
+    if captured {
+        session.capture(&[captured_text(bytes.as_deref().unwrap_or_default())]);
+        return Ok((None, outcome.status()));
+    }
     Ok((bytes, outcome.status()))
 }
 
@@ -1096,33 +1632,74 @@ fn string_of(session: &mut Session, expression: &Expr, source: &str) -> Eval<Str
     Ok(text_of(&value)?)
 }
 
-/// The value a pipeline produces when it is used as one, as in `let x = …`.
-fn value_of_pipeline(session: &mut Session, pipeline: &Pipeline, source: &str) -> Eval<Value> {
-    // A pipeline whose only stage is a bare value is that value: `let name = "world"`.
-    if pipeline.tail.is_empty()
-        && pipeline.head.stages.len() == 1
-        && let Some(stage) = pipeline.head.stages.first()
-        && stage.arguments.is_empty()
-        && stage.redirections.is_empty()
-        && let StageHead::Value(expression) = &stage.head
-    {
-        return eval_expr(session, expression, source);
+/// What `let` binds, with the status of the pipeline that produced it.
+fn binding_value(
+    session: &mut Session,
+    pipeline: &Pipeline,
+    source: &str,
+) -> Eval<(Value, ExitStatus)> {
+    if let Some(expression) = bare_value(pipeline) {
+        return Ok((eval_expr(session, expression, source)?, ExitStatus::SUCCESS));
     }
-    // An expression-mode stage with no arguments and a bare head is a field path or a literal
-    // read as a command; `let n = 3` arrives this way.
-    if pipeline.tail.is_empty()
-        && pipeline.head.stages.len() == 1
-        && let Some(stage) = pipeline.head.stages.first()
-        && stage.redirections.is_empty()
-        && stage.arguments.len() == 1
-        && let StageHead::Error(_) = &stage.head
-        && let Some(Argument::Value(expression)) = stage.arguments.first()
-    {
-        return eval_expr(session, expression, source);
-    }
+    captured_value(session, pipeline, source)
+}
 
-    let status = run_pipeline(session, pipeline, source)?;
-    Ok(Value::Int(i128::from(status.code())))
+/// The expression a one-stage pipeline is, when it is one: `let name = "world"`.
+fn bare_value(pipeline: &Pipeline) -> Option<&Expr> {
+    if !pipeline.tail.is_empty() || pipeline.head.stages.len() != 1 {
+        return None;
+    }
+    let stage = pipeline.head.stages.first()?;
+    if !stage.redirections.is_empty() {
+        return None;
+    }
+    match (&stage.head, stage.arguments.as_slice()) {
+        (StageHead::Value(expression), []) => Some(expression),
+        // An expression-mode stage with no arguments and a bare head is a field path or a
+        // literal read as a command; `let n = 3` arrives this way.
+        (StageHead::Error(_), [Argument::Value(expression)]) => Some(expression),
+        _ => None,
+    }
+}
+
+/// The value a pipeline produces when it is used as one, as in `( … )`.
+fn value_of_pipeline(session: &mut Session, pipeline: &Pipeline, source: &str) -> Eval<Value> {
+    if let Some(expression) = bare_value(pipeline) {
+        return eval_expr(session, expression, source);
+    }
+    Ok(captured_value(session, pipeline, source)?.0)
+}
+
+/// Runs a pipeline for its value rather than its display (spec §19.2, ADR-0069).
+///
+/// Everything the pipeline would have shown is collected instead: a native pipeline's values, or
+/// the text a program wrote to its stdout. One value is that value; several are a list, because
+/// a list splices back into several values when it starts a pipeline (ADR-0019); none is the
+/// empty list — the pipeline is known to have produced nothing, which is not the same as not
+/// knowing. The status is the pipeline's own, so `$?` after `let x = …` says whether it worked.
+fn captured_value(
+    session: &mut Session,
+    pipeline: &Pipeline,
+    source: &str,
+) -> Eval<(Value, ExitStatus)> {
+    session.begin_capture();
+    let outcome = run_pipeline(session, pipeline, source);
+    let mut captured = session.end_capture();
+    let status = outcome?;
+    let value = match captured.len() {
+        1 => captured.remove(0),
+        _ => Value::list(captured),
+    };
+    Ok((value, status))
+}
+
+/// The value a program's captured stdout stands for: its text, without the newline every
+/// line-oriented program ends its output with — `(echo hi)` is `hi`, exactly as `$(echo hi)`
+/// has always been.
+#[must_use]
+pub fn captured_text(bytes: &[u8]) -> Value {
+    let text = String::from_utf8_lossy(bytes);
+    Value::String(text.trim_end_matches(['\n', '\r']).into())
 }
 
 // --- expressions -------------------------------------------------------------------------------
@@ -1164,6 +1741,7 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
                 })?;
             Ok(Value::Ip(address))
         }
+        Expr::Timestamp(literal) => Ok(Value::parse_timestamp(&literal.text)?),
         Expr::Regex(literal) => {
             // Flags become an inline group, which is how the regex engine spells them and keeps
             // the pattern one thing rather than a pattern plus a side channel.
@@ -1230,13 +1808,22 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
             let key = eval_expr(session, &index.index, source)?;
             Ok(index_into(&base, &key)?)
         }
-        Expr::Call(call) => Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::ResolveCommandNotFound,
-                format!("no function to call at {}", call.span),
-            )
-            .with_help("user functions arrive with the module system of spec §19.6"),
-        )),
+        Expr::Call(call) => {
+            // `now()` is the one builtin function language.yaml declares (spec §6.3, ADR-0071).
+            if ono_command::is_now_call(call) {
+                return Ok(Value::now());
+            }
+            Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::ResolveCommandNotFound,
+                    format!("no function to call at {}", call.span),
+                )
+                .with_help(
+                    "`now()` is the only function an expression can call; a user function is \
+                     called as a command (spec §19.3, ADR-0070)",
+                ),
+            ))
+        }
         Expr::CurrentValue(current) => match current.selector {
             // Spec §20.2: previous structured results are reusable without screen scraping. A
             // list splices when it starts a pipeline (ADR-0019), so `@-1 | where …` streams the
@@ -1269,6 +1856,11 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
                         .with_help("`@N` names row N of the last shown result (spec §6.4)"),
                     )
                 }),
+            // The item an enclosing block is iterating shadows the interactive selection for
+            // the block's duration (spec §19.4, ADR-0071 §1).
+            ono_parser::CurrentSelector::Current if session.binding("@").is_some() => {
+                Ok(session.binding("@").cloned().unwrap_or(Value::Null))
+            }
             ono_parser::CurrentSelector::Current => session.selection().cloned().ok_or_else(|| {
                 Flow::Failed(
                     ErrorValue::new(

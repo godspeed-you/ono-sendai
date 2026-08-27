@@ -35,6 +35,8 @@ pub enum TokenKind {
     UnterminatedRawStr,
     /// An IP address literal, in either family (spec §10.2).
     Ip,
+    /// A timestamp literal in operand position, such as `2000-01-01T00:00:00Z` (ADR-0071).
+    Timestamp,
     /// A regex literal, `/pattern/flags`.
     Regex,
     /// A regex literal whose closing delimiter is missing.
@@ -304,6 +306,13 @@ pub(crate) fn next_token(source: &str, at: u32, mode: LexMode) -> Token {
         // `127.0.0.1` as a float followed by field accesses and the specification's own example
         // does not run. Only in operand position, so `a:b` stays a namespace and `1.2` stays a
         // number wherever a value is not being started.
+        // An instant is a value of its own (spec §10.2), and the RFC 3339 spelling is the one
+        // every serializer here emits. Only in operand position, so it can never be mistaken
+        // for the subtraction it would otherwise lex as (ADR-0071).
+        _ if matches!(mode, LexMode::ExprOperand) && timestamp_end(bytes, start).is_some() => {
+            let end = timestamp_end(bytes, start).unwrap_or(start + 1);
+            token(TokenKind::Timestamp, start, end)
+        }
         _ if matches!(mode, LexMode::ExprOperand) && address_end(bytes, start).is_some() => {
             let end = address_end(bytes, start).unwrap_or(start + 1);
             token(TokenKind::Ip, start, end)
@@ -394,6 +403,53 @@ fn ipv6_end(bytes: &[u8], start: usize) -> Option<usize> {
         }
     }
     Some(index)
+}
+
+/// Where the RFC 3339 timestamp starting at `start` ends, if one starts there:
+/// `YYYY-MM-DDTHH:MM[:SS[.fraction]]` followed by `Z` or `±HH:MM`.
+fn timestamp_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let digits = |from: usize, count: usize| -> Option<usize> {
+        (0..count).try_fold(from, |index, _| {
+            bytes
+                .get(index)
+                .is_some_and(u8::is_ascii_digit)
+                .then_some(index + 1)
+        })
+    };
+    let literal = |at: usize, byte: u8| -> Option<usize> {
+        (bytes
+            .get(at)
+            .is_some_and(|found| found.eq_ignore_ascii_case(&byte)))
+        .then_some(at + 1)
+    };
+    let mut index = digits(start, 4)?;
+    index = literal(index, b'-')?;
+    index = digits(index, 2)?;
+    index = literal(index, b'-')?;
+    index = digits(index, 2)?;
+    index = literal(index, b'T')?;
+    index = digits(index, 2)?;
+    index = literal(index, b':')?;
+    index = digits(index, 2)?;
+    if let Some(after) = literal(index, b':').and_then(|at| digits(at, 2)) {
+        index = after;
+        if let Some(first) = literal(index, b'.') {
+            let mut fraction = first;
+            while bytes.get(fraction).is_some_and(u8::is_ascii_digit) {
+                fraction += 1;
+            }
+            if fraction > first {
+                index = fraction;
+            }
+        }
+    }
+    if let Some(after) = literal(index, b'Z') {
+        return Some(after);
+    }
+    index = literal(index, b'+').or_else(|| literal(index, b'-'))?;
+    index = digits(index, 2)?;
+    index = literal(index, b':')?;
+    digits(index, 2)
 }
 
 /// Whether `@` at `index` begins a current-value reference rather than an ordinary word.

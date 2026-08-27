@@ -42,6 +42,44 @@ fn arguments(source: &str) -> Vec<Argument> {
         .arguments
 }
 
+#[test]
+fn should_read_an_rfc_3339_timestamp_as_one_operand_in_expression_mode() {
+    let arguments = arguments("where modified > 2000-01-01T00:00:00Z");
+    let Some(Argument::Value(Expr::Binary(comparison))) = arguments.first() else {
+        panic!("expected a comparison, got {arguments:?}");
+    };
+    let Expr::Timestamp(literal) = &comparison.rhs else {
+        panic!(
+            "spec §6.3 dates: the literal is one timestamp operand, not `2000 - 01 - …` (ADR-0071), \
+             got {:?}",
+            comparison.rhs
+        );
+    };
+    assert_eq!(literal.text, "2000-01-01T00:00:00Z");
+}
+
+#[test]
+fn should_keep_a_bare_date_as_arithmetic_in_expression_mode() {
+    let arguments = arguments("where n == 2000-01-01");
+    let Some(Argument::Value(Expr::Binary(comparison))) = arguments.first() else {
+        panic!("expected a comparison, got {arguments:?}");
+    };
+    assert!(
+        matches!(comparison.rhs, Expr::Binary(_)),
+        "a date without a time and a zone is not a literal (ADR-0071), got {:?}",
+        comparison.rhs
+    );
+}
+
+#[test]
+fn should_keep_a_timestamp_shaped_word_as_a_word_in_words_mode() {
+    let arguments = arguments("touch 2000-01-01T00:00:00Z");
+    assert!(
+        matches!(arguments.first(), Some(Argument::Word(word)) if word.text == "2000-01-01T00:00:00Z"),
+        "words mode keeps the text for the program, got {arguments:?}"
+    );
+}
+
 fn single_string(source: &str) -> Vec<StrPart> {
     match arguments(source).into_iter().next() {
         Some(Argument::Value(Expr::Str(literal))) => literal.parts,

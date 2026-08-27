@@ -597,6 +597,22 @@ pub fn run_seeded(
     run_from(session, list, source, 1, Some(seed))
 }
 
+/// Runs the stages of `list` from `start` on, seeded with values the evaluator already has —
+/// what an `each { … }` block produced for the stages after it (ADR-0071 §1).
+///
+/// # Errors
+///
+/// The structured error of whichever stage could not be resolved, bound, or run.
+pub fn run_seeded_from(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+    start: usize,
+    seed: Vec<Value>,
+) -> Eval<ExitStatus> {
+    run_from(session, list, source, start, Some(seed))
+}
+
 fn run_from(
     session: &mut Session,
     list: &StageList,
@@ -1294,9 +1310,13 @@ fn run_native_segment(
     // bytes arrive on the shell's stdin, not from a stage inside the pipeline. A terminal is
     // never read implicitly — an interactive `from json` waiting silently for EOF would look
     // like a hang, and the "nothing was piped into it" error says what to do instead.
+    // A seeded segment already has its input — `$hot | to json`, a function's stream — and
+    // must not wait on stdin as well: with a pipe that never closes, that wait is a hang.
+    let seeded = seed.is_some();
     let mut input = input;
     if first
         && input.is_none()
+        && !seeded
         && let Some((head, _)) = bound.first()
         && !head.input().accepts_null()
         && accepts_bytes(head.input().text())
@@ -1340,6 +1360,8 @@ fn run_native_segment(
     let adapters = session.shared_adapters();
     let resolver = crate::resolve::resolver(session);
     let context = session.context();
+    // A live view has nobody to watch it while its values are being bound (ADR-0069).
+    let capturing = session.capturing();
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -1423,7 +1445,7 @@ fn run_native_segment(
                 // A live stream at a terminal renders in place (spec §18.3); anywhere else the
                 // representation must be chosen, because an endless unserialised stream into a
                 // pipe or file is a table that never learns its widths.
-                if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                if !capturing && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
                     let (width, height) = live_geometry();
                     failures.extend(crate::live::show(stream, width, height).await);
                     return Ok((Vec::new(), failures, failed_rows));
@@ -1626,9 +1648,17 @@ fn write_result(
     serialised: bool,
     source: &str,
 ) -> Eval<()> {
-    // A pipeline run for its value hands the values on instead of showing them (ADR-0072 §4);
-    // it is neither rendered nor retained, because nothing was shown.
-    if session.capture(values) {
+    let destination = crate::eval::output_destination(session, stage, source)?;
+    // A pipeline run for its value hands on what it would have shown instead of showing it
+    // (spec §19.2, ADR-0069; ADR-0072 §4): the values themselves, or the one document a
+    // serializer made of them. Nothing is rendered and nothing is retained for `@-1`, because
+    // nothing was shown. A redirection still means the file.
+    if destination.is_none() && session.capturing() {
+        if serialised {
+            session.capture(&[crate::eval::captured_text(&bytes_of(values))]);
+        } else {
+            session.capture(values);
+        }
         return Ok(());
     }
     // What is about to be shown is what `@-1` and `@N` reuse (spec §20.2). Serialised output is
@@ -1637,7 +1667,6 @@ fn write_result(
     if !serialised {
         session.retain_result(values.to_vec());
     }
-    let destination = crate::eval::output_destination(session, stage, source)?;
     match destination {
         Some(mut file) => {
             let bytes = if serialised {

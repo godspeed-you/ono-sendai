@@ -61,6 +61,8 @@ pub enum Statement {
     Let(LetStmt),
     /// `fn name(params) -> Type { … }`.
     Fn(FnDecl),
+    /// `alias name = pipeline`.
+    Alias(AliasStmt),
     /// `if … { … } else if … { … } else { … }`.
     If(IfStmt),
     /// `for name in expr { … }`.
@@ -99,6 +101,7 @@ impl Statement {
             Statement::Return(node) => node.span,
             Statement::Break(span) | Statement::Continue(span) | Statement::Error(span) => *span,
             Statement::Use(node) => node.span,
+            Statement::Alias(node) => node.span,
         }
     }
 
@@ -359,6 +362,8 @@ pub enum Expr {
     Regex(RegexLit),
     /// An IP address literal, in either family (spec §10.2).
     Ip(IpLit),
+    /// A timestamp literal, `2000-01-01T00:00:00Z` (spec §6.3, ADR-0071).
+    Timestamp(TimestampLit),
     /// `true` or `false`, with the span of the keyword.
     Bool(bool, Span),
     /// `null`, with the span of the keyword.
@@ -400,6 +405,7 @@ impl Expr {
             Expr::Unit(node) => node.span,
             Expr::Str(node) => node.span,
             Expr::Regex(node) => node.span,
+            Expr::Timestamp(node) => node.span,
             Expr::Ip(node) => node.span,
             Expr::Bool(_, span) | Expr::Null(span) | Expr::Error(span) => *span,
             Expr::Variable(node) => node.span,
@@ -591,6 +597,15 @@ pub enum StrPart {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IpLit {
     /// The address exactly as it was written, including any zone identifier.
+    pub text: String,
+    /// The source range the literal covers.
+    pub span: Span,
+}
+
+/// A timestamp literal in the RFC 3339 spelling (ADR-0071).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimestampLit {
+    /// The literal as written; the value model reads it.
     pub text: String,
     /// The source range the literal covers.
     pub span: Span,
@@ -891,6 +906,19 @@ pub struct LetStmt {
     /// The declared type, if one was written.
     pub ty: Option<TypeRef>,
     /// The pipeline whose value is bound.
+    pub value: Pipeline,
+    /// The source range the statement covers.
+    pub span: Span,
+}
+
+/// `alias name = pipeline` (ADR-0070).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AliasStmt {
+    /// The alias name.
+    pub name: String,
+    /// The span of the name.
+    pub name_span: Span,
+    /// The pipeline the alias stands for. Its span is the text an expansion substitutes.
     pub value: Pipeline,
     /// The source range the statement covers.
     pub span: Span,

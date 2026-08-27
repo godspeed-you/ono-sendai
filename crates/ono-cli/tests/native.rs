@@ -237,3 +237,40 @@ fn should_sort_descending_with_the_specs_own_spelling() {
         "the highest pid comes first and nothing was refused: {text:?}"
     );
 }
+
+#[test]
+fn should_not_wait_on_stdin_when_a_seeded_pipeline_starts_with_a_serializer() {
+    use std::io::Read as _;
+    use std::process::{Command, Stdio};
+    // The pipe is held open for the whole test: a shell that read stdin here would never see
+    // its end, and a seeded pipeline already has its input.
+    let mut child = Command::new(ono_testkit::ono_binary())
+        .args(["-c", "let s = \"x\"; $s | to json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the shell starts");
+    let held_open = child.stdin.take();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("the shell can be waited for") {
+            break status;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a seeded pipeline must not wait on stdin: the shell is still running after 10s"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    drop(held_open);
+    let mut stdout = String::new();
+    child
+        .stdout
+        .take()
+        .expect("stdout is piped")
+        .read_to_string(&mut stdout)
+        .expect("stdout is text");
+    assert!(status.success(), "the shell failed: {status}");
+    assert_eq!(stdout, "[\"x\"]\n");
+}

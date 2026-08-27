@@ -8,13 +8,13 @@
 use ono_core::Span;
 
 use crate::ast::{
-    ArgMode, Argument, BinaryExpr, BinaryOp, Block, CallExpr, CatchClause, ChainOp, ChainedList,
-    CurrentSelector, CurrentValue, Expr, FieldAccess, FieldPath, FnDecl, ForStmt, IfBranch, IfStmt,
-    IndexExpr, LetStmt, ListExpr, MatchArm, MatchArmBody, MatchStmt, NumberLit, NumberValue,
-    OptionArg, Param, ParenInner, ParenValue, Pattern, Pipeline, Program, QualifiedName,
-    RecordExpr, RecordField, RecordKey, RedirectOp, RedirectTarget, Redirection, RegexLit,
-    ReturnStmt, Stage, StageHead, StageList, Statement, StrLit, StrPart, TryStmt, TypeRef,
-    UnaryExpr, UnaryOp, UnitLit, UseStmt, Variable, WhileStmt, WordArg,
+    AliasStmt, ArgMode, Argument, BinaryExpr, BinaryOp, Block, CallExpr, CatchClause, ChainOp,
+    ChainedList, CurrentSelector, CurrentValue, Expr, FieldAccess, FieldPath, FnDecl, ForStmt,
+    IfBranch, IfStmt, IndexExpr, LetStmt, ListExpr, MatchArm, MatchArmBody, MatchStmt, NumberLit,
+    NumberValue, OptionArg, Param, ParenInner, ParenValue, Pattern, Pipeline, Program,
+    QualifiedName, RecordExpr, RecordField, RecordKey, RedirectOp, RedirectTarget, Redirection,
+    RegexLit, ReturnStmt, Stage, StageHead, StageList, Statement, StrLit, StrPart, TimestampLit,
+    TryStmt, TypeRef, UnaryExpr, UnaryOp, UnitLit, UseStmt, Variable, WhileStmt, WordArg,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{LexMode, Token, TokenKind, is_ident_continue, is_ident_start, next_token};
@@ -303,6 +303,7 @@ impl<'a> Parser<'a> {
             match token.text(self.source) {
                 "let" => return (Statement::Let(self.parse_let()), false),
                 "fn" => return (Statement::Fn(self.parse_fn()), true),
+                "alias" => return (Statement::Alias(self.parse_alias()), false),
                 "if" => return (Statement::If(self.parse_if()), true),
                 "for" => return (Statement::For(self.parse_for()), true),
                 "while" => return (Statement::While(self.parse_while()), true),
@@ -352,6 +353,26 @@ impl<'a> Parser<'a> {
             name,
             name_span,
             ty,
+            value,
+            span,
+        }
+    }
+
+    fn parse_alias(&mut self) -> AliasStmt {
+        let keyword = self.bump(LexMode::Words);
+        let (name, name_span) = self.expect_ident("a name for the alias");
+        let assign = self.peek(LexMode::Expr);
+        if assign.kind == TokenKind::Eq {
+            self.bump(LexMode::Expr);
+        } else {
+            let description = self.describe(assign);
+            self.report_unexpected(assign, format!("expected `=`, found {description}"));
+        }
+        let value = self.parse_pipeline();
+        let span = keyword.span.join(value.span);
+        AliasStmt {
+            name,
+            name_span,
             value,
             span,
         }
@@ -989,6 +1010,14 @@ impl Parser<'_> {
             TokenKind::Word => {
                 self.bump(LexMode::Words);
                 StageHead::Command(self.qualified_name(token))
+            }
+            // A value followed by an infix operator is one expression statement — `@ * 2` in a
+            // block, `$n + 1` at the prompt — decided by the same lookahead that tells
+            // `(ls -la)` from `(a - b)` (ADR-0009, ADR-0071 §1).
+            TokenKind::Variable | TokenKind::CurrentValue
+                if self.value_starts_expression(token) =>
+            {
+                StageHead::Value(self.parse_expression())
             }
             TokenKind::Variable => {
                 self.bump(LexMode::Words);
@@ -1674,6 +1703,13 @@ impl Parser<'_> {
             | TokenKind::RawStr
             | TokenKind::UnterminatedStr
             | TokenKind::UnterminatedRawStr => self.parse_string(token),
+            TokenKind::Timestamp => {
+                self.bump(LexMode::ExprOperand);
+                Expr::Timestamp(TimestampLit {
+                    text: token.text(self.source).to_owned(),
+                    span: token.span,
+                })
+            }
             TokenKind::Ip => {
                 self.bump(LexMode::ExprOperand);
                 Expr::Ip(crate::ast::IpLit {
@@ -1998,6 +2034,18 @@ impl Parser<'_> {
         if matches!(first.text(self.source), "true" | "false" | "null" | "not") {
             return true;
         }
+        self.operator_follows(first)
+    }
+
+    /// Whether the value token `first`, at the head of a stage, begins an expression rather than
+    /// a value that seeds a pipeline: `$n + 1` and `@ * 2` do, `$hot | select …` and
+    /// `$cmd -la` do not.
+    fn value_starts_expression(&self, first: Token) -> bool {
+        self.operator_follows(first)
+    }
+
+    /// Whether an infix operator written as arithmetic follows `first`.
+    fn operator_follows(&self, first: Token) -> bool {
         let second = self.peek_after(LexMode::Expr, first);
         let adjacent = first.span.end() == second.span.start();
         match second.kind {

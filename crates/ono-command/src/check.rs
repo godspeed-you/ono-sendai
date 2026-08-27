@@ -129,6 +129,11 @@ fn check_stage(
                 if !field_bearing(name) {
                     continue;
                 }
+                // `sort desc` with no key: the word is the direction over the identity key,
+                // not a field (ADR-0071 §3), exactly as the transform will read it.
+                if contract.id() == "ono.data.sort" && name == "key" && bare_direction(&bound) {
+                    continue;
+                }
                 if let crate::Binding::Expressions(expressions) = binding {
                     for expression in expressions {
                         check_fields(expression, schema)?;
@@ -169,6 +174,20 @@ pub(crate) fn schema_after(
         }
     }
     element
+}
+
+/// Whether `sort`'s key is a bare `asc`/`desc` standing in for an unwritten direction
+/// (ADR-0071 §3). A written direction arrives as an expression; the default, as a value.
+fn bare_direction(bound: &crate::BoundArguments) -> bool {
+    let direction_written = matches!(
+        bound.selector_binding("direction"),
+        Some(crate::Binding::Expressions(_))
+    );
+    !direction_written
+        && matches!(
+            bound.selector_expression("key"),
+            Some(ono_parser::Expr::Path(path)) if matches!(path.name.as_str(), "asc" | "desc")
+        )
 }
 
 /// The schema flowing out of a stage: its own where it names one, the upstream's where its output

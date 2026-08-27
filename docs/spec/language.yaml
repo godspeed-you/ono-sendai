@@ -17,7 +17,7 @@ grammar: grammar.ebnf
 # words-mode argument position `let` is the word "let" and nothing more (ADR-0009).
 # ---------------------------------------------------------------------------------------------
 keywords:
-  statement: [let, fn, if, else, for, while, match, try, catch, return, break, continue, use]
+  statement: [let, fn, alias, if, else, for, while, match, try, catch, return, break, continue, use]
   expression: [and, or, not, in]
   literal: [true, false, null]
   reserved:
@@ -178,6 +178,12 @@ literals:
     doc: >-
       A regex literal only in expression mode at operand position. In words mode `/etc/passwd`
       is a path word.
+  timestamp:
+    form: "2000-01-01T00:00:00Z"
+    doc: >-
+      An instant, in the RFC 3339 profile of ISO 8601 (spec §6.3 dates, §10.2): a full date, `T`,
+      a time and a zone. Only in expression operand position; a date alone is not a literal
+      (ADR-0071).
   boolean: {forms: ["true", "false"]}
   null: {forms: ["null"], doc: "Unknown or unavailable data. Never fabricated and never zero (spec §10.5)."}
 
@@ -255,6 +261,7 @@ resolution_order:
 statements:
   - {form: "let name [: type] = pipeline", doc: "Declare or rebind a binding in the current scope (spec §19.2). The only binding form; rebinding is a further `let`."}
   - {form: "fn name(param: Type = default, …) -> Type { … }", doc: "Declare a function (spec §19.3)."}
+  - {form: "alias name = pipeline", doc: "Declare an alias (spec §6.5 step 2). Its text replaces the head word that names it, exactly once, and the result is resolved again from step 1 (ADR-0070)."}
   - {form: "if expr { … } else if expr { … } else { … }", doc: "Conditional (spec §19.5)."}
   - {form: "for name in expr { … }", doc: "Iterate over a list or stream."}
   - {form: "while expr { … }", doc: "Loop while the expression holds."}

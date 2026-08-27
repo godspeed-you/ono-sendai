@@ -242,6 +242,29 @@ impl Value {
         }
     }
 
+    /// The current wall-clock instant, as `now()` answers it (spec §6.3, ADR-0071).
+    #[must_use]
+    pub fn now() -> Self {
+        Value::Timestamp(Timestamp::now())
+    }
+
+    /// Reads a timestamp literal in the RFC 3339 spelling (ADR-0071).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorCode::TypeMismatch`] when the text is not such a timestamp — a day that
+    /// does not exist, an hour past 23.
+    pub fn parse_timestamp(text: &str) -> Result<Self, ErrorValue> {
+        text.parse::<Timestamp>()
+            .map(Value::Timestamp)
+            .map_err(|error| {
+                ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`{text}` is not a timestamp: {error}"),
+                )
+            })
+    }
+
     /// The value as an instant in time.
     ///
     /// # Errors
