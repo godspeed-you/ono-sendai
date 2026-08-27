@@ -147,6 +147,30 @@ fn check_stage(
     Ok(output_schema(contract.output(), schemas, upstream))
 }
 
+/// The schema flowing out of the last stage of `pipeline`, for completion (spec §15.1,
+/// ADR-0074): what `get process | where cpu > 1 |` hands the stage being typed.
+///
+/// Nothing is checked here — a typo upstream is the check's to report when the line runs — and
+/// nothing is guessed: a stage that is not a native command, or one that reshapes the stream
+/// into something undeclared, leaves the schema unknown.
+pub(crate) fn schema_after(
+    registry: &CommandRegistry,
+    schemas: &[Arc<Schema>],
+    pipeline: &Pipeline,
+) -> Option<Arc<Schema>> {
+    let mut element: Option<Arc<Schema>> = None;
+    let lists =
+        std::iter::once(&pipeline.head).chain(pipeline.tail.iter().map(|chained| &chained.list));
+    for list in lists {
+        for stage in &list.stages {
+            let head = stage.head.name()?;
+            let contract = registry.resolve(head, &stage.arguments).ok()?.contract;
+            element = output_schema(contract.output(), schemas, element);
+        }
+    }
+    element
+}
+
 /// The schema flowing out of a stage: its own where it names one, the upstream's where its output
 /// type is open, and nothing where it reshapes the stream into something undeclared.
 fn output_schema(

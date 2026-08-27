@@ -70,7 +70,6 @@ fn serde_json_text(value: &Value) -> String {
 // --- `tail` -----------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_the_last_n_values_of_a_finite_stream() {
     let run = ono("echo '[1,2,3,4]' | from json | tail 2 | to json");
     run.assert_success();
@@ -82,7 +81,6 @@ fn should_emit_the_last_n_values_of_a_finite_stream() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_whole_records_when_tailing_a_record_stream() {
     let run = ono(r#"echo '[{"n":1},{"n":2},{"n":3}]' | from json | tail 1 | to json"#);
     run.assert_success();
@@ -94,7 +92,6 @@ fn should_keep_whole_records_when_tailing_a_record_stream() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_the_whole_stream_when_the_count_exceeds_it() {
     let run = ono("echo '[1,2]' | from json | tail 9 | to json");
     run.assert_success();
@@ -106,7 +103,6 @@ fn should_emit_the_whole_stream_when_the_count_exceeds_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_follow_a_finite_stream_to_its_end_when_asked_to_follow() {
     // data.yaml: `--follow` keeps the stream open and emits values as they arrive. On a finite
     // input the end arrives at once, so the observable result is the same trailing window — the
@@ -121,7 +117,6 @@ fn should_follow_a_finite_stream_to_its_end_when_asked_to_follow() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_follow_an_unbounded_stream_instead_of_waiting_for_its_end() {
     // data.yaml: "Emit the last N values of a finite stream, or follow an unbounded one." Spec
     // §11.1: a blocking transform on an unbounded stream needs a window or a structured error;
@@ -137,7 +132,6 @@ fn should_follow_an_unbounded_stream_instead_of_waiting_for_its_end() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_bind_the_transform_after_a_native_stage_and_the_program_at_a_byte_boundary() {
     // ADR-0028: a native command whose declared input is a stream of objects binds only where
     // objects reach it; elsewhere the name resolves onward to `PATH`. So `tail -n 1 <file>` at
@@ -170,7 +164,6 @@ const USERS: &str = r#"let users = [{"uid":0,"name":"root"},{"uid":7,"name":"nob
 const PROCS: &str = r#"let procs = [{"pid":1,"uid":0},{"pid":2,"uid":1}]"#;
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pair_records_that_share_the_key_in_an_inner_join() {
     let run = ono(&format!(
         "{USERS}; {PROCS}; $procs | join $users --on uid | to json"
@@ -196,7 +189,6 @@ fn should_pair_records_that_share_the_key_in_an_inner_join() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_unmatched_left_rows_with_a_null_right_side_when_kind_is_left() {
     let run = ono(&format!(
         "{USERS}; {PROCS}; $procs | join $users --on uid --kind left | to json"
@@ -219,7 +211,6 @@ fn should_keep_unmatched_left_rows_with_a_null_right_side_when_kind_is_left() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_the_unmatched_rows_of_both_sides_in_an_outer_join() {
     let run = ono(&format!(
         "{USERS}; {PROCS}; $procs | join $users --on uid --kind outer | to json"
@@ -243,7 +234,6 @@ fn should_keep_the_unmatched_rows_of_both_sides_in_an_outer_join() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_join_provider_records_given_as_a_parenthesised_pipeline() {
     // data.yaml's own example spells the right side as `(get socket)`; the process provider
     // stands in for the socket provider so the test needs no privilege.
@@ -286,7 +276,6 @@ fn changes(rows: &[Value]) -> Vec<(String, i64)> {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_added_removed_and_changed_rows_between_two_snapshots() {
     let run = ono(&format!(
         "{BEFORE}; {NOW}; $now | diff $before --identity [pid] | to json"
@@ -308,7 +297,6 @@ fn should_report_added_removed_and_changed_rows_between_two_snapshots() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_carry_both_values_of_a_changed_row() {
     let run = ono(&format!(
         "{BEFORE}; {NOW}; $now | diff $before --identity [pid] | where change == \"changed\" \
@@ -326,7 +314,6 @@ fn should_carry_both_values_of_a_changed_row() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_no_rows_when_the_snapshots_are_identical() {
     let run = ono(&format!(
         "{BEFORE}; $before | diff $before --identity [pid] | to json"
@@ -340,7 +327,6 @@ fn should_report_no_rows_when_the_snapshots_are_identical() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_compare_provider_records_by_their_schema_identity_without_an_override() {
     // `ono.process/1` declares `identity: [pid, started]`, so no `--identity` is needed. The
     // right side is an empty snapshot (no process has that pid), which makes pid 1 `added`.
@@ -398,7 +384,6 @@ fn screen_of(columns: u16, script: &str) -> String {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_stack_records_instead_of_truncating_a_table_when_the_terminal_is_narrow() {
     // Spec §13.2: a compact table only "when records are homogeneous and terminal width
     // permits"; otherwise stacked records, one field per line, so that every value stays

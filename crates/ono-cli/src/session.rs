@@ -47,6 +47,9 @@ pub struct Session {
     /// Recent structured results, newest last (spec §20.2). Bounded, so a long session cannot
     /// hold every table it ever printed.
     results: std::collections::VecDeque<Vec<Value>>,
+    /// Sub-pipelines being captured as values, innermost last: while one is open, a finished
+    /// native pipeline hands its values here instead of to the terminal (ADR-0072 §4).
+    captures: Vec<Vec<Value>>,
     /// Backgrounded native pipelines (spec §18.4, ADR-0024): jobs in the same table as external
     /// commands, numbered from the executor's own sequence.
     native_jobs: Vec<NativeJob>,
@@ -153,6 +156,7 @@ impl Session {
             providers: None,
             frames: Vec::new(),
             results: std::collections::VecDeque::new(),
+            captures: Vec::new(),
             native_jobs: Vec::new(),
             selection: None,
             links: Vec::new(),
@@ -483,6 +487,46 @@ impl Session {
     #[must_use]
     pub fn binding(&self, name: &str) -> Option<&Value> {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
+    }
+
+    /// Every visible binding, innermost scope winning, as a native stage's expressions see them.
+    #[must_use]
+    pub fn bindings(&self) -> BTreeMap<String, Value> {
+        let mut visible = BTreeMap::new();
+        for scope in &self.scopes {
+            visible.extend(
+                scope
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone())),
+            );
+        }
+        visible
+    }
+
+    /// Starts capturing: the next finished pipeline's values go to [`end_capture`] rather than
+    /// to the terminal (ADR-0072 §4).
+    ///
+    /// [`end_capture`]: Self::end_capture
+    pub fn begin_capture(&mut self) {
+        self.captures.push(Vec::new());
+    }
+
+    /// Ends the innermost capture and returns what it collected.
+    pub fn end_capture(&mut self) -> Vec<Value> {
+        self.captures.pop().unwrap_or_default()
+    }
+
+    /// Hands finished values to the innermost capture, if one is open.
+    ///
+    /// Returns whether they were taken; when they were not, they are the terminal's to show.
+    pub fn capture(&mut self, values: &[Value]) -> bool {
+        match self.captures.last_mut() {
+            Some(capture) => {
+                capture.extend(values.iter().cloned());
+                true
+            }
+            None => false,
+        }
     }
 
     /// Binds `name` in the innermost scope. A further `let` rebinds it (ADR-0009).

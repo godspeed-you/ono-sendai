@@ -1,7 +1,11 @@
-//! `take`, `skip`, `first` and `last`: the transforms that cut a stream by position (spec §53).
+//! `take`, `skip`, `tail`, `first` and `last`: the transforms that cut a stream by position
+//! (spec §53).
+
+use std::collections::VecDeque;
 
 use crate::stream::forward_at_most;
 use crate::{Boundedness, InputRequirement, Transform, ValueStream, Window};
+use ono_value::Value;
 
 /// Emits the first `count` values and then stops (spec §53: streaming and lazy).
 ///
@@ -62,6 +66,59 @@ impl Transform for Skip {
                 if seen <= count {
                     continue;
                 }
+                if sink.send(value).await.is_err() {
+                    return;
+                }
+            }
+        })
+    }
+}
+
+/// Emits the last `count` values of a stream that ends, or follows one that does not.
+///
+/// On a bounded stream it holds at most `count` values and emits them once the input ends. On an
+/// unbounded stream there is no end to wait for, so every value is among the last `count` the
+/// moment it arrives and is passed on at once — the way `tail -f` follows a file (spec §11.1
+/// declares `tail` streaming; a transform that waited for the end of `watch` would never answer).
+pub struct Tail {
+    count: usize,
+}
+
+impl Tail {
+    /// The last `count` values.
+    #[must_use]
+    pub const fn new(count: usize) -> Self {
+        Self { count }
+    }
+}
+
+impl Transform for Tail {
+    fn name(&self) -> &'static str {
+        "tail"
+    }
+
+    fn apply(self: Box<Self>, input: ValueStream) -> ValueStream {
+        let count = self.count;
+        let boundedness = input.boundedness();
+        input.stage(boundedness, move |mut input, sink| async move {
+            if !boundedness.is_bounded() {
+                while let Some(value) = input.next_value(&sink).await {
+                    if sink.send(value).await.is_err() {
+                        return;
+                    }
+                }
+                return;
+            }
+            let mut window: VecDeque<Value> = VecDeque::with_capacity(count.min(1024));
+            while let Some(value) = input.next_value(&sink).await {
+                if window.len() == count {
+                    window.pop_front();
+                }
+                if count > 0 {
+                    window.push_back(value);
+                }
+            }
+            for value in window {
                 if sink.send(value).await.is_err() {
                     return;
                 }
@@ -151,4 +208,4 @@ impl Transform for Last {
     }
 }
 
-crate::transform::debug_as_name!(Take, Skip, First, Last);
+crate::transform::debug_as_name!(Take, Skip, Tail, First, Last);

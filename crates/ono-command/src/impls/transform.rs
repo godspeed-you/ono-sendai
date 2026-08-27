@@ -10,7 +10,8 @@ use std::sync::Arc;
 use ono_core::ErrorCode;
 use ono_parser::Expr;
 use ono_pipeline::{
-    Count, Each, Group, Measure, PathSegment, Reduce, Select, SelectField, Skip, Sort, Take, Where,
+    Count, Diff, Each, Group, Join, JoinKind, Measure, PathSegment, Reduce, Select, SelectField,
+    Skip, Sort, Tail, Take, Where,
 };
 use ono_value::{ErrorValue, Value};
 
@@ -29,10 +30,13 @@ pub(crate) enum Kind {
     Group,
     Take,
     Skip,
+    Tail,
     Each,
     Reduce,
     Count,
     Measure,
+    Join,
+    Diff,
 }
 
 /// One transform, registered against the contract that declares it.
@@ -92,6 +96,9 @@ impl CommandImpl for TransformCommand {
             }
             Kind::Take => input.transform(Take::new(count(arguments, &spelling, &scope)?))?,
             Kind::Skip => input.transform(Skip::new(count(arguments, &spelling, &scope)?))?,
+            // `--follow` names what `tail` does anyway on a stream that never ends (ADR-0072);
+            // on a bounded stream the end arrives, and the trailing window is the answer.
+            Kind::Tail => input.transform(Tail::new(count(arguments, &spelling, &scope)?))?,
             Kind::Each => {
                 let body = expression(arguments, "body", &spelling)?;
                 let scope = Arc::clone(&scope);
@@ -126,6 +133,23 @@ impl CommandImpl for TransformCommand {
                 input.transform(reduce)?
             }
             Kind::Pass => input,
+            Kind::Join => {
+                // ADR-0072 §2: the right side is a value already in hand — a `$variable` or a
+                // parenthesised pipeline the evaluator ran — and one key expression reads both
+                // sides with the record's fields in scope.
+                let right = right_side(arguments, &spelling, &scope)?;
+                let key = option_key_function(arguments, "on", &spelling, &scope)?;
+                let kind = join_kind(arguments, &spelling)?;
+                input.transform(Join::new(right, key).with_kind(kind))?
+            }
+            Kind::Diff => {
+                // ADR-0072 §3: the input is the current state, the right side what it is
+                // compared against, and identity is the schema's unless `--identity` says
+                // otherwise.
+                let previous = right_side(arguments, &spelling, &scope)?;
+                let identity = identity_function(arguments, &scope);
+                input.transform(Diff::new(previous, identity))?
+            }
             Kind::Count => input.transform(Count::new())?,
             Kind::Measure => {
                 let key = key_function(arguments, "key", &spelling, &scope)?;
@@ -192,6 +216,136 @@ fn count(
         )
         .with_help("a count is zero or more")
     })
+}
+
+/// The records of the `right` selector: a list's items, a single value, or nothing for null.
+fn right_side(
+    arguments: &BoundArguments,
+    spelling: &str,
+    scope: &Arc<Scope>,
+) -> Result<Vec<Value>, ErrorValue> {
+    let value = match arguments.selector_binding("right") {
+        Some(Binding::Value(value)) => value.clone(),
+        Some(Binding::Expressions(expressions)) => match expressions.first() {
+            Some(expression) => evaluate(expression, &Value::Null, scope)?,
+            None => Value::Null,
+        },
+        None => {
+            return Err(ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("`{spelling}` needs the records to compare against, and none were given"),
+            )
+            .with_help(format!(
+                "write it as `{spelling} $other --on key` or `{spelling} (get socket) --on pid`"
+            )));
+        }
+    };
+    Ok(match value {
+        Value::List(items) => items.to_vec(),
+        Value::Null => Vec::new(),
+        other => vec![other],
+    })
+}
+
+/// The identity `diff` compares by: the `--identity` fields where given, else the fields the
+/// record's schema declares as its identity (spec §28.1), else the value itself.
+///
+/// One field keys by its value; several key by the list of their values, in the order given.
+fn identity_function(arguments: &BoundArguments, scope: &Arc<Scope>) -> impl ono_pipeline::KeyFn {
+    let overridden: Option<Vec<Expr>> = match arguments.option_binding("identity") {
+        Some(Binding::Expressions(expressions)) => match expressions.first() {
+            Some(Expr::List(list)) => Some(list.items.clone()),
+            Some(single) => Some(vec![single.clone()]),
+            None => None,
+        },
+        _ => None,
+    };
+    let scope = Arc::clone(scope);
+    move |value: &Value| {
+        if let Some(fields) = &overridden {
+            let mut keys = Vec::with_capacity(fields.len());
+            for field in fields {
+                keys.push(evaluate(field, value, &scope)?);
+            }
+            return Ok(single_or_list(keys));
+        }
+        match value.as_record() {
+            Ok(record) if !record.schema().identity().is_empty() => {
+                let keys: Vec<Value> = record
+                    .schema()
+                    .identity()
+                    .iter()
+                    .map(|name| record.get(name).cloned().unwrap_or(Value::Null))
+                    .collect();
+                Ok(single_or_list(keys))
+            }
+            _ => Ok(value.clone()),
+        }
+    }
+}
+
+fn single_or_list(mut keys: Vec<Value>) -> Value {
+    if keys.len() == 1 {
+        keys.pop().unwrap_or(Value::Null)
+    } else {
+        Value::list(keys)
+    }
+}
+
+/// A key function over the expression bound to the option `name`.
+fn option_key_function(
+    arguments: &BoundArguments,
+    name: &str,
+    spelling: &str,
+    scope: &Arc<Scope>,
+) -> Result<impl ono_pipeline::KeyFn + use<>, ErrorValue> {
+    let key = arguments.option_expression(name).cloned().ok_or_else(|| {
+        ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            format!("`{spelling}` needs `--{name} <key>`, and none was given"),
+        )
+        .with_help(format!(
+            "name the field both sides share, as in `{spelling} … --{name} pid`"
+        ))
+    })?;
+    let scope = Arc::clone(scope);
+    Ok(move |value: &Value| evaluate(&key, value, &scope))
+}
+
+/// Which unmatched rows `join` keeps: `--kind inner|left|right|outer`, `inner` by default.
+fn join_kind(arguments: &BoundArguments, spelling: &str) -> Result<JoinKind, ErrorValue> {
+    let Some(binding) = arguments.option_binding("kind") else {
+        return Ok(JoinKind::Inner);
+    };
+    let written = spelled_word(binding).ok_or_else(|| kind_error(spelling, "an expression"))?;
+    match written.as_str() {
+        "inner" => Ok(JoinKind::Inner),
+        "left" => Ok(JoinKind::Left),
+        "right" => Ok(JoinKind::Right),
+        "outer" => Ok(JoinKind::Outer),
+        other => Err(kind_error(spelling, other)),
+    }
+}
+
+fn kind_error(spelling: &str, written: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::TypeMismatch,
+        format!("`{spelling}` joins `inner`, `left`, `right` or `outer`, not `{written}`"),
+    )
+}
+
+/// The word a vocabulary argument was written as — `left` as a bare word, `"left"` quoted, or
+/// the value a words-mode binding already carries.
+fn spelled_word(binding: &Binding) -> Option<String> {
+    match binding {
+        Binding::Value(Value::String(text)) => Some(text.to_string()),
+        Binding::Value(other) => ono_value::canonical_text(other).ok(),
+        Binding::Expressions(expressions) => match expressions.first() {
+            Some(Expr::Path(path)) => Some(path.name.clone()),
+            Some(Expr::Str(literal)) => literal.literal_text().map(str::to_owned),
+            _ => None,
+        },
+    }
 }
 
 /// Whether `sort` was asked for the other end of the order.

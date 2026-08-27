@@ -36,7 +36,6 @@ fn offers(names: &[String], field: &str) -> bool {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_offer_the_process_fields_after_where() {
     let names = texts(&complete("get process | where "));
 
@@ -51,7 +50,6 @@ fn should_offer_the_process_fields_after_where() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_narrow_the_field_candidates_by_the_typed_prefix() {
     let narrowed = texts(&complete("get process | where cp"));
     assert_eq!(
@@ -62,7 +60,6 @@ fn should_narrow_the_field_candidates_by_the_typed_prefix() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_offer_the_fields_after_select() {
     let names = texts(&complete("get process | select "));
 
@@ -75,7 +72,6 @@ fn should_offer_the_fields_after_select() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_offer_the_file_fields_after_where_on_a_file_listing() {
     let names = texts(&complete("get file /etc | where "));
 
@@ -93,7 +89,6 @@ fn should_offer_the_file_fields_after_where_on_a_file_listing() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_offering_the_fields_after_an_earlier_streaming_transform() {
     // `where` passes records through unchanged, so the schema is still Process two stages in.
     let names = texts(&complete("get process | where cpu > 1 | select "));
@@ -105,7 +100,6 @@ fn should_keep_offering_the_fields_after_an_earlier_streaming_transform() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_carry_the_field_documentation_on_a_field_candidate() {
     let candidates = complete("get process | where pi");
     let pid = candidates

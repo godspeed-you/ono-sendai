@@ -72,7 +72,7 @@ pub use explain::{
     Adaptation, ExecutionPlan, PlanContext, Resolution, StagePlan, adapt_program, is_adapt, is_raw,
     literal_arguments, plan, plan_for, plan_with, raw_program,
 };
-pub use expr::{Scope, check_fields, evaluate, evaluate_to_value, is_true};
+pub use expr::{Scope, check_fields, evaluate, evaluate_to_value, is_true, nested_pipelines};
 pub use help::{CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help};
 pub use impls::{builtin_commands, builtin_commands_for};
 pub use invoke::{
