@@ -608,6 +608,7 @@ dependencies = [
  "ono-protocol",
  "ono-provider-api",
  "ono-provider-linux",
+ "ono-provider-net",
  "ono-provider-netlink",
  "ono-provider-systemd",
  "ono-remote",
@@ -807,6 +808,20 @@ dependencies = [
  "ono-testkit",
  "ono-value",
  "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "ono-provider-net"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "jiff",
+ "libc",
+ "ono-core",
+ "ono-pipeline",
+ "ono-provider-api",
+ "ono-value",
  "tokio",
 ]
 

@@ -18,9 +18,6 @@ deferred:
   - id: ono.device/1
     phase: "C"
     required_by: [ono.device.get]
-  - id: ono.dns-record/1
-    phase: "C"
-    required_by: [ono.dns.resolve]
   - id: ono.session/1
     phase: "C"
     required_by: [ono.session.get]

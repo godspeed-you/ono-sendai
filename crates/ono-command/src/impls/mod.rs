@@ -187,7 +187,9 @@ fn implementation_of(
                 return None;
             }
             match contract.verb() {
-                "get" | "find" => Arc::new(ProviderProducer::new(id)),
+                // `resolve dns` and `test port` ask a provider a question and stream its answer,
+                // exactly as `get` does; the contract's selectors are the query (ADR-0087).
+                "get" | "find" | "resolve" | "test" => Arc::new(ProviderProducer::new(id)),
                 verb if registry.verb(verb).is_some_and(VerbSpec::is_mutating) => {
                     // With a provider set, a mutating verb is bound exactly when a provider for
                     // the target advertises the capability the contract names (ADR-0068 §3).

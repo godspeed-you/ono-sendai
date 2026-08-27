@@ -207,6 +207,20 @@ Default view: `depth`, `kind`, `target`, `identity`
 | `identity` | `string` | — | optional | The identity of the entered object — `nginx.service`, `/etc`, `prod-db` — rendered the way the prompt shows it. Null for the ground frame. |
 | `selector` | `string` | — | optional | The explicit spelling of what the frame contributes, such as `--service nginx.service` (spec §14.5, ADR-0023): every context is expressible without entering it. |
 
+## DnsRecord — `ono.dns-record/1`
+
+One answer of a name resolution — an address for a name, or a name for an address.
+
+Identity: `name`, `type`, `address`
+
+Default view: `name`, `type`, `address`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `name` | `string` | — | required | The name the record is about: the query, for an address record; the host name the address maps to, for a pointer record. |
+| `type` | `enum` | — | required | The record type. `A` and `AAAA` answer a name with an address; `PTR` answers an address with a name, which is what a query that is itself an address asks for. `--type` selects one. |
+| `address` | `ip` | — | required | The address an `A`/`AAAA` record carries, or the address a `PTR` record answers for. |
+
 ## Endpoint — `ono.endpoint/1`
 
 One end of a socket: an address and port, or a filesystem path for a Unix socket.

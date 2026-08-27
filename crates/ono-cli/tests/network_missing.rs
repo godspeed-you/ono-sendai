@@ -205,7 +205,6 @@ fn context_frames(run: &ono_testkit::Run) -> Vec<Value> {
 // --- resolve dns ------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_localhost_to_a_loopback_record_when_resolving_dns() {
     // Spec §9.1: `resolve dns <name>` yields `Stream<DnsRecord>`. `localhost` comes from
     // /etc/hosts, so the answer needs no network and is the same on every machine.
@@ -238,7 +237,6 @@ fn should_resolve_localhost_to_a_loopback_record_when_resolving_dns() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_only_the_requested_record_type_when_resolving_dns_with_a_type() {
     // network.yaml: `--type` restricts the answer to one record type.
     let run = ono("resolve dns localhost --type A | to json");
@@ -264,7 +262,6 @@ fn should_return_only_the_requested_record_type_when_resolving_dns_with_a_type()
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_perform_a_reverse_lookup_when_the_query_is_an_address() {
     // network.yaml, selector `query`: "An address performs a reverse lookup." 127.0.0.1 is
     // `localhost` in /etc/hosts everywhere.
@@ -280,7 +277,6 @@ fn should_perform_a_reverse_lookup_when_the_query_is_an_address() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_a_structured_error_and_not_hang_when_the_name_does_not_exist() {
     // `.invalid` is reserved never to resolve (RFC 2606). The resolver answers "no such name"
     // where it is reachable and "cannot ask" where the container has no network; both are

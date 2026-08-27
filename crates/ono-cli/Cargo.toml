@@ -29,6 +29,7 @@ ono-provider-api.workspace = true
 ono-protocol.workspace = true
 ono-remote.workspace = true
 ono-provider-linux.workspace = true
+ono-provider-net.workspace = true
 ono-provider-netlink.workspace = true
 ono-provider-systemd.workspace = true
 ono-value.workspace = true

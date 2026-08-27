@@ -21,6 +21,7 @@ ono-command = { path = "crates/ono-command", version = "0.2.0" }
 ono-render = { path = "crates/ono-render", version = "0.2.0" }
 ono-provider-api = { path = "crates/ono-provider-api", version = "0.2.0" }
 ono-provider-linux = { path = "crates/ono-provider-linux", version = "0.2.0" }
+ono-provider-net = { path = "crates/ono-provider-net", version = "0.2.0" }
 ono-provider-netlink = { path = "crates/ono-provider-netlink", version = "0.2.0" }
 ono-provider-systemd = { path = "crates/ono-provider-systemd", version = "0.2.0" }
 ono-editor = { path = "crates/ono-editor", version = "0.2.0" }
@@ -44,6 +45,7 @@ csv = "1"
 futures = "0.3"
 globset = "0.4"
 jiff = { version = "0.2", features = ["serde"] }
+libc = "0.2"
 nix = "0.31"
 regex = "1"
 serde = { version = "1", features = ["derive", "rc"] }

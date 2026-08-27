@@ -1,0 +1,11 @@
+# The providers that ask beyond the local kernel: the C library's resolver, and the network
+# itself. See linux-procfs.yaml for what this registry is and what enforces it.
+
+providers:
+  - id: linux.resolver
+    doc: >-
+      Names and addresses, through the C library's resolver (getaddrinfo / getnameinfo) — NSS,
+      so /etc/hosts, DNS, mDNS and LDAP all answer, exactly as they do for every other program.
+    targets: [dns]
+    capabilities: [dns.resolve]
+    schemas: [ono.dns-record/1]

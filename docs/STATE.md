@@ -93,6 +93,15 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [network | 2026-08-27] **the network family** (`crates/ono-cli/tests/network_missing.rs` minus
+  the eight watch/trace tests another agent owns; three tests of
+  `options_and_selectors_missing.rs`): `resolve dns`, `test port`, the ten route/interface/socket
+  mutations — files: `crates/ono-provider-net/`, `crates/ono-provider-netlink/src/{act,provider,
+  transport,sys}.rs`, `crates/ono-command/src/impls/{mod,mutate,convert}.rs`,
+  `crates/ono-value/src/{builtin,value}.rs`, `docs/spec/commands/network.yaml`,
+  `docs/spec/schemas/{dns-record,probe-result}.v1.yaml`, `docs/spec/providers/linux-{resolver,
+  netlink}.yaml`, `docker/acceptance/cases/039-network-dns-port-mutations.case`, ADR-0087…0089.
+
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
   one `#[ignore = "REASON: …"]` (AGENTS.md §7) so the tree stays green; **the increment that

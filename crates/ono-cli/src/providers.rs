@@ -27,6 +27,7 @@ pub fn registry(environment: impl IntoIterator<Item = (String, String)>) -> Prov
     registry.register(Arc::new(ono_provider_netlink::RouteProvider::new()));
     registry.register(Arc::new(ono_provider_netlink::NeighborProvider::new()));
     registry.register(Arc::new(ono_provider_netlink::SocketProvider::new()));
+    registry.register(Arc::new(ono_provider_net::DnsProvider::new()));
 
     registry
 }
