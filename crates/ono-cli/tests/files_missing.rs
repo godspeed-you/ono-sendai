@@ -199,7 +199,6 @@ fn should_read_the_file_that_arrives_through_the_pipeline() {
 // --- write file (spec §9.1, §11.5) --------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_create_a_file_from_the_pipeline_string_when_writing() {
     let directory = scratch();
 
@@ -217,7 +216,6 @@ fn should_create_a_file_from_the_pipeline_string_when_writing() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_write_external_bytes_unchanged() {
     let directory = scratch();
 
@@ -233,7 +231,6 @@ fn should_write_external_bytes_unchanged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_replace_an_existing_file_without_overwrite() {
     let directory = scratch();
     directory.write("out.txt", "old");
@@ -252,7 +249,6 @@ fn should_refuse_to_replace_an_existing_file_without_overwrite() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_replace_an_existing_file_when_overwrite_is_given() {
     let directory = scratch();
     directory.write("out.txt", "old");
@@ -271,7 +267,6 @@ fn should_replace_an_existing_file_when_overwrite_is_given() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_append_to_an_existing_file_when_append_is_given() {
     let directory = scratch();
     directory.write("log.txt", "old\n");

@@ -162,6 +162,7 @@ pub struct ActRequest {
     object: ObjectId,
     arguments: Vec<(String, Value)>,
     dry_run: bool,
+    source: Option<String>,
 }
 
 impl ActRequest {
@@ -174,6 +175,7 @@ impl ActRequest {
             object,
             arguments: Vec::new(),
             dry_run: false,
+            source: None,
         }
     }
 
@@ -206,6 +208,7 @@ impl ActRequest {
         );
         request.arguments = action.arguments().to_vec();
         request.dry_run = action.is_dry_run();
+        request.source = action.source().map(str::to_owned);
         request
     }
 
@@ -222,6 +225,9 @@ impl ActRequest {
         }
         if self.dry_run {
             action = action.as_dry_run();
+        }
+        if let Some(source) = &self.source {
+            action = action.with_source(source.clone());
         }
         action
     }
@@ -671,6 +677,13 @@ fn act_to_json(request: &ActRequest) -> Json {
         ("object", object_id_to_json(&request.object)),
         ("arguments", pairs_to_json(&request.arguments)),
         ("dry_run", Json::Bool(request.dry_run)),
+        (
+            "source",
+            request
+                .source
+                .as_ref()
+                .map_or(Json::Null, |source| Json::String(source.clone())),
+        ),
     ])
 }
 
@@ -693,6 +706,7 @@ fn act_from_json(
     if json.get("dry_run").and_then(Json::as_bool) == Some(true) {
         request = request.as_dry_run();
     }
+    request.source = json.get("source").and_then(Json::as_str).map(str::to_owned);
     Ok(request)
 }
 

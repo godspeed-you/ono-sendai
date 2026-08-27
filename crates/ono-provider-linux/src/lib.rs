@@ -48,6 +48,7 @@ pub mod accounts;
 mod common;
 mod env;
 mod file;
+mod file_mutations;
 mod identity;
 mod process;
 mod procfs;

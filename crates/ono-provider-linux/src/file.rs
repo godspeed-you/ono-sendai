@@ -22,7 +22,9 @@ use nix::fcntl::{AT_FDCWD, AtFlags, OFlag, openat, readlinkat};
 use nix::sys::stat::{FileStat, Mode, SFlag, fstatat, major, minor};
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+};
 use ono_value::{ByteSize, ErrorValue, RecordValue, Schema, Value};
 
 use crate::accounts::{Accounts, NssAccounts};
@@ -534,6 +536,7 @@ impl Provider for FileProvider {
             Capability::new("file.list", Risk::Read),
             Capability::new("file.find", Risk::Read),
             Capability::new("file.read", Risk::Read),
+            Capability::new("file.write", Risk::Mutate),
             Capability::new("dir.list", Risk::Read),
         ]
     }
@@ -598,5 +601,9 @@ impl Provider for FileProvider {
             .describe(AT_FDCWD, path.as_os_str(), path.clone(), false)
             .await?;
         Ok(ObjectRef::of(&record).into_iter().collect())
+    }
+
+    async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        crate::file_mutations::act(self, action).await
     }
 }
