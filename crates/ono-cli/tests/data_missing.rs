@@ -70,7 +70,6 @@ fn serde_json_text(value: &Value) -> String {
 // --- `tail` -----------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_the_last_n_values_of_a_finite_stream() {
     let run = ono("echo '[1,2,3,4]' | from json | tail 2 | to json");
     run.assert_success();
@@ -82,7 +81,6 @@ fn should_emit_the_last_n_values_of_a_finite_stream() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_whole_records_when_tailing_a_record_stream() {
     let run = ono(r#"echo '[{"n":1},{"n":2},{"n":3}]' | from json | tail 1 | to json"#);
     run.assert_success();
@@ -94,7 +92,6 @@ fn should_keep_whole_records_when_tailing_a_record_stream() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_the_whole_stream_when_the_count_exceeds_it() {
     let run = ono("echo '[1,2]' | from json | tail 9 | to json");
     run.assert_success();
@@ -106,7 +103,6 @@ fn should_emit_the_whole_stream_when_the_count_exceeds_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_follow_a_finite_stream_to_its_end_when_asked_to_follow() {
     // data.yaml: `--follow` keeps the stream open and emits values as they arrive. On a finite
     // input the end arrives at once, so the observable result is the same trailing window — the
@@ -121,7 +117,6 @@ fn should_follow_a_finite_stream_to_its_end_when_asked_to_follow() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_follow_an_unbounded_stream_instead_of_waiting_for_its_end() {
     // data.yaml: "Emit the last N values of a finite stream, or follow an unbounded one." Spec
     // §11.1: a blocking transform on an unbounded stream needs a window or a structured error;
@@ -137,7 +132,6 @@ fn should_follow_an_unbounded_stream_instead_of_waiting_for_its_end() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_bind_the_transform_after_a_native_stage_and_the_program_at_a_byte_boundary() {
     // ADR-0028: a native command whose declared input is a stream of objects binds only where
     // objects reach it; elsewhere the name resolves onward to `PATH`. So `tail -n 1 <file>` at

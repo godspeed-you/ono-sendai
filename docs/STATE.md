@@ -122,6 +122,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
     watch/trace/enter mount
   - `crates/ono-cli/tests/data_missing.rs` (15) + `crates/ono-command/tests/completion_missing.rs`
     (6) — `tail`, `join`, `diff`, stacked records on narrow terminals, fields after `where`
+    — **claimed by [data | 2026-08-27]** on branch `implementation-data`; files:
+    `crates/ono-pipeline/src/transforms/{slice,relational}.rs`, `crates/ono-command/src/{impls/
+    {mod,transform}.rs,expr.rs,complete.rs}`, `crates/ono-cli/src/{native,session}.rs`,
+    `crates/ono-render/src/table.rs`, `docs/spec/commands/data.yaml`, case 036 (ADR-0072–0074)
   - `crates/ono-cli/tests/remote_missing.rs` (36) — `get link` as data, host commands, link
     definitions, detach/rename, agentless visibility, mutations across a link
   - `crates/ono-cli/tests/plugins_missing.rs` (32) — `ono.plugin/1` records, inspect/find/

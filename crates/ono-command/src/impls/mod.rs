@@ -99,6 +99,7 @@ fn implementation_of(
         "ono.data.group" => Arc::new(TransformCommand::new(id, Kind::Group)),
         "ono.data.take" => Arc::new(TransformCommand::new(id, Kind::Take)),
         "ono.data.skip" => Arc::new(TransformCommand::new(id, Kind::Skip)),
+        "ono.data.tail" => Arc::new(TransformCommand::new(id, Kind::Tail)),
         "ono.data.each" => Arc::new(TransformCommand::new(id, Kind::Each)),
         "ono.data.reduce" => Arc::new(TransformCommand::new(id, Kind::Reduce)),
         "ono.data.count" => Arc::new(TransformCommand::new(id, Kind::Count)),

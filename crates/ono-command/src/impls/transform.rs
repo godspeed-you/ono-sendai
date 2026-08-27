@@ -10,7 +10,8 @@ use std::sync::Arc;
 use ono_core::ErrorCode;
 use ono_parser::Expr;
 use ono_pipeline::{
-    Count, Each, Group, Measure, PathSegment, Reduce, Select, SelectField, Skip, Sort, Take, Where,
+    Count, Each, Group, Measure, PathSegment, Reduce, Select, SelectField, Skip, Sort, Tail, Take,
+    Where,
 };
 use ono_value::{ErrorValue, Value};
 
@@ -29,6 +30,7 @@ pub(crate) enum Kind {
     Group,
     Take,
     Skip,
+    Tail,
     Each,
     Reduce,
     Count,
@@ -92,6 +94,9 @@ impl CommandImpl for TransformCommand {
             }
             Kind::Take => input.transform(Take::new(count(arguments, &spelling, &scope)?))?,
             Kind::Skip => input.transform(Skip::new(count(arguments, &spelling, &scope)?))?,
+            // `--follow` names what `tail` does anyway on a stream that never ends (ADR-0072);
+            // on a bounded stream the end arrives, and the trailing window is the answer.
+            Kind::Tail => input.transform(Tail::new(count(arguments, &spelling, &scope)?))?,
             Kind::Each => {
                 let body = expression(arguments, "body", &spelling)?;
                 let scope = Arc::clone(&scope);

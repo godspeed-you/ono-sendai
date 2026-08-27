@@ -722,7 +722,7 @@ Emit the last N values of a finite stream, or follow an unbounded one.
 |---|---|
 | id | `ono.data.tail` |
 | stability | experimental |
-| phase | planned |
+| phase | B |
 | input | `stream<any>` |
 | output | `stream<any>` |
 | privilege | none |

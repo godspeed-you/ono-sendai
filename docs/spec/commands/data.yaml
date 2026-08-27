@@ -314,7 +314,7 @@ commands:
     verb: tail
     target: null
     summary: Emit the last N values of a finite stream, or follow an unbounded one.
-    stability: experimental               # spec §33.2 and §41.4 both write `| tail 30`
+    stability: experimental               # spec §33.2 and §41.4 both write `| tail 30`; ADR-0072
     argument_mode: words
     input: "stream<any>"
     output: "stream<any>"
@@ -325,7 +325,7 @@ commands:
       - {name: follow, type: bool, doc: "Keep the stream open and emit values as they arrive."}
     privilege: none
     streaming: true
-    phase: planned
+    phase: B
     note: >-
       Distinct from `tail file` and `tail journal`, which take a target word and follow a
       source. This is the transform spelling, disambiguated by the absence of a target
