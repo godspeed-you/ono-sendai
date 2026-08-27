@@ -153,6 +153,21 @@ pub fn run_statement(
     }
 }
 
+// --- kill %N (spec §18.1, §18.4, ADR-0071 §4) --------------------------------------------------
+
+/// Whether a stage is `kill %N …`: the bare `kill` with a job specifier as its first word.
+fn is_job_kill(stage: &Stage) -> bool {
+    let StageHead::Command(name) = &stage.head else {
+        return false;
+    };
+    name.namespace.is_none()
+        && name.name == "kill"
+        && matches!(
+            stage.arguments.first(),
+            Some(Argument::Word(word)) if word.text.starts_with('%')
+        )
+}
+
 // --- each { … } (spec §19.4, ADR-0071 §1) -----------------------------------------------------
 
 /// The index of the `each` stage whose body is a block, if `list` has one.
@@ -799,6 +814,19 @@ fn run_stage_list(
         let outcome = run_pipeline(session, &pipeline, &expanded);
         session.finish_expanding();
         return outcome;
+    }
+
+    // `kill %N` names a job, and a job is the shell's (spec §18.1, §18.4; ADR-0071 §4). Any
+    // other `kill` is the program or the native verb, untouched.
+    if list.stages.len() == 1
+        && let Some(stage) = list.stages.first()
+        && is_job_kill(stage)
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("kill")));
+        }
+        let arguments = stage_arguments(session, stage, source)?;
+        return builtin::kill_jobs(session, &arguments);
     }
 
     // A single builtin stage runs in the shell itself: `cd` in a child moves a directory nobody

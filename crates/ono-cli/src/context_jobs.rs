@@ -7,6 +7,25 @@ use ono_value::Value;
 use crate::eval::{Eval, Flow};
 use crate::session::Session;
 
+/// Stops native job `number` without reattaching it (`kill %N`, ADR-0071 §4).
+///
+/// Aborting the task drops every stream receiver, which stops the producers — the same
+/// cancellation Ctrl-C performs on a foreground run. The job leaves the table.
+///
+/// # Errors
+///
+/// A structured error when no such job exists.
+pub fn stop(session: &mut Session, number: u32) -> Eval<()> {
+    let Some(job) = session.take_native_job(number) else {
+        return Err(Flow::Failed(ono_value::ErrorValue::new(
+            ono_core::ErrorCode::ResolveTargetNotFound,
+            format!("no job %{number}"),
+        )));
+    };
+    job.handle.abort();
+    Ok(())
+}
+
 /// Reattaches native job `number` to the terminal.
 ///
 /// A live job repaints its rows in place until Ctrl-C ends it; a finished one prints what it

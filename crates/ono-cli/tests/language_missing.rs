@@ -465,7 +465,6 @@ fn should_sort_scalars_descending_when_only_the_direction_is_given() {
 // --- kill %N on the job table (spec §18.1, §18.4) -------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_terminate_an_external_job_when_kill_names_it_by_job_number() {
     // The sleeper closes its copies of the test harness pipes so the run ends when the shell does.
     let run = ono("sleep 30 >/dev/null 2>&1 &; kill %1; sleep 0.2; jobs");
@@ -484,7 +483,6 @@ fn should_terminate_an_external_job_when_kill_names_it_by_job_number() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_stop_a_native_job_when_kill_names_it_by_job_number() {
     let run = ono("watch process --every 200ms &; kill %1; sleep 0.2; jobs");
     run.assert_success();
