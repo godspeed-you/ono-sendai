@@ -1011,6 +1011,14 @@ impl Parser<'_> {
                 self.bump(LexMode::Words);
                 StageHead::Command(self.qualified_name(token))
             }
+            // A value followed by an infix operator is one expression statement — `@ * 2` in a
+            // block, `$n + 1` at the prompt — decided by the same lookahead that tells
+            // `(ls -la)` from `(a - b)` (ADR-0009, ADR-0071 §1).
+            TokenKind::Variable | TokenKind::CurrentValue
+                if self.value_starts_expression(token) =>
+            {
+                StageHead::Value(self.parse_expression())
+            }
             TokenKind::Variable => {
                 self.bump(LexMode::Words);
                 StageHead::Value(self.words_variable(token))
@@ -2026,6 +2034,18 @@ impl Parser<'_> {
         if matches!(first.text(self.source), "true" | "false" | "null" | "not") {
             return true;
         }
+        self.operator_follows(first)
+    }
+
+    /// Whether the value token `first`, at the head of a stage, begins an expression rather than
+    /// a value that seeds a pipeline: `$n + 1` and `@ * 2` do, `$hot | select …` and
+    /// `$cmd -la` do not.
+    fn value_starts_expression(&self, first: Token) -> bool {
+        self.operator_follows(first)
+    }
+
+    /// Whether an infix operator written as arithmetic follows `first`.
+    fn operator_follows(&self, first: Token) -> bool {
         let second = self.peek_after(LexMode::Expr, first);
         let adjacent = first.span.end() == second.span.start();
         match second.kind {

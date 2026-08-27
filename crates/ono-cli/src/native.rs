@@ -579,6 +579,22 @@ pub fn run_seeded(
     run_from(session, list, source, 1, Some(seed))
 }
 
+/// Runs the stages of `list` from `start` on, seeded with values the evaluator already has —
+/// what an `each { … }` block produced for the stages after it (ADR-0071 §1).
+///
+/// # Errors
+///
+/// The structured error of whichever stage could not be resolved, bound, or run.
+pub fn run_seeded_from(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+    start: usize,
+    seed: Vec<Value>,
+) -> Eval<ExitStatus> {
+    run_from(session, list, source, start, Some(seed))
+}
+
 fn run_from(
     session: &mut Session,
     list: &StageList,

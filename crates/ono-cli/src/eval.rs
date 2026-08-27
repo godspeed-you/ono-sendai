@@ -153,6 +153,81 @@ pub fn run_statement(
     }
 }
 
+// --- each { … } (spec §19.4, ADR-0071 §1) -----------------------------------------------------
+
+/// The index of the `each` stage whose body is a block, if `list` has one.
+fn each_block_stage(list: &StageList) -> Option<usize> {
+    list.stages.iter().position(|stage| {
+        let StageHead::Command(name) = &stage.head else {
+            return false;
+        };
+        matches!(name.namespace.as_deref(), None | Some("ono"))
+            && name.name == "each"
+            && matches!(
+                stage.arguments.as_slice(),
+                [Argument::Value(Expr::Block(_))]
+            )
+    })
+}
+
+/// Runs the stages before `index` for their values, the block once per value with `@` bound to
+/// it, and the stages after it over what the blocks produced.
+fn run_each_block(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+    index: usize,
+) -> Eval<ExitStatus> {
+    let stage = &list.stages[index];
+    let Some(Argument::Value(Expr::Block(block))) = stage.arguments.first() else {
+        return Ok(ExitStatus::SUCCESS);
+    };
+    if index == 0 {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                "`each` needs a stream of values to run its block over, and none reaches it",
+            )
+            .with_help("put a producer in front of it: `get service | where … | each { … }`"),
+        ));
+    }
+
+    let upstream = StageList {
+        stages: list.stages[..index].to_vec(),
+        span: list.stages[0].span.join(list.stages[index - 1].span),
+    };
+    session.begin_capture();
+    let outcome = run_stage_list(session, &upstream, source, false);
+    let items = session.end_capture();
+    outcome?;
+
+    // The block runs in the caller's output context (ADR-0070 point 3): captured when stages
+    // follow, shown as it goes when nothing does.
+    let consumed = index + 1 < list.stages.len();
+    let mut produced = Vec::new();
+    for item in items {
+        session.push_scope();
+        session.bind("@", item);
+        if consumed {
+            session.begin_capture();
+        }
+        let outcome = run_block(session, block, source);
+        if consumed {
+            produced.extend(session.end_capture());
+        }
+        session.pop_scope();
+        match outcome {
+            Ok(_) | Err(Flow::Continue) => {}
+            Err(Flow::Break) => break,
+            Err(other) => return Err(other),
+        }
+    }
+    if consumed {
+        return crate::native::run_seeded_from(session, list, source, index + 1, produced);
+    }
+    Ok(ExitStatus::SUCCESS)
+}
+
 // --- prefix assignment (spec §54, ADR-0071 §2) ------------------------------------------------
 
 /// The `NAME=value` words that lead a stage of `list`, with the list as it reads without them.
@@ -840,6 +915,12 @@ fn run_stage_list(
                 }
             }
         };
+    }
+
+    // `each { … }` with a block runs in the shell: a block holds statements, and a statement may
+    // run a command, which the transform engine cannot (spec §19.4, ADR-0071 §1).
+    if !background && let Some(index) = each_block_stage(list) {
+        return run_each_block(session, list, source, index);
     }
 
     // A `<package>:command` head invokes a loaded KUANG/11 package's contribution (spec §31.22,
@@ -1706,6 +1787,11 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
                         .with_help("`@N` names row N of the last shown result (spec §6.4)"),
                     )
                 }),
+            // The item an enclosing block is iterating shadows the interactive selection for
+            // the block's duration (spec §19.4, ADR-0071 §1).
+            ono_parser::CurrentSelector::Current if session.binding("@").is_some() => {
+                Ok(session.binding("@").cloned().unwrap_or(Value::Null))
+            }
             ono_parser::CurrentSelector::Current => session.selection().cloned().ok_or_else(|| {
                 Flow::Failed(
                     ErrorValue::new(

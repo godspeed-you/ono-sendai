@@ -371,7 +371,6 @@ fn should_leave_the_shell_environment_alone_after_a_prefix_assignment() {
 // --- blocks under each (spec §19.4, ono.data.each) -----------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_map_every_item_through_a_block_in_each() {
     let run = ono("echo '[1,2,3]' | from json | each { @ * 2 } | to json");
     run.assert_success();
@@ -386,7 +385,6 @@ fn should_map_every_item_through_a_block_in_each() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_run_a_command_per_item_when_the_each_block_contains_one() {
     let run = ono("get process | where pid == 1 | each { echo @.pid }");
     run.assert_success();
