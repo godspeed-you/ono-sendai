@@ -93,11 +93,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 8 — the systemd pack (COMPAT-JOURNAL-001,
-  COMPAT-SYSTEMD-001): the json-lines decoder that streams (ADAPT-005), `journalctl -o json`
-  → journal events, `systemctl list-units`/`show` → `ono.service/1` and unit records; the
-  container gains the tools of steps 8–12 — files: `docs/spec/adapters/first-party/systemd.yaml`,
-  `crates/ono-adapter/src/decode.rs`, `docker/Dockerfile`
+- [claude | 2026-08-27] v0.3 tranche, step 9 — Tier B: `ps` explicit fields → `ono.process/1`
+  (COMPAT-PS-001) and the `lines` decoder streaming per record — files:
+  `docs/spec/adapters/first-party/procps.yaml`, `crates/ono-adapter/src/decode.rs`
 
 ---
 
@@ -359,6 +357,11 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   cases 074, 075. ADAPT-005's streaming half waits for the first line-protocol tool.
 - [x] v0.3 step 7 — COMPAT-IP: the iproute2 pack, `ono.interface-address/1`, the field-map
   derivations children/template/first/infer/literals/require (ADR-0058) — case 076
+- [x] v0.3 step 8 — ADAPT-005 streamed adaptation (`Decoding`, `Output::Pipe`,
+  `start_piped`/`finish_foreground`, cancellation to the producer), the systemd pack
+  (journalctl jsonl, systemctl list-units/show with the `properties` decoder),
+  `ono.journal-event/1`, the live view absorbing plain records; the image gains git, curl,
+  lsof (ADR-0059) — case 077
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

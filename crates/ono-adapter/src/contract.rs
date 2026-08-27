@@ -17,6 +17,7 @@ use crate::version::VersionRange;
 const FIRST_PARTY: &[&str] = &[
     include_str!("../../../docs/spec/adapters/first-party/util-linux.yaml"),
     include_str!("../../../docs/spec/adapters/first-party/iproute2.yaml"),
+    include_str!("../../../docs/spec/adapters/first-party/systemd.yaml"),
 ];
 
 /// The decoders implemented in Rust that a `builtin` decoder may name.
@@ -82,10 +83,22 @@ pub enum Fallback {
 pub enum DecoderKind {
     /// A JSON document.
     Json,
+    /// One JSON document per line, decoded as the lines arrive.
+    Jsonl,
     /// An explicit field protocol.
     Lines,
+    /// `key=value` lines, one record per blank-line-separated block.
+    Properties,
     /// A decoder implemented in Rust.
     Builtin,
+}
+
+impl DecoderKind {
+    /// Whether records can be decoded while the child still runs.
+    #[must_use]
+    pub fn streams(self) -> bool {
+        matches!(self, Self::Jsonl)
+    }
 }
 
 /// How much a builtin decoder can be trusted across versions.
@@ -112,6 +125,8 @@ pub enum Unit {
     Seconds,
     /// Milliseconds.
     Milliseconds,
+    /// Microseconds.
+    Microseconds,
     /// Per cent.
     Percent,
 }
@@ -320,6 +335,8 @@ pub struct Plan {
     append_user_flags: bool,
     env: BTreeMap<String, String>,
     stdin: StdinMode,
+    #[serde(default)]
+    unbounded: bool,
 }
 
 /// A fixture's sidecar: where the bytes came from and what they must decode to.
@@ -732,6 +749,12 @@ impl Plan {
     pub fn stdin(&self) -> StdinMode {
         self.stdin
     }
+
+    /// Whether the invocation may never end on its own (`journalctl -f`).
+    #[must_use]
+    pub fn is_unbounded(&self) -> bool {
+        self.unbounded
+    }
 }
 
 impl Fixture {
@@ -1018,6 +1041,32 @@ fn validate_adapter(
             }
             if decoder.nested().is_some() && decoder.children().is_some() {
                 report("a `json` decoder is either `nested` or `children`, not both".to_owned());
+            }
+        }
+        DecoderKind::Jsonl => {
+            if decoder.records().is_some()
+                || decoder.nested().is_some()
+                || decoder.children().is_some()
+                || decoder.field_separator().is_some()
+                || decoder.record_separator().is_some()
+                || decoder.columns().is_some()
+                || decoder.id().is_some()
+                || decoder.stability().is_some()
+            {
+                report("a `jsonl` decoder takes no options: every line is one record".to_owned());
+            }
+        }
+        DecoderKind::Properties => {
+            if decoder.field_separator().is_none() || decoder.record_separator().is_none() {
+                report(
+                    "a `properties` decoder needs `field_separator` (between key and value) and \
+                     `record_separator` (between records)"
+                        .to_owned(),
+                );
+            }
+            if decoder.columns().is_some() || decoder.records().is_some() || decoder.id().is_some()
+            {
+                report("a `properties` decoder takes no `columns`, `records` or `id`".to_owned());
             }
         }
         DecoderKind::Lines => {

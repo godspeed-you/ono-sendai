@@ -1,0 +1,45 @@
+# v0.3 §1.36, §1.37, §1.69 steps 4–5 (ADAPT-005, COMPAT-JOURNAL-001, COMPAT-SYSTEMD-001): the
+# journal is a stream of typed events and systemctl's read surfaces are Service records. The
+# container has no journald and no systemd as PID 1, so the live tools cannot answer here
+# (§1.48 "where applicable"); shims replay the recorded fixtures byte for byte, answer the
+# version probe like systemd 259, and — for the stream — write one entry, wait, write the next,
+# so the pipeline's early answer proves records flowed before the child ended.
+case: journalctl streams typed events and systemctl composes as Service records
+run: |
+  mkdir -p /tmp/shim
+  cat > /tmp/shim/journalctl <<'SH'
+  #!/bin/sh
+  if [ "$1" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi
+  sed -n 1p /opt/ono-fixtures/adapters/journalctl.jsonl
+  sleep 5
+  sed -n 2p /opt/ono-fixtures/adapters/journalctl.jsonl
+  SH
+  cat > /tmp/shim/systemctl <<'SH'
+  #!/bin/sh
+  if [ "$1" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi
+  case "$1" in
+    list-units) cat /opt/ono-fixtures/adapters/systemctl-list-units.json ;;
+    show) cat /opt/ono-fixtures/adapters/systemctl-show.txt ;;
+    *) echo "unexpected: $*" >&2; exit 2 ;;
+  esac
+  SH
+  chmod +x /tmp/shim/journalctl /tmp/shim/systemctl
+  export PATH=/tmp/shim:$PATH
+  echo "== the first record answers before the child ends =="
+  start=$(date +%s)
+  ono -c 'journalctl -n 2 | take 1 | select message priority | to json'
+  end=$(date +%s); echo "elapsed=$((end - start))"
+  test $((end - start)) -lt 4 && echo streamed=early
+  echo "== typed events =="
+  ono -c 'journalctl | where priority <= 5 | select identifier message | to json'
+  ono -c 'journalctl | take 1 | inspect | to json' | grep -F 'journalctl --output=json --no-pager'
+  echo "== systemctl =="
+  ono -c 'systemctl list-units | where state == "failed" | select name description | to json'
+  ono -c 'systemctl show ssh.service | select name state pid enabled since | to json'
+  echo "== refusal and raw =="
+  ono -c 'journalctl -o short | where priority <= 3' 2>&1 | grep -c 'Ono-Sendai-E0903'
+  ono -c 'raw systemctl list-units' | grep -c '"unit"'
+  ono -c 'explain journalctl -f | where priority <= 3' | grep -F 'adapted by org.ono.compat.systemd.journalctl'
+  echo done=ok
+exit: 0
+stdout-contains: streamed=early

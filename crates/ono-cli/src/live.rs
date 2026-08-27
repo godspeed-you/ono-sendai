@@ -29,7 +29,8 @@ pub async fn show(stream: ValueStream, width: usize, height: usize) -> Vec<Error
     let mut dirty = false;
     let renderer = Renderer::new();
     let theme = Theme::default();
-    let layout = Layout::new(width).max_rows(height.saturating_sub(3).max(4));
+    let row_limit = height.saturating_sub(3).max(4);
+    let layout = Layout::new(width).max_rows(row_limit);
 
     // The frame deadline is fixed, not restarted per event: a stream busier than the frame rate
     // must still paint — otherwise the fastest watches would be the ones showing nothing.
@@ -51,7 +52,7 @@ pub async fn show(stream: ValueStream, width: usize, height: usize) -> Vec<Error
         };
         match event {
             StreamEvent::Value(value) => {
-                if apply(&mut rows, &value) {
+                if absorb(&mut rows, &value, row_limit) {
                     dirty = true;
                 }
             }
@@ -63,6 +64,45 @@ pub async fn show(stream: ValueStream, width: usize, height: usize) -> Vec<Error
         repaint(&layout, &renderer, &theme, &rows, painted);
     }
     failures
+}
+
+/// Absorbs one value into the table model: an event as [`apply`] does, and a plain record —
+/// a journal entry streaming from `journalctl -f` (spec v0.3 §1.37) — as a row of its own,
+/// keyed by its identity, so a live stream of objects is a growing table (ADR-0059).
+///
+/// The model keeps only the newest `limit` such rows — a tail, as a log is read — so the
+/// screen shows what just happened and a follower that never ends holds nothing it cannot show.
+fn absorb(rows: &mut BTreeMap<String, Value>, value: &Value, limit: usize) -> bool {
+    if apply(rows, value) {
+        return true;
+    }
+    let Ok(record) = value.as_record() else {
+        return false;
+    };
+    if is_event(value) {
+        return false;
+    }
+    let key = format!("{:020}:{}", rows.len(), record.identity());
+    let changed = rows.insert(key, value.clone()) != Some(value.clone());
+    while rows.len() > limit {
+        let Some(oldest) = rows.keys().next().cloned() else {
+            break;
+        };
+        rows.remove(&oldest);
+    }
+    changed
+}
+
+/// Whether a record is an event carrying an object, rather than an object itself.
+fn is_event(value: &Value) -> bool {
+    value.as_record().is_ok_and(|record| {
+        record
+            .schema()
+            .fields()
+            .iter()
+            .filter_map(|field| record.get(field.name()))
+            .any(|inner| inner.as_record().is_ok())
+    })
 }
 
 /// Applies one event to the table model, answering whether anything changed.

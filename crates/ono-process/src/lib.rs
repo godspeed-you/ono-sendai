@@ -69,7 +69,7 @@ mod terminal;
 
 pub use command::{Command, Input, Output, Redirect};
 pub use error::{Error, Result};
-pub use executor::{Canceller, Executor, ForegroundOutcome};
+pub use executor::{Canceller, Executor, Foreground, ForegroundOutcome};
 pub use fd::Fd;
 pub use job::{Job, JobChange, JobId, JobProcess, JobState};
 pub use pipeline::{Pipeline, PipelineOutcome, StageOutcome};

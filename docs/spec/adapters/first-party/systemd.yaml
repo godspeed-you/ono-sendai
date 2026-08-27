@@ -1,0 +1,167 @@
+# systemd compatibility pack: `journalctl` and the read surfaces of `systemctl` (spec v0.3
+# §1.36, §1.37, §1.69 steps 4 and 5). `journalctl -o json` is a JSON-lines stream, the first
+# adapted tool whose records flow while the child runs (ADAPT-005); `journalctl -f` never ends.
+# Mutations (`systemctl restart …`) stay ordinary external commands: `restart service` is the
+# typed API (§1.36).
+format: ono-adapter-pack/1
+package:
+  id: org.ono.compat.systemd
+  name: systemd compatibility
+  version: 0.1.0
+  publisher: org.ono
+  tier: first-party
+roles: [adapter]
+capabilities:
+  process.exec:
+    executables: [journalctl, systemctl]
+    argv_policy: declared-invocations-only
+
+adapters:
+  - id: journalctl
+    summary: Journal entries as `ono.journal-event/1` records, streamed from `journalctl -o json`.
+    executable:
+      names: [journalctl]
+      versions: ">=245"
+      version_probe:
+        argv: ["--version"]
+        pattern: "systemd ([0-9]+)"
+        cache: executable-identity
+    tier: A
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.journal-event/1
+    decoder:
+      kind: jsonl
+    fields:
+      timestamp: {from: __REALTIME_TIMESTAMP, unit: microseconds}
+      priority: {from: PRIORITY}
+      message: {from: MESSAGE}
+      identifier: {from: SYSLOG_IDENTIFIER}
+      unit: {from: _SYSTEMD_UNIT}
+      pid: {from: _PID}
+      uid: {from: _UID}
+      boot_id: {from: _BOOT_ID}
+      host: {from: _HOSTNAME}
+      cursor: {from: __CURSOR}
+    invocations:
+      - id: query
+        summary: "journalctl [-u|--unit <unit>] [-p|--priority <range>] [-n|--lines <count>] [--since <time>] [--until <time>] [-b|--boot [id]] [-k|--dmesg] [-r|--reverse] [-g|--grep <pattern>] [-e]"
+        match:
+          words: [[]]
+          flags:
+            allow: [-k, --dmesg, -r, --reverse, -e, --no-pager, -q, --quiet, --user, --system, -b, --boot, -x, --catalog]
+            allow_with_value: [-u, --unit, -p, --priority, -n, --lines, --since, --until, -g, --grep, -t, --identifier, --cursor, --after-cursor]
+          positionals: allow
+        plan:
+          argv: [journalctl, --output=json, --no-pager]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+      - id: follow
+        summary: "journalctl -f|--follow [-u <unit>] [-p <range>] [-n <count>] — a live stream until Ctrl-C"
+        match:
+          words: [[]]
+          flags:
+            allow: [-k, --dmesg, --user, --system, -q, --quiet]
+            allow_with_value: [-u, --unit, -p, --priority, -n, --lines, --since, -g, --grep, -t, --identifier, --cursor, --after-cursor]
+            require: [-f]
+          positionals: forbid
+        plan:
+          argv: [journalctl, --output=json, --no-pager, --follow]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+          unbounded: true
+    limits:
+      - "`-o/--output` is the adapter's to choose; asking for another output format runs raw."
+      - "`--list-boots`, `--disk-usage`, `--verify` and the maintenance forms are not adapted."
+      - "Every raw journal key (`_COMM`, `_EXE`, `_CMDLINE`, …) is in the extension map, never dropped (spec v0.3 §1.37)."
+    fixtures: systemd/journalctl
+
+  - id: systemctl-list-units
+    summary: Units as `ono.service/1` records, from `systemctl list-units --output=json`.
+    executable:
+      names: [systemctl]
+      versions: ">=246"
+      version_probe:
+        argv: ["--version"]
+        pattern: "systemd ([0-9]+)"
+        cache: executable-identity
+    tier: A
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.service/1
+    decoder:
+      kind: json
+    fields:
+      name: {from: unit}
+      description: {from: description}
+      state: {from: active}
+      substate: {from: sub}
+    literals: {provider: systemd}
+    invocations:
+      - id: list
+        summary: "systemctl list-units [-a|--all] [-t|--type <type>] [--state <state>] [--failed] [pattern …]"
+        match:
+          words: [[list-units]]
+          flags:
+            allow: [-a, --all, --failed, --user, --system, --no-pager, --plain, -l, --full]
+            allow_with_value: [-t, --type, --state]
+          positionals: allow
+        plan:
+          argv: [systemctl, list-units, --output=json, --no-pager, --plain]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`pid`, `enabled`, `since` and `unit_file` are not reported by the list; `systemctl show <unit>` answers them."
+      - "`list-unit-files`, `list-timers`, `list-sockets` and every mutation are not adapted (spec v0.3 §1.36)."
+    fixtures: systemd/systemctl-list-units
+
+  - id: systemctl-show
+    summary: One unit in detail as an `ono.service/1` record, from `systemctl show`'s key=value protocol.
+    executable:
+      names: [systemctl]
+      versions: ">=246"
+      version_probe:
+        argv: ["--version"]
+        pattern: "systemd ([0-9]+)"
+        cache: executable-identity
+    tier: B
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.service/1
+    decoder:
+      kind: properties
+      field_separator: "="
+      record_separator: "\n\n"
+    fields:
+      name: {from: Id}
+      description: {from: Description}
+      state: {from: ActiveState}
+      substate: {from: SubState}
+      pid: {from: MainPID, map: {"0": null}}
+      enabled:
+        from: UnitFileState
+        map: {enabled: true, enabled-runtime: true, disabled: false, masked: false, masked-runtime: false, static: null, indirect: null, generated: null, transient: null, alias: null, linked: null, linked-runtime: null, bad: null}
+      since: {from: ActiveEnterTimestamp}
+      unit_file: {from: FragmentPath}
+    literals: {provider: systemd}
+    invocations:
+      - id: show
+        summary: "systemctl show <unit …>"
+        match:
+          words: [[show]]
+          flags:
+            allow: [--user, --system, --no-pager]
+            allow_with_value: []
+          positionals: allow
+        plan:
+          argv: [systemctl, show, --no-pager, --timestamp=utc, -p, "Id,Description,ActiveState,SubState,MainPID,UnitFileState,ActiveEnterTimestamp,FragmentPath"]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`-p/--property` is the adapter's to choose; every other property lands in the extension map only when asked for raw."
+      - "`ActiveEnterTimestamp` is empty for a unit that never started, which is null."
+    fixtures: systemd/systemctl-show

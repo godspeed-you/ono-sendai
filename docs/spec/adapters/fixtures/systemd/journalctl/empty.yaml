@@ -1,0 +1,5 @@
+invocation: [journalctl, -u, nonesuch.service]
+tool_version: "259"
+distro: ubuntu
+expect:
+  records: []

@@ -80,12 +80,12 @@ executable:
 decoder:
   closed: true
   fields:
-    kind:      {type: "enum[json, lines, builtin]", required: true, doc: "`json`: a JSON document. `lines`: an explicit field protocol. `builtin`: a decoder implemented in Rust, the only kind allowed for tier C."}
+    kind:      {type: "enum[json, jsonl, lines, properties, builtin]", required: true, doc: "`json`: a JSON document. `jsonl`: one JSON document per line, decoded as the lines arrive — the streaming kind. `lines`: an explicit field protocol. `properties`: `key=value` lines, one record per block separated by `record_separator`; an empty value is null. `builtin`: a decoder implemented in Rust, the only kind allowed for tier C."}
     records:   {type: string, nullable: true, doc: "json: the key holding the record list; absent when the document is the list or a single record."}
     nested:    {type: string, nullable: true, doc: "json: a key whose children are records too; they are flattened with the parent's identity field carried as `$parent.<field>`."}
     children:  {type: string, nullable: true, doc: "json: the records are the entries of this key inside each element of the list, and the element is their parent (`$parent.<field>`); an element without entries contributes nothing."}
-    field_separator:  {type: string, nullable: true, doc: "lines: the byte between fields (`\\t`, `\\0`, …). Required for `lines`."}
-    record_separator: {type: string, nullable: true, doc: "lines: `\\n` or `\\0`. Required for `lines`."}
+    field_separator:  {type: string, nullable: true, doc: "lines: the byte between fields (`\\t`, `\\0`, …); properties: the text between key and value (`=`). Required for both."}
+    record_separator: {type: string, nullable: true, doc: "lines: `\\n` or `\\0`; properties: the text between records (`\\n\\n`). Required for both."}
     columns:   {type: list<string>, nullable: true, doc: "lines: the decoded names of the fields, in the order the plan requests them. Required for `lines`."}
     id:        {type: string, nullable: true, doc: "builtin: the decoder's stable id, which must exist in the binary. Required for `builtin`."}
     stability: {type: "enum[stable, version-constrained]", nullable: true, doc: "builtin: required; `version-constrained` marks a brittle parser (spec v0.3 §1.9 Tier C)."}
@@ -97,7 +97,7 @@ field:
     template:  {type: string, nullable: true, doc: "A text with `{field}` placeholders filled from the decoded record (`from` empty) or from each object in the list at `from`; the result is coerced like any string. Exactness `normalized`."}
     first:     {type: bool, nullable: true, doc: "Take the first element of the list at `from`. Exactness `normalized`."}
     infer:     {type: "enum[ip-family]", nullable: true, doc: "Derive the field: `ip-family` yields `inet` or `inet6` from an address at `from`. Exactness `inferred`."}
-    unit:      {type: "enum[bytes, kib, mib, seconds, milliseconds, percent]", nullable: true, doc: "How a bare number is to be read; sets exactness to `normalized` when it converts."}
+    unit:      {type: "enum[bytes, kib, mib, seconds, milliseconds, microseconds, percent]", nullable: true, doc: "How a bare number is to be read — for a timestamp, seconds/milliseconds/microseconds since the epoch; sets exactness to `normalized` when it converts."}
     split:     {type: string, nullable: true, doc: "Split a string on this separator into `list<string>`."}
     contains:  {type: string, nullable: true, doc: "After `split`: the field is `true` when the list holds this literal. Exactness `normalized`."}
     map:       {type: map, nullable: true, doc: "Literal translations applied before coercion, e.g. `{\"0\": false, \"1\": true}`."}
@@ -125,6 +125,7 @@ plan:
     append_user_flags: {type: bool, required: true, doc: "Whether allowed user flags and positionals are appended after `argv`."}
     env:               {type: map, required: true, doc: "Environment stabilisation, e.g. `LC_ALL: C` (spec v0.3 §1.21). May be empty."}
     stdin:             {type: "enum[null, inherit]", required: true, doc: "Whether the child sees the pipeline's stdin."}
+    unbounded:         {type: bool, nullable: true, doc: "Whether the invocation may never end on its own (`journalctl -f`); its records are a live stream that renders in place at the terminal and needs a representation elsewhere (spec §18.3). Default false."}
 
 # ---------------------------------------------------------------------------------------------
 # Fixtures (spec v0.3 §1.47): `<name>.out` holds the bytes the tool produced, `<name>.yaml`

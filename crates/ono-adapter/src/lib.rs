@@ -35,4 +35,4 @@ pub use registry::{AdapterPlan, Negotiation, Prober, Registry};
 pub mod conformance;
 mod decode;
 
-pub use decode::{Trace, decode, exactness_name, field_types};
+pub use decode::{Decoding, Trace, decode, exactness_name, field_types};

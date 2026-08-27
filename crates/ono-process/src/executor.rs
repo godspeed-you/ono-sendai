@@ -196,18 +196,63 @@ impl Executor {
     /// started, or that failed, is reported in the outcome rather than as an error, because the
     /// remaining stages still ran.
     pub fn run_foreground(&mut self, pipeline: &Pipeline) -> Result<ForegroundOutcome> {
-        let mut running = self.start(pipeline, true)?;
+        let foreground = self.start_foreground(pipeline)?;
+        self.finish_foreground(foreground)
+    }
+
+    /// Starts `pipeline` in the foreground and returns before it finishes, so the caller can
+    /// read a stage's [`Output::Pipe`](crate::Output::Pipe) while it runs; [`Executor::finish_foreground`] waits.
+    ///
+    /// # Errors
+    ///
+    /// As [`Executor::run_foreground`].
+    pub fn start_foreground(&mut self, pipeline: &Pipeline) -> Result<Foreground> {
+        let running = self.start(pipeline, true)?;
         self.terminal.remember_attributes();
         if running.pgid != 0 {
             self.terminal.give_to(running.pgid)?;
             self.foreground.store(running.pgid, Ordering::SeqCst);
         }
-        let outcome = wait_foreground(&mut running);
-        self.foreground.store(0, Ordering::SeqCst);
-        let reclaimed = self.terminal.reclaim();
-        outcome?;
-        reclaimed?;
-        self.settle(running)
+        Ok(Foreground {
+            running,
+            owns_terminal: true,
+        })
+    }
+
+    /// Starts `pipeline` in its own process group without handing it the terminal, and
+    /// returns before it finishes.
+    ///
+    /// For a child whose output the shell itself consumes (an adapted command streaming
+    /// records, ADR-0059): the terminal stays with the shell, so Ctrl-C reaches the shell's
+    /// own pipeline and the child is told to stop through [`Foreground::terminate`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Executor::run_foreground`].
+    pub fn start_piped(&mut self, pipeline: &Pipeline) -> Result<Foreground> {
+        let running = self.start(pipeline, false)?;
+        Ok(Foreground {
+            running,
+            owns_terminal: false,
+        })
+    }
+
+    /// Waits for a started pipeline and turns it into its outcome.
+    ///
+    /// # Errors
+    ///
+    /// As [`Executor::run_foreground`].
+    pub fn finish_foreground(&mut self, mut foreground: Foreground) -> Result<ForegroundOutcome> {
+        let outcome = wait_foreground(&mut foreground.running);
+        if foreground.owns_terminal {
+            self.foreground.store(0, Ordering::SeqCst);
+            let reclaimed = self.terminal.reclaim();
+            outcome?;
+            reclaimed?;
+        } else {
+            outcome?;
+        }
+        self.settle(foreground.running)
     }
 
     /// Runs `pipeline` in the background as a new job (`&`).
@@ -383,6 +428,7 @@ fn refuse(count: usize, at: usize, refusal: (ExitStatus, Error)) -> Vec<RunningS
             failure: (index == at).then(|| error.clone()),
             stdout: None,
             stderr: None,
+            pipe: None,
         })
         .collect()
 }
@@ -530,6 +576,7 @@ impl Executor {
                     failure: Some(error),
                     stdout: None,
                     stderr: None,
+                    pipe: None,
                 };
             }
         };
@@ -546,6 +593,7 @@ impl Executor {
             failure: None,
             stdout: io.stdout.map(Collector::start),
             stderr: io.stderr.map(Collector::start),
+            pipe: io.pipe,
         }
     }
 
@@ -619,6 +667,50 @@ impl Executor {
 impl Default for Executor {
     fn default() -> Self {
         Self::detached()
+    }
+}
+
+/// A pipeline that has been started and not yet waited for.
+pub struct Foreground {
+    running: Running,
+    owns_terminal: bool,
+}
+
+impl std::fmt::Debug for Foreground {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Foreground")
+            .field("pgid", &self.running.pgid)
+            .field("owns_terminal", &self.owns_terminal)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Foreground {
+    /// The read end of the last stage's [`Output::Pipe`](crate::Output::Pipe), the first time it is asked for.
+    pub fn take_pipe(&mut self) -> Option<std::os::fd::OwnedFd> {
+        self.running
+            .stages
+            .last_mut()
+            .and_then(|stage| stage.pipe.take())
+    }
+
+    /// Why a stage could not be started, if one could not.
+    #[must_use]
+    pub fn failure(&self) -> Option<&Error> {
+        self.running
+            .stages
+            .iter()
+            .find_map(|stage| stage.failure.as_ref())
+    }
+
+    /// Asks every process of the pipeline to stop (`SIGTERM` to the group).
+    pub fn terminate(&self) {
+        if self.running.pgid > 0 {
+            let _ = nix::sys::signal::killpg(
+                nix::unistd::Pid::from_raw(self.running.pgid),
+                nix::sys::signal::Signal::SIGTERM,
+            );
+        }
     }
 }
 

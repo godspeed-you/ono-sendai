@@ -51,7 +51,211 @@ pub fn decode(
     trace: &Trace,
     schemas: &SchemaRegistry,
 ) -> Result<Vec<Value>, ErrorValue> {
-    let schema = adapter
+    let mut decoding = Decoding::borrowed(adapter, trace.clone(), schemas)?;
+    let mut values = Vec::new();
+    for outcome in decoding.feed(bytes).into_iter().chain(decoding.finish()) {
+        values.push(outcome?);
+    }
+    Ok(values)
+}
+
+/// Who owns the adapter a decoding reads for.
+enum Held<'a> {
+    Borrowed(&'a Adapter),
+    Owned(crate::registry::AdapterPlan),
+}
+
+/// An incremental decoding: bytes go in as they arrive, records come out as soon as the
+/// decoder can stand behind them (ADR-0057 point 4, ADR-0059).
+///
+/// A streaming kind (`jsonl`) yields a record per complete line from `feed`; every other kind
+/// buffers and answers from `finish`. Either way every outcome is a value or a structured
+/// error, never a panic.
+pub struct Decoding<'a> {
+    held: Held<'a>,
+    trace: Trace,
+    schema: Arc<Schema>,
+    buffer: Vec<u8>,
+    line: usize,
+    observed: jiff::Timestamp,
+}
+
+impl<'a> Decoding<'a> {
+    /// A decoding for `adapter`, borrowed.
+    ///
+    /// # Errors
+    ///
+    /// `adapter.schema_violation` when the contract's schema is not registered.
+    pub fn borrowed(
+        adapter: &'a Adapter,
+        trace: Trace,
+        schemas: &SchemaRegistry,
+    ) -> Result<Self, ErrorValue> {
+        let schema = registered_schema(adapter, &trace, schemas)?;
+        Ok(Self {
+            held: Held::Borrowed(adapter),
+            trace,
+            schema,
+            buffer: Vec::new(),
+            line: 0,
+            observed: jiff::Timestamp::now(),
+        })
+    }
+
+    /// A decoding that owns its adapter through the plan, so it can move to a reader thread.
+    ///
+    /// # Errors
+    ///
+    /// `adapter.schema_violation` when the contract's schema is not registered.
+    pub fn for_plan(
+        plan: crate::registry::AdapterPlan,
+        trace: Trace,
+        schemas: &SchemaRegistry,
+    ) -> Result<Decoding<'static>, ErrorValue> {
+        let schema = registered_schema(plan.adapter(), &trace, schemas)?;
+        Ok(Decoding {
+            held: Held::Owned(plan),
+            trace,
+            schema,
+            buffer: Vec::new(),
+            line: 0,
+            observed: jiff::Timestamp::now(),
+        })
+    }
+
+    fn adapter(&self) -> &Adapter {
+        match &self.held {
+            Held::Borrowed(adapter) => adapter,
+            Held::Owned(plan) => plan.adapter(),
+        }
+    }
+
+    /// Whether records leave `feed` as the bytes arrive.
+    #[must_use]
+    pub fn streams(&self) -> bool {
+        self.adapter().decoder().kind().streams()
+    }
+
+    /// Takes the next bytes the child wrote.
+    ///
+    /// A streaming decoder answers with every record completed by these bytes; the others
+    /// answer nothing until `finish`.
+    pub fn feed(&mut self, chunk: &[u8]) -> Vec<Result<Value, ErrorValue>> {
+        self.buffer.extend_from_slice(chunk);
+        if !self.streams() {
+            return Vec::new();
+        }
+        let mut outcomes = Vec::new();
+        while let Some(end) = self.buffer.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = self.buffer.drain(..=end).collect();
+            self.line += 1;
+            let line = &line[..line.len() - 1];
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            outcomes.push(self.decode_line(line));
+        }
+        outcomes
+    }
+
+    /// Takes the end of the output: what a streaming decoder still holds is a fragment and
+    /// fails; a buffering decoder decodes everything now.
+    pub fn finish(&mut self) -> Vec<Result<Value, ErrorValue>> {
+        let bytes = std::mem::take(&mut self.buffer);
+        if self.streams() {
+            if bytes.iter().all(u8::is_ascii_whitespace) {
+                return Vec::new();
+            }
+            self.line += 1;
+            return vec![Err(decode_failed(
+                self.adapter(),
+                &self.trace,
+                &bytes,
+                format!("line {} ended before its record did", self.line),
+            ))];
+        }
+        let adapter = self.adapter();
+        let items = match adapter.decoder().kind() {
+            DecoderKind::Json => json_records(adapter, &bytes, &self.trace),
+            DecoderKind::Lines => line_records(adapter, &bytes, &self.trace),
+            DecoderKind::Properties => property_records(adapter, &bytes, &self.trace),
+            DecoderKind::Jsonl => Ok(Vec::new()),
+            DecoderKind::Builtin => Err(decode_failed(
+                adapter,
+                &self.trace,
+                &bytes,
+                format!(
+                    "builtin decoder `{}` is not available in this binary",
+                    adapter.decoder().id().unwrap_or("?")
+                ),
+            )),
+        };
+        let items = match items {
+            Ok(items) => items,
+            Err(error) => return vec![Err(error)],
+        };
+        let mut outcomes = Vec::with_capacity(items.len());
+        for (index, item) in items.iter().enumerate() {
+            outcomes.push(
+                build_record(adapter, &self.schema, item, &self.trace, self.observed).map_err(
+                    |reason| {
+                        violation(
+                            adapter,
+                            &self.trace,
+                            format!("record {}: {reason}", index + 1),
+                        )
+                    },
+                ),
+            );
+            if outcomes.last().is_some_and(Result::is_err) {
+                break;
+            }
+        }
+        outcomes
+    }
+
+    fn decode_line(&self, line: &[u8]) -> Result<Value, ErrorValue> {
+        let adapter = self.adapter();
+        let document: Json = serde_json::from_slice(line).map_err(|error| {
+            decode_failed(
+                adapter,
+                &self.trace,
+                line,
+                format!("line {} is not JSON: {error}", self.line),
+            )
+        })?;
+        let Json::Object(fields) = document else {
+            return Err(decode_failed(
+                adapter,
+                &self.trace,
+                line,
+                format!(
+                    "line {} is {}, not an object",
+                    self.line,
+                    json_kind(&document)
+                ),
+            ));
+        };
+        let item = Item {
+            fields,
+            parent: None,
+        };
+        build_record(adapter, &self.schema, &item, &self.trace, self.observed).map_err(|reason| {
+            violation(
+                adapter,
+                &self.trace,
+                format!("line {}: {reason}", self.line),
+            )
+        })
+    }
+}
+
+fn registered_schema(
+    adapter: &Adapter,
+    trace: &Trace,
+    schemas: &SchemaRegistry,
+) -> Result<Arc<Schema>, ErrorValue> {
+    adapter
         .schema()
         .parse::<SchemaId>()
         .ok()
@@ -62,34 +266,7 @@ pub fn decode(
                 trace,
                 format!("schema `{}` is not registered", adapter.schema()),
             )
-        })?;
-
-    let items = match adapter.decoder().kind() {
-        DecoderKind::Json => json_records(adapter, bytes, trace)?,
-        DecoderKind::Lines => line_records(adapter, bytes, trace)?,
-        DecoderKind::Builtin => {
-            return Err(decode_failed(
-                adapter,
-                trace,
-                bytes,
-                format!(
-                    "builtin decoder `{}` is not available in this binary",
-                    adapter.decoder().id().unwrap_or("?")
-                ),
-            ));
-        }
-    };
-
-    let observed = jiff::Timestamp::now();
-    let mut records = Vec::with_capacity(items.len());
-    for (index, item) in items.iter().enumerate() {
-        records.push(
-            build_record(adapter, &schema, item, trace, observed).map_err(|reason| {
-                violation(adapter, trace, format!("record {}: {reason}", index + 1))
-            })?,
-        );
-    }
-    Ok(records)
+        })
 }
 
 /// One decoded record: the tool's fields by name, plus the parent's fields for a tree.
@@ -287,12 +464,85 @@ fn line_records(adapter: &Adapter, bytes: &[u8], trace: &Trace) -> Result<Vec<It
 }
 
 fn unescape(text: &str) -> Vec<u8> {
-    match text {
-        "\\t" => vec![b'\t'],
-        "\\n" => vec![b'\n'],
-        "\\0" => vec![0],
-        other => other.as_bytes().to_vec(),
+    let mut out = Vec::new();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('t') => out.push(b'\t'),
+                Some('n') => out.push(b'\n'),
+                Some('0') => out.push(0),
+                Some(other) => {
+                    let mut buf = [0u8; 4];
+                    out.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+                }
+                None => out.push(b'\\'),
+            }
+        } else {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+        }
     }
+    out
+}
+
+/// `key=value` lines, one record per block (spec v0.3 §1.9 tier B: `systemctl show`).
+fn property_records(
+    adapter: &Adapter,
+    bytes: &[u8],
+    trace: &Trace,
+) -> Result<Vec<Item>, ErrorValue> {
+    let decoder = adapter.decoder();
+    let (Some(field_separator), Some(record_separator)) =
+        (decoder.field_separator(), decoder.record_separator())
+    else {
+        return Err(decode_failed(
+            adapter,
+            trace,
+            bytes,
+            "the properties decoder is incomplete".to_owned(),
+        ));
+    };
+    let field_separator = unescape(field_separator);
+    let record_separator = unescape(record_separator);
+    let text = String::from_utf8_lossy(bytes);
+    let field_separator = String::from_utf8_lossy(&field_separator).into_owned();
+    let record_separator = String::from_utf8_lossy(&record_separator).into_owned();
+    let mut items = Vec::new();
+    for (index, block) in text.split(record_separator.as_str()).enumerate() {
+        if block.trim().is_empty() {
+            continue;
+        }
+        let mut fields = serde_json::Map::new();
+        for line in block.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Some((key, value)) = line.split_once(field_separator.as_str()) else {
+                return Err(decode_failed(
+                    adapter,
+                    trace,
+                    bytes,
+                    format!(
+                        "record {}: `{}` is not `key{field_separator}value`",
+                        index + 1,
+                        line.chars().take(64).collect::<String>()
+                    ),
+                ));
+            };
+            let value = if value.is_empty() {
+                Json::Null
+            } else {
+                Json::String(value.to_owned())
+            };
+            fields.insert(key.to_owned(), value);
+        }
+        items.push(Item {
+            fields,
+            parent: None,
+        });
+    }
+    Ok(items)
 }
 
 fn build_record(
@@ -313,7 +563,9 @@ fn build_record(
     .decoded_by(
         match adapter.decoder().kind() {
             DecoderKind::Json => "json",
+            DecoderKind::Jsonl => "jsonl",
             DecoderKind::Lines => "lines",
+            DecoderKind::Properties => "properties",
             DecoderKind::Builtin => adapter.decoder().id().unwrap_or("builtin"),
         },
         match adapter.decoder().stability() {
@@ -503,6 +755,11 @@ fn coerce_mapped(raw: &Json, map: &FieldMap, ty: &FieldType) -> Result<Value, St
         && let Some(translated) = translations.get(&key)
     {
         current = yaml_to_json(translated);
+        // A translation to null says the tool's value means "not applicable" — `MainPID=0`,
+        // a `static` unit — and null is exactly what that is (spec §10.5).
+        if current.is_null() {
+            return Ok(Value::Null);
+        }
     }
     if let Some(separator) = map.split() {
         let Json::String(text) = &current else {
@@ -595,19 +852,37 @@ fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, Strin
             Json::String(text) => Ok(Value::Path(Arc::from(Path::new(text)))),
             _ => Err(wrong("path")),
         },
-        FieldType::Timestamp => match raw {
-            Json::String(text) => text
-                .trim()
-                .parse::<jiff::Timestamp>()
-                .map(Value::Timestamp)
-                .map_err(|_| wrong("timestamp")),
-            Json::Number(number) => number
-                .as_i64()
-                .and_then(|seconds| jiff::Timestamp::from_second(seconds).ok())
-                .map(Value::Timestamp)
-                .ok_or_else(|| wrong("timestamp")),
-            _ => Err(wrong("timestamp")),
-        },
+        FieldType::Timestamp => {
+            let epoch = |amount: i64| match unit {
+                Some(Unit::Microseconds) => jiff::Timestamp::from_microsecond(amount).ok(),
+                Some(Unit::Milliseconds) => jiff::Timestamp::from_millisecond(amount).ok(),
+                _ => jiff::Timestamp::from_second(amount).ok(),
+            };
+            match raw {
+                Json::String(text) => {
+                    let text = text.trim();
+                    if unit.is_some() {
+                        return text
+                            .parse::<i64>()
+                            .ok()
+                            .and_then(epoch)
+                            .map(Value::Timestamp)
+                            .ok_or_else(|| wrong("timestamp"));
+                    }
+                    text.parse::<jiff::Timestamp>()
+                        .ok()
+                        .or_else(|| systemd_timestamp(text))
+                        .map(Value::Timestamp)
+                        .ok_or_else(|| wrong("timestamp"))
+                }
+                Json::Number(number) => number
+                    .as_i64()
+                    .and_then(epoch)
+                    .map(Value::Timestamp)
+                    .ok_or_else(|| wrong("timestamp")),
+                _ => Err(wrong("timestamp")),
+            }
+        }
         FieldType::Duration => match raw {
             Json::Number(number) => {
                 let amount = number.as_f64().ok_or_else(|| wrong("duration"))?;
@@ -728,6 +1003,22 @@ fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, Strin
             Err(format!("is declared as {ty}, which no adapter can decode"))
         }
     }
+}
+
+/// systemd's `Fri 2026-08-21 12:01:25 UTC`, as `--timestamp=utc` prints it.
+///
+/// Only the UTC spelling is read: a zone abbreviation is ambiguous, and an instant guessed
+/// from one would be a fabricated instant (spec §10.5).
+fn systemd_timestamp(text: &str) -> Option<jiff::Timestamp> {
+    let civil = text
+        .strip_suffix(" UTC")?
+        .split_once(' ')
+        .map(|(_, rest)| rest)?;
+    let datetime = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", civil).ok()?;
+    datetime
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .ok()
+        .map(|zoned| zoned.timestamp())
 }
 
 /// A JSON value as the plain Ono value it is, with no schema in play.

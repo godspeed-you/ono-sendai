@@ -299,10 +299,16 @@ release line again.
       shown; `should_render_an_adapted_command_as_a_table_at_the_terminal`;
       `should_fall_back_to_the_captured_bytes_at_the_terminal_when_decoding_fails`: the tool
       ran exactly once), cases `074` and `075`.
-- [ ] **ADAPT-005 — streaming decoders that cannot crash the shell.** Decoded values flow
-      while the child runs; malformed, truncated, non-UTF-8 and hostile output produce
-      `adapter.decode_failed` (with the raw bytes retained and inspectable), never a panic —
-      proven by a seeded fuzz/corpus test over every first-party decoder (§1.47, §2.6).
+- [x] **ADAPT-005 — streaming decoders that cannot crash the shell.** Decoded values flow
+      while the child runs — `Decoding::feed` yields a record per complete line, the child runs
+      in its own group with its stdout handed to a reader thread, the consumer drains a bounded
+      channel, and a consumer that stops early cancels the child (ADR-0059); malformed,
+      truncated, non-UTF-8 and hostile output produce `adapter.decode_failed` with the raw bytes
+      retained, never a panic — `ono-cli/tests/adapters.rs`
+      (`should_stream_decoded_records_while_the_child_still_runs`: `take 1` answers in well
+      under the shim's five-second pause; `should_follow_the_journal_live_at_the_terminal_until_interrupted`),
+      `ono-adapter/tests/decode.rs` (`should_never_panic_on_hostile_bytes`, a seeded walk),
+      the truncated-line fixtures, case `077` (`streamed=early`).
 - [x] **ADAPT-006 — version detection is bounded and cached.** Version probes are declared in
       the contract, run at most once per executable identity (path, device/inode, mtime, size —
       v0.3 §1.46) and a failed probe makes a version-constrained parser refuse rather than
@@ -397,10 +403,15 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       (`should_adapt_the_ip_family_into_canonical_network_records`, `-s` refused), case `076`
       (structured, provenance naming `ip -j address show`, raw byte-identical to bash, bytes
       downstream untouched, `explain`).
-- [ ] **COMPAT-JOURNAL-001** — `journalctl` via `-o json` streaming into event records, with
-      cursor and boot fields preserved (v0.3 §1.37).
-- [ ] **COMPAT-SYSTEMD-001** — `systemctl list-units`/`show` read surfaces → `ono.service/1`
-      and unit records, never the human table (v0.3 §1.36).
+- [x] **COMPAT-JOURNAL-001** — `journalctl` via `--output=json` streaming into
+      `ono.journal-event/1` records with cursor and boot id preserved, `-f` as a live view at
+      the terminal (v0.3 §1.37) — `docs/spec/adapters/first-party/systemd.yaml` with fixtures,
+      `ono-cli/tests/adapters.rs` (typed events, priorities, the follow), case `077` (fixture
+      replay through a shim: the container has no journald, §1.48 "where applicable").
+- [x] **COMPAT-SYSTEMD-001** — `systemctl list-units --output=json` and `systemctl show`'s
+      key=value protocol (the `properties` decoder) → `ono.service/1`, never the human table;
+      mutations stay external (v0.3 §1.36) — the systemd pack's fixtures through the harness,
+      case `077` (fixture replay through a shim: the container is not booted with systemd).
 - [ ] **COMPAT-PS-001** — `ps` with explicit `-o` field lists → `ono.process/1`, so that
       `ps aux | where cpu > 20` composes and `ps aux | grep x` stays text (v0.3 §1.34, §1.71).
 - [ ] **COMPAT-STAT / DF / FIND-001** — `stat --printf`, `df --output`, `find -printf … \0`

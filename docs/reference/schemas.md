@@ -445,6 +445,27 @@ Default view: `id`, `state`, `kind`, `command`, `started`
 | `started` | `timestamp` | — | required | When the job was detached. |
 | `exit_status` | `int` | — | nullable | The exit status once the job finished; null while it is still running. A job terminated by a signal reports its status through the `external.signal` error, not as a fabricated number. |
 
+## JournalEvent — `ono.journal-event/1`
+
+One entry of the systemd journal.
+
+Identity: `cursor`
+
+Default view: `timestamp`, `priority`, `identifier`, `message`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `timestamp` | `timestamp` | — | required | When the entry was received by the journal (the realtime clock). |
+| `priority` | `int` | — | required | The syslog priority, 0 (emergency) to 7 (debug). |
+| `message` | `string` | — | required | The entry's message. |
+| `identifier` | `string` | — | nullable | The syslog identifier — the program name as the entry names itself. |
+| `unit` | `string` | — | nullable | The systemd unit the entry belongs to; null for the kernel and for processes outside units. |
+| `pid` | `int` | — | nullable | The process that produced the entry; null for the kernel. |
+| `uid` | `int` | — | nullable | The user the producing process ran as. |
+| `boot_id` | `string` | — | required | The boot the entry belongs to. |
+| `host` | `string` | — | required | The hostname the entry was recorded on. |
+| `cursor` | `string` | — | required | The journal cursor, a stable continuation and provenance token (spec v0.3 §1.37). |
+
 ## Link — `ono.link/1`
 
 One remote Ono link this session holds.

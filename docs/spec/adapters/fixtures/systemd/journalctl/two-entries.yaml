@@ -1,0 +1,9 @@
+# One JSON document per line; the realtime timestamp is microseconds since the epoch; the
+# kernel entry has no pid, uid or unit, which is null; `_COMM` stays in the extension map.
+invocation: [journalctl, -n, "2"]
+tool_version: "259"
+distro: ubuntu
+expect:
+  records:
+    - {timestamp: "2026-08-27T08:46:29.43657Z", priority: 5, message: "ptrace attach was attempted", identifier: kernel, unit: null, pid: null, uid: null, boot_id: 840eee6157ab41408f5bdab3dfa0d73e, host: deck, cursor: "s=8efa487b8c9940329936aedbe2b0ed64;i=a30a8;b=840eee6157ab41408f5bdab3dfa0d73e;m=87aa9b1975;t=65a035f3c0c9a;x=f340b4acaca7950b"}
+    - {timestamp: "2026-08-27T08:46:40Z", priority: 6, message: "Started OpenBSD Secure Shell server.", identifier: systemd, unit: init.scope, pid: 1, uid: 0, boot_id: 840eee6157ab41408f5bdab3dfa0d73e, host: deck}

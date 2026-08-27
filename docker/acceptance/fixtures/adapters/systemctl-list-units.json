@@ -1,0 +1,1 @@
+[{"unit":"cron.service","load":"loaded","active":"active","sub":"running","description":"Regular background program processing daemon"},{"unit":"ssh.service","load":"loaded","active":"active","sub":"running","description":"OpenBSD Secure Shell server"},{"unit":"apt-daily.timer","load":"loaded","active":"failed","sub":"failed","description":"Daily apt download activities"}]

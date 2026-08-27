@@ -1,0 +1,8 @@
+invocation: [systemctl, list-units]
+tool_version: "259"
+distro: ubuntu
+expect:
+  records:
+    - {name: cron.service, description: "Regular background program processing daemon", state: active, substate: running, pid: null, enabled: null, since: null, provider: systemd, unit_file: null}
+    - {name: ssh.service, description: "OpenBSD Secure Shell server", state: active, substate: running, provider: systemd}
+    - {name: apt-daily.timer, description: "Daily apt download activities", state: failed, substate: failed, provider: systemd}

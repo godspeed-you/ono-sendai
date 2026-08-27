@@ -272,3 +272,146 @@ fn should_adapt_the_ip_family_into_canonical_network_records() {
         unsupported.stderr()
     );
 }
+
+/// A fake `journalctl` that answers the version probe and then runs `body`.
+fn journal_shim(body: &str) -> Scratch {
+    let dir = scratch();
+    dir.write(
+        "journalctl",
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi\n{body}\n"
+        ),
+    );
+    let mode = std::os::unix::fs::PermissionsExt::from_mode(0o755);
+    std::fs::set_permissions(dir.path().join("journalctl"), mode).unwrap();
+    dir
+}
+
+const ENTRY_ONE: &str = r#"{"MESSAGE":"first","PRIORITY":"6","__REALTIME_TIMESTAMP":"1787820400000000","_BOOT_ID":"b","_HOSTNAME":"h","__CURSOR":"c1"}"#;
+const ENTRY_TWO: &str = r#"{"MESSAGE":"second","PRIORITY":"3","__REALTIME_TIMESTAMP":"1787820401000000","_BOOT_ID":"b","_HOSTNAME":"h","__CURSOR":"c2"}"#;
+
+#[test]
+fn should_stream_decoded_records_while_the_child_still_runs() {
+    // Spec v0.3 §1.37, ADAPT-005: journal entries flow as they arrive. The shim writes one
+    // entry, waits five seconds, writes another; `take 1` must answer long before that.
+    let dir = journal_shim(&format!("echo '{ENTRY_ONE}'; sleep 5; echo '{ENTRY_TWO}'"));
+    let started = Instant::now();
+    let run = Shell::new()
+        .args([
+            "-c",
+            "journalctl -n 2 | take 1 | select message priority | to json",
+        ])
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.path().display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .timeout(Duration::from_secs(20))
+        .run();
+    run.assert_success();
+    assert!(
+        run.stdout().contains("\"first\""),
+        "the first record arrived, got {:?}",
+        run.stdout()
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "values flowed before the child finished (took {:?})",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn should_report_a_failing_streamed_child_after_its_records() {
+    // Records that arrived are shown; the child's status still stands (spec v0.3 §1.20).
+    let dir = journal_shim(&format!("echo '{ENTRY_ONE}'; exit 3"));
+    let run = Shell::new()
+        .args(["-c", "journalctl | select message | to json"])
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.path().display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .run();
+    assert_ne!(run.status().code(), 0);
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0501"),
+        "got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_decode_a_streamed_stage_into_typed_journal_events() {
+    let dir = journal_shim(&format!("printf '%s\\n%s\\n' '{ENTRY_ONE}' '{ENTRY_TWO}'"));
+    let run = Shell::new()
+        .args([
+            "-c",
+            "journalctl -p 3 | where priority <= 3 | select message timestamp | to json",
+        ])
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.path().display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .run();
+    run.assert_success();
+    assert!(
+        run.stdout().contains("\"second\"") && !run.stdout().contains("\"first\""),
+        "spec v0.3 §1.37: `where priority <= 3` over typed events, got {:?}",
+        run.stdout()
+    );
+    assert!(
+        run.stdout().contains("2026-08-27T08:46:41"),
+        "microseconds since the epoch became a timestamp, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_follow_the_journal_live_at_the_terminal_until_interrupted() {
+    // Spec v0.3 §1.37: `journalctl -f` is a live stream — unbounded, rendered in place at a
+    // terminal (spec §18.3), ended by Ctrl-C, which reaches the shell and stops the child.
+    let dir = journal_shim(&format!(
+        "trap 'exit 0' TERM; echo '{ENTRY_ONE}'; sleep 0.3; echo '{ENTRY_TWO}'; while true; do sleep 0.2; done"
+    ));
+    let mut executor = ono_process::Executor::detached();
+    let command = ono_process::Command::new(ono_testkit::ono_binary())
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
+        .env("HOME", std::env::temp_dir().display().to_string())
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.path().display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        );
+    let mut session = executor
+        .run_pty(&command, ono_process::WindowSize::new(30, 120))
+        .expect("a pseudo-terminal must be available");
+    let _ = read_until(&mut session, "> ", Duration::from_secs(10));
+    session.write_all(b"journalctl -f\n").expect("typed");
+    let seen = read_until(&mut session, "second", Duration::from_secs(10));
+    assert!(
+        seen.contains("first") && seen.contains("second"),
+        "both entries rendered as they arrived, got {seen:?}"
+    );
+    session.write_all(b"\x03").expect("Ctrl-C");
+    session.write_all(b"echo alive-$?\n").expect("typed");
+    let after = read_until(&mut session, "alive-", Duration::from_secs(10));
+    assert!(
+        after.contains("alive-"),
+        "the prompt is back after Ctrl-C and the follower is gone, got {after:?}"
+    );
+}

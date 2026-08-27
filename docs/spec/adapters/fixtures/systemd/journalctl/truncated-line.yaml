@@ -1,0 +1,7 @@
+# A stream that ends in the middle of a line: what arrived before it is still a record; the
+# fragment is the failure the decoder reports.
+invocation: [journalctl]
+tool_version: "259"
+distro: ubuntu
+expect:
+  error: adapter.decode_failed

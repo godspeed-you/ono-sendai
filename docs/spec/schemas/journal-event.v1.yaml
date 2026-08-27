@@ -1,0 +1,50 @@
+# Canonical JournalEvent schema. Source: spec v0.3 §1.37 — `journalctl … | where priority <= 3`
+# yields `Stream<JournalEvent>`, normalising timestamp, priority, message, unit, pid, uid,
+# boot_id, host and cursor while every raw journal key stays in the extension map.
+id: ono.journal-event/1
+name: JournalEvent
+summary: One entry of the systemd journal.
+identity: [cursor]
+fields:
+  timestamp:
+    type: timestamp
+    required: true
+    doc: When the entry was received by the journal (the realtime clock).
+  priority:
+    type: int
+    required: true
+    doc: The syslog priority, 0 (emergency) to 7 (debug).
+  message:
+    type: string
+    required: true
+    doc: The entry's message.
+  identifier:
+    type: string
+    nullable: true
+    doc: The syslog identifier — the program name as the entry names itself.
+  unit:
+    type: string
+    nullable: true
+    doc: The systemd unit the entry belongs to; null for the kernel and for processes outside units.
+  pid:
+    type: int
+    nullable: true
+    doc: The process that produced the entry; null for the kernel.
+  uid:
+    type: int
+    nullable: true
+    doc: The user the producing process ran as.
+  boot_id:
+    type: string
+    required: true
+    doc: The boot the entry belongs to.
+  host:
+    type: string
+    required: true
+    doc: The hostname the entry was recorded on.
+  cursor:
+    type: string
+    required: true
+    doc: The journal cursor, a stable continuation and provenance token (spec v0.3 §1.37).
+default_view:
+  columns: [timestamp, priority, identifier, message]

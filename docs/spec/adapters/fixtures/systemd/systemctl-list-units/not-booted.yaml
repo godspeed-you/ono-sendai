@@ -1,0 +1,5 @@
+invocation: [systemctl, list-units]
+tool_version: "259"
+distro: debian
+expect:
+  error: adapter.decode_failed

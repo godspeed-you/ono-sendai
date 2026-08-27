@@ -479,7 +479,9 @@ fn run_from(
         return Ok(status);
     }
 
-    for (position, segment) in segments.iter().enumerate() {
+    let mut position = 0;
+    while position < segments.len() {
+        let segment = &segments[position];
         let last = position + 1 == segments.len();
         match segment {
             Segment::External(indices) => {
@@ -499,6 +501,31 @@ fn run_from(
                 if let Some((plan, argv, demand)) =
                     negotiate_stage(session, list, indices, source, demand)?
                 {
+                    if plan.adapter().decoder().kind().streams() {
+                        // Records flow while the child runs (ADAPT-005, ADR-0059): the
+                        // following native segment — or the renderer — consumes them as they
+                        // arrive, so both segments are run here and the loop skips ahead.
+                        let following: &[usize] = match segments.get(position + 1) {
+                            Some(Segment::Native(next)) => next,
+                            _ => &[],
+                        };
+                        let consumed_next = !following.is_empty();
+                        status = run_streamed_segment(
+                            session,
+                            registry,
+                            list,
+                            indices,
+                            following,
+                            source,
+                            carried.take(),
+                            &plan,
+                            &argv,
+                            last || (consumed_next && position + 2 == segments.len()),
+                        )?;
+                        carried = None;
+                        position += if consumed_next { 2 } else { 1 };
+                        continue;
+                    }
                     let (bytes, external_status) = crate::eval::run_adapted_segment(
                         session,
                         list,
@@ -553,6 +580,7 @@ fn run_from(
                             }
                         }
                     }
+                    position += 1;
                     continue;
                 }
                 let (bytes, external_status) = crate::eval::run_external_segment(
@@ -569,15 +597,173 @@ fn run_from(
                     indices,
                     source,
                     carried,
-                    seed.take(),
+                    seed.take().map_or(Seed::None, Seed::Values),
                     position == 0,
                     last,
                 )?;
                 status = ExitStatus::SUCCESS;
             }
         }
+        position += 1;
     }
     Ok(status)
+}
+
+/// What starts a native segment's stream besides carried bytes.
+enum Seed {
+    /// Nothing: the head stage is a producer, or reads the carried bytes.
+    None,
+    /// Values already in hand — a retained result, a plugin's answer, a decoded document.
+    Values(Vec<Value>),
+    /// Values arriving from a reader thread while the child that produces them still runs.
+    Stream {
+        receiver: tokio::sync::mpsc::Receiver<StreamEvent>,
+        boundedness: ono_pipeline::Boundedness,
+    },
+}
+
+impl Seed {
+    fn is_some(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+/// Runs an adapted stage whose decoder streams, together with the native segment that
+/// consumes its records (ADR-0059).
+///
+/// The child runs in its own process group without the terminal; a reader thread decodes its
+/// stdout line by line into a channel; the native segment — or, with none, the renderer —
+/// drains the channel on the runtime. Ctrl-C therefore reaches the shell's pipeline as for any
+/// native run; the child is then told to stop and waited for, and its own status stands
+/// (spec v0.3 §1.20).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one call site, and the arguments are the pipeline's actual moving parts"
+)]
+fn run_streamed_segment(
+    session: &mut Session,
+    registry: &'static CommandRegistry,
+    list: &StageList,
+    indices: &[usize],
+    following: &[usize],
+    source: &str,
+    input: Option<Vec<u8>>,
+    plan: &AdapterPlan,
+    argv: &[String],
+    last: bool,
+) -> Eval<ExitStatus> {
+    let trace = ono_adapter::Trace {
+        executable: plan.executable().to_path_buf(),
+        version: plan.version().cloned(),
+        user_invocation: argv.to_vec(),
+        actual_invocation: plan.argv().to_vec(),
+        host: session.link_host(),
+    };
+    let mut decoding =
+        ono_adapter::Decoding::for_plan(plan.clone(), trace, ono_value::builtin_schemas())
+            .map_err(Flow::Failed)?;
+    let boundedness = if plan.invocation().plan().is_unbounded() {
+        ono_pipeline::Boundedness::Unbounded
+    } else {
+        ono_pipeline::Boundedness::Bounded
+    };
+
+    let mut started =
+        crate::eval::start_adapted_segment(session, list, indices, source, input, plan)?;
+    let Some(pipe) = started.take_pipe() else {
+        let outcome = session
+            .executor()
+            .finish_foreground(started)
+            .map_err(process_error_flow)?;
+        return Ok(outcome.status());
+    };
+
+    let (sender, receiver) = tokio::sync::mpsc::channel::<StreamEvent>(256);
+    let reader = std::thread::spawn(move || {
+        let mut file = std::fs::File::from(pipe);
+        let mut buffer = vec![0u8; 64 * 1024];
+        let deliver = |outcome: Result<Value, ErrorValue>| {
+            let event = match outcome {
+                Ok(value) => StreamEvent::Value(value),
+                Err(error) => StreamEvent::Failure(error),
+            };
+            sender.blocking_send(event).is_ok()
+        };
+        loop {
+            match std::io::Read::read(&mut file, &mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    for outcome in decoding.feed(&buffer[..count]) {
+                        if !deliver(outcome) {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        for outcome in decoding.finish() {
+            if !deliver(outcome) {
+                return;
+            }
+        }
+    });
+
+    let consumed = run_native_segment(
+        session,
+        registry,
+        list,
+        following,
+        source,
+        None,
+        Seed::Stream {
+            receiver,
+            boundedness,
+        },
+        false,
+        last,
+    )
+    .map(|_| ());
+    // A reader still running means the consumer stopped before the child's output ended —
+    // `take 1`, an error, Ctrl-C. Cancellation propagates to the producer (spec §18.5,
+    // ADR-0059): the child is told to stop, and a status it exits with because of that is not
+    // a failure of the pipeline. A reader that finished saw end of file, and the child's own
+    // status stands.
+    let cancelled = !reader.is_finished();
+    if cancelled {
+        started.terminate();
+    }
+    let outcome = session.executor().finish_foreground(started);
+    let _ = reader.join();
+    consumed?;
+    let outcome = outcome.map_err(process_error_flow)?;
+    let status = outcome.status();
+    if status != ExitStatus::SUCCESS && !cancelled {
+        let program = plan
+            .executable()
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        return Err(Flow::FailedWith(
+            ErrorValue::new(
+                ErrorCode::ExternalExitNonzero,
+                format!("{program} exited with status {}", status.code()),
+            )
+            .with_help(format!(
+                "its stderr above says why; `raw {}` runs it as typed",
+                argv.join(" ")
+            )),
+            status,
+        ));
+    }
+    Ok(if cancelled {
+        ExitStatus::SUCCESS
+    } else {
+        status
+    })
+}
+
+fn process_error_flow(error: ono_process::Error) -> Flow {
+    Flow::Failed(ErrorValue::new(error.code(), error.message().to_owned()))
 }
 
 /// What the last stage of an external segment is asked to produce (ADR-0052, ADR-0057 point 2).
@@ -713,7 +899,7 @@ fn run_native_segment(
     indices: &[usize],
     source: &str,
     input: Option<Vec<u8>>,
-    seed: Option<Vec<Value>>,
+    seed: Seed,
     first: bool,
     last: bool,
 ) -> Eval<Option<Vec<u8>>> {
@@ -758,10 +944,13 @@ fn run_native_segment(
         input = Some(bytes);
     }
 
-    let Some((final_contract, _)) = bound.last() else {
+    // A streamed seed with no stage after it is the renderer's to show (ADR-0059); anything
+    // else without a stage has nothing to do.
+    let final_contract: Option<&'static CommandContract> =
+        bound.last().map(|(contract, _)| *contract);
+    if final_contract.is_none() && !matches!(seed, Seed::Stream { .. }) {
         return Ok(None);
-    };
-    let final_contract = *final_contract;
+    }
     let stage_has_no_redirection = list.stages[*indices.last().unwrap_or(&0)]
         .redirections
         .is_empty();
@@ -769,13 +958,14 @@ fn run_native_segment(
     // A structured stream cannot be handed to a child process. Spec §12.3 makes the boundary
     // explicit in both directions, and guessing a rendering the program would have to parse back
     // is exactly the text-shaped coupling the object pipeline exists to remove.
-    if !last && !produces_bytes(final_contract) {
+    if !last && final_contract.is_none_or(|contract| !produces_bytes(contract)) {
         return Err(Flow::Failed(
             ErrorValue::new(
                 ErrorCode::TypeMismatch,
                 format!(
                     "`{}` produces objects, and the next stage is a program that reads bytes",
-                    final_contract.spelling()
+                    final_contract
+                        .map_or_else(|| "the adapter".to_owned(), CommandContract::spelling)
                 ),
             )
             .with_help("choose the representation: `… | to json | …` (spec §12.3)"),
@@ -809,8 +999,27 @@ fn run_native_segment(
 
     let pipeline = async {
         let mut stream: Option<ValueStream> = match seed {
-            Some(values) => Some(ValueStream::from_values(values)),
-            None => input.map(|bytes| ValueStream::from_values([Value::Bytes(bytes.into())])),
+            Seed::Values(values) => Some(ValueStream::from_values(values)),
+            Seed::Stream {
+                receiver,
+                boundedness,
+            } => Some(ValueStream::spawn(
+                ono_pipeline::PipelineConfig::new(),
+                boundedness,
+                |sink| async move {
+                    let mut receiver = receiver;
+                    while let Some(event) = receiver.recv().await {
+                        let delivered = match event {
+                            StreamEvent::Value(value) => sink.send(value).await.is_ok(),
+                            StreamEvent::Failure(error) => sink.fail(error).await.is_ok(),
+                        };
+                        if !delivered {
+                            break;
+                        }
+                    }
+                },
+            )),
+            Seed::None => input.map(|bytes| ValueStream::from_values([Value::Bytes(bytes.into())])),
         };
 
         for (contract, arguments) in &bound {
@@ -920,7 +1129,7 @@ fn run_native_segment(
 
     // `view` consumes the terminal instead of printing (ADR-0050): the browse loop owns the
     // rows from here, and leaving it retains them and the selection.
-    if final_contract.id() == "ono.data.view" {
+    if final_contract.is_some_and(|contract| contract.id() == "ono.data.view") {
         let name = bound
             .last()
             .and_then(|(_, arguments)| arguments.selector("name"))
@@ -938,7 +1147,7 @@ fn run_native_segment(
         session,
         stage,
         &values,
-        produces_bytes(final_contract),
+        final_contract.is_some_and(produces_bytes),
         source,
     )?;
     Ok(None)

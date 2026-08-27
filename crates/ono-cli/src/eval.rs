@@ -588,32 +588,15 @@ pub fn run_adapted_segment(
     input: Option<Vec<u8>>,
     plan: &ono_adapter::AdapterPlan,
 ) -> Eval<(Vec<u8>, ExitStatus)> {
-    if session.mode() == Mode::Config {
-        return Err(Flow::Failed(config_refusal("this command")));
-    }
-
-    let mut built = ono_process::Pipeline::new();
-    for (position, index) in indices.iter().enumerate() {
-        let stage = &list.stages[*index];
-        let adapted = position + 1 == indices.len();
-        let mut command = if adapted {
-            adapted_command(session, stage, plan, source)?
-        } else {
-            build_command(session, stage, source)?
-        };
-        if position == 0 {
-            if let Some(bytes) = input.clone() {
-                command = command.stdin(ono_process::Input::Bytes(bytes));
-            } else if adapted && plan.stdin() == ono_adapter::StdinMode::Null {
-                command = command.stdin(ono_process::Input::Null);
-            }
-        }
-        if adapted {
-            command = command.stdout(ono_process::Output::Capture);
-        }
-        built = built.stage(command);
-    }
-
+    let built = adapted_pipeline(
+        session,
+        list,
+        indices,
+        source,
+        input,
+        plan,
+        ono_process::Output::Capture,
+    )?;
     let outcome = session
         .executor()
         .run_foreground(&built)
@@ -632,6 +615,80 @@ pub fn run_adapted_segment(
         .map(|stage| stage.stdout.clone())
         .unwrap_or_default();
     Ok((bytes, outcome.status()))
+}
+
+/// Starts an adapted segment whose records are decoded while it runs (ADR-0059): the last
+/// stage's stdout is handed back as a pipe, the terminal stays with the shell.
+///
+/// # Errors
+///
+/// A stage that could not be started, with its status.
+pub fn start_adapted_segment(
+    session: &mut Session,
+    list: &StageList,
+    indices: &[usize],
+    source: &str,
+    input: Option<Vec<u8>>,
+    plan: &ono_adapter::AdapterPlan,
+) -> Eval<ono_process::Foreground> {
+    let built = adapted_pipeline(
+        session,
+        list,
+        indices,
+        source,
+        input,
+        plan,
+        ono_process::Output::Pipe,
+    )?;
+    let started = session
+        .executor()
+        .start_piped(&built)
+        .map_err(process_error)?;
+    if let Some(failure) = started.failure() {
+        let error = ErrorValue::new(failure.code(), failure.message().to_owned());
+        let outcome = session
+            .executor()
+            .finish_foreground(started)
+            .map_err(process_error)?;
+        return Err(Flow::FailedWith(error, outcome.status()));
+    }
+    Ok(started)
+}
+
+fn adapted_pipeline(
+    session: &mut Session,
+    list: &StageList,
+    indices: &[usize],
+    source: &str,
+    input: Option<Vec<u8>>,
+    plan: &ono_adapter::AdapterPlan,
+    stdout: ono_process::Output,
+) -> Eval<ono_process::Pipeline> {
+    if session.mode() == Mode::Config {
+        return Err(Flow::Failed(config_refusal("this command")));
+    }
+    let mut built = ono_process::Pipeline::new();
+    for (position, index) in indices.iter().enumerate() {
+        let stage = &list.stages[*index];
+        let adapted = position + 1 == indices.len();
+        let mut command = if adapted {
+            adapted_command(session, stage, plan, source)?
+        } else {
+            build_command(session, stage, source)?
+        };
+        if position == 0 {
+            if let Some(bytes) = input.clone() {
+                command = command.stdin(ono_process::Input::Bytes(bytes));
+            } else if adapted && plan.stdin() == ono_adapter::StdinMode::Null {
+                command = command.stdin(ono_process::Input::Null);
+            }
+        }
+        if adapted {
+            command = command.stdout(stdout);
+        }
+        built = built.stage(command);
+    }
+    Ok(built)
 }
 
 /// The command an adapter's plan describes: the pinned executable, the plan's argv, the plan's

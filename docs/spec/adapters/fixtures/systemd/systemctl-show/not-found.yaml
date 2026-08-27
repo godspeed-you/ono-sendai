@@ -1,0 +1,5 @@
+invocation: [systemctl, show, nonesuch.service]
+tool_version: "259"
+distro: ubuntu
+expect:
+  error: adapter.decode_failed

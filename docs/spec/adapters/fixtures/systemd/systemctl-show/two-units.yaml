@@ -1,0 +1,10 @@
+# Blank lines separate units; `MainPID=0` means no main process, which is null; a `static`
+# unit is neither enabled nor disabled; an empty timestamp is null; the UTC timestamp systemd
+# prints under `--timestamp=utc` becomes a real instant.
+invocation: [systemctl, show, ssh.service, apt-daily.timer]
+tool_version: "259"
+distro: ubuntu
+expect:
+  records:
+    - {name: ssh.service, description: "OpenBSD Secure Shell server", state: active, substate: running, pid: 18118, enabled: true, since: "2026-08-21T12:01:25Z", provider: systemd, unit_file: /usr/lib/systemd/system/ssh.service}
+    - {name: apt-daily.timer, description: "Daily apt download activities", state: inactive, substate: dead, pid: null, enabled: null, since: null, provider: systemd, unit_file: /usr/lib/systemd/system/apt-daily.timer}

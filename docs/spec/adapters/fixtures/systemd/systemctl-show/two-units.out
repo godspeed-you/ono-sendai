@@ -1,0 +1,19 @@
+Id=ssh.service
+Description=OpenBSD Secure Shell server
+LoadState=loaded
+ActiveState=active
+SubState=running
+UnitFileState=enabled
+MainPID=18118
+ActiveEnterTimestamp=Fri 2026-08-21 12:01:25 UTC
+FragmentPath=/usr/lib/systemd/system/ssh.service
+
+Id=apt-daily.timer
+Description=Daily apt download activities
+LoadState=loaded
+ActiveState=inactive
+SubState=dead
+UnitFileState=static
+MainPID=0
+ActiveEnterTimestamp=
+FragmentPath=/usr/lib/systemd/system/apt-daily.timer

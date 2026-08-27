@@ -29,6 +29,10 @@ pub enum Output {
     Null,
     /// Collected into memory and returned on the [`StageOutcome`](crate::StageOutcome).
     Capture,
+    /// Handed to the caller as the read end of a pipe, to read while the command runs
+    /// ([`Foreground::take_pipe`](crate::Foreground::take_pipe)). Only standard output can be
+    /// handed out; on standard error it collects like [`Output::Capture`].
+    Pipe,
 }
 
 /// One change to the environment the command runs in.
