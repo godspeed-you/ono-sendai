@@ -1317,9 +1317,9 @@ fn run_native_segment(
         ));
     }
 
+    let scope = std::sync::Arc::new(stage_scope(session, &bound, source)?);
     let adapters = session.shared_adapters();
     let resolver = crate::resolve::resolver(session);
-    let scope = std::sync::Arc::new(Scope::new());
     let context = session.context();
     // A live view has nobody to watch it while its values are being bound (ADR-0069).
     let capturing = session.capturing();
@@ -1503,6 +1503,55 @@ fn run_native_segment(
     Ok(None)
 }
 
+/// What the expressions of a native segment can see: the session's `$variables`, and the values
+/// of every parenthesised pipeline written in an argument, run here and now (ADR-0072 §4).
+///
+/// `ono-command` evaluates expressions but never runs pipelines (ADR-0005), so
+/// `join (get socket) --on pid` needs the evaluator to run `(get socket)` first and hand the
+/// records in. They are keyed by the parentheses' span, which is unique within one source.
+fn stage_scope(
+    session: &mut Session,
+    bound: &[(&'static CommandContract, BoundArguments)],
+    source: &str,
+) -> Eval<Scope> {
+    let mut scope = Scope::new();
+    for (name, value) in session.bindings() {
+        scope = scope.with_variable(&name, value);
+    }
+    for (_, arguments) in bound {
+        for (_, binding) in arguments.selectors().iter().chain(arguments.options()) {
+            for expression in binding.expressions() {
+                for nested in ono_command::nested_pipelines(expression) {
+                    let Some(pipeline) = nested.pipeline() else {
+                        continue;
+                    };
+                    let values = capture_pipeline(session, pipeline, source)?;
+                    scope = scope.with_pipeline_result(nested.span, Value::list(values));
+                }
+            }
+        }
+    }
+    Ok(scope)
+}
+
+/// Runs `pipeline` for its values rather than for the screen.
+///
+/// The pipeline runs through the ordinary evaluator — checked, planned, resolved as always —
+/// with its final values diverted from the sink. A pipeline that ends in a program rather than
+/// a native stage writes bytes, and bytes are not captured here: capturing a program's output
+/// as a value is the language's `(…)` substitution, which is a separate increment.
+pub(crate) fn capture_pipeline(
+    session: &mut Session,
+    pipeline: &ono_parser::Pipeline,
+    source: &str,
+) -> Eval<Vec<Value>> {
+    session.begin_capture();
+    let outcome = crate::eval::run_pipeline(session, pipeline, source);
+    let values = session.end_capture();
+    outcome?;
+    Ok(values)
+}
+
 /// The head word of a stage, or the empty string for a stage that has none.
 fn head_name(stage: &Stage) -> &str {
     match &stage.head {
@@ -1536,14 +1585,15 @@ fn write_result(
     source: &str,
 ) -> Eval<()> {
     let destination = crate::eval::output_destination(session, stage, source)?;
-    // A captured pipeline binds what it would have shown (spec §19.2, ADR-0069): the values
-    // themselves, or the one document a serializer made of them. Nothing is retained for `@-1`,
-    // because nothing was shown.
+    // A pipeline run for its value hands on what it would have shown instead of showing it
+    // (spec §19.2, ADR-0069; ADR-0072 §4): the values themselves, or the one document a
+    // serializer made of them. Nothing is rendered and nothing is retained for `@-1`, because
+    // nothing was shown. A redirection still means the file.
     if destination.is_none() && session.capturing() {
         if serialised {
-            session.capture([crate::eval::captured_text(&bytes_of(values))]);
+            session.capture(&[crate::eval::captured_text(&bytes_of(values))]);
         } else {
-            session.capture(values.iter().cloned());
+            session.capture(values);
         }
         return Ok(());
     }

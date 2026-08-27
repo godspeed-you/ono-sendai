@@ -381,7 +381,7 @@ fn run_function_body(
     }
     if !values.is_empty() {
         if session.capturing() {
-            session.capture(values);
+            session.capture(&values);
         } else {
             return crate::native::run_seeded(session, list, source, values);
         }
@@ -865,7 +865,7 @@ pub fn run_external_segment(
             .unwrap_or_default()
     });
     if captured {
-        session.capture([captured_text(bytes.as_deref().unwrap_or_default())]);
+        session.capture(&[captured_text(bytes.as_deref().unwrap_or_default())]);
         return Ok((None, outcome.status()));
     }
     Ok((bytes, outcome.status()))
@@ -1362,7 +1362,7 @@ fn binding_value(
     if let Some(expression) = bare_value(pipeline) {
         return Ok((eval_expr(session, expression, source)?, ExitStatus::SUCCESS));
     }
-    capture_pipeline(session, pipeline, source)
+    captured_value(session, pipeline, source)
 }
 
 /// The expression a one-stage pipeline is, when it is one: `let name = "world"`.
@@ -1388,7 +1388,7 @@ fn value_of_pipeline(session: &mut Session, pipeline: &Pipeline, source: &str) -
     if let Some(expression) = bare_value(pipeline) {
         return eval_expr(session, expression, source);
     }
-    Ok(capture_pipeline(session, pipeline, source)?.0)
+    Ok(captured_value(session, pipeline, source)?.0)
 }
 
 /// Runs a pipeline for its value rather than its display (spec §19.2, ADR-0069).
@@ -1398,7 +1398,7 @@ fn value_of_pipeline(session: &mut Session, pipeline: &Pipeline, source: &str) -
 /// a list splices back into several values when it starts a pipeline (ADR-0019); none is the
 /// empty list — the pipeline is known to have produced nothing, which is not the same as not
 /// knowing. The status is the pipeline's own, so `$?` after `let x = …` says whether it worked.
-fn capture_pipeline(
+fn captured_value(
     session: &mut Session,
     pipeline: &Pipeline,
     source: &str,

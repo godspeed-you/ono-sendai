@@ -722,7 +722,7 @@ Emit the last N values of a finite stream, or follow an unbounded one.
 |---|---|
 | id | `ono.data.tail` |
 | stability | experimental |
-| phase | planned |
+| phase | B |
 | input | `stream<any>` |
 | output | `stream<any>` |
 | privilege | none |
@@ -754,7 +754,7 @@ Join two record streams on a key.
 |---|---|
 | id | `ono.data.join` |
 | stability | experimental |
-| phase | planned |
+| phase | B |
 | input | `stream<any>` |
 | output | `stream<record>` |
 | privilege | none |
@@ -787,7 +787,7 @@ Compare two structured snapshots by identity and schema.
 |---|---|
 | id | `ono.data.diff` |
 | stability | experimental |
-| phase | planned |
+| phase | B |
 | input | `stream<any>` |
 | output | `stream<record>` |
 | privilege | none |

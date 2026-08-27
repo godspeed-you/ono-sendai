@@ -96,5 +96,5 @@ pub use transforms::group::Group;
 pub use transforms::map::Each;
 pub use transforms::project::{PathSegment, Select, SelectField};
 pub use transforms::relational::{Diff, Join, JoinKind};
-pub use transforms::slice::{First, Last, Skip, Take};
+pub use transforms::slice::{First, Last, Skip, Tail, Take};
 pub use transforms::sort::Sort;

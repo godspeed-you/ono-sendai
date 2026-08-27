@@ -1,0 +1,38 @@
+# Phase B (spec §37, §53): the three data transforms the contract reserved as experimental and
+# ADR-0072 delivers — `tail` counts values and follows what does not end, `join` pairs two record
+# streams on a key, `diff` reports what appeared, vanished and changed between two snapshots by
+# identity. Every answer leaves through `to json`, so what is checked is the values, not a table.
+case: tail, join and diff run over structured data
+timeout: 120
+run: |
+  echo "== tail =="
+  echo '[1,2,3,4]' | ono -c 'from json | tail 2 | to json'
+  echo '[{"n":1},{"n":2},{"n":3}]' | ono -c 'from json | tail 1 | to json'
+  # `--follow` on a bounded stream ends when the stream ends (ADR-0072).
+  echo '[1,2,3]' | ono -c 'from json | tail 2 --follow | to json'
+  # ADR-0028: at a byte boundary `tail` is still the Unix program.
+  printf 'first\nsecond\nlast\n' > lines.txt
+  ono -c 'tail -n 1 lines.txt'
+
+  echo "== join =="
+  ono -c 'let users = [{"uid":0,"name":"root"},{"uid":7,"name":"nobody"}]; let procs = [{"pid":1,"uid":0},{"pid":2,"uid":1}]; $procs | join $users --on uid | count | to json'
+  ono -c 'let users = [{"uid":0,"name":"root"},{"uid":7,"name":"nobody"}]; let procs = [{"pid":1,"uid":0},{"pid":2,"uid":1}]; $procs | join $users --on uid --kind outer | count | to json'
+  # The right side may be a parenthesised pipeline over a real provider (data.yaml's example).
+  ono -c 'get process | where pid == 1 | join (get process | where pid == 1) --on pid | select {lpid: left.pid, rpid: right.pid} | to json'
+
+  echo "== diff =="
+  ono -c 'let before = [{"pid":1,"name":"init"},{"pid":2,"name":"x"}]; let now = [{"pid":1,"name":"systemd"},{"pid":3,"name":"y"}]; $now | diff $before --identity [pid] | select change key | sort key | to json'
+  ono -c 'let before = [{"pid":1,"name":"init"}]; $before | diff $before --identity [pid] | to json'
+  # Identity comes from the schema when nothing overrides it (spec §28.1: pid + started).
+  ono -c 'get process | where pid == 1 | diff (get process | where pid == 99999999) | select change | to json'
+exit: 0
+stdout-contains: [3,4]
+stdout-contains: [{"n":3}]
+stdout-contains: [2,3]
+stdout-contains: last
+stdout-contains: [1]
+stdout-contains: [3]
+stdout-contains: [{"lpid":1,"rpid":1}]
+stdout-contains: [{"change":"changed","key":1},{"change":"removed","key":2},{"change":"added","key":3}]
+stdout-contains: []
+stdout-contains: [{"change":"added"}]

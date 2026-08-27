@@ -5,7 +5,11 @@
 //! services of this host — is not guessed at: [`ValueCompleter`] is the hook the caller fills in,
 //! and without it the candidate list is honestly empty rather than plausibly wrong.
 
-use crate::contract::{ArgumentMode, CommandContract, ParameterSpec};
+use std::sync::Arc;
+
+use ono_value::Schema;
+
+use crate::contract::{ArgumentMode, CommandContract, DeclaredType, ParameterSpec};
 use crate::registry::CommandRegistry;
 
 /// What kind of thing a candidate is, so the editor can present it accordingly.
@@ -19,6 +23,8 @@ pub enum CandidateKind {
     Option,
     /// A value for a selector or an option.
     Value,
+    /// A field of the schema flowing into the stage (spec §15.1).
+    Field,
 }
 
 /// One completion candidate.
@@ -64,6 +70,12 @@ impl Candidate {
         Self::new(text, CandidateKind::Value)
     }
 
+    /// A field candidate.
+    #[must_use]
+    pub fn field(text: impl Into<String>) -> Self {
+        Self::new(text, CandidateKind::Field)
+    }
+
     /// Attaches the one line the editor shows beside the candidate.
     #[must_use]
     pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
@@ -96,6 +108,9 @@ pub struct StageContext {
     head: Option<String>,
     words: Vec<String>,
     prefix: String,
+    /// The pipeline text before the `|` that opened this stage, when there is one: what
+    /// decides which schema's fields `where` and `select` complete (spec §15.1, ADR-0074).
+    upstream: Option<String>,
 }
 
 impl StageContext {
@@ -106,6 +121,7 @@ impl StageContext {
             head: head.map(str::to_owned),
             words: words.iter().map(|word| (*word).to_owned()).collect(),
             prefix: prefix.to_owned(),
+            upstream: None,
         }
     }
 
@@ -119,6 +135,11 @@ impl StageContext {
         let typed = &line[..cursor.min(line.len())];
         let cut = typed.rfind(['|', ';', '&']).map_or(0, |index| index + 1);
         let stage = &typed[cut..];
+        // Only a pipe hands a schema on; a `;` or an `&&` starts the stage from nothing.
+        let upstream = cut
+            .checked_sub(1)
+            .filter(|index| typed.as_bytes().get(*index) == Some(&b'|'))
+            .map(|index| typed[..index].to_owned());
 
         let mut tokens: Vec<String> = stage.split_whitespace().map(str::to_owned).collect();
         let prefix = if stage.ends_with(char::is_whitespace) || stage.is_empty() {
@@ -135,6 +156,7 @@ impl StageContext {
             head,
             words: tokens,
             prefix,
+            upstream,
         }
     }
 
@@ -250,10 +272,47 @@ fn gather(
     let Some(command) = command else {
         return Vec::new();
     };
-    match next_selector(command, context) {
+    let selector = next_selector(command, context);
+    // Spec §15.1: `get process | where <tab>` shows Process fields. The schema is the one the
+    // stages before the pipe hand on, read from the contracts — nothing runs (ADR-0074).
+    if let Some(selector) = selector
+        && reads_fields(command, selector)
+        && let Some(schema) = upstream_schema(registry, context)
+    {
+        return schema
+            .fields()
+            .iter()
+            .filter(|field| field.name().starts_with(context.prefix()))
+            .map(|field| {
+                let candidate = Candidate::field(field.name());
+                match field.doc() {
+                    Some(doc) => candidate.with_doc(doc),
+                    None => candidate,
+                }
+            })
+            .collect();
+    }
+    match selector {
         Some(selector) => selector_values(command, selector, context.prefix(), values),
         None => Vec::new(),
     }
+}
+
+/// Whether an argument bound to `selector` reads fields of the stream: an expression-mode
+/// parameter that carries values. A string parameter — `sort cpu desc`'s direction — is
+/// vocabulary, exactly as the pre-flight check treats it.
+fn reads_fields(command: &CommandContract, selector: &ParameterSpec) -> bool {
+    command.argument_mode() == ArgumentMode::Expression
+        && selector.declared_type() != &DeclaredType::String
+}
+
+/// The schema flowing into the stage under the cursor, where the pipeline before it declares one.
+fn upstream_schema(registry: &CommandRegistry, context: &StageContext) -> Option<Arc<Schema>> {
+    let upstream = context.upstream.as_deref()?;
+    let parsed = ono_parser::parse(upstream);
+    let pipeline = parsed.program().statements.last()?.as_pipeline()?;
+    let schemas: Vec<Arc<Schema>> = ono_value::builtin_schemas().schemas().cloned().collect();
+    crate::check::schema_after(registry, &schemas, pipeline)
 }
 
 /// The command a head and the words typed after it name, if the registry has one.
