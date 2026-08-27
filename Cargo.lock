@@ -804,6 +804,7 @@ dependencies = [
  "ono-core",
  "ono-pipeline",
  "ono-provider-api",
+ "ono-provider-systemd",
  "ono-testkit",
  "ono-value",
  "tempfile",

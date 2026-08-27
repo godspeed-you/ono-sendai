@@ -11,6 +11,10 @@
 //! mounted is still a filesystem: a block device udev found a signature on — linked from
 //! `/dev/disk/by-uuid` or `by-label`, typed in udev's database under `/run/udev/data` — whose
 //! device number (`/sys/class/block/<name>/dev`) is the source of no mount (ADR-0097).
+//!
+//! The mutations are the kernel's calls — `mount(2)`, `umount2(2)`, a remount — and, for the
+//! persistent side, `/etc/fstab` read and written as the structured table it is, and systemd's
+//! mount units for `start`/`stop` (ADR-0098, ADR-0099).
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -23,6 +27,7 @@ use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
 use ono_provider_api::{
     Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
 };
+use ono_provider_systemd::{JobKind, SystemBus, SystemdBus};
 use ono_value::{ByteSize, ErrorValue, RecordValue, Schema, Uuid, Value};
 
 use crate::common::{errno_error, io_error, provenance};
@@ -159,6 +164,10 @@ pub struct StorageProvider {
     disk_by_label: PathBuf,
     sys_class_block: PathBuf,
     udev_data: PathBuf,
+    fstab: PathBuf,
+    /// The service manager `start`/`stop mount` go through; `None` connects to the system bus
+    /// when asked.
+    units: Option<Arc<dyn SystemdBus>>,
 }
 
 impl Default for StorageProvider {
@@ -188,7 +197,61 @@ impl StorageProvider {
             disk_by_label: root.join("dev/disk/by-label"),
             sys_class_block: root.join("sys/class/block"),
             udev_data: root.join("run/udev/data"),
+            fstab: root.join("etc/fstab"),
+            units: None,
         }
+    }
+
+    /// Activates and deactivates mount units through `units` instead of the system bus.
+    #[must_use]
+    pub fn with_units(mut self, units: Arc<dyn SystemdBus>) -> Self {
+        self.units = Some(units);
+        self
+    }
+
+    /// The persistent mount definitions of `/etc/fstab`.
+    ///
+    /// # Errors
+    ///
+    /// The read error, when the table cannot be read. A missing table is an empty one for a
+    /// reader, but not for a writer, who has to create it.
+    fn definitions(&self) -> Result<Vec<MountDefinition>, ErrorValue> {
+        match fs::read_to_string(&self.fstab) {
+            Ok(text) => Ok(parse_fstab(&text)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(error) => Err(io_error(&error, &self.fstab)),
+        }
+    }
+
+    /// A definition rendered as the `ono.mount/1` it would be when active, so a mount that is
+    /// defined but not mounted can be resolved, removed, started — it is an object even while
+    /// the kernel has nothing at its target.
+    fn definition_record(
+        definition: &MountDefinition,
+        schema: &Arc<Schema>,
+    ) -> Result<RecordValue, ErrorValue> {
+        Ok(RecordValue::builder(
+            Arc::clone(schema),
+            provenance(PROVIDER_ID, schema.id(), "/etc/fstab"),
+        )
+        .set("source", Value::string(&definition.source))?
+        .set("target", Value::Path(Arc::from(definition.target.clone())))?
+        .set("filesystem", Value::string(&definition.fs_type))?
+        .set(
+            "options",
+            Value::list(
+                definition
+                    .options
+                    .iter()
+                    .map(|option| Value::string(option)),
+            ),
+        )?
+        .set(
+            "read_only",
+            Value::Bool(definition.options.iter().any(|option| option == "ro")),
+        )?
+        .set("device", Value::Null)?
+        .build())
     }
 
     fn mounts(&self) -> Result<Vec<MountInfo>, ErrorValue> {
@@ -574,13 +637,25 @@ impl Provider for StorageProvider {
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
         let schema = schemas::require(&schemas::mount_id())?;
         let mut found = Vec::new();
-        for mount in self.mounts()? {
-            let record = Self::mount_record(&mount, &schema)?;
+        let mut targets: HashSet<PathBuf> = HashSet::new();
+        let mut consider = |record: RecordValue| {
             if selector.matches(&record)
                 && let Some(reference) = ObjectRef::of(&record)
+                && record
+                    .get("target")
+                    .and_then(path_of)
+                    .is_some_and(|target| targets.insert(target))
             {
                 found.push(reference);
             }
+        };
+        for mount in self.mounts()? {
+            consider(Self::mount_record(&mount, &schema)?);
+        }
+        // A defined mount is an object whether or not it is active: `start mount`, `remove
+        // mount` act on definitions the kernel may have nothing for (ADR-0099).
+        for definition in self.definitions().unwrap_or_default() {
+            consider(Self::definition_record(&definition, &schema)?);
         }
         Ok(found)
     }
@@ -589,6 +664,11 @@ impl Provider for StorageProvider {
         match action.operation() {
             "mount" => Ok(self.mount(action)),
             "unmount" => Ok(self.unmount(action)),
+            "set" => Ok(self.remount(action)),
+            "add" => Ok(self.add_definition(action)),
+            "remove" => Ok(self.remove_definition(action)),
+            "start" => Ok(self.unit_job(action, JobKind::Start).await),
+            "stop" => Ok(self.unit_job(action, JobKind::Stop).await),
             other => Err(ErrorValue::new(
                 ErrorCode::ProviderUnsupported,
                 format!("{PROVIDER_ID} does not implement `{other}`"),
@@ -798,6 +878,333 @@ fn mount_error(errno: nix::errno::Errno, target: &Path) -> ErrorValue {
              privilege broker the policy admits",
         ),
         _ => error,
+    }
+}
+
+// --- persistent definitions and mount units (ADR-0099) ---------------------------------------
+
+/// One line of `fstab(5)`: what is mounted where, with what, and how.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MountDefinition {
+    pub(crate) source: String,
+    pub(crate) target: PathBuf,
+    pub(crate) fs_type: String,
+    pub(crate) options: Vec<String>,
+}
+
+/// Decodes `fstab(5)`: whitespace-separated fields, `#` comments, octal escapes for spaces.
+pub(crate) fn parse_fstab(text: &str) -> Vec<MountDefinition> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let mut fields = line.split_whitespace();
+            let source = unescape(fields.next()?);
+            let target = unescape(fields.next()?);
+            let fs_type = fields.next()?.to_owned();
+            let options = fields
+                .next()
+                .unwrap_or("defaults")
+                .split(',')
+                .filter(|option| !option.is_empty())
+                .map(str::to_owned)
+                .collect();
+            Some(MountDefinition {
+                source,
+                target: PathBuf::from(target),
+                fs_type,
+                options,
+            })
+        })
+        .collect()
+}
+
+/// Whether an `fstab(5)` line defines the mount at `target`.
+fn defines(line: &str, target: &Path) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return false;
+    }
+    trimmed
+        .split_whitespace()
+        .nth(1)
+        .is_some_and(|field| Path::new(&unescape(field)) == target)
+}
+
+/// Encodes the characters `fstab(5)` cannot carry literally, as `getmntent(3)` decodes them.
+fn escape_fstab(field: &str) -> String {
+    let mut out = String::with_capacity(field.len());
+    for character in field.chars() {
+        match character {
+            ' ' => out.push_str("\\040"),
+            '\t' => out.push_str("\\011"),
+            '\n' => out.push_str("\\012"),
+            '\\' => out.push_str("\\134"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The systemd mount unit for a mount point, as `systemd-escape --path --suffix=mount` names
+/// it: `/` is `-.mount`, `/mnt/data` is `mnt-data.mount`, and a character outside
+/// `[A-Za-z0-9:_.\\-]` is `\xNN` (systemd.unit(5)).
+pub(crate) fn mount_unit_name(target: &Path) -> String {
+    let path = target.to_string_lossy();
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        return "-.mount".to_owned();
+    }
+    let mut name = String::with_capacity(trimmed.len() + 6);
+    let mut components = trimmed.split('/').filter(|component| !component.is_empty());
+    let mut first = true;
+    for component in &mut components {
+        if !first {
+            name.push('-');
+        }
+        for (index, byte) in component.bytes().enumerate() {
+            let leading_dot = first && index == 0 && byte == b'.';
+            if !leading_dot
+                && (byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'.' | b'-'))
+            {
+                name.push(char::from(byte));
+            } else {
+                name.push_str(&format!("\\x{byte:02x}"));
+            }
+        }
+        first = false;
+    }
+    name.push_str(".mount");
+    name
+}
+
+impl StorageProvider {
+    /// `set mount`: `mount(2)` with `MS_REMOUNT`, the options and `--read-only` as flags.
+    fn remount(&self, action: &Action) -> ActionOutcome {
+        let Some(target) = Self::action_target(action) else {
+            return missing(action, "mount point");
+        };
+        let (mut flags, data) = split_options(&list_of(action.argument("option")));
+        flags |= MsFlags::MS_REMOUNT;
+        match action.argument("read-only") {
+            Some(Value::Bool(true)) => flags |= MsFlags::MS_RDONLY,
+            Some(Value::Bool(false)) => flags.remove(MsFlags::MS_RDONLY),
+            _ => {}
+        }
+        if action.is_dry_run() {
+            return ActionOutcome::skipped(
+                action,
+                format!("would remount {} with {data:?}", target.display()),
+            );
+        }
+        match nix::mount::mount(
+            None::<&str>,
+            &target,
+            None::<&str>,
+            flags,
+            Some(data.as_str()),
+        ) {
+            Ok(()) => ActionOutcome::succeeded(action, true),
+            Err(errno) => ActionOutcome::failed(action, mount_error(errno, &target)),
+        }
+    }
+
+    /// `add mount`: one more line in `/etc/fstab`.
+    fn add_definition(&self, action: &Action) -> ActionOutcome {
+        let Some(source) = action.argument("source").and_then(text_of) else {
+            return missing(action, "source");
+        };
+        let Some(target) = Self::action_target(action) else {
+            return missing(action, "target");
+        };
+        let definitions = match self.definitions() {
+            Ok(definitions) => definitions,
+            Err(error) => return ActionOutcome::failed(action, error),
+        };
+        if definitions
+            .iter()
+            .any(|definition| definition.target == target)
+        {
+            return ActionOutcome::failed(
+                action,
+                ErrorValue::new(
+                    ErrorCode::IoAlreadyExists,
+                    format!(
+                        "{} already defines a mount at {}",
+                        self.fstab.display(),
+                        target.display()
+                    ),
+                )
+                .with_help("`remove mount` takes the old definition away first"),
+            );
+        }
+        let fs_type = action
+            .argument("type")
+            .and_then(text_of)
+            .or_else(|| self.detect_type(&source))
+            .unwrap_or_else(|| "auto".to_owned());
+        let options = list_of(action.argument("option"));
+        let options = if options.is_empty() {
+            "defaults".to_owned()
+        } else {
+            options.join(",")
+        };
+        let line = format!(
+            "{}\t{}\t{fs_type}\t{options}\t0\t0\n",
+            escape_fstab(&source),
+            escape_fstab(&target.to_string_lossy())
+        );
+        if action.is_dry_run() {
+            return ActionOutcome::skipped(
+                action,
+                format!("would append to {}: {}", self.fstab.display(), line.trim()),
+            );
+        }
+        let written = fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&self.fstab)
+            .and_then(|mut file| {
+                use std::io::Write as _;
+                file.write_all(line.as_bytes())
+            });
+        match written {
+            Ok(()) => ActionOutcome::succeeded(action, true),
+            Err(error) => ActionOutcome::failed(action, definition_error(&error, &self.fstab)),
+        }
+    }
+
+    /// `remove mount`: the definition's line leaves `/etc/fstab`; the table is rewritten whole
+    /// and swapped into place, so a reader never sees half of it.
+    fn remove_definition(&self, action: &Action) -> ActionOutcome {
+        let Some(target) = Self::action_target(action) else {
+            return missing(action, "mount point");
+        };
+        let text = match fs::read_to_string(&self.fstab) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return ActionOutcome::failed(action, io_error(&error, &self.fstab)),
+        };
+        let kept: Vec<&str> = text
+            .lines()
+            .filter(|line| !defines(line, &target))
+            .collect();
+        if kept.len() == text.lines().count() {
+            return ActionOutcome::failed(
+                action,
+                ErrorValue::new(
+                    ErrorCode::IoNotFound,
+                    format!(
+                        "{} defines no mount at {}",
+                        self.fstab.display(),
+                        target.display()
+                    ),
+                )
+                .with_target(ono_value::ValueRef::path(&target))
+                .with_help("`unmount filesystem` detaches a mount that has no definition"),
+            );
+        }
+        if action.is_dry_run() {
+            return ActionOutcome::skipped(
+                action,
+                format!(
+                    "would remove the definition of {} from {}",
+                    target.display(),
+                    self.fstab.display()
+                ),
+            );
+        }
+        let mut rewritten = kept.join("\n");
+        if !rewritten.is_empty() {
+            rewritten.push('\n');
+        }
+        let staging = self.fstab.with_extension("ono-tmp");
+        let written = fs::write(&staging, rewritten).and_then(|()| {
+            fs::rename(&staging, &self.fstab).inspect_err(|_| {
+                let _ = fs::remove_file(&staging);
+            })
+        });
+        match written {
+            Ok(()) => ActionOutcome::succeeded(action, true),
+            Err(error) => ActionOutcome::failed(action, definition_error(&error, &self.fstab)),
+        }
+    }
+
+    /// `start`/`stop mount`: the mount unit's job, queued through the service manager.
+    async fn unit_job(&self, action: &Action, job: JobKind) -> ActionOutcome {
+        let Some(target) = Self::action_target(action) else {
+            return missing(action, "mount point");
+        };
+        let unit = mount_unit_name(&target);
+        if action.is_dry_run() {
+            return ActionOutcome::skipped(action, format!("would {job} `{unit}`"));
+        }
+        let bus: Arc<dyn SystemdBus> = match &self.units {
+            Some(units) => Arc::clone(units),
+            None => match SystemBus::connect().await {
+                Ok(bus) => Arc::new(bus),
+                Err(error) => return ActionOutcome::failed(action, error.into_error()),
+            },
+        };
+        match bus.queue_job(&unit, job).await {
+            Ok(()) => ActionOutcome::succeeded(action, true),
+            Err(error) => ActionOutcome::failed(action, error.into_error()),
+        }
+    }
+}
+
+/// A refused write to the definitions table, with the help an unprivileged user needs.
+fn definition_error(error: &std::io::Error, fstab: &Path) -> ErrorValue {
+    let translated = io_error(error, fstab);
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        translated.with_help(format!(
+            "{} is root's; run this as root, or through a privilege broker the policy admits",
+            fstab.display()
+        ))
+    } else {
+        translated
+    }
+}
+
+#[cfg(test)]
+mod definitions {
+    //! The two pure decoders this file adds: `fstab(5)` and systemd's path escaping. Both have
+    //! a contract of their own, fixed by their man pages.
+
+    use std::path::Path;
+
+    use super::{mount_unit_name, parse_fstab};
+
+    #[test]
+    fn should_name_a_mount_unit_the_way_systemd_escape_does() {
+        assert_eq!(mount_unit_name(Path::new("/")), "-.mount");
+        assert_eq!(mount_unit_name(Path::new("/mnt/data")), "mnt-data.mount");
+        assert_eq!(mount_unit_name(Path::new("/mnt/data/")), "mnt-data.mount");
+        assert_eq!(
+            mount_unit_name(Path::new("/mnt/my data.x")),
+            "mnt-my\\x20data.x.mount"
+        );
+        assert_eq!(mount_unit_name(Path::new("/.hidden")), "\\x2ehidden.mount");
+    }
+
+    #[test]
+    fn should_decode_fstab_lines_and_skip_comments() {
+        let table = "# static file system information\n\
+                     UUID=abc /  ext4 errors=remount-ro 0 1\n\
+                     \n\
+                     tmpfs /mnt/my\\040data tmpfs size=1m,mode=0700 0 0\n\
+                     /swap.img none swap sw 0 0\n";
+        let definitions = parse_fstab(table);
+        assert_eq!(definitions.len(), 3);
+        assert_eq!(definitions[0].source, "UUID=abc");
+        assert_eq!(definitions[0].target, Path::new("/"));
+        assert_eq!(definitions[0].fs_type, "ext4");
+        assert_eq!(definitions[0].options, ["errors=remount-ro"]);
+        assert_eq!(definitions[1].target, Path::new("/mnt/my data"));
+        assert_eq!(definitions[1].options, ["size=1m", "mode=0700"]);
+        assert_eq!(definitions[2].fs_type, "swap");
     }
 }
 

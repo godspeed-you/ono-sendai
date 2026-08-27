@@ -361,7 +361,6 @@ fn should_unmount_the_mounts_piped_in_from_get_mount() {
 // --- set / add / remove / start / stop mount (phase: planned, still delivered as behaviour) ----
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_remounting_unprivileged() {
     if !unprivileged() {
         return;
@@ -382,7 +381,6 @@ fn should_report_a_failed_row_when_remounting_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_adding_a_persistent_mount_unprivileged() {
     if !unprivileged() {
         return;
@@ -408,7 +406,6 @@ fn should_report_a_failed_row_when_adding_a_persistent_mount_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_removing_a_persistent_mount_unprivileged() {
     if !unprivileged() {
         return;
@@ -424,7 +421,6 @@ fn should_report_a_failed_row_when_removing_a_persistent_mount_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_starting_a_mount_unprivileged() {
     if !unprivileged() {
         return;
@@ -440,7 +436,6 @@ fn should_report_a_failed_row_when_starting_a_mount_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_row_when_stopping_a_mount_unprivileged() {
     if !unprivileged() {
         return;

@@ -5018,7 +5018,7 @@ Remount a filesystem with different options.
 |---|---|
 | id | `ono.mount.set` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.mount/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `mount.manage` |
@@ -5052,7 +5052,7 @@ Add a persistent mount definition.
 |---|---|
 | id | `ono.mount.add` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `mount.manage` |
@@ -5087,7 +5087,7 @@ Remove a persistent mount definition.
 |---|---|
 | id | `ono.mount.remove` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.mount/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `mount.manage` |
@@ -5113,8 +5113,8 @@ Activate a mount definition.
 | | |
 |---|---|
 | id | `ono.mount.start` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | C |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `mount.manage` |
@@ -5140,8 +5140,8 @@ Deactivate a mount.
 | | |
 |---|---|
 | id | `ono.mount.stop` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | C |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `mount.manage` |
