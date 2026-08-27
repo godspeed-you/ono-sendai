@@ -7,6 +7,7 @@ use ono_provider_api::ProviderRegistry;
 
 use crate::provider::RelationshipProvider;
 
+mod container;
 mod dns;
 mod file;
 mod identity;
@@ -17,6 +18,7 @@ mod process;
 mod procfs;
 mod service;
 
+pub use container::ContainerImage;
 pub use dns::{RemoteHosts, Resolver};
 pub use file::FileHolders;
 pub use identity::{ProcessUsers, UserGroups, UserProcesses};
@@ -77,6 +79,7 @@ pub fn rooted_relationships(
         Arc::new(InterfaceRoutes::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
         Arc::new(InterfaceSockets::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
         Arc::new(UserProcesses::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
-        Arc::new(UserGroups::new(registry).sharing(snapshots)),
+        Arc::new(UserGroups::new(Arc::clone(&registry)).sharing(snapshots)),
+        Arc::new(ContainerImage::new(registry)),
     ]
 }

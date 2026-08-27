@@ -629,7 +629,6 @@ fn should_name_the_provider_and_the_risk_when_explaining_a_container_stop() {
 // --- containers: context, watch, trace ---------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_push_a_container_frame_when_entering_a_container() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -665,7 +664,6 @@ fn should_push_a_container_frame_when_entering_a_container() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pop_the_container_frame_when_leaving_it() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -690,7 +688,6 @@ fn should_pop_the_container_frame_when_leaving_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_with_a_snapshot_when_watching_containers() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -709,7 +706,6 @@ fn should_begin_with_a_snapshot_when_watching_containers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_relate_a_container_to_its_image_when_tracing_it() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);

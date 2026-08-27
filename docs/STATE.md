@@ -103,7 +103,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   Increment 1 done: `ono-provider-container` — the engine API over the runtime's Unix socket,
   `get container`/`get image`, E0401 naming the sockets tried (4 tests green, ADR-0112).
   Increment 2 done: start/stop/restart/remove/set container as engine requests, the engine's
-  status as the per-target outcome (8 tests green, ADR-0113).
+  status as the per-target outcome (8 tests green, ADR-0113). Increment 3 done: `enter
+  container` as a `container` frame, `watch container` over the engine listing, `trace
+  container` with the exact `image` edge (4 tests green, ADR-0114).
 
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch

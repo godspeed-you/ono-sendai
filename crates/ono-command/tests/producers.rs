@@ -165,9 +165,6 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             "ono.config.set",
             // The context stack of spec §14.1 is the session's too.
             "ono.container.enter",
-            // `trace container` is bound by the increment that adds its relationship
-            // provider (ADR-0114); until then it is honestly absent.
-            "ono.container.trace",
             "ono.dir.enter",
             // Nothing claims the `dns` or `port` targets, so there is no provider to ask.
             "ono.dns.resolve",

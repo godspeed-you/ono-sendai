@@ -15,8 +15,9 @@
 //! - [`ProcessTree`], [`OpenFiles`], [`ProcessSockets`], [`SocketOwners`], [`ServiceProcesses`],
 //!   [`FileHolders`], [`MountDevices`], [`MountFilesystems`], [`MountUsers`],
 //!   [`RouteInterfaces`], [`InterfaceRoutes`], [`InterfaceSockets`], [`UserProcesses`],
-//!   [`UserGroups`], [`ProcessUsers`] — the exact relationships of spec §22.2 and §22.3, each
-//!   read from the kernel or the account database.
+//!   [`UserGroups`], [`ProcessUsers`], [`ContainerImage`] — the exact relationships of spec
+//!   §22.2, §22.3 and §9.1, each read from the kernel, the account database or the container
+//!   engine.
 //! - [`RemoteHosts`] with [`Resolver`] — the derived one, marked as derived.
 //! - [`Tracer`] with [`TraceOptions`] — the bounded walk of spec §22.3.
 //! - [`Graph::trees`] — the ASCII shape of spec §22.4, through `ono-render`'s tree renderer.
@@ -75,10 +76,10 @@ pub use graph::{
     Direction, Edge, Graph, GraphFailure, Node, TRACE_PROVIDER, Truncation, confidence_name,
 };
 pub use kernel::{
-    FileHolders, InterfaceRoutes, InterfaceSockets, MountDevices, MountFilesystems, MountUsers,
-    OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, Resolver, RouteInterfaces,
-    ServiceProcesses, SocketOwners, UserGroups, UserProcesses, kernel_relationships,
-    rooted_relationships,
+    ContainerImage, FileHolders, InterfaceRoutes, InterfaceSockets, MountDevices, MountFilesystems,
+    MountUsers, OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, Resolver,
+    RouteInterfaces, ServiceProcesses, SocketOwners, UserGroups, UserProcesses,
+    kernel_relationships, rooted_relationships,
 };
 pub use provider::{Relationship, RelationshipProvider, Relationships};
 pub use trace::{DEFAULT_DEPTH, DEFAULT_MAX_NODES, TraceOptions, Tracer, roots};

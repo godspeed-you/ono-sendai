@@ -574,6 +574,9 @@ fn error_map(error: &ErrorValue) -> Value {
 /// The stack as `ono.context/1` records, the ground frame first (spec §14.1).
 fn context_records(ctx: &Invocation<'_>) -> Vec<Value> {
     let kind_name = |frame: &crate::ContextFrame| match frame.kind() {
+        // context.v1 names a container frame by its own kind (spec §14.1: "execution/container
+        // context"); every other entered object is `object` (ADR-0114).
+        crate::FrameKind::Object if frame.target() == "container" => "container",
         crate::FrameKind::Object => "object",
         crate::FrameKind::Filesystem => "filesystem",
         crate::FrameKind::Link => "link",
