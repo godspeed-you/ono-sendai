@@ -208,7 +208,6 @@ fn should_resolve_only_user_functions_when_the_fn_namespace_is_forced() {
 // --- aliases (spec §6.5 step 2, §30 `aliases`, ADR-0011 step 3) ----------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_run_the_expansion_when_an_alias_is_called() {
     let run = ono("alias hi = echo hello; hi");
     run.assert_success();
@@ -223,7 +222,6 @@ fn should_run_the_expansion_when_an_alias_is_called() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_let_an_alias_shadow_an_external_command_of_the_same_name() {
     let run = ono("alias ls = echo shadowed; ls");
     run.assert_success();
@@ -237,7 +235,6 @@ fn should_let_an_alias_shadow_an_external_command_of_the_same_name() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_expand_an_alias_exactly_once_so_a_self_reference_terminates() {
     let run = ono("alias echo = echo prefixed; echo x");
     run.assert_success();
@@ -253,7 +250,6 @@ fn should_expand_an_alias_exactly_once_so_a_self_reference_terminates() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_name_the_alias_and_its_expansion_when_explain_inspects_the_resolution() {
     let run = ono("alias hi = echo hello; explain hi");
     run.assert_success();

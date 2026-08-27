@@ -170,6 +170,35 @@ fn should_parse_jump_statements_when_they_appear_in_a_block() {
 }
 
 #[test]
+fn should_declare_an_alias_for_a_pipeline_when_the_statement_is_an_alias() {
+    let Statement::Alias(alias) = only("alias failed = get service | where state == failed") else {
+        panic!("expected an alias statement");
+    };
+    assert_eq!(alias.name, "failed");
+    assert_eq!(
+        alias.value.head.stages.len(),
+        2,
+        "the alias stands for the whole pipeline after the `=` (ADR-0070)"
+    );
+    let source = "alias failed = get service | where state == failed";
+    assert_eq!(
+        alias.value.span.of(source),
+        "get service | where state == failed",
+        "the pipeline's span is the text an expansion substitutes"
+    );
+}
+
+#[test]
+fn should_report_a_missing_equals_sign_when_an_alias_has_none() {
+    let parsed = parse("alias ll ls -la");
+    assert!(
+        parsed.has_errors(),
+        "an alias without `=` is a syntax error, got {:?}",
+        parsed.diagnostics()
+    );
+}
+
+#[test]
 fn should_import_a_module_when_the_statement_is_a_use() {
     let Statement::Use(import) = only("use ono:process") else {
         panic!("expected a use statement");

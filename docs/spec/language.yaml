@@ -17,7 +17,7 @@ grammar: grammar.ebnf
 # words-mode argument position `let` is the word "let" and nothing more (ADR-0009).
 # ---------------------------------------------------------------------------------------------
 keywords:
-  statement: [let, fn, if, else, for, while, match, try, catch, return, break, continue, use]
+  statement: [let, fn, alias, if, else, for, while, match, try, catch, return, break, continue, use]
   expression: [and, or, not, in]
   literal: [true, false, null]
   reserved:
@@ -255,6 +255,7 @@ resolution_order:
 statements:
   - {form: "let name [: type] = pipeline", doc: "Declare or rebind a binding in the current scope (spec §19.2). The only binding form; rebinding is a further `let`."}
   - {form: "fn name(param: Type = default, …) -> Type { … }", doc: "Declare a function (spec §19.3)."}
+  - {form: "alias name = pipeline", doc: "Declare an alias (spec §6.5 step 2). Its text replaces the head word that names it, exactly once, and the result is resolved again from step 1 (ADR-0070)."}
   - {form: "if expr { … } else if expr { … } else { … }", doc: "Conditional (spec §19.5)."}
   - {form: "for name in expr { … }", doc: "Iterate over a list or stream."}
   - {form: "while expr { … }", doc: "Loop while the expression holds."}

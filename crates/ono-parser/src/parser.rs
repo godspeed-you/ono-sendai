@@ -8,13 +8,13 @@
 use ono_core::Span;
 
 use crate::ast::{
-    ArgMode, Argument, BinaryExpr, BinaryOp, Block, CallExpr, CatchClause, ChainOp, ChainedList,
-    CurrentSelector, CurrentValue, Expr, FieldAccess, FieldPath, FnDecl, ForStmt, IfBranch, IfStmt,
-    IndexExpr, LetStmt, ListExpr, MatchArm, MatchArmBody, MatchStmt, NumberLit, NumberValue,
-    OptionArg, Param, ParenInner, ParenValue, Pattern, Pipeline, Program, QualifiedName,
-    RecordExpr, RecordField, RecordKey, RedirectOp, RedirectTarget, Redirection, RegexLit,
-    ReturnStmt, Stage, StageHead, StageList, Statement, StrLit, StrPart, TryStmt, TypeRef,
-    UnaryExpr, UnaryOp, UnitLit, UseStmt, Variable, WhileStmt, WordArg,
+    AliasStmt, ArgMode, Argument, BinaryExpr, BinaryOp, Block, CallExpr, CatchClause, ChainOp,
+    ChainedList, CurrentSelector, CurrentValue, Expr, FieldAccess, FieldPath, FnDecl, ForStmt,
+    IfBranch, IfStmt, IndexExpr, LetStmt, ListExpr, MatchArm, MatchArmBody, MatchStmt, NumberLit,
+    NumberValue, OptionArg, Param, ParenInner, ParenValue, Pattern, Pipeline, Program,
+    QualifiedName, RecordExpr, RecordField, RecordKey, RedirectOp, RedirectTarget, Redirection,
+    RegexLit, ReturnStmt, Stage, StageHead, StageList, Statement, StrLit, StrPart, TryStmt,
+    TypeRef, UnaryExpr, UnaryOp, UnitLit, UseStmt, Variable, WhileStmt, WordArg,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{LexMode, Token, TokenKind, is_ident_continue, is_ident_start, next_token};
@@ -303,6 +303,7 @@ impl<'a> Parser<'a> {
             match token.text(self.source) {
                 "let" => return (Statement::Let(self.parse_let()), false),
                 "fn" => return (Statement::Fn(self.parse_fn()), true),
+                "alias" => return (Statement::Alias(self.parse_alias()), false),
                 "if" => return (Statement::If(self.parse_if()), true),
                 "for" => return (Statement::For(self.parse_for()), true),
                 "while" => return (Statement::While(self.parse_while()), true),
@@ -352,6 +353,26 @@ impl<'a> Parser<'a> {
             name,
             name_span,
             ty,
+            value,
+            span,
+        }
+    }
+
+    fn parse_alias(&mut self) -> AliasStmt {
+        let keyword = self.bump(LexMode::Words);
+        let (name, name_span) = self.expect_ident("a name for the alias");
+        let assign = self.peek(LexMode::Expr);
+        if assign.kind == TokenKind::Eq {
+            self.bump(LexMode::Expr);
+        } else {
+            let description = self.describe(assign);
+            self.report_unexpected(assign, format!("expected `=`, found {description}"));
+        }
+        let value = self.parse_pipeline();
+        let span = keyword.span.join(value.span);
+        AliasStmt {
+            name,
+            name_span,
             value,
             span,
         }

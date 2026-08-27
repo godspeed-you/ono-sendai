@@ -344,7 +344,31 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         ));
     }
 
-    let parsed = ono_parser::parse(&source);
+    let mut source = source;
+    let mut parsed = ono_parser::parse(&source);
+    // Step 3 of the resolution order (ADR-0011, ADR-0070): an alias is reported as one, with
+    // its expansion, and the expansion is what gets explained — it is what would run.
+    let mut expanded: Vec<String> = Vec::new();
+    while let Some(pipeline) = parsed
+        .program()
+        .statements
+        .first()
+        .and_then(ono_parser::Statement::as_pipeline)
+        && let Some((name, text)) = crate::eval::expand_alias(session, &pipeline.head, &source)
+        && !expanded.contains(&name)
+    {
+        print_safely(&format!(
+            "  `{name}` is an alias for `{}` — step 3 of the resolution order; explaining the \
+             expansion",
+            session
+                .alias(&name)
+                .map(|alias| alias.expansion.clone())
+                .unwrap_or_default()
+        ));
+        expanded.push(name);
+        source = text;
+        parsed = ono_parser::parse(&source);
+    }
     let Some(pipeline) = parsed
         .program()
         .statements

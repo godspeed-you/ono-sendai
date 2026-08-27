@@ -61,6 +61,8 @@ pub enum Statement {
     Let(LetStmt),
     /// `fn name(params) -> Type { … }`.
     Fn(FnDecl),
+    /// `alias name = pipeline`.
+    Alias(AliasStmt),
     /// `if … { … } else if … { … } else { … }`.
     If(IfStmt),
     /// `for name in expr { … }`.
@@ -99,6 +101,7 @@ impl Statement {
             Statement::Return(node) => node.span,
             Statement::Break(span) | Statement::Continue(span) | Statement::Error(span) => *span,
             Statement::Use(node) => node.span,
+            Statement::Alias(node) => node.span,
         }
     }
 
@@ -891,6 +894,19 @@ pub struct LetStmt {
     /// The declared type, if one was written.
     pub ty: Option<TypeRef>,
     /// The pipeline whose value is bound.
+    pub value: Pipeline,
+    /// The source range the statement covers.
+    pub span: Span,
+}
+
+/// `alias name = pipeline` (ADR-0070).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AliasStmt {
+    /// The alias name.
+    pub name: String,
+    /// The span of the name.
+    pub name_span: Span,
+    /// The pipeline the alias stands for. Its span is the text an expansion substitutes.
     pub value: Pipeline,
     /// The source range the statement covers.
     pub span: Span,

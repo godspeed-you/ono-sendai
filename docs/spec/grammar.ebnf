@@ -18,7 +18,7 @@
  *)
 
 program        = { statement } ;
-statement      = ( pipeline | let_stmt | fn_decl | control_stmt | use_stmt ) [ terminator ] ;
+statement      = ( pipeline | let_stmt | fn_decl | alias_stmt | control_stmt | use_stmt ) [ terminator ] ;
 terminator     = ";" | NEWLINE ;
 
 (* --- pipelines ------------------------------------------------------------------------- *)
@@ -121,6 +121,7 @@ ipv6           = { HEX | ":" | "." } [ "%" IDENT ] ;
 (* --- statements -------------------------------------------------------------------------- *)
 
 let_stmt       = "let" IDENT [ ":" type ] "=" pipeline ;
+alias_stmt     = "alias" IDENT "=" pipeline ;        (* expanded once, textually -- ADR-0070 *)
 fn_decl        = "fn" IDENT "(" [ params ] ")" [ "->" type ] block ;
 params         = param { "," param } ;
 param          = IDENT [ ":" type ] [ "=" expression ] ;

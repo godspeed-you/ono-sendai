@@ -18,7 +18,7 @@ use ono_value::{ByteSize, Duration as OnoDuration, ErrorValue, MapValue, Percent
 use crate::builtin;
 use crate::expand;
 use crate::resolve::{self, Namespace, Resolution};
-use crate::session::{Definition, Function, Mode, Session};
+use crate::session::{Alias, Definition, Function, Mode, Session};
 
 /// Why evaluation of a statement stopped early.
 #[derive(Debug)]
@@ -125,6 +125,17 @@ pub fn run_statement(
             );
             Ok(ExitStatus::SUCCESS)
         }
+        Statement::Alias(alias) => {
+            // An alias is its text: expansion re-parses it in place of the head word, so the
+            // pipeline is kept as written rather than as a tree (ADR-0070).
+            session.define(
+                alias.name.clone(),
+                Definition::Alias(std::sync::Arc::new(Alias {
+                    expansion: alias.value.span.of(source).to_owned(),
+                })),
+            );
+            Ok(ExitStatus::SUCCESS)
+        }
         Statement::Return(jump) => {
             let value = match &jump.value {
                 Some(expression) => eval_expr(session, expression, source)?,
@@ -140,6 +151,27 @@ pub fn run_statement(
             format!("this statement could not be read at {span}"),
         ))),
     }
+}
+
+// --- aliases (spec §6.5, ADR-0070) ------------------------------------------------------------
+
+/// The text `list` becomes when its head word is an alias: the alias's expansion, then the rest
+/// of the list exactly as written. `None` when the head is not an alias, or is the alias being
+/// expanded right now.
+#[must_use]
+pub fn expand_alias(session: &Session, list: &StageList, source: &str) -> Option<(String, String)> {
+    let stage = list.stages.first()?;
+    let StageHead::Command(name) = &stage.head else {
+        return None;
+    };
+    if name.namespace.is_some() {
+        return None;
+    }
+    let alias = session.alias(&name.name)?;
+    let rest = source
+        .get(name.span.end() as usize..list.span.end() as usize)
+        .unwrap_or_default();
+    Some((name.name.clone(), format!("{}{rest}", alias.expansion)))
 }
 
 // --- functions (spec §19.3, ADR-0070) ---------------------------------------------------------
@@ -533,6 +565,36 @@ fn run_stage_list(
         && let Some(function) = called_function(session, stage)
     {
         return call_function(session, &function, list, source);
+    }
+
+    // Step 3: an alias is expanded exactly once and the result resolved again from the top
+    // (ADR-0011, ADR-0070).
+    if let Some((name, expanded)) = expand_alias(session, list, source) {
+        let expanded = if background {
+            format!("{expanded} &")
+        } else {
+            expanded
+        };
+        let parsed = ono_parser::parse(&expanded);
+        let pipeline = parsed
+            .program()
+            .statements
+            .first()
+            .and_then(Statement::as_pipeline)
+            .cloned()
+            .ok_or_else(|| {
+                Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::ParseSyntax,
+                        format!("the expansion of alias `{name}` is not a pipeline"),
+                    )
+                    .with_help(format!("`{name}` expands to `{expanded}`")),
+                )
+            })?;
+        session.begin_expanding(name);
+        let outcome = run_pipeline(session, &pipeline, &expanded);
+        session.finish_expanding();
+        return outcome;
     }
 
     // A single builtin stage runs in the shell itself: `cd` in a child moves a directory nobody
