@@ -435,6 +435,15 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         if registry.verb(name).is_some() || registry.get(name).is_some() {
             continue;
         }
+        // A user function is step 2 of the order (ADR-0011, ADR-0070): it wins over the
+        // registry and over PATH, and the report says so instead of describing what it shadows.
+        if let Some(function) = session.function(name) {
+            print_safely(&format!(
+                "  `{name}` is a user function declared at {} — step 2 of the resolution order",
+                function.declaration.span
+            ));
+            continue;
+        }
         // The registry does not know the shell's own commands, so without this `explain cd`
         // would report that `cd` resolves to nothing — which is both false and exactly the kind
         // of thing `explain` exists to get right (ADR-0011).

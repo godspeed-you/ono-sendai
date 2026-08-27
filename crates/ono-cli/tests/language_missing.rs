@@ -110,7 +110,6 @@ fn should_bind_the_nested_native_pipelines_value_when_let_uses_parentheses() {
 // --- functions (spec §19.3, §6.5 step 2, ADR-0011) -----------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_call_a_declared_function_by_name() {
     let run = ono("fn f() { echo hi }; f");
     run.assert_success();
@@ -124,7 +123,6 @@ fn should_call_a_declared_function_by_name() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_function_before_an_external_command_of_the_same_name() {
     let run = ono("fn ls() { echo shadowed }; ls");
     run.assert_success();
@@ -138,7 +136,6 @@ fn should_resolve_a_function_before_an_external_command_of_the_same_name() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_apply_the_parameter_default_when_a_function_is_called_without_an_argument() {
     let run = ono("fn twice(n: Int = 1) { ($n * 2) }; twice | to json");
     run.assert_success();
@@ -153,7 +150,6 @@ fn should_apply_the_parameter_default_when_a_function_is_called_without_an_argum
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_bind_an_argument_to_the_parameter_when_a_function_is_called_with_one() {
     let run = ono("fn twice(n: Int = 1) { ($n * 2) }; twice 4 | to json");
     run.assert_success();
@@ -168,7 +164,6 @@ fn should_bind_an_argument_to_the_parameter_when_a_function_is_called_with_one()
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_yield_the_blocks_stream_when_a_function_body_is_a_pipeline() {
     let run = ono("fn one() { get process | where pid == 1 }; one | select pid | to json");
     run.assert_success();
@@ -183,7 +178,6 @@ fn should_yield_the_blocks_stream_when_a_function_body_is_a_pipeline() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_answer_with_the_returned_value_when_a_function_uses_return() {
     let run = ono("fn five() { return 5 }; five | to json");
     run.assert_success();
@@ -198,7 +192,6 @@ fn should_answer_with_the_returned_value_when_a_function_uses_return() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_only_user_functions_when_the_fn_namespace_is_forced() {
     let run = ono("fn f() { echo hi }; fn:f");
     run.assert_success();
