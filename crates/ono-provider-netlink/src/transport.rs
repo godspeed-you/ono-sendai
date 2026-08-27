@@ -155,7 +155,64 @@ impl NetlinkSocket {
         Ok(collected)
     }
 
+    /// Sends one request that changes something and waits for the kernel's acknowledgement.
+    ///
+    /// `flags` are the `NLM_F_CREATE`/`NLM_F_EXCL`/`NLM_F_REPLACE` bits the operation needs;
+    /// `NLM_F_REQUEST` and `NLM_F_ACK` are always set, so the kernel answers every request with
+    /// an `NLMSG_ERROR` — errno zero for success — and a refusal is a structured error
+    /// carrying the kernel's own reason (spec §43). Nothing is retried or reinterpreted: a
+    /// caller without `CAP_NET_ADMIN` gets `EPERM` exactly as the kernel said it.
+    pub(crate) fn request(&self, kind: u16, flags: u16, payload: &[u8]) -> Result<(), ErrorValue> {
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        self.send(
+            kind,
+            sys::NLM_F_REQUEST | sys::NLM_F_ACK | flags,
+            sequence,
+            payload,
+        )?;
+
+        let mut buffer = vec![0u8; RECEIVE_BUFFER];
+        loop {
+            let read =
+                recv(self.fd.as_raw_fd(), &mut buffer, MsgFlags::empty()).map_err(|errno| {
+                    ErrorValue::new(
+                        ErrorCode::ProviderUnavailable,
+                        format!("{} did not acknowledge the request: {errno}", self.family),
+                    )
+                    .with_retryable(errno == nix::errno::Errno::EAGAIN)
+                })?;
+            if read == 0 {
+                return Err(ErrorValue::new(
+                    ErrorCode::ProviderUnavailable,
+                    format!("{} closed before acknowledging the request", self.family),
+                ));
+            }
+            for frame in wire::frames(buffer.get(..read).unwrap_or(&[])) {
+                match frame {
+                    Frame::Message(message) if message.kind == sys::NLMSG_ERROR => {
+                        let errno = wire::i32_at(message.payload, 0).unwrap_or(0);
+                        if errno == 0 {
+                            return Ok(());
+                        }
+                        return Err(wire::errno_error(-errno));
+                    }
+                    // Anything else on this socket is not the answer to this request.
+                    Frame::Message(_) | Frame::Malformed(_) => {}
+                }
+            }
+        }
+    }
+
     fn send_request(&self, kind: u16, sequence: u32, payload: &[u8]) -> Result<(), ErrorValue> {
+        self.send(
+            kind,
+            sys::NLM_F_REQUEST | sys::NLM_F_DUMP,
+            sequence,
+            payload,
+        )
+    }
+
+    fn send(&self, kind: u16, flags: u16, sequence: u32, payload: &[u8]) -> Result<(), ErrorValue> {
         let length = sys::NLMSG_HEADER + payload.len();
         let mut request = Vec::with_capacity(length.div_ceil(sys::ALIGN) * sys::ALIGN);
         let Ok(declared) = u32::try_from(length) else {
@@ -166,7 +223,7 @@ impl NetlinkSocket {
         };
         request.extend_from_slice(&declared.to_ne_bytes());
         request.extend_from_slice(&kind.to_ne_bytes());
-        request.extend_from_slice(&(sys::NLM_F_REQUEST | sys::NLM_F_DUMP).to_ne_bytes());
+        request.extend_from_slice(&flags.to_ne_bytes());
         request.extend_from_slice(&sequence.to_ne_bytes());
         request.extend_from_slice(&0u32.to_ne_bytes());
         request.extend_from_slice(payload);

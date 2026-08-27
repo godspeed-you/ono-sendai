@@ -202,7 +202,9 @@ fn implementation_of(
                 return None;
             }
             match contract.verb() {
-                "get" | "find" => Arc::new(ProviderProducer::new(id)),
+                // `resolve dns` and `test port` ask a provider a question and stream its answer,
+                // exactly as `get` does; the contract's selectors are the query (ADR-0087).
+                "get" | "find" | "resolve" | "test" => Arc::new(ProviderProducer::new(id)),
                 // `tail <target>` follows what the target's provider produces (spec §7.1); the
                 // journal is the one target whose follow is delivered (ADR-0085).
                 "tail" if id == "ono.journal.tail" => Arc::new(ProviderProducer::following(id)),

@@ -312,6 +312,11 @@ impl Value {
             (Value::Ip(a), Value::Ip(b)) => Ok(a.cmp(b)),
             (Value::IpNetwork(a), Value::IpNetwork(b)) => Ok(a.cmp(b)),
             (Value::Port(a), Value::Port(b)) => Ok(a.cmp(b)),
+            // A port and the integer that spells it compare as numbers: spec §10.6 lets a port
+            // "parse from integer context", and `where local.port == 443` is how every example
+            // writes one (ADR-0089).
+            (Value::Port(a), Value::Int(b)) => Ok(i128::from(*a).cmp(b)),
+            (Value::Int(a), Value::Port(b)) => Ok(a.cmp(&i128::from(*b))),
             (Value::List(a), Value::List(b)) => compare_lists(a, b),
             _ => Err(incompatible(self, other, "compare")),
         }

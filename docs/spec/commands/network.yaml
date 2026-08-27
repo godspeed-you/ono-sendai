@@ -3,10 +3,13 @@
 # §41.2 and §41.5. Schemas: `ono.socket/1`, `ono.interface/1`, `ono.route/1`, `ono.neighbor/1`.
 #
 # Read paths for these targets are Phase C, which §37 delivers as "interface/route/neighbor,
-# socket/connection". Write paths — configuring an interface or a routing table — are `planned`:
-# §37's Phase C success criterion is about inspection ("common inspection tasks no longer
-# require parsing text"), and network reconfiguration is a different product decision (ADR-0012).
-# Conventions as documented at the head of process.yaml.
+# socket/connection". The write paths — routes, interface configuration and administrative
+# state, addresses, closing a socket — were `planned` under ADR-0012 and are delivered by
+# ADR-0088 over the same netlink families the read paths use (rtnetlink, sock_diag); they are
+# `experimental`, and the `?` cells of §52 keep `validation_required: true` and their notes.
+# Conventions as documented at the head of process.yaml, plus one: `confirmation: always` on a
+# command marks its `--confirm` option as required for every run, not only above the bulk
+# threshold (spec §17.4, ADR-0088 §3).
 
 version: 1
 family: network
@@ -276,7 +279,7 @@ commands:
     verb: add
     target: route
     summary: Add a routing table entry.
-    stability: experimental               # spec §52, route/add = "M"
+    stability: experimental               # spec §52, route/add = "M"; delivered by ADR-0088
     argument_mode: words
     input: "null"
     output: ono.action-result/1
@@ -290,7 +293,7 @@ commands:
       - {name: table, type: string, doc: "Which routing table to add to."}
     privilege: elevated
     streaming: false
-    phase: planned
+    phase: C
     examples:
       - add route 10.0.0.0/8 --gateway 192.168.1.1
 
@@ -298,7 +301,7 @@ commands:
     verb: remove
     target: route
     summary: Remove a routing table entry.
-    stability: experimental               # spec §52, route/remove = "M"
+    stability: experimental               # spec §52, route/remove = "M"; delivered by ADR-0088
     argument_mode: words
     input: "null | stream<ono.route/1>"
     output: stream<ono.action-result/1>
@@ -309,7 +312,7 @@ commands:
       - {name: table, type: string, doc: "Which routing table to remove from."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - remove route 10.0.0.0/8
 
@@ -317,7 +320,7 @@ commands:
     verb: set
     target: route
     summary: Modify an existing routing table entry.
-    stability: experimental               # spec §52, route/set = "M"
+    stability: experimental               # spec §52, route/set = "M"; delivered by ADR-0088
     argument_mode: words
     input: "null | stream<ono.route/1>"
     output: stream<ono.action-result/1>
@@ -329,7 +332,7 @@ commands:
       - {name: metric, type: int, doc: "New priority."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - set route 10.0.0.0/8 --metric 200
 
@@ -337,7 +340,7 @@ commands:
     verb: set
     target: interface
     summary: Change an interface's configuration or administrative state.
-    stability: experimental               # spec §52, interface/set = "M"
+    stability: experimental               # spec §52, interface/set = "M"; delivered by ADR-0088
     argument_mode: words
     input: "null | stream<ono.interface/1>"
     output: stream<ono.action-result/1>
@@ -349,16 +352,18 @@ commands:
       - {name: up, type: bool, doc: "Bring the interface administratively up or down."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - set interface eth0 --mtu 9000
 
   # --- §52 matrix cells whose usefulness the spec asks to validate first --------------------
+  # Delivered (ADR-0088) but still `validation_required`: the overlap notes stand until one
+  # spelling of each pair is withdrawn.
   - id: ono.interface.start
     verb: start
     target: interface
     summary: Bring an interface up.
-    stability: planned                    # spec §52, interface/start = "M?"
+    stability: experimental               # spec §52, interface/start = "M?"; delivered by ADR-0088
     validation_required: true
     note: Overlaps `set interface --up true`; one spelling should be withdrawn before either is stable.
     argument_mode: words
@@ -370,7 +375,7 @@ commands:
     options: []
     privilege: elevated
     streaming: false
-    phase: planned
+    phase: C
     examples:
       - start interface eth0
 
@@ -378,7 +383,7 @@ commands:
     verb: stop
     target: interface
     summary: Bring an interface down.
-    stability: planned                    # spec §52, interface/stop = "M?"
+    stability: experimental               # spec §52, interface/stop = "M?"; delivered by ADR-0088
     validation_required: true
     note: Overlaps `set interface --up false`.
     argument_mode: words
@@ -390,7 +395,7 @@ commands:
     options: []
     privilege: elevated
     streaming: false
-    phase: planned
+    phase: C
     examples:
       - stop interface eth0
 
@@ -398,7 +403,7 @@ commands:
     verb: add
     target: interface
     summary: Create a virtual interface, or add an address to an existing one.
-    stability: planned                    # spec §52, interface/add = "M?"
+    stability: experimental               # spec §52, interface/add = "M?"; delivered by ADR-0088
     validation_required: true
     argument_mode: words
     input: "null"
@@ -411,7 +416,7 @@ commands:
       - {name: kind, type: string, doc: "Virtual interface kind to create."}
     privilege: elevated
     streaming: false
-    phase: planned
+    phase: C
     examples:
       - add interface eth0 --address 192.168.1.5/24
 
@@ -419,7 +424,7 @@ commands:
     verb: remove
     target: interface
     summary: Delete a virtual interface, or remove an address from one.
-    stability: planned                    # spec §52, interface/remove = "M?"
+    stability: experimental               # spec §52, interface/remove = "M?"; delivered by ADR-0088
     validation_required: true
     argument_mode: words
     input: "null"
@@ -431,7 +436,7 @@ commands:
       - {name: address, type: ipnetwork, doc: "Address to remove; without it the interface itself is deleted."}
     privilege: elevated
     streaming: false
-    phase: planned
+    phase: C
     examples:
       - remove interface eth0 --address 192.168.1.5/24
 
@@ -475,7 +480,7 @@ commands:
     verb: stop
     target: socket
     summary: Force a socket closed.
-    stability: planned                    # spec §52, socket/stop = "M?"
+    stability: experimental               # spec §52, socket/stop = "M?"; delivered by ADR-0088
     validation_required: true
     argument_mode: words
     input: "null | stream<ono.socket/1>"
@@ -483,10 +488,11 @@ commands:
     provider_capability: socket.close
     selectors: []
     options:
-      - {name: confirm, type: bool, doc: "Confirm non-interactively; closing a socket under a running process is destructive."}
+      - {name: confirm, type: bool, doc: "Required: closing a socket under a running process is destructive, and a script never waits for a prompt (spec §17.4). Without it nothing is closed and the run fails with `safety.confirmation_required`."}
+    confirmation: always
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - get socket | where remote.address == 10.4.2.11 | stop socket
 

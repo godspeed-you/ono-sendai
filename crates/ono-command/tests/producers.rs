@@ -122,18 +122,19 @@ fn should_not_register_a_command_whose_phase_has_not_been_delivered() {
 
 #[tokio::test]
 async fn should_report_an_unimplemented_command_by_name_rather_than_failing_halfway() {
-    // `resolve dns` is declared stable and nothing claims the `dns` target yet — the same shape
-    // `watch process` had before phase F delivered it.
+    // `set process` is declared stable and bound only by a provider advertising `process.set`
+    // (ADR-0068 §3, ADR-0092), which the fixture does not — the same shape `watch process` had
+    // before phase F delivered it.
     let error = run(
-        "resolve dns example.com",
+        "set process 1 --priority 5",
         &providers(FixtureProvider::new()),
     )
     .await
-    .expect_err("`resolve dns` has no implementation yet");
+    .expect_err("`set process` has no implementation here");
 
     assert_eq!(error.code(), ErrorCode::ResolveCommandNotFound);
     assert!(
-        error.message().contains("ono.dns.resolve"),
+        error.message().contains("ono.process.set"),
         "the error names the command: {}",
         error.message()
     );
@@ -165,8 +166,6 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             "ono.config.set",
             // The context stack of spec §14.1 is the session's too.
             "ono.dir.enter",
-            // Nothing claims the `dns` or `port` targets, so there is no provider to ask.
-            "ono.dns.resolve",
             // No provider implements a file mutation yet. Registering one would give the user a
             // command that always fails rather than one that is honestly not there (spec §50).
             "ono.file.copy",
@@ -179,7 +178,6 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             // ADR-0020 §9: setting a variable changes the session's own scope, which the
             // evaluator owns.
             "ono.env.set",
-            "ono.port.test",
             // A provider delivers `set process` by advertising `process.set` (ADR-0068 §3,
             // ADR-0092); a table built without providers binds only the verbs every `act`
             // speaks.

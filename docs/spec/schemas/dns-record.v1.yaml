@@ -1,0 +1,31 @@
+# DnsRecord. Derived from spec §9.1 Network — `resolve dns <name|address>` yields
+# `Stream<DnsRecord>`, "perform explicit DNS resolution" — with the answer the system resolver
+# gives (ADR-0087). §28 defines no DnsRecord; the field set is decided here (ADR-0012).
+#
+# The resolver is the C library's (`getaddrinfo` / `getnameinfo`): it answers through NSS, so
+# /etc/hosts, DNS, mDNS and LDAP all take part exactly as they do for every other program on the
+# machine. It does not expose a record's TTL or its authority, so neither is promised here.
+id: ono.dns-record/1
+name: DnsRecord
+summary: One answer of a name resolution — an address for a name, or a name for an address.
+identity: [name, type, address]
+fields:
+  name:
+    type: string
+    required: true
+    doc: >-
+      The name the record is about: the query, for an address record; the host name the
+      address maps to, for a pointer record.
+  type:
+    type: enum
+    required: true
+    values: [A, AAAA, PTR]
+    doc: >-
+      The record type. `A` and `AAAA` answer a name with an address; `PTR` answers an address
+      with a name, which is what a query that is itself an address asks for. `--type` selects one.
+  address:
+    type: ip
+    required: true
+    doc: The address an `A`/`AAAA` record carries, or the address a `PTR` record answers for.
+default_view:
+  columns: [name, type, address]

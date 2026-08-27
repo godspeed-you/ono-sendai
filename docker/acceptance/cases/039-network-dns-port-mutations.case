@@ -1,0 +1,43 @@
+# The network family's read paths beyond netlink and its write paths (spec §9.1, §41.2, §43;
+# ADR-0087, ADR-0088). The container has no network: `localhost` is answered from /etc/hosts
+# through the system resolver, the port probe targets a listener the case starts itself, and a
+# routing-table change is refused by the kernel for an unprivileged user — as one failed
+# ActionResult row with the structured permission error, not as text and not as "not built".
+case: dns resolution, port probes and a refused network mutation are structured answers
+timeout: 120
+run: |
+  echo "== resolve dns =="
+  ono -c 'resolve dns localhost --type A | select name type address | to json'
+  ono -c 'resolve dns 127.0.0.1 | select type | to json'
+  ono -c 'resolve dns definitely.invalid. | to json' 2>&1 | grep -o 'Ono-Sendai-E0[34]01' | head -1
+
+  echo "== test port =="
+  perl -MIO::Socket::INET -e '
+    my $s = IO::Socket::INET->new(LocalAddr => "127.0.0.1", LocalPort => 4711, Listen => 1, ReuseAddr => 1) or die;
+    sleep 30;' &
+  listener=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do ono -c 'test port 127.0.0.1 4711 | select reachable | to json' | grep -q true && break; sleep 0.5; done
+  ono -c 'test port 127.0.0.1 4711 --timeout 2s | select host port reachable error | to json'
+  ono -c 'test port 127.0.0.1 1 | select reachable | to json'; echo "closed-port-status=$?"
+  echo "== a network mutation, refused by the kernel for an unprivileged user =="
+  ono -c 'add route 10.99.0.0/24 --gateway 127.0.0.1 --interface lo | select operation status error | to json'
+  echo "add-route-status=$?"
+  ono -c 'get route | to json' | grep -c '10.99.0.0/24' | sed 's/^/routes-added=/'
+  echo "== stop socket in a script needs --confirm =="
+  ono -c 'get socket --listening | take 1 | stop socket | to json' 2>&1 | grep -o 'Ono-Sendai-E0701' | head -1
+  ono -c 'test port 127.0.0.1 4711 | select reachable | to json'
+  kill "$listener" 2>/dev/null
+  echo "checked"
+exit: 0
+stdout-contains: {"error":{"code":"Ono-Sendai-E0302"
+stdout-contains: "operation":"ono.route.add","status":"failed"
+stdout-contains: add-route-status=1
+stdout-contains: routes-added=0
+stdout-contains: Ono-Sendai-E0701
+stdout-contains: [{"address":"127.0.0.1","name":"localhost","type":"A"}]
+stdout-contains: [{"type":"PTR"}]
+stdout-contains: Ono-Sendai-E0
+stdout-contains: {"error":null,"host":"127.0.0.1","port":4711,"reachable":true}
+stdout-contains: [{"reachable":false}]
+stdout-contains: closed-port-status=0
+stdout-contains: checked

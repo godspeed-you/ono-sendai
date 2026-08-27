@@ -24,19 +24,31 @@ pub(crate) const NLMSG_OVERRUN: u16 = 4;
 pub(crate) const NLM_F_REQUEST: u16 = 0x0001;
 /// `NLM_F_ROOT | NLM_F_MATCH`, the pair the kernel reads as "dump everything matching".
 pub(crate) const NLM_F_DUMP: u16 = 0x0300;
+/// Ask for an `NLMSG_ERROR` acknowledgement even on success, so a write has a definite answer.
+pub(crate) const NLM_F_ACK: u16 = 0x0004;
+/// Replace the object if it exists (`ip route replace`).
+pub(crate) const NLM_F_REPLACE: u16 = 0x0100;
+/// Refuse to touch an object that already exists (`ip route add`).
+pub(crate) const NLM_F_EXCL: u16 = 0x0200;
+/// Create the object if it does not exist.
+pub(crate) const NLM_F_CREATE: u16 = 0x0400;
 
 // `linux/rtnetlink.h`: the message types this crate asks for.
 pub(crate) const RTM_NEWLINK: u16 = 16;
+pub(crate) const RTM_DELLINK: u16 = 17;
 pub(crate) const RTM_GETLINK: u16 = 18;
 pub(crate) const RTM_NEWADDR: u16 = 20;
+pub(crate) const RTM_DELADDR: u16 = 21;
 pub(crate) const RTM_GETADDR: u16 = 22;
 pub(crate) const RTM_NEWROUTE: u16 = 24;
+pub(crate) const RTM_DELROUTE: u16 = 25;
 pub(crate) const RTM_GETROUTE: u16 = 26;
 pub(crate) const RTM_NEWNEIGH: u16 = 28;
 pub(crate) const RTM_GETNEIGH: u16 = 30;
 
 /// `linux/sock_diag.h`: the one request and reply type of the diag protocol.
 pub(crate) const SOCK_DIAG_BY_FAMILY: u16 = 20;
+pub(crate) const SOCK_DESTROY: u16 = 21;
 
 // `linux/if_link.h`: the `IFLA_*` attributes read here.
 pub(crate) const IFLA_ADDRESS: u16 = 1;
@@ -83,6 +95,12 @@ pub(crate) const IPPROTO_TCP: u8 = 6;
 pub(crate) const IPPROTO_UDP: u8 = 17;
 
 /// The size of `struct ifinfomsg`.
+pub(crate) const RT_TABLE_MAIN: u8 = 254;
+pub(crate) const RTPROT_BOOT: u8 = 3;
+pub(crate) const RT_SCOPE_UNIVERSE: u8 = 0;
+pub(crate) const RT_SCOPE_LINK: u8 = 253;
+pub(crate) const RTN_UNICAST: u8 = 1;
+
 pub(crate) const IFINFOMSG: usize = 16;
 /// The size of `struct ifaddrmsg`.
 pub(crate) const IFADDRMSG: usize = 8;

@@ -3,15 +3,19 @@
 
 providers:
   - id: linux.netlink
-    doc: Network interfaces, from rtnetlink (RTM_GETLINK / RTM_GETADDR).
+    doc: >-
+      Network interfaces, from rtnetlink (RTM_GETLINK / RTM_GETADDR); configured through
+      RTM_NEWLINK / RTM_DELLINK / RTM_NEWADDR / RTM_DELADDR, which need CAP_NET_ADMIN.
     targets: [interface]
-    capabilities: [interface.list]
+    capabilities: [interface.list, interface.set]
     schemas: [ono.interface/1]
 
   - id: linux.netlink
-    doc: Routes, from rtnetlink (RTM_GETROUTE).
+    doc: >-
+      Routes, from rtnetlink (RTM_GETROUTE); changed through RTM_NEWROUTE / RTM_DELROUTE,
+      which need CAP_NET_ADMIN.
     targets: [route]
-    capabilities: [route.list]
+    capabilities: [route.list, route.set]
     schemas: [ono.route/1]
 
   - id: linux.netlink
@@ -21,7 +25,9 @@ providers:
     schemas: [ono.neighbor/1]
 
   - id: linux.sock-diag
-    doc: Sockets and connections, from sock_diag; endpoints are ono.endpoint/1 records.
+    doc: >-
+      Sockets and connections, from sock_diag; endpoints are ono.endpoint/1 records. A socket
+      is closed through SOCK_DESTROY, which needs CAP_NET_ADMIN.
     targets: [socket, connection]
-    capabilities: [socket.list, connection.list]
+    capabilities: [socket.list, connection.list, socket.close]
     schemas: [ono.socket/1, ono.endpoint/1]

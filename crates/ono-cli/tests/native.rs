@@ -300,3 +300,32 @@ fn should_compare_an_enum_field_with_its_bare_value_when_the_spec_example_is_wri
         typo.output()
     );
 }
+
+#[test]
+fn should_fail_the_run_when_a_serialised_stream_carried_nothing_but_failures() {
+    // ADR-0028: only when nothing arrived at all is there no answer, and that is the case the
+    // status reports. A serializer is a representation of what arrived, not a source of it —
+    // so a stream that failed before its first value has nothing for `to json` to write, and the
+    // run fails the way it does without the serializer.
+    let run = ono("get file /definitely/not/here | to json");
+    assert!(
+        !run.status().is_success(),
+        "a producer whose only answer is a failure fails the run, serialised or not, got {:?}",
+        run.output()
+    );
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0301"),
+        "the failure is reported as the structured error it was, got {:?}",
+        run.stderr()
+    );
+    assert!(
+        !run.stdout().contains("[]"),
+        "an empty document would claim there was an answer and it was empty, got {:?}",
+        run.stdout()
+    );
+
+    // A filter that matched nothing is an answer — empty — and still serialises as one.
+    let empty = ono("get process | where pid == 2147483647 | to json");
+    empty.assert_success();
+    assert_eq!(empty.stdout().trim(), "[]");
+}

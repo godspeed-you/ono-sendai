@@ -41,6 +41,8 @@ pub fn registry_with_tables(
     registry.register(Arc::new(crate::session_provider::SessionProvider::new(
         tables,
     )));
+    registry.register(Arc::new(ono_provider_net::DnsProvider::new()));
+    registry.register(Arc::new(ono_provider_net::PortProvider::new()));
 
     registry
 }
