@@ -1,0 +1,9 @@
+# A host route has no prefix in ip's output; it is the address alone, which is the /32 (or
+# /128) network — the same route, written the way the kernel means it.
+invocation: [ip, route]
+tool_version: "6.1.0"
+distro: ubuntu
+expect:
+  records:
+    - {destination: "10.1.0.1/32", gateway: null, interface: eth0, source: "10.1.0.4", family: inet, scope: link, protocol: dhcp, metric: 100}
+    - {destination: "168.63.129.16/32", gateway: "10.1.0.1", interface: eth0, source: "10.1.0.4", family: inet, scope: null, protocol: dhcp, metric: 100}

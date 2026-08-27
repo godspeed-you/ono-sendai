@@ -667,9 +667,20 @@ fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, Strin
             _ => Err(wrong("an ip address")),
         },
         FieldType::IpNetwork => match raw {
-            Json::String(text) => ono_value::IpNetwork::parse(text.trim())
-                .map(Value::IpNetwork)
-                .map_err(|_| wrong("an ip network")),
+            // A bare address is the host network — `ip route` prints a host route as
+            // `10.1.0.1`, meaning `10.1.0.1/32` — so the prefix the tool left implicit is
+            // written out rather than refused.
+            Json::String(text) => {
+                let text = text.trim();
+                let spelled = match text.parse::<std::net::IpAddr>() {
+                    Ok(std::net::IpAddr::V4(_)) => format!("{text}/32"),
+                    Ok(std::net::IpAddr::V6(_)) => format!("{text}/128"),
+                    Err(_) => text.to_owned(),
+                };
+                ono_value::IpNetwork::parse(&spelled)
+                    .map(Value::IpNetwork)
+                    .map_err(|_| wrong("an ip network"))
+            }
             _ => Err(wrong("an ip network")),
         },
         FieldType::Port => match raw {

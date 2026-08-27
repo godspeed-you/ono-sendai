@@ -1,0 +1,1 @@
+[{"dst":"10.1.0.1","dev":"eth0","protocol":"dhcp","scope":"link","prefsrc":"10.1.0.4","metric":100,"flags":[]},{"dst":"168.63.129.16","gateway":"10.1.0.1","dev":"eth0","protocol":"dhcp","prefsrc":"10.1.0.4","metric":100,"flags":[]}]
