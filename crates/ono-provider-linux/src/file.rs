@@ -468,6 +468,53 @@ async fn walk_root(
     Ok(())
 }
 
+/// `read file`: each named file's content, as one value per file.
+///
+/// Without an encoding the content stays bytes — spec §12.1 forbids guessing — and with one it
+/// is decoded, or refused with the reason. Only UTF-8 is decoded here: a transcoding table is
+/// a dependency this build does not carry, and a named encoding it cannot honour is refused
+/// rather than approximated.
+async fn read_content(roots: Vec<PathBuf>, encoding: Option<String>, sink: StreamSink) {
+    for path in roots {
+        let outcome = match tokio::fs::read(&path).await {
+            Ok(data) => decode(data, encoding.as_deref(), &path),
+            Err(error) => Err(crate::common::io_error(&error, &path)),
+        };
+        let delivered = match outcome {
+            Ok(value) => sink.send(value).await.is_ok(),
+            Err(error) => sink.fail(error).await.is_ok(),
+        };
+        if !delivered {
+            return;
+        }
+    }
+}
+
+fn decode(data: Vec<u8>, encoding: Option<&str>, path: &Path) -> Result<Value, ErrorValue> {
+    match encoding {
+        None => Ok(Value::Bytes(data.into())),
+        Some(name) if name.eq_ignore_ascii_case("utf-8") || name.eq_ignore_ascii_case("utf8") => {
+            String::from_utf8(data).map(Value::from).map_err(|error| {
+                ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!(
+                        "{}: not valid UTF-8 at byte {}",
+                        path.display(),
+                        error.utf8_error().valid_up_to()
+                    ),
+                )
+                .with_target(ono_value::ValueRef::path(path))
+                .with_help("read it without `--encoding` to get the bytes as they are")
+            })
+        }
+        Some(other) => Err(ErrorValue::new(
+            ErrorCode::ProviderUnsupported,
+            format!("{PROVIDER_ID} decodes utf-8 only, not `{other}`"),
+        )
+        .with_help("read the bytes and decode them downstream")),
+    }
+}
+
 #[async_trait::async_trait]
 impl Provider for FileProvider {
     fn id(&self) -> &str {
@@ -486,6 +533,7 @@ impl Provider for FileProvider {
         vec![
             Capability::new("file.list", Risk::Read),
             Capability::new("file.find", Risk::Read),
+            Capability::new("file.read", Risk::Read),
             Capability::new("dir.list", Risk::Read),
         ]
     }
@@ -502,6 +550,17 @@ impl Provider for FileProvider {
             accounts: Arc::clone(&self.accounts),
         };
         let request = Request::from(query);
+        if query.verb() == "read" {
+            let encoding = query
+                .option_value("encoding")
+                .and_then(|value| value.as_str().ok())
+                .map(str::to_owned);
+            return Ok(ValueStream::spawn(
+                PipelineConfig::new(),
+                Boundedness::Bounded,
+                move |sink| async move { read_content(request.roots, encoding, sink).await },
+            ));
+        }
         Ok(ValueStream::spawn(
             PipelineConfig::new(),
             Boundedness::Bounded,

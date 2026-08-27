@@ -495,7 +495,7 @@ impl CommandContract {
                 format!("`{}` has no target and asks no provider", self.spelling()),
             )
         })?;
-        let mut query = ono_provider_api::Query::target(target);
+        let mut query = ono_provider_api::Query::target(target).for_verb(self.verb());
         for (name, binding) in arguments.selectors() {
             if let Some(value) = binding.value() {
                 query = query.with(ono_provider_api::Selector::field(name, value.clone()));

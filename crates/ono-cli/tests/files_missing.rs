@@ -148,7 +148,6 @@ fn should_resolve_a_glob_to_exactly_the_matching_files_when_getting_files() {
 // --- read file (spec §9.1, §12.1) ---------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_the_content_as_text_when_an_encoding_is_named() {
     let directory = scratch();
     directory.write("hello.txt", "hello world\n");
@@ -163,7 +162,6 @@ fn should_return_the_content_as_text_when_an_encoding_is_named() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_raw_bytes_when_no_encoding_is_named() {
     let directory = scratch();
     directory.write("data.bin", [0x00, 0xff, 0x41]);
@@ -181,7 +179,6 @@ fn should_return_raw_bytes_when_no_encoding_is_named() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_read_the_file_that_arrives_through_the_pipeline() {
     let directory = scratch();
     directory.write("piped.txt", "from the stream");
