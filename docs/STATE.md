@@ -27,7 +27,7 @@ git push origin implementation && git push origin --tags
 ```
 
 **`release-check: the shell is release-ready` — printed 2026-08-26 by `scripts/release-check.sh`
-at commit 58fadee.** All ten phases of spec §37 are complete, proven and tagged; every box in
+at commit 21b37d9.** All ten phases of spec §37 are complete, proven and tagged; every box in
 docs/ACCEPTANCE.md §4 is ticked by a named automated proof; the containerised suite stands at
 35 cases green and the workspace at ~1 400 outcome tests across 21 crates. What remains under
 Next up is post-release deepening — every item deliberate, none blocking the deliverable.
@@ -50,7 +50,7 @@ immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a
 `docs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
 **The v0.3 tranche is in progress (started 2026-08-27).** v0.2 was released as `v0.2.0` from
-`main` at `090d759`; the External Command Adaptation Layer is implemented on `implementation`
+`main` at `273d3cd`; the External Command Adaptation Layer is implemented on `implementation`
 in the same loop, against the same referee. Its definition of done is `docs/ACCEPTANCE.md`
 §4.6 — 39 boxes derived from v0.3 §2.1–§2.6, §1.67 and §1.68 — and `scripts/release-check.sh`
 is red until every one of them is ticked by a named automated proof. **ADR-0027 carries the
@@ -204,9 +204,9 @@ budgets of §34 are tracked under *Cross-cutting*, not here.
 - [x] B7 — Renderer separated from data: table, stacked, list, tree, raw, hex; width-aware
       layout; visible truncation; semantic theme tokens — `crates/ono-render/tests/`
 - [x] B1 — Value model: scalars, semantic scalars, units, `Record`, `Map`, `List`, provenance —
-      `crates/ono-value/tests/` — ADR-0016 — commit 05eb85a
+      `crates/ono-value/tests/` — ADR-0016 — commit d020129
 - [x] B2 — Schema model and registry, the canonical schemas of spec §28, compatibility rules —
-      `crates/ono-value/tests/{builtin_schemas,schema_compatibility}.rs` — commit 05eb85a
+      `crates/ono-value/tests/{builtin_schemas,schema_compatibility}.rs` — commit d020129
 - [x] B4 — Transforms `where`, `select`, `take`, `skip`, `each` (streaming) — spec §53 —
       `crates/ono-pipeline/tests/streaming_transforms.rs`, `crates/ono-command/tests/transforms.rs`
       — the acceptance case lands with the evaluator wiring
@@ -252,7 +252,7 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 ### Phase D — Language consistency and discoverability (spec §15, §27, §36, §47)
 
 - [x] D0 — The registries themselves: `docs/spec/{verbs,targets,errors,capabilities,language}.yaml`,
-      `schemas/*.v1.yaml`, `commands/*.yaml` — ADR-0012 — commit e1363de
+      `schemas/*.v1.yaml`, `commands/*.yaml` — ADR-0012 — commit 6b107d0
 - [x] D1 — `xtask spec-check` validates the registries and cross-checks them against the
       implementation: undocumented stable command, metadata without implementation, doc example
       that no longer parses, schema break without version bump, provider output outside its
@@ -379,17 +379,17 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] Branch policy: implementation on a disposable `implementation` branch, guarded in
       `scripts/gate.sh` — ADR-0004
 - [x] Acceptance harness extended: `|` block scripts, stdin, `pty:`, `columns:`/`lines:`, `env:`,
-      `timeout:` and repeatable assertions, with a self-test case — commit 2001a1d
+      `timeout:` and repeatable assertions, with a self-test case — commit 036f89c
 - [x] The gate refuses untracked unfinished work: `todo!()`, `unimplemented!()`, untracked
-      `TODO`/`FIXME`, `#[ignore]` without a reason — `xtask/tests/scan.rs` — commit 6d855b1
+      `TODO`/`FIXME`, `#[ignore]` without a reason — `xtask/tests/scan.rs` — commit 6f7c308
 - [x] `ono-testkit`: real-binary runs with a deadline, scratch directories, and a reproducible
-      generator for fuzz-style tests — commits e27f481, 12b0a97
+      generator for fuzz-style tests — commits b2a0d2d, a20056c
 - [x] `ono-render`: width-aware table and stacked-record layout, semantic theme tokens, the
-      presentation contract of spec §4.6, and the ASCII tree of §22.4 — commits f387b2c,
-      6f047a3, 22b2f22
-- [x] `ono-history`: semantic entries, restart survival, secret policy — commit 4d7d400
+      presentation contract of spec §4.6, and the ASCII tree of §22.4 — commits bb2d825,
+      a3d3fac, 37f78de
+- [x] `ono-history`: semantic entries, restart survival, secret policy — commit 0b1def8
 - [x] A0 — Shared vocabulary in `ono-core`: `Span`, the complete error taxonomy of spec §43,
-      the exit-status contract — ADR-0005/0006/0008 — commit 1012fea —
+      the exit-status contract — ADR-0005/0006/0008 — commit 5551654 —
       tests `crates/ono-core/tests/{error_taxonomy,exit_status,span}.rs`
 - [x] A0 — The concrete grammar: ADR-0009 and `docs/spec/grammar.ebnf`, resolving the
       command/expression ambiguity of spec §26.1 with the two argument modes
@@ -403,7 +403,7 @@ AUTONOMOUS_IMPLEMENTATION.md §18 requires. Between them they found 27 things, e
 reproduction they ran.
 
 **Everything release-blocking is fixed**, each with a regression test that fails without the fix
-(commits 4034a41, 468258d). A ticked box below means fixed *and* guarded. What remains unticked is
+(commits 0742918, aeae961). A ticked box below means fixed *and* guarded. What remains unticked is
 should-fix or unbuilt, and each entry says which.
 
 - [x] **R1 — nested blocks overflow the stack.** `if true { if true { … } }` nested about 2000
