@@ -333,6 +333,13 @@ fn keep(record: &RecordValue, query: &Query) -> bool {
     {
         return false;
     }
+    // `trace connection --remote 10.4.2.11` and `get connection --remote …` (spec §22.3) name
+    // the peer; a socket with another peer, or none, is not the one asked for.
+    if let Some(Value::Ip(remote)) = query.option_value("remote")
+        && endpoint_address(record, "remote") != Some(*remote)
+    {
+        return false;
+    }
     // `trace socket --port 443` (spec §22.3) spells the port as an option; it means the same
     // as the selector below — either end of the socket.
     if let Some(Value::Port(port)) = query.option_value("port")
@@ -354,6 +361,17 @@ fn keep(record: &RecordValue, query: &Query) -> bool {
         }
         other => other.matches(record),
     })
+}
+
+/// The address of one end of a socket record.
+fn endpoint_address(record: &RecordValue, side: &str) -> Option<std::net::IpAddr> {
+    match record.get(side) {
+        Some(Value::Record(endpoint)) => match endpoint.get("address") {
+            Some(Value::Ip(address)) => Some(*address),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// The port of one end of a socket record.

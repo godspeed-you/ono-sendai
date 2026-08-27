@@ -315,7 +315,6 @@ fn traced_local_port(run: &ono_testkit::Run) -> Option<i64> {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_the_socket_on_the_requested_port_when_port_is_given() {
     // Two listeners, two traces: a shell that ignores `--port` and traces whichever socket it
     // finds first can satisfy at most one of them.
@@ -335,7 +334,6 @@ fn should_trace_the_socket_on_the_requested_port_when_port_is_given() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_nothing_else_when_no_connection_has_the_requested_remote() {
     // 192.0.2.1 is TEST-NET-1 (RFC 5737): never routed, so this machine holds no connection to
     // it. The contract restricts the trace to the peer asked for; a graph rooted at some other
