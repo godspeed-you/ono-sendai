@@ -1,0 +1,10 @@
+#!/bin/sh
+# Register ono as a login shell. `add-shell` (debianutils) is idempotent, so running this on
+# every `configure` — first install, upgrade, reconfigure — keeps exactly one entry (ADR-0122).
+set -e
+case "$1" in
+    configure)
+        add-shell /usr/bin/ono
+        ;;
+esac
+exit 0

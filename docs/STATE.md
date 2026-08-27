@@ -93,8 +93,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- (empty — the wiki-verification defects (1)–(4) and the CI-red symlink walk are fixed, see
-  *Done*; `scripts/gate.sh` green at 1e98be0 on 2026-08-27)
+- [packaging | 2026-08-27] installable `.deb`/`.rpm` for x86_64 and aarch64 — files:
+  `crates/ono-cli/Cargo.toml` (package metadata), `crates/ono-cli/packaging/`,
+  `xtask/tests/packaging.rs`, `scripts/package.sh`, `scripts/package-check.sh`,
+  `scripts/release-check.sh`, `.github/workflows/{ci,release}.yml`, `.gitignore`, `README.md`,
+  `docs/ACCEPTANCE.md` §4.5, ADR-0121…0123.
 
 ---
 

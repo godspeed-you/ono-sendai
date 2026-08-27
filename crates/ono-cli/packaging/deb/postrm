@@ -1,0 +1,13 @@
+#!/bin/sh
+# Unregister ono as a login shell when the package leaves the system. An upgrade also runs
+# postrm (with "upgrade"), and must leave the entry alone, or every upgrade would lock out the
+# users whose shell is ono. Their /etc/passwd entries are never rewritten (ADR-0122).
+set -e
+case "$1" in
+    remove|purge)
+        if command -v remove-shell >/dev/null 2>&1; then
+            remove-shell /usr/bin/ono
+        fi
+        ;;
+esac
+exit 0

@@ -48,3 +48,52 @@ serde_yaml_ng.workspace = true
 
 [lints]
 workspace = true
+
+# Installable packages (ADR-0121). `cargo deb` and `cargo generate-rpm` read these tables;
+# `scripts/package.sh` drives them and `scripts/package-check.sh` installs the result in fresh
+# containers. Paths are relative to this crate; `target/release/ono` is rewritten to the
+# `--target` directory by both tools.
+[package.metadata.deb]
+name = "ono"
+revision = ""
+section = "shells"
+priority = "optional"
+depends = "$auto, debianutils"
+extended-description = """\
+Ono-Sendai is an object-pipeline shell for Linux: commands exchange typed values instead of
+text, providers answer from the kernel and systemd instead of parsing tool output, and the
+Unix tools you already know keep working unchanged. Installing this package registers
+/usr/bin/ono in /etc/shells; `chsh -s /usr/bin/ono` makes it a login shell."""
+maintainer-scripts = "packaging/deb"
+assets = [
+    ["target/release/ono", "usr/bin/", "755"],
+    ["../../README.md", "usr/share/doc/ono/README.md", "644"],
+    ["../../docs/reference/*.md", "usr/share/doc/ono/reference/", "644"],
+    ["../../docs/reference/adapters/*.md", "usr/share/doc/ono/reference/adapters/", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "ono"
+summary = "An object-pipeline shell for Linux"
+license = "MIT"
+url = "https://github.com/godspeed-you/ono-sendai"
+assets = [
+    { source = "target/release/ono", dest = "/usr/bin/ono", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/ono/LICENSE", mode = "644", doc = true },
+    { source = "../../README.md", dest = "/usr/share/doc/ono/README.md", mode = "644", doc = true },
+    { source = "../../docs/reference/*.md", dest = "/usr/share/doc/ono/reference/", mode = "644", doc = true },
+    { source = "../../docs/reference/adapters/*.md", dest = "/usr/share/doc/ono/reference/adapters/", mode = "644", doc = true },
+]
+# /etc/shells is edited in place: rpm has no add-shell, and the edit must be idempotent because
+# %post also runs on upgrade ($1 = 2) and %postun on upgrade ($1 = 1) must leave the entry alone
+# (ADR-0122).
+post_install_script = """
+if ! grep -qx /usr/bin/ono /etc/shells 2>/dev/null; then
+    echo /usr/bin/ono >> /etc/shells
+fi
+"""
+post_uninstall_script = """
+if [ "$1" -eq 0 ] && [ -f /etc/shells ]; then
+    sed -i '\\|^/usr/bin/ono$|d' /etc/shells
+fi
+"""
