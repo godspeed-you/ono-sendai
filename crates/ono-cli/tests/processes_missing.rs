@@ -141,7 +141,6 @@ fn error_names(row: &Value, dotted: &str, code: &str) -> bool {
 // --- inspect process -----------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_a_process_detail_record_when_inspecting_a_pid() {
     // Spec §9.1: `inspect process <pid>` returns a ProcessDetail; §33.1 shows what it carries
     // beyond the Process record — the parent, the cgroup, open files and sockets.
@@ -168,7 +167,6 @@ fn should_return_a_process_detail_record_when_inspecting_a_pid() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_inspect_the_process_arriving_through_the_pipeline() {
     // process.yaml: input `null | ono.process/1` — "omitted when one arrives through the
     // pipeline", as the contract example `... | take 1 | inspect process` does.
@@ -189,7 +187,6 @@ fn should_inspect_the_process_arriving_through_the_pipeline() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_structured_when_inspecting_a_pid_that_does_not_exist() {
     let run = ono("inspect process 4000000 | to json");
     assert!(

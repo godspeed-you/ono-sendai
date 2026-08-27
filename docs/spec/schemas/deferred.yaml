@@ -39,9 +39,6 @@ deferred:
   - id: ono.inspection/1
     phase: "D"
     required_by: [ono.meta.inspect]
-  - id: ono.process-detail/1
-    phase: "D"
-    required_by: [ono.process.inspect]
   - id: ono.type-info/1
     phase: "D"
     required_by: [ono.meta.type]

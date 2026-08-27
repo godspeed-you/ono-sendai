@@ -322,6 +322,72 @@ impl Reader {
         Ok(record)
     }
 
+    /// Reads the detail view of one process (spec §33.1): the record, plus what only a closer
+    /// look answers — the parent by name, the cgroup, the open files and the sockets.
+    async fn read_detail(
+        &self,
+        pid: i64,
+        process: &Arc<Schema>,
+        detail: &Arc<Schema>,
+    ) -> Result<RecordValue, ErrorValue> {
+        let record = self.read(pid, process).await?;
+        let dir = self.proc_root.join(pid.to_string());
+        let mut sources = vec![record.provenance().source().unwrap_or_default().to_owned()];
+
+        let mut builder =
+            RecordValue::builder(Arc::clone(detail), provenance(PROVIDER_ID, detail.id(), ""));
+        for field in detail.fields() {
+            if let Some(value) = record.get(field.name()) {
+                builder = builder.set(field.name(), value.clone())?;
+            }
+        }
+        let parent = match record.get("ppid") {
+            Some(Value::Int(ppid)) => self.parent_ref(*ppid, process, &mut sources),
+            _ => Value::Null,
+        };
+        let (open_files, sockets) = descriptors(&dir, &mut sources);
+        let record = builder
+            .set("parent", parent)?
+            .set("cgroup", cgroup(&dir, &mut sources))?
+            .set("open_files", open_files)?
+            .set("sockets", sockets)?
+            .provenance(provenance(PROVIDER_ID, detail.id(), &sources.join(" + ")))
+            .build();
+        Ok(record)
+    }
+
+    /// The parent as a reference: its pid, and — while the parent can still be read — its name
+    /// and the start time that completes its identity.
+    fn parent_ref(&self, ppid: i128, process: &Arc<Schema>, sources: &mut Vec<String>) -> Value {
+        let stat_path = self.proc_root.join(ppid.to_string()).join("stat");
+        let stat = fs::read_to_string(&stat_path)
+            .ok()
+            .and_then(|text| procfs::parse_stat(&text));
+        if stat.is_some() {
+            sources.push(stat_path.display().to_string());
+        }
+        let mut reference = RecordValue::builder(
+            Arc::clone(process),
+            provenance(PROVIDER_ID, process.id(), &stat_path.display().to_string()),
+        );
+        // The schema declares these fields; a name the schema declares cannot be unknown to it.
+        if let Ok(with_pid) = reference.clone().set("pid", Value::Int(ppid)) {
+            reference = with_pid;
+        }
+        if let Some(stat) = stat {
+            if let Ok(with_name) = reference.clone().set("name", Value::string(&stat.comm)) {
+                reference = with_name;
+            }
+            if let Some(started) = self.started(&stat)
+                && let Ok(with_started) =
+                    reference.clone().set("started", Value::Timestamp(started))
+            {
+                reference = with_started;
+            }
+        }
+        Value::Record(Arc::new(reference.build()))
+    }
+
     /// The `user` and `group` references, keeping a numeric id whichever way the read went.
     async fn identity_fields(&self, dir: &Path, sources: &mut Vec<String>) -> Identity {
         let status_path = dir.join("status");
@@ -456,6 +522,66 @@ fn parent(ppid: i64) -> Value {
     }
 }
 
+/// The unified-hierarchy control group path of `/proc/<pid>/cgroup`: a path, `null` on a kernel
+/// without cgroups, an error when the file is hidden.
+fn cgroup(dir: &Path, sources: &mut Vec<String>) -> Value {
+    let path = dir.join("cgroup");
+    match fs::read_to_string(&path) {
+        Ok(text) => {
+            sources.push(path.display().to_string());
+            // `hierarchy:controllers:path`; the unified hierarchy is `0::<path>`, and on a v1
+            // machine the first line's path is still the process's group.
+            text.lines()
+                .filter_map(|line| line.splitn(3, ':').nth(2))
+                .find(|group| !group.is_empty())
+                .map_or(Value::Null, |group| {
+                    Value::Path(Arc::from(Path::new(group)))
+                })
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
+        Err(error) => io_error(&error, &path).into_value(),
+    }
+}
+
+/// What `/proc/<pid>/fd` holds: the open files as paths, and the sockets as inodes. Both carry
+/// the read error when this user may not look into the descriptor table (spec §10.5).
+fn descriptors(dir: &Path, sources: &mut Vec<String>) -> (Value, Value) {
+    let path = dir.join("fd");
+    let entries = match fs::read_dir(&path) {
+        Ok(entries) => entries,
+        Err(error) => {
+            let failure = io_error(&error, &path).into_value();
+            return (failure.clone(), failure);
+        }
+    };
+    sources.push(path.display().to_string());
+    let mut numbered: Vec<(u32, String)> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let fd = entry.file_name().to_str()?.parse::<u32>().ok()?;
+            // A descriptor closed between the listing and the read is a process going about
+            // its business, not a failure.
+            let target = fs::read_link(entry.path()).ok()?;
+            Some((fd, target.to_string_lossy().into_owned()))
+        })
+        .collect();
+    numbered.sort_unstable();
+    let mut files = Vec::new();
+    let mut sockets = Vec::new();
+    for (_, target) in numbered {
+        if let Some(inode) = target
+            .strip_prefix("socket:[")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .and_then(|inode| inode.parse::<i128>().ok())
+        {
+            sockets.push(Value::Int(inode));
+        } else if target.starts_with('/') && !target.ends_with(" (deleted)") {
+            files.push(Value::Path(Arc::from(Path::new(&target))));
+        }
+    }
+    (Value::list(files), Value::list(sockets))
+}
+
 /// A `/proc` magic link: a path, `null` when the kernel has none, an error when it is hidden.
 fn link(path: &Path, sources: &mut Vec<String>) -> Value {
     match fs::read_link(path) {
@@ -522,8 +648,9 @@ impl Provider for ProcessProvider {
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
-        schemas::require(&schemas::process_id())
-            .into_iter()
+        [schemas::process_id(), schemas::process_detail_id()]
+            .iter()
+            .filter_map(|id| schemas::require(id).ok())
             .collect()
     }
 
@@ -548,6 +675,12 @@ impl Provider for ProcessProvider {
 
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         let schema = schemas::require(&schemas::process_id())?;
+        // `inspect process` asks for the detail view (spec §33.1): the same enumeration, each
+        // process read closer (ADR-0091).
+        let detail = query
+            .flag("detail")
+            .then(|| schemas::require(&schemas::process_detail_id()))
+            .transpose()?;
         let reader = self.reader.clone();
         let pinned = Self::pinned_pid(query);
         let pids = match pinned {
@@ -566,7 +699,11 @@ impl Provider for ProcessProvider {
                     if sent >= limit {
                         break;
                     }
-                    match reader.read(pid, &schema).await {
+                    let read = match &detail {
+                        Some(detail) => reader.read_detail(pid, &schema, detail).await,
+                        None => reader.read(pid, &schema).await,
+                    };
+                    match read {
                         Ok(record) => {
                             if !understood_selectors_match(&query, &record) {
                                 continue;

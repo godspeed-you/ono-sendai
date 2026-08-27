@@ -10,7 +10,7 @@ providers:
     doc: Processes, from /proc. Identity is (pid, start time), never pid alone (ADR-0015 T13).
     targets: [process]
     capabilities: [process.list, process.inspect, process.signal]
-    schemas: [ono.process/1]
+    schemas: [ono.process/1, ono.process-detail/1]
 
   - id: linux.fs
     doc: Files and directories, from the filesystem itself.

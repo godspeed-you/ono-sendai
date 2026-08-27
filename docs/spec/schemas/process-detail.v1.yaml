@@ -1,0 +1,98 @@
+# ProcessDetail. Spec §9.1: `inspect process` returns "detailed process properties and
+# provenance"; §33.1 shows the detail view — everything the Process record carries, plus the
+# parent by name, the cgroup, the open files and the sockets, which a flat `get process` does
+# not read because they cost a directory walk per process. Identity is the Process identity
+# (§23.1, §28.1), so a detail record names the same object as the record it was inspected from.
+# Field set decided in ADR-0091.
+id: ono.process-detail/1
+name: ProcessDetail
+summary: One process in detail — its Process fields, parent, cgroup, open files and sockets.
+identity: [pid, started]
+fields:
+  pid:
+    type: int
+    required: true
+    doc: The process id.
+  name:
+    type: string
+    required: true
+    doc: The short process name, as the kernel records it.
+  parent:
+    type: ref<ono.process/1>
+    nullable: true
+    doc: The parent process, by pid and name; null for the init process.
+  command:
+    type: list<string>
+    nullable: true
+    doc: The full argument vector; null when the process hides it or it is not readable.
+  executable:
+    type: path
+    nullable: true
+    doc: The resolved executable path; null when the link is unreadable or the file is deleted.
+  user:
+    type: ref<ono.user/1>
+    nullable: true
+    doc: The effective user; carries the numeric uid even when the name cannot be resolved.
+  group:
+    type: ref<ono.group/1>
+    nullable: true
+    doc: The effective group; carries the numeric gid even when the name cannot be resolved.
+  state:
+    type: enum
+    required: true
+    values: [running, sleeping, disk-sleep, stopped, tracing-stop, zombie, dead, idle, unknown]
+    doc: The kernel scheduling state. `unknown` when the provider read a state it does not model.
+  cpu:
+    type: float
+    unit: percent
+    nullable: true
+    doc: Share of one logical CPU since the previous observation; null until a second sample exists.
+  memory:
+    type: bytesize
+    nullable: true
+    doc: Resident set size.
+  virtual_mem:
+    type: bytesize
+    nullable: true
+    doc: Virtual memory size.
+  threads:
+    type: int
+    nullable: true
+    doc: Number of threads in the process.
+  started:
+    type: timestamp
+    nullable: true
+    doc: Wall-clock start time; half of the identity, as for `ono.process/1`.
+  cwd:
+    type: path
+    nullable: true
+    doc: Current working directory; null when not readable by this user.
+  service:
+    type: ref<ono.service/1>
+    nullable: true
+    doc: The service unit the process belongs to; null when it belongs to none.
+  container:
+    type: ref<ono.container/1>
+    nullable: true
+    doc: The container the process runs in; null outside a container or without a provider.
+  cgroup:
+    type: path
+    nullable: true
+    doc: >-
+      The control group path, as `/proc/<pid>/cgroup` reports it for the unified hierarchy;
+      null on a kernel without cgroups.
+  open_files:
+    type: list<path>
+    nullable: true
+    doc: >-
+      The paths the process holds open, from `/proc/<pid>/fd`; descriptors on pipes, sockets and
+      anonymous inodes are not files and are not listed. An error value when this user may not
+      read the descriptor table.
+  sockets:
+    type: list<int>
+    nullable: true
+    doc: >-
+      The inodes of the sockets the process holds open — the `inode` an `ono.socket/1` carries,
+      so the two join. An error value when this user may not read the descriptor table.
+default_view:
+  columns: [pid, name, parent, user, cpu, memory, started, service, cgroup, open_files, sockets]

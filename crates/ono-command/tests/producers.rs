@@ -180,9 +180,6 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             // evaluator owns.
             "ono.env.set",
             "ono.port.test",
-            // `inspect process` promises `ono.process-detail/1`, which no provider produces yet.
-            // Answering it with `ono.process/1` would be a different value wearing the name.
-            "ono.process.inspect",
         ]
         .iter()
         .copied()
