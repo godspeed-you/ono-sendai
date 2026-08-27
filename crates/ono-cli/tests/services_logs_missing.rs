@@ -440,7 +440,6 @@ fn one_failed_row(run: &ono_testkit::Run, what: &str) -> Option<serde_yaml_ng::V
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_one_failed_row_when_disabling_a_unit_is_refused_unprivileged() {
     let run = ono(&format!("set service {JOURNALD} --enabled false | to json"));
     let Some(row) = one_failed_row(&run, "`set service --enabled false` unprivileged") else {
@@ -459,7 +458,6 @@ fn should_report_one_failed_row_when_disabling_a_unit_is_refused_unprivileged() 
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_one_failed_row_when_the_unit_to_modify_does_not_exist() {
     // The selector resolves the unit before the mutation (spec §6.1), so a unit that is not
     // there is `io.not_found` whatever the caller's privilege.
@@ -476,7 +474,6 @@ fn should_report_one_failed_row_when_the_unit_to_modify_does_not_exist() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_accept_piped_service_records_when_set_service_has_no_selector() {
     // service.yaml: `input: null | stream<ono.service/1>` — the units to modify may be piped in,
     // as `get service | where state == failed | restart service` does for restart.
@@ -493,7 +490,6 @@ fn should_accept_piped_service_records_when_set_service_has_no_selector() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_set_service_without_a_property_when_nothing_is_asked_to_change() {
     let run = ono(&format!("set service {JOURNALD}"));
     assert!(

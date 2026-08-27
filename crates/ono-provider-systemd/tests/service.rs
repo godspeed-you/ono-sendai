@@ -525,6 +525,43 @@ async fn should_report_a_change_when_a_disabled_unit_is_enabled() {
 }
 
 #[tokio::test]
+async fn should_change_what_starts_at_boot_when_set_carries_the_enabled_property() {
+    // `set service nginx --enabled false` reaches the provider as the operation `set` with the
+    // property as an argument (service.yaml `ono.service.set`, ADR-0068).
+    let provider = provider_over(RecordedSystemd::running()).await;
+    let action =
+        Action::new("service", "set", unit_id("nginx.service")).with("enabled", Value::Bool(false));
+
+    let outcome = tokio::time::timeout(BUDGET, provider.act(&action))
+        .await
+        .expect("an action against a recorded service manager must not hang")
+        .expect("`set` with a declared property is an operation the provider attempts");
+    assert_eq!(outcome.status(), ActionStatus::Success);
+    assert!(outcome.changed());
+    assert_eq!(
+        unit(&provider, "nginx.service").await.get("enabled"),
+        Some(&Value::Bool(false))
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_set_when_no_property_it_can_change_is_given() {
+    let provider = provider_over(RecordedSystemd::running()).await;
+    let action = Action::new("service", "set", unit_id("nginx.service"));
+
+    let error = tokio::time::timeout(BUDGET, provider.act(&action))
+        .await
+        .expect("refusing must not hang")
+        .expect_err("`set` with nothing to set is not an action the provider can attempt");
+    assert_eq!(error.code(), ErrorCode::ProviderUnsupported);
+    assert!(
+        error.message().contains("enabled"),
+        "the refusal names the property it can change: {}",
+        error.message()
+    );
+}
+
+#[tokio::test]
 async fn should_report_skipped_when_an_already_enabled_unit_is_enabled() {
     let provider = provider_over(RecordedSystemd::running()).await;
 

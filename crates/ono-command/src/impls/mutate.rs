@@ -76,6 +76,26 @@ impl ProviderMutation {
             })
             .collect();
 
+        // `set <target> <name>` with no property is a request to change nothing, and the
+        // provider would only be able to say so per target. It is a usage error before anything
+        // is resolved, naming the properties the contract declares (ADR-0084).
+        if contract.verb() == "set" && arguments.iter().all(|(name, _)| name == "dry-run") {
+            let properties: Vec<String> = contract
+                .options()
+                .iter()
+                .filter(|option| !matches!(option.name(), "dry-run" | "confirm" | "provider"))
+                .map(|option| format!("--{}", option.name()))
+                .collect();
+            return Err(ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("`{spelling}` needs a property to set, and none was given"),
+            )
+            .with_help(format!(
+                "name what should change: {}",
+                properties.join(", ")
+            )));
+        }
+
         let mut failures = Vec::new();
         let targets = self.targets(ctx, target, &spelling, &mut failures).await?;
 

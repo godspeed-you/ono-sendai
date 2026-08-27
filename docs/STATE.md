@@ -93,6 +93,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [services | 2026-08-27] **services family** — `crates/ono-cli/tests/services_logs_missing.rs`
+  on branch `implementation-services`; files: `crates/ono-provider-systemd/`,
+  `crates/ono-command/src/impls/{mutate,mod,producer}.rs`, `docs/spec/commands/service.yaml`,
+  `docs/spec/schemas/log-record.v1.yaml`, case 038. ADR-0084–0086.
+
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
   one `#[ignore = "REASON: …"]` (AGENTS.md §7) so the tree stays green; **the increment that
@@ -406,6 +411,11 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   missing property as E0201 naming `--enabled`
   (`services_logs_missing.rs::should_refuse_set_service_without_a_property…` stays ignored).
 
+- [x] services 1 — `set service <unit> --enabled true|false` reaches the systemd provider as the
+  `set` operation with the property as an argument (EnableUnitFiles/DisableUnitFiles); a `set`
+  with no property is E0201 naming `--enabled` before anything is resolved (ADR-0084);
+  `services_logs_missing.rs` (4 `set service` tests un-ignored),
+  `ono-provider-systemd/tests/service.rs` (2 tests)
 - [x] data family (ADR-0072) — `tail N [--follow]` (commit 0f68fe0), `join <right> --on key
   --kind inner|left|right|outer` with `$variables` and pre-run `(pipelines)` visible to native
   stages (1616fe1), `diff <right> [--identity [fields]]` by schema identity (1761cc9),
