@@ -707,3 +707,94 @@ fn should_explain_and_document_forced_adaptation() {
         help.stdout()
     );
 }
+
+fn completion_shell(path_prefix: Option<&Scratch>) -> ono_process::PtySession {
+    let mut executor = ono_process::Executor::detached();
+    let mut command = ono_process::Command::new(ono_testkit::ono_binary())
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
+        .env("HOME", std::env::temp_dir().display().to_string());
+    if let Some(dir) = path_prefix {
+        command = command.env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.path().display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        );
+    }
+    executor
+        .run_pty(&command, ono_process::WindowSize::new(30, 120))
+        .expect("a pseudo-terminal must be available")
+}
+
+#[test]
+fn should_complete_fields_of_the_adapted_schema_after_the_pipe_and_declared_flags_before_it() {
+    // Spec v0.3 §1.59: `ss -tunap | where <TAB>` knows Socket fields; before the pipe an adapter
+    // offers the invocations it declares and invents nothing else.
+    let mut shell = completion_shell(None);
+    let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
+    shell.write_all(b"ps aux | where cp\t").expect("typed");
+    let seen = read_until(&mut shell, "cpu", Duration::from_secs(10));
+    assert!(
+        seen.contains("where cpu"),
+        "the Process field completed, got {seen:?}"
+    );
+    shell.write_all(b"\x15").expect("clear the line");
+    shell.write_all(b"lsblk --node\t").expect("typed");
+    let seen = read_until(&mut shell, "--nodeps", Duration::from_secs(10));
+    assert!(
+        seen.contains("--nodeps"),
+        "a declared flag completes, got {seen:?}"
+    );
+    shell.write_all(b"\x15").expect("clear the line");
+    shell.write_all(b"lsblk --pa\t").expect("typed");
+    std::thread::sleep(Duration::from_millis(600));
+    let seen = read_until(&mut shell, "\u{0}never", Duration::from_millis(600));
+    assert!(
+        !seen.contains("--paths"),
+        "an undeclared flag is not invented, got {seen:?}"
+    );
+    shell.write_all(b"\x15exit\n").expect("leave");
+}
+
+#[test]
+fn should_record_the_adapter_in_history() {
+    // Spec v0.3 §1.58: history remembers that a command was adapted.
+    let home = scratch();
+    let mut executor = ono_process::Executor::detached();
+    let command = ono_process::Command::new(ono_testkit::ono_binary())
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
+        .env("HOME", home.path().display().to_string())
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    let mut shell = executor
+        .run_pty(&command, ono_process::WindowSize::new(30, 120))
+        .expect("a pseudo-terminal must be available");
+    let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
+    shell
+        .write_all(b"findmnt | where target == \"/\" | count\n")
+        .expect("typed");
+    let _ = read_until(&mut shell, "VALUE", Duration::from_secs(10));
+    shell.write_all(b"exit\n").expect("leave");
+    std::thread::sleep(Duration::from_millis(500));
+    let mut found = String::new();
+    let mut stack = vec![home.path().to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(text) = std::fs::read_to_string(&path)
+                && text.contains("findmnt")
+            {
+                found.push_str(&text);
+            }
+        }
+    }
+    assert!(
+        found.contains("org.ono.compat.util-linux.findmnt"),
+        "the history entry names the adapter, got {found:?}"
+    );
+}

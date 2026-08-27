@@ -76,7 +76,19 @@ impl CommandImpl for MetaCommand {
                     .first()
                     .and_then(ono_parser::Statement::as_pipeline)
                     .ok_or_else(|| not_a_pipeline(subject))?;
-                let plan = crate::plan(self.registry, Some(ctx.providers()), pipeline, subject);
+                let resolver = ctx.resolver().cloned();
+                let executables = |name: &str| resolver.as_ref().and_then(|resolve| resolve(name));
+                let plan = crate::plan_with(
+                    self.registry,
+                    Some(ctx.providers()),
+                    pipeline,
+                    subject,
+                    &crate::PlanContext {
+                        stdout: ono_adapter::Stdout::Stream,
+                        adapters: ctx.adapters(),
+                        executables: Some(&executables),
+                    },
+                );
                 Ok(values([plan.to_value()]))
             }
             Kind::GetContext => Ok(values(context_records(ctx))),
@@ -100,7 +112,21 @@ impl MetaCommand {
                 .first()
                 .and_then(ono_parser::Statement::as_pipeline)
                 .ok_or_else(|| not_a_pipeline(subject))?;
-            let plan = crate::plan(self.registry, Some(ctx.providers()), pipeline, subject);
+            // An adapted program is a producer with a schema (spec v0.3 §1.61, ADR-0067), so
+            // the registry and the shell's `PATH` resolution take part when they were given.
+            let resolver = ctx.resolver().cloned();
+            let executables = |name: &str| resolver.as_ref().and_then(|resolve| resolve(name));
+            let plan = crate::plan_with(
+                self.registry,
+                Some(ctx.providers()),
+                pipeline,
+                subject,
+                &crate::PlanContext {
+                    stdout: ono_adapter::Stdout::Stream,
+                    adapters: ctx.adapters(),
+                    executables: Some(&executables),
+                },
+            );
             let last = plan
                 .stages()
                 .last()

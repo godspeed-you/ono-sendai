@@ -113,9 +113,32 @@ pub fn find_on_path(session: &Session, name: &str) -> Option<PathBuf> {
         return candidate.is_file().then_some(candidate);
     }
 
-    let path = session.env_var("PATH")?;
+    find_in(session.env_var("PATH")?, session.cwd(), name)
+}
+
+/// A resolver that answers as [`find_on_path`] would, from a snapshot of `PATH` and the working
+/// directory, for callers that outlive the borrow of the session: `type` planning inside a
+/// running pipeline, and completion (ADR-0067).
+#[must_use]
+pub fn resolver(session: &Session) -> ono_command::Resolver {
+    let path = session.env_var("PATH").map(std::ffi::OsStr::to_os_string);
+    let cwd = session.cwd().to_path_buf();
+    std::sync::Arc::new(move |name: &str| {
+        if name.contains('/') {
+            let candidate = if Path::new(name).is_absolute() {
+                PathBuf::from(name)
+            } else {
+                cwd.join(name)
+            };
+            return candidate.is_file().then_some(candidate);
+        }
+        find_in(path.as_deref()?, &cwd, name)
+    })
+}
+
+fn find_in(path: &std::ffi::OsStr, cwd: &Path, name: &str) -> Option<PathBuf> {
     for directory in std::env::split_paths(path) {
-        let candidate = search_directory(session, &directory).join(name);
+        let candidate = search_directory_in(cwd, &directory).join(name);
         if is_executable_file(&candidate) {
             return Some(candidate);
         }
@@ -132,11 +155,15 @@ pub fn find_on_path(session: &Session, name: &str) -> Option<PathBuf> {
 /// child in the session's. A resolution report that does not describe the resolution is worse
 /// than none, because ADR-0015 T11 makes it the only defence against a shadowing binary.
 fn search_directory(session: &Session, entry: &Path) -> PathBuf {
+    search_directory_in(session.cwd(), entry)
+}
+
+fn search_directory_in(cwd: &Path, entry: &Path) -> PathBuf {
     if entry.as_os_str().is_empty() {
-        return session.cwd().to_path_buf();
+        return cwd.to_path_buf();
     }
     if entry.is_relative() {
-        return session.cwd().join(entry);
+        return cwd.join(entry);
     }
     entry.to_path_buf()
 }

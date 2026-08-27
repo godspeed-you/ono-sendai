@@ -1,0 +1,15 @@
+# v0.3 §1.53, §1.68 item 11 (scripts are deterministic): the same invocation selects the same
+# adapter in `-c`, in a script file and at a terminal; redirection keeps the tool's own bytes.
+case: the same adapted invocation answers the same in -c, a script and at a terminal
+env: NO_COLOR=1
+run: |
+  printf 'ps aux | where pid == 1 | select pid name | to json\n' > /tmp/probe.ono
+  ono -c 'ps aux | where pid == 1 | select pid name | to json' > /tmp/a.out
+  ono /tmp/probe.ono > /tmp/b.out
+  script --quiet --return --command "ono -c 'ps aux | where pid == 1 | select pid name | to json'" /dev/null | tr -d '\r' > /tmp/c.out
+  cmp /tmp/a.out /tmp/b.out && echo script=same
+  grep -F "$(cat /tmp/a.out)" /tmp/c.out > /dev/null && echo terminal=same
+  ono -c 'ps -o pid= -p 1 > /tmp/redirected.out'; bash -c 'ps -o pid= -p 1' > /tmp/bash.out; cmp /tmp/redirected.out /tmp/bash.out && echo redirect=raw
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

@@ -369,14 +369,40 @@ fn produces_bytes(contract: &CommandContract) -> bool {
 /// # Errors
 ///
 /// `type.unknown_field` naming the field, the schema, and the nearest declared field.
-pub fn check(pipeline: &ono_parser::Pipeline) -> Result<(), ErrorValue> {
+pub fn check(
+    session: &mut Session,
+    pipeline: &ono_parser::Pipeline,
+    source: &str,
+) -> Result<(), ErrorValue> {
     let Ok(registry) = registry() else {
         // An unreadable registry is reported where a native stage actually runs; the pre-flight
         // check is an optimisation of the failure path, not a second gate.
         return Ok(());
     };
     let schemas: Vec<_> = ono_value::builtin_schemas().schemas().cloned().collect();
-    ono_command::check_pipeline(registry, &schemas, pipeline)
+    // A program an adapter gives a schema is a producer like any other (spec v0.3 §1.61,
+    // ADR-0067): the plan says which stages those are, so the check reaches the stages after
+    // them. Inside a link frame the remote decides, and nothing is known here.
+    let adapted = if session.link_host().is_some() {
+        Vec::new()
+    } else {
+        let resolve = crate::resolve::resolver(session);
+        let executables = |name: &str| resolve(name);
+        let (providers, adapters) = session.registries();
+        ono_command::plan_with(
+            registry,
+            Some(providers),
+            pipeline,
+            source,
+            &ono_command::PlanContext {
+                stdout: ono_adapter::Stdout::Stream,
+                adapters: Some(adapters),
+                executables: Some(&executables),
+            },
+        )
+        .adapted_schemas()
+    };
+    ono_command::check_pipeline_with(registry, &schemas, pipeline, &adapted)
 }
 
 /// Runs a stage list that contains at least one native command.
@@ -444,6 +470,8 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
         .to_owned();
     let scope = std::sync::Arc::new(Scope::new());
     let context = session.context();
+    let adapters = session.shared_adapters();
+    let resolver = crate::resolve::resolver(session);
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -465,7 +493,8 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
             let started = std::time::Instant::now();
             let mut invocation = Invocation::new(contract, arguments, &providers)
                 .with_scope(std::sync::Arc::clone(&scope))
-                .with_context(context.clone());
+                .with_context(context.clone())
+                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone());
             if let Some(previous) = stream.take() {
                 invocation = invocation.with_input(previous);
             }
@@ -651,6 +680,7 @@ fn run_from(
                 if let Some((plan, argv, demand)) =
                     negotiate_stage(session, list, indices, source, demand)?
                 {
+                    session.note_adaptation(plan.adapter().full_id(), plan.argv().join(" "));
                     if plan.adapter().decoder().kind().streams() {
                         // Records flow while the child runs (ADAPT-005, ADR-0059): the
                         // following native segment — or the renderer — consumes them as they
@@ -1052,6 +1082,8 @@ fn run_remote_adapted(
         false,
         last,
     )?;
+    let host = session.link_host().unwrap_or_default();
+    session.note_adaptation(format!("{} on {host}", decision.state), argv.join(" "));
     Ok(RemoteRun::Adapted(ExitStatus::SUCCESS))
 }
 
@@ -1285,6 +1317,8 @@ fn run_native_segment(
         ));
     }
 
+    let adapters = session.shared_adapters();
+    let resolver = crate::resolve::resolver(session);
     let scope = std::sync::Arc::new(Scope::new());
     let context = session.context();
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
@@ -1339,7 +1373,8 @@ fn run_native_segment(
             let started = std::time::Instant::now();
             let mut invocation = Invocation::new(contract, arguments, providers)
                 .with_scope(std::sync::Arc::clone(&scope))
-                .with_context(context.clone());
+                .with_context(context.clone())
+                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone());
             if let Some(previous) = stream.take() {
                 invocation = invocation.with_input(previous);
             }

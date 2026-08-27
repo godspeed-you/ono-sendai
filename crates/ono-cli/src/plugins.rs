@@ -224,11 +224,11 @@ pub fn load_plugin_with(
             match &held {
                 Some(reason) => {
                     listed.push(format!("{} [disabled: {reason}]", ids.join(" ")));
-                    session.adapters_mut().add_disabled_pack(pack, reason);
+                    session.adapters().add_disabled_pack(pack, reason);
                 }
                 None => {
                     listed.push(ids.join(" "));
-                    session.adapters_mut().add_pack(pack);
+                    session.adapters().add_pack(pack);
                 }
             }
         }

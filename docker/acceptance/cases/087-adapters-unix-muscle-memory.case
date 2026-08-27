@@ -1,0 +1,13 @@
+# v0.3 §1.2, §2.4 (Unix muscle memory holds): the lines everyone types produce the bytes the
+# tools produce — byte for byte what bash gives — because bytes downstream keep the tool raw.
+case: ps aux | grep, ip a | head, find | wc and git status are the bytes bash produces
+run: |
+  export GIT_AUTHOR_NAME=Case GIT_AUTHOR_EMAIL=case@example.org GIT_COMMITTER_NAME=Case GIT_COMMITTER_EMAIL=case@example.org
+  mkdir -p /tmp/mm && cd /tmp/mm && git init -q && printf 'x\n' > a.txt
+  for line in 'ps -o pid= -p 1 | grep -c 1' 'ip a | head -1' 'find /etc/default -maxdepth 1 | wc -l' 'git status --short' 'ip -j link show lo | wc -c' 'ps aux | head -1'; do
+    ono -c "$line" > /tmp/ono.out; bash -c "$line" > /tmp/bash.out
+    cmp /tmp/ono.out /tmp/bash.out && echo "same: $line"
+  done
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

@@ -25,6 +25,12 @@ pub struct Entry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     duration_ms: Option<u64>,
     session: String,
+    /// The adapters that shaped the command's programs (spec v0.3 §1.62), by full id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    adapters: Vec<String>,
+    /// The argv each adapter actually ran, in the same order as `adapters`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    plans: Vec<String>,
 }
 
 impl Entry {
@@ -40,10 +46,16 @@ impl Entry {
             at: Timestamp::now(),
             command,
             cwd,
-            status: outcome.map(|outcome| outcome.status.code()),
+            status: outcome.as_ref().map(|outcome| outcome.status.code()),
             duration_ms: outcome
+                .as_ref()
                 .map(|outcome| u64::try_from(outcome.duration.as_millis()).unwrap_or(u64::MAX)),
             session,
+            adapters: outcome
+                .as_ref()
+                .map(|outcome| outcome.adapters.clone())
+                .unwrap_or_default(),
+            plans: outcome.map(|outcome| outcome.plans).unwrap_or_default(),
         }
     }
 
@@ -88,31 +100,83 @@ impl Entry {
     pub fn session(&self) -> &str {
         &self.session
     }
+
+    /// The adapters that shaped the command's programs, by full id (spec v0.3 §1.62).
+    #[must_use]
+    pub fn adapters(&self) -> &[String] {
+        &self.adapters
+    }
+
+    /// What the entry can say about how it ran: each adapter and the argv it planned, or that
+    /// no adapter took part. History records semantics (spec §20.1), so `explain` of a past
+    /// command answers from the record and re-runs nothing.
+    #[must_use]
+    pub fn explain(&self) -> String {
+        if self.adapters.is_empty() {
+            return "no adapter took part".to_owned();
+        }
+        self.adapters
+            .iter()
+            .zip(
+                self.plans
+                    .iter()
+                    .map(String::as_str)
+                    .chain(std::iter::repeat("")),
+            )
+            .map(|(adapter, plan)| {
+                if plan.is_empty() {
+                    format!("adapted by {adapter}")
+                } else {
+                    format!("adapted by {adapter}: {plan}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 /// How a command ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     status: ExitStatus,
     duration: Duration,
+    adapters: Vec<String>,
+    plans: Vec<String>,
 }
 
 impl Outcome {
     /// An outcome with the given status and duration.
     #[must_use]
     pub fn new(status: ExitStatus, duration: Duration) -> Self {
-        Self { status, duration }
+        Self {
+            status,
+            duration,
+            adapters: Vec::new(),
+            plans: Vec::new(),
+        }
+    }
+
+    /// Records which adapters shaped the command and what each one ran (spec v0.3 §1.62).
+    #[must_use]
+    pub fn adapted_by(
+        mut self,
+        adapters: impl IntoIterator<Item = String>,
+        plans: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.adapters = adapters.into_iter().collect();
+        self.plans = plans.into_iter().collect();
+        self
     }
 
     /// The command's exit status.
     #[must_use]
-    pub fn status(self) -> ExitStatus {
+    pub fn status(&self) -> ExitStatus {
         self.status
     }
 
     /// How long it took.
     #[must_use]
-    pub fn duration(self) -> Duration {
+    pub fn duration(&self) -> Duration {
         self.duration
     }
 }

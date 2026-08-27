@@ -116,7 +116,6 @@ pub enum Outcome {
 /// already resolved against the declared types, the input stream is already connected, and the
 /// cancellation token is the pipeline's, so one `Ctrl-C` stops every stage at its next await
 /// (spec §18.5).
-#[derive(Debug)]
 pub struct Invocation<'a> {
     contract: &'a CommandContract,
     arguments: &'a BoundArguments,
@@ -125,6 +124,23 @@ pub struct Invocation<'a> {
     cancel: CancelToken,
     scope: Arc<Scope>,
     context: Vec<ContextFrame>,
+    adapters: Option<Arc<ono_adapter::Registry>>,
+    resolver: Option<Resolver>,
+}
+
+/// Resolves a program name to the path the shell would run, for planning (ADR-0056).
+pub type Resolver = Arc<dyn Fn(&str) -> Option<std::path::PathBuf> + Send + Sync>;
+
+impl std::fmt::Debug for Invocation<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Invocation")
+            .field("contract", &self.contract.id())
+            .field("arguments", &self.arguments)
+            .field("context", &self.context)
+            .field("adapters", &self.adapters.is_some())
+            .field("resolver", &self.resolver.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> Invocation<'a> {
@@ -144,7 +160,34 @@ impl<'a> Invocation<'a> {
             cancel: CancelToken::new(),
             scope: Arc::new(Scope::new()),
             context: Vec::new(),
+            adapters: None,
+            resolver: None,
         }
+    }
+
+    /// Makes the adapter registry and `PATH` resolution available to commands that plan —
+    /// `type` — so an adapted stage's schema is known (spec v0.3 §1.61, ADR-0067).
+    #[must_use]
+    pub fn with_adapters(
+        mut self,
+        adapters: Arc<ono_adapter::Registry>,
+        resolver: Resolver,
+    ) -> Self {
+        self.adapters = Some(adapters);
+        self.resolver = Some(resolver);
+        self
+    }
+
+    /// The adapter registry, when the caller made one available.
+    #[must_use]
+    pub fn adapters(&self) -> Option<&ono_adapter::Registry> {
+        self.adapters.as_deref()
+    }
+
+    /// The `PATH` resolver, when the caller made one available.
+    #[must_use]
+    pub fn resolver(&self) -> Option<&Resolver> {
+        self.resolver.as_ref()
     }
 
     /// The context frames in force, innermost last (spec §14.1).

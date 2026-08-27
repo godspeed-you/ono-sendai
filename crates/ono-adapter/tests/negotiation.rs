@@ -481,3 +481,26 @@ fn should_hold_a_disabled_pack_back_from_structured_output() {
             .starts_with("raw (adapter disabled")
     );
 }
+
+#[test]
+fn should_leave_text_tools_raw_by_design() {
+    // Spec v0.3 §1.70: the correct adapter for cat, grep, sed and friends is none at all.
+    let dir = scratch();
+    let (registry, _) = registry("1.0");
+    for tool in [
+        "cat", "less", "more", "grep", "sed", "awk", "cut", "tr", "head", "tail", "sort", "uniq",
+        "wc", "tee", "printf", "vi", "vim", "nano", "python3", "gcc", "rustc",
+    ] {
+        let path = executable(&dir, tool);
+        assert_eq!(
+            registry.negotiate(&path, &argv(&[tool, "x"]), &structured()),
+            Negotiation::NotApplicable,
+            "`{tool}` stays raw"
+        );
+        assert_eq!(
+            registry.negotiate(&path, &argv(&[tool]), &OutputDemand::Interactive),
+            Negotiation::NotApplicable,
+            "`{tool}` at the terminal is itself"
+        );
+    }
+}

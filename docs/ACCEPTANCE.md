@@ -461,29 +461,41 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       body as bytes and curl's write-out as the metadata; a plain `curl` stays the bytes it
       always was; headers and credentials never adapt (v0.3 §1.41, ADR-0064) — the curl pack's
       fixtures through the harness, `ono-cli/tests/adapters.rs`, case `082`.
-- [ ] **Text tools stay raw.** No first-party adapter claims `cat`, `grep`, `sed`, `awk`,
+- [x] **Text tools stay raw.** No first-party adapter claims `cat`, `grep`, `sed`, `awk`,
       `head`, `tail`, `sort`, `less`, editors or REPLs (v0.3 §1.70); terminal-owning tools keep
-      the PTY (§1.19, §1.43). Exit test: a registry case asserting `NotApplicable` for each.
+      the PTY (§1.19, §1.43). Exit test: a registry case asserting `NotApplicable` for each. — `ono-adapter/tests/negotiation.rs`
+      (`should_leave_text_tools_raw_by_design`: `NotApplicable` for each), case `024`
+      (a program run by `ono` owns the real terminal), case `071`.
 
 #### 4.6.4 Integration surfaces (v0.3 §2.4)
 
-- [ ] **Invisible on success.** Adapted commands render exactly like native results at a TTY
+- [x] **Invisible on success.** Adapted commands render exactly like native results at a TTY
       and compose in pipelines without new syntax; the prompt, tables and `@` reuse work on
-      adapted values. Exit test: the §1.71 session as an acceptance case.
-- [ ] **Inspectable on demand.** `type`, `inspect` and `explain` show the selected adaptation
+      adapted values. Exit test: the §1.71 session as an acceptance case. — case `085` (the §1.71 session: `ps aux | where`,
+      `@-1`, `ss`/`ip route`, `explain`, `raw`).
+- [x] **Inspectable on demand.** `type`, `inspect` and `explain` show the selected adaptation
       plan, the negotiation state and the diagnostics of v0.3 §1.57, §1.61 for any external
-      stage. Exit test: an explain case per negotiation state.
-- [ ] **Adapter-aware completion invents nothing.** Completion after an adapted executable
+      stage. Exit test: an explain case per negotiation state. — case `071` (every negotiation state through `explain`),
+      `ono-cli/tests/builtins.rs`
+      (`should_answer_type_with_the_adapters_schema_and_check_fields_before_running`, ADR-0067),
+      `ono-adapter/tests/negotiation.rs` (`describe` per state).
+- [x] **Adapter-aware completion invents nothing.** Completion after an adapted executable
       offers only invocations the contract declares and marks the rest as raw pass-through
-      (v0.3 §1.59). Exit test: an `ono-editor` completion case.
-- [ ] **History records adaptation.** Each history entry names the adapter and plan used, and
-      the history view can explain it (v0.3 §1.58). Exit test: an `ono-history` case.
-- [ ] **Scripts are deterministic.** The same invocation selects the same adapter with output
+      (v0.3 §1.59). Exit test: an `ono-editor` completion case. — `ono-cli/tests/adapters.rs`
+      (`should_complete_fields_of_the_adapted_schema_after_the_pipe_and_declared_flags_before_it`:
+      schema fields after the pipe, only declared flags before it, `--paths` never invented;
+      ADR-0067).
+- [x] **History records adaptation.** Each history entry names the adapter and plan used, and
+      the history view can explain it (v0.3 §1.58). Exit test: an `ono-history` case. — `ono-history/tests/history.rs`
+      (`should_remember_that_a_command_was_adapted_and_explain_it`), `ono-cli/tests/adapters.rs`
+      (`should_record_the_adapter_in_history`).
+- [x] **Scripts are deterministic.** The same invocation selects the same adapter with output
       redirected, in `-c`, in a script and at a TTY; redirection and TTY regressions are tested
-      (v0.3 §1.53, §1.68 item 11). Exit test: an acceptance case comparing the three modes.
-- [ ] **Unix muscle memory holds.** `ps aux | grep foo`, `ip a | head`, `find . | wc -l` and
+      (v0.3 §1.53, §1.68 item 11). Exit test: an acceptance case comparing the three modes. — case `086` (`-c`, a script file and a `script`-driven
+      terminal answer the same; a redirected program keeps the tool's bytes).
+- [x] **Unix muscle memory holds.** `ps aux | grep foo`, `ip a | head`, `find . | wc -l` and
       `git status` produce the bytes the tool produces (v0.3 §1.2, §2.4). Exit test: an
-      acceptance case diffing against a bash run of the same lines.
+      acceptance case diffing against a bash run of the same lines. — case `087` (each line `cmp`-identical to a `bash -c` run).
 
 #### 4.6.5 Release evidence (v0.3 §2.6, §1.68)
 

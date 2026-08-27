@@ -198,6 +198,15 @@ impl StagePlan {
         self.adaptation.as_ref()
     }
 
+    /// The schema an adapted stage produces, when the registry answered with a plan.
+    #[must_use]
+    pub fn adapted_schema(&self) -> Option<&str> {
+        self.adaptation
+            .as_ref()
+            .and_then(|adaptation| adaptation.negotiation.plan())
+            .map(|plan| plan.adapter().schema())
+    }
+
     /// What the stage's stdout is asked to carry, for a stage that is a child process.
     ///
     /// Decided backwards from the consumer (spec v0.3 §1.4): a native command over objects asks
@@ -342,6 +351,16 @@ impl ExecutionPlan {
             .any(|stage| stage.risk.is_some_and(Risk::changes_the_world))
     }
 
+    /// Per stage, the schema an adapter gives it — what the pre-flight check of spec §11.3
+    /// needs to know about programs (ADR-0067).
+    #[must_use]
+    pub fn adapted_schemas(&self) -> Vec<Option<String>> {
+        self.stages
+            .iter()
+            .map(|stage| stage.adapted_schema().map(str::to_owned))
+            .collect()
+    }
+
     /// The plan as plain text, in the shape of spec §42.1.
     #[must_use]
     pub fn render(&self) -> String {
@@ -459,6 +478,7 @@ pub fn plan_with(
         }
         plan_demands(&mut stages[first..], list, stdout);
         plan_adaptations(&mut stages[first..], list, source, context);
+        rethread(&mut stages[first..], list, registry, providers, source);
     }
 
     ExecutionPlan {
@@ -539,6 +559,45 @@ fn plan_demands(stages: &mut [StagePlan], list: &StageList, stdout: Stdout) {
             },
         };
         stages[index].demand = Some((demand, reason));
+    }
+}
+
+/// Threads an adapted stage's schema into the stages after it (spec v0.3 §1.61): once the
+/// registry has answered, an adapted program's output is `stream<schema>` rather than bytes,
+/// and every later native stage is planned again over that type.
+fn rethread(
+    stages: &mut [StagePlan],
+    list: &StageList,
+    registry: &CommandRegistry,
+    providers: Option<&ProviderRegistry>,
+    source: &str,
+) {
+    let mut upstream: Option<IoType> = None;
+    let mut changed = false;
+    for (index, planned) in stages.iter_mut().enumerate() {
+        if let Some(schema) = planned.adapted_schema() {
+            let schema = schema.to_owned();
+            planned.output = format!("stream<{schema}>");
+            planned.element_schema = Some(schema);
+            changed = true;
+        } else if changed
+            && matches!(planned.resolution, Resolution::Native { .. })
+            && let Some(stage) = list.stages.get(index)
+        {
+            let ordinal = planned.ordinal;
+            let keep = (planned.demand.clone(), planned.adaptation.clone());
+            *planned = plan_stage(
+                registry,
+                providers,
+                stage,
+                source,
+                ordinal,
+                upstream.as_ref(),
+            );
+            planned.demand = keep.0;
+            planned.adaptation = keep.1;
+        }
+        upstream = Some(IoType::from_text(&planned.output));
     }
 }
 

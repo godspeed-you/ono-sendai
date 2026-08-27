@@ -439,16 +439,20 @@ impl Negotiation {
 
 /// The installed adapters and the probe cache (spec v0.3 §1.24).
 pub struct Registry {
-    packs: Vec<Arc<AdapterPack>>,
-    /// Why a pack, by index into `packs`, may not influence structured output (ADR-0065).
-    disabled: Vec<Option<String>>,
+    /// The packs, each with why it may not influence structured output, if it may not
+    /// (ADR-0065). Behind a lock so a registry can be shared and still gain packs.
+    packs: Mutex<Vec<(Arc<AdapterPack>, Option<String>)>>,
     prober: Prober,
     versions: Mutex<HashMap<Identity, Option<Version>>>,
 }
 
 impl fmt::Debug for Registry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let ids: Vec<&str> = self.packs.iter().map(|pack| pack.id()).collect();
+        let ids: Vec<String> = self
+            .snapshot()
+            .iter()
+            .map(|(pack, _)| pack.id().to_owned())
+            .collect();
         f.debug_struct("Registry")
             .field("packs", &ids)
             .finish_non_exhaustive()
@@ -459,10 +463,13 @@ impl Registry {
     /// A registry over `packs`, probing versions through `prober`.
     #[must_use]
     pub fn new(packs: Vec<AdapterPack>, prober: Prober) -> Self {
-        let packs: Vec<Arc<AdapterPack>> = packs.into_iter().map(Arc::new).collect();
         Self {
-            disabled: vec![None; packs.len()],
-            packs,
+            packs: Mutex::new(
+                packs
+                    .into_iter()
+                    .map(|pack| (Arc::new(pack), None))
+                    .collect(),
+            ),
             prober,
             versions: Mutex::new(HashMap::new()),
         }
@@ -476,7 +483,7 @@ impl Registry {
 
     /// Adds one pack. Load order never decides anything (spec v0.3 §1.25).
     #[must_use]
-    pub fn with_pack(mut self, pack: AdapterPack) -> Self {
+    pub fn with_pack(self, pack: AdapterPack) -> Self {
         self.add_pack(pack);
         self
     }
@@ -484,14 +491,14 @@ impl Registry {
     /// Adds a pack that is known but may not influence structured output — its process.exec
     /// grant was denied, or its tier is not trusted yet (spec v0.3 §1.22, §1.56, ADR-0065).
     #[must_use]
-    pub fn with_disabled_pack(mut self, pack: AdapterPack, reason: &str) -> Self {
+    pub fn with_disabled_pack(self, pack: AdapterPack, reason: &str) -> Self {
         self.add_disabled_pack(pack, reason);
         self
     }
 
     /// Adds several packs.
     #[must_use]
-    pub fn with_packs(mut self, packs: Vec<AdapterPack>) -> Self {
+    pub fn with_packs(self, packs: Vec<AdapterPack>) -> Self {
         for pack in packs {
             self.add_pack(pack);
         }
@@ -500,55 +507,101 @@ impl Registry {
 
     /// Adds a pack to a registry the session already holds; a pack of the same id replaces
     /// the earlier one, so reloading a package never leaves two copies to conflict.
-    pub fn add_pack(&mut self, pack: AdapterPack) {
-        self.forget(pack.id());
-        self.packs.push(Arc::new(pack));
-        self.disabled.push(None);
+    pub fn add_pack(&self, pack: AdapterPack) {
+        self.insert(pack, None);
     }
 
     /// Adds a disabled pack, replacing an earlier pack of the same id.
-    pub fn add_disabled_pack(&mut self, pack: AdapterPack, reason: &str) {
-        self.forget(pack.id());
-        self.packs.push(Arc::new(pack));
-        self.disabled.push(Some(reason.to_owned()));
+    pub fn add_disabled_pack(&self, pack: AdapterPack, reason: &str) {
+        self.insert(pack, Some(reason.to_owned()));
     }
 
-    fn forget(&mut self, id: &str) {
-        while let Some(index) = self.packs.iter().position(|pack| pack.id() == id) {
-            self.packs.remove(index);
-            self.disabled.remove(index);
+    fn insert(&self, pack: AdapterPack, disabled: Option<String>) {
+        if let Ok(mut packs) = self.packs.lock() {
+            packs.retain(|(held, _)| held.id() != pack.id());
+            packs.push((Arc::new(pack), disabled));
         }
+    }
+
+    /// The packs as they are now, with their disabled reasons.
+    fn snapshot(&self) -> Vec<(Arc<AdapterPack>, Option<String>)> {
+        self.packs
+            .lock()
+            .map(|packs| packs.clone())
+            .unwrap_or_default()
     }
 
     /// The packs, in load order.
     #[must_use]
-    pub fn packs(&self) -> Vec<&AdapterPack> {
-        self.packs.iter().map(Arc::as_ref).collect()
+    pub fn packs(&self) -> Vec<Arc<AdapterPack>> {
+        self.snapshot().into_iter().map(|(pack, _)| pack).collect()
     }
 
-    /// Every adapter, with the pack it belongs to.
-    pub fn adapters(&self) -> impl Iterator<Item = (&AdapterPack, &Adapter)> {
-        self.packs.iter().flat_map(|pack| {
-            pack.adapters()
-                .iter()
-                .map(move |adapter| (pack.as_ref(), adapter))
-        })
-    }
-
-    /// The adapters that name `program` (a name or a path) among their executables.
+    /// The flags every adapter of `program` declares, for completion that invents nothing
+    /// (spec v0.3 §1.59): what the contracts let through, and nothing else.
     #[must_use]
-    pub fn adapters_for(&self, program: &str) -> Vec<&Adapter> {
+    pub fn declared_flags(&self, program: &str) -> Vec<String> {
+        let mut flags: Vec<String> = self
+            .adapters_for(program)
+            .iter()
+            .flat_map(|(pack, index)| {
+                pack.adapters()[*index]
+                    .invocations()
+                    .iter()
+                    .flat_map(|invocation| {
+                        let matcher = invocation.matcher();
+                        matcher
+                            .allowed_flags()
+                            .iter()
+                            .chain(matcher.allowed_flags_with_value())
+                            .chain(matcher.required_flags())
+                            .cloned()
+                            .collect::<Vec<String>>()
+                    })
+                    .collect::<Vec<String>>()
+            })
+            .collect();
+        flags.sort();
+        flags.dedup();
+        flags
+    }
+
+    /// The schema the adapters of `program` produce, when they agree on one — for completion
+    /// after the pipe (spec v0.3 §1.59).
+    #[must_use]
+    pub fn schema_for(&self, program: &str) -> Option<String> {
+        let mut schemas: Vec<String> = self
+            .adapters_for(program)
+            .iter()
+            .map(|(pack, index)| pack.adapters()[*index].schema().to_owned())
+            .collect();
+        schemas.sort();
+        schemas.dedup();
+        match schemas.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        }
+    }
+
+    /// The adapters that name `program` (a name or a path) among their executables, as the
+    /// pack and the adapter's index in it.
+    #[must_use]
+    pub fn adapters_for(&self, program: &str) -> Vec<(Arc<AdapterPack>, usize)> {
         let name = basename(program);
-        self.adapters()
-            .filter(|(_, adapter)| {
-                adapter
+        let mut found = Vec::new();
+        for (pack, _) in self.snapshot() {
+            for (index, adapter) in pack.adapters().iter().enumerate() {
+                if adapter
                     .executable()
                     .names()
                     .iter()
                     .any(|declared| basename(declared) == name)
-            })
-            .map(|(_, adapter)| adapter)
-            .collect()
+                {
+                    found.push((Arc::clone(&pack), index));
+                }
+            }
+        }
+        found
     }
 
     /// What the registry answers for running `executable` with `argv` (program first, as the
@@ -580,7 +633,8 @@ impl Registry {
 
         // Every adapter that names the executable answers; the answers are then ranked.
         let mut answers: Vec<(Ranked, Negotiation)> = Vec::new();
-        for (index, pack) in self.packs.iter().enumerate() {
+        let packs = self.snapshot();
+        for (index, (pack, disabled)) in packs.iter().enumerate() {
             for (position, adapter) in pack.adapters().iter().enumerate() {
                 let Some(declared) = adapter
                     .executable()
@@ -593,7 +647,7 @@ impl Registry {
                 if !adapter.output_demand().contains(&wanted) {
                     continue;
                 }
-                let answer = match &self.disabled[index] {
+                let answer = match disabled {
                     Some(reason) => Negotiation::Disabled {
                         adapter: adapter.full_id(),
                         reason: reason.clone(),

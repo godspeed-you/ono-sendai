@@ -56,12 +56,38 @@ pub fn check_pipeline(
     schemas: &[Arc<Schema>],
     pipeline: &Pipeline,
 ) -> Result<(), ErrorValue> {
+    check_pipeline_with(registry, schemas, pipeline, &[])
+}
+
+/// As [`check_pipeline`], knowing which stages an adapter gives a schema (ADR-0067):
+/// `adapted[i]` is the schema id of stage `i` when a program there is adapted, so the field
+/// check reaches the stages after it exactly as it reaches them after a native producer.
+///
+/// # Errors
+///
+/// As [`check_pipeline`].
+pub fn check_pipeline_with(
+    registry: &CommandRegistry,
+    schemas: &[Arc<Schema>],
+    pipeline: &Pipeline,
+    adapted: &[Option<String>],
+) -> Result<(), ErrorValue> {
     let mut element: Option<Arc<Schema>> = None;
+    let mut index = 0;
     let lists =
         std::iter::once(&pipeline.head).chain(pipeline.tail.iter().map(|chained| &chained.list));
     for list in lists {
         for stage in &list.stages {
-            element = check_stage(registry, schemas, stage, element)?;
+            let adapted_here = adapted
+                .get(index)
+                .and_then(Option::as_deref)
+                .and_then(|id| id.parse::<ono_value::SchemaId>().ok())
+                .and_then(|id| schemas.iter().find(|schema| *schema.id() == id).cloned());
+            element = match adapted_here {
+                Some(schema) => Some(schema),
+                None => check_stage(registry, schemas, stage, element)?,
+            };
+            index += 1;
         }
     }
     Ok(())

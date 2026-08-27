@@ -1,0 +1,22 @@
+# v0.3 §1.71, §2.4 (invisible on success): the session the specification opens with. Familiar
+# commands render as typed tables at the terminal with no special mode showing, `@-1` reuses
+# the result, an expert can ask `explain`, and `raw` is the immediate escape hatch.
+case: familiar commands become composable at the terminal without a legacy mode showing
+pty: true
+env: NO_COLOR=1
+columns: 140
+lines: 40
+run: |
+  echo "== ps aux | where … renders a Process table =="
+  ono -c 'ps aux | where pid == 1 | select pid user name' | grep -c 'NAME'
+  echo "== @-1 reuses adapted records in a session =="
+  printf 'ps aux | where pid == 1\n@-1 | select pid | to json\nexit\n' | ono | grep -F '"pid":1'
+  echo "== ss and ip route compose the same way =="
+  ono -c 'ss -tunap | where state == "listen" | count | to text'
+  ono -c 'ip route | where interface == "lo" | count | to text'
+  echo "== the expert asks, and escapes =="
+  ono -c 'explain ss -tunap | where state == "established"' | grep -F 'adapted by org.ono.compat.iproute2.ss'
+  ono -c 'raw ps -o pid= -p 1' | grep -c 1
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

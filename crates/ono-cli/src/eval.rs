@@ -290,7 +290,7 @@ fn run_try(session: &mut Session, try_: &ono_parser::TryStmt, source: &str) -> E
 pub fn run_pipeline(session: &mut Session, pipeline: &Pipeline, source: &str) -> Eval<ExitStatus> {
     // Spec §11.3: field names are checked against the declared schemas before anything runs, so
     // a typo costs one message instead of one per object.
-    crate::native::check(pipeline).map_err(Flow::Failed)?;
+    crate::native::check(session, pipeline, source).map_err(Flow::Failed)?;
 
     let mut status = run_stage_list(session, &pipeline.head, source, pipeline.background)?;
 

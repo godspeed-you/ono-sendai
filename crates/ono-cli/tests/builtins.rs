@@ -282,3 +282,27 @@ fn should_explain_which_adapter_answers_and_what_it_will_run() {
         none.stdout()
     );
 }
+
+#[test]
+fn should_answer_type_with_the_adapters_schema_and_check_fields_before_running() {
+    // Spec v0.3 §1.61: `type` knows what an adapted stage produces; spec §11.3: a field typo is
+    // caught before anything runs — for an adapted program as for a native one.
+    let typed = Shell::new()
+        .args(["-c", "type \"lsblk | where type == \\\"disk\\\"\""])
+        .run();
+    typed.assert_success();
+    assert!(
+        typed.stdout().contains("ono.block-device/1"),
+        "the adapter's schema flows through the plan, got {:?}",
+        typed.stdout()
+    );
+    let typo = Shell::new()
+        .args(["-c", "lsblk | where colour == \"blue\""])
+        .run();
+    assert_ne!(typo.status().code(), 0);
+    assert!(
+        typo.stderr().contains("Ono-Sendai-E0202") && typo.stderr().contains("ono.block-device/1"),
+        "type.unknown_field against the adapter's schema, before lsblk runs, got {:?}",
+        typo.stderr()
+    );
+}

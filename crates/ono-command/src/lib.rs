@@ -62,7 +62,7 @@ mod registry;
 mod suggest;
 
 pub use bind::{Binding, BoundArguments};
-pub use check::check_pipeline;
+pub use check::{check_pipeline, check_pipeline_with};
 pub use complete::{Candidate, CandidateKind, StageContext, ValueCompleter, complete};
 pub use contract::{
     ArgumentMode, CapabilitySpec, CommandContract, DeclaredType, Elevation, IoType, ParameterSpec,
@@ -77,6 +77,6 @@ pub use help::{CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, Verb
 pub use impls::builtin_commands;
 pub use invoke::{
     CommandImpl, CommandTable, ContextFrame, FrameKind, Invocation, Outcome, OutcomeFuture,
-    unbound_stable_commands,
+    Resolver, unbound_stable_commands,
 };
 pub use registry::{CommandRegistry, Resolved};

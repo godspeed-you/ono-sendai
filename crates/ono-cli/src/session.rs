@@ -59,7 +59,10 @@ pub struct Session {
     plugins: Vec<(String, ono_kuang_supervisor::LoadedPlugin)>,
     /// The external command adapters (spec v0.3 §1.24), built on first use: the registry holds
     /// the version probe cache, which is per session by design (§1.46).
-    adapters: Option<ono_adapter::Registry>,
+    adapters: Option<std::sync::Arc<ono_adapter::Registry>>,
+    /// The adapters that shaped the statement being run, with the argv each one planned —
+    /// what history records about it (spec v0.3 §1.62).
+    adaptations: Vec<(String, String)>,
 }
 
 /// One held remote link: the connection, and the registry its providers are mounted in.
@@ -155,6 +158,7 @@ impl Session {
             links: Vec::new(),
             plugins: Vec::new(),
             adapters: None,
+            adaptations: Vec::new(),
         }
     }
 
@@ -342,12 +346,33 @@ impl Session {
     /// Version probes run through `probe_version`: a declared, bounded, non-interactive
     /// invocation with stdin closed and `LC_ALL=C`, whose output is read whole (ADR-0056).
     pub fn adapters(&mut self) -> &ono_adapter::Registry {
+        self.shared_adapters();
+        self.adapters
+            .as_deref()
+            .unwrap_or_else(|| unreachable!("just constructed"))
+    }
+
+    /// The same registry, shared: commands that plan while they run (`type`), and the line
+    /// editor's completion, hold it alongside the session (ADR-0067).
+    pub fn shared_adapters(&mut self) -> std::sync::Arc<ono_adapter::Registry> {
         if self.adapters.is_none() {
-            self.adapters = Some(ono_adapter::Registry::bundled(Box::new(probe_version)));
+            self.adapters = Some(std::sync::Arc::new(ono_adapter::Registry::bundled(
+                Box::new(probe_version),
+            )));
         }
         self.adapters
-            .as_ref()
+            .clone()
             .unwrap_or_else(|| unreachable!("just constructed"))
+    }
+
+    /// Remembers that an adapter shaped the statement being run (spec v0.3 §1.62).
+    pub fn note_adaptation(&mut self, adapter: String, plan: String) {
+        self.adaptations.push((adapter, plan));
+    }
+
+    /// The adaptations noted since the last call, for the history entry of the statement.
+    pub fn take_adaptations(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.adaptations)
     }
 
     /// The host of the innermost link frame, when the session is inside one (spec §21.2).
@@ -367,19 +392,11 @@ impl Session {
         self.links.iter().find(|link| link.name == host)
     }
 
-    /// The adapter registry, to add a package's packs to (spec v0.3 §1.26).
-    pub fn adapters_mut(&mut self) -> &mut ono_adapter::Registry {
-        let _ = self.adapters();
-        self.adapters
-            .as_mut()
-            .unwrap_or_else(|| unreachable!("just constructed"))
-    }
-
     /// Both registries a plan consults, borrowed together.
     pub fn registries(&mut self) -> (&ProviderRegistry, &ono_adapter::Registry) {
         let _ = self.providers();
         let _ = self.adapters();
-        match (&self.providers, &self.adapters) {
+        match (&self.providers, self.adapters.as_deref()) {
             (Some(providers), Some(adapters)) => (providers, adapters),
             _ => unreachable!("just constructed"),
         }

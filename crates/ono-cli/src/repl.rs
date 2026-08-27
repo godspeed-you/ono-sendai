@@ -62,6 +62,109 @@ fn token_colour(kind: ono_parser::TokenKind) -> Token {
 /// budgets 50 ms for the first results from local metadata — which is a lookup, not a search.
 struct ShellCompleter {
     commands: Vec<String>,
+    /// The adapter registry, so completion after an adapted program knows the schema its
+    /// records have, and before the pipe offers only the flags the adapter declares (spec v0.3
+    /// §1.59): what the contracts say, and nothing invented.
+    adapters: Option<std::sync::Arc<ono_adapter::Registry>>,
+    resolver: Option<ono_command::Resolver>,
+}
+
+/// Completes an expression-mode selector — `where <field>`, `select <field>` — with the fields
+/// of the schema flowing into the stage.
+struct FieldCompleter {
+    fields: Vec<String>,
+}
+
+impl ono_command::ValueCompleter for FieldCompleter {
+    fn complete(
+        &self,
+        _command: &ono_command::CommandContract,
+        _parameter: &ono_command::ParameterSpec,
+        prefix: &str,
+    ) -> Vec<ono_command::Candidate> {
+        self.fields
+            .iter()
+            .filter(|field| field.starts_with(prefix))
+            .map(ono_command::Candidate::value)
+            .collect()
+    }
+}
+
+impl ShellCompleter {
+    /// The schema flowing out of the stages before the one under the cursor, planned the way
+    /// the pipeline would be — so an adapted `ps aux |` answers with Process fields exactly as
+    /// `get process |` does (spec v0.3 §1.59, §1.61).
+    fn upstream_fields(&self, line: &str, cursor: usize) -> Vec<String> {
+        let typed = &line[..cursor.min(line.len())];
+        let Some(cut) = typed.rfind('|') else {
+            return Vec::new();
+        };
+        let upstream = typed[..cut].trim();
+        if upstream.is_empty() || upstream.ends_with([';', '&']) {
+            return Vec::new();
+        }
+        let Ok(registry) = ono_command::CommandRegistry::embedded() else {
+            return Vec::new();
+        };
+        // Planned with a structured consumer after it, because that is what the stage under
+        // the cursor is about to be: alone, a program at the end of a line is raw bytes.
+        let upstream = format!("{upstream} | count");
+        let parsed = ono_parser::parse(&upstream);
+        let Some(pipeline) = parsed
+            .program()
+            .statements
+            .first()
+            .and_then(ono_parser::Statement::as_pipeline)
+        else {
+            return Vec::new();
+        };
+        let resolver = self.resolver.clone();
+        let executables = |name: &str| resolver.as_ref().and_then(|resolve| resolve(name));
+        let plan = ono_command::plan_with(
+            registry,
+            None,
+            pipeline,
+            &upstream,
+            &ono_command::PlanContext {
+                stdout: ono_adapter::Stdout::Stream,
+                adapters: self.adapters.as_deref(),
+                executables: Some(&executables),
+            },
+        );
+        let stages = plan.stages();
+        stages
+            .len()
+            .checked_sub(2)
+            .and_then(|producer| stages.get(producer))
+            .and_then(ono_command::StagePlan::element_schema)
+            .and_then(|id| id.parse::<ono_value::SchemaId>().ok())
+            .and_then(|id| ono_value::builtin_schemas().get(&id))
+            .map(|schema| {
+                schema
+                    .fields()
+                    .iter()
+                    .map(|field| field.name().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The flags an adapter declares for the program at the head of the stage under the
+    /// cursor; empty when nothing adapts it, so ordinary completion applies.
+    fn declared_flags(&self, line: &str, start: usize) -> Vec<String> {
+        let Some(adapters) = self.adapters.as_deref() else {
+            return Vec::new();
+        };
+        let stage = &line[..start];
+        let stage = &stage[stage.rfind(['|', ';', '&']).map_or(0, |at| at + 1)..];
+        let mut words = stage.split_whitespace();
+        let head = match words.next() {
+            Some("raw" | "adapt") => words.next(),
+            head => head,
+        };
+        head.map(|program| adapters.declared_flags(program))
+            .unwrap_or_default()
+    }
 }
 
 impl Completer for ShellCompleter {
@@ -76,8 +179,15 @@ impl Completer for ShellCompleter {
 
         if let Ok(registry) = ono_command::CommandRegistry::embedded() {
             let context = ono_command::StageContext::from_line(line, cursor);
+            let fields = FieldCompleter {
+                fields: if is_head {
+                    Vec::new()
+                } else {
+                    self.upstream_fields(line, cursor)
+                },
+            };
             candidates.extend(
-                ono_command::complete(registry, &context, None)
+                ono_command::complete(registry, &context, Some(&fields))
                     .into_iter()
                     .map(|candidate| candidate.text().to_owned()),
             );
@@ -90,7 +200,15 @@ impl Completer for ShellCompleter {
                     .filter(|name| name.starts_with(prefix))
                     .cloned(),
             );
-        } else if !prefix.starts_with('-') {
+        } else if prefix.starts_with('-') {
+            // An adapter's declared invocations are the only flags it can vouch for (spec v0.3
+            // §1.59); an undeclared flag is not offered, and not refused either.
+            candidates.extend(
+                self.declared_flags(line, start)
+                    .into_iter()
+                    .filter(|flag| flag.starts_with(prefix)),
+            );
+        } else {
             // An option is the registry's business; a path is the filesystem's.
             candidates.extend(path_candidates(prefix));
         }
@@ -140,6 +258,8 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
         .with_highlighter(ParserHighlighter)
         .with_completer(ShellCompleter {
             commands: resolve::candidates(session, ""),
+            adapters: Some(session.shared_adapters()),
+            resolver: Some(resolve::resolver(session)),
         });
     editor.set_history(
         history
@@ -190,13 +310,16 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
         }
 
         let started = std::time::Instant::now();
+        let _ = session.take_adaptations();
         let status = run_source(session, &line, reporter);
+        let (adapters, plans): (Vec<String>, Vec<String>) =
+            session.take_adaptations().into_iter().unzip();
 
         if let Some(history) = history.as_mut() {
             history.record(
                 &line,
                 session.cwd(),
-                HistoryOutcome::new(status, started.elapsed()),
+                HistoryOutcome::new(status, started.elapsed()).adapted_by(adapters, plans),
             );
             let _ = history.flush();
             editor.push_history(line.clone());
@@ -471,6 +594,8 @@ mod tests {
     fn completer() -> ShellCompleter {
         ShellCompleter {
             commands: vec!["cd".to_owned(), "git".to_owned()],
+            adapters: None,
+            resolver: None,
         }
     }
 

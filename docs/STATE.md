@@ -93,11 +93,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 16 — integration surfaces (§4.6.3 text tools stay
-  raw, §4.6.4): the §1.71 session as an acceptance case, `type`/`inspect`/`explain` with the
-  adapter's schema, completion after adapted programs, history recording the adapter, script
-  determinism, the muscle-memory diff — files: `crates/ono-command/src/{check,explain}.rs`,
-  `crates/ono-editor/`, `crates/ono-history/`, `crates/ono-cli/src/`
+- [claude | 2026-08-27] v0.3 tranche, step 17 — release evidence (§4.6.5): adapter reference
+  pages and the compatibility matrix generated from `docs/spec/adapters/` (`xtask/src/reference.rs`,
+  `docs/reference/adapters/`), the live-conformance and overhead evidence as acceptance cases,
+  the README section for the adapter layer — files: `xtask/`, `docs/reference/adapters/`,
+  `docker/acceptance/cases/`, `README.md`
 
 ---
 
@@ -107,11 +107,6 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   `--field` names the one bytes field to emit — the natural way to write an adapted `curl`
   body to a file (`adapt curl url | to bytes --field body > page.html`) — exit test: a
   data_codecs case emitting one bytes field verbatim
-- [ ] The pre-flight field check (spec §11.3) and `type` do not know an adapted stage's
-  schema: `lsblk | where colour == 1` runs lsblk before failing per record, and `type lsblk`
-  says bytes. The plan already knows the adapter's schema (ADR-0056) — thread it into
-  `check_pipeline` and `type` with the integration-surfaces step — exit test: a builtins.rs
-  case for `type lsblk | where type == "disk"` and an adapters.rs case for the pre-flight
 - [ ] `explain` resolves a head by the registry alone, so `printf x | sort` is planned as
   `ono.data.sort` while the executor runs `/usr/bin/sort` (ADR-0028); the plan must use the
   executor's resolution — fixed with ADAPT-002, which needs it anyway (ADR-0052) — exit test:
@@ -387,6 +382,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] v0.3 step 15 — ADAPT-011: the `start-adapt` frame, the agent negotiating, running and
   decoding on its side, records marked with the host, `explain … on <host>`, visible
   degradation (ADR-0066) — case 084
+- [x] v0.3 step 16 — integration surfaces: adapted stages are producers for the pre-flight
+  check, `type`, completion and history; text tools pinned raw; the §1.71 session, script
+  determinism and the muscle-memory diff as cases (ADR-0067) — cases 085, 086, 087
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

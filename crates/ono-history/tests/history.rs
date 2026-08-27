@@ -372,3 +372,40 @@ fn should_keep_the_history_readable_only_by_its_owner() {
         "the state directory is 0o{directory:o}, not 0o700"
     );
 }
+
+#[test]
+fn should_remember_that_a_command_was_adapted_and_explain_it() {
+    // Spec v0.3 §1.58: an entry records the adapter and plan used, so the same line behaving
+    // raw on another machine is explicable.
+    let dir = ono_testkit::scratch();
+    let mut history = history_at(&dir.path().join("history.jsonl"));
+    let outcome = ono_history::Outcome::new(
+        ono_core::ExitStatus::SUCCESS,
+        std::time::Duration::from_millis(12),
+    )
+    .adapted_by(
+        ["org.ono.compat.util-linux.lsblk".to_owned()],
+        ["lsblk --json --list".to_owned()],
+    );
+    let id = history
+        .record(
+            "lsblk | where type == \"disk\"",
+            std::path::Path::new("/"),
+            outcome,
+        )
+        .expect("recorded");
+    history.flush().expect("flushed");
+    let reopened = history_at(&dir.path().join("history.jsonl"));
+    let entry = reopened
+        .entries()
+        .iter()
+        .find(|entry| entry.id() == id)
+        .expect("persisted");
+    assert_eq!(entry.adapters(), ["org.ono.compat.util-linux.lsblk"]);
+    let explained = entry.explain();
+    assert!(
+        explained.contains("org.ono.compat.util-linux.lsblk")
+            && explained.contains("lsblk --json --list"),
+        "the explanation names the adapter and the plan, got {explained:?}"
+    );
+}
