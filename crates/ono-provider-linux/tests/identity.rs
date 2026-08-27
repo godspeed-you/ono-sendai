@@ -293,5 +293,5 @@ fn should_claim_the_user_and_group_targets_with_the_registry_capability_ids() {
         .iter()
         .map(|capability| capability.id().to_owned())
         .collect();
-    assert_eq!(ids, ["user.list", "group.list"]);
+    assert_eq!(ids, ["user.list", "group.list", "user.manage"]);
 }

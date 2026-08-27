@@ -456,6 +456,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] identity 1 — `get session` from systemd-logind over D-Bus, `ono.session/1` written,
   `--user` filter, E0401 where no login manager answers — ADR-0100;
   `identity_missing.rs` (2 tests) un-ignored, `crates/ono-provider-systemd/tests/session.rs` (4)
+- [x] identity 2 — `add`/`remove`/`set user` through shadow-utils by exit status, E0302 from the
+  euid check before any tool runs; `add` acts unresolved and an ambiguous name is narrowed by
+  the input type — ADR-0101, ADR-0102; `identity_missing.rs` (6 tests) un-ignored
 - [x] seams 1 — `set`/`remove` of system targets dispatch through the registry — commit 7ec0d83
   (ADR-0068 §1; `crates/ono-cli/tests/builtins.rs`)
 - [x] seams 2 — ActionResult contract: a failed row exits 1, a missing target is an E0301 row,

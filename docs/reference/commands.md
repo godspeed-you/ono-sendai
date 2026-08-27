@@ -1550,7 +1550,7 @@ Create a user account.
 |---|---|
 | id | `ono.user.add` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `user.manage` |
@@ -1586,7 +1586,7 @@ Remove a user account.
 |---|---|
 | id | `ono.user.remove` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.user/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `user.manage` |
@@ -1619,7 +1619,7 @@ Modify a user account.
 |---|---|
 | id | `ono.user.set` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.user/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `user.manage` |

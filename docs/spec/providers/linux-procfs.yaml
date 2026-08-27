@@ -21,7 +21,7 @@ providers:
   - id: linux.nss
     doc: Users and groups, through NSS — so LDAP and sssd answer too, not only /etc/passwd.
     targets: [user, group]
-    capabilities: [user.list, group.list]
+    capabilities: [user.list, group.list, user.manage]
     schemas: [ono.user/1, ono.group/1]
 
   - id: ono.session

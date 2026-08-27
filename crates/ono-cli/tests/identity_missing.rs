@@ -181,7 +181,6 @@ fn should_restrict_sessions_to_one_user_when_the_user_option_is_given() {
 // --- add / remove / set user ---------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_adding_a_user_unprivileged() {
     require_unprivileged();
     let run = ono("add user testuser-ono --shell /bin/false | to json");
@@ -189,7 +188,6 @@ fn should_report_a_failed_action_result_when_adding_a_user_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_not_create_the_account_when_adding_a_user_fails() {
     require_unprivileged();
     // The attempt is honest about its outcome: nothing appears in the account database.
@@ -210,7 +208,6 @@ fn should_not_create_the_account_when_adding_a_user_fails() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_removing_a_user_unprivileged() {
     require_unprivileged();
     let run = ono("remove user root | to json");
@@ -218,7 +215,6 @@ fn should_report_a_failed_action_result_when_removing_a_user_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_structured_not_found_when_removing_a_user_that_does_not_exist() {
     require_unprivileged();
     // A selector nothing answers to is a resolution failure (E0102) or, per target, `io.not_found`
@@ -242,7 +238,6 @@ fn should_report_a_structured_not_found_when_removing_a_user_that_does_not_exist
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_setting_a_users_shell_unprivileged() {
     require_unprivileged();
     let run = ono("set user root --shell /bin/false | to json");
@@ -250,7 +245,6 @@ fn should_report_a_failed_action_result_when_setting_a_users_shell_unprivileged(
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_leave_the_account_unchanged_when_setting_a_user_fails() {
     require_unprivileged();
     let before = last_json(&ono("get user root | select shell | to json"));

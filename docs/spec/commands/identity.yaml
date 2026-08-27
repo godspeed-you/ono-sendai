@@ -124,7 +124,7 @@ commands:
       - {name: group, type: "ref<ono.group/1>", doc: "Primary group."}
     privilege: elevated
     streaming: false
-    phase: planned
+    phase: C                           # delivered by ADR-0101
     examples:
       - add user deploy --shell /usr/bin/ono
 
@@ -143,7 +143,7 @@ commands:
       - {name: remove-home, type: bool, doc: "Delete the home directory too. Destructive, and therefore never the default."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C                           # delivered by ADR-0101
     examples:
       - remove user deploy
 
@@ -164,7 +164,7 @@ commands:
       - {name: group, type: "ref<ono.group/1>", doc: "New primary group."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C                           # delivered by ADR-0101
     examples:
       - set user deploy --shell /usr/bin/ono
 

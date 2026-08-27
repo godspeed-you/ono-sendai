@@ -44,6 +44,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod account_tools;
 pub mod accounts;
 mod common;
 mod env;
@@ -58,6 +59,7 @@ use std::sync::Arc;
 
 use ono_provider_api::ProviderRegistry;
 
+pub use account_tools::AccountCommand;
 pub use accounts::{Accounts, GroupAccount, NSS_TIMEOUT, NssAccounts, UserAccount};
 pub use env::{EnvBinding, EnvProvider, EnvSource};
 pub use file::FileProvider;

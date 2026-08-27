@@ -215,13 +215,37 @@ impl ProviderMutation {
                 ))
             })?;
 
-        let objects: Vec<ObjectId> = ctx
+        // `add` creates or associates (verbs.yaml): the thing it names need not exist yet, so
+        // resolving the selector first would refuse every `add user <new>` as not found. The
+        // name travels unresolved, and the provider — which is the only party that can say
+        // whether creating or extending is meant — answers for it (ADR-0102).
+        if ctx.contract().verb() == "add" {
+            return Ok(vec![ObjectId::new(
+                ono_value::SchemaId::new(&format!("ono.{target}"), 1),
+                [value.clone()],
+            )]);
+        }
+
+        let mut objects: Vec<ObjectId> = ctx
             .providers()
             .resolve(target, &Selector::field(name, value.clone()))
             .await?
             .iter()
             .map(|reference| reference.id().clone())
             .collect();
+        // A name can answer for more than one kind of object — `root` is a user and a group,
+        // and one provider resolves both. When that happens, the kind the command acts on is
+        // the one its input type declares; a provider that answered with one kind is never
+        // second-guessed (ADR-0102).
+        let kinds = objects
+            .iter()
+            .map(|id| id.schema().to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+        if kinds.len() > 1
+            && let Some(accepted) = ctx.contract().input().element_schema()
+        {
+            objects.retain(|id| id.schema().to_string() == accepted);
+        }
         // A selector that names nothing is not an empty selection: the user asked to act on
         // one particular thing, and "it is not there" is that thing's outcome (spec §16.5,
         // ADR-0068 §2). An empty stream would be the answer to a filter that matched nothing.
