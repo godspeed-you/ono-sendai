@@ -142,12 +142,18 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   generic `enter`/`watch`/`trace` for object targets), then the families. Each file is one
   family; each test asserts the behaviour the contract promises, never mere presence:
   - `crates/ono-cli/tests/files_missing.rs` (34) — read/write/copy/move/remove/set/open/tail/
-    watch/trace/enter file, remove/set dir, globs for native selectors
+    watch/trace/enter file, remove/set dir, globs for native selectors — **done** by
+    [files | 2026-08-27] on branch `implementation-files` (ADR-0081–0083) for everything
+    except the four watch/trace tests, which stay `#[ignore` for the watch/trace family;
+    the four `find file` option tests of `options_and_selectors_missing.rs` are green too.
+    Acceptance: `docker/acceptance/cases/037-files-read-write-remove.case` (written, not yet
+    run in the container by this agent)
   - `crates/ono-cli/tests/language_missing.rs` (31) — `let` capturing a pipeline, `$(…)`/`(…)`
     values, callable `fn`, `alias`, `now()`, timestamp literals, `FOO=bar cmd`, `each { … }`,
     string `+`, keyless `sort`, `kill %N`
   - `crates/ono-cli/tests/options_and_selectors_missing.rs` (15) — `--user/--tree`, `find file`
-    options, `--mounted`, `trace socket --port`, `--human`, `get user 0`, `where local.port`
+    options (**done**, files family), `--mounted`, `trace socket --port`, `--human`,
+    `get user 0`, `where local.port`
   - `crates/ono-cli/tests/meta_config_missing.rs` (24) — `resolve command`, `get config` layers/
     source/line, `set config` typed + effective (`render.table.max_rows`)
   - `crates/ono-cli/tests/processes_missing.rs` (18) — `inspect process`, `get job`, `enter
@@ -198,6 +204,16 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   link races the hangup `script` sends when its piped stdin reaches EOF. Confirm under low load;
   if it recurs, make link teardown at exit not wait on the agent — exit test: the case green in
   three consecutive full runs
+- [ ] `read file` streams a large file as several `bytes` values instead of one whole-file
+  value (ADR-0083 §3 defers chunking) — exit test: a files case reading a file larger than the
+  pipeline's chunk size through `| count`
+- [ ] `tail file` through inotify instead of the 100 ms poll (ADR-0083 §3) — exit test: the
+  existing follow test with the poll interval removed
+- [ ] `explain remove file *.txt` shows the resolved target count of the plan (ADR-0081) —
+  exit test: an explain case inside a scratch directory
+- [ ] `--preserve` timestamps on a directory copied with `--recursive` (`set_times` needs a
+  writable handle; directories are skipped today, ADR-0082 §6) — exit test: a files case
+  comparing `modified` of the copied tree
 
 - [ ] `explain get process` inside a frame prints the narrowed spelling (`get process 1`,
   `get process --user root`) — ADR-0023 promised it, ADR-0076 made the arguments available —
@@ -452,6 +468,11 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   (`ono.process-detail/1`, ADR-0091) — commit d512f03; `get process --tree` — commit b3f91a4;
   `set process --priority` (ADR-0092) — commit 730b1a3; `send signal` — commit d9cd7f8;
   `processes_missing.rs` (18) and the three `--user`/`--tree` tests un-ignored
+- [x] File family — globs for native selectors, `read`/`write`/`copy`/`move`/`remove`/`set`/
+  `open`/`tail file`, `remove`/`set dir`, `find file --name/--depth/--kind/--follow-symlinks`
+  (ADR-0081, ADR-0082, ADR-0083) — branch `implementation-files`, commits b27b0a5, 7c41a09,
+  a9b1f2f, c7e0e15, c26466f and the find-options commit after them
+
 - [x] seams 1 — `set`/`remove` of system targets dispatch through the registry — commit 7ec0d83
   (ADR-0068 §1; `crates/ono-cli/tests/builtins.rs`)
 - [x] seams 2 — ActionResult contract: a failed row exits 1, a missing target is an E0301 row,

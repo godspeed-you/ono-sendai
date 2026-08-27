@@ -193,7 +193,6 @@ fn should_nest_children_under_their_parents_when_tree_is_requested() {
 // --- find file --name / --depth / --kind / --follow-symlinks ----------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_only_matching_names_when_find_file_has_a_name_glob() {
     let dir = tree();
     let run = ono(&format!(
@@ -212,7 +211,6 @@ fn should_return_only_matching_names_when_find_file_has_a_name_glob() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_stop_descending_when_find_file_has_a_depth() {
     let dir = tree();
     let run = ono(&format!(
@@ -233,7 +231,6 @@ fn should_stop_descending_when_find_file_has_a_depth() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_only_directories_when_find_file_has_a_kind() {
     let dir = tree();
     let run = ono(&format!(
@@ -258,7 +255,6 @@ fn should_return_only_directories_when_find_file_has_a_kind() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_descend_through_a_symlinked_directory_when_follow_symlinks_is_set() {
     let dir = tree();
     let run = ono(&format!(

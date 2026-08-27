@@ -1043,7 +1043,7 @@ Delete file resources, with a destructive preview for broad selections.
 
 | name | type | meaning |
 |---|---|---|
-| `path` | `path` | What to delete; omitted when files arrive through the pipeline. |
+| `path` | `path` | What to delete; omitted when files arrive through the pipeline. A glob resolves to exact targets first (spec §17.3). |
 
 **Options**
 
@@ -1170,7 +1170,7 @@ Open a file in its associated handler.
 |---|---|
 | id | `ono.file.open` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.file/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `file.open` |

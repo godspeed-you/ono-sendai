@@ -312,14 +312,22 @@ fn should_answer_type_with_the_adapters_schema_and_check_fields_before_running()
 #[test]
 fn should_dispatch_set_of_a_system_target_through_the_registry_rather_than_the_builtin() {
     // `set env` and `set config` change the session, so they are the shell's own. `set file` is
-    // a native command like any other (docs/spec/commands/file.yaml, `ono.file.set`), and the
-    // honest answer while nothing implements it is E0101 naming the command id — not E0102
-    // claiming the verb has no such target.
-    let run = ono("set file /definitely/not/here --mode 0755");
-    run.assert_status(127);
+    // a native command like any other (docs/spec/commands/file.yaml, `ono.file.set`): the
+    // registry's implementation answers — with an ActionResult row naming `ono.file.set`
+    // whose failure is the file's absence (ADR-0068 §2, ADR-0082) — never E0102 claiming the
+    // verb has no such target.
+    let run = ono("set file /definitely/not/here --mode 0755 | to json");
+    run.assert_status(1);
     assert!(
-        run.stderr().contains("Ono-Sendai-E0101") && run.stderr().contains("ono.file.set"),
-        "the registry answers for `set file`, got {:?}",
+        run.stdout().contains("\"operation\":\"ono.file.set\"")
+            && run.stdout().contains("Ono-Sendai-E0301"),
+        "the registry answers for `set file`, got {:?} / {:?}",
+        run.stdout(),
+        run.stderr()
+    );
+    assert!(
+        !run.stderr().contains("Ono-Sendai-E0102"),
+        "`set` is not a builtin for a system target, got {:?}",
         run.stderr()
     );
 }
@@ -329,10 +337,12 @@ fn should_let_remove_of_a_system_target_stand_in_a_pipeline() {
     // `remove file … | to json` is a mutation whose ActionResults flow on; only `remove env`
     // runs in the shell itself.
     let run = ono("remove file /definitely/not/here | to json");
-    run.assert_status(127);
+    run.assert_status(1);
     assert!(
-        run.stderr().contains("Ono-Sendai-E0101") && run.stderr().contains("ono.file.remove"),
-        "the registry answers for `remove file` in pipeline position, got {:?}",
+        run.stdout().contains("\"operation\":\"ono.file.remove\"")
+            && run.stdout().contains("Ono-Sendai-E0301"),
+        "the registry answers for `remove file` in pipeline position, got {:?} / {:?}",
+        run.stdout(),
         run.stderr()
     );
     assert!(

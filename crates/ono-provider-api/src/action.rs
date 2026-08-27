@@ -12,6 +12,7 @@ pub struct Action {
     object: ObjectId,
     arguments: Vec<(String, Value)>,
     dry_run: bool,
+    source: Option<String>,
 }
 
 impl Action {
@@ -24,7 +25,20 @@ impl Action {
             object,
             arguments: Vec::new(),
             dry_run: false,
+            source: None,
         }
+    }
+
+    /// Records where the object was observed: the provenance `source` of the record it came
+    /// from, or the path a `path` selector named (ADR-0082 §4).
+    ///
+    /// An identity says *which* object; for a provider whose identity is not what the system
+    /// acts on — a file is `(device, inode)`, and every filesystem call takes a path — the
+    /// source is how the object is found again. A provider whose identity is complete ignores it.
+    #[must_use]
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = Some(source.into());
+        self
     }
 
     /// Adds an argument, such as the signal a `kill` should send.
@@ -85,6 +99,12 @@ impl Action {
     #[must_use]
     pub fn is_dry_run(&self) -> bool {
         self.dry_run
+    }
+
+    /// Where the object was observed, when the caller recorded it (ADR-0082 §4).
+    #[must_use]
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 }
 

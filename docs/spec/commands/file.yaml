@@ -22,7 +22,7 @@ commands:
     output: stream<ono.file/1>
     provider_capability: file.list
     selectors:
-      - {name: path, type: path, doc: "The path or glob to describe. Globs resolve to exact objects before anything acts on them (spec §17.3)."}
+      - {name: path, type: path, repeatable: true, doc: "The path or glob to describe. Globs resolve to exact objects before anything acts on them (spec §17.3)."}
     options:
       - {name: recursive, type: bool, doc: "Descend into directories (spec §11.6, §6.2)."}
       - {name: follow-symlinks, type: bool, doc: "Describe the symlink target rather than the link itself."}
@@ -149,7 +149,7 @@ commands:
     output: stream<ono.action-result/1>
     provider_capability: file.remove
     selectors:
-      - {name: path, type: path, doc: "What to delete; omitted when files arrive through the pipeline."}
+      - {name: path, type: path, repeatable: true, doc: "What to delete; omitted when files arrive through the pipeline. A glob resolves to exact targets first (spec §17.3)."}
     options:
       - {name: recursive, type: bool, doc: "Delete directories and their contents."}
       - {name: confirm, type: bool, doc: "Confirm a bulk deletion non-interactively. Without it, a selection over the configured threshold fails with `safety.confirmation_required` in a script (spec §11.6, §17.4)."}
@@ -170,7 +170,7 @@ commands:
     output: stream<ono.action-result/1>
     provider_capability: file.set
     selectors:
-      - {name: path, type: path, doc: "The file to modify."}
+      - {name: path, type: path, repeatable: true, doc: "The file to modify."}
     options:
       - {name: mode, type: string, doc: "Permission bits as four octal digits, matching `ono.file/1`'s `mode` field."}
       - {name: owner, type: "ref<ono.user/1>", doc: "New owning user."}
@@ -236,7 +236,7 @@ commands:
       - {name: with, type: string, doc: "Name the handler explicitly instead of using the association."}
     privilege: none
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - open file ./report.pdf
 
@@ -328,7 +328,7 @@ commands:
     output: stream<ono.action-result/1>
     provider_capability: file.remove
     selectors:
-      - {name: path, type: path, doc: "The directory to delete."}
+      - {name: path, type: path, repeatable: true, doc: "The directory to delete."}
     options:
       - {name: recursive, type: bool, doc: "Delete the contents as well. Without it a non-empty directory is refused."}
       - {name: confirm, type: bool, doc: "Confirm a bulk deletion non-interactively (spec §11.6, §17.4)."}
@@ -349,7 +349,7 @@ commands:
     output: stream<ono.action-result/1>
     provider_capability: file.set
     selectors:
-      - {name: path, type: path, doc: "The directory to modify."}
+      - {name: path, type: path, repeatable: true, doc: "The directory to modify."}
     options:
       - {name: mode, type: string, doc: "Permission bits as four octal digits."}
       - {name: owner, type: "ref<ono.user/1>", doc: "New owning user."}

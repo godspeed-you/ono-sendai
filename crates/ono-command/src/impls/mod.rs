@@ -23,6 +23,7 @@
 //!   none of which the registry can see. Answering from the registry alone would report a
 //!   resolution the shell would not actually perform.
 
+pub(crate) mod content;
 pub(crate) mod convert;
 mod inspect;
 pub(crate) mod meta;
@@ -205,6 +206,16 @@ fn implementation_of(
                 // `tail <target>` follows what the target's provider produces (spec §7.1); the
                 // journal is the one target whose follow is delivered (ADR-0085).
                 "tail" if id == "ono.journal.tail" => Arc::new(ProviderProducer::following(id)),
+                // Content verbs ask a provider for what an object holds rather than for the
+                // object: bound, like a mutation, exactly when a provider for the target
+                // advertises the capability (ADR-0083).
+                "read" | "tail" => {
+                    if !providers.is_some_and(|providers| advertised(providers, target, capability))
+                    {
+                        return None;
+                    }
+                    Arc::new(content::ContentCommand::new(id))
+                }
                 verb if registry.verb(verb).is_some_and(VerbSpec::is_mutating) => {
                     // With a provider set, a mutating verb is bound exactly when a provider for
                     // the target advertises the capability the contract names (ADR-0068 §3).

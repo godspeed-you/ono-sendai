@@ -480,8 +480,10 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
                 format!("`{}` is not a native command here", stage.span),
             ))
         })?;
+        let arguments =
+            crate::expand::expand_globs(session, &stage.arguments).map_err(Flow::Failed)?;
         let resolved = registry
-            .resolve(head_name(stage), &stage.arguments)
+            .resolve(head_name(stage), &arguments)
             .map_err(Flow::Failed)?;
         let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
         structured = !produces_bytes(contract);
@@ -1298,8 +1300,10 @@ fn run_native_segment(
                 format!("`{}` is not a native command here", stage.span),
             ))
         })?;
+        let arguments =
+            crate::expand::expand_globs(session, &stage.arguments).map_err(Flow::Failed)?;
         let resolved = registry
-            .resolve(head_name(stage), &stage.arguments)
+            .resolve(head_name(stage), &arguments)
             .map_err(Flow::Failed)?;
         let mut arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
         // `format table` without `--max-rows` truncates where the sink would (spec §13.3,

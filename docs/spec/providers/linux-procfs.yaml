@@ -15,7 +15,7 @@ providers:
   - id: linux.fs
     doc: Files and directories, from the filesystem itself.
     targets: [file, dir]
-    capabilities: [file.list, file.find, dir.list]
+    capabilities: [file.list, file.find, file.read, file.write, file.copy, file.move, file.remove, file.set, file.open, file.watch, dir.list]
     schemas: [ono.file/1]
 
   - id: linux.nss

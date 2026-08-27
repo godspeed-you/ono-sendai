@@ -22,7 +22,9 @@ use nix::fcntl::{AT_FDCWD, AtFlags, OFlag, openat, readlinkat};
 use nix::sys::stat::{FileStat, Mode, SFlag, fstatat, major, minor};
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+};
 use ono_value::{ByteSize, ErrorValue, RecordValue, Schema, Value};
 
 use crate::accounts::{Accounts, NssAccounts};
@@ -75,38 +77,80 @@ impl FileProvider {
         self.accounts = accounts;
         self
     }
+
+    /// The uid a `--owner` names: a number as it is, a name through the accounts database.
+    pub(crate) async fn uid_of(&self, value: &Value) -> Result<u32, ErrorValue> {
+        if let Some(uid) = numeric_id(value) {
+            return Ok(uid);
+        }
+        let name = value.as_str()?;
+        self.accounts
+            .user_named(name)
+            .await
+            .map(|account| account.uid)
+            .ok_or_else(|| {
+                ErrorValue::new(ErrorCode::IoNotFound, format!("no user named `{name}`"))
+            })
+    }
+
+    /// The gid a `--group` names: a number as it is, a name through the accounts database.
+    pub(crate) async fn gid_of(&self, value: &Value) -> Result<u32, ErrorValue> {
+        if let Some(gid) = numeric_id(value) {
+            return Ok(gid);
+        }
+        let name = value.as_str()?;
+        self.accounts
+            .group_named(name)
+            .await
+            .map(|account| account.gid)
+            .ok_or_else(|| {
+                ErrorValue::new(ErrorCode::IoNotFound, format!("no group named `{name}`"))
+            })
+    }
+}
+
+/// A user or group written as its numeric id, in either of the forms a word binds to.
+fn numeric_id(value: &Value) -> Option<u32> {
+    match value {
+        Value::Int(id) => u32::try_from(*id).ok(),
+        Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }
 }
 
 /// What a query asked the walk to do.
 #[derive(Debug, Clone)]
 struct Request {
-    root: PathBuf,
+    /// The paths the query names — several when a glob resolved to several (spec §17.3).
+    roots: Vec<PathBuf>,
     list_contents: bool,
     recursive: bool,
     follow_symlinks: bool,
     include_hidden: bool,
     max_depth: usize,
     limit: usize,
+    /// `find file --name <glob>`: only entries whose name matches are emitted.
+    name: Option<globset::GlobMatcher>,
+    /// `find file --kind <kind>`: only entries of this kind are emitted; directories of
+    /// another kind are still descended into.
+    kind: Option<String>,
 }
 
 impl Request {
     fn from(query: &Query) -> Self {
         let mut named_root = false;
-        let root = query
+        let roots = query
             .selectors()
             .iter()
             .find_map(|selector| match selector {
                 Selector::Field { name, value } if name == "path" || name == "root" => {
                     named_root = name == "root";
-                    match value {
-                        Value::Path(path) => Some(path.to_path_buf()),
-                        Value::String(text) => Some(PathBuf::from(text.as_ref())),
-                        _ => None,
-                    }
+                    Some(paths_of(value))
                 }
                 _ => None,
             })
-            .unwrap_or_else(|| PathBuf::from("."));
+            .filter(|roots| !roots.is_empty())
+            .unwrap_or_else(|| vec![PathBuf::from(".")]);
         let listing = query.target_name() != "file";
         // `find file /var/log` binds its path to the selector named `root`, and find *is* the
         // walk (docs/spec/commands/file.yaml: "discover files by walking a root"); only
@@ -117,17 +161,53 @@ impl Request {
             .option_value("depth")
             .and_then(|value| value.as_int().ok())
             .and_then(|depth| usize::try_from(depth).ok());
+        let name = query
+            .option_value("name")
+            .and_then(|value| value.as_str().ok())
+            .and_then(|pattern| {
+                globset::GlobBuilder::new(pattern)
+                    .literal_separator(true)
+                    .build()
+                    .ok()
+            })
+            .map(|glob| glob.compile_matcher());
+        let kind = query
+            .option_value("kind")
+            .and_then(|value| value.as_str().ok())
+            .map(str::to_owned);
         Self {
-            root,
+            roots,
             list_contents: listing,
             recursive,
             follow_symlinks: query.flag("follow-symlinks"),
             // `docs/spec/commands/file.yaml` gives `--all` to `get dir` only, so a `file` walk
             // reports every entry it reaches and a `dir` listing hides dot entries by default.
             include_hidden: !listing || query.flag("all"),
-            max_depth: depth.unwrap_or(if recursive { usize::MAX } else { 0 }),
+            // The root's direct entries are depth 1: `--depth 1` lists them and descends no
+            // further. Without a bound a recursive walk has none.
+            max_depth: depth.unwrap_or(if recursive { usize::MAX } else { 1 }),
             limit: query.max().unwrap_or(usize::MAX),
+            name,
+            kind,
         }
+    }
+
+    /// Whether `--name` and `--kind` let this entry through.
+    fn admits(&self, name: &OsStr, kind: &str) -> bool {
+        self.name
+            .as_ref()
+            .is_none_or(|glob| glob.is_match(Path::new(name)))
+            && self.kind.as_deref().is_none_or(|wanted| wanted == kind)
+    }
+}
+
+/// The paths a selector value names: one, or every element of a list a glob resolved to.
+fn paths_of(value: &Value) -> Vec<PathBuf> {
+    match value {
+        Value::Path(path) => vec![path.to_path_buf()],
+        Value::String(text) => vec![PathBuf::from(text.as_ref())],
+        Value::List(items) => items.iter().flat_map(paths_of).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -311,45 +391,76 @@ fn open_root(path: &Path) -> Result<OwnedFd, ErrorValue> {
     .map_err(|errno| errno_error(errno, path))
 }
 
-/// Emits the walk, breadth first, sending each entry as it is stated.
+/// Emits the walk of every named root, breadth first, sending each entry as it is stated.
 async fn walk(request: Request, describer: Describer, sink: StreamSink) {
     let mut sent = 0usize;
+    for root in &request.roots {
+        if sent >= request.limit {
+            return;
+        }
+        if walk_root(&request, root, &describer, &sink, &mut sent)
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+}
 
+/// The receiving side went away; nothing more can be delivered.
+struct Closed;
+
+/// Emits one root: the entry itself for `get file`, then its tree where the query descends.
+async fn walk_root(
+    request: &Request,
+    root_path: &Path,
+    describer: &Describer,
+    sink: &StreamSink,
+    sent: &mut usize,
+) -> Result<(), Closed> {
     if !request.list_contents {
         match describer
             .describe(
                 AT_FDCWD,
-                request.root.as_os_str(),
-                request.root.clone(),
+                root_path.as_os_str(),
+                root_path.to_path_buf(),
                 request.follow_symlinks,
             )
             .await
         {
             Ok(record) => {
-                if sink.send(record.into_value()).await.is_err() {
-                    return;
+                let kind = record
+                    .get("kind")
+                    .and_then(|value| value.as_str().ok())
+                    .unwrap_or("other")
+                    .to_owned();
+                let name = root_path.file_name().unwrap_or(root_path.as_os_str());
+                if request.admits(name, &kind) {
+                    sink.send(record.into_value()).await.map_err(|_| Closed)?;
+                    *sent += 1;
                 }
-                sent += 1;
             }
+            // One root that is not there is that root's answer, not the walk's: the other
+            // roots a glob resolved to are still described (spec §16.5).
             Err(error) => {
-                let _ = sink.fail(error).await;
-                return;
+                sink.fail(error).await.map_err(|_| Closed)?;
+                return Ok(());
             }
         }
         if !request.recursive {
-            return;
+            return Ok(());
         }
     }
 
-    let root = match open_root(&request.root) {
+    let root = match open_root(root_path) {
         Ok(fd) => fd,
         Err(error) => {
             // A plain `get file <path>` on a non-directory has already reported the entry; the
             // failure to open it as a directory is not a second answer.
             if request.list_contents {
-                let _ = sink.fail(error).await;
+                sink.fail(error).await.map_err(|_| Closed)?;
             }
-            return;
+            return Ok(());
         }
     };
 
@@ -361,20 +472,34 @@ async fn walk(request: Request, describer: Describer, sink: StreamSink) {
     // the recorded path makes the open fail loudly instead of following it. At most two
     // descriptors are ever held: the root, and the directory being read.
     let mut queue: VecDeque<(PathBuf, PathBuf, usize)> = VecDeque::new();
-    queue.push_back((PathBuf::new(), request.root.clone(), 0));
+    queue.push_back((PathBuf::new(), root_path.to_path_buf(), 0));
+    // With `--follow-symlinks` a directory can be reached by more than one name, and a link
+    // can point at its own ancestor: each directory is listed once, by `(device, inode)`.
+    let mut visited: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::new();
 
     while let Some((relative, path, depth)) = queue.pop_front() {
         let fd = if relative.as_os_str().is_empty() {
             match root.try_clone() {
                 Ok(fd) => fd,
                 Err(error) => {
-                    let _ = sink
-                        .fail(errno_error(
-                            Errno::from_raw(error.raw_os_error().unwrap_or(0)),
-                            &path,
-                        ))
-                        .await;
-                    return;
+                    sink.fail(errno_error(
+                        Errno::from_raw(error.raw_os_error().unwrap_or(0)),
+                        &path,
+                    ))
+                    .await
+                    .map_err(|_| Closed)?;
+                    return Ok(());
+                }
+            }
+        } else if request.follow_symlinks {
+            // Following means following: the directory is opened by the name it was reached
+            // by, symlinks included. The T14 guarantee is deliberately given up here, which is
+            // why the contract keeps this off by default (ADR-0083 §3).
+            match open_root(&path) {
+                Ok(fd) => fd,
+                Err(error) => {
+                    sink.fail(error).await.map_err(|_| Closed)?;
+                    continue;
                 }
             }
         } else {
@@ -383,25 +508,29 @@ async fn walk(request: Request, describer: Describer, sink: StreamSink) {
                 // The directory vanished or a component stopped being a plain directory between
                 // the listing and this turn — the swap of ADR-0015 T14. Reported, not followed.
                 Err(errno) => {
-                    if sink.fail(errno_error(errno, &path)).await.is_err() {
-                        return;
-                    }
+                    sink.fail(errno_error(errno, &path))
+                        .await
+                        .map_err(|_| Closed)?;
                     continue;
                 }
             }
         };
+        if request.follow_symlinks
+            && let Ok(stat) = nix::sys::stat::fstat(&fd)
+            && !visited.insert((stat.st_dev, stat.st_ino))
+        {
+            continue;
+        }
         let names = match entry_names(&fd, &path) {
             Ok(names) => names,
             Err(error) => {
-                if sink.fail(error).await.is_err() {
-                    return;
-                }
+                sink.fail(error).await.map_err(|_| Closed)?;
                 continue;
             }
         };
         for name in names {
-            if sent >= request.limit {
-                return;
+            if *sent >= request.limit {
+                return Ok(());
             }
             if !request.include_hidden && name.as_bytes().starts_with(b".") {
                 continue;
@@ -422,23 +551,183 @@ async fn walk(request: Request, describer: Describer, sink: StreamSink) {
                         .and_then(|value| value.as_str().ok())
                         .unwrap_or("other")
                         .to_owned();
-                    if sink.send(record.into_value()).await.is_err() {
-                        return;
+                    if request.admits(&name, &kind) {
+                        sink.send(record.into_value()).await.map_err(|_| Closed)?;
+                        *sent += 1;
                     }
-                    sent += 1;
                     kind
                 }
                 Err(error) => {
-                    if sink.fail(error).await.is_err() {
-                        return;
-                    }
+                    sink.fail(error).await.map_err(|_| Closed)?;
                     continue;
                 }
             };
-            if kind == "dir" && depth < request.max_depth {
+            if kind == "dir" && depth + 1 < request.max_depth {
                 queue.push_back((relative.join(&name), child_path, depth + 1));
             }
         }
+    }
+    Ok(())
+}
+
+/// `read file`: each named file's content, as one value per file.
+///
+/// Without an encoding the content stays bytes — spec §12.1 forbids guessing — and with one it
+/// is decoded, or refused with the reason. Only UTF-8 is decoded here: a transcoding table is
+/// a dependency this build does not carry, and a named encoding it cannot honour is refused
+/// rather than approximated.
+async fn read_content(roots: Vec<PathBuf>, encoding: Option<String>, sink: StreamSink) {
+    for path in roots {
+        let outcome = match tokio::fs::read(&path).await {
+            Ok(data) => decode(data, encoding.as_deref(), &path),
+            Err(error) => Err(crate::common::io_error(&error, &path)),
+        };
+        let delivered = match outcome {
+            Ok(value) => sink.send(value).await.is_ok(),
+            Err(error) => sink.fail(error).await.is_ok(),
+        };
+        if !delivered {
+            return;
+        }
+    }
+}
+
+fn decode(data: Vec<u8>, encoding: Option<&str>, path: &Path) -> Result<Value, ErrorValue> {
+    match encoding {
+        None => Ok(Value::Bytes(data.into())),
+        Some(name) if name.eq_ignore_ascii_case("utf-8") || name.eq_ignore_ascii_case("utf8") => {
+            String::from_utf8(data).map(Value::from).map_err(|error| {
+                ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!(
+                        "{}: not valid UTF-8 at byte {}",
+                        path.display(),
+                        error.utf8_error().valid_up_to()
+                    ),
+                )
+                .with_target(ono_value::ValueRef::path(path))
+                .with_help("read it without `--encoding` to get the bytes as they are")
+            })
+        }
+        Some(other) => Err(ErrorValue::new(
+            ErrorCode::ProviderUnsupported,
+            format!("{PROVIDER_ID} decodes utf-8 only, not `{other}`"),
+        )
+        .with_help("read the bytes and decode them downstream")),
+    }
+}
+
+/// `tail file`: the last `lines` existing lines, then — while `follow` — every line appended
+/// afterwards, one `string` per line without its terminator (ADR-0083 §3).
+///
+/// The follow polls the file by name every 100 ms, so a file replaced under the tail (log
+/// rotation) is picked up at its new inode on the next poll; a file that shrinks is read again
+/// from its start. Polling is explicit here because spec §18.2 asks that it be.
+async fn tail_lines(path: PathBuf, lines: usize, follow: bool, sink: StreamSink) {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+
+    let mut file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) => {
+            let _ = sink.fail(crate::common::io_error(&error, &path)).await;
+            return;
+        }
+    };
+    let mut existing = Vec::new();
+    if let Err(error) = file.read_to_end(&mut existing) {
+        let _ = sink.fail(crate::common::io_error(&error, &path)).await;
+        return;
+    }
+    let mut offset = existing.len() as u64;
+    // A last line without its newline is not a line yet: it stays pending, and the follow
+    // completes it when the writer does.
+    let complete = existing
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    let mut pending: Vec<u8> = existing[complete..].to_vec();
+    // Splitting `a\nb\n` gives `a`, `b` and a trailing empty piece that is no line.
+    let mut last: Vec<&[u8]> = existing[..complete].split(|byte| *byte == b'\n').collect();
+    last.pop();
+    let skip = last.len().saturating_sub(lines);
+    for line in last.into_iter().skip(skip) {
+        if sink.send(line_value(line)).await.is_err() {
+            return;
+        }
+    }
+    if !follow {
+        if !pending.is_empty() && lines > 0 && sink.send(line_value(&pending)).await.is_err() {
+            return;
+        }
+        return;
+    }
+
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        tick.tick().await;
+        if sink.is_cancelled() {
+            return;
+        }
+        // Reopen by name: rotation replaces the file, and the old descriptor would follow the
+        // renamed one forever.
+        let (length, reopened) = match std::fs::metadata(&path) {
+            Ok(metadata) => {
+                let same = std::os::unix::fs::MetadataExt::ino(&metadata)
+                    == file
+                        .metadata()
+                        .map(|m| std::os::unix::fs::MetadataExt::ino(&m))
+                        .unwrap_or(0);
+                (metadata.len(), !same)
+            }
+            Err(_) => continue,
+        };
+        if reopened || length < offset {
+            match std::fs::File::open(&path) {
+                Ok(fresh) => file = fresh,
+                Err(_) => continue,
+            }
+            offset = 0;
+            pending.clear();
+        }
+        if length == offset {
+            continue;
+        }
+        if file.seek(SeekFrom::Start(offset)).is_err() {
+            continue;
+        }
+        loop {
+            let read = match file.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(error) => {
+                    let _ = sink.fail(crate::common::io_error(&error, &path)).await;
+                    return;
+                }
+            };
+            offset += read as u64;
+            pending.extend_from_slice(&buffer[..read]);
+            while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<u8> = pending.drain(..=end).collect();
+                if sink
+                    .send(line_value(&line[..line.len() - 1]))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// A line as a string, or as bytes when it is not UTF-8 (spec §12.2: never lost).
+fn line_value(line: &[u8]) -> Value {
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    match std::str::from_utf8(line) {
+        Ok(text) => Value::string(text),
+        Err(_) => Value::Bytes(line.to_vec().into()),
     }
 }
 
@@ -460,6 +749,14 @@ impl Provider for FileProvider {
         vec![
             Capability::new("file.list", Risk::Read),
             Capability::new("file.find", Risk::Read),
+            Capability::new("file.read", Risk::Read),
+            Capability::new("file.write", Risk::Mutate),
+            Capability::new("file.copy", Risk::Mutate),
+            Capability::new("file.move", Risk::Mutate),
+            Capability::new("file.remove", Risk::Destructive),
+            Capability::new("file.set", Risk::Mutate),
+            Capability::new("file.open", Risk::Mutate),
+            Capability::new("file.watch", Risk::Observe),
             Capability::new("dir.list", Risk::Read),
         ]
     }
@@ -476,6 +773,35 @@ impl Provider for FileProvider {
             accounts: Arc::clone(&self.accounts),
         };
         let request = Request::from(query);
+        if query.verb() == "tail" {
+            let lines = query
+                .option_value("lines")
+                .and_then(|value| value.as_int().ok())
+                .and_then(|lines| usize::try_from(lines).ok())
+                .unwrap_or(10);
+            let follow = !matches!(query.option_value("follow"), Some(Value::Bool(false)));
+            let path = request.roots.into_iter().next().unwrap_or_default();
+            return Ok(ValueStream::spawn(
+                PipelineConfig::new(),
+                if follow {
+                    Boundedness::Unbounded
+                } else {
+                    Boundedness::Bounded
+                },
+                move |sink| async move { tail_lines(path, lines, follow, sink).await },
+            ));
+        }
+        if query.verb() == "read" {
+            let encoding = query
+                .option_value("encoding")
+                .and_then(|value| value.as_str().ok())
+                .map(str::to_owned);
+            return Ok(ValueStream::spawn(
+                PipelineConfig::new(),
+                Boundedness::Bounded,
+                move |sink| async move { read_content(request.roots, encoding, sink).await },
+            ));
+        }
         Ok(ValueStream::spawn(
             PipelineConfig::new(),
             Boundedness::Bounded,
@@ -513,5 +839,9 @@ impl Provider for FileProvider {
             .describe(AT_FDCWD, path.as_os_str(), path.clone(), false)
             .await?;
         Ok(ObjectRef::of(&record).into_iter().collect())
+    }
+
+    async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        crate::file_mutations::act(self, action).await
     }
 }

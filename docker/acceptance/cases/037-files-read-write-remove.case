@@ -1,0 +1,51 @@
+# Spec §9.1 (the filesystem family), §11.5 (ActionResult per target), §12.1 (bytes are bytes),
+# §16.5 (no collapsed bulk), §17.3 (globs resolve to exact targets before acting), §17.4 (a
+# script never waits for a prompt) — ADR-0081, ADR-0082, ADR-0083. An unprivileged user, in a
+# scratch directory of their own: content goes in through the pipeline, comes back out through
+# `read`, and every mutation answers with one row per target.
+case: files are written, read, copied, moved, set, removed and tailed with ActionResult rows
+run: |
+  mkdir -p "$HOME/files" && cd "$HOME/files"
+  ono -c 'let s = "hello"; $s | write file out.txt | select operation status changed | to json'
+  ono -c 'read file out.txt --encoding utf-8 | to json'
+  printf '\000\377A' | ono -c 'write file data.bin' && ono -c 'read file data.bin | to json'
+  ono -c 'let s = "again"; $s | write file out.txt | to json' > /dev/null 2>&1; echo "overwrite-refused=$?"
+  ono -c 'read file out.txt --encoding utf-8 | to json'
+  ono -c 'copy file out.txt copy.txt | select status | to json'
+  ono -c 'move file copy.txt moved.txt | select status | to json'
+  test ! -e copy.txt && echo moved=ok
+  ono -c 'set file moved.txt --mode 0600 | select changed | to json'
+  ono -c 'set file moved.txt --mode 0600 | select changed | to json'
+  ono -c 'get file moved.txt | select mode | to json'
+  printf 'a\n' > a.tmp; printf 'b\n' > b.tmp; printf 'c\n' > c.md
+  ono -c 'remove file *.tmp | select status | to json'
+  test ! -e a.tmp && test ! -e b.tmp && test -e c.md && echo glob-removed=ok
+  ono -c 'remove file nope.txt | to json' > /dev/null 2>&1; echo "missing=$?"
+  ono -c 'set config safety.confirm.bulk_threshold = 0; remove file c.md' 2>&1 | grep -o 'Ono-Sendai-E0701'
+  test -e c.md && echo bulk-untouched=ok
+  ono -c 'remove file c.md --confirm | select status | to json'
+  printf 'one\ntwo\nthree\n' > app.log
+  ono -c 'tail file app.log --lines 2 | take 2 | to json'
+  mkdir -p build/inner && touch build/inner/o
+  ono -c 'remove dir build | to json' > /dev/null 2>&1; echo "nonempty=$?"
+  ono -c 'remove dir build --recursive | select status | to json'
+  test ! -e build && echo tree-removed=ok
+  echo files=ok
+exit: 0
+stdout-contains: [{"changed":true,"operation":"ono.file.write","status":"success"}]
+stdout-contains: ["hello"]
+stdout-contains: ["00ff41"]
+stdout-contains: overwrite-refused=1
+stdout-contains: moved=ok
+stdout-contains: [{"changed":true}]
+stdout-contains: [{"changed":false}]
+stdout-contains: [{"mode":"0600"}]
+stdout-contains: [{"status":"success"},{"status":"success"}]
+stdout-contains: glob-removed=ok
+stdout-contains: missing=1
+stdout-contains: Ono-Sendai-E0701
+stdout-contains: bulk-untouched=ok
+stdout-contains: ["two","three"]
+stdout-contains: nonempty=1
+stdout-contains: tree-removed=ok
+stdout-contains: files=ok

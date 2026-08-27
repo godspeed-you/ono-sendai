@@ -43,6 +43,8 @@ use crate::{FrameKind, Limits, ProtocolError};
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RemoteQuery {
     target: String,
+    /// The verb the query is asked in; empty means `get`, so an older frame decodes unchanged.
+    verb: String,
     selectors: Vec<Selector>,
     options: Vec<(String, Value)>,
     limit: Option<usize>,
@@ -88,6 +90,7 @@ impl RemoteQuery {
     pub fn from_query(query: &Query) -> Self {
         Self {
             target: query.target_name().to_owned(),
+            verb: query.verb().to_owned(),
             selectors: query.selectors().to_vec(),
             options: query.options().to_vec(),
             limit: query.max(),
@@ -98,6 +101,9 @@ impl RemoteQuery {
     #[must_use]
     pub fn to_query(&self) -> Query {
         let mut query = Query::target(&self.target);
+        if !self.verb.is_empty() {
+            query = query.for_verb(&self.verb);
+        }
         for selector in &self.selectors {
             query = query.with(selector.clone());
         }
@@ -156,6 +162,7 @@ pub struct ActRequest {
     object: ObjectId,
     arguments: Vec<(String, Value)>,
     dry_run: bool,
+    source: Option<String>,
 }
 
 impl ActRequest {
@@ -168,6 +175,7 @@ impl ActRequest {
             object,
             arguments: Vec::new(),
             dry_run: false,
+            source: None,
         }
     }
 
@@ -200,6 +208,7 @@ impl ActRequest {
         );
         request.arguments = action.arguments().to_vec();
         request.dry_run = action.is_dry_run();
+        request.source = action.source().map(str::to_owned);
         request
     }
 
@@ -216,6 +225,9 @@ impl ActRequest {
         }
         if self.dry_run {
             action = action.as_dry_run();
+        }
+        if let Some(source) = &self.source {
+            action = action.with_source(source.clone());
         }
         action
     }
@@ -589,6 +601,7 @@ fn query_to_json(query: &RemoteQuery) -> Json {
         .collect();
     object([
         ("target", Json::String(query.target.clone())),
+        ("verb", Json::String(query.verb.clone())),
         ("selectors", Json::Array(selectors)),
         ("options", pairs_to_json(&query.options)),
         (
@@ -611,6 +624,9 @@ fn query_from_json(
         .and_then(Json::as_str)
         .ok_or_else(|| bad(kind, "a request names its target"))?;
     let mut query = RemoteQuery::target(target);
+    if let Some(verb) = json.get("verb").and_then(Json::as_str) {
+        query.verb = verb.to_owned();
+    }
     if let Some(Json::Array(selectors)) = json.get("selectors") {
         for selector in selectors {
             query = query.with(selector_from_json(kind, selector, schemas)?);
@@ -661,6 +677,13 @@ fn act_to_json(request: &ActRequest) -> Json {
         ("object", object_id_to_json(&request.object)),
         ("arguments", pairs_to_json(&request.arguments)),
         ("dry_run", Json::Bool(request.dry_run)),
+        (
+            "source",
+            request
+                .source
+                .as_ref()
+                .map_or(Json::Null, |source| Json::String(source.clone())),
+        ),
     ])
 }
 
@@ -683,6 +706,7 @@ fn act_from_json(
     if json.get("dry_run").and_then(Json::as_bool) == Some(true) {
         request = request.as_dry_run();
     }
+    request.source = json.get("source").and_then(Json::as_str).map(str::to_owned);
     Ok(request)
 }
 

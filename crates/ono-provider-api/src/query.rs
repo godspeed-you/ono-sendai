@@ -10,6 +10,7 @@ use ono_value::{RecordValue, Value};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Query {
     target: String,
+    verb: String,
     selectors: Vec<Selector>,
     options: Vec<(String, Value)>,
     limit: Option<usize>,
@@ -21,10 +22,30 @@ impl Query {
     pub fn target(target: impl Into<String>) -> Self {
         Self {
             target: target.into(),
+            verb: "get".to_owned(),
             selectors: Vec::new(),
             options: Vec::new(),
             limit: None,
         }
+    }
+
+    /// Says what is asked of the objects, in the verb the user typed.
+    ///
+    /// `get` — the default — and `find` ask for the objects themselves. A provider that can
+    /// answer more than that (`read file` asks for a file's *content*, `tail file` for the
+    /// lines appended to it) tells the two apart by this verb; one that cannot ignores it and
+    /// the command's contract, which named a capability the provider does not advertise, keeps
+    /// the command from ever reaching it.
+    #[must_use]
+    pub fn for_verb(mut self, verb: impl Into<String>) -> Self {
+        self.verb = verb.into();
+        self
+    }
+
+    /// The verb the query is asked in; `get` unless [`for_verb`](Self::for_verb) said otherwise.
+    #[must_use]
+    pub fn verb(&self) -> &str {
+        &self.verb
     }
 
     /// Narrows the query.
