@@ -17,8 +17,8 @@ commands:
     output: stream<ono.user/1>
     provider_capability: user.list
     selectors:
+      - {name: uid, type: int, doc: "Resolve one account by numeric id. Declared before `name` so that `get user 0` binds the number (ADR-0095)."}
       - {name: name, type: string, doc: "Resolve one account by login name."}
-      - {name: uid, type: int, doc: "Resolve one account by numeric id."}
     options: []
     privilege: none
     streaming: true
@@ -37,8 +37,8 @@ commands:
     output: stream<ono.group/1>
     provider_capability: group.list
     selectors:
+      - {name: gid, type: int, doc: "Resolve one group by numeric id. Declared before `name` so that `get group 0` binds the number (ADR-0095)."}
       - {name: name, type: string, doc: "Resolve one group by name."}
-      - {name: gid, type: int, doc: "Resolve one group by numeric id."}
     options: []
     privilege: none
     streaming: true
