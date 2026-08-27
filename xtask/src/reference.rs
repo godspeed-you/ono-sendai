@@ -602,7 +602,13 @@ fn adapter_pack_page(pack: &ono_adapter::AdapterPack) -> String {
         ),
     );
     for adapter in pack.adapters() {
-        let _ = write!(page, "\n## {} — `{}`\n\n{}\n\n", adapter.id(), adapter.full_id(), adapter.summary());
+        let _ = write!(
+            page,
+            "\n## {} — `{}`\n\n{}\n\n",
+            adapter.id(),
+            adapter.full_id(),
+            adapter.summary()
+        );
         let _ = writeln!(
             page,
             "| | |\n|---|---|\n| executable | `{}` |\n| versions | `{}` |\n| tier | {} |\n\
@@ -611,13 +617,16 @@ fn adapter_pack_page(pack: &ono_adapter::AdapterPack) -> String {
             adapter.executable().versions(),
             tier_name(adapter.tier()),
             adapter.schema(),
-            adapter.decoder().id().unwrap_or(match adapter.decoder().kind() {
-                ono_adapter::DecoderKind::Json => "json",
-                ono_adapter::DecoderKind::Jsonl => "jsonl",
-                ono_adapter::DecoderKind::Lines => "lines",
-                ono_adapter::DecoderKind::Properties => "properties",
-                ono_adapter::DecoderKind::Builtin => "builtin",
-            }),
+            adapter
+                .decoder()
+                .id()
+                .unwrap_or(match adapter.decoder().kind() {
+                    ono_adapter::DecoderKind::Json => "json",
+                    ono_adapter::DecoderKind::Jsonl => "jsonl",
+                    ono_adapter::DecoderKind::Lines => "lines",
+                    ono_adapter::DecoderKind::Properties => "properties",
+                    ono_adapter::DecoderKind::Builtin => "builtin",
+                }),
             demand_names(adapter),
             fallback_name(adapter.fallback()),
             adapter.fixtures(),
@@ -637,7 +646,11 @@ fn adapter_pack_page(pack: &ono_adapter::AdapterPack) -> String {
                 "| `{}` | `{}` | {} | {} |",
                 cell(invocation.summary()),
                 cell(&invocation.plan().argv().join(" ")),
-                if allowed.is_empty() { "—".to_owned() } else { format!("`{}`", allowed.join("`, `")) },
+                if allowed.is_empty() {
+                    "—".to_owned()
+                } else {
+                    format!("`{}`", allowed.join("`, `"))
+                },
                 if matcher.required_flags().is_empty() {
                     "—".to_owned()
                 } else {

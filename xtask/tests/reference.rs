@@ -201,7 +201,7 @@ fn adapter_registries() -> Scratch {
         .join("../docs/spec/adapters/first-party/util-linux.yaml");
     repo.write(
         "docs/spec/adapters/first-party/util-linux.yaml",
-        &std::fs::read_to_string(pack).expect("the util-linux pack is part of the repository"),
+        std::fs::read_to_string(pack).expect("the util-linux pack is part of the repository"),
     );
     repo
 }
@@ -216,7 +216,12 @@ fn should_publish_a_page_per_adapter_pack_and_a_compatibility_matrix_when_genera
         written
             .iter()
             .find(|page| page.path == path)
-            .unwrap_or_else(|| panic!("{path} missing from {:?}", written.iter().map(|p| &p.path).collect::<Vec<_>>()))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{path} missing from {:?}",
+                    written.iter().map(|p| &p.path).collect::<Vec<_>>()
+                )
+            })
             .contents
             .clone()
     };
@@ -230,7 +235,10 @@ fn should_publish_a_page_per_adapter_pack_and_a_compatibility_matrix_when_genera
         "ono.block-device/1",
         "ono.mount/1",
     ] {
-        assert!(matrix.contains(expected), "the matrix names {expected}; got:\n{matrix}");
+        assert!(
+            matrix.contains(expected),
+            "the matrix names {expected}; got:\n{matrix}"
+        );
     }
     let pack = page("docs/reference/adapters/org.ono.compat.util-linux.md");
     for expected in [
@@ -241,7 +249,10 @@ fn should_publish_a_page_per_adapter_pack_and_a_compatibility_matrix_when_genera
         "raw",
         "util-linux/lsblk",
     ] {
-        assert!(pack.contains(expected), "the pack page states {expected}; got:\n{pack}");
+        assert!(
+            pack.contains(expected),
+            "the pack page states {expected}; got:\n{pack}"
+        );
     }
     assert!(
         matrix.contains("org.ono.compat.util-linux.md"),
