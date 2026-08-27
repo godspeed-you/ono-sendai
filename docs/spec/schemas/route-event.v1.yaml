@@ -1,0 +1,37 @@
+# RouteEvent. The envelope of spec §31.14 over `ono.route/1`, on the same terms as
+# interface-event.v1.yaml: routes are dumped from rtnetlink and compared (ADR-0080).
+id: ono.route-event/1
+name: RouteEvent
+summary: One routing table change, as a live stream emits it.
+identity: []
+fields:
+  kind:
+    type: enum
+    required: true
+    values: [snapshot, added, changed, removed]
+    doc: >-
+      What happened. A subscription always begins with `snapshot` events carrying the current
+      state (ADR-0024). A route's identity is its table, family, destination, gateway and
+      interface (route.v1.yaml), so a route re-pointed at another gateway is `removed` +
+      `added`, and a metric change is `changed`.
+  at:
+    type: timestamp
+    required: true
+    doc: When the change was observed.
+  route:
+    type: record
+    required: false
+    doc: The route as it now is — or, for `removed`, as it last was.
+  changed:
+    type: list<string>
+    required: false
+    doc: For `changed`, the names of the fields whose values moved. Null for every other kind.
+  source:
+    type: enum
+    required: true
+    values: [subscription, poll]
+    doc: >-
+      How the change was observed. `poll` means the runtime compared rtnetlink dumps at the
+      configured interval — explicit, as spec §18.2 requires.
+default_view:
+  columns: [kind, at, route, changed]

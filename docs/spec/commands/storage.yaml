@@ -212,8 +212,7 @@ commands:
     verb: watch
     target: mount
     summary: Emit mount and unmount events as a live stream.
-    stability: planned                    # spec §52, mount/watch = "L?"
-    validation_required: true
+    stability: experimental               # spec §52, mount/watch = "L?" — delivered by ADR-0079
     argument_mode: words
     input: "null"
     output: stream<ono.mount-event/1>
@@ -230,8 +229,7 @@ commands:
     verb: trace
     target: mount
     summary: Show a mount's device, filesystem, propagation peers and the processes using it.
-    stability: planned                    # spec §52, mount/trace = "R?"
-    validation_required: true
+    stability: experimental               # spec §52, mount/trace = "R?" — delivered by ADR-0079
     argument_mode: words
     input: "null | ono.mount/1"
     output: ono.graph/1

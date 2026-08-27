@@ -231,8 +231,7 @@ commands:
     verb: watch
     target: user
     summary: Emit account database changes as a live stream.
-    stability: planned                    # spec §52, user/watch = "L?"
-    validation_required: true
+    stability: experimental               # spec §52, user/watch = "L?" — delivered by ADR-0078
     argument_mode: words
     input: "null"
     output: stream<ono.user-event/1>
@@ -249,8 +248,7 @@ commands:
     verb: trace
     target: user
     summary: Show a user's processes, sessions, groups and owned files.
-    stability: planned                    # spec §52, user/trace = "R?"
-    validation_required: true
+    stability: experimental               # spec §52, user/trace = "R?" — delivered by ADR-0078
     argument_mode: words
     input: "null | ono.user/1"
     output: ono.graph/1
@@ -289,8 +287,7 @@ commands:
     verb: watch
     target: group
     summary: Emit group database changes as a live stream.
-    stability: planned                    # spec §52, group/watch = "L?"
-    validation_required: true
+    stability: experimental               # spec §52, group/watch = "L?" — delivered by ADR-0078
     argument_mode: words
     input: "null"
     output: stream<ono.group-event/1>

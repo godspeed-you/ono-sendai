@@ -1,0 +1,39 @@
+# InterfaceEvent. The envelope of spec §31.14 over `ono.interface/1`. Interfaces and their
+# addresses are read from rtnetlink and compared at the configured interval; `source` says so
+# until the provider subscribes to the kernel's multicast groups (ADR-0034, ADR-0080).
+id: ono.interface-event/1
+name: InterfaceEvent
+summary: One change to one network interface, as a live stream emits it.
+identity: []
+fields:
+  kind:
+    type: enum
+    required: true
+    values: [snapshot, added, changed, removed]
+    doc: >-
+      What happened. A subscription always begins with `snapshot` events carrying the current
+      state (ADR-0024). An address added or removed is the interface `changed`, with
+      `addresses` named; link state moving is `changed` with `state` named.
+  at:
+    type: timestamp
+    required: true
+    doc: When the change was observed.
+  interface:
+    type: record
+    required: false
+    doc: >-
+      The interface as it now is — or, for `removed`, as it last was. Identity is the netlink
+      index (interface.v1.yaml), so a renamed interface is the same object changing.
+  changed:
+    type: list<string>
+    required: false
+    doc: For `changed`, the names of the fields whose values moved. Null for every other kind.
+  source:
+    type: enum
+    required: true
+    values: [subscription, poll]
+    doc: >-
+      How the change was observed. `poll` means the runtime compared rtnetlink dumps at the
+      configured interval — explicit, as spec §18.2 requires.
+default_view:
+  columns: [kind, at, interface, changed]

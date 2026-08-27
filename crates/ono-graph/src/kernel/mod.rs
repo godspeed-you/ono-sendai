@@ -8,14 +8,20 @@ use ono_provider_api::ProviderRegistry;
 use crate::provider::RelationshipProvider;
 
 mod dns;
+mod file;
+mod identity;
 mod lookup;
 mod mount;
+mod network;
 mod process;
 mod procfs;
 mod service;
 
 pub use dns::{RemoteHosts, Resolver};
-pub use mount::MountDevices;
+pub use file::FileHolders;
+pub use identity::{ProcessUsers, UserGroups, UserProcesses};
+pub use mount::{MountDevices, MountFilesystems, MountUsers};
+pub use network::{InterfaceRoutes, InterfaceSockets, RouteInterfaces};
 pub use process::{OpenFiles, ProcessSockets, ProcessTree, SocketOwners};
 pub use service::ServiceProcesses;
 
@@ -55,6 +61,22 @@ pub fn rooted_relationships(
         ),
         Arc::new(OpenFiles::new(Arc::clone(&registry)).rooted(root)),
         Arc::new(SocketOwners::new(Arc::clone(&registry)).rooted(root)),
-        Arc::new(MountDevices::new(registry)),
+        Arc::new(
+            FileHolders::new(Arc::clone(&registry))
+                .rooted(root)
+                .sharing(Arc::clone(&snapshots)),
+        ),
+        Arc::new(MountDevices::new(Arc::clone(&registry))),
+        Arc::new(MountFilesystems::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
+        Arc::new(
+            MountUsers::new(Arc::clone(&registry))
+                .rooted(root)
+                .sharing(Arc::clone(&snapshots)),
+        ),
+        Arc::new(RouteInterfaces::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
+        Arc::new(InterfaceRoutes::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
+        Arc::new(InterfaceSockets::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
+        Arc::new(UserProcesses::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
+        Arc::new(UserGroups::new(registry).sharing(snapshots)),
     ]
 }

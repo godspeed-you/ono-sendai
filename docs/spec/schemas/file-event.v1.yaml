@@ -1,0 +1,39 @@
+# FileEvent. The envelope of spec §31.14 over `ono.file/1`. A file watch observes what is
+# beneath the path it names — one level, or the tree with `--recursive` — and until the file
+# provider subscribes to inotify the runtime compares walks and says so in `source`
+# (ADR-0034, ADR-0078).
+id: ono.file-event/1
+name: FileEvent
+summary: One change to one file or directory entry, as a live stream emits it.
+identity: []
+fields:
+  kind:
+    type: enum
+    required: true
+    values: [snapshot, added, changed, removed]
+    doc: >-
+      What happened. A subscription always begins with `snapshot` events carrying the current
+      state (ADR-0024). Identity is `(device, inode)` (file.v1.yaml), so a file written in place
+      is `changed` with `size`/`modified` named, a rename is `changed` with `path` named, and a
+      replacement is `removed` + `added`.
+  at:
+    type: timestamp
+    required: true
+    doc: When the change was observed.
+  file:
+    type: record
+    required: false
+    doc: The entry as it now is — or, for `removed`, as it last was.
+  changed:
+    type: list<string>
+    required: false
+    doc: For `changed`, the names of the fields whose values moved. Null for every other kind.
+  source:
+    type: enum
+    required: true
+    values: [subscription, poll]
+    doc: >-
+      How the change was observed. `poll` means the runtime walked the path again at the
+      configured interval — explicit, as spec §18.2 requires.
+default_view:
+  columns: [kind, at, file, changed]

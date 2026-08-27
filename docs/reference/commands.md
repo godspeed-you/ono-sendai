@@ -1202,7 +1202,7 @@ Emit filesystem change events for a path or tree.
 | | |
 |---|---|
 | id | `ono.file.watch` |
-| stability | planned |
+| stability | experimental |
 | phase | F |
 | input | `null` |
 | output | `stream<ono.file-event/1>` |
@@ -1753,7 +1753,7 @@ Emit account database changes as a live stream.
 | | |
 |---|---|
 | id | `ono.user.watch` |
-| stability | planned |
+| stability | experimental |
 | phase | F |
 | input | `null` |
 | output | `stream<ono.user-event/1>` |
@@ -1774,7 +1774,7 @@ Show a user's processes, sessions, groups and owned files.
 | | |
 |---|---|
 | id | `ono.user.trace` |
-| stability | planned |
+| stability | experimental |
 | phase | G |
 | input | `null | ono.user/1` |
 | output | `ono.graph/1` |
@@ -1828,7 +1828,7 @@ Emit group database changes as a live stream.
 | | |
 |---|---|
 | id | `ono.group.watch` |
-| stability | planned |
+| stability | experimental |
 | phase | F |
 | input | `null` |
 | output | `stream<ono.group-event/1>` |
@@ -3378,7 +3378,7 @@ Show the routes, addresses, neighbours and sockets bound to an interface.
 | | |
 |---|---|
 | id | `ono.interface.trace` |
-| stability | planned |
+| stability | experimental |
 | phase | G |
 | input | `null | ono.interface/1` |
 | output | `ono.graph/1` |
@@ -5164,7 +5164,7 @@ Emit mount and unmount events as a live stream.
 | | |
 |---|---|
 | id | `ono.mount.watch` |
-| stability | planned |
+| stability | experimental |
 | phase | F |
 | input | `null` |
 | output | `stream<ono.mount-event/1>` |
@@ -5185,7 +5185,7 @@ Show a mount's device, filesystem, propagation peers and the processes using it.
 | | |
 |---|---|
 | id | `ono.mount.trace` |
-| stability | planned |
+| stability | experimental |
 | phase | G |
 | input | `null | ono.mount/1` |
 | output | `ono.graph/1` |

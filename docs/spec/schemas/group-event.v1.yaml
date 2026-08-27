@@ -1,0 +1,38 @@
+# GroupEvent. The envelope of spec §31.14 over `ono.group/1`, on the same terms as
+# user-event.v1.yaml: the group database is polled through NSS, and `source` says so (ADR-0078).
+id: ono.group-event/1
+name: GroupEvent
+summary: One change to one group, as a live stream emits it.
+identity: []
+fields:
+  kind:
+    type: enum
+    required: true
+    values: [snapshot, added, changed, removed]
+    doc: >-
+      What happened. A subscription always begins with `snapshot` events carrying the current
+      state (ADR-0024), so no consumer has to reconstruct the starting point.
+  at:
+    type: timestamp
+    required: true
+    doc: When the change was observed.
+  group:
+    type: record
+    required: false
+    doc: >-
+      The group as it now is — or, for `removed`, as it last was. Identity is the gid
+      (group.v1.yaml); a membership change is the same group changing, with `members` named in
+      `changed`.
+  changed:
+    type: list<string>
+    required: false
+    doc: For `changed`, the names of the fields whose values moved. Null for every other kind.
+  source:
+    type: enum
+    required: true
+    values: [subscription, poll]
+    doc: >-
+      How the change was observed. `poll` means the runtime compared NSS snapshots at the
+      configured interval — explicit, as spec §18.2 requires.
+default_view:
+  columns: [kind, at, group, changed]

@@ -6,15 +6,18 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    FixtureProvider, ProcFixture, TableResolver, edges, endpoint, file, make_readable, mount, node,
-    process, registry, service, socket, trace_with,
+    FixtureProvider, ProcFixture, TableResolver, edges, endpoint, file, filesystem, group,
+    interface, make_readable, mount, neighbor, node, owned_process, process, registry, route,
+    service, socket, trace_with, user,
 };
 use ono_core::ErrorCode;
 use ono_graph::{
-    Confidence, MountDevices, OpenFiles, ProcessSockets, ProcessTree, RemoteHosts,
-    ServiceProcesses, SocketOwners, TraceOptions,
+    Confidence, FileHolders, InterfaceSockets, MountDevices, MountFilesystems, MountUsers,
+    OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, RouteInterfaces,
+    ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
 };
 use ono_provider_api::Provider;
+use ono_value::Value;
 
 /// One hop, so a test about one relationship sees only that relationship.
 fn one_hop() -> TraceOptions {
@@ -427,4 +430,372 @@ async fn should_keep_an_inferred_edge_inferred_when_an_exact_edge_joins_the_same
         ],
         "an exact edge beside an inferred one promotes nothing"
     );
+}
+
+#[tokio::test]
+async fn should_link_a_user_to_the_processes_running_as_it_by_uid_not_by_name() {
+    let processes: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.process",
+        &["process"],
+        vec![
+            owned_process(812, "postgres", 999, "postgres"),
+            owned_process(813, "postgres", 999, "postgres"),
+            // Same name, other uid: a lookalike account, not this user.
+            owned_process(900, "postgres", 1001, "postgres"),
+            owned_process(1, "systemd", 0, "root"),
+        ],
+    ))];
+    let registry = registry(processes);
+    let subject = user(999, "postgres", 999);
+
+    let graph = trace_with(
+        vec![Arc::new(UserProcesses::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        [
+            "runs -> process/812 postgres",
+            "runs -> process/813 postgres"
+        ],
+        "spec §23.6: a process belongs to a user by uid, in pid order"
+    );
+    assert!(
+        graph
+            .edges()
+            .iter()
+            .all(|edge| edge.confidence() == Confidence::Exact),
+        "the kernel reports a process's owner; nothing is inferred"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_user_to_its_primary_group_and_to_the_groups_that_list_it() {
+    let groups: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.group",
+        &["group"],
+        vec![
+            group(0, "root", &[]),
+            group(27, "sudo", &["alice", "bob"]),
+            group(1000, "alice", &[]),
+            group(44, "video", &["bob"]),
+        ],
+    ))];
+    let registry = registry(groups);
+    let subject = user(1000, "alice", 1000);
+
+    let graph = trace_with(
+        vec![Arc::new(UserGroups::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["member-of -> sudo", "primary-group -> alice"],
+        "the primary group comes from the account, the others from the group's own member \
+         list, in gid order; a group that does not list the user is not related to it"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_mount_to_the_filesystem_at_the_same_mount_point() {
+    let filesystems: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.filesystem",
+        &["filesystem"],
+        vec![
+            filesystem(
+                "/dev/sda2",
+                "/",
+                "ext4",
+                "5d6c1406-0b18-4cb7-8f0b-2a6aec04847e",
+            ),
+            filesystem(
+                "/dev/sdb1",
+                "/srv/data",
+                "xfs",
+                "0f7c2b1e-9a3d-4e55-8c21-1d2e3f4a5b6c",
+            ),
+        ],
+    ))];
+    let registry = registry(filesystems);
+    let subject = mount("/dev/sdb1", "/srv/data", "xfs");
+
+    let graph = trace_with(
+        vec![Arc::new(MountFilesystems::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["filesystem -> filesystem/0f7c2b1e-9a3d-4e55-8c21-1d2e3f4a5b6c"],
+        "the filesystem is the one at the mount's own target, not the root's"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_mount_to_the_processes_rooted_or_working_on_it() {
+    let proc = ProcFixture::new();
+    proc.process(700)
+        .link("root", "/")
+        .link("cwd", "/srv/data/pg");
+    proc.process(701)
+        .link("root", "/")
+        .link("cwd", "/home/alice");
+    // The mount a path lies on is its longest-prefix mount, so `/srv/data` is not `/srv`.
+    proc.process(702).link("root", "/").link("cwd", "/srv");
+    let providers: Vec<Arc<dyn Provider>> = vec![
+        Arc::new(FixtureProvider::new(
+            "fixture.mount",
+            &["mount"],
+            vec![
+                mount("/dev/sda2", "/", "ext4"),
+                mount("/dev/sdb1", "/srv/data", "xfs"),
+                mount("/dev/sdc1", "/srv", "ext4"),
+                mount("/dev/sdd1", "/home", "ext4"),
+            ],
+        )),
+        Arc::new(FixtureProvider::new(
+            "fixture.process",
+            &["process"],
+            vec![
+                process(700, Some(1), "postgres"),
+                process(701, Some(1), "bash"),
+                process(702, Some(1), "nginx"),
+            ],
+        )),
+    ];
+    let registry = registry(providers);
+    let subject = mount("/dev/sdb1", "/srv/data", "xfs");
+
+    let graph = trace_with(
+        vec![Arc::new(MountUsers::new(registry).rooted(proc.root()))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["cwd -> process/700 postgres"],
+        "only the process whose working directory lies on this mount uses it; the roots are \
+         on `/`, and `/srv` is another mount"
+    );
+    let edge = &graph.edges()[0];
+    assert_eq!(edge.confidence(), Confidence::Exact);
+    assert_eq!(
+        edge.metadata().get("path"),
+        Some(&ono_value::Value::Path(Arc::from(std::path::Path::new(
+            "/srv/data/pg"
+        )))),
+        "the edge names the path it was read from"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_route_to_its_interface_and_to_the_neighbour_that_is_its_gateway() {
+    let providers: Vec<Arc<dyn Provider>> = vec![
+        Arc::new(FixtureProvider::new(
+            "fixture.interface",
+            &["interface"],
+            vec![
+                interface(1, "lo", &["127.0.0.1/8"]),
+                interface(2, "eth0", &["192.168.1.20/24"]),
+            ],
+        )),
+        Arc::new(FixtureProvider::new(
+            "fixture.neighbor",
+            &["neighbor"],
+            vec![
+                neighbor("192.168.1.1", "aa:bb:cc:dd:ee:01", "eth0"),
+                // The same address seen on another interface is another neighbour.
+                neighbor("192.168.1.1", "aa:bb:cc:dd:ee:02", "wlan0"),
+            ],
+        )),
+    ];
+    let registry = registry(providers);
+    let subject = route("main", "0.0.0.0/0", Some("192.168.1.1"), "eth0");
+
+    let graph = trace_with(
+        vec![Arc::new(RouteInterfaces::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["via -> eth0", "gateway -> neighbor/192.168.1.1"],
+        "the route leaves through its interface and via the neighbour on that interface"
+    );
+    let gateway = graph
+        .nodes()
+        .iter()
+        .find(|node| node.kind().to_string() == "ono.neighbor/1")
+        .expect("the gateway neighbour node");
+    assert_eq!(
+        gateway.text("mac").as_deref(),
+        Some("aa:bb:cc:dd:ee:01"),
+        "the neighbour is the one on the route's interface, not a lookalike elsewhere"
+    );
+}
+
+#[tokio::test]
+async fn should_not_invent_a_gateway_neighbour_the_kernel_has_not_resolved() {
+    let providers: Vec<Arc<dyn Provider>> = vec![
+        Arc::new(FixtureProvider::new(
+            "fixture.interface",
+            &["interface"],
+            vec![interface(2, "eth0", &["192.168.1.20/24"])],
+        )),
+        Arc::new(FixtureProvider::new(
+            "fixture.neighbor",
+            &["neighbor"],
+            vec![],
+        )),
+    ];
+    let registry = registry(providers);
+    let subject = route("main", "0.0.0.0/0", Some("192.168.1.1"), "eth0");
+
+    let graph = trace_with(
+        vec![Arc::new(RouteInterfaces::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["via -> eth0"],
+        "spec §22.4: an unresolved gateway is absence, not a made-up neighbour"
+    );
+    assert!(graph.failures().is_empty(), "absence is not a failed read");
+}
+
+#[tokio::test]
+async fn should_link_an_interface_to_sockets_bound_to_its_addresses_and_mark_wildcards_inferred() {
+    let sockets: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.socket",
+        &["socket"],
+        vec![
+            socket(
+                11,
+                "tcp",
+                endpoint(Some("127.0.0.1"), Some(631)),
+                Value::Null,
+                "listen",
+            ),
+            socket(
+                12,
+                "tcp",
+                endpoint(Some("0.0.0.0"), Some(22)),
+                Value::Null,
+                "listen",
+            ),
+            socket(
+                13,
+                "tcp",
+                endpoint(Some("192.168.1.20"), Some(443)),
+                Value::Null,
+                "listen",
+            ),
+        ],
+    ))];
+    let registry = registry(sockets);
+    let subject = interface(1, "lo", &["127.0.0.1/8", "::1/128"]);
+
+    let graph = trace_with(
+        vec![Arc::new(InterfaceSockets::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["bound -> tcp/127.0.0.1:631", "bound -> tcp/:22"],
+        "the loopback listener and the wildcard listener are bound to `lo`; the one on another \
+         interface's address is not"
+    );
+    let confidences: Vec<Confidence> = graph.edges().iter().map(|e| e.confidence()).collect();
+    assert_eq!(
+        confidences,
+        [Confidence::Exact, Confidence::Inferred],
+        "spec §22.2: a socket on the interface's own address is observed; a wildcard binding is \
+         inferred and says so"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_file_to_the_processes_holding_it_open() {
+    let proc = ProcFixture::new();
+    proc.process(300).fd(0, "/srv/data/held.txt", 0);
+    proc.process(301).fd(5, "/srv/data/other.txt", 1);
+    proc.process(302).fd(7, "/srv/data/held.txt", 1);
+    let processes: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.process",
+        &["process"],
+        vec![
+            process(300, Some(1), "sleep"),
+            process(301, Some(1), "cat"),
+            process(302, Some(1), "tee"),
+        ],
+    ))];
+    let registry = registry(processes);
+    let subject = file("/srv/data/held.txt", "file", 2049, 41);
+
+    let graph = trace_with(
+        vec![Arc::new(FileHolders::new(registry).rooted(proc.root()))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["holder -> process/300 sleep", "holder -> process/302 tee"],
+        "spec §22.3: the holders are the processes whose descriptor tables name the file, in \
+         pid order"
+    );
+    let access: Vec<Option<String>> = graph
+        .edges()
+        .iter()
+        .map(|edge| {
+            edge.metadata()
+                .get("access")
+                .and_then(|value| value.as_str().ok().map(str::to_owned))
+        })
+        .collect();
+    assert_eq!(
+        access,
+        [Some("read".to_owned()), Some("write".to_owned())],
+        "each edge says how the holder opened the file"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_process_to_the_user_it_runs_as() {
+    let users: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.user",
+        &["user"],
+        vec![user(0, "root", 0), user(999, "postgres", 999)],
+    ))];
+    let registry = registry(users);
+    let subject = owned_process(812, "postgres", 999, "postgres");
+
+    let graph = trace_with(
+        vec![Arc::new(ProcessUsers::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(edges(&graph), ["runs-as -> postgres"]);
+    assert_eq!(graph.edges()[0].confidence(), Confidence::Exact);
 }

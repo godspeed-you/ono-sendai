@@ -469,7 +469,6 @@ fn should_report_a_failed_row_when_stopping_a_mount_unprivileged() {
 // --- watch mount ------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_watching_mounts_with_a_snapshot() {
     let run = ono("watch mount | take 1 | select kind | to json");
     run.assert_success();
@@ -481,7 +480,6 @@ fn should_begin_watching_mounts_with_a_snapshot() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_include_the_root_mount_in_the_first_snapshot() {
     let run =
         ono(r#"watch mount | where mount.target == "/" | take 1 | select kind mount | to json"#);
@@ -533,7 +531,6 @@ fn is_root_mount_node(node: &Value) -> bool {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_a_mount_to_what_it_sits_on_and_who_uses_it() {
     let run = ono("trace mount / | to json");
     run.assert_success();
@@ -579,7 +576,6 @@ fn should_trace_a_mount_to_what_it_sits_on_and_who_uses_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_not_found_when_tracing_a_path_that_is_no_mount_point() {
     let run = ono("trace mount /definitely/not/a/mount | to json");
     assert!(

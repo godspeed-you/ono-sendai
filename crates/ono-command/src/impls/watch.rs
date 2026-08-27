@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
-use ono_provider_api::{ProviderRegistry, Query};
+use ono_provider_api::{ProviderRegistry, Query, Selector};
 use ono_value::{ErrorValue, RecordValue, Schema, SchemaId, Value};
 
 use crate::invoke::{CommandImpl, Invocation, Outcome};
@@ -54,6 +54,10 @@ impl CommandImpl for WatchCommand {
             }
         }
 
+        if ctx.contract().target() == Some("file") {
+            query = file_tree_query(&query);
+        }
+
         let event_schema = event_schema_for(ctx.contract())?;
         let interval = ctx
             .arguments()
@@ -78,6 +82,38 @@ impl CommandImpl for WatchCommand {
             interval,
         )))
     }
+}
+
+/// The query behind `watch file <path>`: what lies beneath a directory, not the one entry.
+///
+/// ADR-0078: a watch of a directory reports the files created, changed and removed under it —
+/// the provider's directory listing, hidden entries included, one level deep or the whole tree
+/// with `--recursive` — rather than the directory's own record whose mtime moves. A path that
+/// is not a directory is watched as the one entry it is.
+fn file_tree_query(query: &Query) -> Query {
+    let is_directory = query.selectors().iter().any(|selector| match selector {
+        Selector::Field { name, value } if name == "path" => match value {
+            Value::Path(path) => path.is_dir(),
+            Value::String(text) => std::path::Path::new(text.as_ref()).is_dir(),
+            _ => false,
+        },
+        _ => false,
+    });
+    if !is_directory {
+        return query.clone();
+    }
+    let mut listing = Query::target("dir");
+    for selector in query.selectors() {
+        listing = listing.with(selector.clone());
+    }
+    for (name, value) in query.options() {
+        listing = listing.option(name.clone(), value.clone());
+    }
+    listing = listing.option("all", Value::Bool(true));
+    if let Some(max) = query.max() {
+        listing = listing.limit(max);
+    }
+    listing
 }
 
 /// The event schema this watch emits, resolved from the contract's declared output.

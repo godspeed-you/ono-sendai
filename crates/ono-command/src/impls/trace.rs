@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use ono_core::ErrorCode;
-use ono_graph::{Node, TraceOptions, Tracer, kernel_relationships};
+use ono_graph::{Node, ProcessUsers, TraceOptions, Tracer, kernel_relationships};
 use ono_pipeline::ValueStream;
 use ono_value::{ErrorValue, Value};
 
@@ -92,9 +92,18 @@ impl CommandImpl for TraceCommand {
                 );
             }
 
-            let tracer = Tracer::new()
+            let providers = Arc::new(ctx.providers().clone());
+            let mut tracer = Tracer::new()
                 .with_options(options)
-                .with_all(kernel_relationships(Arc::new(ctx.providers().clone())));
+                .with_all(kernel_relationships(Arc::clone(&providers)));
+            // Spec §22.3: `--users` adds the people behind the processes the trace reaches.
+            if ctx
+                .arguments()
+                .option("users")
+                .is_some_and(|value| matches!(value, Value::Bool(true)))
+            {
+                tracer = tracer.with(Arc::new(ProcessUsers::new(providers)));
+            }
             let graph = tracer.trace([root]).await;
             Ok(Outcome::Values(ValueStream::from_values([
                 graph.to_value()?
