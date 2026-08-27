@@ -191,15 +191,42 @@ enum Operation {
 }
 
 impl Operation {
-    fn parse(operation: &str) -> Option<Self> {
-        match operation {
-            "start" => Some(Operation::Job(JobKind::Start)),
-            "stop" => Some(Operation::Job(JobKind::Stop)),
-            "restart" => Some(Operation::Job(JobKind::Restart)),
-            "reload" => Some(Operation::Job(JobKind::Reload)),
-            "enable" => Some(Operation::SetEnabled(true)),
-            "disable" => Some(Operation::SetEnabled(false)),
-            _ => None,
+    /// What `action` asks for, or the reason it asks for nothing this provider does.
+    ///
+    /// `set` is the property form of `service.yaml`'s `ono.service.set`: the property travels as
+    /// an argument, and `--enabled` is the one persistent property a unit has (ADR-0084).
+    fn of(action: &Action) -> Result<Self, ErrorValue> {
+        let unsupported = |message: String, help: &str| {
+            Err(ErrorValue::new(ErrorCode::ProviderUnsupported, message).with_help(help))
+        };
+        match action.operation() {
+            "start" => Ok(Operation::Job(JobKind::Start)),
+            "stop" => Ok(Operation::Job(JobKind::Stop)),
+            "restart" => Ok(Operation::Job(JobKind::Restart)),
+            "reload" => Ok(Operation::Job(JobKind::Reload)),
+            "enable" => Ok(Operation::SetEnabled(true)),
+            "disable" => Ok(Operation::SetEnabled(false)),
+            "set" => match action.argument("enabled") {
+                Some(Value::Bool(wanted)) => Ok(Operation::SetEnabled(*wanted)),
+                Some(other) => unsupported(
+                    format!(
+                        "`enabled` is whether the unit starts at boot, a bool, not a {}",
+                        other.type_name()
+                    ),
+                    "write `--enabled true` or `--enabled false`",
+                ),
+                None => unsupported(
+                    "the systemd provider changes one persistent property, `enabled`, and \
+                     `set` named none"
+                        .to_owned(),
+                    "write `--enabled true` or `--enabled false`",
+                ),
+            },
+            other => unsupported(
+                format!("the systemd provider has no operation `{other}`"),
+                "it can start, stop, restart, reload, enable and disable a unit, and set \
+                 `--enabled`",
+            ),
         }
     }
 }
@@ -325,16 +352,7 @@ impl Provider for SystemdProvider {
 
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let bus = self.bus()?;
-        let Some(operation) = Operation::parse(action.operation()) else {
-            return Err(ErrorValue::new(
-                ErrorCode::ProviderUnsupported,
-                format!(
-                    "the systemd provider has no operation `{}`",
-                    action.operation()
-                ),
-            )
-            .with_help("it can start, stop, restart, reload, enable and disable a unit"));
-        };
+        let operation = Operation::of(action)?;
         let name = unit_name(action.target())?;
 
         let properties = match load_unit(&bus, &name).await {

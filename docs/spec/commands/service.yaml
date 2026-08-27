@@ -178,36 +178,39 @@ commands:
       - {name: service, type: "ref<ono.service/1>", doc: "Restrict to one service unit's records (spec §33.2)."}
       - {name: since, type: timestamp, doc: "Only records at or after this time."}
       - {name: until, type: timestamp, doc: "Only records at or before this time."}
-      - {name: level, type: string, doc: "Minimum severity."}
+      - {name: level, type: string, doc: "Minimum severity: emerg, alert, crit, error, warning, notice, info or debug (ADR-0086)."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - get log --service nginx | tail 30
       - get log --service @1 | where level >= error | take 20
+      - get log --level error | take 20
 
   - id: ono.journal.get
     verb: get
     target: journal
     summary: Query the structured system journal directly.
-    stability: planned                    # spec §8.1 names the target; no section defines a command
+    stability: experimental               # spec §8.1 names the target; no section defines a command
     validation_required: true
     note: >-
-      Overlaps `ono.log.get`, which the spec's own examples use. One of the two should be
-      withdrawn before either is stable.
+      Overlaps `ono.log.get`, which the spec's own examples use; ADR-0085 keeps both — the journal
+      is the raw record, the log is the severity-levelled view over it — until one is withdrawn
+      before either is stable.
     argument_mode: words
     input: "null"
-    output: stream<ono.log-record/1>
+    output: stream<ono.journal-event/1>
     provider_capability: log.read
     selectors: []
     options:
       - {name: since, type: timestamp, doc: "Only records at or after this time."}
-      - {name: boot, type: int, doc: "Restrict to one boot."}
+      - {name: boot, type: int, doc: "Restrict to one boot: 0 is the running one, -1 the one before, as the journal counts them."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - get journal --since (now() - 1h)
+      - get journal --boot 0 | where priority <= 3
 
   - id: ono.journal.tail
     verb: tail
@@ -216,13 +219,14 @@ commands:
     stability: experimental               # spec §7.1 lists `journal` among `tail`'s targets
     argument_mode: words
     input: "null"
-    output: stream<ono.log-record/1>
+    output: stream<ono.journal-event/1>
     provider_capability: log.read
     selectors: []
     options:
       - {name: lines, type: int, doc: "How many existing records to emit before following."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - tail journal --lines 50
+      - tail journal | where priority <= 3 | take 1

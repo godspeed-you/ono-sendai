@@ -46,6 +46,7 @@ Journal entries as `ono.journal-event/1` records, streamed from `journalctl -o j
 - `-o/--output` is the adapter's to choose; asking for another output format runs raw.
 - `--list-boots`, `--disk-usage`, `--verify` and the maintenance forms are not adapted.
 - Every raw journal key (`_COMM`, `_EXE`, `_CMDLINE`, …) is in the extension map, never dropped (spec v0.3 §1.37).
+- A `MESSAGE` that is not valid UTF-8 arrives as journalctl's byte array and is decoded lossily (U+FFFD for what is not UTF-8); a field an entry carries more than once is its values joined by newlines.
 
 ## systemctl-list-units — `org.ono.compat.systemd.systemctl-list-units`
 

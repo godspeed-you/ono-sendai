@@ -1456,6 +1456,24 @@ fn coerce(
             Json::String(text) => Ok(Value::string(text)),
             Json::Number(number) => Ok(Value::string(&number.to_string())),
             Json::Bool(value) => Ok(Value::string(if *value { "true" } else { "false" })),
+            // The two encodings `journalctl -o json` documents for a field that is not one
+            // UTF-8 string: bytes as an array of numbers, and a field that occurs more than
+            // once as an array of strings. Text that is not UTF-8 is decoded lossily — a
+            // string field can carry nothing else — and repeated values keep their order, one
+            // per line.
+            Json::Array(items) if !items.is_empty() => {
+                let bytes: Option<Vec<u8>> = items
+                    .iter()
+                    .map(|item| item.as_u64().and_then(|byte| u8::try_from(byte).ok()))
+                    .collect();
+                if let Some(bytes) = bytes {
+                    return Ok(Value::string(&String::from_utf8_lossy(&bytes)));
+                }
+                let lines: Option<Vec<&str>> = items.iter().map(Json::as_str).collect();
+                lines
+                    .map(|lines| Value::string(&lines.join("\n")))
+                    .ok_or_else(|| wrong("string"))
+            }
             _ => Err(wrong("string")),
         },
         FieldType::Bytes => match raw {

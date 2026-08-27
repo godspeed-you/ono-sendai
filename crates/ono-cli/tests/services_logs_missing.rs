@@ -149,7 +149,6 @@ fn utc_iso_seconds_ago(seconds_ago: u64) -> String {
 // --- get journal --------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_journal_events_with_the_schema_fields_when_the_journal_is_queried() {
     let run = ono("get journal | take 3 | to json");
     let Some(rows) = records_or_unavailable(&run, "`get journal | take 3`") else {
@@ -166,7 +165,6 @@ fn should_emit_journal_events_with_the_schema_fields_when_the_journal_is_queried
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restrict_journal_events_to_the_current_boot_when_boot_is_zero() {
     // `--boot <int>` restricts to one boot; 0 is the running one, as the journal counts boots.
     let run = ono("get journal --boot 0 | take 3 | select boot_id | to json");
@@ -210,7 +208,6 @@ fn should_only_emit_recent_events_when_since_is_a_relative_timestamp() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_filter_journal_events_by_priority_when_where_composes_over_the_typed_stream() {
     let run = ono("get journal | where priority <= 3 | take 5 | select priority | to json");
     let Some(rows) = records_or_unavailable(&run, "`get journal | where priority <= 3`") else {
@@ -227,7 +224,6 @@ fn should_filter_journal_events_by_priority_when_where_composes_over_the_typed_s
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_reject_an_unknown_field_before_reading_the_journal_when_where_names_one() {
     // Spec §11.3: `get journal` advertises its schema, so `where prio == 1` is refused before
     // any record is read — on every box, with or without a journal.
@@ -253,7 +249,6 @@ fn should_reject_an_unknown_field_before_reading_the_journal_when_where_names_on
 // --- tail journal -------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_the_most_recent_event_and_return_when_the_journal_is_tailed_through_take() {
     // Spec §7.1: `tail journal` follows the journal; `take 1` bounds the follow and the pipeline
     // returns as soon as one record arrived (ADR-0059 point 5).
@@ -271,7 +266,6 @@ fn should_emit_the_most_recent_event_and_return_when_the_journal_is_tailed_throu
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_existing_records_in_order_before_following_when_lines_is_given() {
     let run = ono("tail journal --lines 2 | take 2 | select timestamp cursor | to json");
     let Some(rows) = records_or_unavailable(&run, "`tail journal --lines 2`") else {
@@ -299,7 +293,6 @@ fn should_emit_existing_records_in_order_before_following_when_lines_is_given() 
 // --- get log -------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_structured_log_records_when_the_log_is_queried() {
     let run = ono("get log | take 1 | to json");
     let Some(rows) = records_or_unavailable(&run, "`get log | take 1`") else {
@@ -323,7 +316,6 @@ fn should_emit_structured_log_records_when_the_log_is_queried() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restrict_log_records_to_one_unit_when_service_is_given() {
     let run = ono(&format!("get log --service {JOURNALD} | take 2 | to json"));
     let Some(rows) = records_or_unavailable(&run, "`get log --service`") else {
@@ -360,7 +352,6 @@ fn should_run_the_failed_service_example_when_a_level_threshold_composes() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restrict_log_records_by_minimum_severity_when_level_is_given() {
     let run = ono("get log --level error | take 3 | to json");
     let Some(rows) = records_or_unavailable(&run, "`get log --level error`") else {
@@ -440,7 +431,6 @@ fn one_failed_row(run: &ono_testkit::Run, what: &str) -> Option<serde_yaml_ng::V
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_one_failed_row_when_disabling_a_unit_is_refused_unprivileged() {
     let run = ono(&format!("set service {JOURNALD} --enabled false | to json"));
     let Some(row) = one_failed_row(&run, "`set service --enabled false` unprivileged") else {
@@ -459,7 +449,6 @@ fn should_report_one_failed_row_when_disabling_a_unit_is_refused_unprivileged() 
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_one_failed_row_when_the_unit_to_modify_does_not_exist() {
     // The selector resolves the unit before the mutation (spec §6.1), so a unit that is not
     // there is `io.not_found` whatever the caller's privilege.
@@ -476,7 +465,6 @@ fn should_report_one_failed_row_when_the_unit_to_modify_does_not_exist() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_accept_piped_service_records_when_set_service_has_no_selector() {
     // service.yaml: `input: null | stream<ono.service/1>` — the units to modify may be piped in,
     // as `get service | where state == failed | restart service` does for restart.
@@ -493,7 +481,6 @@ fn should_accept_piped_service_records_when_set_service_has_no_selector() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_set_service_without_a_property_when_nothing_is_asked_to_change() {
     let run = ono(&format!("set service {JOURNALD}"));
     assert!(
