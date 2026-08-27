@@ -134,12 +134,14 @@ fn set(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             );
             Ok(ExitStatus::SUCCESS)
         }
+        // Every other target reaches the registry before this runs (ADR-0068); only a target
+        // that is not a literal word — `set $what …` — can still arrive here.
         other => Err(Flow::Failed(
             ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
-                format!("`set` has no target `{other}`"),
+                format!("`set` has no target `{other}` in the shell itself"),
             )
-            .with_help("`set env` and `set config` are the targets phase A carries"),
+            .with_help("`set env` and `set config` change the session; write the target as a word"),
         )),
     }
 }
@@ -163,9 +165,9 @@ fn remove(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         Some(other) => Err(Flow::Failed(
             ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
-                format!("`remove` has no target `{other}` yet"),
+                format!("`remove` has no target `{other}` in the shell itself"),
             )
-            .with_help("`remove env` is the target phase A carries; `remove file` arrives with the file provider"),
+            .with_help("`remove env` withdraws a variable; write the target as a word"),
         )),
         None => Err(Flow::Failed(ErrorValue::new(
             ErrorCode::ResolveTargetNotFound,

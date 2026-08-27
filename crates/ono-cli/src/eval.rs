@@ -468,6 +468,12 @@ fn run_stage_list(
     if crate::native::claims(session, list)
         || (!background && crate::native::adapts_at_terminal(session, list))
     {
+        // A native command is as much "running something" as a child process is: `set file`
+        // reaches the registry now (ADR-0068), and a configuration file that could change a
+        // file's mode would be a startup script wearing a settings file's name (ADR-0010).
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
         if background {
             // Spec §18.4: a backgrounded native pipeline is a job — listed, addressable,
             // stoppable — never a hidden thread (ADR-0024).
@@ -833,9 +839,17 @@ fn builtin_name(session: &Session, stage: &Stage) -> Option<&'static str> {
         return None;
     }
     match resolve::resolve(session, namespace, &name.name) {
-        Ok(Resolution::Builtin(builtin)) => Some(builtin),
+        Ok(Resolution::Builtin(builtin)) => resolve::builtin_for(builtin, first_word(stage)),
         _ => None,
     }
+}
+
+/// The literal word after the head, which decides whether `set`/`remove` are the shell's.
+fn first_word(stage: &Stage) -> Option<&str> {
+    stage
+        .arguments
+        .first()
+        .and_then(ono_parser::Argument::as_word)
 }
 
 /// Builds the external command one stage describes.
@@ -914,12 +928,13 @@ fn build_command(session: &mut Session, stage: &Stage, source: &str) -> Eval<Com
         )
     })?;
 
-    let namespace =
-        if namespace == Namespace::Any && resolve::BUILTINS.contains(&name.name.as_str()) {
-            Namespace::External
-        } else {
-            namespace
-        };
+    let namespace = if namespace == Namespace::Any
+        && resolve::builtin_for(&name.name, first_word(stage)).is_some()
+    {
+        Namespace::External
+    } else {
+        namespace
+    };
 
     let resolution = resolve::resolve(session, namespace, &name.name).map_err(|error| {
         let suggestions = resolve::suggestions(session, &name.name);

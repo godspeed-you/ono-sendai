@@ -313,7 +313,11 @@ fn native_contract(
     }
     // A shell builtin changes the shell, so it is never a native command: `cd` in a pipeline
     // moves a directory nobody is standing in, and the evaluator has already said so.
-    if crate::resolve::BUILTINS.contains(&name.name.as_str()) {
+    let first_word = stage
+        .arguments
+        .first()
+        .and_then(ono_parser::Argument::as_word);
+    if crate::resolve::builtin_for(&name.name, first_word).is_some() {
         return None;
     }
 

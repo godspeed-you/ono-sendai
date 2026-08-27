@@ -306,3 +306,51 @@ fn should_answer_type_with_the_adapters_schema_and_check_fields_before_running()
         typo.stderr()
     );
 }
+
+// --- `set` and `remove` are builtins only for the shell's own state -------------------------
+
+#[test]
+fn should_dispatch_set_of_a_system_target_through_the_registry_rather_than_the_builtin() {
+    // `set env` and `set config` change the session, so they are the shell's own. `set file` is
+    // a native command like any other (docs/spec/commands/file.yaml, `ono.file.set`), and the
+    // honest answer while nothing implements it is E0101 naming the command id — not E0102
+    // claiming the verb has no such target.
+    let run = ono("set file /definitely/not/here --mode 0755");
+    run.assert_status(127);
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0101") && run.stderr().contains("ono.file.set"),
+        "the registry answers for `set file`, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_let_remove_of_a_system_target_stand_in_a_pipeline() {
+    // `remove file … | to json` is a mutation whose ActionResults flow on; only `remove env`
+    // runs in the shell itself.
+    let run = ono("remove file /definitely/not/here | to json");
+    run.assert_status(127);
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0101") && run.stderr().contains("ono.file.remove"),
+        "the registry answers for `remove file` in pipeline position, got {:?}",
+        run.stderr()
+    );
+    assert!(
+        !run.stderr().contains("cannot be a pipeline stage"),
+        "a native mutation is not refused as a builtin, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_keep_set_env_and_remove_env_in_the_shell_itself() {
+    let run = ono(
+        "set env SEAM_MARK = kept; echo $SEAM_MARK; remove env SEAM_MARK; echo \"<$SEAM_MARK>\"",
+    );
+    run.assert_success();
+    assert_eq!(
+        run.stdout(),
+        "kept\n<>\n",
+        "`set env` binds and `remove env` withdraws in the running shell"
+    );
+}

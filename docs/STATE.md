@@ -93,6 +93,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [seams | 2026-08-27] **cross-cutting mutation seams**: registry-dispatched `set`/`remove`
+  (`crates/ono-cli/src/{resolve,eval,native,builtin}.rs`), ActionResult exit status + error shape
+  (`crates/ono-command/src/impls/mutate.rs`, `crates/ono-cli/src/native.rs`,
+  `crates/ono-value/src/json.rs`, `crates/ono-remote/src/client.rs`), generic mutation-verb
+  binding (`crates/ono-command/src/impls/mod.rs`).
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
   one `#[ignore = "REASON: …"]` (AGENTS.md §7) so the tree stays green; **the increment that

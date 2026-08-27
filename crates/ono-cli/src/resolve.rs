@@ -52,6 +52,28 @@ pub const BUILTINS: &[&str] = &[
     "cd", "exit", "set", "remove", "jobs", "fg", "bg", "help", "explain", "true", "false",
 ];
 
+/// The builtin a head word names, given the word after it — or `None` when the stage is not the
+/// shell's to run.
+///
+/// `set` and `remove` are builtins only for the state that lives in the shell: `set env`,
+/// `set config` and `remove env` (ADR-0010, ADR-0020 §9). `set file`, `remove file`, `set
+/// service` and every other target are native commands the registry answers for
+/// (`docs/spec/commands/`), so they resolve like `stop process` does — a bound implementation, or
+/// the honest E0101 — and they may stand in a pipeline (ADR-0068).
+#[must_use]
+pub fn builtin_for(name: &str, first_argument: Option<&str>) -> Option<&'static str> {
+    let builtin = BUILTINS
+        .iter()
+        .find(|candidate| **candidate == name)
+        .copied()?;
+    let shell_owned = match builtin {
+        "set" => matches!(first_argument, Some("env" | "config")),
+        "remove" => first_argument == Some("env"),
+        _ => true,
+    };
+    shell_owned.then_some(builtin)
+}
+
 /// Resolves `name` in `namespace`, following the order of ADR-0011.
 ///
 /// A forced namespace that misses is never retried elsewhere: forcing a namespace is a statement
