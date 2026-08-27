@@ -16,7 +16,8 @@ decides whether that has been reached.
 |---|---|---|
 | Quality gate | `scripts/gate.sh` | is the code correct, linted, tested, documented, contract-consistent? |
 | Acceptance suite | `scripts/acceptance.sh` | does the real binary do the real thing in a clean Linux container? |
-| Release gate | `scripts/release-check.sh` | are the first two green **and** is the checklist in section 4 fully ticked? |
+| Package check | `scripts/package-check.sh` | do the `.deb` and `.rpm` of `scripts/package.sh` install, run and register the login shell in fresh Debian and Fedora containers? |
+| Release gate | `scripts/release-check.sh` | are the first three green **and** is the checklist in section 4 fully ticked? |
 
 The quality gate proves the code is sound. It cannot prove the product exists: unit tests pass
 in a workspace that has never been installed anywhere. That is what the container is for.
@@ -233,6 +234,17 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
       `003-login-shell` and every interactive case, which run as the unprivileged `case` user.
 - [x] Startup loads no plugin eagerly and queries no network-backed configuration —
       `027-startup-is-quiet`, in a container with networking disabled.
+- [x] Installable `.deb` and `.rpm` packages for x86_64 and aarch64, proven by
+      `scripts/package-check.sh` — `scripts/package.sh` builds `dist/ono_<v>_<arch>.deb` and
+      `dist/ono-<v>-1.<arch>.rpm` from `crates/ono-cli/Cargo.toml` (ADR-0121), the shape is
+      pinned in the gate by `xtask/tests/packaging.rs`, and the check installs the host
+      architecture's packages into fresh `debian:bookworm` and `fedora:latest` containers with
+      networking disabled: `ono --version`, a `get process` pipeline as root and as an
+      unprivileged user whose login shell is `/usr/bin/ono`, `/etc/shells` registered on
+      install and cleared on removal (ADR-0122). `scripts/release-check.sh` runs both scripts
+      for the host architecture; the other architecture's runtime proof is the same two scripts
+      on a native runner in `.github/workflows/release.yml` (ADR-0123), which is what ships the
+      packages — locally, a foreign architecture is checked structurally only.
 - [x] Generated documentation is reproducible from the registries and committed docs match it —
       `xtask/tests/reference.rs` regenerates every page and requires the committed files to be
       identical, and `spec-check` runs the same comparison in the gate (ADR-0018).

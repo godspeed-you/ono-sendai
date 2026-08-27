@@ -93,11 +93,8 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [packaging | 2026-08-27] installable `.deb`/`.rpm` for x86_64 and aarch64 — files:
-  `crates/ono-cli/Cargo.toml` (package metadata), `crates/ono-cli/packaging/`,
-  `xtask/tests/packaging.rs`, `scripts/package.sh`, `scripts/package-check.sh`,
-  `scripts/release-check.sh`, `.github/workflows/{ci,release}.yml`, `.gitignore`, `README.md`,
-  `docs/ACCEPTANCE.md` §4.5, ADR-0121…0123.
+- (empty — installable packages delivered, see *Done*; `scripts/release-check.sh` green on
+  2026-08-27 with the package check in the chain)
 
 ---
 
@@ -410,6 +407,17 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Done
 
+- [x] installable `.deb`/`.rpm` for x86_64 and aarch64 (docs/ACCEPTANCE.md §4.5, ADR-0121,
+  ADR-0122, ADR-0123): package metadata and maintainer scripts in `crates/ono-cli/Cargo.toml`
+  + `crates/ono-cli/packaging/deb/`, shape pinned by `xtask/tests/packaging.rs` — commit
+  cbc7612; `scripts/package.sh` (container builds via `cross`, `dist/ono_<v>_<arch>.deb`,
+  `dist/ono-<v>-1.<arch>.rpm`, reproducible bytes) — commit 8608c1c;
+  `scripts/package-check.sh` (install/run/login-shell/remove in fresh `debian:bookworm` and
+  `fedora:latest`, structural check for a foreign arch) — commit a16633e; release workflow on
+  `v*` tags with native x86_64 and aarch64 runners plus a `packaging` job in `ci.yml` — commit
+  e6f10f1; the §4.5 box, `scripts/release-check.sh` running both scripts, README install
+  section. Local aarch64 packages are structural proof only; their runtime proof is the release
+  workflow on `ubuntu-24.04-arm`.
 - [x] wiki-verification defect (1): piped forms of shell-answered commands answered by their
   seams, `input: null` refused with the head form named (ADR-0118) — commit 1e98be0
 - [x] wiki-verification defect (2): `get env` reads the session's live environment — commit 8ca9aa7

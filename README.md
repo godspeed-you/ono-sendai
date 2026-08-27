@@ -168,8 +168,30 @@ path bounded in the editor's own suite.
 
 ## Installing it
 
-Requirements: Linux, and Rust 1.94+ if you build from source (the pinned toolchain in
-`rust-toolchain.toml` is picked up automatically).
+Requirements: Linux on x86_64 or aarch64, glibc 2.34 or newer (Debian 12, Ubuntu 22.04,
+Fedora, RHEL 9 and their relatives).
+
+Each [GitHub release](https://github.com/godspeed-you/ono-sendai/releases) carries a `.deb` and
+an `.rpm` for both architectures. They install `/usr/bin/ono`, the licence and the generated
+command reference under `/usr/share/doc/ono/`, and register the shell in `/etc/shells`:
+
+```bash
+# Debian, Ubuntu and relatives
+sudo apt install ./ono_0.2.0_amd64.deb          # or ono_0.2.0_arm64.deb
+# Fedora, RHEL and relatives
+sudo dnf install ./ono-0.2.0-1.x86_64.rpm       # or ono-0.2.0-1.aarch64.rpm
+
+chsh -s /usr/bin/ono                             # make it your login shell
+```
+
+Every release is installed into fresh Debian and Fedora containers on both architectures
+before it is published, as root and as an unprivileged user whose login shell is `ono`
+(`scripts/package-check.sh`), so this path is tested, not aspirational. Removing the package
+(`apt remove ono`, `dnf remove ono`) unregisters the shell again but never edits anyone's
+account: `chsh` back to another shell first if `ono` is yours.
+
+To build from source you need Rust 1.94+ (the pinned toolchain in `rust-toolchain.toml` is
+picked up automatically):
 
 ```bash
 git clone https://github.com/godspeed-you/ono-sendai
@@ -178,13 +200,11 @@ cargo build --release -p ono-cli
 install -m 0755 target/release/ono ~/.local/bin/ono   # or anywhere on your PATH
 ```
 
-A prebuilt Linux x86-64 binary is attached to each
-[GitHub release](https://github.com/godspeed-you/ono-sendai/releases).
+`scripts/package.sh [--target aarch64-unknown-linux-gnu]` builds the same packages locally into
+`dist/` (it needs docker, `cross`, `cargo-deb` and `cargo-generate-rpm`).
 
-To make it your login shell, add the binary's path to `/etc/shells` and `chsh -s` to it — the
-acceptance suite does exactly that in a container on every run, so this path is tested, not
-aspirational. Configuration lives at `~/.config/ono/config.ono` and is deliberately
-restricted: it sets values, functions and aliases, and cannot run commands at startup.
+Configuration lives at `~/.config/ono/config.ono` and is deliberately restricted: it sets
+values, functions and aliases, and cannot run commands at startup.
 
 ## Running it
 
