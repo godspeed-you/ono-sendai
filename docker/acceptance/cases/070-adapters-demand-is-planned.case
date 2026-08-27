@@ -1,0 +1,15 @@
+# v0.3 §1.4, §1.5 (ADAPT-001): adaptation is demand-driven, and the demand is part of execution
+# planning. `explain` states what every external stage's stdout is asked to be — backwards from
+# its consumer — before anything is spawned: a native transform asks for values, a process
+# downstream keeps bytes, a redirection keeps bytes, and `/dev/null` discards.
+case: explain reports the output demand of every external stage
+run: |
+  ono -c 'explain ps aux | where cpu > 20' | grep -F 'demand       structured (`where cpu > 20` consumes objects)'
+  ono -c 'explain ps aux | grep x' | grep -F 'demand       bytes (`grep x` consumes bytes)'
+  ono -c 'explain ps aux' | grep -F 'demand       bytes (stdout is not a terminal)'
+  ono -c 'explain "ps aux > /dev/null"' | grep -F 'demand       discard (stdout goes to /dev/null)'
+  ono -c 'explain "ps aux > /tmp/out.txt"' | grep -F 'demand       bytes (stdout goes to /tmp/out.txt)'
+  ono -c 'explain ps aux | stop process' | grep -F 'demand       structured<ono.process/1>'
+  echo planned=ok
+exit: 0
+stdout-contains: planned=ok

@@ -7,7 +7,8 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use ono_parser::{Argument, Expr, Pipeline, Stage};
+use ono_adapter::{Consumer, OutputDemand, Stdout};
+use ono_parser::{Argument, Expr, Pipeline, RedirectOp, RedirectTarget, Stage, StageList};
 use ono_provider_api::{ProviderRegistry, Risk};
 use ono_value::{MapValue, Value};
 
@@ -52,6 +53,9 @@ pub struct StagePlan {
     risk: Option<Risk>,
     fields: Vec<String>,
     notes: Vec<String>,
+    demand: Option<(OutputDemand, String)>,
+    /// The input type the contract declares, before the upstream type was threaded in.
+    declared_input: Option<String>,
 }
 
 impl StagePlan {
@@ -142,6 +146,16 @@ impl StagePlan {
         &self.notes
     }
 
+    /// What the stage's stdout is asked to carry, for a stage that is a child process.
+    ///
+    /// Decided backwards from the consumer (spec v0.3 §1.4): a native command over objects asks
+    /// for values, a process or a file keeps bytes, the terminal invites the renderer. A native
+    /// stage has no stdout of its own and answers `None`.
+    #[must_use]
+    pub fn demand(&self) -> Option<&OutputDemand> {
+        self.demand.as_ref().map(|(demand, _)| demand)
+    }
+
     fn to_value(&self) -> Value {
         let mut map = MapValue::default();
         map.insert("ordinal".into(), Value::Int(self.ordinal as i128));
@@ -175,6 +189,11 @@ impl StagePlan {
             "fields".into(),
             Value::list(self.fields.iter().map(|field| Value::string(field))),
         );
+        map.insert(
+            "demand".into(),
+            self.demand()
+                .map_or(Value::Null, |demand| Value::string(&demand.to_string())),
+        );
         Value::Map(Arc::new(map))
     }
 
@@ -201,6 +220,9 @@ impl StagePlan {
         }
         row(into, "input", &self.input);
         row(into, "output", &self.output);
+        if let Some((demand, reason)) = &self.demand {
+            row(into, "demand", &format!("{demand} ({reason})"));
+        }
         row(into, "streaming", if self.streaming { "yes" } else { "no" });
         if let Some(privilege) = self.privilege {
             row(into, "privilege", privilege.as_str());
@@ -296,13 +318,30 @@ pub fn plan(
     pipeline: &Pipeline,
     source: &str,
 ) -> ExecutionPlan {
+    plan_for(registry, providers, pipeline, source, Stdout::Stream)
+}
+
+/// The plan for `pipeline` as it would run with the shell's stdout being `stdout`.
+///
+/// The last stage of a pipeline has no consumer inside it, so what its stdout is asked to carry
+/// depends on where the shell's own stdout goes (spec v0.3 §1.4): `plan` assumes a stream, which
+/// is what a script and a redirected `ono -c` see; the interactive shell says so here.
+#[must_use]
+pub fn plan_for(
+    registry: &CommandRegistry,
+    providers: Option<&ProviderRegistry>,
+    pipeline: &Pipeline,
+    source: &str,
+    stdout: Stdout,
+) -> ExecutionPlan {
     let mut stages: Vec<StagePlan> = Vec::new();
-    let mut upstream: Option<IoType> = None;
     let mut ordinal = 1;
 
     let lists =
         std::iter::once(&pipeline.head).chain(pipeline.tail.iter().map(|chained| &chained.list));
     for list in lists {
+        let mut upstream: Option<IoType> = None;
+        let first = stages.len();
         for stage in &list.stages {
             let planned = plan_stage(
                 registry,
@@ -316,12 +355,98 @@ pub fn plan(
             stages.push(planned);
             ordinal += 1;
         }
+        plan_demands(&mut stages[first..], list, stdout);
     }
 
     ExecutionPlan {
         source: source.to_owned(),
         stages,
     }
+}
+
+/// Decides, backwards from each consumer, what every external stage's stdout must carry.
+///
+/// Spec v0.3 §1.5 wants the demand to be "part of execution planning, not an after-the-fact
+/// renderer trick", which is why it is settled here, on the plan, before anything is spawned.
+fn plan_demands(stages: &mut [StagePlan], list: &StageList, stdout: Stdout) {
+    let count = stages.len();
+    for index in 0..count {
+        if !matches!(stages[index].resolution, Resolution::External { .. }) {
+            continue;
+        }
+        let redirected = list.stages.get(index).and_then(stdout_redirection);
+        let (demand, reason) = match redirected {
+            Some(Redirected::File(path)) => (
+                OutputDemand::for_consumer(Consumer::File { path: &path }),
+                format!("stdout goes to {path}"),
+            ),
+            Some(Redirected::Descriptor(fd)) => (
+                OutputDemand::for_consumer(Consumer::Descriptor),
+                format!("stdout is duplicated onto descriptor {fd}"),
+            ),
+            None => match stages.get(index + 1) {
+                Some(next) => match &next.resolution {
+                    Resolution::Native { .. } => {
+                        // What the consumer is declared over decides the demand, not the bytes
+                        // the plan threaded into it: `where` is defined over objects even when
+                        // the stage before it is a program.
+                        let declared = next.declared_input.as_deref().unwrap_or(&next.input);
+                        let input = IoType::from_text(declared);
+                        let what = if input.admits_bytes() {
+                            "bytes"
+                        } else if input.admits_text() {
+                            "text"
+                        } else {
+                            "objects"
+                        };
+                        (
+                            OutputDemand::for_consumer(Consumer::Native { input: declared }),
+                            format!("`{}` consumes {what}", next.source),
+                        )
+                    }
+                    Resolution::External { .. } | Resolution::Value => (
+                        OutputDemand::for_consumer(Consumer::Process),
+                        format!("`{}` consumes bytes", next.source),
+                    ),
+                },
+                None => match stdout {
+                    Stdout::Terminal => (
+                        OutputDemand::for_consumer(Consumer::Terminal),
+                        "stdout is the terminal".to_owned(),
+                    ),
+                    Stdout::Stream => (
+                        OutputDemand::for_consumer(Consumer::Stream),
+                        "stdout is not a terminal".to_owned(),
+                    ),
+                },
+            },
+        };
+        stages[index].demand = Some((demand, reason));
+    }
+}
+
+/// Where a stage's stdout redirection sends it, when it has one.
+enum Redirected {
+    File(String),
+    Descriptor(u32),
+}
+
+fn stdout_redirection(stage: &Stage) -> Option<Redirected> {
+    stage
+        .redirections
+        .iter()
+        .filter(|redirection| matches!(redirection.fd, None | Some(1)))
+        .filter_map(|redirection| match (redirection.op, &redirection.target) {
+            (RedirectOp::Write | RedirectOp::Append, RedirectTarget::Word(word)) => {
+                Some(Redirected::File(word.text.clone()))
+            }
+            (RedirectOp::Write | RedirectOp::Append, RedirectTarget::Value(_)) => {
+                Some(Redirected::File("a computed path".to_owned()))
+            }
+            (RedirectOp::DupWrite, RedirectTarget::Fd(fd)) => Some(Redirected::Descriptor(*fd)),
+            _ => None,
+        })
+        .next_back()
 }
 
 fn plan_stage(
@@ -351,6 +476,8 @@ fn plan_stage(
             risk: None,
             fields,
             notes: vec!["the stage's head is a value, not a command".to_owned()],
+            demand: None,
+            declared_input: None,
         };
     };
 
@@ -375,6 +502,8 @@ fn plan_stage(
                  (ADR-0011)"
                     .to_owned(),
             ],
+            demand: None,
+            declared_input: None,
         };
     };
 
@@ -443,6 +572,8 @@ fn plan_stage(
         risk: capability.map(crate::contract::CapabilitySpec::risk),
         fields,
         notes,
+        demand: None,
+        declared_input: Some(contract.input().text().to_owned()),
     }
 }
 

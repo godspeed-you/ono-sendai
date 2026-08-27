@@ -75,7 +75,13 @@ fn plan_of(source: &str, providers: Option<&ProviderRegistry>) -> ExecutionPlan 
         .first()
         .and_then(ono_parser::Statement::as_pipeline)
         .expect("the source is a pipeline");
-    ono_command::plan(registry(), providers, pipeline, source)
+    ono_command::plan_for(
+        registry(),
+        providers,
+        pipeline,
+        source,
+        ono_adapter::Stdout::Stream,
+    )
 }
 
 #[test]
@@ -238,4 +244,100 @@ fn should_verify_a_schema_id_is_carried_through_the_plan() {
         .parse()
         .expect("the carried type is a schema id");
     assert_eq!(schema.name(), "ono.process");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Output demand (spec v0.3 §1.4, §1.5): the planner computes what each external stage's stdout
+// must be — backwards from its consumer — and the plan reports it.
+
+fn demand_of(source: &str, stdout: ono_adapter::Stdout) -> Vec<Option<ono_adapter::OutputDemand>> {
+    let parsed = ono_parser::parse(source);
+    let pipeline = parsed
+        .program()
+        .statements
+        .first()
+        .and_then(ono_parser::Statement::as_pipeline)
+        .expect("the source is a pipeline");
+    ono_command::plan_for(registry(), None, pipeline, source, stdout)
+        .stages()
+        .iter()
+        .map(|stage| stage.demand().cloned())
+        .collect()
+}
+
+#[test]
+fn should_demand_structure_from_an_external_stage_feeding_a_native_transform() {
+    let demands = demand_of("ps aux | where cpu > 20", ono_adapter::Stdout::Stream);
+    assert_eq!(
+        demands[0],
+        Some(ono_adapter::OutputDemand::Structured { schema: None }),
+        "spec v0.3 §1.4: `where` requires structured values, so `ps` is asked for them"
+    );
+    assert_eq!(
+        demands[1], None,
+        "a native stage has no stdout demand of its own"
+    );
+}
+
+#[test]
+fn should_demand_bytes_from_an_external_stage_feeding_another_process() {
+    let demands = demand_of("ps aux | grep x", ono_adapter::Stdout::Terminal);
+    assert_eq!(demands[0], Some(ono_adapter::OutputDemand::RawBytes));
+    assert_eq!(
+        demands[1],
+        Some(ono_adapter::OutputDemand::Interactive),
+        "the last stage's consumer is the terminal"
+    );
+}
+
+#[test]
+fn should_demand_bytes_from_the_last_stage_when_stdout_is_not_a_terminal() {
+    let demands = demand_of("ps aux", ono_adapter::Stdout::Stream);
+    assert_eq!(
+        demands[0],
+        Some(ono_adapter::OutputDemand::RawBytes),
+        "spec v0.3 §1.4: a script must see what bash would"
+    );
+}
+
+#[test]
+fn should_let_a_redirection_decide_the_demand_before_the_terminal_does() {
+    assert_eq!(
+        demand_of("ps aux > /dev/null", ono_adapter::Stdout::Terminal)[0],
+        Some(ono_adapter::OutputDemand::Discard)
+    );
+    assert_eq!(
+        demand_of("ps aux > out.txt", ono_adapter::Stdout::Terminal)[0],
+        Some(ono_adapter::OutputDemand::RawBytes),
+        "spec v0.3 §1.4: redirection preserves raw external output"
+    );
+    assert_eq!(
+        demand_of("ps aux >&2", ono_adapter::Stdout::Terminal)[0],
+        Some(ono_adapter::OutputDemand::RawBytes)
+    );
+}
+
+#[test]
+fn should_constrain_the_demand_to_the_schema_a_consumer_declares() {
+    assert_eq!(
+        demand_of("ps aux | stop process", ono_adapter::Stdout::Stream)[0],
+        Some(ono_adapter::OutputDemand::Structured {
+            schema: Some("ono.process/1".to_owned())
+        })
+    );
+}
+
+#[test]
+fn should_render_the_demand_of_every_external_stage_with_its_reason() {
+    let plan = plan_of("ps aux | where cpu > 20", None);
+    let text = plan.render();
+    assert!(
+        text.contains("demand       structured (`where cpu > 20` consumes objects)"),
+        "the demand row names what asked for it, got:\n{text}"
+    );
+    let value = plan.to_value();
+    assert!(
+        format!("{value:?}").contains("structured"),
+        "the structured plan carries the demand too, got {value:?}"
+    );
 }

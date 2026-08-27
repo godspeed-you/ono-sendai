@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+ono-adapter.workspace = true
 ono-core.workspace = true
 ono-graph.workspace = true
 ono-parser.workspace = true

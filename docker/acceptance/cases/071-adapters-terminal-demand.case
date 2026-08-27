@@ -1,0 +1,10 @@
+# v0.3 §1.4: at a terminal the last external stage's consumer is the renderer, so its demand is
+# interactive — the one place a high-confidence adapter may make a command feel native. The same
+# line with stdout on a pipe demands bytes (case 070), which is what keeps scripts honest.
+case: at the terminal the last external stage is asked for interactive rendering
+pty: true
+env: NO_COLOR=1
+run: |
+  ono -c 'explain ps aux | grep x'
+exit: 0
+stdout-contains: demand       interactive (stdout is the terminal)

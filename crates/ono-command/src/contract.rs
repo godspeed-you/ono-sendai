@@ -427,6 +427,18 @@ impl IoType {
             .all(|part| matches!(Self::element_of(part), "any" | "value"))
     }
 
+    /// Whether the type admits raw bytes.
+    #[must_use]
+    pub fn admits_bytes(&self) -> bool {
+        self.alternatives().any(|part| part.starts_with("bytes"))
+    }
+
+    /// Whether the type admits text.
+    #[must_use]
+    pub fn admits_text(&self) -> bool {
+        self.alternatives().any(|part| part.starts_with("string"))
+    }
+
     /// The alternatives of a union type, each trimmed.
     fn alternatives(&self) -> impl Iterator<Item = &str> {
         self.text.split('|').map(str::trim)

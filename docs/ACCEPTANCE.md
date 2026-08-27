@@ -255,12 +255,14 @@ release line again.
 
 #### 4.6.1 Core runtime (v0.3 §2.1, ADAPT-001 … ADAPT-007, ADAPT-011)
 
-- [ ] **ADAPT-001 — OutputDemand is part of planning.** The planner computes the stdout demand
+- [x] **ADAPT-001 — OutputDemand is part of planning.** The planner computes the stdout demand
       of every external stage backwards from its consumer — `RawBytes`, `Text`,
       `Structured(schema?)`, `Interactive`, `Discard` (v0.3 §1.4, §1.5) — before anything is
-      spawned, and `explain <pipeline>` reports it per stage. Exit test: an `explain` case
-      showing `ps aux | where cpu > 20` demanding structure and `ps aux | grep x` demanding
-      bytes.
+      spawned, and `explain <pipeline>` reports it per stage — ADR-0052;
+      `ono-adapter/tests/demand.rs` (the derivation table), `ono-command/tests/explain.rs`
+      (the plan), `ono-cli/tests/builtins.rs` (the rendering), cases `070` (at a pipe: structure
+      for `where`, bytes for `grep`, bytes for a file, discard for `/dev/null`, the schema for
+      `stop process`) and `071` (interactive at a PTY).
 - [ ] **ADAPT-003 — the raw path is guaranteed.** One spelling runs any external command with
       byte semantics untouched no matter which adapters are installed (v0.3 §1.17), it is
       documented in `help`, and byte semantics are preserved by default for every consumer that

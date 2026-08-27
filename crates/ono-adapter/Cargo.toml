@@ -1,0 +1,19 @@
+[package]
+name = "ono-adapter"
+description = "The External Command Adaptation Layer of Ono-Sendai: output demand, adapter negotiation, execution plans and provenance (spec v0.3)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-value.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

@@ -358,7 +358,20 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     };
 
     let registry = ono_command::CommandRegistry::embedded().map_err(Flow::Failed)?;
-    let plan = ono_command::plan(registry, Some(session.providers()), pipeline, &source);
+    // The last stage's consumer is whatever the shell's stdout is, and a plan that assumed a
+    // terminal would promise interactive rendering to a script (spec v0.3 §1.4).
+    let stdout = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        ono_adapter::Stdout::Terminal
+    } else {
+        ono_adapter::Stdout::Stream
+    };
+    let plan = ono_command::plan_for(
+        registry,
+        Some(session.providers()),
+        pipeline,
+        &source,
+        stdout,
+    );
     // The plan quotes the source it was given and the paths it resolved, both of which are
     // attacker-controlled: a program named with an OSC sequence sitting on `PATH` would otherwise
     // retitle the terminal from inside the command that exists to tell you about it, and the

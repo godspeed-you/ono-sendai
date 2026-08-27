@@ -93,14 +93,18 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 1 — `ADAPT-001` OutputDemand in the planner —
-  files: `crates/ono-cli/src/native.rs`, `crates/ono-cli/src/eval.rs`, `crates/ono-command/src/`,
-  `crates/ono-adapter/` (new)
+- [claude | 2026-08-27] v0.3 tranche, step 2 — the `adapter.*` error family (E09xx) in
+  `docs/spec/errors.yaml` and `ono-core` — files: `docs/spec/errors.yaml`,
+  `crates/ono-core/src/error.rs`, `docs/reference/errors.md`
 
 ---
 
 ## Next up (ordered)
 
+- [ ] `explain` resolves a head by the registry alone, so `printf x | sort` is planned as
+  `ono.data.sort` while the executor runs `/usr/bin/sort` (ADR-0028); the plan must use the
+  executor's resolution — fixed with ADAPT-002, which needs it anyway (ADR-0052) — exit test:
+  a builtins.rs case explaining `printf x | sort`
 - [ ] A `SIGPIPE`d stdout (`ono -c '… | to json' | head -c 100`) reports io.permission_denied
   where every other shell exits quietly — treat EPIPE on stdout as normal termination — exit
   test: a cli case piping into head
@@ -328,6 +332,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 ---
 
 ## Done
+
+- [x] v0.3 step 1 — ADAPT-001 OutputDemand computed backwards from the consumer, reported
+  by `explain` (ADR-0052) — cases 070, 071
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

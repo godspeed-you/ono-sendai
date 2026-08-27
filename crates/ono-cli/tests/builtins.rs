@@ -146,3 +146,49 @@ fn should_explain_without_running_anything() {
         run.stderr()
     );
 }
+
+#[test]
+fn should_report_what_each_external_stage_is_asked_to_produce() {
+    // Spec v0.3 §1.4: adaptation is demand-driven, and the demand is decided while planning —
+    // so `explain` can state it before anything runs.
+    let structured = Shell::new()
+        .args(["-c", "explain ps aux | where cpu > 20"])
+        .run();
+    structured.assert_success();
+    assert!(
+        structured
+            .stdout()
+            .contains("demand       structured (`where cpu > 20` consumes objects)"),
+        "a native transform downstream asks the external stage for values, got {:?}",
+        structured.stdout()
+    );
+
+    let bytes = Shell::new().args(["-c", "explain ps aux | grep x"]).run();
+    bytes.assert_success();
+    assert!(
+        bytes
+            .stdout()
+            .contains("demand       bytes (`grep x` consumes bytes)"),
+        "a process downstream keeps Unix byte semantics, got {:?}",
+        bytes.stdout()
+    );
+    assert!(
+        bytes
+            .stdout()
+            .contains("demand       bytes (stdout is not a terminal)"),
+        "the last stage's stdout is this test's pipe, got {:?}",
+        bytes.stdout()
+    );
+
+    let discarded = Shell::new()
+        .args(["-c", "explain \"ps aux > /dev/null\""])
+        .run();
+    discarded.assert_success();
+    assert!(
+        discarded
+            .stdout()
+            .contains("demand       discard (stdout goes to /dev/null)"),
+        "got {:?}",
+        discarded.stdout()
+    );
+}
