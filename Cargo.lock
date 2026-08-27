@@ -807,6 +807,7 @@ dependencies = [
  "ono-provider-api",
  "ono-testkit",
  "ono-value",
+ "rustix",
  "tempfile",
  "tokio",
 ]

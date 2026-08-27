@@ -186,8 +186,7 @@ commands:
     verb: set
     target: process
     summary: Adjust mutable process attributes such as scheduling priority.
-    stability: planned                    # spec §52, process/set = "M?"
-    validation_required: true
+    stability: stable                     # spec §52, process/set = "M?"; validated and delivered by ADR-0092
     argument_mode: words
     input: "null | stream<ono.process/1>"
     output: stream<ono.action-result/1>
@@ -195,10 +194,10 @@ commands:
     selectors:
       - {name: pid, type: int, doc: "The process to modify."}
     options:
-      - {name: priority, type: int, doc: "The scheduling niceness to apply."}
+      - {name: priority, type: int, doc: "The scheduling niceness to apply, -20 to 19; raising priority (a negative value) needs CAP_SYS_NICE."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - set process 4419 --priority 10
 

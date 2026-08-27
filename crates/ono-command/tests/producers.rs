@@ -180,6 +180,10 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             // evaluator owns.
             "ono.env.set",
             "ono.port.test",
+            // A provider delivers `set process` by advertising `process.set` (ADR-0068 §3,
+            // ADR-0092); a table built without providers binds only the verbs every `act`
+            // speaks.
+            "ono.process.set",
         ]
         .iter()
         .copied()

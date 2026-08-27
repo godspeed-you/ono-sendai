@@ -479,7 +479,6 @@ fn should_refuse_to_enter_a_process_that_does_not_exist() {
 // --- set process -----------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_set_the_niceness_of_a_process() {
     // process.yaml: `set process <pid> --priority N` — "The scheduling niceness to apply." An
     // unprivileged user may always lower priority, so the child's nice value afterwards is N.
@@ -514,7 +513,6 @@ fn should_set_the_niceness_of_a_process() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_denied_priority_raise_as_a_failed_result() {
     // Raising priority (a negative niceness) needs CAP_SYS_NICE; the unprivileged answer is one
     // failed row with the permission error (errors.yaml E0302) and, per ADR-0006, exit status 1.

@@ -91,6 +91,61 @@ pub trait Signals: Send + Sync + std::fmt::Debug {
     fn send(&self, pid: i32, signal: i32) -> Result<(), ErrorValue>;
 }
 
+/// Reading and setting a process's scheduling niceness.
+///
+/// Injectable for the same reason as [`Signals`]: a test that proves the refusal paths must not
+/// be able to renice an unrelated process on the machine it runs on.
+pub trait Priorities: Send + Sync + std::fmt::Debug {
+    /// The niceness of `pid`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured form of the kernel's refusal.
+    fn get(&self, pid: i32) -> Result<i32, ErrorValue>;
+
+    /// Sets the niceness of `pid`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured form of the kernel's refusal — `io.permission_denied` when raising
+    /// priority without `CAP_SYS_NICE`.
+    fn set(&self, pid: i32, niceness: i32) -> Result<(), ErrorValue>;
+}
+
+/// `getpriority(2)` and `setpriority(2)`.
+#[derive(Debug, Default)]
+pub struct KernelPriorities;
+
+impl KernelPriorities {
+    fn pid(pid: i32) -> Result<rustix::process::Pid, ErrorValue> {
+        rustix::process::Pid::from_raw(pid).ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("{pid} is not a process id"),
+            )
+        })
+    }
+
+    fn failure(errno: rustix::io::Errno, pid: i32) -> ErrorValue {
+        errno_error(
+            nix::errno::Errno::from_raw(errno.raw_os_error()),
+            &PathBuf::from(format!("/proc/{pid}")),
+        )
+    }
+}
+
+impl Priorities for KernelPriorities {
+    fn get(&self, pid: i32) -> Result<i32, ErrorValue> {
+        rustix::process::getpriority_process(Some(Self::pid(pid)?))
+            .map_err(|errno| Self::failure(errno, pid))
+    }
+
+    fn set(&self, pid: i32, niceness: i32) -> Result<(), ErrorValue> {
+        rustix::process::setpriority_process(Some(Self::pid(pid)?), niceness)
+            .map_err(|errno| Self::failure(errno, pid))
+    }
+}
+
 /// `kill(2)`.
 #[derive(Debug, Default)]
 pub struct KernelSignals;
@@ -138,6 +193,7 @@ struct Reader {
 pub struct ProcessProvider {
     reader: Reader,
     signals: Arc<dyn Signals>,
+    priorities: Arc<dyn Priorities>,
 }
 
 impl Default for ProcessProvider {
@@ -171,6 +227,7 @@ impl ProcessProvider {
                 samples: Arc::new(Mutex::new(HashMap::new())),
             },
             signals: Arc::new(KernelSignals),
+            priorities: Arc::new(KernelPriorities),
         }
     }
 
@@ -195,12 +252,79 @@ impl ProcessProvider {
         self
     }
 
+    /// Reads and sets niceness through `priorities`.
+    #[must_use]
+    pub fn with_priorities(mut self, priorities: Arc<dyn Priorities>) -> Self {
+        self.priorities = priorities;
+        self
+    }
+
     /// Treats the system as having booted `seconds` after the epoch, for a fixture whose
     /// `/proc/stat` is not the running kernel's.
     #[must_use]
     pub fn with_boot_time(mut self, seconds: i64) -> Self {
         self.reader.boot_seconds = Some(seconds);
         self
+    }
+
+    /// `set process --priority N` (ADR-0092): the niceness, through `setpriority(2)`.
+    ///
+    /// The identity is confirmed first, as for a signal, so a recycled pid is never reniced.
+    /// A refusal — raising priority without `CAP_SYS_NICE` — is the target's failed outcome
+    /// with the kernel's `io.permission_denied`, never an error that stops a bulk `set`.
+    fn set_attributes(
+        &self,
+        action: &Action,
+        pid: i32,
+        expected: Option<Timestamp>,
+    ) -> Result<ActionOutcome, ErrorValue> {
+        let niceness = match action.argument("priority") {
+            Some(Value::Int(niceness)) => i32::try_from(*niceness)
+                .ok()
+                .filter(|niceness| (-20..=19).contains(niceness))
+                .ok_or_else(|| {
+                    ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!("a niceness is -20 to 19, not {niceness}"),
+                    )
+                })?,
+            Some(other) => {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`--priority` is a niceness, not {}", other.type_name()),
+                ));
+            }
+            None => {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    "`set process` changes nothing without an attribute to set",
+                )
+                .with_help("`set process <pid> --priority N` sets the scheduling niceness"));
+            }
+        };
+        if let Err(error) = self.reader.confirm(i64::from(pid), expected) {
+            return Ok(ActionOutcome::failed(action, error));
+        }
+        let current = match self.priorities.get(pid) {
+            Ok(current) => current,
+            Err(error) => return Ok(ActionOutcome::failed(action, error)),
+        };
+        if current == niceness {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("pid {pid} already has niceness {niceness}"),
+            ));
+        }
+        if action.is_dry_run() {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("would set the niceness of pid {pid} from {current} to {niceness}"),
+            ));
+        }
+        match self.priorities.set(pid, niceness) {
+            Ok(()) => Ok(ActionOutcome::succeeded(action, true)),
+            Err(error) => Ok(ActionOutcome::failed(action, error)),
+        }
     }
 
     /// The pid a selector pins the query to, when one does.
@@ -659,6 +783,7 @@ impl Provider for ProcessProvider {
             Capability::new("process.list", Risk::Read),
             Capability::new("process.inspect", Risk::Read),
             Capability::new("process.signal", Risk::Mutate),
+            Capability::new("process.set", Risk::Mutate),
         ]
     }
 
@@ -780,7 +905,7 @@ impl Provider for ProcessProvider {
 
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let operation = action.operation();
-        if !matches!(operation, "signal" | "kill" | "stop") {
+        if !matches!(operation, "signal" | "kill" | "stop" | "set") {
             return Err(ErrorValue::new(
                 ErrorCode::ProviderUnsupported,
                 format!("{PROVIDER_ID} has no operation `{operation}`"),
@@ -803,6 +928,9 @@ impl Provider for ProcessProvider {
             .get(1)
             .and_then(|value| value.as_timestamp().ok());
 
+        if operation == "set" {
+            return self.set_attributes(action, pid, expected);
+        }
         let signal = requested_signal(action)?;
         if let Err(error) = self.reader.confirm(i64::from(pid), expected) {
             return Ok(ActionOutcome::failed(action, error));
