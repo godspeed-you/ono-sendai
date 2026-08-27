@@ -287,6 +287,8 @@ pub enum Request {
     InstallPlugin,
     /// `grant capability <capability> --plugin <id>` (spec §31.18).
     GrantCapability,
+    /// `ask assistant <id> <request>` (spec §31.42).
+    AskAssistant,
 }
 
 /// What a management command produced: the values for the pipeline after it, and the failure
@@ -316,6 +318,7 @@ pub fn claims(stage: &ono_parser::Stage) -> Option<Request> {
         ("verify", "plugin") => Some(Request::VerifyPlugin),
         ("install", "plugin") => Some(Request::InstallPlugin),
         ("grant", "capability") => Some(Request::GrantCapability),
+        ("ask", "assistant") => Some(Request::AskAssistant),
         _ => None,
     }
 }
@@ -341,6 +344,26 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
             .map(String::as_str)
     };
     match request {
+        // Spec §7.1: the assistant is selected explicitly, and no assistant package is loaded
+        // in this build, so whatever was named is not found (ADR-0111 §3).
+        Request::AskAssistant => {
+            let Some(assistant) = arguments.first() else {
+                return Err(Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::ResolveTargetNotFound,
+                        "`ask assistant` needs the assistant to ask",
+                    )
+                    .with_help("`get assistant` lists the loaded assistants (spec §31.42)"),
+                ));
+            };
+            Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::ResolveTargetNotFound,
+                    format!("no loaded assistant answers to `{assistant}`"),
+                )
+                .with_help("`get assistant` lists the loaded assistants (spec §31.42)"),
+            ))
+        }
         Request::GrantCapability => {
             let Some(capability) = arguments.first() else {
                 return Err(Flow::Failed(

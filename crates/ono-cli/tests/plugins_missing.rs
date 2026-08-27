@@ -1121,7 +1121,6 @@ fn should_show_the_new_version_when_a_loaded_package_is_reloaded() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_no_assistants_when_none_is_loaded() {
     let home = plugin_home();
     let run = ono(&home, "get assistant | to json");
@@ -1135,7 +1134,6 @@ fn should_report_no_assistants_when_none_is_loaded() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_no_model_providers_when_none_is_configured() {
     let home = plugin_home();
     let run = ono(&home, "get model | to json");
@@ -1149,7 +1147,6 @@ fn should_report_no_model_providers_when_none_is_configured() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_structured_not_found_when_asking_an_unknown_assistant() {
     let home = plugin_home();
     let run = ono(&home, "ask assistant nobody \"hello\"");
@@ -1166,7 +1163,6 @@ fn should_report_a_structured_not_found_when_asking_an_unknown_assistant() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_no_findings_when_nothing_was_analysed() {
     let home = plugin_home();
     let run = ono(
@@ -1188,7 +1184,6 @@ fn should_report_no_findings_when_nothing_was_analysed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_reject_an_unknown_field_on_the_finding_stream() {
     let home = plugin_home();
     let run = ono(&home, "get finding | where sevrity == \"x\"");

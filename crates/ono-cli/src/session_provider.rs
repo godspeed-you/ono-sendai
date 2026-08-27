@@ -90,6 +90,9 @@ impl SessionProvider {
             "plugin" => crate::kuang_host::schema("ono.plugin"),
             "capability" => crate::kuang_host::schema("ono.capability-grant"),
             "audit" => crate::kuang_host::schema("ono.plugin-audit-event"),
+            "assistant" => crate::kuang_host::schema("ono.assistant"),
+            "model" => crate::kuang_host::schema("ono.model-provider"),
+            "finding" => crate::kuang_host::schema("ono.finding"),
             other => Err(ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
                 format!("{PROVIDER_ID} has no table `{other}`"),
@@ -104,6 +107,9 @@ impl SessionProvider {
             "plugin" => self.lock().kuang.plugin_records(),
             "capability" => Ok((self.lock().kuang.capability_records(None)?, Vec::new())),
             "audit" => Ok((self.lock().kuang.audit_records()?, Vec::new())),
+            // No assistant package is loaded, no model provider is configured, no analysis has
+            // run: the typed, empty answer (ADR-0111 §3).
+            "assistant" | "model" | "finding" => Ok((Vec::new(), Vec::new())),
             other => Err(ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
                 format!("{PROVIDER_ID} has no table `{other}`"),
@@ -416,7 +422,15 @@ impl Provider for SessionProvider {
     }
 
     fn targets(&self) -> &[&str] {
-        &["job", "plugin", "capability", "audit"]
+        &[
+            "job",
+            "plugin",
+            "capability",
+            "audit",
+            "assistant",
+            "model",
+            "finding",
+        ]
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
@@ -429,6 +443,9 @@ impl Provider for SessionProvider {
                     "ono.plugin-inspection",
                     "ono.capability-grant",
                     "ono.plugin-audit-event",
+                    "ono.assistant",
+                    "ono.model-provider",
+                    "ono.finding",
                 ]
                 .into_iter()
                 .filter_map(|name| crate::kuang_host::schema(name).ok()),
@@ -448,6 +465,9 @@ impl Provider for SessionProvider {
             Capability::new("capability.list", Risk::Read),
             Capability::new("capability.revoke", Risk::Mutate),
             Capability::new("audit.list", Risk::Read),
+            Capability::new("assistant.list", Risk::Read),
+            Capability::new("model.list", Risk::Read),
+            Capability::new("finding.list", Risk::Read),
         ]
     }
 
