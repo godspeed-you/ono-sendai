@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "xtask"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT"
@@ -12,31 +12,31 @@ authors = ["The Ono-Sendai project"]
 
 [workspace.dependencies]
 # Internal crates. Created as a phase needs them (ADR-0001, ADR-0005).
-ono-core = { path = "crates/ono-core", version = "0.2.0" }
-ono-value = { path = "crates/ono-value", version = "0.2.0" }
-ono-parser = { path = "crates/ono-parser", version = "0.2.0" }
-ono-process = { path = "crates/ono-process", version = "0.2.0" }
-ono-pipeline = { path = "crates/ono-pipeline", version = "0.2.0" }
-ono-command = { path = "crates/ono-command", version = "0.2.0" }
-ono-render = { path = "crates/ono-render", version = "0.2.0" }
-ono-provider-api = { path = "crates/ono-provider-api", version = "0.2.0" }
-ono-provider-linux = { path = "crates/ono-provider-linux", version = "0.2.0" }
-ono-provider-net = { path = "crates/ono-provider-net", version = "0.2.0" }
-ono-provider-netlink = { path = "crates/ono-provider-netlink", version = "0.2.0" }
-ono-provider-systemd = { path = "crates/ono-provider-systemd", version = "0.2.0" }
-ono-provider-container = { path = "crates/ono-provider-container", version = "0.2.0" }
-ono-editor = { path = "crates/ono-editor", version = "0.2.0" }
-ono-graph = { path = "crates/ono-graph", version = "0.2.0" }
-ono-adapter = { path = "crates/ono-adapter", version = "0.2.0" }
-ono-history = { path = "crates/ono-history", version = "0.2.0" }
-ono-protocol = { path = "crates/ono-protocol", version = "0.2.0" }
-ono-remote = { path = "crates/ono-remote", version = "0.2.0" }
-ono-kuang-protocol = { path = "crates/ono-kuang-protocol", version = "0.2.0" }
-ono-kuang-supervisor = { path = "crates/ono-kuang-supervisor", version = "0.2.0" }
-ono-kuang-sdk = { path = "crates/ono-kuang-sdk", version = "0.2.0" }
-ono-kuang-testhost = { path = "crates/ono-kuang-testhost", version = "0.2.0" }
-ono-model-broker = { path = "crates/ono-model-broker", version = "0.2.0" }
-ono-testkit = { path = "crates/ono-testkit", version = "0.2.0" }
+ono-core = { path = "crates/ono-core", version = "0.3.0" }
+ono-value = { path = "crates/ono-value", version = "0.3.0" }
+ono-parser = { path = "crates/ono-parser", version = "0.3.0" }
+ono-process = { path = "crates/ono-process", version = "0.3.0" }
+ono-pipeline = { path = "crates/ono-pipeline", version = "0.3.0" }
+ono-command = { path = "crates/ono-command", version = "0.3.0" }
+ono-render = { path = "crates/ono-render", version = "0.3.0" }
+ono-provider-api = { path = "crates/ono-provider-api", version = "0.3.0" }
+ono-provider-linux = { path = "crates/ono-provider-linux", version = "0.3.0" }
+ono-provider-net = { path = "crates/ono-provider-net", version = "0.3.0" }
+ono-provider-netlink = { path = "crates/ono-provider-netlink", version = "0.3.0" }
+ono-provider-systemd = { path = "crates/ono-provider-systemd", version = "0.3.0" }
+ono-provider-container = { path = "crates/ono-provider-container", version = "0.3.0" }
+ono-editor = { path = "crates/ono-editor", version = "0.3.0" }
+ono-graph = { path = "crates/ono-graph", version = "0.3.0" }
+ono-adapter = { path = "crates/ono-adapter", version = "0.3.0" }
+ono-history = { path = "crates/ono-history", version = "0.3.0" }
+ono-protocol = { path = "crates/ono-protocol", version = "0.3.0" }
+ono-remote = { path = "crates/ono-remote", version = "0.3.0" }
+ono-kuang-protocol = { path = "crates/ono-kuang-protocol", version = "0.3.0" }
+ono-kuang-supervisor = { path = "crates/ono-kuang-supervisor", version = "0.3.0" }
+ono-kuang-sdk = { path = "crates/ono-kuang-sdk", version = "0.3.0" }
+ono-kuang-testhost = { path = "crates/ono-kuang-testhost", version = "0.3.0" }
+ono-model-broker = { path = "crates/ono-model-broker", version = "0.3.0" }
+ono-testkit = { path = "crates/ono-testkit", version = "0.3.0" }
 
 # Third-party. Choices and rationale: ADR-0005.
 async-trait = "0.1"
