@@ -15,6 +15,7 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
+use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_protocol::{
     ActRequest, ClientConfig, Link, Negotiated, ProviderDescriptor, RemoteMessage, RemoteQuery,
@@ -302,8 +303,11 @@ impl Provider for RemoteProvider {
             }
         }
         match failure {
-            // A failure beside resolved objects is a partial answer; the objects stand.
-            Some(error) if refs.is_empty() => Err(error),
+            // A failure beside resolved objects is a partial answer; the objects stand. An
+            // object that is not there is not a failure to resolve either — the local
+            // providers answer "nothing" for a missing pid, and ADR-0036 wants the far side to
+            // end the same way, so the shell writes the same `io.not_found` row for both.
+            Some(error) if refs.is_empty() && error.code() != ErrorCode::IoNotFound => Err(error),
             _ => Ok(refs),
         }
     }

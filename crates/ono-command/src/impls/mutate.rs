@@ -154,14 +154,14 @@ impl ProviderMutation {
             return Ok(objects);
         }
 
-        let selector = ctx
+        let (name, value) = ctx
             .contract()
             .selectors()
             .iter()
             .find_map(|spec| {
                 ctx.arguments()
                     .selector(spec.name())
-                    .map(|value| Selector::field(spec.name(), value.clone()))
+                    .map(|value| (spec.name(), value.clone()))
             })
             .ok_or_else(|| {
                 ErrorValue::new(
@@ -173,13 +173,32 @@ impl ProviderMutation {
                 ))
             })?;
 
-        Ok(ctx
+        let objects: Vec<ObjectId> = ctx
             .providers()
-            .resolve(target, &selector)
+            .resolve(target, &Selector::field(name, value.clone()))
             .await?
             .iter()
             .map(|reference| reference.id().clone())
-            .collect())
+            .collect();
+        // A selector that names nothing is not an empty selection: the user asked to act on
+        // one particular thing, and "it is not there" is that thing's outcome (spec §16.5,
+        // ADR-0068 §2). An empty stream would be the answer to a filter that matched nothing.
+        if objects.is_empty() {
+            let object = ObjectId::new(
+                ono_value::SchemaId::new(&format!("ono.{target}"), 1),
+                [value.clone()],
+            );
+            let action = Action::new(target, ctx.contract().verb(), object);
+            failures.push(ActionOutcome::failed(
+                &action,
+                ErrorValue::new(
+                    ErrorCode::IoNotFound,
+                    format!("no {target} answers to {name} {value}"),
+                )
+                .with_help(format!("`get {target}` lists what is there")),
+            ));
+        }
+        Ok(objects)
     }
 }
 

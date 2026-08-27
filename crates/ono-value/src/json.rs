@@ -174,7 +174,7 @@ pub fn to_json_data(value: &Value) -> Json {
                 .collect(),
         ),
         Value::Record(record) => Json::Object(record_to_json_data(record)),
-        Value::Error(error) => tagged("error", error_to_json_data(error)),
+        Value::Error(error) => error_to_json_data(error),
     }
 }
 
@@ -215,15 +215,57 @@ fn decimal_to_json_data(value: Decimal) -> Json {
 /// The `code` is the stable identifier of the spec §43 taxonomy, so a script can branch on it;
 /// the `message` is what a person reads. Everything else an [`ErrorValue`] carries — help, cause,
 /// metadata — is Ono's own diagnostic apparatus and belongs to `inspect`, not to interop.
+/// An error as the fields `ono.error/1` declares (`docs/spec/schemas/error.v1.yaml`): the
+/// stable code in `code`, the dotted selector in `name`, the kind, and the rest flat — so a
+/// reader that knows nothing about Ono still finds `code` and `name` where the schema says.
 fn error_to_json_data(error: &ErrorValue) -> Json {
-    let mut object = Map::with_capacity(2);
+    let mut object = Map::with_capacity(10);
     object.insert(
         "code".to_owned(),
+        Json::String(error.code().code().to_owned()),
+    );
+    object.insert(
+        "name".to_owned(),
         Json::String(error.code().name().to_owned()),
+    );
+    object.insert(
+        "kind".to_owned(),
+        Json::String(error.kind().as_str().to_owned()),
     );
     object.insert(
         "message".to_owned(),
         Json::String(error.message().to_owned()),
+    );
+    object.insert(
+        "target".to_owned(),
+        error
+            .target()
+            .map_or(Json::Null, |target| to_json_data(&target.to_value())),
+    );
+    object.insert(
+        "source".to_owned(),
+        error.cause().map_or(Json::Null, error_to_json_data),
+    );
+    object.insert(
+        "help".to_owned(),
+        error
+            .help()
+            .map_or(Json::Null, |help| Json::String(help.to_owned())),
+    );
+    object.insert(
+        "retryable".to_owned(),
+        error.retryable().map_or(Json::Null, Json::Bool),
+    );
+    object.insert("span".to_owned(), Json::Null);
+    object.insert(
+        "metadata".to_owned(),
+        Json::Object(
+            error
+                .metadata()
+                .iter()
+                .map(|(key, value)| (key.to_owned(), to_json_data(value)))
+                .collect(),
+        ),
     );
     Json::Object(object)
 }

@@ -90,6 +90,14 @@ impl ActionResult {
         }
     }
 
+    /// Names the operation as the schema wants it: the command id that ran
+    /// (`ono.process.kill`), where the provider was asked in its own verb.
+    #[must_use]
+    pub fn with_operation(mut self, operation: &str) -> Self {
+        self.operation = operation.into();
+        self
+    }
+
     /// States whether the action actually changed anything.
     #[must_use]
     pub fn changed(mut self, changed: bool) -> Self {

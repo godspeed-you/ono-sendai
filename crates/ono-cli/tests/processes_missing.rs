@@ -595,7 +595,6 @@ fn should_deliver_a_signal_to_the_process_arriving_through_the_pipeline() {
 // --- contract behaviour: a failed ActionResult sets the exit status ---------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_result_and_exit_status_one_when_killing_a_pid_that_does_not_exist() {
     // Spec §16.5 + ADR-0006: the outcome is one ActionResult per target and the exit status is
     // derived from them. A target that does not exist is a failed row, not an empty stream.
@@ -624,7 +623,6 @@ fn should_report_a_failed_result_and_exit_status_one_when_killing_a_pid_that_doe
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_exit_with_status_one_when_stopping_a_process_is_denied() {
     // `stop process 1` as an unprivileged user: the row already says `failed` with
     // `io.permission_denied`; ADR-0006 requires the exit status to say so too.
@@ -649,7 +647,6 @@ fn should_exit_with_status_one_when_stopping_a_process_is_denied() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_partial_failure_row_by_row_when_a_bulk_kill_mixes_outcomes() {
     // Spec §16.5: "The shell should never collapse `97 succeeded, 3 failed` into a single
     // ambiguous boolean." One row per target, and the aggregate exit status is 1 because one

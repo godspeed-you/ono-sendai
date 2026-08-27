@@ -19,7 +19,7 @@ use ono_command::{
 use ono_core::{ErrorCode, ExitStatus};
 use ono_parser::{Stage, StageHead, StageList};
 use ono_pipeline::{StreamEvent, ValueStream};
-use ono_value::{ErrorValue, Value};
+use ono_value::{ActionStatus, ErrorValue, Value};
 
 use crate::eval::{Eval, Flow};
 use crate::resolve::Namespace;
@@ -505,14 +505,7 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
             match table.run(contract.id(), &mut invocation).await {
                 Ok(Outcome::Values(produced)) => stream = Some(produced),
                 Ok(Outcome::Actions(outcomes)) => {
-                    let elapsed = ono_value::Duration::from_nanoseconds(
-                        i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),
-                    );
-                    stream = Some(ValueStream::from_values(
-                        outcomes
-                            .into_iter()
-                            .map(|outcome| outcome.into_record(elapsed).into_value()),
-                    ));
+                    stream = Some(action_records(contract, outcomes, started));
                 }
                 Err(error) => {
                     task_failures
@@ -774,7 +767,7 @@ fn run_from(
                 status = external_status;
             }
             Segment::Native(indices) => {
-                carried = run_native_segment(
+                let (bytes, native_status) = run_native_segment(
                     session,
                     registry,
                     list,
@@ -785,7 +778,8 @@ fn run_from(
                     position == 0,
                     last,
                 )?;
-                status = ExitStatus::SUCCESS;
+                carried = bytes;
+                status = native_status;
             }
         }
         position += 1;
@@ -1072,7 +1066,7 @@ fn run_remote_adapted(
             }
         }
     });
-    run_native_segment(
+    let (_, status) = run_native_segment(
         session,
         registry,
         list,
@@ -1088,7 +1082,7 @@ fn run_remote_adapted(
     )?;
     let host = session.link_host().unwrap_or_default();
     session.note_adaptation(format!("{} on {host}", decision.state), argv.join(" "));
-    Ok(RemoteRun::Adapted(ExitStatus::SUCCESS))
+    Ok(RemoteRun::Adapted(status))
 }
 
 /// What the last stage of an external segment is asked to produce (ADR-0052, ADR-0057 point 2).
@@ -1251,7 +1245,7 @@ fn run_native_segment(
     seed: Seed,
     first: bool,
     last: bool,
-) -> Eval<Option<Vec<u8>>> {
+) -> Eval<(Option<Vec<u8>>, ExitStatus)> {
     let table = implementations().map_err(Flow::Failed)?;
 
     // Everything is bound before anything runs. A pipeline that cannot be built runs no part of
@@ -1298,7 +1292,7 @@ fn run_native_segment(
     let final_contract: Option<&'static CommandContract> =
         bound.last().map(|(contract, _)| *contract);
     if final_contract.is_none() && !matches!(seed, Seed::Stream { .. }) {
-        return Ok(None);
+        return Ok((None, ExitStatus::SUCCESS));
     }
     let stage_has_no_redirection = list.stages[*indices.last().unwrap_or(&0)]
         .redirections
@@ -1373,6 +1367,7 @@ fn run_native_segment(
             Seed::None => input.map(|bytes| ValueStream::from_values([Value::Bytes(bytes.into())])),
         };
 
+        let mut failed_rows = false;
         for (contract, arguments) in &bound {
             let started = std::time::Instant::now();
             let mut invocation = Invocation::new(contract, arguments, providers)
@@ -1386,15 +1381,15 @@ fn run_native_segment(
                 Ok(Outcome::Values(values)) => stream = Some(values),
                 Ok(Outcome::Actions(outcomes)) => {
                     // Spec §11.5: one record per target, so `97 succeeded, 3 failed` stays two
-                    // readable numbers rather than one ambiguous status.
-                    let elapsed = ono_value::Duration::from_nanoseconds(
-                        i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),
-                    );
-                    stream = Some(ValueStream::from_values(
-                        outcomes
-                            .into_iter()
-                            .map(|outcome| outcome.into_record(elapsed).into_value()),
-                    ));
+                    // readable numbers rather than one ambiguous status — and a failed row
+                    // fails the run, after every row has been written (spec §16.5, ADR-0006).
+                    if outcomes
+                        .iter()
+                        .any(|outcome| outcome.status() == ActionStatus::Failed)
+                    {
+                        failed_rows = true;
+                    }
+                    stream = Some(action_records(contract, outcomes, started));
                 }
                 Err(error) => return Err(error),
             }
@@ -1410,7 +1405,7 @@ fn run_native_segment(
                 if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
                     let (width, height) = live_geometry();
                     failures.extend(crate::live::show(stream, width, height).await);
-                    return Ok((Vec::new(), failures));
+                    return Ok((Vec::new(), failures, failed_rows));
                 }
                 return Err(ErrorValue::new(
                     ErrorCode::StreamUnboundedOperation,
@@ -1428,7 +1423,7 @@ fn run_native_segment(
                 }
             }
         }
-        Ok((values, failures))
+        Ok((values, failures, failed_rows))
     };
 
     let collected = runtime.block_on(async {
@@ -1441,7 +1436,7 @@ fn run_native_segment(
         }
     });
 
-    let (values, failures) = collected.map_err(|error| {
+    let (values, failures, failed_rows) = collected.map_err(|error| {
         if error.code() == ErrorCode::StreamCancelled {
             // 128 + SIGINT, the status every shell reports for an interrupted foreground job
             // (ADR-0008); the message would only repeat what the ^C on the terminal already
@@ -1475,8 +1470,13 @@ fn run_native_segment(
         }
     }
 
+    let status = if failed_rows {
+        ExitStatus::FAILURE
+    } else {
+        ExitStatus::SUCCESS
+    };
     if !last {
-        return Ok(Some(bytes_of(&values)));
+        return Ok((Some(bytes_of(&values)), status));
     }
 
     // `view` consumes the terminal instead of printing (ADR-0050): the browse loop owns the
@@ -1489,7 +1489,7 @@ fn run_native_segment(
             .unwrap_or("table")
             .to_owned();
         return match crate::view::run(session, &name, values) {
-            Ok(_) => Ok(None),
+            Ok(_) => Ok((None, status)),
             Err(flow) => Err(flow),
         };
     }
@@ -1502,7 +1502,26 @@ fn run_native_segment(
         final_contract.is_some_and(produces_bytes),
         source,
     )?;
-    Ok(None)
+    Ok((None, status))
+}
+
+/// The ActionResult rows of one mutation stage, as the schema writes them: `operation` is the
+/// command id that ran (`ono.process.kill`), not the verb the provider was asked in
+/// (`action-result.v1.yaml`, ADR-0068 §2).
+fn action_records(
+    contract: &CommandContract,
+    outcomes: Vec<ono_provider_api::ActionOutcome>,
+    started: std::time::Instant,
+) -> ValueStream {
+    let elapsed = ono_value::Duration::from_nanoseconds(
+        i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),
+    );
+    ValueStream::from_values(outcomes.into_iter().map(move |outcome| {
+        outcome
+            .into_record(elapsed)
+            .with_operation(contract.id())
+            .into_value()
+    }))
 }
 
 /// The head word of a stage, or the empty string for a stage that has none.

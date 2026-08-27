@@ -317,9 +317,16 @@ fn should_show_a_reader_that_a_value_failed() {
     let error = ErrorValue::new(ErrorCode::IoPermissionDenied, "cannot read /proc/1/io");
     let json = to_json_data(&error.into_value());
 
+    // `docs/spec/schemas/error.v1.yaml`: the stable code in `code`, the dotted selector in
+    // `name`, the kind beside them — flat, so a reader that knows nothing about Ono still finds
+    // them where the schema says (ADR-0068 §2).
+    assert_eq!(json["code"], json!("Ono-Sendai-E0302"));
+    assert_eq!(json["name"], json!("io.permission_denied"));
+    assert_eq!(json["kind"], json!("permission"));
+    assert_eq!(json["message"], json!("cannot read /proc/1/io"));
     assert_eq!(
-        json,
-        json!({"error": {"code": "io.permission_denied", "message": "cannot read /proc/1/io"}}),
+        json["metadata"],
+        json!({}),
         "a failed value must stay visibly failed to a tool that knows nothing about Ono"
     );
 }

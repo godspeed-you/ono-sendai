@@ -389,6 +389,12 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Done
 
+- [x] seams 1 — `set`/`remove` of system targets dispatch through the registry — commit 7ec0d83
+  (ADR-0068 §1; `crates/ono-cli/tests/builtins.rs`)
+- [x] seams 2 — ActionResult contract: a failed row exits 1, a missing target is an E0301 row,
+  `operation` is the command id, `error` is a flat `ono.error/1` — ADR-0068 §2;
+  `processes_missing.rs` (3 tests), `remote_missing.rs` (2 tests) un-ignored
+
 - [x] v0.3 step 1 — ADAPT-001 OutputDemand computed backwards from the consumer, reported
   by `explain` (ADR-0052) — cases 070, 071
 - [x] v0.3 step 2 — the `adapter.*` error family E0901–E0911 in `docs/spec/errors.yaml` and

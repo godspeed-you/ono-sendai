@@ -735,7 +735,6 @@ fn should_explain_that_a_query_runs_in_agentless_mode() {
 // --- mutations across a link ------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_answer_a_missing_remote_target_the_way_the_local_side_does() {
     // ADR-0036: a linked machine is the same code path as the local one — "nothing above the
     // registry can tell". Naming a process that does not exist must therefore end the same way
@@ -751,9 +750,22 @@ fn should_answer_a_missing_remote_target_the_way_the_local_side_does() {
         local.output(),
         remote.output()
     );
+    // `duration` is measured wall-clock time (action-result.v1 requires it), so it is the one
+    // field two runs can never agree on; everything else in the row must.
+    let timeless = |run: &ono_testkit::Run| -> Vec<Value> {
+        rows(run)
+            .into_iter()
+            .map(|mut row| {
+                if let Value::Mapping(map) = &mut row {
+                    map.remove("duration");
+                }
+                row
+            })
+            .collect()
+    };
     assert_eq!(
-        remote.stdout().lines().last(),
-        local.stdout().lines().last(),
+        timeless(&remote),
+        timeless(&local),
         "ADR-0036: the same records come back across the link; local {:?}, remote {:?}",
         local.output(),
         remote.output()
@@ -761,7 +773,6 @@ fn should_answer_a_missing_remote_target_the_way_the_local_side_does() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_the_run_when_a_remote_mutation_fails() {
     // Spec §16.5 + ADR-0006: the far side's refusal arrives as a `failed` ActionResult with the
     // remote's own error, and a failed row makes the exit status 1.
