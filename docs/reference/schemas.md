@@ -896,6 +896,36 @@ Default view: `name`, `version`, `state`, `trust`, `jobs`, `memory`
 | `restart_count` | `int` | — | required | How often the supervisor has restarted this package's instance in this session (spec §31.34). A package that keeps restarting should be visible as one. |
 | `last_error` | `ono.error/1` | — | nullable | The most recent structured error from this package. Null when it has produced none. |
 
+## ProcessDetail — `ono.process-detail/1`
+
+One process in detail — its Process fields, parent, cgroup, open files and sockets.
+
+Identity: `pid`, `started`
+
+Default view: `pid`, `name`, `parent`, `user`, `cpu`, `memory`, `started`, `service`, `cgroup`, `open_files`, `sockets`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `pid` | `int` | — | required | The process id. |
+| `name` | `string` | — | required | The short process name, as the kernel records it. |
+| `parent` | `ref<ono.process/1>` | — | nullable | The parent process, by pid and name; null for the init process. |
+| `command` | `list<string>` | — | nullable | The full argument vector; null when the process hides it or it is not readable. |
+| `executable` | `path` | — | nullable | The resolved executable path; null when the link is unreadable or the file is deleted. |
+| `user` | `ref<ono.user/1>` | — | nullable | The effective user; carries the numeric uid even when the name cannot be resolved. |
+| `group` | `ref<ono.group/1>` | — | nullable | The effective group; carries the numeric gid even when the name cannot be resolved. |
+| `state` | `enum` | — | required | The kernel scheduling state. `unknown` when the provider read a state it does not model. |
+| `cpu` | `float` | percent | nullable | Share of one logical CPU since the previous observation; null until a second sample exists. |
+| `memory` | `bytesize` | — | nullable | Resident set size. |
+| `virtual_mem` | `bytesize` | — | nullable | Virtual memory size. |
+| `threads` | `int` | — | nullable | Number of threads in the process. |
+| `started` | `timestamp` | — | nullable | Wall-clock start time; half of the identity, as for `ono.process/1`. |
+| `cwd` | `path` | — | nullable | Current working directory; null when not readable by this user. |
+| `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
+| `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
+| `cgroup` | `path` | — | nullable | The control group path, as `/proc/<pid>/cgroup` reports it for the unified hierarchy; null on a kernel without cgroups. |
+| `open_files` | `list<path>` | — | nullable | The paths the process holds open, from `/proc/<pid>/fd`; descriptors on pipes, sockets and anonymous inodes are not files and are not listed. An error value when this user may not read the descriptor table. |
+| `sockets` | `list<int>` | — | nullable | The inodes of the sockets the process holds open — the `inode` an `ono.socket/1` carries, so the two join. An error value when this user may not read the descriptor table. |
+
 ## ProcessEvent — `ono.process-event/1`
 
 One change to one process, as a live stream emits it.

@@ -62,7 +62,9 @@ pub use accounts::{Accounts, GroupAccount, NSS_TIMEOUT, NssAccounts, UserAccount
 pub use env::{EnvBinding, EnvProvider, EnvSource};
 pub use file::FileProvider;
 pub use identity::IdentityProvider;
-pub use process::{Clock, KernelSignals, ProcessProvider, Signals, SystemClock};
+pub use process::{
+    Clock, KernelPriorities, KernelSignals, Priorities, ProcessProvider, Signals, SystemClock,
+};
 pub use storage::StorageProvider;
 
 /// Registers every Linux provider, in the order a shell should consult them.

@@ -16,6 +16,7 @@ ono-value.workspace = true
 async-trait.workspace = true
 jiff.workspace = true
 nix = { workspace = true, features = ["dir", "feature", "fs", "process", "signal", "user"] }
+rustix.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

@@ -21,6 +21,12 @@ pub fn process_id() -> SchemaId {
     SchemaId::new("ono.process", 1)
 }
 
+/// `ono.process-detail/1` — `docs/spec/schemas/process-detail.v1.yaml`.
+#[must_use]
+pub fn process_detail_id() -> SchemaId {
+    SchemaId::new("ono.process-detail", 1)
+}
+
 /// `ono.file/1` — `docs/spec/schemas/file.v1.yaml`.
 #[must_use]
 pub fn file_id() -> SchemaId {
@@ -62,6 +68,7 @@ pub fn env_var_id() -> SchemaId {
 pub fn ids() -> Vec<SchemaId> {
     vec![
         process_id(),
+        process_detail_id(),
         file_id(),
         user_id(),
         group_id(),

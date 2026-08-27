@@ -46,6 +46,7 @@ globset = "0.4"
 jiff = { version = "0.2", features = ["serde"] }
 nix = "0.31"
 regex = "1"
+rustix = { version = "1", features = ["process"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"

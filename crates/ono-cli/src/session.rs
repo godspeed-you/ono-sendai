@@ -78,6 +78,12 @@ pub struct Session {
     /// Backgrounded native pipelines (spec §18.4, ADR-0024): jobs in the same table as external
     /// commands, numbered from the executor's own sequence.
     native_jobs: Vec<NativeJob>,
+    /// The tables the session publishes for `ono.shell` to answer from — the job table today
+    /// (spec §18.4, ADR-0090). Shared with the provider registered in `providers()`.
+    tables: std::sync::Arc<std::sync::Mutex<crate::session_provider::SessionTables>>,
+    /// When each external job was detached, by job number; the executor's table does not
+    /// record it, and `ono.job/1` requires it.
+    job_started: BTreeMap<u32, Value>,
     /// What the last interactive view left selected — the referent of bare `@` (spec §6.4,
     /// ADR-0033, ADR-0050).
     selection: Option<Value>,
@@ -134,6 +140,8 @@ pub struct NativeJob {
     pub values: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
     /// The failures the stream reported.
     pub failures: std::sync::Arc<std::sync::Mutex<Vec<ono_value::ErrorValue>>>,
+    /// When the pipeline was detached.
+    pub started: Value,
     /// The task driving the stream; aborting it drops every receiver, which stops the producers.
     pub handle: tokio::task::JoinHandle<()>,
 }
@@ -190,6 +198,8 @@ impl Session {
             results: std::collections::VecDeque::new(),
             captures: Vec::new(),
             native_jobs: Vec::new(),
+            tables: std::sync::Arc::default(),
+            job_started: BTreeMap::new(),
             selection: None,
             links: Vec::new(),
             plugins: Vec::new(),
@@ -355,6 +365,95 @@ impl Session {
         Some(job)
     }
 
+    /// Records that external job `number` was just detached, for `ono.job/1`'s `started`.
+    pub fn note_job_started(&mut self, number: u32) {
+        self.job_started.entry(number).or_insert_with(Value::now);
+    }
+
+    /// Publishes the job table as it is now, for `get job` (spec §18.4, ADR-0090).
+    ///
+    /// Reaps first, so a job that finished since the last prompt is `done` here and not still
+    /// `running`. Both halves of the table — the executor's process groups and the detached
+    /// native pipelines — become rows of one list, in job-number order.
+    pub fn publish_jobs(&mut self) {
+        use crate::session_provider::JobRow;
+        let _ = self.executor.poll_jobs();
+        let mut rows: Vec<JobRow> = Vec::new();
+        for job in self.executor.jobs() {
+            let number = job.id.number();
+            // A job that entered the table by being stopped rather than by `&` was never noted;
+            // its first publication is the closest instant the shell has.
+            let started = self
+                .job_started
+                .entry(number)
+                .or_insert_with(Value::now)
+                .clone();
+            let (state, exit_status) = match job.state {
+                ono_process::JobState::Running => ("running", None),
+                ono_process::JobState::Stopped(_) => ("stopped", None),
+                ono_process::JobState::Exited(status) => {
+                    if job
+                        .processes
+                        .iter()
+                        .any(|process| process.failure.is_some())
+                    {
+                        ("failed", None)
+                    } else {
+                        // A signal death has no exit status to report (job.v1): null, never
+                        // 128 + n dressed up as one.
+                        ("done", status.signal().is_none().then_some(status))
+                    }
+                }
+            };
+            rows.push(JobRow {
+                number,
+                kind: "external",
+                state,
+                command: job.command.clone(),
+                process_group: Some(job.pgid),
+                pids: Some(
+                    job.processes
+                        .iter()
+                        .map(|process| process.pid)
+                        .filter(|pid| *pid != 0)
+                        .collect(),
+                ),
+                started,
+                exit_status,
+            });
+        }
+        for job in &self.native_jobs {
+            let finished = job.handle.is_finished();
+            let failed = finished
+                && !job
+                    .failures
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_empty();
+            rows.push(JobRow {
+                number: job.number,
+                kind: "native",
+                state: if finished { "done" } else { "running" },
+                command: job.command.clone(),
+                process_group: None,
+                pids: None,
+                started: job.started.clone(),
+                exit_status: finished.then_some(if failed {
+                    ExitStatus::FAILURE
+                } else {
+                    ExitStatus::SUCCESS
+                }),
+            });
+        }
+        rows.sort_by_key(|row| row.number);
+        self.job_started
+            .retain(|number, _| rows.iter().any(|row| row.number == *number));
+        self.tables
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .publish_jobs(rows);
+    }
+
     /// Retains a finished pipeline's values for `@-1` and `@N` (spec §6.4, §20.2).
     ///
     /// Retention is bounded twice: by result count, and by values per result — a `get file /`
@@ -415,6 +514,8 @@ impl Session {
     /// Returns `None` only if the operating system refuses to start the runtime.
     pub fn pipeline_context(&mut self) -> Option<(&tokio::runtime::Runtime, &ProviderRegistry)> {
         self.runtime()?;
+        // What `get job` answers is what is true when the pipeline starts (ADR-0090).
+        self.publish_jobs();
         // Spec §14.4: the active link frame decides where provider calls run. The innermost
         // link frame wins; without one, the local registry answers.
         let remote = self.frames.iter().rev().find_map(|frame| {
@@ -512,7 +613,10 @@ impl Session {
                     )
                 })
                 .collect();
-            let mut registry = crate::providers::registry(environment);
+            let mut registry = crate::providers::registry_with_tables(
+                environment,
+                std::sync::Arc::clone(&self.tables),
+            );
             if let Some(runtime) = self.runtime() {
                 runtime.block_on(crate::providers::register_async(&mut registry));
             }

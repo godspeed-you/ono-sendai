@@ -3919,8 +3919,8 @@ Adjust mutable process attributes such as scheduling priority.
 | | |
 |---|---|
 | id | `ono.process.set` |
-| stability | planned |
-| phase | planned |
+| stability | stable |
+| phase | C |
 | input | `null | stream<ono.process/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `process.set` |
@@ -3937,7 +3937,7 @@ Adjust mutable process attributes such as scheduling priority.
 
 | name | type | meaning |
 |---|---|---|
-| `--priority` | `int` | The scheduling niceness to apply. |
+| `--priority` | `int` | The scheduling niceness to apply, -20 to 19; raising priority (a negative value) needs CAP_SYS_NICE. |
 
 **Examples**
 
@@ -3947,13 +3947,13 @@ set process 4419 --priority 10
 
 ### `send signal`
 
-Deliver a signal to a process or job.
+Deliver a signal to the processes arriving through the pipeline.
 
 | | |
 |---|---|
 | id | `ono.signal.send` |
-| stability | planned |
-| phase | planned |
+| stability | stable |
+| phase | C |
 | input | `null | stream<ono.process/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `process.signal` |
@@ -3964,7 +3964,7 @@ Deliver a signal to a process or job.
 
 | name | type | meaning |
 |---|---|---|
-| `signal` | `string` | The signal to deliver. |
+| `signal` | `string` | The signal to deliver, named as in signal(7): SIGHUP, TERM, 15. |
 
 **Examples**
 

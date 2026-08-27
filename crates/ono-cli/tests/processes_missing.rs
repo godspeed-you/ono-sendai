@@ -141,7 +141,6 @@ fn error_names(row: &Value, dotted: &str, code: &str) -> bool {
 // --- inspect process -----------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_a_process_detail_record_when_inspecting_a_pid() {
     // Spec §9.1: `inspect process <pid>` returns a ProcessDetail; §33.1 shows what it carries
     // beyond the Process record — the parent, the cgroup, open files and sockets.
@@ -168,7 +167,6 @@ fn should_return_a_process_detail_record_when_inspecting_a_pid() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_inspect_the_process_arriving_through_the_pipeline() {
     // process.yaml: input `null | ono.process/1` — "omitted when one arrives through the
     // pipeline", as the contract example `... | take 1 | inspect process` does.
@@ -189,7 +187,6 @@ fn should_inspect_the_process_arriving_through_the_pipeline() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_structured_when_inspecting_a_pid_that_does_not_exist() {
     let run = ono("inspect process 4000000 | to json");
     assert!(
@@ -207,7 +204,6 @@ fn should_fail_structured_when_inspecting_a_pid_that_does_not_exist() {
 // --- get job ---------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_a_backgrounded_external_pipeline_as_a_job() {
     // Spec §18.4: "`get job` returns structured job objects". job.v1: an external job owns a
     // process group and the pids in it.
@@ -284,7 +280,6 @@ fn should_list_a_backgrounded_external_pipeline_as_a_job() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_a_detached_live_view_as_a_native_job() {
     // ADR-0024: a backgrounded watch is a job in the same table; job.v1: a native job owns no
     // process group and no pids.
@@ -318,7 +313,6 @@ fn should_list_a_detached_live_view_as_a_native_job() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_one_job_by_its_number() {
     // process.yaml: selector `id` — "Resolve one job by its job number."
     let run = ono(
@@ -344,7 +338,6 @@ fn should_resolve_one_job_by_its_number() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_finished_job_as_done_with_its_exit_status() {
     // job.v1: `exit_status` is null while running and the status once the job finished; the
     // contract example `get job | where state == running` shows `state` composes with `where`.
@@ -486,7 +479,6 @@ fn should_refuse_to_enter_a_process_that_does_not_exist() {
 // --- set process -----------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_set_the_niceness_of_a_process() {
     // process.yaml: `set process <pid> --priority N` — "The scheduling niceness to apply." An
     // unprivileged user may always lower priority, so the child's nice value afterwards is N.
@@ -521,7 +513,6 @@ fn should_set_the_niceness_of_a_process() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_denied_priority_raise_as_a_failed_result() {
     // Raising priority (a negative niceness) needs CAP_SYS_NICE; the unprivileged answer is one
     // failed row with the permission error (errors.yaml E0302) and, per ADR-0006, exit status 1.
@@ -558,7 +549,6 @@ fn should_report_a_denied_priority_raise_as_a_failed_result() {
 // --- send signal -----------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_deliver_a_signal_to_the_process_arriving_through_the_pipeline() {
     // process.yaml: `get process 4419 | send signal SIGHUP` — the signal is the selector, the
     // process comes through the pipeline.
