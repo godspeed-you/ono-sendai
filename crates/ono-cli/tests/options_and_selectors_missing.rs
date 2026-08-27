@@ -122,7 +122,6 @@ fn listener() -> (TcpListener, u16) {
 // --- get process --user / --tree ------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_only_root_processes_when_user_root_is_requested() {
     // process.yaml: `--user` "Restrict to processes of one user". Unprivileged, root's processes
     // are still enumerable through /proc, so the restricted stream is non-empty — and nothing in
@@ -142,7 +141,6 @@ fn should_return_only_root_processes_when_user_root_is_requested() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_return_only_the_callers_processes_when_user_names_the_caller() {
     let me = current_user();
     let strangers = count(&format!(
@@ -161,7 +159,6 @@ fn should_return_only_the_callers_processes_when_user_names_the_caller() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_nest_children_under_their_parents_when_tree_is_requested() {
     // process.yaml: `--tree` "Emit the parent/child structure rather than a flat stream." Read
     // as: the stream carries the roots, and every other process is reachable beneath its parent.

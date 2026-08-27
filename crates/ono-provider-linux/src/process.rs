@@ -689,11 +689,37 @@ impl Provider for ProcessProvider {
         };
         let enumerating = pinned.is_none();
         let limit = query.max().unwrap_or(usize::MAX);
+        let tree = query.flag("tree");
         let query = query.clone();
         Ok(ValueStream::spawn(
             PipelineConfig::new(),
             Boundedness::Bounded,
             move |sink| async move {
+                if tree {
+                    // `--tree` needs the whole table before the first root can be emitted: a
+                    // root is a process whose parent is not in the stream (ADR-0091 §3).
+                    let mut records = Vec::new();
+                    for pid in pids {
+                        match reader.read(pid, &schema).await {
+                            Ok(record) if understood_selectors_match(&query, &record) => {
+                                records.push(record);
+                            }
+                            Ok(_) => {}
+                            Err(error) if error.code() == ErrorCode::IoNotFound => {}
+                            Err(error) => {
+                                if sink.fail(error).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    for root in nest(records).into_iter().take(limit) {
+                        if sink.send(root).await.is_err() {
+                            return;
+                        }
+                    }
+                    return;
+                }
                 let mut sent = 0;
                 for pid in pids {
                     if sent >= limit {
@@ -792,6 +818,87 @@ impl Provider for ProcessProvider {
             Err(error) => Ok(ActionOutcome::failed(action, error)),
         }
     }
+}
+
+/// The process tree of `records`: the roots, each carrying its descendants under the extension
+/// key `children` (spec §10.4, ADR-0091 §3).
+///
+/// Built deepest-first rather than recursively, so a chain of parents as long as the table
+/// cannot overflow the stack. A parent that is not among the records — filtered out, or pid 0 —
+/// makes its children roots.
+fn nest(records: Vec<RecordValue>) -> Vec<Value> {
+    let pid_of = |record: &RecordValue| match record.get("pid") {
+        Some(Value::Int(pid)) => Some(*pid),
+        _ => None,
+    };
+    let parent_of = |record: &RecordValue| match record.get("ppid") {
+        Some(Value::Int(ppid)) => Some(*ppid),
+        _ => None,
+    };
+    let present: HashMap<i128, usize> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(index, record)| pid_of(record).map(|pid| (pid, index)))
+        .collect();
+    let parent = |record: &RecordValue| parent_of(record).filter(|ppid| present.contains_key(ppid));
+
+    // The depth of each process is the length of its chain of present parents; a cycle —
+    // impossible in a kernel table, cheap to guard against in a fixture — ends the walk.
+    let depth_of = |record: &RecordValue| {
+        let mut depth = 0usize;
+        let mut current = parent(record);
+        while let Some(ppid) = current
+            && depth <= records.len()
+        {
+            depth += 1;
+            current = present
+                .get(&ppid)
+                .and_then(|index| parent(&records[*index]));
+        }
+        depth
+    };
+    let mut order: Vec<(usize, usize)> = records
+        .iter()
+        .enumerate()
+        .map(|(index, record)| (depth_of(record), index))
+        .collect();
+    order.sort_by(|left, right| right.cmp(left));
+
+    let mut children: HashMap<i128, Vec<Value>> = HashMap::new();
+    let mut roots = Vec::new();
+    for (_, index) in order {
+        let record = &records[index];
+        let own = pid_of(record)
+            .and_then(|pid| children.remove(&pid))
+            .unwrap_or_default();
+        let value = with_children(record, own);
+        match parent(record) {
+            Some(ppid) => children.entry(ppid).or_default().push(value),
+            None => roots.push(value),
+        }
+    }
+    // Deepest-first building reversed the order within each level; the table's order is pid
+    // order, which is what a reader expects of siblings.
+    roots.reverse();
+    roots
+}
+
+/// `record` with `children` nested beneath it.
+fn with_children(record: &RecordValue, mut children: Vec<Value>) -> Value {
+    children.reverse();
+    let mut builder =
+        RecordValue::builder(Arc::clone(record.schema()), record.provenance().clone());
+    for field in record.schema().fields() {
+        if let Some(value) = record.get(field.name())
+            && let Ok(with_field) = builder.clone().set(field.name(), value.clone())
+        {
+            builder = with_field;
+        }
+    }
+    builder
+        .set_extra("children", Value::list(children))
+        .build()
+        .into_value()
 }
 
 /// Whether the selectors this provider understands accept `record`.
