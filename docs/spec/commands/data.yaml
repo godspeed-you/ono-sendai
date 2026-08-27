@@ -374,7 +374,13 @@ commands:
       - {name: identity, type: list<string>, doc: "Override the schema's identity fields for the comparison."}
     privilege: none
     streaming: false
-    phase: planned
-    note: Spec §53 gives the semantics but not a frozen syntax; see `ono.data.join`.
+    phase: B
+    note: >-
+      Spec §53 gives the semantics but not a frozen syntax; see `ono.data.join`. Delivered
+      experimental (ADR-0072): the input is the current state and `right` the snapshot it is
+      compared against, identity is the schema's (spec §28.1) unless `--identity` overrides it,
+      and each row is an `ono.diff/1` record — `change` (`added`, `removed`, `changed`),
+      `key`, `left` (the current value) and `right` (the previous one) — so a changed row
+      carries both values. Unchanged objects produce no row.
     examples:
       - get service | diff @-1

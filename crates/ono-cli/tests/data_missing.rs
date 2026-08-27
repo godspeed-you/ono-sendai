@@ -276,7 +276,6 @@ fn changes(rows: &[Value]) -> Vec<(String, i64)> {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_added_removed_and_changed_rows_between_two_snapshots() {
     let run = ono(&format!(
         "{BEFORE}; {NOW}; $now | diff $before --identity [pid] | to json"
@@ -298,7 +297,6 @@ fn should_report_added_removed_and_changed_rows_between_two_snapshots() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_carry_both_values_of_a_changed_row() {
     let run = ono(&format!(
         "{BEFORE}; {NOW}; $now | diff $before --identity [pid] | where change == \"changed\" \
@@ -316,7 +314,6 @@ fn should_carry_both_values_of_a_changed_row() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_no_rows_when_the_snapshots_are_identical() {
     let run = ono(&format!(
         "{BEFORE}; $before | diff $before --identity [pid] | to json"
@@ -330,7 +327,6 @@ fn should_report_no_rows_when_the_snapshots_are_identical() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_compare_provider_records_by_their_schema_identity_without_an_override() {
     // `ono.process/1` declares `identity: [pid, started]`, so no `--identity` is needed. The
     // right side is an empty snapshot (no process has that pid), which makes pid 1 `added`.

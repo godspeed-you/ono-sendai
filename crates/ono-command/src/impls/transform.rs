@@ -10,8 +10,8 @@ use std::sync::Arc;
 use ono_core::ErrorCode;
 use ono_parser::Expr;
 use ono_pipeline::{
-    Count, Each, Group, Join, JoinKind, Measure, PathSegment, Reduce, Select, SelectField, Skip,
-    Sort, Tail, Take, Where,
+    Count, Diff, Each, Group, Join, JoinKind, Measure, PathSegment, Reduce, Select, SelectField,
+    Skip, Sort, Tail, Take, Where,
 };
 use ono_value::{ErrorValue, Value};
 
@@ -36,6 +36,7 @@ pub(crate) enum Kind {
     Count,
     Measure,
     Join,
+    Diff,
 }
 
 /// One transform, registered against the contract that declares it.
@@ -141,6 +142,14 @@ impl CommandImpl for TransformCommand {
                 let kind = join_kind(arguments, &spelling)?;
                 input.transform(Join::new(right, key).with_kind(kind))?
             }
+            Kind::Diff => {
+                // ADR-0072 §3: the input is the current state, the right side what it is
+                // compared against, and identity is the schema's unless `--identity` says
+                // otherwise.
+                let previous = right_side(arguments, &spelling, &scope)?;
+                let identity = identity_function(arguments, &scope);
+                input.transform(Diff::new(previous, identity))?
+            }
             Kind::Count => input.transform(Count::new())?,
             Kind::Measure => {
                 let key = key_function(arguments, "key", &spelling, &scope)?;
@@ -236,6 +245,51 @@ fn right_side(
         Value::Null => Vec::new(),
         other => vec![other],
     })
+}
+
+/// The identity `diff` compares by: the `--identity` fields where given, else the fields the
+/// record's schema declares as its identity (spec §28.1), else the value itself.
+///
+/// One field keys by its value; several key by the list of their values, in the order given.
+fn identity_function(arguments: &BoundArguments, scope: &Arc<Scope>) -> impl ono_pipeline::KeyFn {
+    let overridden: Option<Vec<Expr>> = match arguments.option_binding("identity") {
+        Some(Binding::Expressions(expressions)) => match expressions.first() {
+            Some(Expr::List(list)) => Some(list.items.clone()),
+            Some(single) => Some(vec![single.clone()]),
+            None => None,
+        },
+        _ => None,
+    };
+    let scope = Arc::clone(scope);
+    move |value: &Value| {
+        if let Some(fields) = &overridden {
+            let mut keys = Vec::with_capacity(fields.len());
+            for field in fields {
+                keys.push(evaluate(field, value, &scope)?);
+            }
+            return Ok(single_or_list(keys));
+        }
+        match value.as_record() {
+            Ok(record) if !record.schema().identity().is_empty() => {
+                let keys: Vec<Value> = record
+                    .schema()
+                    .identity()
+                    .iter()
+                    .map(|name| record.get(name).cloned().unwrap_or(Value::Null))
+                    .collect();
+                Ok(single_or_list(keys))
+            }
+            _ => Ok(value.clone()),
+        }
+    }
+}
+
+fn single_or_list(mut keys: Vec<Value>) -> Value {
+    if keys.len() == 1 {
+        keys.pop().unwrap_or(Value::Null)
+    } else {
+        Value::list(keys)
+    }
 }
 
 /// A key function over the expression bound to the option `name`.

@@ -787,7 +787,7 @@ Compare two structured snapshots by identity and schema.
 |---|---|
 | id | `ono.data.diff` |
 | stability | experimental |
-| phase | planned |
+| phase | B |
 | input | `stream<any>` |
 | output | `stream<record>` |
 | privilege | none |
