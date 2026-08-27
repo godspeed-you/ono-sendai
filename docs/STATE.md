@@ -93,15 +93,6 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [network | 2026-08-27] **the network family** (`crates/ono-cli/tests/network_missing.rs` minus
-  the eight watch/trace tests another agent owns; three tests of
-  `options_and_selectors_missing.rs`): `resolve dns`, `test port`, the ten route/interface/socket
-  mutations — files: `crates/ono-provider-net/`, `crates/ono-provider-netlink/src/{act,provider,
-  transport,sys}.rs`, `crates/ono-command/src/impls/{mod,mutate,convert}.rs`,
-  `crates/ono-value/src/{builtin,value}.rs`, `docs/spec/commands/network.yaml`,
-  `docs/spec/schemas/{dns-record,probe-result}.v1.yaml`, `docs/spec/providers/linux-{resolver,
-  netlink}.yaml`, `docker/acceptance/cases/039-network-dns-port-mutations.case`, ADR-0087…0089.
-
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
   one `#[ignore = "REASON: …"]` (AGENTS.md §7) so the tree stays green; **the increment that
@@ -159,6 +150,17 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## Next up (ordered)
 
+- [ ] network write paths, privileged conformance — ADR-0088 delivers the nine mutations and
+  proves only the unprivileged refusal; a root run in the container (`add route … --dry-run`,
+  then a real add/remove on a dummy interface and its removal) should prove the request layouts
+  against a live kernel — exit test: a new case under `docker/acceptance/cases/` run with
+  `CAP_NET_ADMIN`.
+- [ ] `resolve dns --server <ip>` — refused as provider.unsupported (ADR-0087 §1); needs a DNS
+  client (UDP/TCP query builder and parser) beside the system resolver.
+- [ ] `select error.code` on an ActionResult row projects the whole error under `code` rather
+  than the code string: reading a field *of* an error value (`FieldAccess::Failed`) yields the
+  error — decide whether an `ono.error/1` field is navigable as a record (spec §10.5 keeps
+  "could not read" apart from data, but the row's `error` *is* data).
 - [ ] `explain get process` inside a frame prints the narrowed spelling (`get process 1`,
   `get process --user root`) — ADR-0023 promised it, ADR-0076 made the arguments available —
   exit test: a context.rs case explaining inside `enter process 1`
@@ -402,6 +404,15 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Done
 
+- [x] network family — `resolve dns` (system resolver, `ono-provider-net`, ADR-0087), `test port`
+  (probe result, ADR-0087 §3), the nine route/interface/socket mutations over rtnetlink and
+  sock_diag with the unresolved-target and `confirmation: always` seams (ADR-0088), null
+  through a schema-known field and port/int comparability (ADR-0089), `--remote` on
+  `trace connection`; a serializer no longer writes `[]` for a stream that only failed
+  (ADR-0028) — commits 24f7968, baf53e2, e1d5a73, 3c54b30 and the two fixes after it;
+  `network_missing.rs` (17 tests), `options_and_selectors_missing.rs` (3 tests),
+  `docker/acceptance/cases/039-network-dns-port-mutations.case`. The eight watch/trace tests of
+  `network_missing.rs` belong to another agent.
 - [x] seams 1 — `set`/`remove` of system targets dispatch through the registry — commit 7ec0d83
   (ADR-0068 §1; `crates/ono-cli/tests/builtins.rs`)
 - [x] seams 2 — ActionResult contract: a failed row exits 1, a missing target is an E0301 row,

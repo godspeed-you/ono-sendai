@@ -21,7 +21,8 @@ use std::sync::Arc;
 
 use ono_core::{ErrorCode, Span};
 use ono_parser::{
-    BinaryOp, CurrentSelector, Expr, NumberValue, ParenValue, RecordKey, StrPart, UnaryOp, Unit,
+    BinaryOp, CurrentSelector, Expr, FieldAccess, NumberValue, ParenValue, RecordKey, StrPart,
+    UnaryOp, Unit,
 };
 use ono_value::{
     ByteSize, Duration, ErrorValue, FieldStep, MapValue, Percent, RegexValue, Schema, Value,
@@ -215,14 +216,25 @@ pub fn evaluate(expression: &Expr, current: &Value, scope: &Scope) -> Result<Val
         },
         // Spec §10.3: within a pipeline predicate the current record exposes its fields directly.
         Expr::Path(path) => current.follow(&[FieldStep::required(&path.name)]),
+        // A chain `local.port` is followed as one path from its receiver, so that a null a
+        // schema-known field answered with stays unknown through the steps beneath it instead
+        // of becoming a type error at the next one (spec §10.5, ADR-0089).
         Expr::Field(access) => {
-            let base = evaluate(&access.base, current, scope)?;
-            let step = if access.optional {
-                FieldStep::optional(&access.field)
-            } else {
-                FieldStep::required(&access.field)
+            let mut steps = vec![field_step(access)];
+            let mut receiver = &access.base;
+            while let Expr::Field(inner) = receiver {
+                steps.push(field_step(inner));
+                receiver = &inner.base;
+            }
+            let base = match receiver {
+                Expr::Path(path) => {
+                    steps.push(FieldStep::required(&path.name));
+                    current.clone()
+                }
+                other => evaluate(other, current, scope)?,
             };
-            base.follow(&[step])
+            steps.reverse();
+            base.follow(&steps)
         }
         Expr::Index(index) => {
             let base = evaluate(&index.base, current, scope)?;
@@ -425,6 +437,15 @@ pub fn check_fields(expression: &Expr, schema: &Schema) -> Result<(), ErrorValue
         | Expr::CurrentValue(_)
         | Expr::Block(_)
         | Expr::Error(_) => Ok(()),
+    }
+}
+
+/// One step of a field chain, optional where it was written `?.`.
+fn field_step(access: &FieldAccess) -> FieldStep<'_> {
+    if access.optional {
+        FieldStep::optional(&access.field)
+    } else {
+        FieldStep::required(&access.field)
     }
 }
 

@@ -453,7 +453,6 @@ fn should_resolve_a_group_by_gid_when_the_selector_is_numeric() {
 // --- endpoint fields in predicates -------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_an_endpoint_field_in_a_predicate_when_filtering_sockets_by_local_port() {
     // socket.v1: `local` is an `ono.endpoint/1` with a `port`; spec §41.2 writes
     // `where local.address not in […]`, so a predicate reaches into the endpoint. The test's own

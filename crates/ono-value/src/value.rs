@@ -10,8 +10,8 @@ use jiff::Timestamp;
 use ono_core::ErrorCode;
 
 use crate::{
-    ByteSize, Decimal, Duration, ErrorValue, FieldAccess, FieldStep, IpNetwork, MapValue, Percent,
-    RecordValue, RegexValue, Uuid,
+    ByteSize, Decimal, Duration, ErrorValue, FieldAccess, FieldStep, FieldType, IpNetwork,
+    MapValue, Percent, RecordValue, RegexValue, Uuid,
 };
 
 /// A value flowing through a pipeline (spec §10.2, §25).
@@ -148,7 +148,28 @@ impl Value {
     /// failure when a field's access failed.
     pub fn follow(&self, steps: &[FieldStep<'_>]) -> Result<Value, ErrorValue> {
         let mut current = self.clone();
+        let mut unknown = false;
         for step in steps {
+            // A record-typed field the schema declares and the provider could not fill is an
+            // unknown record, and so is everything beneath it: `local.port` on a socket whose
+            // `local` is null is not a type error but the same unknown, and a predicate over it
+            // does not match (spec §10.5, ADR-0014, ADR-0089). Only a null that came from a
+            // field *with fields* propagates; a null string has no `.name`, and a null that was
+            // never a field still refuses a required step.
+            if unknown && matches!(current, Value::Null) {
+                continue;
+            }
+            unknown = matches!(
+                &current,
+                Value::Record(record)
+                    if matches!(record.access(step.name()), FieldAccess::Unknown)
+                        && record.schema().field(step.name()).is_some_and(|field| {
+                            matches!(
+                                field.ty(),
+                                FieldType::Record(_) | FieldType::Ref(_) | FieldType::Map | FieldType::Any
+                            )
+                        })
+            );
             current = follow_step(&current, *step)?;
         }
         Ok(current)
