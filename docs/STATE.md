@@ -122,10 +122,8 @@ showcase: a live view of the machine should feel like instrumentation, not like 
     watch/trace/enter mount
   - `crates/ono-cli/tests/data_missing.rs` (15) + `crates/ono-command/tests/completion_missing.rs`
     (6) — `tail`, `join`, `diff`, stacked records on narrow terminals, fields after `where`
-    — **claimed by [data | 2026-08-27]** on branch `implementation-data`; files:
-    `crates/ono-pipeline/src/transforms/{slice,relational}.rs`, `crates/ono-command/src/{impls/
-    {mod,transform}.rs,expr.rs,complete.rs}`, `crates/ono-cli/src/{native,session}.rs`,
-    `crates/ono-render/src/table.rs`, `docs/spec/commands/data.yaml`, case 036 (ADR-0072–0074)
+    — **done** by [data | 2026-08-27] on branch `implementation-data` (ADR-0072–0074); no
+    `#[ignore` left in either file
   - `crates/ono-cli/tests/remote_missing.rs` (36) — `get link` as data, host commands, link
     definitions, detach/rename, agentless visibility, mutations across a link
   - `crates/ono-cli/tests/plugins_missing.rs` (32) — `ono.plugin/1` records, inspect/find/
@@ -391,8 +389,10 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] data family (ADR-0072) — `tail N [--follow]` (commit 0f68fe0), `join <right> --on key
   --kind inner|left|right|outer` with `$variables` and pre-run `(pipelines)` visible to native
   stages (1616fe1), `diff <right> [--identity [fields]]` by schema identity (1761cc9),
-  stacked records once a cut column would drop below eight cells (ADR-0073) —
-  `crates/ono-cli/tests/data_missing.rs`, case 036
+  stacked records once a cut column would drop below eight cells (ADR-0073, 98437d4),
+  schema fields with their docs after `where`/`select` (ADR-0074) —
+  `crates/ono-cli/tests/data_missing.rs` (15/15), `crates/ono-command/tests/
+  completion_missing.rs` (6/6), case 036
 - [x] v0.3 step 1 — ADAPT-001 OutputDemand computed backwards from the consumer, reported
   by `explain` (ADR-0052) — cases 070, 071
 - [x] v0.3 step 2 — the `adapter.*` error family E0901–E0911 in `docs/spec/errors.yaml` and
