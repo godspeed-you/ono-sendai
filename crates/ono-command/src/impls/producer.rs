@@ -15,11 +15,24 @@ use crate::invoke::{CommandImpl, Invocation, Outcome};
 #[derive(Debug)]
 pub(crate) struct ProviderProducer {
     id: String,
+    /// Whether the query asks the provider to keep producing as the world changes — `tail
+    /// journal` rather than `get journal` (spec §7.1).
+    follow: bool,
 }
 
 impl ProviderProducer {
     pub(crate) fn new(id: &str) -> Self {
-        Self { id: id.to_owned() }
+        Self {
+            id: id.to_owned(),
+            follow: false,
+        }
+    }
+
+    pub(crate) fn following(id: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            follow: true,
+        }
     }
 }
 
@@ -32,7 +45,10 @@ impl CommandImpl for ProviderProducer {
         // The query is built from the contract, so a new target is a new registry entry and no
         // new code (ADR-0012, ADR-0021). What a context frame narrows is already in the
         // arguments: the command table filled it in before this ran (spec §14.3, ADR-0076).
-        let query = ctx.contract().query(ctx.arguments())?;
+        let mut query = ctx.contract().query(ctx.arguments())?;
+        if self.follow {
+            query = query.option("follow", ono_value::Value::Bool(true));
+        }
         let stream = ctx.providers().snapshot(&query)?;
         Ok(Outcome::Values(stream))
     }

@@ -184,6 +184,19 @@ impl StreamSink {
         self.cancel.is_cancelled()
     }
 
+    /// Waits until nothing will read another value: the consumer dropped the stream, or the
+    /// pipeline was cancelled.
+    ///
+    /// A producer that waits on the outside world — a followed journal, a child that writes
+    /// only when something happens — has no next `send` to learn from, so it selects on this
+    /// instead and stops reading the moment `take` has what it wanted.
+    pub async fn closed(&self) {
+        tokio::select! {
+            () = self.cancel.cancelled() => {}
+            () = self.values.closed() => {}
+        }
+    }
+
     /// The pipeline's cancellation scope.
     #[must_use]
     pub const fn cancel_token(&self) -> &CancelToken {

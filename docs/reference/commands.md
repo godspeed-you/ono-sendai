@@ -4804,10 +4804,10 @@ Query the structured system journal directly.
 | | |
 |---|---|
 | id | `ono.journal.get` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | C |
 | input | `null` |
-| output | `stream<ono.log-record/1>` |
+| output | `stream<ono.journal-event/1>` |
 | provider capability | `log.read` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
@@ -4817,12 +4817,13 @@ Query the structured system journal directly.
 | name | type | meaning |
 |---|---|---|
 | `--since` | `timestamp` | Only records at or after this time. |
-| `--boot` | `int` | Restrict to one boot. |
+| `--boot` | `int` | Restrict to one boot: 0 is the running one, -1 the one before, as the journal counts them. |
 
 **Examples**
 
 ```text
 get journal --since (now() - 1h)
+get journal --boot 0 | where priority <= 3
 ```
 
 ### `tail journal`
@@ -4833,9 +4834,9 @@ Follow the journal as records are appended.
 |---|---|
 | id | `ono.journal.tail` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null` |
-| output | `stream<ono.log-record/1>` |
+| output | `stream<ono.journal-event/1>` |
 | provider capability | `log.read` |
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
@@ -4850,6 +4851,7 @@ Follow the journal as records are appended.
 
 ```text
 tail journal --lines 50
+tail journal | where priority <= 3 | take 1
 ```
 
 ## storage

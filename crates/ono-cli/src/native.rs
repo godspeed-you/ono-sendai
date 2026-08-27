@@ -1491,7 +1491,13 @@ fn run_native_segment(
         }
     }
 
-    let status = if failed_rows {
+    // A failure of the provider kind — it could not answer, or not as promised — is never a
+    // partial one: no object was lost, the answer was (ADR-0085). What did arrive is still
+    // written; the status says the run did not get what it asked for.
+    let unanswered = failures
+        .iter()
+        .any(|failure| failure.kind() == ono_core::ErrorKind::Provider);
+    let status = if failed_rows || unanswered {
         ExitStatus::FAILURE
     } else {
         ExitStatus::SUCCESS

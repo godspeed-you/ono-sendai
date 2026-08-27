@@ -416,6 +416,11 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   with no property is E0201 naming `--enabled` before anything is resolved (ADR-0084);
   `services_logs_missing.rs` (4 `set service` tests un-ignored),
   `ono-provider-systemd/tests/service.rs` (2 tests)
+- [x] services 2 — `get journal [--since --boot]` and `tail journal [--lines]` as
+  `ono.journal-event/1` through `journalctl --output=json` and the systemd adapter pack's
+  decoder (ADR-0085); a provider-kind stream failure exits 1; `StreamSink::closed()` lets a
+  following producer stop when `take` is satisfied; the decoder reads journalctl's byte-array
+  and multi-valued strings (fix); `services_logs_missing.rs` (6 journal tests un-ignored)
 - [x] data family (ADR-0072) — `tail N [--follow]` (commit 0f68fe0), `join <right> --on key
   --kind inner|left|right|outer` with `$variables` and pre-run `(pipelines)` visible to native
   stages (1616fe1), `diff <right> [--identity [fields]]` by schema identity (1761cc9),
@@ -694,8 +699,10 @@ security review — and because re-testing these later costs nothing if they are
 
 ## Deferred / blocked
 
-_(empty — an entry here needs a reason, the ignored test's path, and the ADR that states the
-assumption)_
+- `get journal --since (now() - 1h)` — needs `now()`, which the language family delivers
+  (`language_missing.rs`); the option itself is delivered — ignored test:
+  `crates/ono-cli/tests/services_logs_missing.rs::should_only_emit_recent_events_when_since_is_a_relative_timestamp`
+  — ADR-0085
 
 ---
 

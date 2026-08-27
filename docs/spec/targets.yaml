@@ -201,8 +201,8 @@ targets:
     name: journal
     category: system
     summary: The structured system journal.
-    schema: null
-    phase: planned
+    schema: ono.journal-event/1
+    phase: C
   - id: ono.target.log
     name: log
     category: system

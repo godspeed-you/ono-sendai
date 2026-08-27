@@ -149,7 +149,6 @@ fn utc_iso_seconds_ago(seconds_ago: u64) -> String {
 // --- get journal --------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_journal_events_with_the_schema_fields_when_the_journal_is_queried() {
     let run = ono("get journal | take 3 | to json");
     let Some(rows) = records_or_unavailable(&run, "`get journal | take 3`") else {
@@ -166,7 +165,6 @@ fn should_emit_journal_events_with_the_schema_fields_when_the_journal_is_queried
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restrict_journal_events_to_the_current_boot_when_boot_is_zero() {
     // `--boot <int>` restricts to one boot; 0 is the running one, as the journal counts boots.
     let run = ono("get journal --boot 0 | take 3 | select boot_id | to json");
@@ -210,7 +208,6 @@ fn should_only_emit_recent_events_when_since_is_a_relative_timestamp() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_filter_journal_events_by_priority_when_where_composes_over_the_typed_stream() {
     let run = ono("get journal | where priority <= 3 | take 5 | select priority | to json");
     let Some(rows) = records_or_unavailable(&run, "`get journal | where priority <= 3`") else {
@@ -227,7 +224,6 @@ fn should_filter_journal_events_by_priority_when_where_composes_over_the_typed_s
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_reject_an_unknown_field_before_reading_the_journal_when_where_names_one() {
     // Spec §11.3: `get journal` advertises its schema, so `where prio == 1` is refused before
     // any record is read — on every box, with or without a journal.
@@ -253,7 +249,6 @@ fn should_reject_an_unknown_field_before_reading_the_journal_when_where_names_on
 // --- tail journal -------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_the_most_recent_event_and_return_when_the_journal_is_tailed_through_take() {
     // Spec §7.1: `tail journal` follows the journal; `take 1` bounds the follow and the pipeline
     // returns as soon as one record arrived (ADR-0059 point 5).
@@ -271,7 +266,6 @@ fn should_emit_the_most_recent_event_and_return_when_the_journal_is_tailed_throu
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_existing_records_in_order_before_following_when_lines_is_given() {
     let run = ono("tail journal --lines 2 | take 2 | select timestamp cursor | to json");
     let Some(rows) = records_or_unavailable(&run, "`tail journal --lines 2`") else {

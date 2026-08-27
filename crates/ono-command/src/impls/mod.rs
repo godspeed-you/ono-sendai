@@ -188,6 +188,9 @@ fn implementation_of(
             }
             match contract.verb() {
                 "get" | "find" => Arc::new(ProviderProducer::new(id)),
+                // `tail <target>` follows what the target's provider produces (spec §7.1); the
+                // journal is the one target whose follow is delivered (ADR-0085).
+                "tail" if id == "ono.journal.tail" => Arc::new(ProviderProducer::following(id)),
                 verb if registry.verb(verb).is_some_and(VerbSpec::is_mutating) => {
                     // With a provider set, a mutating verb is bound exactly when a provider for
                     // the target advertises the capability the contract names (ADR-0068 §3).

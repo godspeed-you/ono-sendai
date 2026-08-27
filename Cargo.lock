@@ -832,6 +832,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "jiff",
+ "ono-adapter",
  "ono-core",
  "ono-pipeline",
  "ono-provider-api",

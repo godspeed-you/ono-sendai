@@ -8,3 +8,12 @@ providers:
     targets: [service]
     capabilities: [service.list, service.manage]
     schemas: [ono.service/1]
+
+  - id: systemd-journal
+    doc: >-
+      The journal and the log, from `journalctl --output=json` through the decoder of the
+      systemd adapter pack (ADR-0085). Registered even where no `journalctl` is on PATH or no
+      journal files exist: that is `provider.unavailable` with the reason, not an empty journal.
+    targets: [journal, log]
+    capabilities: [log.read]
+    schemas: [ono.journal-event/1]

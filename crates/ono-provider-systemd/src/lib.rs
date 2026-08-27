@@ -6,6 +6,10 @@
 //! `org.freedesktop.systemd1` — `Manager.ListUnits`, `Manager.LoadUnit` and
 //! `org.freedesktop.DBus.Properties.GetAll` — and from nowhere else (spec §50).
 //!
+//! The crate also carries the [`JournalProvider`] for the `journal` and `log` targets. The
+//! journal has no D-Bus surface; that provider runs `journalctl --output=json` — the machine
+//! format systemd documents — through the decoder of the v0.3 systemd adapter pack (ADR-0085).
+//!
 //! # Being honest about not being there
 //!
 //! systemd is absent from a great many machines Ono runs on: a Docker container, a WSL session,
@@ -50,10 +54,12 @@
 
 mod bus;
 mod dbus;
+mod journal;
 mod provider;
 mod record;
 
 pub use bus::{BusError, JobKind, SystemdBus, UnitListing, UnitProperties};
 pub use dbus::SystemBus;
+pub use journal::{JOURNAL_PROVIDER_ID, JournalProvider};
 pub use provider::{PROVIDER_ID, SystemdProvider};
 pub use record::{service_schema, unit_name_candidates};

@@ -144,3 +144,26 @@ async fn should_expose_the_token_so_a_caller_can_cancel_a_stream_it_was_handed()
     })
     .await;
 }
+
+#[tokio::test]
+async fn should_wake_a_waiting_producer_when_the_consumer_drops_the_stream() {
+    // A producer blocked on the outside world has no next `send` to learn from; the sink tells
+    // it directly that nothing will read another value, so `tail journal | take 1` stops
+    // reading the journal the moment `take` is satisfied.
+    within(async {
+        let (woke, awoken) = tokio::sync::oneshot::channel::<()>();
+        let stream = ValueStream::spawn(
+            PipelineConfig::new(),
+            Boundedness::Unbounded,
+            |sink| async move {
+                sink.closed().await;
+                let _ = woke.send(());
+            },
+        );
+        drop(stream);
+        awoken
+            .await
+            .expect("the producer observed the consumer going away");
+    })
+    .await;
+}

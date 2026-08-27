@@ -33,7 +33,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `container` | system | `—` | planned | A container, through an installed container provider. |
 | `namespace` | system | `—` | planned | A kernel namespace. Spec §8.3 lists a Kubernetes namespace under the same word; the two are distinguished by provider qualification — `get linux:namespace` and `get k8s:namespace`. |
 | `cgroup` | system | `—` | planned | A control group and its resource accounting. |
-| `journal` | system | `—` | planned | The structured system journal. |
+| `journal` | system | `ono.journal-event/1` | C | The structured system journal. |
 | `log` | system | `—` | planned | A log source, queried as records rather than parsed as text. |
 | `port` | system | `—` | C | A transport port, as the subject of a reachability test. |
 | `signal` | system | `—` | planned | A Unix signal, as the object a `send` or `kill` delivers. |
