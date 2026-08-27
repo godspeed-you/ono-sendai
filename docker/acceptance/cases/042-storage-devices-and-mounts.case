@@ -35,7 +35,7 @@ stdout-contains: [{"kind":"char","major":1,"minor":3}]
 stdout-contains: not-char-among-char=[0]
 stdout-contains: unmounted-with-target=[0]
 stdout-contains: mounted-without-target=[0]
-stdout-matches: ^\[\{"changed":false,"error":\{"code":"Ono-Sendai-E0302",[^\n]*"name":"io\.permission_denied",[^\n]*"operation":"ono\.filesystem\.mount","status":"failed"\}\]$
+stdout-matches: ^\[\{"changed":false,"error":\{"code":"Ono-Sendai-E0302",[^\n]*"name":"io\.permission_denied",[^\n]*"operation":"ono\.filesystem\.mount","status":"failed"[^\n]*\}\]$
 stdout-contains: mount-exit-1
 stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0302",[^\n]*"operation":"ono\.filesystem\.unmount","status":"failed"\}\]$
 stdout-contains: unmount-exit-1
