@@ -41,6 +41,10 @@ pub struct Management {
     /// The content hash recorded at install, which `verify plugin` re-checks (spec §31.36).
     #[serde(default)]
     pub integrity: Option<String>,
+    /// Whether the operator let a package with a background role run jobs no command created
+    /// (spec §31.38). Recorded; nothing in this build starts such jobs.
+    #[serde(default)]
+    pub background: bool,
 }
 
 const fn enabled_by_default() -> bool {
@@ -53,6 +57,7 @@ impl Default for Management {
             enabled: true,
             installed_from: None,
             integrity: None,
+            background: false,
         }
     }
 }
@@ -1315,6 +1320,7 @@ impl Host {
             enabled: true,
             installed_from: Some(source.to_owned()),
             integrity: Some(integrity_of(&installed)),
+            background: false,
         };
         self.write_management(&manifest.package.id, &management)?;
         Ok(installed)

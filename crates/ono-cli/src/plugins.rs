@@ -123,6 +123,21 @@ pub fn load_plugin_with(
         ));
     };
 
+    // `load` is a transition from `enabled` (lifecycle.v1): a package the operator disabled
+    // stays inert until `set plugin --enabled true`.
+    let management = session.with_kuang(|host| host.management(id));
+    if !management.enabled {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::SafetyPolicyDenied,
+                format!("`{id}` is disabled and is not loaded"),
+            )
+            .with_help(format!(
+                "`set plugin {id} --enabled true` makes it eligible again (spec §31.3)"
+            )),
+        ));
+    }
+
     // The policy is default-deny; what the user said on the command line is the only grant
     // (spec §31.18). A grant takes the scope the manifest asked for, never a wider one.
     let mut policy = ono_kuang_supervisor::Policy::deny_all();

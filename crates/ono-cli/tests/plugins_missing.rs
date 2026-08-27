@@ -670,7 +670,6 @@ fn should_refuse_to_install_a_version_that_is_already_installed() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_withdraw_contributions_when_a_package_is_unloaded() {
     let home = plugin_home();
     let run = ono(
@@ -717,7 +716,6 @@ fn should_withdraw_contributions_when_a_package_is_unloaded() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_disable_a_package_and_refuse_to_load_it() {
     let home = plugin_home();
     let run = ono(
@@ -771,7 +769,6 @@ fn should_disable_a_package_and_refuse_to_load_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_persist_enablement_across_sessions() {
     let home = plugin_home();
     ono(&home, &format!("set plugin {ECHO} --enabled false")).assert_success();

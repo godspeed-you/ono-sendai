@@ -202,6 +202,62 @@ impl SessionProvider {
         }
     }
 
+    /// `unload plugin` (lifecycle.v1 `unload`): the instance is shut down and its
+    /// contributions are withdrawn; a package that is not loaded is left as it is.
+    async fn unload_plugin(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let (id, _) = Self::plugin_identity(action)?;
+        if self.lock().kuang.instance(&id).is_none() {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("`{id}` is not loaded"),
+            ));
+        }
+        if action.is_dry_run() {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("would unload `{id}`"),
+            ));
+        }
+        Ok(ActionOutcome::succeeded(
+            action,
+            self.unload_instance(&id).await,
+        ))
+    }
+
+    /// `set plugin --enabled … --background …` (spec §31.3, §31.38): management state on disk,
+    /// with a disabled package unloaded first (lifecycle.v1 `disable`).
+    async fn set_plugin(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let (id, _) = Self::plugin_identity(action)?;
+        let mut management = self.lock().kuang.management(&id);
+        let before = management.clone();
+        if let Some(enabled) = action.argument("enabled") {
+            management.enabled = enabled.as_bool()?;
+        }
+        if let Some(background) = action.argument("background") {
+            management.background = background.as_bool()?;
+        }
+        if management == before {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("`{id}` already has these settings"),
+            ));
+        }
+        if action.is_dry_run() {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!(
+                    "would record enabled={} background={}",
+                    management.enabled, management.background
+                ),
+            ));
+        }
+        if !management.enabled {
+            self.unload_instance(&id).await;
+        }
+        self.lock().kuang.write_management(&id, &management)?;
+        Ok(ActionOutcome::succeeded(action, true))
+    }
+
     /// `remove plugin` (spec §31.81): a loaded instance is unloaded first, the directory is
     /// removed, and state is retained only when asked.
     async fn remove_plugin(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
@@ -323,6 +379,8 @@ impl Provider for SessionProvider {
             Capability::new("plugin.search", Risk::Read),
             Capability::new("plugin.inspect", Risk::Read),
             Capability::new("plugin.remove", Risk::Destructive),
+            Capability::new("plugin.unload", Risk::Mutate),
+            Capability::new("plugin.set", Risk::Mutate),
         ]
     }
 
@@ -387,6 +445,8 @@ impl Provider for SessionProvider {
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         match (action.target_name(), action.operation()) {
             ("plugin", "remove") => self.remove_plugin(action).await,
+            ("plugin", "unload") => self.unload_plugin(action).await,
+            ("plugin", "set") => self.set_plugin(action).await,
             (target, operation) => Err(ErrorValue::new(
                 ErrorCode::ProviderUnsupported,
                 format!("{PROVIDER_ID} does not `{operation}` a {target}"),
