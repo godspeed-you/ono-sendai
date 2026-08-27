@@ -373,6 +373,19 @@ impl ProviderMutation {
                 unresolved: None,
             })
             .collect();
+        // A name can answer for more than one kind of object — `root` is a user and a group,
+        // and one provider resolves both. When that happens, the kind the command acts on is
+        // the one its input type declares; a provider that answered with one kind is never
+        // second-guessed (ADR-0102).
+        let kinds = objects
+            .iter()
+            .map(|object| object.id.schema().to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+        if kinds.len() > 1
+            && let Some(accepted) = ctx.contract().input().element_schema()
+        {
+            objects.retain(|object| object.id.schema().to_string() == accepted);
+        }
         // A selector that names nothing is not an empty selection: the user asked to act on
         // one particular thing, and that thing is still the target (spec §16.5, ADR-0068 §2).
         // Whether it exists is the provider's to say — a creation names what does not exist
@@ -467,7 +480,8 @@ async fn collect_content(mut input: ValueStream, spelling: &str) -> Result<Value
 /// Whether a verb creates the object it names rather than acting on one that exists.
 ///
 /// `docs/spec/verbs.yaml`: `add` is "Create a membership or association", `mount` is "Attach a
-/// filesystem or resource" — both name something that is not there yet.
+/// filesystem or resource" — both name something that is not there yet (ADR-0098 §1,
+/// ADR-0102 §1).
 fn creates(verb: &str) -> bool {
     matches!(verb, "add" | "mount")
 }

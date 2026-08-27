@@ -1,0 +1,76 @@
+# Session. Derived from spec §9.1 Identity — `get session` "enumerates local/login/session objects"
+# as `Stream<Session>` — and from the `session` row of §8.1. The spec names no fields, so these
+# are the properties systemd-logind publishes for a session on `org.freedesktop.login1.Session`
+# (ADR-0100), reduced to what identifies the session and says who holds it, where, and how.
+# Identity is the session id logind assigns; the holder is a `ref<ono.user/1>` so that
+# `select user.uid` works without a second lookup and an unresolved name keeps its uid (§23.6).
+id: ono.session/1
+name: Session
+summary: A login session as the session manager tracks it.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The session id the session manager assigned; stable for the session's lifetime.
+  user:
+    type: ref<ono.user/1>
+    required: true
+    doc: The user holding the session, referenced by uid and, where it resolves, name.
+  seat:
+    type: string
+    nullable: true
+    doc: The seat the session is attached to (`seat0`); null for a session with no seat, such as an SSH login.
+  tty:
+    type: string
+    nullable: true
+    doc: The controlling terminal, where the session has one.
+  display:
+    type: string
+    nullable: true
+    doc: The X11 display, where the session has one.
+  type:
+    type: enum
+    values: [tty, x11, wayland, mir, web, unspecified]
+    nullable: true
+    doc: What kind of session it is; null when the session manager did not say.
+  class:
+    type: string
+    nullable: true
+    doc: >-
+      The session class the manager assigns — `user`, `greeter`, `lock-screen`, `background`,
+      `manager`. A string rather than an enum because the set is the manager's, not Ono's.
+  state:
+    type: enum
+    values: [online, active, closing, unknown]
+    nullable: true
+    doc: >-
+      `online` when logged in but not in the foreground, `active` when in the foreground of its
+      seat, `closing` when the session is being torn down; `unknown` for a state the provider
+      does not model.
+  remote:
+    type: bool
+    nullable: true
+    doc: Whether the session was opened from another host.
+  remote_host:
+    type: string
+    nullable: true
+    doc: The host a remote session came from, as the manager recorded it.
+  service:
+    type: string
+    nullable: true
+    doc: The PAM service that opened the session (`sshd`, `login`, `gdm-password`).
+  leader:
+    type: int
+    nullable: true
+    doc: The pid of the session leader; null when the manager reports none.
+  scope:
+    type: string
+    nullable: true
+    doc: The service-manager scope unit the session's processes run in (`session-2.scope`).
+  since:
+    type: timestamp
+    nullable: true
+    doc: When the session was opened.
+default_view:
+  columns: [id, user, seat, tty, type, state, since]

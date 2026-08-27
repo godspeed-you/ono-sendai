@@ -6,7 +6,9 @@
 //! `org.freedesktop.systemd1` — `Manager.ListUnits`, `Manager.LoadUnit` and
 //! `org.freedesktop.DBus.Properties.GetAll` — and from nowhere else (spec §50).
 //!
-//! The crate also carries the [`JournalProvider`] for the `journal` and `log` targets. The
+//! The crate also carries the [`SessionProvider`] for the `session` target — login sessions from
+//! systemd-logind, `org.freedesktop.login1` over the same bus (ADR-0100) — and the
+//! [`JournalProvider`] for the `journal` and `log` targets. The
 //! journal has no D-Bus surface; that provider runs `journalctl --output=json` — the machine
 //! format systemd documents — through the decoder of the v0.3 systemd adapter pack (ADR-0085).
 //!
@@ -55,11 +57,16 @@
 mod bus;
 mod dbus;
 mod journal;
+mod logind;
 mod provider;
 mod record;
 
 pub use bus::{BusError, JobKind, SystemdBus, UnitListing, UnitProperties};
 pub use dbus::SystemBus;
 pub use journal::{JOURNAL_PROVIDER_ID, JournalProvider};
+pub use logind::{
+    LoginBus, LoginSystemBus, SESSION_PROVIDER_ID, SessionListing, SessionProperties,
+    SessionProvider,
+};
 pub use provider::{PROVIDER_ID, SystemdProvider};
 pub use record::{service_schema, unit_name_candidates};

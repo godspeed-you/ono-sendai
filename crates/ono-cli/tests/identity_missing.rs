@@ -130,7 +130,6 @@ fn assert_failed_for_lack_of_privilege(run: &ono_testkit::Run, operation: &str) 
 // --- get session ------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_enumerate_sessions_as_a_list_when_asked() {
     // Spec §9.1: `get session` enumerates local/login/session objects as `Stream<Session>`. An
     // unprivileged container may have none — the shape is asserted only for what is there, but
@@ -160,7 +159,6 @@ fn should_enumerate_sessions_as_a_list_when_asked() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restrict_sessions_to_one_user_when_the_user_option_is_given() {
     // identity.yaml `ono.session.get` option `--user ref<ono.user/1>`: only that user's sessions.
     let run = ono("get session --user root | to json");
@@ -183,7 +181,6 @@ fn should_restrict_sessions_to_one_user_when_the_user_option_is_given() {
 // --- add / remove / set user ---------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_adding_a_user_unprivileged() {
     require_unprivileged();
     let run = ono("add user testuser-ono --shell /bin/false | to json");
@@ -191,7 +188,6 @@ fn should_report_a_failed_action_result_when_adding_a_user_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_not_create_the_account_when_adding_a_user_fails() {
     require_unprivileged();
     // The attempt is honest about its outcome: nothing appears in the account database.
@@ -212,7 +208,6 @@ fn should_not_create_the_account_when_adding_a_user_fails() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_removing_a_user_unprivileged() {
     require_unprivileged();
     let run = ono("remove user root | to json");
@@ -220,7 +215,6 @@ fn should_report_a_failed_action_result_when_removing_a_user_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_structured_not_found_when_removing_a_user_that_does_not_exist() {
     require_unprivileged();
     // A selector nothing answers to is a resolution failure (E0102) or, per target, `io.not_found`
@@ -244,7 +238,6 @@ fn should_report_a_structured_not_found_when_removing_a_user_that_does_not_exist
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_setting_a_users_shell_unprivileged() {
     require_unprivileged();
     let run = ono("set user root --shell /bin/false | to json");
@@ -252,7 +245,6 @@ fn should_report_a_failed_action_result_when_setting_a_users_shell_unprivileged(
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_leave_the_account_unchanged_when_setting_a_user_fails() {
     require_unprivileged();
     let before = last_json(&ono("get user root | select shell | to json"));
@@ -269,7 +261,6 @@ fn should_leave_the_account_unchanged_when_setting_a_user_fails() {
 // --- add / remove / set group --------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_adding_a_group_unprivileged() {
     require_unprivileged();
     let run = ono("add group testgroup-ono | to json");
@@ -277,7 +268,6 @@ fn should_report_a_failed_action_result_when_adding_a_group_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_adding_a_member_to_a_group_unprivileged() {
     require_unprivileged();
     // identity.yaml `ono.group.add --member`: extends an existing group instead of creating one.
@@ -295,7 +285,6 @@ fn should_report_a_failed_action_result_when_adding_a_member_to_a_group_unprivil
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_removing_a_group_unprivileged() {
     require_unprivileged();
     let run = ono("remove group root | to json");
@@ -303,7 +292,6 @@ fn should_report_a_failed_action_result_when_removing_a_group_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_failed_action_result_when_setting_a_group_id_unprivileged() {
     require_unprivileged();
     let run = ono("set group root --gid 999 | to json");
@@ -311,7 +299,6 @@ fn should_report_a_failed_action_result_when_setting_a_group_id_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_leave_the_group_unchanged_when_setting_a_group_fails() {
     require_unprivileged();
     let run = ono("set group root --gid 999 | to json; get group root | select gid | to json");

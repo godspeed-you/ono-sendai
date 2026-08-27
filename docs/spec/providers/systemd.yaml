@@ -17,3 +17,11 @@ providers:
     targets: [journal, log]
     capabilities: [log.read]
     schemas: [ono.journal-event/1, ono.log-record/1]
+
+  - id: systemd-logind
+    doc: >-
+      Login sessions, from org.freedesktop.login1 over D-Bus (ADR-0100). Registered even when no
+      login manager answers: that is `provider.unavailable` with the reason, not "no sessions".
+    targets: [session]
+    capabilities: [session.list]
+    schemas: [ono.session/1]

@@ -15,9 +15,6 @@ deferred:
   - id: ono.measure/1
     phase: "B"
     required_by: [ono.data.measure]
-  - id: ono.session/1
-    phase: "C"
-    required_by: [ono.session.get]
   - id: ono.execution-plan/1
     phase: "D"
     required_by: [ono.meta.explain]
