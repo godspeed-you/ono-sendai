@@ -162,8 +162,8 @@ targets:
     name: package
     category: system
     summary: An installed or available package, through a package provider.
-    schema: null
-    phase: planned
+    schema: ono.package/1
+    phase: C
   - id: ono.target.kernel
     name: kernel
     category: system

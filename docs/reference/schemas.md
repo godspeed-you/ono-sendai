@@ -801,6 +801,22 @@ Default view: `pid`, `process`, `fd`, `kind`, `name`
 | `name` | `string` | — | required | What lsof prints in its NAME column — a path, a socket endpoint, a device. |
 | `path` | `path` | — | nullable | The name as a path, when the kind is a filesystem object. |
 
+## Package — `ono.package/1`
+
+A package the active package manager knows, installed or available.
+
+Identity: `provider`, `name`
+
+Default view: `name`, `version`, `installed`, `description`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `name` | `string` | — | required | The package name, as the manager spells it. |
+| `version` | `string` | — | nullable | The installed version; null for a package that is known but not installed. |
+| `installed` | `bool` | — | nullable | Whether the package is installed. Null when the manager could not say — never a guess (spec §35.3). |
+| `description` | `string` | — | nullable | The manager's one-line description, where the query that produced the record carried one. |
+| `provider` | `string` | — | required | The package manager that answered, such as `dpkg`; part of the identity. |
+
 ## PluginAuditEvent — `ono.plugin-audit-event/1`
 
 One capability-sensitive action a KUANG/11 package took, or was refused.

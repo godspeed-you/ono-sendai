@@ -27,7 +27,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `session` | system | `—` | C | A login or seat session. |
 | `env` | system | `ono.env-var/1` | C | The environment, as records rather than as a flat string namespace. |
 | `command` | system | `—` | D | A native or external command and its metadata, as discoverable data. |
-| `package` | system | `—` | planned | An installed or available package, through a package provider. |
+| `package` | system | `ono.package/1` | C | An installed or available package, through a package provider. |
 | `kernel` | system | `—` | planned | The running kernel, its version and its parameters. |
 | `module` | system | `—` | planned | A loaded kernel module. |
 | `container` | system | `ono.container/1` | C | A container, through an installed container provider. |

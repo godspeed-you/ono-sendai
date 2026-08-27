@@ -105,7 +105,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   Increment 2 done: start/stop/restart/remove/set container as engine requests, the engine's
   status as the per-target outcome (8 tests green, ADR-0113). Increment 3 done: `enter
   container` as a `container` frame, `watch container` over the engine listing, `trace
-  container` with the exact `image` edge (4 tests green, ADR-0114).
+  container` with the exact `image` edge (4 tests green, ADR-0114). Increment 4 done:
+  `linux.packages` — `get package`/`find package` from `dpkg-query -W -f` and `apt-cache
+  search`, E0401 naming dpkg and rpm, E0403 for a listing outside the machine format (5 tests
+  green, ADR-0115).
 
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch

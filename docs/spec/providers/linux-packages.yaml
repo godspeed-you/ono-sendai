@@ -1,0 +1,14 @@
+# The provider that answers from the package manager found on PATH, through its machine formats
+# only (spec §31.58, ADR-0115): `dpkg-query -W -f` for the installed set, `apt-cache search` for
+# the repositories, `apt-get` and `apt-mark` for changes. Registered even where no manager is
+# on PATH: unavailability naming what was looked for is a different answer from "there are no
+# packages" (spec §35.3). See linux-procfs.yaml for what this registry is and what enforces it.
+
+providers:
+  - id: linux.packages
+    doc: >-
+      Packages, from dpkg and apt. A listing that is not in the declared machine format is a
+      provider defect (E0403), never a source of invented records.
+    targets: [package]
+    capabilities: [package.list, package.search]
+    schemas: [ono.package/1]

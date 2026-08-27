@@ -3489,7 +3489,7 @@ Enumerate installed and known packages through the active provider.
 |---|---|
 | id | `ono.package.get` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null` |
 | output | `stream<ono.package/1>` |
 | provider capability | `package.list` |
@@ -3524,7 +3524,7 @@ Search the provider's repositories.
 |---|---|
 | id | `ono.package.find` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null` |
 | output | `stream<ono.package/1>` |
 | provider capability | `package.search` |
@@ -3557,7 +3557,7 @@ Install a package.
 |---|---|
 | id | `ono.package.add` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.package/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `package.manage` |
@@ -3590,7 +3590,7 @@ Remove a package.
 |---|---|
 | id | `ono.package.remove` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.package/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `package.manage` |
@@ -3623,7 +3623,7 @@ Request a version transition where the provider supports it.
 |---|---|
 | id | `ono.package.set` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.package/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `package.manage` |

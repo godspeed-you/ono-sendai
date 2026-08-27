@@ -1,0 +1,34 @@
+# Canonical Package schema. Source: spec §9.1 Package (`Stream<Package>`). The fields are what
+# the package manager's machine format reports — `dpkg-query -W -f '${Package}\t${Version}\t
+# ${Status}\n'` and `apt-cache search` — never its human listings (spec §31.58, ADR-0115).
+# Identity is `provider + name`, as a service's is: a machine can carry more than one package
+# database and a name alone does not say which one answered.
+id: ono.package/1
+name: Package
+summary: A package the active package manager knows, installed or available.
+identity: [provider, name]
+fields:
+  name:
+    type: string
+    required: true
+    doc: The package name, as the manager spells it.
+  version:
+    type: string
+    nullable: true
+    doc: The installed version; null for a package that is known but not installed.
+  installed:
+    type: bool
+    nullable: true
+    doc: >-
+      Whether the package is installed. Null when the manager could not say — never a guess
+      (spec §35.3).
+  description:
+    type: string
+    nullable: true
+    doc: The manager's one-line description, where the query that produced the record carried one.
+  provider:
+    type: string
+    required: true
+    doc: The package manager that answered, such as `dpkg`; part of the identity.
+default_view:
+  columns: [name, version, installed, description]

@@ -816,7 +816,6 @@ fn ono_with_path(bin: &Path, script: &str) -> ono_testkit::Run {
 // --- packages: enumeration and search ----------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_provider_unavailable_when_no_package_manager_is_on_the_path() {
     let directory = scratch();
     let empty = directory.path().join("empty-bin");
@@ -835,7 +834,6 @@ fn should_report_provider_unavailable_when_no_package_manager_is_on_the_path() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_installed_packages_when_dpkg_query_answers_in_its_machine_format() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -862,7 +860,6 @@ fn should_list_installed_packages_when_dpkg_query_answers_in_its_machine_format(
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_one_package_when_getting_it_by_name() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -888,7 +885,6 @@ fn should_resolve_one_package_when_getting_it_by_name() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_search_the_repositories_when_finding_a_package() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -909,7 +905,6 @@ fn should_search_the_repositories_when_finding_a_package() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_schema_violation_when_the_manager_prints_garbage() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::Garbage);

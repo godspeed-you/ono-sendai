@@ -177,6 +177,11 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             "ono.file.write",
             "ono.filesystem.mount",
             "ono.filesystem.unmount",
+            // A provider delivers the package mutations by advertising `package.manage`
+            // (ADR-0068 §3); a table built without providers binds none of them.
+            "ono.package.add",
+            "ono.package.remove",
+            "ono.package.set",
             // ADR-0020 §9: setting a variable changes the session's own scope, which the
             // evaluator owns.
             "ono.env.set",
