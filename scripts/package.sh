@@ -7,8 +7,9 @@
 # The binary is always built inside a container, never with the host toolchain, so the glibc
 # a package requires is the one of the build image and not of whichever machine ran the script:
 # the host's own target builds in the acceptance image base (`rust:1.94-slim-bookworm`, glibc
-# 2.36), a foreign target in cross's toolchain image for it. Both go through `cross`, which
-# mounts the pinned toolchain of rust-toolchain.toml into the container.
+# 2.36) run directly, a foreign target in cross's toolchain image for it. The native build does
+# not go through `cross`: cross installs an `x86_64` toolchain inside whatever image it runs,
+# which fails on an arm64 runner where the image and the target are aarch64 (ADR-0123).
 #
 # usage: scripts/package.sh [--target <triple>] [--no-build]
 #   --target    x86_64-unknown-linux-gnu (default: the host) or aarch64-unknown-linux-gnu
@@ -52,15 +53,33 @@ export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}"
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
 if [[ $no_build -eq 0 ]]; then
-  if ! command -v cross >/dev/null 2>&1; then
-    echo "package: cross is not installed — cargo install --locked cross" >&2
-    exit 127
-  fi
   if [[ "$target" == "$host_triple" ]]; then
     step "building ono for $target in $BUILD_IMAGE"
-    image_var="CROSS_TARGET_$(echo "$target" | tr 'a-z-' 'A-Z_')_IMAGE"
-    export "$image_var=$BUILD_IMAGE"
+    runtime=""
+    for candidate in docker podman; do
+      if command -v "$candidate" >/dev/null 2>&1; then runtime="$candidate"; break; fi
+    done
+    if [[ -z "$runtime" ]]; then
+      echo "package: neither docker nor podman is available" >&2
+      exit 127
+    fi
+    # The image is multi-architecture, so this is the same command on an x86_64 and on an
+    # arm64 runner. Cargo writes as the invoking user into a cache under target/, so nothing
+    # the container leaves behind is root's.
+    "$runtime" run --rm \
+      --user "$(id -u):$(id -g)" \
+      --volume "$PWD:/project" \
+      --workdir /project \
+      --env CARGO_HOME=/project/target/container-cargo \
+      --env CARGO_INCREMENTAL=0 \
+      --env "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" \
+      "$BUILD_IMAGE" \
+      cargo build --release --locked --target "$target" --package ono-cli
   else
+    if ! command -v cross >/dev/null 2>&1; then
+      echo "package: cross is not installed — cargo install --locked cross" >&2
+      exit 127
+    fi
     step "building ono for $target in cross's toolchain image"
     cat <<NOTE
 package: $target is foreign to this $host_triple host. The packages will carry the right
@@ -68,8 +87,8 @@ architecture and binary, but dpkg-shlibdeps and ldd cannot read a foreign ELF, s
 dependencies stay undeclared; the packages a release ships are built on a native runner
 (ADR-0123, .github/workflows/release.yml).
 NOTE
+    cross build --release --locked --target "$target" --package ono-cli
   fi
-  cross build --release --locked --target "$target" --package ono-cli
 fi
 
 binary="target/$target/release/ono"
