@@ -680,14 +680,17 @@ fn should_pop_the_interface_frame_when_leaving() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_enter_an_interface_that_does_not_exist() {
-    let run = ono("enter interface ono-definitely-not-an-interface0; get context | to json");
+    // On its own, the refused `enter` is the script's last statement and its status is the
+    // script's; followed by another statement, the script continues — `-c 'a; b'` exits with
+    // `b`'s status in this shell as in every other — and the stack is still shown.
+    let alone = ono("enter interface ono-definitely-not-an-interface0");
     assert!(
-        !run.status().is_success(),
+        !alone.status().is_success(),
         "entering nothing must fail, got {:?}",
-        run.output()
+        alone.output()
     );
+    let run = ono("enter interface ono-definitely-not-an-interface0; get context | to json");
     assert!(
         run.stderr().contains("Ono-Sendai-E0102"),
         "the refusal is `resolve.target_not_found` for the named interface — the same answer \
