@@ -1,0 +1,116 @@
+# PluginInspection. Source: spec §31.33 (what `inspect plugin` shows, item for item), §31.1
+# (the contributes/requests display), §31.64 (origin), §31.36 (verification), §31.15 (quotas).
+# Output of `inspect plugin` (`docs/spec/commands/kuang.yaml` → `ono.plugin.inspect`).
+#
+# `inspect` is the detailed view (spec §9.1), so this record is deliberately wide: it is the one
+# place an operator can answer "what is this thing, what did it ask for, what did it get, and
+# what is it doing with it" without reading four other commands.
+id: ono.plugin-inspection/1
+name: PluginInspection
+summary: Everything Ono knows about one installed package — manifest, contributions, grants, health.
+identity: [plugin]
+fields:
+  plugin:
+    type: ref<ono.plugin/1>
+    required: true
+    doc: The package version being inspected.
+  manifest:
+    type: record
+    required: true
+    doc: >-
+      The validated manifest, as parsed. Its shape is `docs/spec/kuang/manifest.v1.yaml`. Present
+      even for a package that has never been loaded, which is the point of manifest-before-code.
+  origin:
+    type: enum
+    required: true
+    values: [core, plugin, remote-provider]
+    doc: >-
+      Where the contributions came from (spec §31.64). `plugin` for anything installed locally;
+      `remote-provider` for a component projected across a link.
+  contributions:
+    type: record
+    required: true
+    doc: >-
+      What the package contributes, resolved: command ids, schema ids, target names, view ids,
+      relation shapes and annotation keys. Spec §31.1: every line is backed by a manifest field
+      or a resolved dependency, never by marketing metadata.
+  capability_grants:
+    type: list<ono.capability-grant/1>
+    required: true
+    doc: Every grant and lease the package currently holds, with scope, duration and source. Empty when it holds none.
+  capability_requests:
+    type: list<record>
+    required: true
+    doc: >-
+      Every capability the package asks for, as `{capability, class, scope, roles, purpose,
+      state}` where `state` is `granted`, `denied` or `not-requested-yet`. This is the display
+      spec §31.1 shows under `requests` and `optional`.
+  verification:
+    type: ono.verification-result/1
+    required: true
+    doc: "The most recent verification: integrity, signature, publisher, transparency, compatibility, runtime."
+  runtime:
+    type: ono.plugin-runtime/1
+    nullable: true
+    doc: The negotiated contract of the running instance. Null when nothing is loaded — not an empty record.
+  memory_current:
+    type: bytesize
+    nullable: true
+    doc: Instance memory now. Null when nothing is loaded.
+  memory_limit:
+    type: bytesize
+    required: true
+    doc: The effective memory ceiling, whether or not an instance exists.
+  cpu_time:
+    type: duration
+    nullable: true
+    doc: CPU consumed by the current instance. Null when nothing is loaded.
+  host_calls:
+    type: int
+    required: true
+    doc: Host calls made by the current instance, cumulative. Zero when nothing is loaded.
+  open_streams:
+    type: int
+    required: true
+    doc: Streams the instance currently holds open (spec §31.33).
+  queued_events:
+    type: int
+    required: true
+    doc: Events waiting in the instance's bounded queues (spec §31.15).
+  dropped_events:
+    type: int
+    required: true
+    doc: >-
+      Events lost to a lossy overflow policy, cumulative. Zero is a real answer and means
+      nothing was lost; data loss is never invisible (spec §31.15, §31.33).
+  last_error:
+    type: ono.error/1
+    nullable: true
+    doc: The most recent structured error from this package. Null when it has produced none.
+  restart_count:
+    type: int
+    required: true
+    doc: How often the supervisor has restarted the instance in this session (spec §31.34).
+  network_destinations:
+    type: list<record>
+    required: true
+    doc: >-
+      Destinations the package has actually reached, as `{host, port, protocol, count,
+      last_at}`, alongside what it declared. Spec §31.21 lists auditing destinations as one of
+      the reasons network access is brokered at all.
+  state_usage:
+    type: bytesize
+    nullable: true
+    doc: Persistent state in use. Null when the package declares no persistent state.
+  state_quota:
+    type: bytesize
+    nullable: true
+    doc: The effective persistent-state ceiling. Null when the package declares no persistent state.
+  jobs:
+    type: list<record>
+    required: true
+    doc: >-
+      The invocations currently running, as `{invocation, kind, command, started_at}` where
+      `kind` is `command`, `view`, `stream`, `analysis` or `assistant-turn`. Empty when idle.
+default_view:
+  columns: [plugin, origin, memory_current, open_streams, restart_count, last_error]

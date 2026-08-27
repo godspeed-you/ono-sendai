@@ -1,0 +1,26 @@
+# Group. Derived from spec §9.1 Identity — `get group [name|gid]` yields `Stream<Group>` — and
+# from the `GroupRef` fields of §28.1, §28.2 and §28.7, which require a Group to refer to.
+# Identity is the gid, mirroring User (§28.7); §23.6 requires the numeric identity to survive an
+# unresolvable name, so `name` is nullable and `gid` is not.
+id: ono.group/1
+name: Group
+summary: A group account.
+identity: [gid]
+fields:
+  gid:
+    type: int
+    required: true
+    doc: The numeric group id. Always present, even when no name resolves for it.
+  name:
+    type: string
+    nullable: true
+    doc: The group name; null when the identity provider cannot resolve the gid.
+  members:
+    type: list<string>
+    nullable: true
+    doc: >-
+      Login names listed as supplementary members. Names rather than user references, because
+      the account database stores names and they need not resolve to an account. Users whose
+      primary group this is are not listed here; null when the provider cannot enumerate them.
+default_view:
+  columns: [gid, name, members]

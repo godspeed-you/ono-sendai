@@ -11,8 +11,9 @@ duplicate rules here — if a rule needs to change, change it in `AGENTS.md`.
 ## The short version (full rules in AGENTS.md)
 
 - **Project:** Ono-Sendai (binary: `ono`), an object-pipeline shell in Rust. Narrative spec:
-  `docs/ono_sendai_shell_spec_v0.2.md` (normative MUST/SHOULD/MAY). Machine-readable contracts live
-  in `docs/spec/`.
+  `docs/ono_sendai_shell_spec_v0.2.md` (normative MUST/SHOULD/MAY), plus the enhancement specs
+  layered on it that AGENTS.md §5.2 enumerates — all equally immutable. Machine-readable contracts
+  live in `docs/spec/`.
 - **Naming:** the product is **Ono-Sendai**, the short name and binary is **`ono`**, crates are
   `ono-*`. **KUANG/11** is a different thing — the extension runtime of spec §31, not an old
   name for the shell. `kuang` belongs only in KUANG/11 context (AGENTS.md §3).

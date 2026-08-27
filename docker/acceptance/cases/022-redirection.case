@@ -1,0 +1,22 @@
+# Phase A: redirection, including the descriptor forms, and a redirection that cannot be opened
+# reported before the command runs rather than by the command failing oddly.
+case: redirection writes, appends, reads and folds the error stream
+run: |
+  cd /tmp
+  rm -f r1.txt r2.txt
+  ono -c 'echo first > /tmp/r1.txt'
+  ono -c 'echo second >> /tmp/r1.txt'
+  echo "--- file ---"; cat /tmp/r1.txt
+  ono -c 'wc -l < /tmp/r1.txt'
+  ono -c 'sh -c "echo to-err >&2" 2>&1'
+  ono -c 'sh -c "echo out; echo err >&2" > /tmp/r2.txt' 2>/dev/null
+  echo "--- only stdout was captured ---"; cat /tmp/r2.txt
+  ono -c 'sh -c "touch /tmp/must-not-exist" < /definitely/not/here' 2>&1 | head -1
+  test -e /tmp/must-not-exist && echo "COMMAND RAN ANYWAY" || echo "command did not run"
+exit: 0
+stdout-contains: first
+stdout-contains: second
+stdout-contains: to-err
+stdout-contains: Ono-Sendai-E0301
+stdout-contains: command did not run
+stdout-not-contains: COMMAND RAN ANYWAY

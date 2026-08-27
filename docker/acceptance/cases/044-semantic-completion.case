@@ -1,0 +1,16 @@
+# Phase D (spec §37): completion is semantic — candidates come from the registries, not from a
+# wordlist. `get proc<TAB>` completes to the declared target `process` because the contract says
+# `get` takes one, and the completed pipeline then actually runs.
+case: completion answers from the registries on a real terminal
+pty: true
+columns: 100
+lines: 30
+timeout: 60
+stdin: |
+  get proc	 | count
+  exit
+run: |
+  ono
+exit: 0
+stdout-contains: get process
+stdout-contains: VALUE

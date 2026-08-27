@@ -1,0 +1,23 @@
+# GraphNode. Source: spec §22.1's `Node` record. A structural sub-record of ono.graph/1, so it
+# carries no identity of its own — `id` is the identity of the object the node stands for.
+id: ono.graph-node/1
+name: GraphNode
+summary: One object in a relationship graph.
+identity: []
+fields:
+  id:
+    type: value
+    required: true
+    doc: A reference to the object this node stands for; unique within the graph.
+  kind:
+    type: string
+    required: true
+    doc: The schema id of the object, e.g. `ono.process/1`, so a renderer can label it.
+  value:
+    type: record
+    required: true
+    doc: >-
+      A summary of the object's fields — enough to render a row without a second query, not the
+      whole record.
+default_view:
+  columns: [id, kind]

@@ -1,0 +1,131 @@
+# Plugin. Source: spec §31.8 (the state model and the `get plugin` table), §31.5 (identity),
+# §31.10 (isolation tiers), §31.36 (trust), §31.33 (runtime health). Output of `get plugin`
+# (`docs/spec/commands/kuang.yaml` → `ono.plugin.get`).
+#
+# ADR-0022: identity is `[id, version]`, not `[id]`. Spec §31.35 wants side-by-side installed
+# versions with one active per scope, and §31.81's removal shows two versions of one package;
+# an identity of `[id]` alone cannot represent that, and would make two installed versions the
+# same object.
+#
+# ADR-0022: the fourth state is `active`, not `running`. Spec §31.8's state machine writes ACTIVE
+# and its definitions define "Active"; "run" appears only in that section's heading.
+id: ono.plugin/1
+name: Plugin
+summary: One installed version of a KUANG/11 package, and what it is currently doing.
+identity: [id, version]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The immutable, publisher-namespaced package id, e.g. `dev.example.packet-eye` (spec §31.5).
+  name:
+    type: string
+    required: true
+    doc: The display name. Mutable between releases and not globally unique; `id` is what identifies.
+  version:
+    type: string
+    required: true
+    doc: This installed version. Part of the identity, because several may be installed at once.
+  publisher:
+    type: string
+    required: true
+    doc: The publisher namespace `id` begins with.
+  state:
+    type: enum
+    required: true
+    values: [installed, enabled, loaded, active, degraded, quarantined]
+    doc: >-
+      The lifecycle state of spec §31.8. `installed` and `enabled` mean no code of this package
+      has run. See `docs/spec/kuang/lifecycle.v1.yaml` for the transitions.
+  trust:
+    type: enum
+    required: true
+    values: [signed, verified, local, unknown, untrusted]
+    doc: >-
+      What is known about who produced the artifact (spec §31.8's table, §31.36). `signed` means
+      a valid signature from a key this system does not vouch for; `verified` means a valid
+      signature from a trusted publisher; `local` is an unsigned development package;
+      `untrusted` is a package quarantined on trust grounds. It is a separate question from
+      `isolation`, deliberately (spec §31.36).
+  isolation:
+    type: enum
+    required: true
+    values: [core-built-in, trusted-native, isolated-component, remote-service]
+    doc: >-
+      What the code can do even if it is not trusted — the tiers of spec §31.10. A package
+      cannot declare `core-built-in`.
+  roles:
+    type: list<string>
+    required: true
+    doc: The extension roles of spec §31.4 the package declares, at least one.
+  enabled:
+    type: bool
+    required: true
+    doc: >-
+      Whether policy makes it eligible for loading. Distinct from `state`, which says what is
+      happening now: a package can be enabled and unloaded, which is the normal resting state
+      under lazy loading (spec §31.68).
+  active_version:
+    type: bool
+    required: true
+    doc: >-
+      Whether this is the version contributions currently resolve to. During an upgrade two
+      versions are installed and exactly one is active (spec §31.35).
+  source:
+    type: string
+    required: true
+    doc: The source reference the artifact was installed from, e.g. `registry:example/packet-eye@2.4.1` (spec §31.9).
+  integrity:
+    type: string
+    required: true
+    doc: The content hash recorded at install, e.g. `sha256:...`. Re-verified at load.
+  kuang_api:
+    type: string
+    required: true
+    doc: The host API range the package declares, e.g. `">=11.1 <12"` (spec §31.7, §31.62).
+  jobs:
+    type: int
+    required: true
+    doc: >-
+      How many invocations, streams, views or assistant turns are running. Zero for anything not
+      `active`. A count, never null: the host always knows this.
+  memory:
+    type: bytesize
+    nullable: true
+    doc: >-
+      Current instance memory. Null when nothing is loaded — which is not zero, because an
+      unloaded package has no instance to measure (spec §10.5).
+  state_usage:
+    type: bytesize
+    nullable: true
+    doc: Persistent state in use. Null when the package declares no persistent state.
+  degraded_reason:
+    type: string
+    nullable: true
+    doc: >-
+      Why the package is `degraded` — the optional capability or dependency that was denied or
+      is unavailable. Null in every other state.
+  quarantine_reason:
+    type: string
+    nullable: true
+    doc: Why the package is `quarantined` — integrity, signature, publisher trust or policy. Null in every other state.
+  installed_at:
+    type: timestamp
+    required: true
+    doc: When the artifact was installed and validated.
+  loaded_at:
+    type: timestamp
+    nullable: true
+    doc: When the current instance was loaded. Null when nothing is loaded.
+  restart_count:
+    type: int
+    required: true
+    doc: >-
+      How often the supervisor has restarted this package's instance in this session (spec
+      §31.34). A package that keeps restarting should be visible as one.
+  last_error:
+    type: ono.error/1
+    nullable: true
+    doc: The most recent structured error from this package. Null when it has produced none.
+default_view:
+  columns: [name, version, state, trust, jobs, memory]

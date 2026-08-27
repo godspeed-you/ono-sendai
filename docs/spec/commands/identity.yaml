@@ -1,0 +1,324 @@
+# Command family: Identity. Sources: spec §9.1 Identity and the `user` and `group` rows of the
+# §52 matrix. Schemas: `ono.user/1`, `ono.group/1`, `ono.env-var/1`.
+# §23.6 requires an unresolved id to keep its numeric identity, which is why every selector here
+# accepts either a name or a number. Conventions as documented at the head of process.yaml.
+
+version: 1
+family: identity
+
+commands:
+  - id: ono.user.get
+    verb: get
+    target: user
+    summary: Enumerate or resolve user accounts.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.user/1>
+    provider_capability: user.list
+    selectors:
+      - {name: name, type: string, doc: "Resolve one account by login name."}
+      - {name: uid, type: int, doc: "Resolve one account by numeric id."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get user
+      - get user postgres
+
+  - id: ono.group.get
+    verb: get
+    target: group
+    summary: Enumerate or resolve group accounts.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.group/1>
+    provider_capability: group.list
+    selectors:
+      - {name: name, type: string, doc: "Resolve one group by name."}
+      - {name: gid, type: int, doc: "Resolve one group by numeric id."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get group
+      - get group | where "postgres" in members
+
+  - id: ono.session.get
+    verb: get
+    target: session
+    summary: Enumerate local, login and seat sessions.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.session/1>
+    provider_capability: session.list
+    selectors: []
+    options:
+      - {name: user, type: "ref<ono.user/1>", doc: "Restrict to one user's sessions."}
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get session
+
+  - id: ono.env.get
+    verb: get
+    target: env
+    summary: Return environment values as records.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.env-var/1>
+    provider_capability: env.read
+    selectors:
+      - {name: name, type: string, doc: "Resolve one variable. `$env.NAME` is the expression form of the same data (ADR-0009)."}
+    options:
+      - {name: exported, type: bool, doc: "Restrict to variables that are or are not passed to child processes."}
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get env
+      - get env PATH
+
+  - id: ono.env.set
+    verb: set
+    target: env
+    summary: Set an environment variable in the current scope.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: env.set
+    selectors:
+      - {name: name, type: string, doc: "The variable to set."}
+      - {name: value, type: string, doc: "The value to set it to."}
+    options:
+      - {name: exported, type: bool, default: true, doc: "Whether child processes inherit it. A non-exported binding is what `let` produces (ADR-0009)."}
+    privilege: none
+    streaming: false
+    phase: C
+    examples:
+      - set env RUST_LOG debug
+
+  # --- account management, spec §52 `user` and `group` rows ---------------------------------
+  - id: ono.user.add
+    verb: add
+    target: user
+    summary: Create a user account.
+    stability: experimental               # spec §52, user/add = "M"
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: user.manage
+    selectors:
+      - {name: name, type: string, doc: "The login name to create."}
+    options:
+      - {name: uid, type: int, doc: "Numeric id to assign."}
+      - {name: home, type: path, doc: "Home directory."}
+      - {name: shell, type: path, doc: "Login shell."}
+      - {name: group, type: "ref<ono.group/1>", doc: "Primary group."}
+    privilege: elevated
+    streaming: false
+    phase: planned
+    examples:
+      - add user deploy --shell /usr/bin/ono
+
+  - id: ono.user.remove
+    verb: remove
+    target: user
+    summary: Remove a user account.
+    stability: experimental               # spec §52, user/remove = "M"
+    argument_mode: words
+    input: "null | stream<ono.user/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: user.manage
+    selectors:
+      - {name: name, type: string, doc: "The account to remove."}
+    options:
+      - {name: remove-home, type: bool, doc: "Delete the home directory too. Destructive, and therefore never the default."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - remove user deploy
+
+  - id: ono.user.set
+    verb: set
+    target: user
+    summary: Modify a user account.
+    stability: experimental               # spec §52, user/set = "M"
+    argument_mode: words
+    input: "null | stream<ono.user/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: user.manage
+    selectors:
+      - {name: name, type: string, doc: "The account to modify."}
+    options:
+      - {name: shell, type: path, doc: "New login shell."}
+      - {name: home, type: path, doc: "New home directory."}
+      - {name: group, type: "ref<ono.group/1>", doc: "New primary group."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - set user deploy --shell /usr/bin/ono
+
+  - id: ono.group.add
+    verb: add
+    target: group
+    summary: Create a group, or add a member to one.
+    stability: experimental               # spec §52, group/add = "M"; §7.1 gives `add` the "membership/association" semantics
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: group.manage
+    selectors:
+      - {name: name, type: string, doc: "The group to create or extend."}
+    options:
+      - {name: gid, type: int, doc: "Numeric id to assign."}
+      - {name: member, type: "ref<ono.user/1>", repeatable: true, doc: "Add this user as a member instead of creating the group."}
+    privilege: elevated
+    streaming: false
+    phase: planned
+    examples:
+      - add group docker --member deploy
+
+  - id: ono.group.remove
+    verb: remove
+    target: group
+    summary: Remove a group, or remove a member from one.
+    stability: experimental               # spec §52, group/remove = "M"
+    argument_mode: words
+    input: "null | stream<ono.group/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: group.manage
+    selectors:
+      - {name: name, type: string, doc: "The group to remove or shrink."}
+    options:
+      - {name: member, type: "ref<ono.user/1>", repeatable: true, doc: "Remove this member instead of the group."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - remove group docker --member deploy
+
+  - id: ono.group.set
+    verb: set
+    target: group
+    summary: Modify a group.
+    stability: experimental               # spec §52, group/set = "M"
+    argument_mode: words
+    input: "null | stream<ono.group/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: group.manage
+    selectors:
+      - {name: name, type: string, doc: "The group to modify."}
+    options:
+      - {name: gid, type: int, doc: "New numeric id."}
+    privilege: elevated
+    streaming: true
+    phase: planned
+    examples:
+      - set group docker --gid 999
+
+  # --- §52 matrix cells whose usefulness the spec asks to validate first --------------------
+  - id: ono.user.watch
+    verb: watch
+    target: user
+    summary: Emit account database changes as a live stream.
+    stability: planned                    # spec §52, user/watch = "L?"
+    validation_required: true
+    argument_mode: words
+    input: "null"
+    output: stream<ono.user-event/1>
+    provider_capability: user.list
+    selectors: []
+    options: []
+    privilege: none
+    streaming: true
+    phase: F
+    examples:
+      - watch user
+
+  - id: ono.user.trace
+    verb: trace
+    target: user
+    summary: Show a user's processes, sessions, groups and owned files.
+    stability: planned                    # spec §52, user/trace = "R?"
+    validation_required: true
+    argument_mode: words
+    input: "null | ono.user/1"
+    output: ono.graph/1
+    provider_capability: user.list
+    selectors:
+      - {name: name, type: string, doc: "The account to trace."}
+    options: []
+    privilege: conditional
+    streaming: false
+    phase: G
+    examples:
+      - trace user postgres
+
+  - id: ono.user.enter
+    verb: enter
+    target: user
+    summary: Push a user onto the context stack.
+    stability: planned                    # spec §52, user/enter = "C?"
+    validation_required: true
+    note: >-
+      Not a privilege change. Spec §17.2's elevated context is a separate mechanism and must
+      stay unmistakably distinct from entering a user object.
+    argument_mode: words
+    input: "null | ono.user/1"
+    output: ono.context/1
+    provider_capability: user.list
+    selectors:
+      - {name: name, type: string, doc: "The account to enter."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: E
+    examples:
+      - enter user postgres
+
+  - id: ono.group.watch
+    verb: watch
+    target: group
+    summary: Emit group database changes as a live stream.
+    stability: planned                    # spec §52, group/watch = "L?"
+    validation_required: true
+    argument_mode: words
+    input: "null"
+    output: stream<ono.group-event/1>
+    provider_capability: group.list
+    selectors: []
+    options: []
+    privilege: none
+    streaming: true
+    phase: F
+    examples:
+      - watch group
+
+  - id: ono.group.enter
+    verb: enter
+    target: group
+    summary: Push a group onto the context stack.
+    stability: planned                    # spec §52, group/enter = "C?"
+    validation_required: true
+    argument_mode: words
+    input: "null | ono.group/1"
+    output: ono.context/1
+    provider_capability: group.list
+    selectors:
+      - {name: name, type: string, doc: "The group to enter."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: E
+    examples:
+      - enter group docker

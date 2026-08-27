@@ -1,0 +1,91 @@
+# AssistantAction. Source: spec §31.47's proposed action list, §31.46 (typed tools, risk and
+# confirmation), §31.48 (what an autonomy level permits). Carried by
+# `ono.assistant-turn/1.proposed_actions`.
+#
+# ADR-0022: spec §31.47 shows the proposal as a numbered list with `[mutating]` markers and does
+# not name a type for it. Typing the field `record` would discard the contract (ADR-0012 §13),
+# so the schema is written here (ADR-0022 §12).
+#
+# The distinction this schema encodes, from spec §31.47: a proposed action is *not* an execution
+# plan. It is what the model asked for. Ono turns a chosen proposal into a concrete
+# `ono.execution-plan/1`, resolving object identities again at that point — "the model does not
+# get to treat its stale object reference as authority".
+#
+# A structural sub-record, so no identity (ADR-0012 §9).
+id: ono.assistant-action/1
+name: AssistantAction
+summary: One step an assistant proposed, with what it would cost and whether it has been taken.
+identity: []
+fields:
+  index:
+    type: int
+    required: true
+    doc: The step's position in the proposal, as spec §31.47 numbers them, so `run 1-2` means something.
+  tool:
+    type: string
+    required: true
+    doc: >-
+      The tool or command id the model requested, e.g. `ono.service.restart`. It must be one the
+      host exposed for this turn; anything else is `assistant.tool_invalid` and never reaches a
+      proposal (`assistants.v1.yaml` → `authority_invariants.tools-are-declared`).
+  arguments:
+    type: record
+    required: true
+    doc: >-
+      The structured arguments the model supplied, already validated against the tool's
+      descriptor. There is no command line here: an assistant never composes shell text.
+  summary:
+    type: string
+    required: true
+    doc: One line, what the step would do, e.g. `restart service nginx`.
+  subject:
+    type: value
+    nullable: true
+    doc: >-
+      A reference to the object the step would act on, as it was when proposed. Re-resolved at
+      execution time; a subject that changed identity in between refuses rather than acts
+      (ADR-0015 T12).
+  mutating:
+    type: bool
+    required: true
+    doc: >-
+      Whether it would change anything outside the shell — spec §31.47's `[mutating]` marker.
+      Required even when false, so "this only looks" is stated rather than inferred.
+  risk:
+    type: enum
+    nullable: true
+    values: [read, observe, mutate, destructive]
+    doc: >-
+      From `risk_levels` in `docs/spec/capabilities.yaml`. Required whenever `mutating` is true;
+      spec §31.75 flags a mutation tool without risk metadata as a static-analysis finding.
+  capability:
+    type: string
+    required: true
+    doc: The capability the step would cost, checked against the assistant's grants before anything runs.
+  confirmation:
+    type: enum
+    required: true
+    values: [never, policy, always]
+    doc: Whether the operator confirms, from the tool's descriptor (spec §31.46).
+  evidence:
+    type: list<ono.evidence/1>
+    required: true
+    doc: >-
+      Why the assistant proposes it. Empty is allowed for an obvious read-only check; a mutating
+      step with no evidence is a proposal an operator has no basis to judge, and reads as one.
+  status:
+    type: enum
+    required: true
+    values: [proposed, approved, executed, refused, failed, skipped]
+    doc: >-
+      Where the step stands. `proposed` is the resting state and the default: spec §31.47 says an
+      assistant proposes rather than silently executes. `refused` means the operator declined;
+      `skipped` means an earlier step made it unnecessary.
+  result:
+    type: ono.action-result/1
+    nullable: true
+    doc: >-
+      The structured outcome, once the step ran (spec §11.5). Null while it has not — which is
+      the state every mutating step is in until an operator or a lease says otherwise.
+default_view:
+  columns: [index, summary, mutating, risk, status]

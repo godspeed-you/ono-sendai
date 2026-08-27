@@ -1,0 +1,55 @@
+# Route. Derived from spec §9.1 Network — `get route` yields `Stream<Route>` — with the fields a
+# netlink route provider (§23.2) can answer without inventing anything. §47 names route.v1.yaml
+# as an initial contract but §28 defines no Route, so the field set is decided here (ADR-0012).
+id: ono.route/1
+name: Route
+summary: A routing table entry.
+identity: [table, family, destination, gateway, interface]
+fields:
+  destination:
+    type: ipnetwork
+    nullable: true
+    doc: The destination prefix. Null is the default route — a real answer, not an unknown one.
+  gateway:
+    type: ip
+    nullable: true
+    doc: The next hop; null for a directly connected route.
+  interface:
+    type: ref<ono.interface/1>
+    nullable: true
+    doc: The outgoing interface; null for routes that name none, such as blackholes.
+  source:
+    type: ip
+    nullable: true
+    doc: The preferred source address for traffic taking this route.
+  family:
+    type: enum
+    required: true
+    values: [inet, inet6]
+    doc: The address family of the route.
+  type:
+    type: enum
+    nullable: true
+    values: [unicast, local, broadcast, multicast, anycast, blackhole, unreachable, prohibit, throw, other]
+    doc: The route type; null when the provider does not distinguish types.
+  scope:
+    type: enum
+    nullable: true
+    values: [universe, site, link, host, nowhere]
+    doc: The scope of the destination.
+  protocol:
+    type: string
+    nullable: true
+    doc: >-
+      What installed the route — `kernel`, `static`, `dhcp`, `ra`, a routing daemon's name. A
+      string because the set is the system's registry of route origins, not Ono's.
+  metric:
+    type: int
+    nullable: true
+    doc: The route priority; lower wins. Null when the provider supplies no metric.
+  table:
+    type: string
+    nullable: true
+    doc: The routing table the entry belongs to, by name where one exists, otherwise its number.
+default_view:
+  columns: [destination, gateway, interface, metric, protocol]

@@ -1,0 +1,24 @@
+[package]
+name = "ono-provider-api"
+description = "The contract every Ono provider implements, and that KUANG/11 consumes unchanged."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-pipeline.workspace = true
+ono-value.workspace = true
+async-trait.workspace = true
+jiff.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true

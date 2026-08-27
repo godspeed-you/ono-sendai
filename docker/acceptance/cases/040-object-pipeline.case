@@ -1,0 +1,41 @@
+# Phase B/C/D: the object pipeline of spec §5, run against the real system. `get process` streams
+# typed records from procfs, transforms filter and project them, and `to json` serialises the
+# canonical data of §33.5 — no Ono envelope, no `$record`, bare canonical values an external tool
+# can read. The §12.3 boundary is explicit in both directions: bytes become objects only through
+# `from`, objects become bytes only through `to`, and objects aimed at a raw program are an error.
+case: the object pipeline runs against the real system
+timeout: 120
+run: |
+  # A native producer, a filter on a typed field, a projection, and the serialised answer.
+  ono -c 'get process | where pid == 1 | select pid | to json'
+
+  # The §33.5 shape is the contract: an array of plain objects, nothing else.
+  out=$(ono -c 'get process | where pid == 1 | select pid | to json')
+  if [ "$out" = '[{"pid":1}]' ]; then echo "canonical-json"; else echo "WRONG: $out"; fi
+
+  # Counting streams every process; the count is at least the shell itself.
+  n=$(ono -c 'get process | count | to json' | tr -d '[]')
+  if [ "$n" -ge 1 ] 2>/dev/null; then echo "counted-processes"; fi
+
+  # Bytes from an external program become objects only through an explicit `from` (spec §12.4).
+  ono -c 'echo "[{\"name\":\"a\",\"size\":1},{\"name\":\"b\",\"size\":9}]" | from json | where size > 5 | select name | to json'
+
+  # Objects aimed at a raw program are refused with the fix in the message (spec §12.3).
+  if ono -c 'get process | grep x' 2>&1 | grep -q 'to json'; then
+    echo "boundary-refused"
+  fi
+
+  # Unix pipelines are untouched: `sort` at a byte boundary is /usr/bin/sort (ADR-0028).
+  printf 'b\nc\na\n' | ono -c 'sort' | tr -d '\n'; echo
+
+  # And a native stage may feed a real program once the representation is chosen.
+  ono -c 'get process | where pid == 1 | select pid | to json | tr -d "[]"'
+exit: 0
+stdout-contains: canonical-json
+stdout-contains: counted-processes
+stdout-contains: [{"name":"b"}]
+stdout-contains: boundary-refused
+stdout-contains: abc
+stdout-contains: {"pid":1}
+stdout-not-contains: WRONG
+stdout-not-contains: $record

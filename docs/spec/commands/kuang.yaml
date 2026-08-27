@@ -1,0 +1,345 @@
+# Command family: KUANG/11 Extensions. Source: spec §9.1 "KUANG/11 Extensions", complete and in
+# the order the specification gives, with the state model of §31.8 (install, enable, load and run
+# are different states), the capability model of §31.16–§31.19 and the assistant surface of
+# §31.41–§31.51. Delivered by spec §37 Phase I.
+#
+# KUANG/11 is the extension runtime, never a name for the shell (AGENTS.md §3). The contracts
+# these commands operate on live in `docs/spec/kuang/`, which arrives with Phase I (spec §31.78).
+# Conventions as documented at the head of process.yaml.
+
+version: 1
+family: kuang
+
+commands:
+  - id: ono.plugin.get
+    verb: get
+    target: plugin
+    summary: Enumerate installed and loaded KUANG/11 packages and their runtime health.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.plugin/1>
+    provider_capability: plugin.list
+    selectors:
+      - {name: id, type: string, doc: "Resolve one package by its publisher-namespaced id (spec §31.5)."}
+    options:
+      - {name: state, type: string, doc: "Restrict to one of the six states of spec §31.8: installed, enabled, loaded, active, degraded, quarantined (ADR-0022: §31.8 defines `active`, never `running`)."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - get plugin
+      - get plugin | where state == loaded
+
+  - id: ono.plugin.find
+    verb: find
+    target: plugin
+    summary: Search the configured extension sources without executing any package.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.plugin-package/1>
+    provider_capability: plugin.search
+    selectors:
+      - {name: query, type: string, doc: "The search term."}
+    options:
+      - {name: source, type: string, doc: "Search one configured source (spec §31.9)."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - find plugin postgres
+
+  - id: ono.plugin.inspect
+    verb: inspect
+    target: plugin
+    summary: Show a package's manifest, origin, contributions, capabilities, resource use and errors.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.plugin/1"
+    output: ono.plugin-inspection/1
+    provider_capability: plugin.inspect
+    selectors:
+      - {name: id, type: string, doc: "The package to inspect."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: I
+    examples:
+      - inspect plugin dev.example.packet-eye
+
+  - id: ono.plugin.install
+    verb: install
+    target: plugin
+    summary: Verify and install a package after an explicit install and capability plan.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: plugin.install
+    selectors:
+      - {name: reference, type: string, doc: "The package reference to install."}
+    options:
+      - {name: source, type: string, doc: "Install from one configured source."}
+      - {name: confirm, type: bool, doc: "Accept the install and capability plan non-interactively. A script never waits for a prompt (spec §17.4)."}
+    privilege: none
+    streaming: false
+    phase: I
+    examples:
+      - install plugin dev.example.packet-eye
+
+  - id: ono.plugin.remove
+    verb: remove
+    target: plugin
+    summary: Remove a package; state and policy retention is explicit.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.plugin/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: plugin.remove
+    selectors:
+      - {name: id, type: string, doc: "The package to remove."}
+    options:
+      - {name: keep-state, type: bool, doc: "Retain the package's persisted state (spec §31.31, §31.81)."}
+      - {name: keep-grants, type: bool, doc: "Retain the capability grants made to it."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - remove plugin dev.example.packet-eye
+
+  - id: ono.plugin.load
+    verb: load
+    target: plugin
+    summary: Negotiate capabilities and instantiate a package's runtime.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.plugin/1>"
+    output: ono.plugin-runtime/1
+    provider_capability: plugin.load
+    selectors:
+      - {name: id, type: string, doc: "The package to load."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: I
+    examples:
+      - load plugin dev.example.packet-eye
+
+  - id: ono.plugin.unload
+    verb: unload
+    target: plugin
+    summary: Drain or cancel a package's jobs and withdraw its runtime contributions.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.plugin/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: plugin.unload
+    selectors:
+      - {name: id, type: string, doc: "The package to unload."}
+    options:
+      - {name: timeout, type: duration, doc: "How long to let jobs drain before cancelling them."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - unload plugin dev.example.packet-eye
+
+  # Not in §9.1's table; spec §31.3 writes `set plugin pg-surgeon --enabled false` and §31.38
+  # writes `set plugin packet-eye --background true`. The enable/disable transitions of
+  # `docs/spec/kuang/lifecycle.v1.yaml` name this command (ADR-0022, Consequences item 3).
+  - id: ono.plugin.set
+    verb: set
+    target: plugin
+    summary: Change a package's management settings — enablement and background policy.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.plugin/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: plugin.set
+    selectors:
+      - {name: id, type: string, doc: "The package to configure."}
+    options:
+      - {name: enabled, type: bool, doc: "Make the package eligible for loading, or withdraw that eligibility (spec §31.3). Neither direction runs package code; disabling unloads a loaded instance first (lifecycle.v1.yaml, transitions `enable`/`disable`)."}
+      - {name: background, type: bool, doc: "Let a package that declares a background role run jobs no command, view or subscription created (spec §31.38). Job lifetime stays scoped to Ono; KUANG/11 never silently creates system services."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - set plugin dev.example.packet-eye --enabled false
+      - set plugin dev.example.packet-eye --background true
+
+  - id: ono.plugin.verify
+    verb: verify
+    target: plugin
+    summary: Validate a package's integrity, signature and compatibility.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.plugin/1>"
+    output: ono.verification-result/1
+    provider_capability: plugin.verify
+    selectors:
+      - {name: id, type: string, doc: "The installed package or the package reference to verify."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: I
+    examples:
+      - verify plugin dev.example.packet-eye
+
+  - id: ono.capability.get
+    verb: get
+    target: capability
+    summary: Show capability definitions, requests, grants and leases.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.capability-grant/1>
+    provider_capability: capability.list
+    selectors:
+      - {name: id, type: string, doc: "Resolve one capability by id."}
+    options:
+      - {name: plugin, type: string, doc: "Restrict to the capabilities of one package."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - get capability
+      - get capability --plugin dev.example.packet-eye
+
+  - id: ono.capability.grant
+    verb: grant
+    target: capability
+    summary: Create a scoped capability grant or lease, subject to policy.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.capability-grant/1
+    provider_capability: capability.grant
+    selectors:
+      - {name: capability, type: string, doc: "The capability to grant, from `kuang_capabilities` in docs/spec/capabilities.yaml."}
+    options:
+      - {name: plugin, type: string, doc: "The package the grant is made to."}
+      - {name: scope, type: record, doc: "The scope keys the capability supports (spec §31.16). A scope that cannot be enforced is never offered."}
+      - {name: duration, type: duration, doc: "Make it a lease that expires. Grant prompts must state effect, scope and duration (spec §31.18)."}
+    privilege: none
+    streaming: false
+    phase: I
+    examples:
+      - grant capability filesystem.read --plugin dev.example.packet-eye --duration 1h
+
+  - id: ono.capability.revoke
+    verb: revoke
+    target: capability
+    summary: Revoke a capability grant or lease.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.capability-grant/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: capability.revoke
+    selectors:
+      - {name: selector, type: string, doc: "The grant to revoke."}
+    options:
+      - {name: plugin, type: string, doc: "Revoke only this plugin's grant of the capability."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - revoke capability filesystem.read --plugin dev.example.packet-eye
+
+  - id: ono.assistant.get
+    verb: get
+    target: assistant
+    summary: Enumerate loaded assistant extensions.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.assistant/1>
+    provider_capability: assistant.list
+    selectors:
+      - {name: id, type: string, doc: "Resolve one assistant by id."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - get assistant
+
+  - id: ono.assistant.ask
+    verb: ask
+    target: assistant
+    summary: Run one assistant turn under an explicit context and model policy.
+    stability: stable
+    argument_mode: words
+    input: "null | any"
+    output: ono.assistant-turn/1
+    provider_capability: assistant.ask
+    selectors:
+      - {name: id, type: string, doc: "The assistant to ask. Never implicit: spec §7.1 requires the assistant to be explicitly selected."}
+      - {name: request, type: string, doc: "The request text."}
+    options:
+      - {name: autonomy, type: string, doc: "The autonomy level for this turn (spec §31.48)."}
+      - {name: model, type: string, doc: "Force one model provider rather than letting the broker choose (spec §31.43)."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - ask assistant ops-assist "why did image-worker fail?"
+
+  - id: ono.model.get
+    verb: get
+    target: model
+    summary: Enumerate configured model providers and their policy characteristics.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.model-provider/1>
+    provider_capability: model.list
+    selectors:
+      - {name: id, type: string, doc: "Resolve one model provider by id."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - get model
+
+  - id: ono.finding.get
+    verb: get
+    target: finding
+    summary: Query the findings emitted by analyses and assistants.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.finding/1>
+    provider_capability: finding.list
+    selectors: []
+    options:
+      - {name: plugin, type: string, doc: "Restrict to one package's findings."}
+      - {name: severity, type: string, doc: "Minimum severity."}
+      - {name: since, type: timestamp, doc: "Only findings at or after this time."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - get finding | where severity >= warning
+
+  - id: ono.audit.get
+    verb: get
+    target: audit
+    summary: Query the record of capability-sensitive KUANG/11 actions.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.plugin-audit-event/1>
+    provider_capability: audit.list
+    selectors: []
+    options:
+      - {name: plugin, type: string, doc: "Restrict to one package."}
+      - {name: capability, type: string, doc: "Restrict to actions taken under one capability."}
+      - {name: since, type: timestamp, doc: "Only events at or after this time."}
+    privilege: none
+    streaming: true
+    phase: I
+    examples:
+      - get audit --plugin dev.example.packet-eye

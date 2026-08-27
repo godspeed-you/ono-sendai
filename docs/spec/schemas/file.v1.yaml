@@ -1,0 +1,66 @@
+# Canonical File schema. Source: spec §28.2, field-for-field. Identity is device+inode when
+# available; §28.2 states that "path is a reference, not always identity", which is why `path`
+# is not part of `identity`.
+id: ono.file/1
+name: File
+summary: A filesystem object and its metadata.
+identity: [device, inode]
+fields:
+  path:
+    type: path
+    required: true
+    doc: The path this record was reached by. A reference, not an identity — hard links share one inode.
+  name:
+    type: string
+    required: true
+    doc: The final component of the path.
+  kind:
+    type: enum
+    required: true
+    values: [file, dir, symlink, socket, fifo, device, other]
+    doc: The object kind, exactly as spec §28.2 enumerates it.
+  size:
+    type: bytesize
+    nullable: true
+    doc: Apparent size in bytes; null for kinds where size is not meaningful or not readable.
+  owner:
+    type: ref<ono.user/1>
+    nullable: true
+    doc: Owning user; carries the numeric uid even when the name cannot be resolved.
+  group:
+    type: ref<ono.group/1>
+    nullable: true
+    doc: Owning group; carries the numeric gid even when the name cannot be resolved.
+  mode:
+    type: string
+    nullable: true
+    doc: >-
+      Permission bits with the setuid/setgid/sticky flags, as four octal digits, e.g. "0644".
+      A string rather than an int because the grammar has no octal literal to compare against
+      (ADR-0009); a `PermissionMode` semantic scalar is deferred, see ADR-0012.
+  modified:
+    type: timestamp
+    nullable: true
+    doc: Last content modification time.
+  accessed:
+    type: timestamp
+    nullable: true
+    doc: Last access time; null on filesystems mounted without access-time tracking.
+  created:
+    type: timestamp
+    nullable: true
+    doc: Creation time; null on filesystems that do not record it.
+  inode:
+    type: int
+    nullable: true
+    doc: Inode number; null where the filesystem has no inode concept.
+  device:
+    type: ref<ono.device/1>
+    nullable: true
+    doc: The device the object lives on.
+  target:
+    type: path
+    nullable: true
+    doc: The symlink target; null for every kind other than `symlink`.
+default_view:
+  columns: [name, kind, size, modified, owner]

@@ -1,0 +1,789 @@
+//! Running the object pipeline of spec §5 in the shell itself.
+//!
+//! A pipeline is a sequence of stages, and each one is either a child process or a native command
+//! the registry declares. This module decides which is which, then runs the native ones and hands
+//! the rest to [`ono_process`], threading the boundary of spec §12.3 between them.
+//!
+//! The boundary is explicit in both directions, as spec §12.3 requires. Bytes become objects only
+//! through a command that says so — `from json` — and objects become bytes only through `to` or
+//! `format`. A structured stream aimed at a child process is a type error naming `to json`
+//! (ADR-0013), never a silent rendering the receiving program would have to parse back.
+
+use std::io::Write;
+use std::sync::OnceLock;
+
+use ono_command::{
+    BoundArguments, CommandContract, CommandRegistry, CommandTable, Invocation, Outcome, Scope,
+};
+use ono_core::{ErrorCode, ExitStatus};
+use ono_parser::{Stage, StageHead, StageList};
+use ono_pipeline::{StreamEvent, ValueStream};
+use ono_value::{ErrorValue, Value};
+
+use crate::eval::{Eval, Flow};
+use crate::resolve::Namespace;
+use crate::session::Session;
+use crate::sink::Sink;
+
+/// The command contracts, parsed once from the copies embedded at compile time.
+///
+/// # Errors
+///
+/// The structured error the registry raises when an embedded contract cannot be read. That is a
+/// build-time mistake rather than a user's, but it is reported rather than panicked over: a shell
+/// that aborts on startup teaches nobody anything.
+pub fn registry() -> Result<&'static CommandRegistry, ErrorValue> {
+    CommandRegistry::embedded()
+}
+
+/// The native implementations, built once against the registry.
+fn implementations() -> Result<&'static CommandTable, ErrorValue> {
+    static TABLE: OnceLock<CommandTable> = OnceLock::new();
+    if let Some(table) = TABLE.get() {
+        return Ok(table);
+    }
+    let built = ono_command::builtin_commands(registry()?);
+    Ok(TABLE.get_or_init(|| built))
+}
+
+/// One run of adjacent stages that belong on the same side of the byte boundary.
+#[derive(Debug)]
+enum Segment {
+    /// Child processes, joined to each other by real pipes (ADR-0013).
+    External(Vec<usize>),
+    /// Native commands, joined by the value stream.
+    Native(Vec<usize>),
+}
+
+/// Whether any stage of `list` is a native command, and so whether this module runs it at all.
+///
+/// Deciding this needs the whole list rather than one stage: a transform binds where structure
+/// reaches it, and nowhere else (ADR-0028).
+#[must_use]
+pub fn claims(session: &Session, list: &StageList) -> bool {
+    segments(session, list, 0, false).is_some_and(|segments| {
+        segments
+            .iter()
+            .any(|segment| matches!(segment, Segment::Native(_)))
+    })
+}
+
+/// Splits `list` into runs of native and external stages.
+///
+/// Returns `None` when the registry itself cannot be read, which leaves the caller on the
+/// external path it would have taken before native commands existed.
+fn segments(
+    session: &Session,
+    list: &StageList,
+    start: usize,
+    seeded: bool,
+) -> Option<Vec<Segment>> {
+    let registry = registry().ok()?;
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut structured = seeded;
+
+    for (index, stage) in list.stages.iter().enumerate().skip(start) {
+        let native = native_contract(session, registry, stage, structured).is_some();
+        structured = native
+            && native_contract(session, registry, stage, structured)
+                .is_some_and(|contract| !produces_bytes(contract));
+
+        match segments.last_mut() {
+            Some(Segment::Native(indices)) if native => indices.push(index),
+            Some(Segment::External(indices)) if !native => indices.push(index),
+            _ if native => segments.push(Segment::Native(vec![index])),
+            _ => segments.push(Segment::External(vec![index])),
+        }
+    }
+    Some(segments)
+}
+
+/// The contract `stage` names, if a native command is what it means here.
+///
+/// `structured` says whether objects reach this stage. It is what keeps `printf … | sort` the
+/// program it has always been while `get process | sort name` is the transform: a command
+/// declared over a stream of records binds only where a stream of records arrives.
+fn native_contract(
+    session: &Session,
+    registry: &'static CommandRegistry,
+    stage: &Stage,
+    structured: bool,
+) -> Option<&'static CommandContract> {
+    let StageHead::Command(name) = &stage.head else {
+        return None;
+    };
+    let namespace = Namespace::from_prefix(name.namespace.as_deref())?;
+    if matches!(namespace, Namespace::External | Namespace::Function) {
+        return None;
+    }
+    // A shell builtin changes the shell, so it is never a native command: `cd` in a pipeline
+    // moves a directory nobody is standing in, and the evaluator has already said so.
+    if crate::resolve::BUILTINS.contains(&name.name.as_str()) {
+        return None;
+    }
+
+    let contract = registry
+        .resolve(&name.name, &stage.arguments)
+        .ok()?
+        .contract;
+    if binds_here(contract, structured) || matches!(namespace, Namespace::Native) {
+        return Some(contract);
+    }
+    // A transform reached by bytes is the program of the same name, where one exists. Where none
+    // does, the transform stays and reports the type error honestly — "`count` needs objects" is
+    // a better answer than "command not found: count".
+    crate::resolve::find_on_path(session, &name.name)
+        .is_none()
+        .then_some(contract)
+}
+
+/// Whether `contract` can accept the input that reaches it.
+///
+/// A producer starts a pipeline and needs nothing. A serializer or parser is defined over bytes
+/// and text, which is exactly what a child process hands on. A transform is defined over objects.
+fn binds_here(contract: &CommandContract, structured: bool) -> bool {
+    structured || accepts_bytes(contract.input().text())
+}
+
+/// Whether a declared input type admits something other than a stream of objects.
+fn accepts_bytes(input: &str) -> bool {
+    input.split('|').map(str::trim).any(|alternative| {
+        matches!(alternative, "any" | "null" | "string" | "bytes" | "value")
+            || alternative.starts_with("string")
+            || alternative.starts_with("bytes")
+    })
+}
+
+/// Whether a command's output is bytes or text rather than objects.
+fn produces_bytes(contract: &CommandContract) -> bool {
+    let output = contract.output().text();
+    output.split('|').map(str::trim).all(|alternative| {
+        matches!(alternative, "string" | "bytes")
+            || alternative.starts_with("string")
+            || alternative.starts_with("bytes")
+    })
+}
+
+/// Checks every expression in `pipeline` against the schema that would reach it.
+///
+/// Spec §11.3: a typo in a field name is caught before process enumeration begins, because the
+/// contracts declare what flows where. Everything here is declarative — nothing is enumerated and
+/// nothing is spawned — so the check costs nothing when the pipeline is sound. A pipeline whose
+/// schemas are unknown is not checked rather than guessed at.
+///
+/// # Errors
+///
+/// `type.unknown_field` naming the field, the schema, and the nearest declared field.
+pub fn check(pipeline: &ono_parser::Pipeline) -> Result<(), ErrorValue> {
+    let Ok(registry) = registry() else {
+        // An unreadable registry is reported where a native stage actually runs; the pre-flight
+        // check is an optimisation of the failure path, not a second gate.
+        return Ok(());
+    };
+    let schemas: Vec<_> = ono_value::builtin_schemas().schemas().cloned().collect();
+    ono_command::check_pipeline(registry, &schemas, pipeline)
+}
+
+/// Runs a stage list that contains at least one native command.
+///
+/// # Errors
+///
+/// The structured error of whichever stage could not be resolved, bound, or run.
+pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitStatus> {
+    run_from(session, list, source, 0, None)
+}
+
+/// Backgrounds a native pipeline as a job (spec §18.4, ADR-0024).
+///
+/// The stream chain is built exactly as a foreground run builds it, then driven by a task on the
+/// session runtime instead of being awaited: events fold into a row model the way the live view
+/// folds them, other values collect, and `fg` later repaints or prints whichever the pipeline
+/// produced. Aborting the task drops every receiver, which stops the producers — the same
+/// cancellation the foreground path uses.
+///
+/// # Errors
+///
+/// The structured error of whichever stage could not be resolved or bound, or a refusal when
+/// the pipeline mixes in external stages, which a job with no process group cannot carry yet.
+pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitStatus> {
+    let registry = registry().map_err(Flow::Failed)?;
+    let table = implementations().map_err(Flow::Failed)?;
+    let segments = segments(session, list, 0, false).ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::ResolveCommandNotFound,
+            "the command registry could not be read",
+        ))
+    })?;
+    let [Segment::Native(indices)] = segments.as_slice() else {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                "a background job cannot mix native stages with external programs yet",
+            )
+            .with_help("background the native part alone, or serialise into a file"),
+        ));
+    };
+
+    let mut bound: Vec<(&'static CommandContract, BoundArguments)> = Vec::new();
+    let mut structured = true;
+    for index in indices {
+        let stage = &list.stages[*index];
+        let contract = native_contract(session, registry, stage, structured).ok_or_else(|| {
+            Flow::Failed(ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                format!("`{}` is not a native command here", stage.span),
+            ))
+        })?;
+        let resolved = registry
+            .resolve(head_name(stage), &stage.arguments)
+            .map_err(Flow::Failed)?;
+        let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
+        structured = !produces_bytes(contract);
+        bound.push((contract, arguments));
+    }
+
+    let command_text = source
+        .get(list.span.start() as usize..list.span.end() as usize)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let scope = std::sync::Arc::new(Scope::new());
+    let context = session.context();
+    let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::IoPermissionDenied,
+            "the operating system refused to start the pipeline runtime",
+        ))
+    })?;
+    let providers = providers.clone();
+
+    let model = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let values = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let task_model = std::sync::Arc::clone(&model);
+    let task_values = std::sync::Arc::clone(&values);
+    let task_failures = std::sync::Arc::clone(&failures);
+    let handle = runtime.spawn(async move {
+        let mut stream: Option<ValueStream> = None;
+        for (contract, arguments) in &bound {
+            let started = std::time::Instant::now();
+            let mut invocation = Invocation::new(contract, arguments, &providers)
+                .with_scope(std::sync::Arc::clone(&scope))
+                .with_context(context.clone());
+            if let Some(previous) = stream.take() {
+                invocation = invocation.with_input(previous);
+            }
+            match table.run(contract.id(), &mut invocation).await {
+                Ok(Outcome::Values(produced)) => stream = Some(produced),
+                Ok(Outcome::Actions(outcomes)) => {
+                    let elapsed = ono_value::Duration::from_nanoseconds(
+                        i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),
+                    );
+                    stream = Some(ValueStream::from_values(
+                        outcomes
+                            .into_iter()
+                            .map(|outcome| outcome.into_record(elapsed).into_value()),
+                    ));
+                }
+                Err(error) => {
+                    task_failures
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(error);
+                    return;
+                }
+            }
+        }
+        let Some(mut stream) = stream else {
+            return;
+        };
+        while let Some(event) = stream.recv().await {
+            match event {
+                StreamEvent::Value(value) => {
+                    if !crate::live::apply(
+                        &mut task_model
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner),
+                        &value,
+                    ) {
+                        task_values
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(value);
+                    }
+                }
+                StreamEvent::Failure(error) => {
+                    task_failures
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(error);
+                }
+            }
+        }
+    });
+
+    let number = session.executor().reserve_job_number();
+    eprintln!("[%{number}]");
+    session.push_native_job(crate::session::NativeJob {
+        number,
+        command: command_text,
+        model,
+        values,
+        failures,
+        handle,
+    });
+    Ok(ExitStatus::SUCCESS)
+}
+
+/// Runs a stage list whose head has already produced values.
+///
+/// A pipeline may start with a value instead of a command — `$hot | where …`, `@-1 | count` —
+/// and a list splices because it *is* several values (ADR-0019). The evaluator has already
+/// turned the head into `seed`; everything after it runs exactly as if a native producer had
+/// streamed those values.
+///
+/// # Errors
+///
+/// The structured error of whichever stage could not be resolved, bound, or run.
+pub fn run_seeded(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+    seed: Vec<Value>,
+) -> Eval<ExitStatus> {
+    run_from(session, list, source, 1, Some(seed))
+}
+
+fn run_from(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+    start: usize,
+    seed: Option<Vec<Value>>,
+) -> Eval<ExitStatus> {
+    let registry = registry().map_err(Flow::Failed)?;
+    let segments = segments(session, list, start, seed.is_some()).ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::ResolveCommandNotFound,
+            "the command registry could not be read",
+        ))
+    })?;
+
+    let mut carried: Option<Vec<u8>> = None;
+    let mut seed = seed;
+    let mut status = ExitStatus::SUCCESS;
+
+    // A seeded list with nothing after the seed shows the seed itself: `@-1` alone re-renders
+    // the retained result.
+    if segments.is_empty() {
+        if let Some(values) = seed.take()
+            && let Some(stage) = list.stages.first()
+        {
+            write_result(session, stage, &values, false, source)?;
+        }
+        return Ok(status);
+    }
+
+    for (position, segment) in segments.iter().enumerate() {
+        let last = position + 1 == segments.len();
+        match segment {
+            Segment::External(indices) => {
+                if let Some(values) = seed.take() {
+                    // Spec §12.3: objects reach a child process only through an explicit
+                    // representation. Text and bytes already are one.
+                    carried = Some(seed_bytes(values)?);
+                }
+                let (bytes, external_status) = crate::eval::run_external_segment(
+                    session, list, indices, source, carried, last,
+                )?;
+                carried = bytes;
+                status = external_status;
+            }
+            Segment::Native(indices) => {
+                carried = run_native_segment(
+                    session,
+                    registry,
+                    list,
+                    indices,
+                    source,
+                    carried,
+                    seed.take(),
+                    position == 0,
+                    last,
+                )?;
+                status = ExitStatus::SUCCESS;
+            }
+        }
+    }
+    Ok(status)
+}
+
+/// The bytes a seed of values hands a child process: text and bytes pass, objects are refused.
+fn seed_bytes(values: Vec<Value>) -> Result<Vec<u8>, Flow> {
+    if values
+        .iter()
+        .any(|value| !matches!(value, Value::String(_) | Value::Bytes(_)))
+    {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                "these values are objects, and the next stage is a program that reads bytes",
+            )
+            .with_help("choose the representation: `… | to json | …` (spec §12.3)"),
+        ));
+    }
+    Ok(bytes_of(&values))
+}
+
+/// Runs one run of native stages, answering with the bytes a following child process would read.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one call site, and the arguments are the pipeline's actual moving parts"
+)]
+fn run_native_segment(
+    session: &mut Session,
+    registry: &'static CommandRegistry,
+    list: &StageList,
+    indices: &[usize],
+    source: &str,
+    input: Option<Vec<u8>>,
+    seed: Option<Vec<Value>>,
+    first: bool,
+    last: bool,
+) -> Eval<Option<Vec<u8>>> {
+    let table = implementations().map_err(Flow::Failed)?;
+
+    // Everything is bound before anything runs. A pipeline that cannot be built runs no part of
+    // itself, so a typo in the third stage never leaves the first two half-done.
+    let mut bound: Vec<(&'static CommandContract, BoundArguments)> = Vec::new();
+    let mut structured = input.is_none() || seed.is_some();
+    for index in indices {
+        let stage = &list.stages[*index];
+        let contract = native_contract(session, registry, stage, structured).ok_or_else(|| {
+            Flow::Failed(ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                format!("`{}` is not a native command here", stage.span),
+            ))
+        })?;
+        let resolved = registry
+            .resolve(head_name(stage), &stage.arguments)
+            .map_err(Flow::Failed)?;
+        let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
+        structured = !produces_bytes(contract);
+        bound.push((contract, arguments));
+    }
+
+    // A head stage that needs bytes reads the shell's own standard input, exactly as a child
+    // process would have: spec §12.4's example is `curl … | ono -c 'from json | …'`, and the
+    // bytes arrive on the shell's stdin, not from a stage inside the pipeline. A terminal is
+    // never read implicitly — an interactive `from json` waiting silently for EOF would look
+    // like a hang, and the "nothing was piped into it" error says what to do instead.
+    let mut input = input;
+    if first
+        && input.is_none()
+        && let Some((head, _)) = bound.first()
+        && !head.input().accepts_null()
+        && accepts_bytes(head.input().text())
+        && !std::io::IsTerminal::is_terminal(&std::io::stdin())
+    {
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut std::io::stdin().lock(), &mut bytes)
+            .map_err(write_failed)?;
+        input = Some(bytes);
+    }
+
+    let Some((final_contract, _)) = bound.last() else {
+        return Ok(None);
+    };
+    let final_contract = *final_contract;
+    let stage_has_no_redirection = list.stages[*indices.last().unwrap_or(&0)]
+        .redirections
+        .is_empty();
+
+    // A structured stream cannot be handed to a child process. Spec §12.3 makes the boundary
+    // explicit in both directions, and guessing a rendering the program would have to parse back
+    // is exactly the text-shaped coupling the object pipeline exists to remove.
+    if !last && !produces_bytes(final_contract) {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!(
+                    "`{}` produces objects, and the next stage is a program that reads bytes",
+                    final_contract.spelling()
+                ),
+            )
+            .with_help("choose the representation: `… | to json | …` (spec §12.3)"),
+        ));
+    }
+
+    let scope = std::sync::Arc::new(Scope::new());
+    let context = session.context();
+    let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::IoPermissionDenied,
+            "the operating system refused to start the pipeline runtime",
+        ))
+    })?;
+
+    // Ctrl-C is delivered to the shell itself while a native pipeline runs — there is no child
+    // for the kernel to interrupt — so the pipeline future races the interrupt note and loses
+    // to it (spec §18.5). Dropping the futures drops every stream receiver, which closes the
+    // bounded channels and stops every producer at its next send.
+    let _ = ono_process::take_interrupt();
+    let interrupted = async {
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(40));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            if ono_process::take_interrupt() {
+                return;
+            }
+        }
+    };
+
+    let pipeline = async {
+        let mut stream: Option<ValueStream> = match seed {
+            Some(values) => Some(ValueStream::from_values(values)),
+            None => input.map(|bytes| ValueStream::from_values([Value::Bytes(bytes.into())])),
+        };
+
+        for (contract, arguments) in &bound {
+            let started = std::time::Instant::now();
+            let mut invocation = Invocation::new(contract, arguments, providers)
+                .with_scope(std::sync::Arc::clone(&scope))
+                .with_context(context.clone());
+            if let Some(previous) = stream.take() {
+                invocation = invocation.with_input(previous);
+            }
+            match table.run(contract.id(), &mut invocation).await {
+                Ok(Outcome::Values(values)) => stream = Some(values),
+                Ok(Outcome::Actions(outcomes)) => {
+                    // Spec §11.5: one record per target, so `97 succeeded, 3 failed` stays two
+                    // readable numbers rather than one ambiguous status.
+                    let elapsed = ono_value::Duration::from_nanoseconds(
+                        i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),
+                    );
+                    stream = Some(ValueStream::from_values(
+                        outcomes
+                            .into_iter()
+                            .map(|outcome| outcome.into_record(elapsed).into_value()),
+                    ));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        let mut values = Vec::new();
+        let mut failures = Vec::new();
+        if let Some(mut stream) = stream {
+            if last && !stream.boundedness().is_bounded() && stage_has_no_redirection {
+                // A live stream at a terminal renders in place (spec §18.3); anywhere else the
+                // representation must be chosen, because an endless unserialised stream into a
+                // pipe or file is a table that never learns its widths.
+                if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                    let (width, height) = live_geometry();
+                    failures.extend(crate::live::show(stream, width, height).await);
+                    return Ok((Vec::new(), failures));
+                }
+                return Err(ErrorValue::new(
+                    ErrorCode::StreamUnboundedOperation,
+                    "a live stream needs a representation when nobody is watching it",
+                )
+                .with_help(
+                    "pipe it through a serializer — `watch process | to json` — or bound it \
+                     with `take` (spec §18.3)",
+                ));
+            }
+            while let Some(event) = stream.recv().await {
+                match event {
+                    StreamEvent::Value(value) => values.push(value),
+                    StreamEvent::Failure(error) => failures.push(error),
+                }
+            }
+        }
+        Ok((values, failures))
+    };
+
+    let collected = runtime.block_on(async {
+        tokio::select! {
+            outcome = pipeline => outcome,
+            () = interrupted => Err(ErrorValue::new(
+                ErrorCode::StreamCancelled,
+                "interrupted",
+            )),
+        }
+    });
+
+    let (values, failures) = collected.map_err(|error| {
+        if error.code() == ErrorCode::StreamCancelled {
+            // 128 + SIGINT, the status every shell reports for an interrupted foreground job
+            // (ADR-0008); the message would only repeat what the ^C on the terminal already
+            // says.
+            Flow::FailedWith(error, ExitStatus::from_signal(2))
+        } else {
+            Flow::Failed(error)
+        }
+    })?;
+
+    // Spec §16.5: what succeeded and what failed are both reported, and neither is collapsed into
+    // the other. A process that exits between being listed and being read costs one object, not
+    // the answer — so the failures are shown and the values still arrive. Only when nothing
+    // arrived at all is there no answer, and that is the case the status reports (ADR-0028).
+    if !failures.is_empty() {
+        let reporter = crate::report::Reporter::new(ono_render::Presentation::choose(
+            std::io::IsTerminal::is_terminal(&std::io::stderr()),
+            &[],
+        ));
+        for failure in &failures {
+            reporter.error(failure);
+        }
+        if values.is_empty() {
+            let first = failures.into_iter().next().unwrap_or_else(|| {
+                ErrorValue::new(
+                    ErrorCode::ProviderUnavailable,
+                    "the command produced nothing",
+                )
+            });
+            return Err(Flow::Failed(first));
+        }
+    }
+
+    if !last {
+        return Ok(Some(bytes_of(&values)));
+    }
+
+    // `view` consumes the terminal instead of printing (ADR-0050): the browse loop owns the
+    // rows from here, and leaving it retains them and the selection.
+    if final_contract.id() == "ono.data.view" {
+        let name = bound
+            .last()
+            .and_then(|(_, arguments)| arguments.selector("name"))
+            .and_then(|value| value.as_str().ok())
+            .unwrap_or("table")
+            .to_owned();
+        return match crate::view::run(session, &name, values) {
+            Ok(_) => Ok(None),
+            Err(flow) => Err(flow),
+        };
+    }
+
+    let stage = &list.stages[*indices.last().unwrap_or(&0)];
+    write_result(
+        session,
+        stage,
+        &values,
+        produces_bytes(final_contract),
+        source,
+    )?;
+    Ok(None)
+}
+
+/// The head word of a stage, or the empty string for a stage that has none.
+fn head_name(stage: &Stage) -> &str {
+    match &stage.head {
+        StageHead::Command(name) => &name.name,
+        _ => "",
+    }
+}
+
+/// The bytes a serialised stream carries into a child process.
+fn bytes_of(values: &[Value]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for value in values {
+        match value {
+            Value::Bytes(raw) => bytes.extend_from_slice(raw),
+            Value::String(text) => bytes.extend_from_slice(text.as_bytes()),
+            other => bytes.extend_from_slice(other.to_string().as_bytes()),
+        }
+        if !bytes.ends_with(b"\n") {
+            bytes.push(b'\n');
+        }
+    }
+    bytes
+}
+
+/// Writes the last segment's result where the stage's redirections say it goes.
+fn write_result(
+    session: &mut Session,
+    stage: &Stage,
+    values: &[Value],
+    serialised: bool,
+    source: &str,
+) -> Eval<()> {
+    // What is about to be shown is what `@-1` and `@N` reuse (spec §20.2). Serialised output is
+    // not retained: its values are one rendered document, and reusing the objects it was made
+    // from is what the retention of the *previous* result is for.
+    if !serialised {
+        session.retain_result(values.to_vec());
+    }
+    let destination = crate::eval::output_destination(session, stage, source)?;
+    match destination {
+        Some(mut file) => {
+            let bytes = if serialised {
+                bytes_of(values)
+            } else {
+                rendered_bytes(values)
+            };
+            file.write_all(&bytes).map_err(write_failed)?;
+            file.flush().map_err(write_failed)
+        }
+        None if serialised => {
+            let mut out = std::io::stdout().lock();
+            out.write_all(&bytes_of(values)).map_err(write_failed)?;
+            out.flush().map_err(write_failed)
+        }
+        None => {
+            let environment: Vec<(String, String)> = session
+                .env()
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect();
+            let borrowed: Vec<(&str, &str)> = environment
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+                .collect();
+            Sink::for_stdout(&borrowed).write(values);
+            Ok(())
+        }
+    }
+}
+
+/// The rendered form, laid out at the fixed width a file gets (spec §4.6).
+fn rendered_bytes(values: &[Value]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for line in Sink::for_file().render(values) {
+        bytes.extend_from_slice(line.as_bytes());
+        bytes.push(b'\n');
+    }
+    bytes
+}
+
+/// Reports a failed write on the closed taxonomy of spec §43.
+///
+/// The taxonomy has no generic I/O code, so anything the specific codes do not describe is
+/// reported the way `ono-process` reports it: the operating system refused the operation, with
+/// the real reason in the message.
+fn write_failed(error: std::io::Error) -> Flow {
+    let code = match error.kind() {
+        std::io::ErrorKind::NotFound => ErrorCode::IoNotFound,
+        std::io::ErrorKind::AlreadyExists => ErrorCode::IoAlreadyExists,
+        std::io::ErrorKind::NotADirectory => ErrorCode::IoNotDirectory,
+        _ => ErrorCode::IoPermissionDenied,
+    };
+    Flow::Failed(ErrorValue::new(
+        code,
+        format!("the output could not be written: {error}"),
+    ))
+}
+
+/// The terminal's size for a live view, with the fallbacks the sink already uses.
+pub(crate) fn live_geometry() -> (usize, usize) {
+    let (width, height) = ono_editor::terminal_size().unwrap_or((0, 0));
+    (width.max(20), if height == 0 { 24 } else { height })
+}

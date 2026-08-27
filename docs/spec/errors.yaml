@@ -1,0 +1,232 @@
+# Ono-Sendai error registry.
+#
+# Source: spec §43 (the stable code taxonomy) and spec §16.1 (the error record and its kinds).
+# The kind assignments are fixed by ADR-0006 and implemented in `crates/ono-core/src/error.rs`;
+# this file and that file MUST agree exactly — `cargo xtask spec-check` compares them.
+#
+# `code`    the rendered, user-visible identity, spelled as spec §43 spells it.
+# `name`    the dotted selector `try`/`catch`, `where` predicates over errors and this registry
+#           match on. Stable and machine-readable (ADR-0006).
+# `kind`    the broad category scripts branch on. One of the twelve kinds of `kinds` below.
+# `summary` one line, what happened.
+# `help`    one line, what the user should do about it.
+#
+# The taxonomy is closed and additive (ADR-0006): a code is never renumbered, never removed and
+# never re-pointed at a different meaning. New codes take the next free number in their family.
+
+version: 1
+
+# spec §16.1, extended by ADR-0006 with `safety` and `stream`, which spec §43 needs and §16.1
+# omits. See the `Spec deviation` heading of ADR-0006.
+kinds:
+  - name: resolution
+    doc: A name could not be resolved to a command, target or object.
+  - name: permission
+    doc: The operation is understood but not permitted for this user or context.
+  - name: io
+    doc: The operating system refused or failed an I/O operation.
+  - name: parse
+    doc: The input could not be parsed.
+  - name: type
+    doc: A value, field or unit did not have the required type.
+  - name: provider
+    doc: A provider could not answer, or answered outside its advertised schema.
+  - name: external
+    doc: An external process failed or was signalled.
+  - name: conflict
+    doc: The requested state conflicts with the state that already exists.
+  - name: timeout
+    doc: The operation did not complete within its budget.
+  - name: cancelled
+    doc: The operation was cancelled before completing.
+  - name: safety
+    doc: A safety policy or confirmation requirement stopped the operation (ADR-0006).
+  - name: stream
+    doc: The operation is not valid for a stream with these properties (ADR-0006).
+
+errors:
+  # --- parse ------------------------------------------------------------------------------
+  - code: Ono-Sendai-E0001
+    name: parse.syntax
+    kind: parse
+    summary: The input is not valid Ono syntax.
+    help: >-
+      Read the span the diagnostic points at; the construct there cannot become valid however
+      much more you type. `help language` lists the syntax of every statement form.
+  - code: Ono-Sendai-E0002
+    name: parse.incomplete
+    kind: parse
+    summary: The input ended in the middle of a construct; more text would complete it.
+    help: >-
+      Close the open string, bracket or block. Interactively the editor keeps the line open; in
+      a script the file ended early.
+
+  # --- resolution -------------------------------------------------------------------------
+  - code: Ono-Sendai-E0101
+    name: resolve.command_not_found
+    kind: resolution
+    summary: No keyword, function, native command or executable answers to this name.
+    help: >-
+      Check the suggestions the error carries, or run `help` to browse commands. `explain <name>`
+      reports every resolution step that was tried (ADR-0011).
+  - code: Ono-Sendai-E0102
+    name: resolve.target_not_found
+    kind: resolution
+    summary: The verb is known but has no such target.
+    help: >-
+      Run `help <verb>` to list the targets that verb accepts, or `get command` to browse the
+      registry.
+  - code: Ono-Sendai-E0103
+    name: resolve.ambiguous
+    kind: resolution
+    summary: The name matches more than one candidate and no namespace was given.
+    help: >-
+      Qualify the name with the namespace of the candidate you meant, for example `ono:get` or
+      `dev.example.tool:scan`. The error lists every candidate's qualified name.
+  # --- type -------------------------------------------------------------------------------
+  - code: Ono-Sendai-E0201
+    name: type.mismatch
+    kind: type
+    summary: A value did not have the type the operation requires.
+    help: >-
+      `type <expression>` shows what the value actually is. Convert it explicitly rather than
+      relying on coercion.
+  - code: Ono-Sendai-E0202
+    name: type.unknown_field
+    kind: type
+    summary: A record schema has no such field.
+    help: >-
+      `type` on the stream shows the schema and its fields. A field that exists but is unknown
+      to the provider is `null`, not a missing field (spec §10.5).
+  - code: Ono-Sendai-E0203
+    name: type.invalid_unit
+    kind: type
+    summary: A unit was unknown, or two incompatible dimensions were compared.
+    help: >-
+      Compare like with like: byte sizes with byte sizes, durations with durations. The unit
+      suffix must be adjacent to the number, as in `512MiB`, not `512 MiB`.
+
+  # --- io ---------------------------------------------------------------------------------
+  - code: Ono-Sendai-E0301
+    name: io.not_found
+    kind: io
+    summary: The path or resource does not exist.
+    help: Check the path; `get file <parent>` lists what is actually there.
+  - code: Ono-Sendai-E0302
+    name: io.permission_denied
+    kind: permission
+    summary: The operating system refused access to the resource.
+    help: >-
+      The current user lacks the required permission. Elevate explicitly rather than re-running
+      blind; `explain` reports the privilege a command needs before it runs.
+  - code: Ono-Sendai-E0303
+    name: io.already_exists
+    kind: io
+    summary: The resource already exists and would have been overwritten.
+    help: Choose another destination, or pass the command's explicit overwrite option.
+  - code: Ono-Sendai-E0304
+    name: io.not_directory
+    kind: io
+    summary: A path component is not a directory.
+    help: One of the leading components of the path is a file; check the path spelling.
+
+  # --- provider ---------------------------------------------------------------------------
+  - code: Ono-Sendai-E0401
+    name: provider.unavailable
+    kind: provider
+    summary: The provider cannot answer on this system right now.
+    help: >-
+      The backing system is absent or not running — no systemd on this host, no container
+      runtime socket. `get command <name>` names the provider a command needs.
+  - code: Ono-Sendai-E0402
+    name: provider.unsupported
+    kind: provider
+    summary: The provider does not implement this capability.
+    help: >-
+      Another provider for the same target may support it. The capability matrix generated from
+      `docs/spec/capabilities.yaml` lists which provider answers what.
+  - code: Ono-Sendai-E0403
+    name: provider.schema_violation
+    kind: provider
+    summary: A provider emitted a value outside the schema it advertises.
+    help: >-
+      This is a defect in the provider, not in your pipeline. Report it with the output of
+      `inspect` on the offending value.
+
+  # --- external ---------------------------------------------------------------------------
+  - code: Ono-Sendai-E0501
+    name: external.exit_nonzero
+    kind: external
+    summary: An external process exited with a non-zero status.
+    help: >-
+      The status is carried in the error metadata. Use `||` to branch on it, or `try`/`catch` to
+      handle it as a value.
+  - code: Ono-Sendai-E0502
+    name: external.signal
+    kind: external
+    summary: An external process was terminated by a signal.
+    help: >-
+      The signal name is carried in the error metadata. A signalled process did not choose its
+      exit status, so treat it differently from a non-zero exit.
+
+  # --- remote -----------------------------------------------------------------------------
+  - code: Ono-Sendai-E0601
+    name: remote.unreachable
+    kind: provider
+    summary: The remote link could not be established or was lost.
+    help: >-
+      `test host <name>` probes reachability and reports where the attempt failed. An
+      established link that dropped mid-pipeline reports the values it had already delivered.
+  - code: Ono-Sendai-E0602
+    name: remote.protocol_mismatch
+    kind: provider
+    summary: The remote peer speaks an incompatible protocol version.
+    help: >-
+      Upgrade the agent on the remote host, or connect in agentless mode where the local side
+      does the work.
+  - code: Ono-Sendai-E0603
+    name: remote.host_key_changed
+    kind: safety
+    summary: The remote host presented a different key than the one recorded for it.
+    help: >-
+      Do not override this because it is inconvenient. Verify the new key out of band, then
+      record it deliberately. A changed key is indistinguishable from an interception.
+
+  # --- safety -----------------------------------------------------------------------------
+  - code: Ono-Sendai-E0701
+    name: safety.confirmation_required
+    kind: safety
+    summary: The operation needs explicit confirmation that this context cannot ask for.
+    help: >-
+      Scripts and non-interactive sessions never wait for a TTY (spec §17.4). Re-run
+      interactively, or pass the command's explicit confirmation option.
+  - code: Ono-Sendai-E0702
+    name: safety.policy_denied
+    kind: safety
+    summary: A configured safety policy forbids the operation.
+    help: >-
+      `get config safety.*` shows the policy and the layer that set it. Config mode denies
+      external execution, network access and plugin load by design (ADR-0010).
+
+  # --- stream -----------------------------------------------------------------------------
+  - code: Ono-Sendai-E0801
+    name: stream.unbounded_operation
+    kind: stream
+    summary: The operation requires bounded input but the stream is unbounded.
+    help: >-
+      `sort`, `group`, `count` and `measure` need a finite input. Bound the stream first with
+      `take <n>` or a window.
+  - code: Ono-Sendai-E0802
+    name: stream.cancelled
+    kind: cancelled
+    summary: The stream was cancelled before it completed.
+    help: >-
+      Cancellation propagates through native pipelines and becomes a signal for external
+      processes (spec §18.5). Values already delivered remain valid.
+  - code: Ono-Sendai-E0803
+    name: stream.backpressure_timeout
+    kind: timeout
+    summary: A consumer did not accept values within the configured budget.
+    help: >-
+      The slow stage is named in the error metadata. Raise the budget, or insert a bounded stage
+      such as `take` ahead of the consumer.

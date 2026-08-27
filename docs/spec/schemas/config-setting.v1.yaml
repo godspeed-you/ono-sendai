@@ -1,0 +1,50 @@
+# ConfigSetting. Derived from spec §30 — "a `get config` command SHOULD return structured
+# configuration with source/provenance so the user can see which file or environment variable
+# set each value" — and from ADR-0010, which fixes the five layers and requires every resolved
+# setting to carry the layer, file and line that set it.
+id: ono.config-setting/1
+name: ConfigSetting
+summary: One resolved configuration setting together with the layer that set it.
+identity: [key]
+fields:
+  key:
+    type: string
+    required: true
+    doc: The dotted setting key, e.g. `render.table.max_rows` (spec §30).
+  value:
+    type: value
+    required: true
+    doc: >-
+      The resolved value, in its own type — `64MiB` is a bytesize, not the string "64MiB".
+      Typed as a value because settings span the whole value model.
+  type:
+    type: string
+    required: true
+    doc: The declared type of the setting, so `explain` and completion can check an assignment.
+  layer:
+    type: enum
+    required: true
+    values: [default, system, user, environment, invocation]
+    doc: >-
+      Which of ADR-0010's five layers supplied the effective value; later layers override
+      earlier ones.
+  source:
+    type: path
+    nullable: true
+    doc: >-
+      The file that set it; null for the built-in default layer and for the environment and
+      invocation layers, which have no file.
+  line:
+    type: int
+    nullable: true
+    doc: The line within `source`; null wherever `source` is null.
+  default_value:
+    type: value
+    nullable: true
+    doc: The built-in default, so the user can see what they have overridden.
+  description:
+    type: string
+    nullable: true
+    doc: One line describing what the setting does, shown by `help` and by completion.
+default_view:
+  columns: [key, value, layer, source]

@@ -1,0 +1,43 @@
+# Canonical Interface schema. Source: spec §28.5, field-for-field. §28.5 gives no identity line;
+# the netlink interface index is the stable identity on Linux (§23.2), and the name is not — it
+# can be renamed while the interface lives. See ADR-0012.
+id: ono.interface/1
+name: Interface
+summary: A network interface with its addresses, operational state and counters.
+identity: [index]
+fields:
+  name:
+    type: string
+    required: true
+    doc: The interface name. Renameable, so a reference but not the identity.
+  index:
+    type: int
+    required: true
+    doc: The kernel interface index.
+  mac:
+    type: string
+    nullable: true
+    doc: The link-layer address; null for interfaces that have none, such as loopback or tun.
+  state:
+    type: enum
+    required: true
+    values: [up, down, unknown, dormant, testing, lower-layer-down, not-present]
+    doc: The operational state as the kernel reports it, not the administrative flag.
+  mtu:
+    type: int
+    required: true
+    doc: The maximum transmission unit in bytes.
+  addresses:
+    type: list<ipnetwork>
+    required: true
+    doc: Configured addresses with their prefix lengths; an empty list when none are configured.
+  rx_bytes:
+    type: bytesize
+    nullable: true
+    doc: Bytes received since the counter was last reset; null when the provider has no counters.
+  tx_bytes:
+    type: bytesize
+    nullable: true
+    doc: Bytes transmitted since the counter was last reset.
+default_view:
+  columns: [name, state, addresses, mtu, mac]

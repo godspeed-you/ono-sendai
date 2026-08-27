@@ -1,0 +1,42 @@
+# Neighbor. Derived from spec §9.1 Network — `get neighbor` yields `Stream<Neighbor>`, "ARP/NDP
+# neighbors" — with the fields the netlink neighbour table (§23.2) actually carries. §28 defines
+# no Neighbor; the field set is decided here (ADR-0012).
+id: ono.neighbor/1
+name: Neighbor
+summary: An ARP or NDP neighbour table entry.
+identity: [address, interface]
+fields:
+  address:
+    type: ip
+    required: true
+    doc: The neighbour's network address.
+  mac:
+    type: string
+    nullable: true
+    doc: >-
+      The resolved link-layer address; null for an incomplete or failed entry. Null here means
+      "not resolved", which is exactly what spec §10.5 requires it to mean.
+  interface:
+    type: ref<ono.interface/1>
+    required: true
+    doc: The interface the neighbour was seen on; part of the identity, since addresses repeat.
+  family:
+    type: enum
+    required: true
+    values: [inet, inet6]
+    doc: The address family.
+  state:
+    type: enum
+    required: true
+    values: [incomplete, reachable, stale, delay, probe, failed, permanent, noarp, none]
+    doc: The neighbour cache state as the kernel reports it.
+  router:
+    type: bool
+    nullable: true
+    doc: Whether the neighbour advertises itself as a router; null outside NDP.
+  updated:
+    type: timestamp
+    nullable: true
+    doc: When the entry was last confirmed; null when the provider keeps no timestamp.
+default_view:
+  columns: [address, mac, interface, state]

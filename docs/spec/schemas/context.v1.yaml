@@ -1,0 +1,38 @@
+# Context. Spec §14.1 defines the frame — kind, identity, capabilities, environment overlay —
+# and §37 Phase E delivers the stack. `enter` pushes one, `leave` pops one, `get context` streams
+# the stack from the ground up. ADR-0023 fixes the semantics: a frame narrows, is always visible,
+# and everything it contributes can be written out as an explicit command instead.
+id: ono.context/1
+name: Context
+summary: One frame of the context stack — where commands run and what narrows them.
+identity: [depth]
+fields:
+  depth:
+    type: int
+    required: true
+    doc: The frame's position, 0 for the session's ground frame. The stack renders bottom-up.
+  kind:
+    type: enum
+    required: true
+    values: [local, link, filesystem, object, container, provider]
+    doc: What sort of frame this is (spec §14.1).
+  target:
+    type: string
+    required: false
+    doc: >-
+      The target the frame narrows to, such as `service` for `enter service nginx`. Null for
+      the ground frame and for frames that narrow nothing.
+  identity:
+    type: string
+    required: false
+    doc: >-
+      The identity of the entered object — `nginx.service`, `/etc`, `prod-db` — rendered the
+      way the prompt shows it. Null for the ground frame.
+  selector:
+    type: string
+    required: false
+    doc: >-
+      The explicit spelling of what the frame contributes, such as `--service nginx.service`
+      (spec §14.5, ADR-0023): every context is expressible without entering it.
+default_view:
+  columns: [depth, kind, target, identity]

@@ -1,0 +1,27 @@
+# Phase C (spec §37): common inspection tasks no longer require parsing text. Every provider the
+# phase names answers from the kernel or systemd with typed fields — the proof is that a typed
+# field can be selected and compared without a single cut, awk or grep over columns.
+case: the system is inspected through typed objects, not parsed text
+timeout: 120
+run: |
+  echo "== process ==";    ono -c 'get process | where pid == 1 | select pid | to json'
+  echo "== file/dir ==";   ono -c 'get file /etc/hostname | select kind | to json'
+  echo "== user/group =="; ono -c 'get user root | select uid | to json'; ono -c 'get group root | select gid | to json'
+  echo "== env ==";        HOME=/home/ono ono -c 'get env HOME | select value | to json'
+  echo "== mount ==";      ono -c 'get mount | where target == "/proc" | select filesystem | to json'
+  echo "== interface ==";  ono -c 'get interface lo | select name | to json'
+  echo "== socket ==";     ono -c 'get socket | count | to json' >/dev/null && echo "sockets-enumerable"
+  echo "== service ==";    out=$(ono -c 'get service | count | to json' 2>&1) && echo "services-answered" || echo "$out" | grep -q "Ono-Sendai-E04" && echo "services-unavailable-structured"
+  echo "== a field the schema does not declare fails before anything runs =="
+  ono -c 'get process | where cpy > 20' 2>&1 | grep 'perhaps: cpu'
+exit: 0
+stdout-contains: [{"pid":1}]
+stdout-contains: [{"kind":"file"}]
+stdout-contains: [{"uid":0}]
+stdout-contains: [{"gid":0}]
+stdout-contains: [{"value":"/home/ono"}]
+stdout-contains: [{"filesystem":"proc"}]
+stdout-contains: [{"name":"lo"}]
+stdout-contains: sockets-enumerable
+stdout-contains: services-
+stdout-contains: perhaps: cpu

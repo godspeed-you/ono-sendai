@@ -1,0 +1,22 @@
+# Phase A: real pipes between real processes. `yes | head -1` is the case that distinguishes a
+# shell that connects two processes from one that shuttles their bytes itself (ADR-0013).
+case: pipelines connect real processes and terminate when a stage stops reading
+timeout: 45
+run: |
+  ono -c "printf 'b\nc\na\n' | sort | tr -d '\n'"; echo
+  ono -c 'yes | head -1'
+  ono -c 'true | false'; echo "last-stage=$?"
+  ono -c 'false | true'; echo "last-stage=$?"
+  ono -c 'true && echo and-ran'
+  ono -c 'false || echo or-ran'
+  ono -c 'false && echo no || echo chained'
+  ono -c 'echo one; echo two'
+exit: 0
+stdout-contains: abc
+stdout-contains: last-stage=1
+stdout-contains: last-stage=0
+stdout-contains: and-ran
+stdout-contains: or-ran
+stdout-contains: chained
+stdout-contains: one
+stdout-contains: two

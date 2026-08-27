@@ -1,0 +1,243 @@
+# Command family: Meta. Sources: spec §9.1 Meta (help, type, inspect, explain, get command),
+# §15.2 (help derives from metadata), §15.3 (explain), §30 and ADR-0010 (configuration and its
+# provenance), and §7.1 / §14.1 for `leave`.
+#
+# `inspect` here is the generic form of §9.1 Meta: "detailed field/value/provenance view" over
+# any value. The §52 matrix has an `inspect` cell for every target; those are served by this one
+# command rather than by a per-target entry, and only the two target-specific inspects that
+# §9.1 actually defines — `inspect process` and `inspect plugin` — exist separately (ADR-0012).
+# Conventions as documented at the head of process.yaml.
+
+version: 1
+family: meta
+
+commands:
+  - id: ono.meta.help
+    verb: help
+    target: null
+    summary: Show structured help for a command, target or topic.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.help-page/1
+    provider_capability: command.list
+    selectors:
+      - {name: topic, type: string, repeatable: true, doc: "The command, target or topic to explain. Without one, help browses the registry."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: D
+    note: >-
+      Generated from the registries in this directory, never hand-written: synopsis,
+      description, selectors, options, input and output types, privileges and capabilities,
+      examples, related commands, provider source and stability level (spec §15.2).
+    examples:
+      - help
+      - help get process
+
+  - id: ono.meta.type
+    verb: type
+    target: null
+    summary: Show the type or schema of a value or a command's output.
+    stability: stable
+    argument_mode: words
+    input: "null | any"
+    output: ono.type-info/1
+    provider_capability: null
+    selectors:
+      - {name: subject, type: string, repeatable: true, doc: "The command or expression to describe, written as words or quoted; omitted when a value arrives through the pipeline."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: D
+    examples:
+      - get process | type
+      - type get socket
+
+  - id: ono.meta.inspect
+    verb: inspect
+    target: null
+    summary: Show a detailed field, value and provenance view of any value.
+    stability: stable
+    argument_mode: words
+    input: "null | any"
+    output: ono.inspection/1
+    provider_capability: null
+    selectors:
+      - {name: subject, type: value, doc: "The value to inspect; omitted when one arrives through the pipeline or is selected interactively."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: D
+    note: >-
+      The generic inspect. Every `inspect` cell of the §52 matrix is served by this command
+      except `inspect process` and `inspect plugin`, which spec §9.1 defines with their own
+      detailed outputs.
+    examples:
+      - inspect @1
+      - get service | where state == failed | take 1 | inspect
+
+  - id: ono.meta.explain
+    verb: explain
+    target: null
+    summary: Show the resolution, provider, coercions, privilege and planned effects without executing.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.execution-plan/1
+    provider_capability: null
+    selectors:
+      - {name: subject, type: string, repeatable: true, doc: "The command or pipeline to plan, written as words or quoted."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: D
+    note: >-
+      Reports which resolution step matched, what was skipped and why (ADR-0011), which is what
+      makes spec §6.5's order "explicit and inspectable" — reported by the code rather than
+      described beside it. Adapters must be visible here and must never rewrite a user's
+      command opaquely (spec §12.4).
+    examples:
+      - explain get process
+      - explain get file /tmp --recursive | remove file
+
+  - id: ono.command.get
+    verb: get
+    target: command
+    summary: Discover native and external commands and their metadata.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.command/1>
+    provider_capability: command.list
+    selectors:
+      - {name: name, type: string, doc: "Resolve one command by name."}
+    options:
+      - {name: verb, type: string, doc: "Restrict to one verb."}
+      - {name: target, type: string, doc: "Restrict to one target."}
+      - {name: stability, type: string, doc: "Restrict to one stability level."}
+    privilege: none
+    streaming: true
+    phase: D
+    examples:
+      - get command
+      - get command --verb trace
+
+  - id: ono.command.find
+    verb: find
+    target: command
+    summary: Discover commands by fuzzy search over names, summaries and targets.
+    stability: experimental               # spec §7.1 lists `command` among `find`'s targets; §15.4 requires fuzzy discovery
+    argument_mode: words
+    input: "null"
+    output: stream<ono.command/1>
+    provider_capability: command.list
+    selectors:
+      - {name: query, type: string, doc: "The search term."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: D
+    examples:
+      - find command "listening ports"
+
+  - id: ono.command.resolve
+    verb: resolve
+    target: command
+    summary: Report what a head word resolves to, without running it.
+    stability: experimental               # spec §7.1 lists `command` among `resolve`'s targets
+    note: Narrower than `explain`, which plans a whole pipeline. Answers only "which one is this".
+    argument_mode: words
+    input: "null"
+    output: ono.command/1
+    provider_capability: command.list
+    selectors:
+      - {name: name, type: string, doc: "The head word to resolve."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: D
+    examples:
+      - resolve command ls
+
+  # --- configuration, spec §30 and ADR-0010 -------------------------------------------------
+  - id: ono.config.get
+    verb: get
+    target: config
+    summary: Return resolved configuration settings with the layer and file that set each one.
+    stability: stable                     # spec §30: "A `get config` command SHOULD return structured configuration with source/provenance"
+    argument_mode: words
+    input: "null"
+    output: stream<ono.config-setting/1>
+    provider_capability: config.read
+    selectors:
+      - {name: key, type: string, doc: "Resolve one setting, or a dotted prefix such as `safety.`."}
+    options:
+      - {name: problems, type: bool, doc: "Return the diagnostics from loading the config layers instead of the settings. A bad setting never stops the shell from starting (ADR-0010), so the diagnostics stay available as values."}
+      - {name: overridden, type: bool, doc: "Include the values of the layers each setting overrides."}
+    privilege: none
+    streaming: true
+    phase: A
+    examples:
+      - get config
+      - get config render.
+      - get config --problems
+
+  - id: ono.config.set
+    verb: set
+    target: config
+    summary: Change a configuration setting in the current scope.
+    stability: stable                     # spec §30 writes `set config prompt.path = "smart"`
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: config.set
+    selectors:
+      - {name: key, type: string, doc: "The dotted setting key."}
+      - {name: value, type: value, doc: "The new value, in the setting's declared type."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: A
+    examples:
+      - set config prompt.path = "smart"
+      - set config render.table.max_rows = 200
+      - set config history.result_cache = 64MiB
+      - set config safety.confirm.bulk_threshold = 100
+
+  # --- context stack, spec §14.1 ------------------------------------------------------------
+  - id: ono.context.leave
+    verb: leave
+    target: context
+    summary: Pop the active context.
+    stability: stable                     # spec §7.1; §37 Phase E delivers `enter`/`leave`
+    argument_mode: words
+    input: "null"
+    output: ono.context/1
+    provider_capability: null
+    selectors: []
+    options:
+      - {name: all, type: bool, doc: "Pop every context back to the session's root."}
+    privilege: none
+    streaming: false
+    phase: E
+    examples:
+      - leave
+      - leave --all
+
+  - id: ono.context.get
+    verb: get
+    target: context
+    summary: Show the context stack — the working directory, active object and active link.
+    stability: experimental               # spec §14.1 describes the stack; no section defines the command
+    argument_mode: words
+    input: "null"
+    output: stream<ono.context/1>
+    provider_capability: null
+    selectors: []
+    options: []
+    privilege: none
+    streaming: true
+    phase: E
+    examples:
+      - get context

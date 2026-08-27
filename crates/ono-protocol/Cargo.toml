@@ -1,0 +1,30 @@
+[package]
+name = "ono-protocol"
+description = "The typed, multiplexed, bounded transport an Ono-Sendai remote link speaks (spec §21)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-pipeline.workspace = true
+ono-provider-api.workspace = true
+ono-value.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true

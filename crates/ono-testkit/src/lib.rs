@@ -1,16 +1,32 @@
 //! Test fixtures and harness helpers shared by every crate in the workspace.
 //!
-//! Tests in this project assert observable outcomes, never internal structure (AGENTS.md
-//! section 11). The helpers here exist to make that easy: locating the built binary, running it
-//! non-interactively, and comparing what a user would actually see.
+//! Tests in this project assert observable outcomes, never internal structure (AGENTS.md §11).
+//! The helpers here exist to make that easy: run the real binary the way a user would, capture
+//! exactly what a user would see, and never hang the suite while doing it.
+//!
+//! ```no_run
+//! use ono_testkit::Shell;
+//! let run = Shell::new().args(["--version"]).run();
+//! run.assert_success();
+//! assert!(run.stdout().starts_with("ono "));
+//! ```
 
+#![forbid(unsafe_code)]
 #![allow(
     clippy::expect_used,
+    clippy::panic,
     reason = "this crate is only ever linked into tests, where a failed precondition should abort loudly"
 )]
 
+mod rng;
+mod run;
+mod scratch;
+
+pub use rng::Rng;
+pub use run::{Run, RunError, Shell};
+pub use scratch::{Scratch, scratch};
+
 use std::path::PathBuf;
-use std::process::{Command, Output};
 
 /// Absolute path of the `ono` binary belonging to the current build profile.
 ///
@@ -19,15 +35,7 @@ use std::process::{Command, Output};
 /// Panics if the binary is missing, which means the test was run without building it.
 #[must_use]
 pub fn ono_binary() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.pop();
-    path.pop();
-    path.push("target");
-    path.push(if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    });
+    let mut path = target_dir();
     path.push("ono");
     assert!(
         path.is_file(),
@@ -37,25 +45,18 @@ pub fn ono_binary() -> PathBuf {
     path
 }
 
-/// Runs the shell binary non-interactively with the given arguments.
-///
-/// # Panics
-///
-/// Panics if the binary cannot be executed at all.
-#[must_use]
-pub fn run_ono(args: &[&str]) -> Output {
-    Command::new(ono_binary())
-        .args(args)
-        .output()
-        .expect("the ono binary must be executable")
-}
-
-/// Standard output of a run, as the user would see it.
-///
-/// # Panics
-///
-/// Panics if the output is not valid UTF-8.
-#[must_use]
-pub fn stdout_of(output: &Output) -> String {
-    String::from_utf8(output.stdout.clone()).expect("shell output must be valid UTF-8")
+/// Directory the current build profile writes its binaries to.
+fn target_dir() -> PathBuf {
+    // `CARGO_BIN_EXE_*` is only available to the crate that declares the binary, so the path is
+    // derived from this crate's manifest instead, which keeps the helper usable everywhere.
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.pop();
+    path.pop();
+    path.push("target");
+    path.push(if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    });
+    path
 }

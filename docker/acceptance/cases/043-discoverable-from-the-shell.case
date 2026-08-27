@@ -1,0 +1,29 @@
+# Phase D (spec §37): a new user can discover capabilities from the shell itself. Help is
+# generated from the registries rather than written by hand, completion is semantic, and `type`,
+# `inspect` and `explain` answer from the same metadata — so the shell is its own manual.
+case: a new user discovers the shell from inside the shell
+timeout: 120
+run: |
+  echo "== the surface, from the registries =="
+  ono -c 'help' | head -3
+
+  echo "== one command, from its contract =="
+  ono -c 'help get process' | grep -E 'SYNOPSIS|process'  | head -4
+
+  echo "== what a pipeline would produce, without producing it =="
+  ono -c 'type get socket' | head -2
+
+  echo "== what a record is, field by field =="
+  ono -c 'get process | where pid == 1 | inspect' | head -2
+
+  echo "== what would happen, without it happening =="
+  ono -c 'explain get process | where cpu > 20 | to json' | grep -E 'provider|capability' | head -2
+  ono -c 'explain sh -c "echo RAN; exit 9"' >/dev/null 2>&1 && echo "explain-never-ran"
+exit: 0
+stdout-contains: the shell's whole public surface
+stdout-contains: SYNOPSIS
+stdout-contains: stream<ono.socket/1>
+stdout-contains: PROVENANCE
+stdout-contains: linux.procfs
+stdout-contains: explain-never-ran
+stdout-not-contains: RAN

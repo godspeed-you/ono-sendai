@@ -1,0 +1,17 @@
+# Spec section 4.2: the prompt communicates where native operations will execute and where the
+# user is. It must stay short enough not to take the line being typed with it.
+case: the prompt shows the execution location and the working directory
+pty: true
+columns: 80
+lines: 24
+timeout: 60
+stdin: |
+  cd /usr/share
+  echo marker-after-cd
+  exit 0
+run: |
+  ono
+exit: 0
+stdout-contains: local
+stdout-contains: share
+stdout-contains: marker-after-cd

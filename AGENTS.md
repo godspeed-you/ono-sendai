@@ -48,7 +48,9 @@ ono-sendai/
 ├── docker/                       Dockerfile + acceptance/cases/ (the referee, §10)
 └── docs/
     ├── ono_sendai_shell_spec_v0.2.md
-    │                             narrative spec (normative)
+    │                             base narrative spec (normative)
+    ├── ono_sendai_shell_spec_v0.3_external_command_adapters.md
+    │                             enhancement spec, layered on the base (§5.2)
     ├── STATE.md                  progress board (§9)
     ├── ACCEPTANCE.md             definition of release-ready + stopping rule (§15)
     ├── decisions/ADR-*.md        recorded agent decisions (§8)
@@ -139,7 +141,9 @@ Concretely:
 ## 5. Authority Order (what wins when sources disagree)
 
 ```
-1. docs/ono_sendai_shell_spec_v0.2.md   narrative spec — intent & semantics (IMMUTABLE, read-only)
+0. docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md
+                                   enhancement spec (IMMUTABLE, read-only) — §5.2
+1. docs/ono_sendai_shell_spec_v0.2.md   base narrative spec — intent & semantics (IMMUTABLE, read-only)
 2. docs/spec/*.yaml, grammar.ebnf  machine-readable contracts (public API surface)
 3. docs/decisions/ADR-*.md         recorded agent decisions (fill gaps in 1 & 2)
 4. docs/ACCEPTANCE.md              what "finished" means, in checkable boxes
@@ -151,6 +155,24 @@ Concretely:
 Lower levels must never silently contradict higher ones. If implementation reality forces a
 change at level 2 or below, **change it explicitly** in the same commit and note it in the
 commit body. Level 1 is the exception, and the exception is absolute:
+
+### 5.2 The specification is a base plus enhancements
+
+`docs/ono_sendai_shell_spec_v0.2.md` is the **base**. The user may add further narrative
+specifications beside it — `docs/*_shell_spec_*.md` — and each is an **enhancement layered on top
+of the base**, not a replacement for it. The base still governs everything the enhancement does
+not speak about; where they overlap, **the later version wins**, and the ADR implementing that
+part cites both.
+
+Every one of them is immutable under §5.1, without exception, and `spec-check` enforces two
+things on every gate run (ADR-0026):
+
+- each narrative specification has a `sha256sum` line in `docs/spec.sha256`, so none of them can
+  be edited unnoticed;
+- this file enumerates each enhancement by name, so no enhancement can sit in `docs/` unread.
+
+Adding an enhancement is the user's action. Reconciling the code, the contracts and the ADRs with
+it is the agent's, and it is ordinary work in the loop of §7 — not a reason to stop and ask.
 
 ### 5.1 The initial specification is immutable
 

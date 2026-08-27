@@ -1,0 +1,42 @@
+# GraphEdge. Source: spec §22.1's `Edge` record, field-for-field. `confidence` is the field
+# §22.2 makes mandatory: "Ono-Sendai MUST distinguish exact relationships from inferred ones"
+# and "the UI must not visually imply certainty that the provider does not possess".
+id: ono.graph-edge/1
+name: GraphEdge
+summary: One relationship between two objects in a graph.
+identity: []
+fields:
+  from:
+    type: value
+    required: true
+    doc: The reference of the source node.
+  to:
+    type: value
+    required: true
+    doc: The reference of the target node.
+  relation:
+    type: string
+    required: true
+    doc: The relationship name, e.g. `owns`, `listens`, `reads`, `requires` (spec §22.4).
+  direction:
+    type: enum
+    required: true
+    values: [directed, undirected]
+    doc: Whether the relationship runs from `from` to `to`, or holds symmetrically.
+  confidence:
+    type: enum
+    required: true
+    values: [exact, inferred]
+    doc: >-
+      Whether the provider observed the relationship or derived it. Required, never defaulted:
+      spec §22.2 forbids presenting an inference as an observation.
+  provider:
+    type: string
+    required: true
+    doc: Which provider asserted the edge, so a questionable relationship can be traced to its source.
+  metadata:
+    type: record
+    required: true
+    doc: Relationship-specific detail, such as the file descriptor or the socket inode; empty when there is none.
+default_view:
+  columns: [from, relation, to, confidence, provider]

@@ -1,0 +1,355 @@
+# Command family: Remote. Sources: spec §9.1 Remote, the `host` and `link` rows of the §52
+# matrix, §6.1 (`connect host prod-db`), §21 (link handshake and security) and §33.4/§41.6.
+# Delivered by spec §37 Phase H. Conventions as documented at the head of process.yaml.
+
+version: 1
+family: remote
+
+commands:
+  - id: ono.host.get
+    verb: get
+    target: host
+    summary: Enumerate known hosts from the configured providers and sources.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.host/1>
+    provider_capability: host.list
+    selectors:
+      - {name: name, type: string, doc: "Resolve one host by name."}
+    options:
+      - {name: source, type: string, doc: "Query one named host source."}
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - get host
+
+  - id: ono.host.link
+    verb: link
+    target: host
+    summary: Create a reusable remote Ono link.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.link/1
+    provider_capability: link.create
+    selectors:
+      - {name: name, type: string, doc: "The host to link to."}
+    options:
+      - {name: agentless, type: bool, doc: "Use the agentless mode of spec §21.3 instead of the remote agent."}
+      - {name: transport, type: string, doc: "Force one transport rather than negotiating."}
+    privilege: none
+    streaming: false
+    phase: H
+    examples:
+      - link host prod-db
+      - link host prod-web-3
+
+  - id: ono.link.get
+    verb: get
+    target: link
+    summary: List active links.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.link/1>
+    provider_capability: link.list
+    selectors:
+      - {name: name, type: string, doc: "Resolve one link by name."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - get link
+
+  - id: ono.link.detach
+    verb: detach
+    target: link
+    summary: Detach from an active link without tearing it down.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.link/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: link.manage
+    selectors:
+      - {name: name, type: string, doc: "The link to detach from."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - detach link prod-db
+
+  - id: ono.link.enter
+    verb: enter
+    target: link
+    summary: Switch the active execution context to a link.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.link/1"
+    output: ono.context/1
+    provider_capability: link.list
+    selectors:
+      - {name: name, type: string, doc: "The link to enter."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: H
+    examples:
+      - enter link prod-db
+
+  - id: ono.host.test
+    verb: test
+    target: host
+    summary: Check a host's reachability and its advertised capabilities.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.probe-result/1
+    provider_capability: host.probe
+    selectors:
+      - {name: name, type: string, doc: "The host to probe."}
+    options:
+      - {name: timeout, type: duration, doc: "How long to wait before reporting the host as unreachable."}
+    privilege: none
+    streaming: false
+    phase: H
+    examples:
+      - test host prod-db
+
+  - id: ono.host.connect
+    verb: connect
+    target: host
+    summary: Open a protocol connection to a host without persisting a link.
+    stability: experimental               # spec §6.1 writes `connect host prod-db`; §9.1 defines no such command
+    note: >-
+      Distinct from `link host`, which persists a reusable Ono execution link (§7.1). One-shot
+      versus persistent is the whole difference, and it should be validated before either is
+      declared stable.
+    argument_mode: words
+    input: "null"
+    output: ono.link/1
+    provider_capability: link.create
+    selectors:
+      - {name: name, type: string, doc: "The host to connect to."}
+    options:
+      - {name: transport, type: string, doc: "Force one transport rather than negotiating."}
+    privilege: none
+    streaming: false
+    phase: H
+    examples:
+      - connect host prod-db
+
+  - id: ono.host.trace
+    verb: trace
+    target: host
+    summary: Show a host's links, sessions, addresses and reachable services.
+    stability: experimental               # spec §52, host/trace = "R"
+    argument_mode: words
+    input: "null | ono.host/1"
+    output: ono.graph/1
+    provider_capability: host.list
+    selectors:
+      - {name: name, type: string, doc: "The host to trace."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: H
+    examples:
+      - trace host prod-db
+
+  - id: ono.link.watch
+    verb: watch
+    target: link
+    summary: Emit link state and health changes as a live stream.
+    stability: experimental               # spec §52, link/watch = "L"
+    argument_mode: words
+    input: "null"
+    output: stream<ono.link-event/1>
+    provider_capability: link.watch
+    selectors:
+      - {name: name, type: string, doc: "Watch one link."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - watch link prod-db
+
+  - id: ono.link.add
+    verb: add
+    target: link
+    summary: Record a link definition without establishing it.
+    stability: experimental               # spec §52, link/add = "M"
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: link.manage
+    selectors:
+      - {name: name, type: string, doc: "The name for the definition."}
+    options:
+      - {name: host, type: string, doc: "The host the definition points at."}
+      - {name: transport, type: string, doc: "The transport to use."}
+    privilege: none
+    streaming: false
+    phase: H
+    examples:
+      - add link prod-db --host 10.4.2.11
+
+  - id: ono.link.remove
+    verb: remove
+    target: link
+    summary: Remove a link definition, tearing the link down if it is established.
+    stability: experimental               # spec §52, link/remove = "M"
+    argument_mode: words
+    input: "null | stream<ono.link/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: link.manage
+    selectors:
+      - {name: name, type: string, doc: "The link to remove."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - remove link prod-db
+
+  - id: ono.link.set
+    verb: set
+    target: link
+    summary: Modify a link definition.
+    stability: experimental               # spec §52, link/set = "M"
+    argument_mode: words
+    input: "null | stream<ono.link/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: link.manage
+    selectors:
+      - {name: name, type: string, doc: "The link to modify."}
+    options:
+      - {name: host, type: string, doc: "New host."}
+      - {name: transport, type: string, doc: "New transport."}
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - set link prod-db --transport ssh
+
+  - id: ono.link.rename
+    verb: rename
+    target: link
+    summary: Change a link's name.
+    stability: experimental               # spec §7.1 names `link` among `rename`'s targets
+    argument_mode: words
+    input: "null | ono.link/1"
+    output: ono.action-result/1
+    provider_capability: link.manage
+    selectors:
+      - {name: name, type: string, doc: "The link to rename."}
+      - {name: new-name, type: string, doc: "The new name."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: H
+    examples:
+      - rename link prod-db prod-db-primary
+
+  # --- §52 matrix cells whose usefulness the spec asks to validate first --------------------
+  - id: ono.host.watch
+    verb: watch
+    target: host
+    summary: Emit host reachability changes as a live stream.
+    stability: planned                    # spec §52, host/watch = "L?"
+    validation_required: true
+    argument_mode: words
+    input: "null"
+    output: stream<ono.host-event/1>
+    provider_capability: host.probe
+    selectors:
+      - {name: name, type: string, doc: "Watch one host."}
+    options:
+      - {name: every, type: duration, doc: "Probe interval."}
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - watch host prod-db --every 30s
+
+  - id: ono.host.add
+    verb: add
+    target: host
+    summary: Record a host in a configured host source.
+    stability: planned                    # spec §52, host/add = "M?"
+    validation_required: true
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: host.list
+    selectors:
+      - {name: name, type: string, doc: "The host name to record."}
+    options:
+      - {name: address, type: ip, doc: "The address to record for it."}
+    privilege: none
+    streaming: false
+    phase: planned
+    examples:
+      - add host prod-db --address 10.4.2.11
+
+  - id: ono.host.remove
+    verb: remove
+    target: host
+    summary: Remove a host from a configured host source.
+    stability: planned                    # spec §52, host/remove = "M?"
+    validation_required: true
+    argument_mode: words
+    input: "null | stream<ono.host/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: host.list
+    selectors:
+      - {name: name, type: string, doc: "The host to remove."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: planned
+    examples:
+      - remove host prod-db
+
+  - id: ono.host.set
+    verb: set
+    target: host
+    summary: Modify a recorded host.
+    stability: planned                    # spec §52, host/set = "M?"
+    validation_required: true
+    argument_mode: words
+    input: "null | stream<ono.host/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: host.list
+    selectors:
+      - {name: name, type: string, doc: "The host to modify."}
+    options:
+      - {name: address, type: ip, doc: "New address."}
+    privilege: none
+    streaming: true
+    phase: planned
+    examples:
+      - set host prod-db --address 10.4.2.12
+
+  - id: ono.link.trace
+    verb: trace
+    target: link
+    summary: Show a link's transport, agent, negotiated providers and multiplexed streams.
+    stability: planned                    # spec §52, link/trace = "R?"
+    validation_required: true
+    argument_mode: words
+    input: "null | ono.link/1"
+    output: ono.graph/1
+    provider_capability: link.list
+    selectors:
+      - {name: name, type: string, doc: "The link to trace."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: H
+    examples:
+      - trace link prod-db

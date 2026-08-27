@@ -1,0 +1,18 @@
+# Spec section 4.1 and docs/ACCEPTANCE.md section 4.5: startup prints nothing a pipe would have
+# to filter, loads no plugin and reads no network-backed configuration.
+case: a non-interactive shell prints nothing but what it was asked to
+run: |
+  out="$(ono -c 'echo only-this')"
+  test "$out" = "only-this" && echo "clean=yes" || echo "clean=no: [$out]"
+  err="$(ono -c 'echo x' 2>&1 >/dev/null)"
+  test -z "$err" && echo "quiet=yes" || echo "quiet=no: [$err]"
+
+  # Driven from a pipe, ono reads the pipe rather than opening a prompt on the terminal behind it
+  # (ADR-0010). A shell that got this wrong would exit successfully having done nothing.
+  piped="$(printf 'echo from-a-pipe\nexit 4\n' | ono; echo "status=$?")"
+  echo "$piped"
+exit: 0
+stdout-contains: clean=yes
+stdout-contains: quiet=yes
+stdout-contains: from-a-pipe
+stdout-contains: status=4

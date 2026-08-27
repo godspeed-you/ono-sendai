@@ -1,0 +1,56 @@
+# Phase B (spec §37): synthetic and parsed structured data can flow end to end. Every transform
+# the phase names runs against parsed data, every serialisation format comes back out, and
+# rendering stays a view — the same values, table for a human, canonical data for a machine.
+case: typed values flow end to end through every phase-B transform
+timeout: 120
+run: |
+  data='[{"name":"ada","score":3,"size":2048},{"name":"grace","score":9,"size":1024},{"name":"linus","score":5,"size":4096}]'
+
+  echo "== where/select =="
+  echo "$data" | ono -c 'from json | where score > 4 | select name | to json'
+
+  echo "== sort =="
+  echo "$data" | ono -c 'from json | sort score | select name | to json'
+
+  echo "== take/skip =="
+  echo "$data" | ono -c 'from json | sort score | skip 1 | take 1 | select name | to json'
+
+  echo "== each =="
+  echo "$data" | ono -c 'from json | each score | to json'
+
+  echo "== count =="
+  echo "$data" | ono -c 'from json | count | to json'
+
+  echo "== measure =="
+  echo "$data" | ono -c 'from json | measure score | to json' | tr ',' '\n' | grep -o '"sum":17' || echo "MEASURE-WRONG"
+
+  echo "== yaml =="
+  echo "$data" | ono -c 'from json | where name == "ada" | select score | to yaml'
+
+  echo "== csv =="
+  echo "$data" | ono -c 'from json | select name score | to csv'
+
+  echo "== text =="
+  echo "$data" | ono -c 'from json | select name | to text --field name'
+
+  echo "== csv parses back =="
+  # CSV carries no types, so its cells are text and compare as text (spec §12.4).
+  printf 'name,score\nada,3\ngrace,9\n' | ono -c 'from csv --headers | where score == "9" | select name | to json'
+
+  echo "== rendering is a view, not the data =="
+  rendered=$(echo "$data" | ono -c 'from json | select name score')
+  echo "$rendered" | head -1
+exit: 0
+stdout-contains: [{"name":"grace"},{"name":"linus"}]
+stdout-contains: [{"name":"ada"},{"name":"linus"},{"name":"grace"}]
+stdout-contains: [{"name":"linus"}]
+stdout-contains: [{"name":"grace"}]
+stdout-contains: [3,9,5]
+stdout-contains: [3]
+stdout-contains: "sum":17
+stdout-contains: score: 3
+stdout-contains: name,score
+stdout-contains: ada,3
+stdout-contains: NAME
+stdout-not-contains: MEASURE-WRONG
+stdout-not-contains: $record

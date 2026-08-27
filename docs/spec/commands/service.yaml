@@ -1,0 +1,228 @@
+# Command family: Service. Sources: spec §9.1 Service, the `service` row of the §52 matrix, and
+# §33.2 / §41.4 for the log queries a failed service leads to. Schema: `ono.service/1`.
+# Conventions as documented at the head of process.yaml.
+
+version: 1
+family: service
+
+commands:
+  - id: ono.service.get
+    verb: get
+    target: service
+    summary: List or resolve service-manager units through the active provider.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.service/1>
+    provider_capability: service.list
+    selectors:
+      - {name: name, type: string, doc: "Resolve one unit by name, as in `get service nginx` (spec §6.1)."}
+    options:
+      - {name: provider, type: string, doc: "Query one named service provider instead of the active one."}
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get service
+      - get service nginx
+      - get service | where state == failed
+
+  - id: ono.service.start
+    verb: start
+    target: service
+    summary: Start a service.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.service/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: service.manage
+    selectors:
+      - {name: name, type: string, doc: "The unit to start."}
+    options: []
+    privilege: elevated
+    streaming: true
+    phase: C
+    examples:
+      - start service nginx
+
+  - id: ono.service.stop
+    verb: stop
+    target: service
+    summary: Stop a service.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.service/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: service.manage
+    selectors:
+      - {name: name, type: string, doc: "The unit to stop."}
+    options: []
+    privilege: elevated
+    streaming: true
+    phase: C
+    examples:
+      - stop service nginx
+
+  - id: ono.service.restart
+    verb: restart
+    target: service
+    summary: Restart a service.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.service/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: service.manage
+    selectors:
+      - {name: name, type: string, doc: "The unit to restart."}
+    options: []
+    privilege: elevated
+    streaming: true
+    phase: C
+    examples:
+      - restart service nginx
+      - get service | where state == failed | restart service
+
+  - id: ono.service.watch
+    verb: watch
+    target: service
+    summary: Emit service state transitions as a live stream.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.service-event/1>
+    provider_capability: service.watch
+    selectors:
+      - {name: name, type: string, doc: "Watch one unit."}
+    options:
+      - {name: every, type: duration, doc: "Polling interval where the provider has no event source (spec §18.2)."}
+    privilege: none
+    streaming: true
+    phase: F
+    examples:
+      - watch service nginx
+      - watch service nginx &
+
+  - id: ono.service.trace
+    verb: trace
+    target: service
+    summary: Show a unit's dependency, process, socket and file relationships.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.service/1"
+    output: ono.graph/1
+    provider_capability: service.trace
+    selectors:
+      - {name: name, type: string, doc: "The unit to trace."}
+    options:
+      - {name: depth, type: int, doc: "How many relationship hops to follow."}
+      - {name: relations, type: list<string>, doc: "Restrict the trace to these relation names."}
+    privilege: conditional
+    streaming: false
+    phase: G
+    examples:
+      - trace service nginx
+
+  - id: ono.service.enter
+    verb: enter
+    target: service
+    summary: Push a service object onto the context stack.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.service/1"
+    output: ono.context/1
+    provider_capability: service.list
+    selectors:
+      - {name: name, type: string, doc: "The unit to enter."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: E
+    examples:
+      - enter service nginx
+
+  - id: ono.service.set
+    verb: set
+    target: service
+    summary: Change a unit's persistent properties, such as whether it starts at boot.
+    stability: experimental               # spec §52, service/set = "M"; §9.1 defines no such command
+    argument_mode: words
+    input: "null | stream<ono.service/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: service.manage
+    selectors:
+      - {name: name, type: string, doc: "The unit to modify."}
+    options:
+      - {name: enabled, type: bool, doc: "Whether the unit starts at boot."}
+    privilege: elevated
+    streaming: true
+    phase: C
+    examples:
+      - set service nginx --enabled true
+
+  # --- log and journal queries -------------------------------------------------------------
+  # Spec §33.2 and §41.4 both write `get log --service <ref>`, so the command is named by the
+  # specification even though §9.1 defines no Log family and §8.1 lists `journal` and `log` as
+  # targets without commands. They live here because a log query is, in practice, reached from
+  # a service (ADR-0012).
+  - id: ono.log.get
+    verb: get
+    target: log
+    summary: Query log records as structured values rather than as parsed text.
+    stability: experimental               # spec §33.2, §41.4
+    argument_mode: words
+    input: "null | ono.service/1"
+    output: stream<ono.log-record/1>
+    provider_capability: log.read
+    selectors: []
+    options:
+      - {name: service, type: "ref<ono.service/1>", doc: "Restrict to one service unit's records (spec §33.2)."}
+      - {name: since, type: timestamp, doc: "Only records at or after this time."}
+      - {name: until, type: timestamp, doc: "Only records at or before this time."}
+      - {name: level, type: string, doc: "Minimum severity."}
+    privilege: conditional
+    streaming: true
+    phase: planned
+    examples:
+      - get log --service nginx | tail 30
+      - get log --service @1 | where level >= error | take 20
+
+  - id: ono.journal.get
+    verb: get
+    target: journal
+    summary: Query the structured system journal directly.
+    stability: planned                    # spec §8.1 names the target; no section defines a command
+    validation_required: true
+    note: >-
+      Overlaps `ono.log.get`, which the spec's own examples use. One of the two should be
+      withdrawn before either is stable.
+    argument_mode: words
+    input: "null"
+    output: stream<ono.log-record/1>
+    provider_capability: log.read
+    selectors: []
+    options:
+      - {name: since, type: timestamp, doc: "Only records at or after this time."}
+      - {name: boot, type: int, doc: "Restrict to one boot."}
+    privilege: conditional
+    streaming: true
+    phase: planned
+    examples:
+      - get journal --since (now() - 1h)
+
+  - id: ono.journal.tail
+    verb: tail
+    target: journal
+    summary: Follow the journal as records are appended.
+    stability: experimental               # spec §7.1 lists `journal` among `tail`'s targets
+    argument_mode: words
+    input: "null"
+    output: stream<ono.log-record/1>
+    provider_capability: log.read
+    selectors: []
+    options:
+      - {name: lines, type: int, doc: "How many existing records to emit before following."}
+    privilege: conditional
+    streaming: true
+    phase: planned
+    examples:
+      - tail journal --lines 50

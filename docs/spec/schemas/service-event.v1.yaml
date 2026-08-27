@@ -1,0 +1,37 @@
+# ServiceEvent. Spec §18.2 turns a query into a stream of updates and §31.14 fixes the event
+# envelope: what kind of change, when, to which object, carrying the object's state. Spec §18.2
+# also requires polling to be explicit rather than invisible, which is what `source` is for.
+id: ono.service-event/1
+name: ServiceEvent
+summary: One change to one service, as a live stream emits it.
+identity: []
+fields:
+  kind:
+    type: enum
+    required: true
+    values: [snapshot, added, changed, removed]
+    doc: >-
+      What happened. A subscription always begins with `snapshot` events carrying the current
+      state (ADR-0024), so no consumer has to reconstruct the starting point.
+  at:
+    type: timestamp
+    required: true
+    doc: When the change was observed.
+  service:
+    type: record
+    required: false
+    doc: >-
+      The service as it now is — or, for `removed`, as it last was. Identity lives inside it.
+  changed:
+    type: list<string>
+    required: false
+    doc: For `changed`, the names of the fields whose values moved. Null for every other kind.
+  source:
+    type: enum
+    required: true
+    values: [subscription, poll]
+    doc: >-
+      How the change was observed. `poll` means the provider has no event source and the runtime
+      compared snapshots at the configured interval — explicit, as spec §18.2 requires.
+default_view:
+  columns: [kind, at, service, changed]

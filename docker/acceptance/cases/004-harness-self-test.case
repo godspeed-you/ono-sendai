@@ -1,0 +1,23 @@
+# The referee proves itself. If a directive silently stopped working, every later case could
+# pass while proving nothing (AGENTS.md section 14: a broken referee makes progress worthless).
+case: the acceptance harness runs multi-line scripts, stdin and a real terminal
+timeout: 60
+pty: true
+columns: 100
+lines: 30
+env: ONO_HARNESS_PROBE=alive
+stdin: |
+  from-stdin
+run: |
+  test -t 1 || { echo "NO-TTY"; exit 1; }
+  echo "size: $(stty size)"
+  echo "env: $ONO_HARNESS_PROBE"
+  read -r line
+  echo "stdin: $line"
+  echo "multi-line: ok"
+exit: 0
+stdout-contains: size: 30 100
+stdout-contains: env: alive
+stdout-contains: stdin: from-stdin
+stdout-contains: multi-line: ok
+stdout-not-contains: NO-TTY

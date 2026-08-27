@@ -1,0 +1,37 @@
+# The providers built into this shell that answer from the kernel's file interfaces and NSS.
+#
+# This registry is level 6 of spec §47: what each provider advertises — its targets, the
+# capabilities of `capabilities.yaml` it claims, and the schemas of `schemas/` it emits — declared
+# here first, implemented second. `crates/ono-cli/tests/providers.rs` fails when the built
+# registry and these declarations drift in either direction (spec §35.3).
+
+providers:
+  - id: linux.procfs
+    doc: Processes, from /proc. Identity is (pid, start time), never pid alone (ADR-0015 T13).
+    targets: [process]
+    capabilities: [process.list, process.inspect, process.signal]
+    schemas: [ono.process/1]
+
+  - id: linux.fs
+    doc: Files and directories, from the filesystem itself.
+    targets: [file, dir]
+    capabilities: [file.list, file.find, dir.list]
+    schemas: [ono.file/1]
+
+  - id: linux.nss
+    doc: Users and groups, through NSS — so LDAP and sssd answer too, not only /etc/passwd.
+    targets: [user, group]
+    capabilities: [user.list, group.list]
+    schemas: [ono.user/1, ono.group/1]
+
+  - id: ono.session
+    doc: The session's own environment. The shell is the source; no kernel interface is asked.
+    targets: [env]
+    capabilities: [env.read]
+    schemas: [ono.env-var/1]
+
+  - id: linux.mountinfo
+    doc: Mounts and filesystems, from /proc/self/mountinfo and statvfs.
+    targets: [mount, filesystem]
+    capabilities: [mount.list, filesystem.list]
+    schemas: [ono.mount/1, ono.filesystem/1]

@@ -1,0 +1,80 @@
+# Canonical Process schema. Source: spec §28.1, field-for-field; identity from §28.1
+# ("identity: pid + started") and §23.1 ("process identity SHOULD account for PID reuse by
+# including start time where available"). `default_view` is the column list of spec §27.3.
+id: ono.process/1
+name: Process
+summary: A running process as the process provider observes it.
+identity: [pid, started]
+fields:
+  pid:
+    type: int
+    required: true
+    doc: The process id.
+  ppid:
+    type: int
+    nullable: true
+    doc: The parent process id; null for the init process and when the parent is not visible.
+  name:
+    type: string
+    required: true
+    doc: The short process name, as the kernel records it.
+  command:
+    type: list<string>
+    nullable: true
+    doc: The full argument vector; null when the process hides it or it is not readable.
+  executable:
+    type: path
+    nullable: true
+    doc: The resolved executable path; null when the link is unreadable or the file is deleted.
+  user:
+    type: ref<ono.user/1>
+    nullable: true
+    doc: The effective user; carries the numeric uid even when the name cannot be resolved.
+  group:
+    type: ref<ono.group/1>
+    nullable: true
+    doc: The effective group; carries the numeric gid even when the name cannot be resolved.
+  state:
+    type: enum
+    required: true
+    values: [running, sleeping, disk-sleep, stopped, tracing-stop, zombie, dead, idle, unknown]
+    doc: The kernel scheduling state. `unknown` when the provider read a state it does not model.
+  cpu:
+    type: float
+    unit: percent
+    nullable: true
+    doc: >-
+      Share of one logical CPU, as spec §28.1 documents it. Null until a second sample exists,
+      because a single procfs read cannot answer it.
+  memory:
+    type: bytesize
+    nullable: true
+    doc: Resident set size.
+  virtual_mem:
+    type: bytesize
+    nullable: true
+    doc: Virtual memory size.
+  threads:
+    type: int
+    nullable: true
+    doc: Number of threads in the process.
+  started:
+    type: timestamp
+    nullable: true
+    doc: >-
+      Wall-clock start time. Part of the identity, so a provider that cannot answer it yields a
+      process whose identity is pid alone and is therefore vulnerable to pid reuse.
+  cwd:
+    type: path
+    nullable: true
+    doc: Current working directory; null when not readable by this user.
+  service:
+    type: ref<ono.service/1>
+    nullable: true
+    doc: The service unit the process belongs to; null when it belongs to none.
+  container:
+    type: ref<ono.container/1>
+    nullable: true
+    doc: The container the process runs in; null outside a container or without a provider.
+default_view:
+  columns: [pid, name, cpu, memory, user]

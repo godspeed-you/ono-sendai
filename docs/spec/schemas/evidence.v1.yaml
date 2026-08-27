@@ -1,0 +1,84 @@
+# Evidence. Source: spec §31.24 (`Finding.evidence: List<Evidence>`), §31.25 (evidence must
+# remain inspectable, and what it looks like when it is), §31.50 (assistant citations),
+# §31.26 (`Relation.evidence`).
+#
+# ADR-0022: spec §31.24 and §31.26 both refer to an `Evidence` type without defining its fields,
+# and `docs/spec/schemas/deferred.yaml` does not list it. Typing the field `record` instead would
+# make the registry parse cleanly while discarding the contract, which ADR-0012 §13 rejects, so
+# the schema is written here (ADR-0022 §12).
+#
+# The rule this schema serves, spec §31.25: an analysis "SHOULD carry evidence references, not
+# only prose". A reference that does not resolve is prose wearing a citation's clothes, and
+# `output.finding` rejects it (`protocol.v1.yaml`).
+#
+# Evidence is a structural sub-record, not an addressable object, so it declares no identity
+# (ADR-0012 §9).
+id: ono.evidence/1
+name: Evidence
+summary: One inspectable observation supporting a finding, an annotation or an assistant claim.
+identity: []
+fields:
+  kind:
+    type: enum
+    required: true
+    values: [object, field, samples, source, command, unavailable]
+    doc: >-
+      What sort of evidence this is. `unavailable` records an observation that was attempted and
+      could not be made — spec §31.25's `heap unavailable`. Recording the gap is evidence;
+      omitting it is how a confident-looking conclusion gets built on a hole.
+  reference:
+    type: string
+    required: true
+    doc: >-
+      The stable citation id, e.g. `@process/4419.smaps#12` (spec §31.50). Selectable in an
+      interactive renderer and a stable textual id when output is redirected — the same value
+      either way. It must resolve, or the finding carrying it is rejected.
+  subject:
+    type: value
+    nullable: true
+    doc: >-
+      A reference to the object the evidence is about. Null for evidence about no single object,
+      such as a source that was read across many.
+  field:
+    type: string
+    nullable: true
+    doc: "The field observed, for `kind: field`. Null otherwise."
+  observed:
+    type: value
+    nullable: true
+    doc: >-
+      What was observed — a value, a range, a before-and-after pair. Null for `unavailable` and
+      for `command`, where the reference is the evidence.
+  source:
+    type: string
+    nullable: true
+    doc: >-
+      What was read, e.g. `/proc/4419/smaps` or `process snapshots` (spec §31.25). Null where
+      the subject reference already says.
+  samples:
+    type: int
+    nullable: true
+    doc: >-
+      How many observations back it, e.g. spec §31.25's `85 samples`. Null when the count is not
+      meaningful — and null is not one (spec §10.5).
+  window:
+    type: duration
+    nullable: true
+    doc: The period the observations cover, e.g. spec §31.25's `window 14m`. Null for a point observation.
+  observed_at:
+    type: timestamp
+    required: true
+    doc: When the observation was made, or when the window ended.
+  command:
+    type: string
+    nullable: true
+    doc: >-
+      An Ono command that reproduces the observation, for `kind: command`. It must parse and be
+      runnable — spec §31.87 asks that the same question be investigable manually from the
+      citations. Null for the other kinds.
+  unavailable_reason:
+    type: string
+    nullable: true
+    doc: "Why the observation could not be made, for `kind: unavailable`. Null otherwise."
+default_view:
+  columns: [kind, reference, source, samples, observed_at]

@@ -1,0 +1,26 @@
+[package]
+name = "ono-graph"
+description = "The relationship graph of Ono-Sendai: graph values, relationship providers and `trace` (spec §22)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-pipeline.workspace = true
+ono-provider-api.workspace = true
+ono-render.workspace = true
+ono-value.workspace = true
+async-trait.workspace = true
+jiff.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true

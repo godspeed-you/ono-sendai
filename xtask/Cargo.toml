@@ -9,5 +9,22 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[lib]
+name = "xtask"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+ono-core.workspace = true
+ono-parser.workspace = true
+serde = { workspace = true }
+serde_yaml_ng.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
 [lints]
 workspace = true

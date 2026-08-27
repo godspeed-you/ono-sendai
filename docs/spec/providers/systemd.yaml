@@ -1,0 +1,10 @@
+# The provider that answers over D-Bus from systemd. Registered even when systemd cannot be
+# reached: unavailability with a reason is a different answer from "there are no services"
+# (spec §35.3). See linux-procfs.yaml for what this registry is and what enforces it.
+
+providers:
+  - id: systemd
+    doc: Services, from org.freedesktop.systemd1 over D-Bus.
+    targets: [service]
+    capabilities: [service.list, service.manage]
+    schemas: [ono.service/1]

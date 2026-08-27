@@ -1,0 +1,41 @@
+# docs/ACCEPTANCE.md section 4.2 and spec section 4.6: behaviour is deterministic when output is
+# redirected or the terminal is not a TTY. A shell whose output depends on who is watching cannot
+# be scripted against, and the difference is invisible until it breaks something.
+case: what ono prints does not depend on whether anyone is watching
+pty: true
+columns: 100
+lines: 30
+timeout: 60
+run: |
+  script='echo alpha; printf "%s\n" one two three; sh -c "exit 3"; echo "status=$?"'
+
+  # Once with a terminal on the other end, once into a file, once through a pipe.
+  ono -c "$script" > /tmp/to-a-file.txt 2>&1
+  ono -c "$script" | cat > /tmp/through-a-pipe.txt 2>&1
+  ono -c "$script" 2>&1 | tr -d '\r' > /tmp/to-a-terminal.txt
+
+  if diff -q /tmp/to-a-file.txt /tmp/through-a-pipe.txt >/dev/null; then
+    echo "file-and-pipe-agree"
+  else
+    echo "DIFFER: file vs pipe"; diff /tmp/to-a-file.txt /tmp/through-a-pipe.txt
+  fi
+  if diff -q /tmp/to-a-file.txt /tmp/to-a-terminal.txt >/dev/null; then
+    echo "terminal-agrees"
+  else
+    echo "DIFFER: file vs terminal"; diff /tmp/to-a-file.txt /tmp/to-a-terminal.txt
+  fi
+
+  # And nothing that reaches a file may carry a terminal escape sequence.
+  if LC_ALL=C grep -q $'\033' /tmp/to-a-file.txt; then
+    echo "ESCAPES IN A FILE"
+  else
+    echo "no-escapes-in-a-file"
+  fi
+  cat /tmp/to-a-file.txt
+exit: 0
+stdout-contains: file-and-pipe-agree
+stdout-contains: terminal-agrees
+stdout-contains: no-escapes-in-a-file
+stdout-contains: status=3
+stdout-not-contains: DIFFER
+stdout-not-contains: ESCAPES IN A FILE

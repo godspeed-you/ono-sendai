@@ -1,0 +1,32 @@
+[package]
+name = "ono-provider-linux"
+description = "The Linux core providers of Ono-Sendai: processes, files, identities, the environment and mounts, answered from the kernel and from NSS."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-pipeline.workspace = true
+ono-provider-api.workspace = true
+ono-value.workspace = true
+async-trait.workspace = true
+jiff.workspace = true
+nix = { workspace = true, features = ["dir", "feature", "fs", "process", "signal", "user"] }
+tokio.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+async-trait.workspace = true
+jiff.workspace = true
+nix = { workspace = true, features = ["fs"] }
+ono-pipeline.workspace = true
+ono-value.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true

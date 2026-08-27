@@ -1,0 +1,34 @@
+# Canonical User schema. Source: spec §28.7, field-for-field; identity is the uid. §23.6 requires
+# that an unresolved id keep its numeric identity, which is why `name` is nullable and `uid` is
+# not.
+id: ono.user/1
+name: User
+summary: A user account.
+identity: [uid]
+fields:
+  uid:
+    type: int
+    required: true
+    doc: The numeric user id. Always present, even when no name resolves for it.
+  name:
+    type: string
+    nullable: true
+    doc: The login name; null when the identity provider cannot resolve the uid.
+  primary_group:
+    type: ref<ono.group/1>
+    nullable: true
+    doc: The primary group.
+  home:
+    type: path
+    nullable: true
+    doc: The home directory as the account database records it; not checked for existence.
+  shell:
+    type: path
+    nullable: true
+    doc: The login shell as the account database records it.
+  gecos:
+    type: string
+    nullable: true
+    doc: The GECOS field, unparsed.
+default_view:
+  columns: [uid, name, home, shell]

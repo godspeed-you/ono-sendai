@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "xtask"]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT"
@@ -11,8 +11,49 @@ repository = "https://github.com/godspeed-you/ono-sendai"
 authors = ["The Ono-Sendai project"]
 
 [workspace.dependencies]
-ono-core = { path = "crates/ono-core", version = "0.0.1" }
-ono-testkit = { path = "crates/ono-testkit", version = "0.0.1" }
+# Internal crates. Created as a phase needs them (ADR-0001, ADR-0005).
+ono-core = { path = "crates/ono-core", version = "0.2.0" }
+ono-value = { path = "crates/ono-value", version = "0.2.0" }
+ono-parser = { path = "crates/ono-parser", version = "0.2.0" }
+ono-process = { path = "crates/ono-process", version = "0.2.0" }
+ono-pipeline = { path = "crates/ono-pipeline", version = "0.2.0" }
+ono-command = { path = "crates/ono-command", version = "0.2.0" }
+ono-render = { path = "crates/ono-render", version = "0.2.0" }
+ono-provider-api = { path = "crates/ono-provider-api", version = "0.2.0" }
+ono-provider-linux = { path = "crates/ono-provider-linux", version = "0.2.0" }
+ono-provider-netlink = { path = "crates/ono-provider-netlink", version = "0.2.0" }
+ono-provider-systemd = { path = "crates/ono-provider-systemd", version = "0.2.0" }
+ono-editor = { path = "crates/ono-editor", version = "0.2.0" }
+ono-graph = { path = "crates/ono-graph", version = "0.2.0" }
+ono-history = { path = "crates/ono-history", version = "0.2.0" }
+ono-protocol = { path = "crates/ono-protocol", version = "0.2.0" }
+ono-remote = { path = "crates/ono-remote", version = "0.2.0" }
+ono-kuang-protocol = { path = "crates/ono-kuang-protocol", version = "0.2.0" }
+ono-kuang-supervisor = { path = "crates/ono-kuang-supervisor", version = "0.2.0" }
+ono-kuang-sdk = { path = "crates/ono-kuang-sdk", version = "0.2.0" }
+ono-kuang-testhost = { path = "crates/ono-kuang-testhost", version = "0.2.0" }
+ono-model-broker = { path = "crates/ono-model-broker", version = "0.2.0" }
+ono-testkit = { path = "crates/ono-testkit", version = "0.2.0" }
+
+# Third-party. Choices and rationale: ADR-0005.
+async-trait = "0.1"
+bytes = "1"
+crossterm = "0.29"
+csv = "1"
+futures = "0.3"
+globset = "0.4"
+jiff = { version = "0.2", features = ["serde"] }
+nix = "0.31"
+regex = "1"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+sha2 = "0.11"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "process", "signal", "net", "fs"] }
+toml = "1"
+unicode-width = "0.2"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

@@ -1,0 +1,26 @@
+# Phase G (spec §37): the relationship graph. `trace` answers with a graph value that travels
+# the pipeline like any other value (§22.1), draws as a tree and never as a table (§13.6), and
+# every edge carries who asserted it and how confidently. PID 1 exists in the container and its
+# children are real relationships procfs asserts.
+case: known relationships become a graph a pipeline can carry
+timeout: 120
+run: |
+  echo "== a trace draws as a tree =="
+  ono -c 'trace process 1' | head -5
+
+  echo "== the graph is a value: it serialises, and its type is inspectable =="
+  ono -c 'trace process 1 | type' | head -2
+  ono -c 'trace process 1 | to json' | head -c 200; echo
+
+  echo "== a trace of nothing is an error naming what was asked =="
+  ono -c 'trace process 999999' 2>&1 | head -1
+
+  echo "== provenance survives: every edge names its asserter =="
+  ono -c 'trace process 1 | to json' | grep -o '"provider":"linux.process-tree"' | head -1
+exit: 0
+stdout-contains: +-- child ->
+stdout-contains: ono.graph/1
+stdout-contains: "edges"
+stdout-contains: Ono-Sendai-E
+stdout-contains: "provider":"linux.process-tree"
+stdout-not-contains: panicked

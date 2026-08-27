@@ -1,0 +1,49 @@
+# Canonical Socket schema. Source: spec §28.4, field-for-field. Identity is the
+# "provider-specific socket ref/inode" of §28.4. The `local`/`remote` Endpoint records are
+# `ono.endpoint/1`, defined in endpoint.v1.yaml (ADR-0012).
+id: ono.socket/1
+name: Socket
+summary: A socket with its endpoints, owner and state.
+identity: [inode]
+fields:
+  protocol:
+    type: enum
+    required: true
+    values: [tcp, udp, unix, raw, sctp, dccp, packet, unknown]
+    doc: The transport protocol.
+  family:
+    type: enum
+    required: true
+    values: [inet, inet6, unix, packet, netlink, other]
+    doc: The address family.
+  local:
+    type: ono.endpoint/1
+    nullable: true
+    doc: The local endpoint; null for socket kinds that have none.
+  remote:
+    type: ono.endpoint/1
+    nullable: true
+    doc: The peer endpoint; null for listening and connectionless sockets.
+  state:
+    type: enum
+    nullable: true
+    values:
+      [established, syn-sent, syn-recv, fin-wait-1, fin-wait-2, time-wait, close, close-wait,
+       last-ack, listen, closing, unknown]
+    doc: The connection state; null for protocols that have none, such as UDP.
+  process:
+    type: ref<ono.process/1>
+    nullable: true
+    doc: >-
+      The owning process; null when no process owns the socket, or when this user may not see
+      the owner. Spec §10.5 forbids collapsing those two into an empty string.
+  user:
+    type: ref<ono.user/1>
+    nullable: true
+    doc: The owning user.
+  inode:
+    type: int
+    nullable: true
+    doc: The socket inode; the identity field, null when the provider cannot supply it.
+default_view:
+  columns: [protocol, local, remote, state, process]

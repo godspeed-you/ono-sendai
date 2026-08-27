@@ -1,0 +1,32 @@
+# Spec section 6.5 requires that command resolution be "explicit and inspectable", and ADR-0015
+# rows T10 and T11 make that a security property: command confusion between namespaces, and a
+# binary earlier in PATH shadowing the one a user meant, are only defensible if the shell will
+# say which one it picked.
+case: explain reports the resolution the shell would actually perform
+run: |
+  ono -c 'explain ls'
+  ono -c 'explain cd'
+  # `explain` answers "what would happen", and "nothing on PATH resolves this" is an answer. It
+  # therefore succeeds at explaining even when the thing explained would fail (ADR-0021): a
+  # command that withheld the explanation exactly when something was wrong would be useless.
+  ono -c 'explain nonesuch' 2>&1; echo "explained=$?"
+
+  # PATH shadowing: a directory earlier in PATH wins, and `explain` names the absolute path, so a
+  # user can see which `ls` they are about to run.
+  mkdir -p /tmp/shadow
+  printf '#!/bin/sh\necho SHADOWED\n' > /tmp/shadow/ls
+  chmod +x /tmp/shadow/ls
+  PATH=/tmp/shadow:$PATH ono -c 'explain ls'
+  PATH=/tmp/shadow:$PATH ono -c 'ls'
+
+  # A forced namespace is a statement of intent and is never retried elsewhere (ADR-0011).
+  ono -c 'ono:ls' 2>&1; echo "forced=$?"
+exit: 0
+stdout-contains: is an external program and resolves to /usr/bin/ls
+stdout-contains: is a command the shell runs itself
+stdout-contains: resolves to nothing on PATH
+stdout-contains: explained=0
+stdout-contains: /tmp/shadow/ls
+stdout-contains: SHADOWED
+stdout-contains: Ono-Sendai-E0101
+stdout-contains: forced=127

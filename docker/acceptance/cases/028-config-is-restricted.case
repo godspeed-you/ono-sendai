@@ -1,0 +1,18 @@
+# ADR-0010: a configuration file may set values and may not run commands, and a broken config
+# never stops the shell from starting — otherwise it has removed the tool needed to repair it.
+case: configuration is restricted, and a broken one still leaves a usable shell
+run: |
+  mkdir -p /tmp/ono-config
+  printf 'touch /tmp/ono-config/should-not-exist\n' > /tmp/ono-config/config.ono
+  ONO_CONFIG=/tmp/ono-config/config.ono ono -c 'echo started' 2>&1
+  test -e /tmp/ono-config/should-not-exist && echo "CONFIG RAN A COMMAND" || echo "config ran nothing"
+  printf 'echo )\n' > /tmp/ono-config/broken.ono
+  ONO_CONFIG=/tmp/ono-config/broken.ono ono -c 'echo still-starts' 2>/dev/null
+  ono --no-config -c 'echo no-config-at-all'
+exit: 0
+stdout-contains: started
+stdout-contains: Ono-Sendai-E0702
+stdout-contains: config ran nothing
+stdout-contains: still-starts
+stdout-contains: no-config-at-all
+stdout-not-contains: CONFIG RAN A COMMAND

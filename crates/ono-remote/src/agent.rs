@@ -1,0 +1,219 @@
+//! The remote end of a link: spec §21.4's `ono-agent`, as a library.
+//!
+//! Spec §21.4 sketches the agent as "a small remote agent [that] can expose native provider
+//! calls and typed streams over a versioned protocol". The protocol half already exists in
+//! `ono-protocol`; this module supplies the other half — a [`RemoteService`] that answers with
+//! a real [`ProviderRegistry`], and the negotiation material derived from it: which providers
+//! this machine has, which targets they answer, which schemas they produce, what they must be
+//! allowed to do, and whether they can answer here at all (spec §21.2, §35.3).
+//!
+//! [`agent_main`] is the entry the `ono --agent` flag will call: the same loop over stdin and
+//! stdout, because in agent mode those *are* the wire — `ssh <host> ono --agent` hands them to
+//! the caller as the byte pipe (spec §21.4). Nothing else may be written to stdout in that
+//! mode; diagnostics belong on stderr, which ssh carries separately.
+
+use std::process::ExitCode;
+use std::sync::Arc;
+
+use ono_pipeline::StreamEvent;
+use ono_protocol::{
+    ActRequest, Identity, Limits, ProviderDescriptor, RemoteQuery, RemoteService, ServerConfig,
+    StreamResponder, Transport,
+};
+use ono_provider_api::{ActionOutcome, Availability, ProviderRegistry};
+use ono_value::{ErrorValue, SchemaRegistry};
+use tokio::io::{AsyncRead, AsyncWrite};
+
+use crate::transport::StdioTransport;
+
+/// What an agent serves, and as whom.
+///
+/// ```
+/// use std::sync::Arc;
+/// use ono_protocol::Identity;
+/// use ono_provider_api::ProviderRegistry;
+/// use ono_remote::AgentConfig;
+///
+/// let registry = Arc::new(ProviderRegistry::new());
+/// let config = AgentConfig::new(registry).with_identity(Identity::new("deploy"));
+/// ```
+#[derive(Debug, Clone)]
+pub struct AgentConfig {
+    registry: Arc<ProviderRegistry>,
+    identity: Identity,
+    limits: Limits,
+}
+
+impl AgentConfig {
+    /// An agent serving `registry`.
+    ///
+    /// The identity defaults to the `USER` environment variable, because that is who the agent
+    /// process runs as; the CLI replaces it with the real resolved identity when it wires
+    /// `--agent` (spec §21.2: "identity and privilege").
+    #[must_use]
+    pub fn new(registry: Arc<ProviderRegistry>) -> Self {
+        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_owned());
+        Self {
+            registry,
+            identity: Identity::new(user),
+            limits: Limits::default(),
+        }
+    }
+
+    /// Who the agent answers as (spec §21.5: least privilege, and visibly so).
+    #[must_use]
+    pub fn with_identity(mut self, identity: Identity) -> Self {
+        self.identity = identity;
+        self
+    }
+
+    /// The bounds the agent enforces on its caller (ADR-0015 T7).
+    #[must_use]
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// The negotiation material spec §21.2 asks for, derived from the registry rather than
+    /// written down twice: every provider with its targets, capabilities and availability, and
+    /// every schema any of them produces, on top of the built-in ones.
+    fn server_config(&self) -> ServerConfig {
+        let mut schemas = SchemaRegistry::new();
+        for schema in ono_value::builtin_schemas().schemas() {
+            // A duplicate id is already registered, which is the outcome wanted.
+            let _ = schemas.register((**schema).clone());
+        }
+        for schema in self.registry.schemas() {
+            let _ = schemas.register((*schema).clone());
+        }
+
+        let mut config = ServerConfig::new()
+            .with_identity(self.identity.clone())
+            .with_schemas(Arc::new(schemas))
+            .with_limits(self.limits.clone());
+        for provider in self.registry.providers() {
+            let mut descriptor = ProviderDescriptor::new(provider.id())
+                .with_targets(provider.targets().iter().copied());
+            for capability in provider.capabilities() {
+                descriptor = descriptor.with_capability(&capability);
+            }
+            if let Availability::Unavailable(reason) = provider.availability() {
+                descriptor = descriptor.unavailable(reason);
+            }
+            config = config.with_provider(descriptor);
+        }
+        config
+    }
+}
+
+/// Answers one link from `transport` with the registry in `config`, until the caller hangs up.
+///
+/// A caller disconnecting is the normal end of a session and returns `Ok(())`; so does a caller
+/// that shares no protocol version, which is refused inside the handshake (spec §21.2).
+///
+/// # Errors
+///
+/// Returns `remote.protocol_mismatch` when the caller is not speaking this protocol, and
+/// `remote.unreachable` when the transport fails or ends mid-frame.
+pub async fn serve_registry<T: Transport>(
+    transport: T,
+    config: AgentConfig,
+) -> Result<(), ErrorValue> {
+    let server = config.server_config();
+    let service = RegistryService {
+        registry: Arc::clone(&config.registry),
+    };
+    ono_protocol::serve(transport, server, service).await
+}
+
+/// The agent process entry: serve the registry over this process's stdin and stdout.
+///
+/// This is what `ono --agent` runs (spec §21.4). The exit status follows ADR-0008: `0` when the
+/// session ended — however unimpressive the caller's manners — and `1` when the agent itself
+/// failed, with the structured error rendered to stderr, which ssh carries back to the user
+/// separately from the wire.
+pub async fn agent_main<R, W>(input: R, output: W, config: AgentConfig) -> ExitCode
+where
+    R: AsyncRead + Send + Unpin + 'static,
+    W: AsyncWrite + Send + Unpin + 'static,
+{
+    match serve_registry(StdioTransport::new(input, output), config).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("ono --agent: {}", error.render_full());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// A [`RemoteService`] that answers with a local [`ProviderRegistry`].
+#[derive(Debug)]
+struct RegistryService {
+    registry: Arc<ProviderRegistry>,
+}
+
+#[async_trait::async_trait]
+impl RemoteService for RegistryService {
+    async fn query(
+        &self,
+        query: RemoteQuery,
+        responder: &StreamResponder,
+    ) -> Result<(), ErrorValue> {
+        let mut stream = self.registry.snapshot(&query.to_query())?;
+        // The provider may honour the limit or ignore it (its documented liberty); the caller's
+        // bound is enforced here either way, so an endless remote target with a limit ends.
+        let limit = query.max().unwrap_or(usize::MAX);
+        let mut sent = 0;
+        loop {
+            // Biased, so a caller that cancelled is heard before the next value is taken out of
+            // a producer that may never pause on its own.
+            let event = tokio::select! {
+                biased;
+                () = responder.cancel_token().cancelled() => break,
+                event = stream.recv() => match event {
+                    Some(event) => event,
+                    None => break,
+                },
+            };
+            let delivered = match event {
+                StreamEvent::Value(value) => {
+                    sent += 1;
+                    responder.send(value).await
+                }
+                StreamEvent::Failure(error) => responder.fail(error).await,
+            };
+            if delivered.is_err() || sent >= limit {
+                break;
+            }
+        }
+        stream.cancel_token().cancel();
+        Ok(())
+    }
+
+    async fn subscribe(
+        &self,
+        query: RemoteQuery,
+        responder: &StreamResponder,
+    ) -> Result<(), ErrorValue> {
+        let mut events = self.registry.subscribe(&query.to_query())?;
+        loop {
+            let event = tokio::select! {
+                biased;
+                () = responder.cancel_token().cancelled() => break,
+                event = events.recv() => match event {
+                    Some(event) => event,
+                    None => break,
+                },
+            };
+            if responder.send_event(event).await.is_err() {
+                break;
+            }
+        }
+        events.cancel();
+        Ok(())
+    }
+
+    async fn act(&self, request: ActRequest) -> Result<ActionOutcome, ErrorValue> {
+        self.registry.act(&request.to_action()).await
+    }
+}

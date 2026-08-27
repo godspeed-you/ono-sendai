@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use xtask::{contracts, narrative, reference, scan};
+
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
     let rest: Vec<String> = std::env::args().skip(2).collect();
@@ -14,6 +16,7 @@ fn main() -> ExitCode {
         Some("gate") => run_script("gate.sh", &rest),
         Some("acceptance") => run_script("acceptance.sh", &rest),
         Some("spec-check") => spec_check(),
+        Some("docs") => generate_docs(),
         Some("release-check") => run_script("release-check.sh", &rest),
         Some(other) => {
             eprintln!("xtask: unknown task `{other}`");
@@ -33,6 +36,7 @@ fn usage() {
     eprintln!("tasks:");
     eprintln!("  gate           format, lint, test, contract check, docs (AGENTS.md section 10)");
     eprintln!("  spec-check     contract drift between docs/spec and the implementation");
+    eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!("  acceptance     build the container and run the acceptance suite");
     eprintln!("  release-check  the full release gate of docs/ACCEPTANCE.md");
 }
@@ -60,6 +64,22 @@ fn run_script(name: &str, args: &[String]) -> ExitCode {
     }
 }
 
+/// Regenerates `docs/reference/` from the machine-readable contracts (spec section 36.2).
+fn generate_docs() -> ExitCode {
+    match reference::write(&repo_root()) {
+        Ok(written) => {
+            for path in written {
+                println!("docs: wrote {path}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("docs: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// Checks the contracts that exist today against the rules in AGENTS.md.
 ///
 /// The registries of spec section 47 do not exist yet. Until they do, this task enforces the
@@ -76,35 +96,32 @@ fn spec_check() -> ExitCode {
 
     problems.extend(check_spec_is_untouched(&root));
 
-    let spec_docs = find_narrative_spec(&root);
-    match spec_docs.as_slice() {
-        [] => problems.push("no narrative specification found under docs/".to_owned()),
-        [single] => {
-            for file in ["AGENTS.md", "CLAUDE.md", "README.md"] {
-                let Ok(text) = std::fs::read_to_string(root.join(file)) else {
-                    problems.push(format!("{file} is missing"));
-                    continue;
-                };
-                if !text.contains(single) {
-                    problems.push(format!(
-                        "{file} does not reference the current specification `{single}`"
-                    ));
-                }
-            }
-        }
-        many => problems.push(format!(
-            "several narrative specifications found ({}); exactly one is authoritative",
-            many.join(", ")
-        )),
+    let state = std::fs::read_to_string(root.join("docs").join("STATE.md")).unwrap_or_default();
+    if state.is_empty() {
+        problems.push(
+            "docs/STATE.md is missing; it is the shared work board (AGENTS.md §9)".to_owned(),
+        );
     }
+    problems.extend(
+        scan::check_unfinished_work(&root, &state)
+            .into_iter()
+            .map(|problem| format!("{} — {}", problem.location, problem.detail)),
+    );
 
-    let contracts = root.join("docs").join("spec");
-    if contracts.is_dir() {
-        for entry in walk(&contracts) {
-            if std::fs::metadata(&entry).map(|m| m.len()).unwrap_or(0) == 0 {
-                problems.push(format!("contract {} is empty", entry.display()));
-            }
-        }
+    problems.extend(
+        narrative::check(&root)
+            .into_iter()
+            .map(|problem| format!("{} — {}", problem.location, problem.detail)),
+    );
+
+    if root.join("docs").join("spec").is_dir() {
+        problems.extend(
+            contracts::check_contracts(&root)
+                .into_iter()
+                .chain(contracts::check_examples(&root))
+                .chain(reference::check_committed(&root))
+                .map(|problem| format!("{} — {}", problem.location, problem.detail)),
+        );
     } else {
         println!("spec-check: docs/spec/ does not exist yet (expected before phase D)");
     }
@@ -154,33 +171,4 @@ fn check_spec_is_untouched(root: &Path) -> Vec<String> {
             "cannot verify the specification checksum: {error}. `sha256sum` must be available"
         )],
     }
-}
-
-fn find_narrative_spec(root: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(root.join("docs")) else {
-        return Vec::new();
-    };
-    let mut found: Vec<String> = entries
-        .flatten()
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.contains("shell_spec") && name.ends_with(".md"))
-        .collect();
-    found.sort();
-    found
-}
-
-fn walk(dir: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return files;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            files.extend(walk(&path));
-        } else {
-            files.push(path);
-        }
-    }
-    files
 }

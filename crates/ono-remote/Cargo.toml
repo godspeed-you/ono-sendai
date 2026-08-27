@@ -1,0 +1,32 @@
+[package]
+name = "ono-remote"
+description = "The remote-link machinery of spec §21 and §37 Phase H: the agent loop, the mounted remote provider, and the SSH-subprocess transport."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+# The agent end of the child-process round-trip suite (`tests/subprocess.rs`). It exists so the
+# subprocess transport is provable offline: the suite spawns this binary the way `link host`
+# will spawn `ssh <host> ono --agent`, with a local child standing in for the remote machine.
+name = "ono-remote-fixture-agent"
+path = "src/bin/fixture_agent.rs"
+
+[dependencies]
+ono-core.workspace = true
+ono-pipeline.workspace = true
+ono-protocol.workspace = true
+ono-provider-api.workspace = true
+ono-value.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["io-std"] }
+
+[dev-dependencies]
+jiff.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+[lints]
+workspace = true

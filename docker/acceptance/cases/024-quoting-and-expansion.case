@@ -1,0 +1,19 @@
+# Phase A: the expansion rules of ADR-0019, observed from outside. The one that matters most is
+# that a value's content never becomes a command's structure.
+case: words expand as ADR-0019 says, and a value never becomes syntax
+run: |
+  mkdir -p /tmp/ono-glob && cd /tmp/ono-glob && rm -rf ./* && touch a.txt b.txt c.md
+  ono -c "printf '[%s]' *.txt"; echo
+  ono -c "printf '[%s]' '*.txt'"; echo
+  ono -c 'printf "[%s]" one\ argument'; echo
+  ONO_PROBE='two words' ono -c 'printf "[%s]" $ONO_PROBE'; echo
+  ONO_PROBE='*.txt' ono -c 'printf "[%s]" $ONO_PROBE'; echo
+  ONO_PROBE=read ono -c 'echo ${ONO_PROBE}able'
+  ono -c 'echo *.nothing-matches' 2>&1 | head -1
+exit: 0
+stdout-contains: [a.txt][b.txt]
+stdout-contains: [*.txt]
+stdout-contains: [one argument]
+stdout-contains: [two words]
+stdout-contains: readable
+stdout-contains: Ono-Sendai-E0301

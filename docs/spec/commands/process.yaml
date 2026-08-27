@@ -1,0 +1,226 @@
+# Command family: Process. Sources: spec §9.1 Process, the `process` and `job` rows of the §52
+# core command matrix, and §18.4 (`get job`). Schema: `ono.process/1`, `ono.job/1`.
+#
+# Registry conventions, fixed by ADR-0012 and used by every file in this directory:
+#   stability  stable       named by spec §9.1 or by another normative section; the id,
+#                           semantics and output schema are a compatibility promise (§40.4).
+#              experimental named only by the §52 matrix, an example, or a transform §53
+#                           declines to freeze; the surface may still change.
+#              planned      a `?` cell of the §52 matrix — "the semantic usefulness must be
+#                           validated rather than mechanically implemented for symmetry".
+#                           Carries `validation_required: true`. No implementation is expected
+#                           and `spec-check` does not demand one.
+#   argument_mode  per ADR-0009: expression for the transforms; words for everything else.
+#   phase          the spec §37 phase that delivers it, or `planned` when no phase does.
+#   privilege      none | elevated | conditional — what the user needs, before the command runs.
+
+version: 1
+family: process
+
+commands:
+  - id: ono.process.get
+    verb: get
+    target: process
+    summary: Enumerate or resolve processes.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.process/1>
+    provider_capability: process.list
+    selectors:
+      - {name: pid, type: int, doc: "Resolve one process by id, as in `get process 4419` (spec §6.1)."}
+      - {name: name, type: string, doc: "Resolve processes whose name matches exactly."}
+    options:
+      - {name: user, type: "ref<ono.user/1>", repeatable: false, doc: "Restrict to processes of one user."}
+      - {name: tree, type: bool, doc: "Emit the parent/child structure rather than a flat stream."}
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get process
+      - get process 4419
+      - get process | where cpu > 20
+
+  - id: ono.process.inspect
+    verb: inspect
+    target: process
+    summary: Return detailed process properties and provenance.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.process/1"
+    output: ono.process-detail/1
+    provider_capability: process.inspect
+    selectors:
+      - {name: pid, type: int, doc: "The process to inspect; omitted when one arrives through the pipeline."}
+    options: []
+    privilege: conditional
+    streaming: false
+    phase: D
+    examples:
+      - inspect process 4419
+      - get process | where memory > 1GiB | take 1 | inspect process
+
+  - id: ono.process.watch
+    verb: watch
+    target: process
+    summary: Emit process snapshots and updates as a live stream.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.process-event/1>
+    provider_capability: process.watch
+    selectors:
+      - {name: pid, type: int, doc: "Watch one process."}
+    options:
+      - {name: every, type: duration, doc: "Polling interval where the provider has no event source (spec §18.2)."}
+      - {name: service, type: string, doc: "Watch only the processes of one service unit (spec §41.6)."}
+    privilege: none
+    streaming: true
+    phase: F
+    examples:
+      - watch process --every 1s | where cpu > 20
+      - watch process --service nginx &
+
+  - id: ono.process.stop
+    verb: stop
+    target: process
+    summary: Request graceful termination using default TERM semantics.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.process/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: process.signal
+    selectors:
+      - {name: pid, type: int, doc: "The process to stop; omitted when processes arrive through the pipeline."}
+    options:
+      - {name: timeout, type: duration, doc: "How long to wait for the process to exit before reporting failure."}
+      - {name: confirm, type: bool, doc: "Confirm a bulk stop non-interactively. Without it, a selection over the bulk threshold fails with `safety.confirmation_required` (spec §11.6, §17.4)."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - stop process 4419
+      - get process | where name == "foo" | stop process | where status == failed
+
+  - id: ono.process.kill
+    verb: kill
+    target: process
+    summary: Send an explicit signal; the forceful semantics must stay visible.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.process/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: process.signal
+    selectors:
+      - {name: pid, type: int, doc: "The process to signal."}
+    options:
+      - {name: signal, type: string, default: SIGKILL, doc: "The signal to deliver. Defaults to SIGKILL, which is what distinguishes `kill` from `stop` (spec §9.1)."}
+    privilege: conditional
+    streaming: true
+    phase: C
+    examples:
+      - kill process 4419
+      - kill process 4419 --signal SIGHUP
+
+  - id: ono.process.trace
+    verb: trace
+    target: process
+    summary: Show known process relationships — parent, children, files, sockets, cgroup, service.
+    stability: stable
+    argument_mode: words
+    input: "null | ono.process/1"
+    output: ono.graph/1
+    provider_capability: process.trace
+    selectors:
+      - {name: pid, type: int, doc: "The process to trace."}
+    options:
+      - {name: depth, type: int, doc: "How many relationship hops to follow."}
+      - {name: relations, type: list<string>, doc: "Restrict the trace to these relation names."}
+    privilege: conditional
+    streaming: false
+    phase: G
+    examples:
+      - trace process 812
+      - trace @1
+
+  - id: ono.job.get
+    verb: get
+    target: job
+    summary: Enumerate the session's jobs — backgrounded pipelines and detached live views.
+    stability: stable                     # spec §18.4: "`get job` returns structured job objects"
+    argument_mode: words
+    input: "null"
+    output: stream<ono.job/1>
+    provider_capability: job.list
+    selectors:
+      - {name: id, type: int, doc: "Resolve one job by its job number."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: F
+    examples:
+      - get job
+      - get job | where state == running
+
+  # --- §52 matrix cells whose usefulness the spec asks to validate first -------------------
+  - id: ono.process.enter
+    verb: enter
+    target: process
+    summary: Push a process onto the context stack so later commands need no selector.
+    stability: planned                    # spec §52, process/enter = "C?"
+    validation_required: true
+    argument_mode: words
+    input: "null | ono.process/1"
+    output: ono.context/1
+    provider_capability: process.inspect
+    selectors:
+      - {name: pid, type: int, doc: "The process to enter."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: E
+    examples:
+      - enter process 4419
+
+  - id: ono.process.set
+    verb: set
+    target: process
+    summary: Adjust mutable process attributes such as scheduling priority.
+    stability: planned                    # spec §52, process/set = "M?"
+    validation_required: true
+    argument_mode: words
+    input: "null | stream<ono.process/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: process.set
+    selectors:
+      - {name: pid, type: int, doc: "The process to modify."}
+    options:
+      - {name: priority, type: int, doc: "The scheduling niceness to apply."}
+    privilege: conditional
+    streaming: true
+    phase: planned
+    examples:
+      - set process 4419 --priority 10
+
+  - id: ono.signal.send
+    verb: send
+    target: signal
+    summary: Deliver a signal to a process or job.
+    stability: planned                    # spec §7.1 lists `signal` among `send`'s targets; §9.1 defines no such command
+    validation_required: true
+    note: >-
+      Overlaps `ono.process.kill --signal` entirely. Kept in the registry because §7.1 names the
+      pair, and marked planned because two spellings for one operation is exactly the kind of
+      symmetry §52 warns against; one of the two should be withdrawn before either is stable.
+    argument_mode: words
+    input: "null | stream<ono.process/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: process.signal
+    selectors:
+      - {name: signal, type: string, doc: "The signal to deliver."}
+    options: []
+    privilege: conditional
+    streaming: true
+    phase: planned
+    examples:
+      - get process 4419 | send signal SIGHUP
