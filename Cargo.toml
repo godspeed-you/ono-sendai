@@ -65,6 +65,11 @@ unwrap_used = "warn"
 expect_used = "warn"
 panic = "warn"
 
+# Full debuginfo made every build directory 14-20 GB, which is what fills the disk when several
+# worktrees build at once. Line tables keep test backtraces readable at a fraction of the size.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
