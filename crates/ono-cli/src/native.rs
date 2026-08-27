@@ -1291,9 +1291,13 @@ fn run_native_segment(
     // bytes arrive on the shell's stdin, not from a stage inside the pipeline. A terminal is
     // never read implicitly — an interactive `from json` waiting silently for EOF would look
     // like a hang, and the "nothing was piped into it" error says what to do instead.
+    // A seeded segment already has its input — `$hot | to json`, a function's stream — and
+    // must not wait on stdin as well: with a pipe that never closes, that wait is a hang.
+    let seeded = seed.is_some();
     let mut input = input;
     if first
         && input.is_none()
+        && !seeded
         && let Some((head, _)) = bound.first()
         && !head.input().accepts_null()
         && accepts_bytes(head.input().text())
