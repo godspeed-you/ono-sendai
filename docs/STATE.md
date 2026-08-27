@@ -93,172 +93,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [identity | 2026-08-27] **identity family remainder** — **all 25 tests of
-  `crates/ono-cli/tests/identity_missing.rs` green and un-ignored** on branch
-  `implementation-identity` (ADR-0100–0102). Acceptance case
-  `docker/acceptance/cases/043-identity-sessions-and-accounts.case` is written and dry-run
-  against the binary; **the integrator runs it in the container** when merging. Left open (not
-  in the RED suite): a privileged conformance run of the account tools (the workspace's tests
-  never change the developer's accounts); `select error.code` on an ActionResult row projects
-  the whole error under `code` instead of its field.
-- [remote | 2026-08-27] **remote family** (`crates/ono-cli/tests/remote_missing.rs`) on branch
-  `implementation-remote` — **all 36 tests green and un-ignored**; the gate is green at every
-  commit. Delivered: `link`/`host` as tables of the session provider, `ono.host/1` and its
-  three sources (ADR-0103); `add/set/rename/remove/detach link`, `connect host`, `test host`
-  and `add/set/remove host` (ADR-0104); `watch`/`trace` for link and host with
-  `ono.link-event/1`, `ono.host-event/1`, `ono.provider/1` (ADR-0105); `--agentless` recorded
-  and visible, `explain`'s EXECUTION CONTEXT and MUTATION blocks (ADR-0106). Acceptance case
-  `docker/acceptance/cases/044-remote-links-as-objects.case` is written and dry-run against the
-  binary; **the integrator runs it in the container** when merging the branch. Case 049 now
-  matches the typed `get link` table by regular expression. Left open (not in the RED suite):
-  the piped forms `get link | remove link` / `… | detach link`; the agentless provider set of
-  ADR-0037 §6 (today `mode: agentless` is recorded and the agent answers, visibly); a
-  `watch host` that probes reachability; the multiplexed streams of `trace link`; the
-  execution context in the `ono.execution-plan/1` value.
-- [containers | 2026-08-27] **container and package families** (`crates/ono-cli/tests/containers_packages_missing.rs`)
-  on branch `implementation-containers` — files: `crates/ono-provider-container/`,
-  `crates/ono-provider-linux/src/packages.rs`, `crates/ono-graph/src/kernel/container.rs`,
-  `crates/ono-command/src/impls/{mod,meta}.rs`, `crates/ono-cli/src/providers.rs`,
-  `docs/spec/commands/{container,package}.yaml`, `docs/spec/schemas/{container,image,package,container-event}.v1.yaml`,
-  `docs/spec/providers/{container-engine,linux-packages}.yaml`, acceptance case
-  `046-containers-and-packages`. ADR-0112–0115.
-  Increment 1 done: `ono-provider-container` — the engine API over the runtime's Unix socket,
-  `get container`/`get image`, E0401 naming the sockets tried (4 tests green, ADR-0112).
-  Increment 2 done: start/stop/restart/remove/set container as engine requests, the engine's
-  status as the per-target outcome (8 tests green, ADR-0113). Increment 3 done: `enter
-  container` as a `container` frame, `watch container` over the engine listing, `trace
-  container` with the exact `image` edge (4 tests green, ADR-0114). Increment 4 done:
-  `linux.packages` — `get package`/`find package` from `dpkg-query -W -f` and `apt-cache
-  search`, E0401 naming dpkg and rpm, E0403 for a listing outside the machine format (5 tests
-  green, ADR-0115). Increment 5 done: `add`/`remove`/`set package` through `apt-get` and
-  `apt-mark`, the unprivileged refusal as a failed E0302 row before anything runs (4 tests
-  green, ADR-0115 §5). **All 25 tests green and un-ignored**; the gate is green at every
-  commit. Acceptance case `docker/acceptance/cases/046-containers-and-packages.case` is
-  written and dry-run against the binary; **the integrator runs it in the container** when
-  merging the branch. Left open (not in the RED suite): an rpm/dnf package provider (the
-  refusal names it); `trace container` edges to namespaces, cgroups, mounts and processes
-  (need `State.Pid` joined to procfs); `watch container` over the engine's `/events` instead
-  of polling; `enter container` as an execution context (`container.exec`); a root acceptance
-  case for the package mutations' success path.
-
-- [plugins | 2026-08-27] **plugins family** (`crates/ono-cli/tests/plugins_missing.rs`) on
-  branch `implementation-plugins` — **all 32 tests green and un-ignored**; the gate is green at
-  every commit. Delivered: `ono.plugin/1` records from the session provider `ono.shell`
-  (ADR-0107); `verify`/`inspect`/`find plugin` and the K11 family folded into
-  `ono_core::ErrorCode` (ADR-0108); `install`/`remove plugin` (ADR-0109); `unload`/`set plugin`,
-  enablement on disk, hot reload (ADR-0110); `get/grant/revoke capability`, `get audit`, and the
-  typed empty `assistant`/`model`/`finding` tables (ADR-0111). Acceptance case
-  `docker/acceptance/cases/045-plugins-lifecycle.case` is written and dry-run against the
-  binary; **the integrator runs it in the container** when merging the branch. Left open (not in
-  the RED suite): `always` grants and leases on disk (spec §31.19), `--scope`/`--duration` on
-  `grant capability`, `capability_grants` inside `inspect plugin`, instance memory/cpu figures
-  (null today), the interactive install prompt under a PTY case.
-- [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
-  `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
-  `implementation-meta` — files: `crates/ono-cli/src/{meta,resolve,settings,config,eval,native}.rs`,
-  `crates/ono-command/src/impls/{meta,convert}.rs`, `docs/spec/schemas/command.v1.yaml`,
-  `docs/spec/commands/identity.yaml`, acceptance case `041-config-and-resolve`. ADR-0093–0095.
-  Increment 1 done: `resolve command` (6 tests green, ADR-0093). Increment 2 done: the typed
-  settings catalogue, `get config` with layers/source/line/`--overridden`/`--problems`, typed
-  `set config` with E0202/E0201 and its ActionResult (15 tests green, ADR-0094). Increment 3
-  done: `render.table.max_rows` reaches the sink, redirected output and `format table`
-  (3 tests green; the file has no `#[ignore` left). Increments 4–5 done: `--human` reaches
-  record fields (2 tests), `uid`/`gid` declared before `name` so numeric selectors bind
-  (2 tests, ADR-0095). Acceptance case `041-config-and-resolve` written and dry-run against the
-  binary; **the integrator runs it in the container** when merging.
-
-- [language | 2026-08-27] **language family** (`crates/ono-cli/tests/language_missing.rs`) on
-  branch `implementation-language` — **all 31 tests green and un-ignored**; the gate is green
-  at every commit. Delivered: `let`/`( … )`/`$( … )` capture (ADR-0069); callable functions and
-  `alias` (ADR-0070); `now()`, the RFC 3339 timestamp literal, prefix assignment
-  `NAME=value cmd`, `each { … }` blocks, string `+`, keyless `sort`, `kill %N` (ADR-0071).
-  Acceptance case `docker/acceptance/cases/035-scripting-language.case` is written and
-  dry-run against the binary; **the integrator runs it in the container** when merging the
-  branch. Left open (not in the RED suite): `explain` of a `NAME=value cmd` stage, functions
-  and aliases in completion candidates, a function in a non-head pipeline position.
-- [watch | 2026-08-27] **`watch`/`trace` for the declared-but-unbound targets** — done for
-  file, user, group, interface, route and mount (ADR-0078..0080; commits on
-  `implementation-watch`). Left ignored: the remote five in `remote_missing.rs` (`watch
-  link|host`, `trace link|host`) — they need `link`/`host` as provider-backed records first
-  (context.rs `get_link` renders by hand); the remote family picks them up.
-
-- [processes | 2026-08-27] **process family remainder** (`crates/ono-cli/tests/processes_missing.rs`;
-  `--tree`/`--user` in `options_and_selectors_missing.rs`) on branch `implementation-processes`
-  — **all 18 process tests and the 3 option tests green and un-ignored**; the gate is green at
-  every commit. Delivered: `get job` from the session provider `ono.shell` (ADR-0090);
-  `inspect process` → `ono.process-detail/1` and `get process --tree` (ADR-0091); `set process
-  --priority` via setpriority(2) and `send signal` as the pipeline spelling of a signal
-  (ADR-0092). Acceptance case `docker/acceptance/cases/040-processes-inspect-jobs-signals.case`
-  is written and dry-run against the binary; **the integrator runs it in the container** when
-  merging the branch. Left open (not in the RED suite): a tree renderer for `--tree` at the
-  terminal (the table shows the roots' columns; spec §22.4's tree view is the graph family's);
-  `link`/`host` rows in `SessionTables` (remote family, ADR-0090 §3).
-
-- [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
-  request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
-  one `#[ignore = "REASON: …"]` (AGENTS.md §7) so the tree stays green; **the increment that
-  delivers a family removes the ignore lines of its tests in the same commit** — a family is
-  done when its file has no `#[ignore` left and the gate is green. Work order: cross-cutting
-  seams first (registry-dispatched `set`/`remove`, ActionResult exit status and error shape,
-  generic `enter`/`watch`/`trace` for object targets), then the families. Each file is one
-  family; each test asserts the behaviour the contract promises, never mere presence:
-  - `crates/ono-cli/tests/files_missing.rs` (34) — read/write/copy/move/remove/set/open/tail/
-    watch/trace/enter file, remove/set dir, globs for native selectors — **done** by
-    [files | 2026-08-27] on branch `implementation-files` (ADR-0081–0083) for everything
-    except the four watch/trace tests, which stay `#[ignore` for the watch/trace family;
-    the four `find file` option tests of `options_and_selectors_missing.rs` are green too.
-    Acceptance: `docker/acceptance/cases/037-files-read-write-remove.case` (written, not yet
-    run in the container by this agent)
-  - `crates/ono-cli/tests/language_missing.rs` (31) — `let` capturing a pipeline, `$(…)`/`(…)`
-    values, callable `fn`, `alias`, `now()`, timestamp literals, `FOO=bar cmd`, `each { … }`,
-    string `+`, keyless `sort`, `kill %N`
-  - `crates/ono-cli/tests/options_and_selectors_missing.rs` (15) — `--user/--tree`, `find file`
-    options (**done**, files family), `--mounted`, `trace socket --port`, `--human`,
-    `get user 0`, `where local.port`
-  - `crates/ono-cli/tests/meta_config_missing.rs` (24) — `resolve command`, `get config` layers/
-    source/line, `set config` typed + effective (`render.table.max_rows`)
-  - `crates/ono-cli/tests/processes_missing.rs` (18) — `inspect process`, `get job`, `enter
-    process`, `set process --priority`, `send signal`, failed ActionResult ⇒ exit 1 (ADR-0006)
-  - `crates/ono-cli/tests/identity_missing.rs` (25) — `get session`, user/group mutations,
-    watch/trace/enter user|group
-  - `crates/ono-cli/tests/network_missing.rs` (31) — `resolve dns`, `test port`, watch/trace/
-    enter interface|route|socket, route/interface/socket mutations
-  - `crates/ono-cli/tests/services_logs_missing.rs` (15) — `set service`, `get journal`,
-    `tail journal`, `get log` — **done, 15/15** by [services | 2026-08-27] on branch
-    `implementation-services` (ADR-0084–0086, ADR-0096, case 038)
-  - `crates/ono-cli/tests/storage_missing.rs` (22) — `get device`, mount/unmount, mount verbs,
-    watch/trace/enter mount — **done** by [storage | 2026-08-27] on branch
-    `implementation-storage` (ADR-0097–0099, case 042-storage-devices-and-mounts); nothing left
-    ignored. `should_return_only_unmounted_filesystems_when_mounted_is_false` in
-    `options_and_selectors_missing.rs` is green on the same branch.
-  - `crates/ono-cli/tests/data_missing.rs` (15) + `crates/ono-command/tests/completion_missing.rs`
-    (6) — `tail`, `join`, `diff`, stacked records on narrow terminals, fields after `where`
-    — **done** by [data | 2026-08-27] on branch `implementation-data` (ADR-0072–0074); no
-    `#[ignore` left in either file
-  - `crates/ono-cli/tests/remote_missing.rs` (36) — `get link` as data, host commands, link
-    definitions, detach/rename, agentless visibility, mutations across a link — **done** by
-    [remote | 2026-08-27] on branch `implementation-remote` (ADR-0103–0106, case 044); no
-    `#[ignore` left
-  - `crates/ono-cli/tests/plugins_missing.rs` (32) — `ono.plugin/1` records, inspect/find/
-    verify/install/unload/set/remove plugin, capabilities, audit, reload, assistants/models
-  - `crates/ono-cli/tests/containers_packages_missing.rs` (25) — a fake engine-API socket and
-    fake package managers on PATH; E0401 when none answers
-
-  Wiki claims found stale while writing them (already work, no test added): `get route
-  --table/--family`, `format --max-rows`, backgrounding native stages, `let i = $i + 1`.
-
-  Contract gaps the suites had to resolve by reading — each needs an ADR (or a registry change)
-  before its GREEN increment: `alias` statement syntax (grammar.ebnf/language.yaml have none);
-  `ono.command/1` resolution `kind` field; `set config` unknown key ⇒ E0202; `ono.device/1`
-  shape (path/kind/major/minor); `ono.session/1` fields; `ono.link/1` lacks a `host` field;
-  `ono.container/1`, `ono.image/1`, `ono.package/1` schemas and the runtime knobs
-  (`DOCKER_HOST`/`CONTAINER_HOST`, managers found on PATH); `get journal`/`get log` referenced
-  `ono.log-record/1` which neither existed nor was deferred (resolved: ADR-0085/0086);
-  `join`/`diff` output shape and
-  `--identity [pid]` spelling; failed ActionResult rows nest the error as
-  `error.error.code = "io.permission_denied"` instead of `error.code = "Ono-Sendai-E…"`, and
-  `operation` carries the bare verb instead of the command id; K11 codes not folded into
-  `Ono-Sendai-K11xxx`; `--agentless` is accepted and ignored by `context.rs::link`.
+- (empty — every family of the RED suites is merged into `implementation`;
+  `scripts/release-check.sh` printed `release-check: the shell is release-ready` at 8d4a3f4 on
+  2026-08-27: gate green, acceptance 67/67, all 329 RED tests green and un-ignored)
 
 ---
 
@@ -555,6 +392,177 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 ---
 
 ## Done
+
+### The RED-suite run (2026-08-27): per-family notes, kept for their open items
+
+- [identity | 2026-08-27] **identity family remainder** — **all 25 tests of
+  `crates/ono-cli/tests/identity_missing.rs` green and un-ignored** on branch
+  `implementation-identity` (ADR-0100–0102). Acceptance case
+  `docker/acceptance/cases/043-identity-sessions-and-accounts.case` is written and dry-run
+  against the binary; **the integrator runs it in the container** when merging. Left open (not
+  in the RED suite): a privileged conformance run of the account tools (the workspace's tests
+  never change the developer's accounts); `select error.code` on an ActionResult row projects
+  the whole error under `code` instead of its field.
+- [remote | 2026-08-27] **remote family** (`crates/ono-cli/tests/remote_missing.rs`) on branch
+  `implementation-remote` — **all 36 tests green and un-ignored**; the gate is green at every
+  commit. Delivered: `link`/`host` as tables of the session provider, `ono.host/1` and its
+  three sources (ADR-0103); `add/set/rename/remove/detach link`, `connect host`, `test host`
+  and `add/set/remove host` (ADR-0104); `watch`/`trace` for link and host with
+  `ono.link-event/1`, `ono.host-event/1`, `ono.provider/1` (ADR-0105); `--agentless` recorded
+  and visible, `explain`'s EXECUTION CONTEXT and MUTATION blocks (ADR-0106). Acceptance case
+  `docker/acceptance/cases/044-remote-links-as-objects.case` is written and dry-run against the
+  binary; **the integrator runs it in the container** when merging the branch. Case 049 now
+  matches the typed `get link` table by regular expression. Left open (not in the RED suite):
+  the piped forms `get link | remove link` / `… | detach link`; the agentless provider set of
+  ADR-0037 §6 (today `mode: agentless` is recorded and the agent answers, visibly); a
+  `watch host` that probes reachability; the multiplexed streams of `trace link`; the
+  execution context in the `ono.execution-plan/1` value.
+- [containers | 2026-08-27] **container and package families** (`crates/ono-cli/tests/containers_packages_missing.rs`)
+  on branch `implementation-containers` — files: `crates/ono-provider-container/`,
+  `crates/ono-provider-linux/src/packages.rs`, `crates/ono-graph/src/kernel/container.rs`,
+  `crates/ono-command/src/impls/{mod,meta}.rs`, `crates/ono-cli/src/providers.rs`,
+  `docs/spec/commands/{container,package}.yaml`, `docs/spec/schemas/{container,image,package,container-event}.v1.yaml`,
+  `docs/spec/providers/{container-engine,linux-packages}.yaml`, acceptance case
+  `046-containers-and-packages`. ADR-0112–0115.
+  Increment 1 done: `ono-provider-container` — the engine API over the runtime's Unix socket,
+  `get container`/`get image`, E0401 naming the sockets tried (4 tests green, ADR-0112).
+  Increment 2 done: start/stop/restart/remove/set container as engine requests, the engine's
+  status as the per-target outcome (8 tests green, ADR-0113). Increment 3 done: `enter
+  container` as a `container` frame, `watch container` over the engine listing, `trace
+  container` with the exact `image` edge (4 tests green, ADR-0114). Increment 4 done:
+  `linux.packages` — `get package`/`find package` from `dpkg-query -W -f` and `apt-cache
+  search`, E0401 naming dpkg and rpm, E0403 for a listing outside the machine format (5 tests
+  green, ADR-0115). Increment 5 done: `add`/`remove`/`set package` through `apt-get` and
+  `apt-mark`, the unprivileged refusal as a failed E0302 row before anything runs (4 tests
+  green, ADR-0115 §5). **All 25 tests green and un-ignored**; the gate is green at every
+  commit. Acceptance case `docker/acceptance/cases/046-containers-and-packages.case` is
+  written and dry-run against the binary; **the integrator runs it in the container** when
+  merging the branch. Left open (not in the RED suite): an rpm/dnf package provider (the
+  refusal names it); `trace container` edges to namespaces, cgroups, mounts and processes
+  (need `State.Pid` joined to procfs); `watch container` over the engine's `/events` instead
+  of polling; `enter container` as an execution context (`container.exec`); a root acceptance
+  case for the package mutations' success path.
+
+- [plugins | 2026-08-27] **plugins family** (`crates/ono-cli/tests/plugins_missing.rs`) on
+  branch `implementation-plugins` — **all 32 tests green and un-ignored**; the gate is green at
+  every commit. Delivered: `ono.plugin/1` records from the session provider `ono.shell`
+  (ADR-0107); `verify`/`inspect`/`find plugin` and the K11 family folded into
+  `ono_core::ErrorCode` (ADR-0108); `install`/`remove plugin` (ADR-0109); `unload`/`set plugin`,
+  enablement on disk, hot reload (ADR-0110); `get/grant/revoke capability`, `get audit`, and the
+  typed empty `assistant`/`model`/`finding` tables (ADR-0111). Acceptance case
+  `docker/acceptance/cases/045-plugins-lifecycle.case` is written and dry-run against the
+  binary; **the integrator runs it in the container** when merging the branch. Left open (not in
+  the RED suite): `always` grants and leases on disk (spec §31.19), `--scope`/`--duration` on
+  `grant capability`, `capability_grants` inside `inspect plugin`, instance memory/cpu figures
+  (null today), the interactive install prompt under a PTY case.
+- [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
+  `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
+  `implementation-meta` — files: `crates/ono-cli/src/{meta,resolve,settings,config,eval,native}.rs`,
+  `crates/ono-command/src/impls/{meta,convert}.rs`, `docs/spec/schemas/command.v1.yaml`,
+  `docs/spec/commands/identity.yaml`, acceptance case `041-config-and-resolve`. ADR-0093–0095.
+  Increment 1 done: `resolve command` (6 tests green, ADR-0093). Increment 2 done: the typed
+  settings catalogue, `get config` with layers/source/line/`--overridden`/`--problems`, typed
+  `set config` with E0202/E0201 and its ActionResult (15 tests green, ADR-0094). Increment 3
+  done: `render.table.max_rows` reaches the sink, redirected output and `format table`
+  (3 tests green; the file has no `#[ignore` left). Increments 4–5 done: `--human` reaches
+  record fields (2 tests), `uid`/`gid` declared before `name` so numeric selectors bind
+  (2 tests, ADR-0095). Acceptance case `041-config-and-resolve` written and dry-run against the
+  binary; **the integrator runs it in the container** when merging.
+
+- [language | 2026-08-27] **language family** (`crates/ono-cli/tests/language_missing.rs`) on
+  branch `implementation-language` — **all 31 tests green and un-ignored**; the gate is green
+  at every commit. Delivered: `let`/`( … )`/`$( … )` capture (ADR-0069); callable functions and
+  `alias` (ADR-0070); `now()`, the RFC 3339 timestamp literal, prefix assignment
+  `NAME=value cmd`, `each { … }` blocks, string `+`, keyless `sort`, `kill %N` (ADR-0071).
+  Acceptance case `docker/acceptance/cases/035-scripting-language.case` is written and
+  dry-run against the binary; **the integrator runs it in the container** when merging the
+  branch. Left open (not in the RED suite): `explain` of a `NAME=value cmd` stage, functions
+  and aliases in completion candidates, a function in a non-head pipeline position.
+- [watch | 2026-08-27] **`watch`/`trace` for the declared-but-unbound targets** — done for
+  file, user, group, interface, route and mount (ADR-0078..0080; commits on
+  `implementation-watch`). Left ignored: the remote five in `remote_missing.rs` (`watch
+  link|host`, `trace link|host`) — they need `link`/`host` as provider-backed records first
+  (context.rs `get_link` renders by hand); the remote family picks them up.
+
+- [processes | 2026-08-27] **process family remainder** (`crates/ono-cli/tests/processes_missing.rs`;
+  `--tree`/`--user` in `options_and_selectors_missing.rs`) on branch `implementation-processes`
+  — **all 18 process tests and the 3 option tests green and un-ignored**; the gate is green at
+  every commit. Delivered: `get job` from the session provider `ono.shell` (ADR-0090);
+  `inspect process` → `ono.process-detail/1` and `get process --tree` (ADR-0091); `set process
+  --priority` via setpriority(2) and `send signal` as the pipeline spelling of a signal
+  (ADR-0092). Acceptance case `docker/acceptance/cases/040-processes-inspect-jobs-signals.case`
+  is written and dry-run against the binary; **the integrator runs it in the container** when
+  merging the branch. Left open (not in the RED suite): a tree renderer for `--tree` at the
+  terminal (the table shows the roots' columns; spec §22.4's tree view is the graph family's);
+  `link`/`host` rows in `SessionTables` (remote family, ADR-0090 §3).
+
+- [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
+  request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
+  one `#[ignore = "REASON: …"]` (AGENTS.md §7) so the tree stays green; **the increment that
+  delivers a family removes the ignore lines of its tests in the same commit** — a family is
+  done when its file has no `#[ignore` left and the gate is green. Work order: cross-cutting
+  seams first (registry-dispatched `set`/`remove`, ActionResult exit status and error shape,
+  generic `enter`/`watch`/`trace` for object targets), then the families. Each file is one
+  family; each test asserts the behaviour the contract promises, never mere presence:
+  - `crates/ono-cli/tests/files_missing.rs` (34) — read/write/copy/move/remove/set/open/tail/
+    watch/trace/enter file, remove/set dir, globs for native selectors — **done** by
+    [files | 2026-08-27] on branch `implementation-files` (ADR-0081–0083) for everything
+    except the four watch/trace tests, which stay `#[ignore` for the watch/trace family;
+    the four `find file` option tests of `options_and_selectors_missing.rs` are green too.
+    Acceptance: `docker/acceptance/cases/037-files-read-write-remove.case` (written, not yet
+    run in the container by this agent)
+  - `crates/ono-cli/tests/language_missing.rs` (31) — `let` capturing a pipeline, `$(…)`/`(…)`
+    values, callable `fn`, `alias`, `now()`, timestamp literals, `FOO=bar cmd`, `each { … }`,
+    string `+`, keyless `sort`, `kill %N`
+  - `crates/ono-cli/tests/options_and_selectors_missing.rs` (15) — `--user/--tree`, `find file`
+    options (**done**, files family), `--mounted`, `trace socket --port`, `--human`,
+    `get user 0`, `where local.port`
+  - `crates/ono-cli/tests/meta_config_missing.rs` (24) — `resolve command`, `get config` layers/
+    source/line, `set config` typed + effective (`render.table.max_rows`)
+  - `crates/ono-cli/tests/processes_missing.rs` (18) — `inspect process`, `get job`, `enter
+    process`, `set process --priority`, `send signal`, failed ActionResult ⇒ exit 1 (ADR-0006)
+  - `crates/ono-cli/tests/identity_missing.rs` (25) — `get session`, user/group mutations,
+    watch/trace/enter user|group
+  - `crates/ono-cli/tests/network_missing.rs` (31) — `resolve dns`, `test port`, watch/trace/
+    enter interface|route|socket, route/interface/socket mutations
+  - `crates/ono-cli/tests/services_logs_missing.rs` (15) — `set service`, `get journal`,
+    `tail journal`, `get log` — **done, 15/15** by [services | 2026-08-27] on branch
+    `implementation-services` (ADR-0084–0086, ADR-0096, case 038)
+  - `crates/ono-cli/tests/storage_missing.rs` (22) — `get device`, mount/unmount, mount verbs,
+    watch/trace/enter mount — **done** by [storage | 2026-08-27] on branch
+    `implementation-storage` (ADR-0097–0099, case 042-storage-devices-and-mounts); nothing left
+    ignored. `should_return_only_unmounted_filesystems_when_mounted_is_false` in
+    `options_and_selectors_missing.rs` is green on the same branch.
+  - `crates/ono-cli/tests/data_missing.rs` (15) + `crates/ono-command/tests/completion_missing.rs`
+    (6) — `tail`, `join`, `diff`, stacked records on narrow terminals, fields after `where`
+    — **done** by [data | 2026-08-27] on branch `implementation-data` (ADR-0072–0074); no
+    `#[ignore` left in either file
+  - `crates/ono-cli/tests/remote_missing.rs` (36) — `get link` as data, host commands, link
+    definitions, detach/rename, agentless visibility, mutations across a link — **done** by
+    [remote | 2026-08-27] on branch `implementation-remote` (ADR-0103–0106, case 044); no
+    `#[ignore` left
+  - `crates/ono-cli/tests/plugins_missing.rs` (32) — `ono.plugin/1` records, inspect/find/
+    verify/install/unload/set/remove plugin, capabilities, audit, reload, assistants/models
+  - `crates/ono-cli/tests/containers_packages_missing.rs` (25) — a fake engine-API socket and
+    fake package managers on PATH; E0401 when none answers
+
+  Wiki claims found stale while writing them (already work, no test added): `get route
+  --table/--family`, `format --max-rows`, backgrounding native stages, `let i = $i + 1`.
+
+  Contract gaps the suites had to resolve by reading — each needs an ADR (or a registry change)
+  before its GREEN increment: `alias` statement syntax (grammar.ebnf/language.yaml have none);
+  `ono.command/1` resolution `kind` field; `set config` unknown key ⇒ E0202; `ono.device/1`
+  shape (path/kind/major/minor); `ono.session/1` fields; `ono.link/1` lacks a `host` field;
+  `ono.container/1`, `ono.image/1`, `ono.package/1` schemas and the runtime knobs
+  (`DOCKER_HOST`/`CONTAINER_HOST`, managers found on PATH); `get journal`/`get log` referenced
+  `ono.log-record/1` which neither existed nor was deferred (resolved: ADR-0085/0086);
+  `join`/`diff` output shape and
+  `--identity [pid]` spelling; failed ActionResult rows nest the error as
+  `error.error.code = "io.permission_denied"` instead of `error.code = "Ono-Sendai-E…"`, and
+  `operation` carries the bare verb instead of the command id; K11 codes not folded into
+  `Ono-Sendai-K11xxx`; `--agentless` is accepted and ignored by `context.rs::link`.
+
+### Everything else
 
 - [x] remote family — `get link`/`get host` from the session provider (ADR-0103) — commit
   19dce98; link definitions add/set/rename/remove/detach (ADR-0104) — commit fb10641;
