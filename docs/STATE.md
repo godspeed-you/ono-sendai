@@ -93,6 +93,13 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [language | 2026-08-27] **language family** (`crates/ono-cli/tests/language_missing.rs`) on
+  branch `implementation-language` — files: `crates/ono-cli/src/{eval,session,native,resolve,
+  builtin,context_jobs}.rs`, `crates/ono-parser/src/{lexer,parser,ast}.rs`,
+  `crates/ono-command/src/{expr,impls/transform}.rs`, `crates/ono-value/src/arith.rs`,
+  `docs/spec/{grammar.ebnf,language.yaml}`, `docker/acceptance/cases/035-scripting-language.case`.
+  Landed so far: `let`/`( … )`/`$( … )` capture (ADR-0069).
+
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
   one `#[ignore = "REASON: …"]` (AGENTS.md §7) so the tree stays green; **the increment that

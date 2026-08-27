@@ -27,7 +27,6 @@ fn ono(script: &str) -> ono_testkit::Run {
 // --- let captures a pipeline (spec §19.2) --------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_bind_the_pipelines_value_when_let_captures_a_native_pipeline() {
     let run = ono("let n = get process | where pid == 1 | count; $n | to json");
     run.assert_success();
@@ -41,7 +40,6 @@ fn should_bind_the_pipelines_value_when_let_captures_a_native_pipeline() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_bind_a_replayable_stream_when_let_captures_records() {
     let run = ono("let hot = get process | where pid == 1; $hot | select pid | to json");
     run.assert_success();
@@ -57,7 +55,6 @@ fn should_bind_a_replayable_stream_when_let_captures_records() {
 // --- the value of a nested pipeline (grammar.ebnf `paren_value`, `interpolation`) ----------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_substitute_the_nested_pipelines_output_inside_a_double_quoted_string() {
     let run = ono(r#"echo "$(echo hi)""#);
     run.assert_success();
@@ -71,7 +68,6 @@ fn should_substitute_the_nested_pipelines_output_inside_a_double_quoted_string()
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pass_the_nested_pipelines_output_as_an_argument_when_written_in_parentheses() {
     let run = ono("echo (echo hi)");
     run.assert_success();
@@ -86,7 +82,6 @@ fn should_pass_the_nested_pipelines_output_as_an_argument_when_written_in_parent
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pass_a_native_pipelines_value_as_an_argument_when_written_in_parentheses() {
     let run = ono("echo (get process | where pid == 1 | count)");
     run.assert_success();
@@ -100,7 +95,6 @@ fn should_pass_a_native_pipelines_value_as_an_argument_when_written_in_parenthes
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_bind_the_nested_native_pipelines_value_when_let_uses_parentheses() {
     let run = ono("let x = (get process | where pid == 1 | count); $x | to json");
     run.assert_success();

@@ -1321,6 +1321,8 @@ fn run_native_segment(
     let resolver = crate::resolve::resolver(session);
     let scope = std::sync::Arc::new(Scope::new());
     let context = session.context();
+    // A live view has nobody to watch it while its values are being bound (ADR-0069).
+    let capturing = session.capturing();
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -1403,7 +1405,7 @@ fn run_native_segment(
                 // A live stream at a terminal renders in place (spec §18.3); anywhere else the
                 // representation must be chosen, because an endless unserialised stream into a
                 // pipe or file is a table that never learns its widths.
-                if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                if !capturing && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
                     let (width, height) = live_geometry();
                     failures.extend(crate::live::show(stream, width, height).await);
                     return Ok((Vec::new(), failures));
@@ -1533,13 +1535,24 @@ fn write_result(
     serialised: bool,
     source: &str,
 ) -> Eval<()> {
+    let destination = crate::eval::output_destination(session, stage, source)?;
+    // A captured pipeline binds what it would have shown (spec §19.2, ADR-0069): the values
+    // themselves, or the one document a serializer made of them. Nothing is retained for `@-1`,
+    // because nothing was shown.
+    if destination.is_none() && session.capturing() {
+        if serialised {
+            session.capture([crate::eval::captured_text(&bytes_of(values))]);
+        } else {
+            session.capture(values.iter().cloned());
+        }
+        return Ok(());
+    }
     // What is about to be shown is what `@-1` and `@N` reuse (spec §20.2). Serialised output is
     // not retained: its values are one rendered document, and reusing the objects it was made
     // from is what the retention of the *previous* result is for.
     if !serialised {
         session.retain_result(values.to_vec());
     }
-    let destination = crate::eval::output_destination(session, stage, source)?;
     match destination {
         Some(mut file) => {
             let bytes = if serialised {

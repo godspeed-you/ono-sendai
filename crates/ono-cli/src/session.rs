@@ -63,6 +63,9 @@ pub struct Session {
     /// The adapters that shaped the statement being run, with the argv each one planned —
     /// what history records about it (spec v0.3 §1.62).
     adaptations: Vec<(String, String)>,
+    /// The values of pipelines being captured rather than shown, innermost last: `let x = …`
+    /// and `( … )` bind what the pipeline produces (spec §19.2, ADR-0069).
+    captures: Vec<Vec<Value>>,
 }
 
 /// One held remote link: the connection, and the registry its providers are mounted in.
@@ -159,6 +162,30 @@ impl Session {
             plugins: Vec::new(),
             adapters: None,
             adaptations: Vec::new(),
+            captures: Vec::new(),
+        }
+    }
+
+    /// Starts capturing pipeline results instead of showing them (ADR-0069).
+    pub fn begin_capture(&mut self) {
+        self.captures.push(Vec::new());
+    }
+
+    /// Ends the innermost capture and answers with everything it collected.
+    pub fn end_capture(&mut self) -> Vec<Value> {
+        self.captures.pop().unwrap_or_default()
+    }
+
+    /// Whether a pipeline's result is currently being captured rather than shown.
+    #[must_use]
+    pub fn capturing(&self) -> bool {
+        !self.captures.is_empty()
+    }
+
+    /// Hands a pipeline's result to the innermost capture. A no-op when nothing captures.
+    pub fn capture(&mut self, values: impl IntoIterator<Item = Value>) {
+        if let Some(capture) = self.captures.last_mut() {
+            capture.extend(values);
         }
     }
 

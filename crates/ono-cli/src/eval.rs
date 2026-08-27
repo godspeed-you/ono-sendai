@@ -104,9 +104,9 @@ pub fn run_statement(
     match statement {
         Statement::Pipeline(pipeline) => run_pipeline(session, pipeline, source),
         Statement::Let(binding) => {
-            let value = value_of_pipeline(session, &binding.value, source)?;
+            let (value, status) = binding_value(session, &binding.value, source)?;
             session.bind(binding.name.clone(), value);
-            Ok(ExitStatus::SUCCESS)
+            Ok(status)
         }
         Statement::If(branch) => run_if(session, branch, source),
         Statement::While(loop_) => run_while(session, loop_, source),
@@ -466,7 +466,7 @@ fn run_stage_list(
     // So does an all-external pipeline whose last stage an adapter renders at the terminal
     // (spec v0.3 §1.4), which is what makes `lsblk` typed at the prompt a table.
     if crate::native::claims(session, list)
-        || (!background && crate::native::adapts_at_terminal(session, list))
+        || (!background && !session.capturing() && crate::native::adapts_at_terminal(session, list))
     {
         if background {
             // Spec §18.4: a backgrounded native pipeline is a job — listed, addressable,
@@ -478,6 +478,14 @@ fn run_stage_list(
 
     if session.mode() == Mode::Config {
         return Err(Flow::Failed(config_refusal("this command")));
+    }
+
+    // A pipeline being captured hands its stdout to the capture rather than the terminal: the
+    // text is the value of `(echo hi)` (ADR-0069).
+    if !background && session.capturing() {
+        let indices: Vec<usize> = (0..list.stages.len()).collect();
+        let (_, status) = run_external_segment(session, list, &indices, source, None, true)?;
+        return Ok(status);
     }
 
     let mut built = ono_process::Pipeline::new();
@@ -534,7 +542,8 @@ pub fn run_external_segment(
         return Err(Flow::Failed(config_refusal("this command")));
     }
 
-    let capture = !last;
+    let captured = last && session.capturing();
+    let capture = !last || captured;
     let mut built = ono_process::Pipeline::new();
     for (position, index) in indices.iter().enumerate() {
         let mut command = build_command(session, &list.stages[*index], source)?;
@@ -570,6 +579,10 @@ pub fn run_external_segment(
             .map(|stage| stage.stdout.clone())
             .unwrap_or_default()
     });
+    if captured {
+        session.capture([captured_text(bytes.as_deref().unwrap_or_default())]);
+        return Ok((None, outcome.status()));
+    }
     Ok((bytes, outcome.status()))
 }
 
@@ -1055,33 +1068,74 @@ fn string_of(session: &mut Session, expression: &Expr, source: &str) -> Eval<Str
     Ok(text_of(&value)?)
 }
 
-/// The value a pipeline produces when it is used as one, as in `let x = …`.
-fn value_of_pipeline(session: &mut Session, pipeline: &Pipeline, source: &str) -> Eval<Value> {
-    // A pipeline whose only stage is a bare value is that value: `let name = "world"`.
-    if pipeline.tail.is_empty()
-        && pipeline.head.stages.len() == 1
-        && let Some(stage) = pipeline.head.stages.first()
-        && stage.arguments.is_empty()
-        && stage.redirections.is_empty()
-        && let StageHead::Value(expression) = &stage.head
-    {
-        return eval_expr(session, expression, source);
+/// What `let` binds, with the status of the pipeline that produced it.
+fn binding_value(
+    session: &mut Session,
+    pipeline: &Pipeline,
+    source: &str,
+) -> Eval<(Value, ExitStatus)> {
+    if let Some(expression) = bare_value(pipeline) {
+        return Ok((eval_expr(session, expression, source)?, ExitStatus::SUCCESS));
     }
-    // An expression-mode stage with no arguments and a bare head is a field path or a literal
-    // read as a command; `let n = 3` arrives this way.
-    if pipeline.tail.is_empty()
-        && pipeline.head.stages.len() == 1
-        && let Some(stage) = pipeline.head.stages.first()
-        && stage.redirections.is_empty()
-        && stage.arguments.len() == 1
-        && let StageHead::Error(_) = &stage.head
-        && let Some(Argument::Value(expression)) = stage.arguments.first()
-    {
-        return eval_expr(session, expression, source);
-    }
+    capture_pipeline(session, pipeline, source)
+}
 
-    let status = run_pipeline(session, pipeline, source)?;
-    Ok(Value::Int(i128::from(status.code())))
+/// The expression a one-stage pipeline is, when it is one: `let name = "world"`.
+fn bare_value(pipeline: &Pipeline) -> Option<&Expr> {
+    if !pipeline.tail.is_empty() || pipeline.head.stages.len() != 1 {
+        return None;
+    }
+    let stage = pipeline.head.stages.first()?;
+    if !stage.redirections.is_empty() {
+        return None;
+    }
+    match (&stage.head, stage.arguments.as_slice()) {
+        (StageHead::Value(expression), []) => Some(expression),
+        // An expression-mode stage with no arguments and a bare head is a field path or a
+        // literal read as a command; `let n = 3` arrives this way.
+        (StageHead::Error(_), [Argument::Value(expression)]) => Some(expression),
+        _ => None,
+    }
+}
+
+/// The value a pipeline produces when it is used as one, as in `( … )`.
+fn value_of_pipeline(session: &mut Session, pipeline: &Pipeline, source: &str) -> Eval<Value> {
+    if let Some(expression) = bare_value(pipeline) {
+        return eval_expr(session, expression, source);
+    }
+    Ok(capture_pipeline(session, pipeline, source)?.0)
+}
+
+/// Runs a pipeline for its value rather than its display (spec §19.2, ADR-0069).
+///
+/// Everything the pipeline would have shown is collected instead: a native pipeline's values, or
+/// the text a program wrote to its stdout. One value is that value; several are a list, because
+/// a list splices back into several values when it starts a pipeline (ADR-0019); none is the
+/// empty list — the pipeline is known to have produced nothing, which is not the same as not
+/// knowing. The status is the pipeline's own, so `$?` after `let x = …` says whether it worked.
+fn capture_pipeline(
+    session: &mut Session,
+    pipeline: &Pipeline,
+    source: &str,
+) -> Eval<(Value, ExitStatus)> {
+    session.begin_capture();
+    let outcome = run_pipeline(session, pipeline, source);
+    let mut captured = session.end_capture();
+    let status = outcome?;
+    let value = match captured.len() {
+        1 => captured.remove(0),
+        _ => Value::list(captured),
+    };
+    Ok((value, status))
+}
+
+/// The value a program's captured stdout stands for: its text, without the newline every
+/// line-oriented program ends its output with — `(echo hi)` is `hi`, exactly as `$(echo hi)`
+/// has always been.
+#[must_use]
+pub fn captured_text(bytes: &[u8]) -> Value {
+    let text = String::from_utf8_lossy(bytes);
+    Value::String(text.trim_end_matches(['\n', '\r']).into())
 }
 
 // --- expressions -------------------------------------------------------------------------------
