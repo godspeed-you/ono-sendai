@@ -797,6 +797,23 @@ Default view: `name`, `version`, `state`, `trust`, `jobs`, `memory`
 | `restart_count` | `int` | — | required | How often the supervisor has restarted this package's instance in this session (spec §31.34). A package that keeps restarting should be visible as one. |
 | `last_error` | `ono.error/1` | — | nullable | The most recent structured error from this package. Null when it has produced none. |
 
+## ProbeResult — `ono.probe-result/1`
+
+What one reachability probe found — whether the peer answered, how long it took, and why not.
+
+Identity: 
+
+Default view: `host`, `port`, `protocol`, `reachable`, `duration`, `error`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `host` | `string` | — | required | The host that was probed, as it was given. |
+| `port` | `port` | — | nullable | The port that was probed; null for a probe of a host as a whole. |
+| `protocol` | `enum` | — | required | The transport the probe used. |
+| `reachable` | `bool` | — | nullable | `true` when the peer answered, `false` when the peer or the network refused, and null when nothing answered before the timeout — silence is not a refusal (spec §10.5). |
+| `duration` | `duration` | — | required | How long the attempt took, whatever it found. |
+| `error` | `string` | — | nullable | The operating system's reason when `reachable` is not `true` — the refusal, the timeout, the unreachable network; null when the peer answered. |
+
 ## ProcessEvent — `ono.process-event/1`
 
 One change to one process, as a live stream emits it.

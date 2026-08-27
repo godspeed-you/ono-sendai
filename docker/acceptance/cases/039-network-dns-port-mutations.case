@@ -10,9 +10,22 @@ run: |
   ono -c 'resolve dns localhost --type A | select name type address | to json'
   ono -c 'resolve dns 127.0.0.1 | select type | to json'
   ono -c 'resolve dns definitely.invalid. | to json' 2>&1 | grep -o 'Ono-Sendai-E0[34]01' | head -1
+
+  echo "== test port =="
+  perl -MIO::Socket::INET -e '
+    my $s = IO::Socket::INET->new(LocalAddr => "127.0.0.1", LocalPort => 4711, Listen => 1, ReuseAddr => 1) or die;
+    sleep 30;' &
+  listener=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do ono -c 'test port 127.0.0.1 4711 | select reachable | to json' | grep -q true && break; sleep 0.5; done
+  ono -c 'test port 127.0.0.1 4711 --timeout 2s | select host port reachable error | to json'
+  ono -c 'test port 127.0.0.1 1 | select reachable | to json'; echo "closed-port-status=$?"
+  kill "$listener" 2>/dev/null
   echo "checked"
 exit: 0
-stdout-contains: {"name":"localhost","type":"A","address":"127.0.0.1"}
+stdout-contains: [{"address":"127.0.0.1","name":"localhost","type":"A"}]
 stdout-contains: [{"type":"PTR"}]
 stdout-contains: Ono-Sendai-E0
+stdout-contains: {"error":null,"host":"127.0.0.1","port":4711,"reachable":true}
+stdout-contains: [{"reachable":false}]
+stdout-contains: closed-port-status=0
 stdout-contains: checked

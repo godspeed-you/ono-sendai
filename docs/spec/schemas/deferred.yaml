@@ -21,9 +21,6 @@ deferred:
   - id: ono.session/1
     phase: "C"
     required_by: [ono.session.get]
-  - id: ono.probe-result/1
-    phase: "C/H"
-    required_by: [ono.host.test, ono.port.test]
   - id: ono.command/1
     phase: "D"
     required_by: [ono.command.find, ono.command.get, ono.command.resolve]

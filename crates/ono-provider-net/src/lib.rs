@@ -1,9 +1,10 @@
 //! Network providers that ask beyond the local kernel (spec §9.1, §23.2, §41.2).
 //!
-//! What the providers here have in common is that none answers from `/proc` or from netlink:
-//! [`DnsProvider`] asks the C library's resolver. Nothing in this crate runs `dig`, `host` or
-//! `nslookup`, or reads anything they print — spec §50 forbids parsing another program's output,
-//! and the resolver every other program uses is a function call away.
+//! Two providers live here, and what they have in common is that neither answers from `/proc`
+//! or from netlink: [`DnsProvider`] asks the C library's resolver, and [`PortProvider`] asks the
+//! network itself. Nothing in this crate runs `dig`, `host`, `nslookup` or `nc`, or reads
+//! anything they print — spec §50 forbids parsing another program's output, and the resolver
+//! every other program uses is a function call away.
 //!
 //! # Why the C library, and why `unsafe`
 //!
@@ -17,6 +18,12 @@
 //! (ADR-0087).
 //!
 
+//! # What a null means here
+//!
+//! A probe that timed out has `reachable: null`, not `false`: nothing answered, which is not the
+//! same as something refusing. A probe the peer refused has `reachable: false` and the reason in
+//! `error`. Unknown is null, never a fabricated answer (spec §10.5, §35.3).
+
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(
     unsafe_code,
@@ -24,11 +31,16 @@
 )]
 
 mod dns;
+mod probe;
 mod resolver;
 mod schema;
 
 pub use dns::DnsProvider;
+pub use probe::PortProvider;
 pub use resolver::{RecordType, lookup_error};
 
 /// The id every record answered by the C library's resolver carries in its provenance.
 pub const RESOLVER_PROVIDER: &str = "linux.resolver";
+
+/// The id every probe result carries in its provenance: the shell itself made the attempt.
+pub const PROBE_PROVIDER: &str = "ono.probe";

@@ -13,6 +13,12 @@ pub fn dns_record_id() -> SchemaId {
     SchemaId::new("ono.dns-record", 1)
 }
 
+/// `ono.probe-result/1` — `docs/spec/schemas/probe-result.v1.yaml`.
+#[must_use]
+pub fn probe_result_id() -> SchemaId {
+    SchemaId::new("ono.probe-result", 1)
+}
+
 /// The schema `id` names.
 ///
 /// # Errors

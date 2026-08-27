@@ -9,3 +9,11 @@ providers:
     targets: [dns]
     capabilities: [dns.resolve]
     schemas: [ono.dns-record/1]
+
+  - id: ono.probe
+    doc: >-
+      Reachability probes: the shell itself connects to a host and port and reports what it
+      found, with timing. A refused or silent port is the answer, not an error.
+    targets: [port]
+    capabilities: [port.probe]
+    schemas: [ono.probe-result/1]

@@ -306,7 +306,6 @@ fn should_fail_with_a_structured_error_and_not_hang_when_the_name_does_not_exist
 // --- test port --------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_reachable_port_when_probing_a_listening_socket() {
     let (_listener, port) = listener();
     // Spec §9.1: `test port <host> <port>` → `ProbeResult`, "reachability with timing and error
@@ -340,7 +339,6 @@ fn should_report_a_reachable_port_when_probing_a_listening_socket() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_the_refusal_when_probing_a_closed_port() {
     let port = closed_port();
     // A port nothing listens on is refused immediately by the loopback stack. The probe did
@@ -369,7 +367,6 @@ fn should_report_the_refusal_when_probing_a_closed_port() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_accept_the_timeout_and_protocol_options_when_probing() {
     let (_listener, port) = listener();
     // network.yaml: `--timeout <duration>` and `--protocol <string>`; the contract's own example
