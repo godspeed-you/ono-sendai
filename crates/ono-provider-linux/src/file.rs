@@ -77,6 +77,45 @@ impl FileProvider {
         self.accounts = accounts;
         self
     }
+
+    /// The uid a `--owner` names: a number as it is, a name through the accounts database.
+    pub(crate) async fn uid_of(&self, value: &Value) -> Result<u32, ErrorValue> {
+        if let Some(uid) = numeric_id(value) {
+            return Ok(uid);
+        }
+        let name = value.as_str()?;
+        self.accounts
+            .user_named(name)
+            .await
+            .map(|account| account.uid)
+            .ok_or_else(|| {
+                ErrorValue::new(ErrorCode::IoNotFound, format!("no user named `{name}`"))
+            })
+    }
+
+    /// The gid a `--group` names: a number as it is, a name through the accounts database.
+    pub(crate) async fn gid_of(&self, value: &Value) -> Result<u32, ErrorValue> {
+        if let Some(gid) = numeric_id(value) {
+            return Ok(gid);
+        }
+        let name = value.as_str()?;
+        self.accounts
+            .group_named(name)
+            .await
+            .map(|account| account.gid)
+            .ok_or_else(|| {
+                ErrorValue::new(ErrorCode::IoNotFound, format!("no group named `{name}`"))
+            })
+    }
+}
+
+/// A user or group written as its numeric id, in either of the forms a word binds to.
+fn numeric_id(value: &Value) -> Option<u32> {
+    match value {
+        Value::Int(id) => u32::try_from(*id).ok(),
+        Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }
 }
 
 /// What a query asked the walk to do.
@@ -537,6 +576,11 @@ impl Provider for FileProvider {
             Capability::new("file.find", Risk::Read),
             Capability::new("file.read", Risk::Read),
             Capability::new("file.write", Risk::Mutate),
+            Capability::new("file.copy", Risk::Mutate),
+            Capability::new("file.move", Risk::Mutate),
+            Capability::new("file.remove", Risk::Destructive),
+            Capability::new("file.set", Risk::Mutate),
+            Capability::new("file.open", Risk::Mutate),
             Capability::new("dir.list", Risk::Read),
         ]
     }

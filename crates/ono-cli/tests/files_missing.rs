@@ -287,7 +287,6 @@ fn should_append_to_an_existing_file_when_append_is_given() {
 // --- copy file ----------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_copy_a_file_and_report_the_result() {
     let directory = scratch();
     directory.write("a.txt", "payload");
@@ -309,7 +308,6 @@ fn should_copy_a_file_and_report_the_result() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_copy_a_tree_when_recursive_is_given() {
     let directory = scratch();
     directory.write("src/inner/deep.txt", "deep");
@@ -326,7 +324,6 @@ fn should_copy_a_tree_when_recursive_is_given() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_preserve_the_mode_when_preserve_is_given() {
     let directory = scratch();
     let source = directory.write("secret.txt", "s");
@@ -343,7 +340,6 @@ fn should_preserve_the_mode_when_preserve_is_given() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_copy_over_an_existing_destination_without_overwrite() {
     let directory = scratch();
     directory.write("a.txt", "new");
@@ -362,7 +358,6 @@ fn should_refuse_to_copy_over_an_existing_destination_without_overwrite() {
 // --- move file ----------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_move_a_file_and_leave_no_source_behind() {
     let directory = scratch();
     directory.write("a.txt", "payload");
@@ -382,7 +377,6 @@ fn should_move_a_file_and_leave_no_source_behind() {
 // --- remove file (spec §9.1, §11.6, §16.5, §17.3, §17.4, §41.3) ---------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_remove_a_single_file_and_report_the_result() {
     let directory = scratch();
     directory.write("build.tmp", "x");
@@ -398,7 +392,6 @@ fn should_remove_a_single_file_and_report_the_result() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_glob_to_exact_targets_before_removing() {
     let directory = scratch();
     directory.write("a.txt", "a");
@@ -435,7 +428,6 @@ fn should_resolve_a_glob_to_exact_targets_before_removing() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_missing_removal_target_as_a_failed_row() {
     let directory = scratch();
 
@@ -445,7 +437,6 @@ fn should_report_a_missing_removal_target_as_a_failed_row() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_a_bulk_removal_in_a_script_without_confirm() {
     let directory = scratch();
     directory.write("a.txt", "a");
@@ -474,7 +465,6 @@ fn should_refuse_a_bulk_removal_in_a_script_without_confirm() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_perform_a_bulk_removal_when_confirm_is_given() {
     let directory = scratch();
     directory.write("a.txt", "a");
@@ -493,7 +483,6 @@ fn should_perform_a_bulk_removal_when_confirm_is_given() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_remove_the_files_a_finite_query_selected() {
     let directory = scratch();
     directory.write("keep.log", "k");
@@ -519,7 +508,6 @@ fn should_remove_the_files_a_finite_query_selected() {
 // --- remove dir ---------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_remove_a_non_empty_directory_without_recursive() {
     let directory = scratch();
     directory.write("build/artifact.o", "o");
@@ -542,7 +530,6 @@ fn should_refuse_to_remove_a_non_empty_directory_without_recursive() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_remove_a_directory_tree_when_recursive_is_given() {
     let directory = scratch();
     directory.write("build/inner/artifact.o", "o");
@@ -560,7 +547,6 @@ fn should_remove_a_directory_tree_when_recursive_is_given() {
 // --- set file / set dir -------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_change_the_mode_of_a_file() {
     let directory = scratch();
     let script = directory.write("script.sh", "#!/bin/sh\n");
@@ -579,7 +565,6 @@ fn should_change_the_mode_of_a_file() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_no_change_when_the_mode_already_matches() {
     let directory = scratch();
     let file = directory.write("same.txt", "");
@@ -602,7 +587,6 @@ fn should_report_no_change_when_the_mode_already_matches() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_change_the_mode_of_a_directory() {
     let directory = scratch();
     let secrets = directory.path().join("secrets");
@@ -624,7 +608,6 @@ fn should_change_the_mode_of_a_directory() {
 // --- open file ----------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_open_a_file_with_the_handler_named_explicitly() {
     let directory = scratch();
     directory.write("report.txt", "r");
