@@ -8,6 +8,7 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 use ono_core::ErrorCode;
+use ono_parser::{Argument, WordArg};
 use ono_value::ErrorValue;
 
 use crate::session::Session;
@@ -34,6 +35,51 @@ pub fn expand_word(session: &Session, text: &str) -> Result<Vec<OsString>, Error
         ));
     }
     Ok(matches.into_iter().map(OsString::from).collect())
+}
+
+/// The arguments of a native stage with every unquoted glob resolved to the paths it matches.
+///
+/// Spec §17.3: a native command receives resolved objects, so `get file *.txt` and
+/// `remove file *.tmp` know their exact targets before the provider hears a word. Only a bare
+/// word carrying an unescaped pattern character is expanded — a quoted `"*.md"` is an
+/// expression the parser kept as text, and stays the literal an option such as `--name` wants.
+/// Each match takes the span of the word it came from, so a diagnostic still points at what was
+/// typed. A pattern that matches nothing is refused, exactly as it is for a program (ADR-0019).
+pub fn expand_globs(
+    session: &Session,
+    arguments: &[Argument],
+) -> Result<Vec<Argument>, ErrorValue> {
+    let mut expanded = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        let Argument::Word(word) = argument else {
+            expanded.push(argument.clone());
+            continue;
+        };
+        let (literal, has_pattern) = substitute(session, &word.text);
+        if !has_pattern {
+            expanded.push(argument.clone());
+            continue;
+        }
+        let matches = glob(session.cwd(), &literal);
+        if matches.is_empty() {
+            return Err(ErrorValue::new(
+                ErrorCode::IoNotFound,
+                format!("no path matches `{literal}`"),
+            )
+            .with_help(
+                "quote the pattern to pass it through literally, or check the directory you \
+                 are in. A pattern that matches nothing is refused rather than passed on as a \
+                 filename (ADR-0019).",
+            ));
+        }
+        expanded.extend(matches.into_iter().map(|text| {
+            Argument::Word(WordArg {
+                text,
+                span: word.span,
+            })
+        }));
+    }
+    Ok(expanded)
 }
 
 /// A word used where exactly one path is required, such as a redirection target.

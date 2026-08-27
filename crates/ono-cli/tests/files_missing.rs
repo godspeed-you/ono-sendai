@@ -121,7 +121,6 @@ fn assert_failed_row(row: &Value, operation: &str, code: &str) {
 // --- globs for native selectors (spec §17.3) ----------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_glob_to_exactly_the_matching_files_when_getting_files() {
     let directory = scratch();
     directory.write("a.txt", "a");

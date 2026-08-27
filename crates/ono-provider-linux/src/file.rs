@@ -80,7 +80,8 @@ impl FileProvider {
 /// What a query asked the walk to do.
 #[derive(Debug, Clone)]
 struct Request {
-    root: PathBuf,
+    /// The paths the query names — several when a glob resolved to several (spec §17.3).
+    roots: Vec<PathBuf>,
     list_contents: bool,
     recursive: bool,
     follow_symlinks: bool,
@@ -92,21 +93,18 @@ struct Request {
 impl Request {
     fn from(query: &Query) -> Self {
         let mut named_root = false;
-        let root = query
+        let roots = query
             .selectors()
             .iter()
             .find_map(|selector| match selector {
                 Selector::Field { name, value } if name == "path" || name == "root" => {
                     named_root = name == "root";
-                    match value {
-                        Value::Path(path) => Some(path.to_path_buf()),
-                        Value::String(text) => Some(PathBuf::from(text.as_ref())),
-                        _ => None,
-                    }
+                    Some(paths_of(value))
                 }
                 _ => None,
             })
-            .unwrap_or_else(|| PathBuf::from("."));
+            .filter(|roots| !roots.is_empty())
+            .unwrap_or_else(|| vec![PathBuf::from(".")]);
         let listing = query.target_name() != "file";
         // `find file /var/log` binds its path to the selector named `root`, and find *is* the
         // walk (docs/spec/commands/file.yaml: "discover files by walking a root"); only
@@ -118,7 +116,7 @@ impl Request {
             .and_then(|value| value.as_int().ok())
             .and_then(|depth| usize::try_from(depth).ok());
         Self {
-            root,
+            roots,
             list_contents: listing,
             recursive,
             follow_symlinks: query.flag("follow-symlinks"),
@@ -128,6 +126,16 @@ impl Request {
             max_depth: depth.unwrap_or(if recursive { usize::MAX } else { 0 }),
             limit: query.max().unwrap_or(usize::MAX),
         }
+    }
+}
+
+/// The paths a selector value names: one, or every element of a list a glob resolved to.
+fn paths_of(value: &Value) -> Vec<PathBuf> {
+    match value {
+        Value::Path(path) => vec![path.to_path_buf()],
+        Value::String(text) => vec![PathBuf::from(text.as_ref())],
+        Value::List(items) => items.iter().flat_map(paths_of).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -311,45 +319,68 @@ fn open_root(path: &Path) -> Result<OwnedFd, ErrorValue> {
     .map_err(|errno| errno_error(errno, path))
 }
 
-/// Emits the walk, breadth first, sending each entry as it is stated.
+/// Emits the walk of every named root, breadth first, sending each entry as it is stated.
 async fn walk(request: Request, describer: Describer, sink: StreamSink) {
     let mut sent = 0usize;
+    for root in &request.roots {
+        if sent >= request.limit {
+            return;
+        }
+        if walk_root(&request, root, &describer, &sink, &mut sent)
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+}
 
+/// The receiving side went away; nothing more can be delivered.
+struct Closed;
+
+/// Emits one root: the entry itself for `get file`, then its tree where the query descends.
+async fn walk_root(
+    request: &Request,
+    root_path: &Path,
+    describer: &Describer,
+    sink: &StreamSink,
+    sent: &mut usize,
+) -> Result<(), Closed> {
     if !request.list_contents {
         match describer
             .describe(
                 AT_FDCWD,
-                request.root.as_os_str(),
-                request.root.clone(),
+                root_path.as_os_str(),
+                root_path.to_path_buf(),
                 request.follow_symlinks,
             )
             .await
         {
             Ok(record) => {
-                if sink.send(record.into_value()).await.is_err() {
-                    return;
-                }
-                sent += 1;
+                sink.send(record.into_value()).await.map_err(|_| Closed)?;
+                *sent += 1;
             }
+            // One root that is not there is that root's answer, not the walk's: the other
+            // roots a glob resolved to are still described (spec §16.5).
             Err(error) => {
-                let _ = sink.fail(error).await;
-                return;
+                sink.fail(error).await.map_err(|_| Closed)?;
+                return Ok(());
             }
         }
         if !request.recursive {
-            return;
+            return Ok(());
         }
     }
 
-    let root = match open_root(&request.root) {
+    let root = match open_root(root_path) {
         Ok(fd) => fd,
         Err(error) => {
             // A plain `get file <path>` on a non-directory has already reported the entry; the
             // failure to open it as a directory is not a second answer.
             if request.list_contents {
-                let _ = sink.fail(error).await;
+                sink.fail(error).await.map_err(|_| Closed)?;
             }
-            return;
+            return Ok(());
         }
     };
 
@@ -361,20 +392,20 @@ async fn walk(request: Request, describer: Describer, sink: StreamSink) {
     // the recorded path makes the open fail loudly instead of following it. At most two
     // descriptors are ever held: the root, and the directory being read.
     let mut queue: VecDeque<(PathBuf, PathBuf, usize)> = VecDeque::new();
-    queue.push_back((PathBuf::new(), request.root.clone(), 0));
+    queue.push_back((PathBuf::new(), root_path.to_path_buf(), 0));
 
     while let Some((relative, path, depth)) = queue.pop_front() {
         let fd = if relative.as_os_str().is_empty() {
             match root.try_clone() {
                 Ok(fd) => fd,
                 Err(error) => {
-                    let _ = sink
-                        .fail(errno_error(
-                            Errno::from_raw(error.raw_os_error().unwrap_or(0)),
-                            &path,
-                        ))
-                        .await;
-                    return;
+                    sink.fail(errno_error(
+                        Errno::from_raw(error.raw_os_error().unwrap_or(0)),
+                        &path,
+                    ))
+                    .await
+                    .map_err(|_| Closed)?;
+                    return Ok(());
                 }
             }
         } else {
@@ -383,9 +414,9 @@ async fn walk(request: Request, describer: Describer, sink: StreamSink) {
                 // The directory vanished or a component stopped being a plain directory between
                 // the listing and this turn — the swap of ADR-0015 T14. Reported, not followed.
                 Err(errno) => {
-                    if sink.fail(errno_error(errno, &path)).await.is_err() {
-                        return;
-                    }
+                    sink.fail(errno_error(errno, &path))
+                        .await
+                        .map_err(|_| Closed)?;
                     continue;
                 }
             }
@@ -393,15 +424,13 @@ async fn walk(request: Request, describer: Describer, sink: StreamSink) {
         let names = match entry_names(&fd, &path) {
             Ok(names) => names,
             Err(error) => {
-                if sink.fail(error).await.is_err() {
-                    return;
-                }
+                sink.fail(error).await.map_err(|_| Closed)?;
                 continue;
             }
         };
         for name in names {
-            if sent >= request.limit {
-                return;
+            if *sent >= request.limit {
+                return Ok(());
             }
             if !request.include_hidden && name.as_bytes().starts_with(b".") {
                 continue;
@@ -422,16 +451,12 @@ async fn walk(request: Request, describer: Describer, sink: StreamSink) {
                         .and_then(|value| value.as_str().ok())
                         .unwrap_or("other")
                         .to_owned();
-                    if sink.send(record.into_value()).await.is_err() {
-                        return;
-                    }
-                    sent += 1;
+                    sink.send(record.into_value()).await.map_err(|_| Closed)?;
+                    *sent += 1;
                     kind
                 }
                 Err(error) => {
-                    if sink.fail(error).await.is_err() {
-                        return;
-                    }
+                    sink.fail(error).await.map_err(|_| Closed)?;
                     continue;
                 }
             };
@@ -440,6 +465,7 @@ async fn walk(request: Request, describer: Describer, sink: StreamSink) {
             }
         }
     }
+    Ok(())
 }
 
 #[async_trait::async_trait]

@@ -22,7 +22,7 @@ commands:
     output: stream<ono.file/1>
     provider_capability: file.list
     selectors:
-      - {name: path, type: path, doc: "The path or glob to describe. Globs resolve to exact objects before anything acts on them (spec §17.3)."}
+      - {name: path, type: path, repeatable: true, doc: "The path or glob to describe. Globs resolve to exact objects before anything acts on them (spec §17.3)."}
     options:
       - {name: recursive, type: bool, doc: "Descend into directories (spec §11.6, §6.2)."}
       - {name: follow-symlinks, type: bool, doc: "Describe the symlink target rather than the link itself."}
