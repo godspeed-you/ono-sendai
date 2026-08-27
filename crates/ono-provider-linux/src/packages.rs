@@ -26,7 +26,8 @@ use jiff::Timestamp;
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{
-    Availability, Capability, ObjectId, ObjectRef, Provider, Query, Risk, Selector,
+    Action, ActionOutcome, Availability, Capability, ObjectId, ObjectRef, Provider, Query, Risk,
+    Selector,
 };
 use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value, builtin_schemas};
 
@@ -67,6 +68,8 @@ pub fn package_schema() -> Arc<Schema> {
 pub(crate) struct Dpkg {
     pub(crate) dpkg_query: PathBuf,
     pub(crate) apt_cache: Option<PathBuf>,
+    pub(crate) apt_get: Option<PathBuf>,
+    pub(crate) apt_mark: Option<PathBuf>,
 }
 
 /// The package provider: `ono.package/1` records from dpkg and apt.
@@ -110,6 +113,8 @@ impl PackageProvider {
         let manager = find("dpkg-query").map(|dpkg_query| Dpkg {
             dpkg_query,
             apt_cache: find("apt-cache"),
+            apt_get: find("apt-get"),
+            apt_mark: find("apt-mark"),
         });
         Self { manager }
     }
@@ -464,6 +469,150 @@ async fn answer(dpkg: &Dpkg, plan: &Plan) -> Result<Vec<RecordValue>, ErrorValue
         .collect()
 }
 
+/// The manager invocations a `package` action asks for (ADR-0115 §5).
+struct Mutation {
+    /// Each `(program, arguments)`, run in order; the action succeeds when all did.
+    commands: Vec<(PathBuf, Vec<String>)>,
+    /// What is being asked, for a dry run's answer and the refusal's wording.
+    described: String,
+    /// Whether the outcome can be read from dpkg's version afterwards; a hold cannot.
+    versioned: bool,
+}
+
+impl Mutation {
+    fn of(action: &Action, dpkg: &Dpkg, name: &str) -> Result<Self, ErrorValue> {
+        let unsupported = |message: String, help: &str| {
+            Err(ErrorValue::new(ErrorCode::ProviderUnsupported, message).with_help(help))
+        };
+        let apt_get = || {
+            dpkg.apt_get.clone().ok_or_else(|| {
+                ErrorValue::new(
+                    ErrorCode::ProviderUnsupported,
+                    "no `apt-get` is on PATH, so packages cannot be changed here",
+                )
+                .with_help("`get package` still lists what dpkg has installed")
+            })
+        };
+        let text = |option: &str| match action.argument(option) {
+            Some(Value::String(text)) => Some(text.to_string()),
+            Some(other) => Some(other.to_string()),
+            None => None,
+        };
+        let flag = |option: &str| match action.argument(option) {
+            Some(Value::Bool(wanted)) => Some(*wanted),
+            _ => None,
+        };
+        match action.operation() {
+            "add" => {
+                let spec = match text("version") {
+                    Some(version) => format!("{name}={version}"),
+                    None => name.to_owned(),
+                };
+                Ok(Self {
+                    commands: vec![(
+                        apt_get()?,
+                        vec!["install".to_owned(), "-y".to_owned(), spec.clone()],
+                    )],
+                    described: format!("install `{spec}`"),
+                    versioned: true,
+                })
+            }
+            "remove" => {
+                let verb = if flag("purge") == Some(true) {
+                    "purge"
+                } else {
+                    "remove"
+                };
+                Ok(Self {
+                    commands: vec![(
+                        apt_get()?,
+                        vec![verb.to_owned(), "-y".to_owned(), name.to_owned()],
+                    )],
+                    described: format!("{verb} `{name}`"),
+                    versioned: true,
+                })
+            }
+            "set" => {
+                let mut commands = Vec::new();
+                let mut described = Vec::new();
+                let mut versioned = false;
+                if let Some(version) = text("version") {
+                    commands.push((
+                        apt_get()?,
+                        vec![
+                            "install".to_owned(),
+                            "-y".to_owned(),
+                            format!("{name}={version}"),
+                        ],
+                    ));
+                    described.push(format!("move `{name}` to {version}"));
+                    versioned = true;
+                }
+                if let Some(hold) = flag("hold") {
+                    let Some(apt_mark) = dpkg.apt_mark.clone() else {
+                        return unsupported(
+                            "no `apt-mark` is on PATH, so a package cannot be held".to_owned(),
+                            "`--version` still works through apt-get",
+                        );
+                    };
+                    let mark = if hold { "hold" } else { "unhold" };
+                    commands.push((apt_mark, vec![mark.to_owned(), name.to_owned()]));
+                    described.push(format!("{mark} `{name}`"));
+                }
+                if commands.is_empty() {
+                    return unsupported(
+                        "the package provider changes `version` and `hold`, and `set` named \
+                         neither"
+                            .to_owned(),
+                        "write `--version 1.24.0` or `--hold true`",
+                    );
+                }
+                Ok(Self {
+                    commands,
+                    described: described.join(" and "),
+                    versioned,
+                })
+            }
+            other => unsupported(
+                format!("the package provider has no operation `{other}`"),
+                "it can add and remove a package, and set `--version` and `--hold`",
+            ),
+        }
+    }
+}
+
+/// The version dpkg has installed for `name`, or `None`.
+async fn installed_version(dpkg: &Dpkg, name: &str) -> Result<Option<String>, ErrorValue> {
+    Ok(installed(dpkg, &[name.to_owned()])
+        .await?
+        .into_iter()
+        .find(|entry| entry.name == name && entry.installed)
+        .and_then(|entry| entry.version))
+}
+
+/// The error a failed manager run is: apt's "cannot locate" is `io.not_found`, anything else
+/// is the manager's exit with its own words.
+fn manager_failure(program: &Path, answer: &Answer) -> ErrorValue {
+    let said = String::from_utf8_lossy(&answer.stderr).trim().to_owned();
+    let code = if said.contains("Unable to locate package")
+        || said.contains("is not installed, so not removed")
+    {
+        ErrorCode::IoNotFound
+    } else {
+        ErrorCode::ExternalExitNonzero
+    };
+    ErrorValue::new(
+        code,
+        format!(
+            "`{}` exited with status {}: {said}",
+            program.display(),
+            answer
+                .status
+                .map_or("signal".to_owned(), |status| status.to_string())
+        ),
+    )
+}
+
 #[async_trait::async_trait]
 impl Provider for PackageProvider {
     fn id(&self) -> &str {
@@ -482,6 +631,10 @@ impl Provider for PackageProvider {
         vec![
             Capability::new("package.list", Risk::Read),
             Capability::new("package.search", Risk::Read),
+            // `docs/spec/capabilities.yaml` gives `package.manage` elevation `required`: dpkg's
+            // database is root's, and the provider says so before it runs anything
+            // (ADR-0115 §5).
+            Capability::new("package.manage", Risk::Mutate).needing_elevation(),
         ]
     }
 
@@ -555,6 +708,53 @@ impl Provider for PackageProvider {
             return Ok(ObjectRef::of(&record).into_iter().collect());
         }
         Ok(Vec::new())
+    }
+    async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let dpkg = self.manager()?;
+        let name = package_name(action.target())?.to_owned();
+        let mutation = Mutation::of(action, &dpkg, &name)?;
+        if action.is_dry_run() {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("would {}", mutation.described),
+            ));
+        }
+        // Spec §17.2: elevation is explicit. dpkg's database is root's, and the outcome of
+        // asking apt-get as anyone else is known before it runs (ADR-0115 §5).
+        let uid = nix::unistd::geteuid();
+        if !uid.is_root() {
+            return Ok(ActionOutcome::failed(
+                action,
+                ErrorValue::new(
+                    ErrorCode::IoPermissionDenied,
+                    format!(
+                        "to {} needs root, and this shell runs as uid {uid}",
+                        mutation.described
+                    ),
+                )
+                .with_help(
+                    "run it as root — `sudo ono -c '…'` — after `explain` has shown you the \
+                     privilege it needs (spec §17.2)",
+                ),
+            ));
+        }
+        let before = installed_version(&dpkg, &name).await?;
+        for (program, arguments) in &mutation.commands {
+            let answer = run(program, arguments).await?;
+            if answer.status != Some(0) {
+                return Ok(ActionOutcome::failed(
+                    action,
+                    manager_failure(program, &answer),
+                ));
+            }
+        }
+        // What changed is dpkg's to say, not apt's prose: the version before against after.
+        let changed = if mutation.versioned {
+            installed_version(&dpkg, &name).await? != before
+        } else {
+            true
+        };
+        Ok(ActionOutcome::succeeded(action, changed))
     }
 }
 

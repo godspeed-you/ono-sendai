@@ -10,5 +10,5 @@ providers:
       Packages, from dpkg and apt. A listing that is not in the declared machine format is a
       provider defect (E0403), never a source of invented records.
     targets: [package]
-    capabilities: [package.list, package.search]
+    capabilities: [package.list, package.search, package.manage]
     schemas: [ono.package/1]

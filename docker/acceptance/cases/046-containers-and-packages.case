@@ -1,0 +1,76 @@
+# The container and package families (spec §9.1). The container has no container runtime, so
+# every container command is the honest E0401 naming the sockets tried — never an empty list
+# pretending there are no containers (spec §35.3, ADR-0112) — and DOCKER_HOST is honoured the way
+# docker itself honours it. Packages come from the real dpkg through its machine format
+# (`dpkg-query -W -f`, spec §31.58, ADR-0115); a manager that prints something else is E0403
+# with nothing fabricated; an unprivileged install is one failed row with E0302 and exit
+# status 1 (spec §16.5, §17.2, ADR-0006); `explain` shows the provider and the privilege first.
+case: containers refuse honestly without a runtime, and packages answer from dpkg's machine format
+timeout: 120
+run: |
+  # --- containers: no runtime here -------------------------------------------------------
+  ono -c 'get container | to json'; echo "container-status=$?"
+  ono -c 'get container | to json' 2>&1 | grep -q 'Ono-Sendai-E0401' && echo "container-unavailable-structured"
+  ono -c 'get container | to json' 2>&1 | grep -q '/var/run/docker.sock' && echo "names-the-socket"
+  ono -c 'get image | to json' 2>&1 | grep -q 'Ono-Sendai-E0401' && echo "image-unavailable-structured"
+  DOCKER_HOST=unix:///tmp/nowhere.sock ono -c 'get container | to json' 2>&1 | grep -q 'nowhere.sock' && echo "honours-docker-host"
+  ono -c 'stop container web | to json' 2>&1 | grep -q 'Ono-Sendai-E0401' && echo "mutation-refused-honestly"
+  ono -c 'explain stop container web' | grep -q 'container-engine' && echo "explain-names-container-provider"
+  ono -c 'explain stop container web' | grep -q 'mutate' && echo "explain-shows-risk"
+
+  # --- packages: the real dpkg, through its machine format --------------------------------
+  out=$(ono -c 'get package bash | select name installed | to json')
+  if [ "$out" = '[{"installed":true,"name":"bash"}]' ]; then echo "bash-installed"; else echo "WRONG package: $out"; fi
+  ono -c 'get package bash | to json' | grep -q '"version":"' && echo "has-version"
+  ono -c 'get package bash | to json' | grep -q '"provider":"dpkg"' && echo "names-dpkg"
+  n=$(ono -c 'get package | count | to json' | tr -d '[]')
+  if [ "$n" -gt 10 ] 2>/dev/null; then echo "listed-many"; fi
+  ono -c 'get package --installed false | count | to json'
+
+  # An unprivileged install or removal: one failed row with E0302, and the exit status is 1.
+  ono -c 'add package foo | to json' | grep -q 'Ono-Sendai-E0302' && echo "install-denied-structured"
+  ono -c 'add package foo | to json' > /dev/null; echo "install-status=$?"
+  ono -c 'remove package bash | to json' | grep -q '"status":"failed"' && echo "remove-denied"
+  ono -c 'set package bash --hold true | to json' | grep -q 'Ono-Sendai-E0302' && echo "hold-denied"
+  ono -c 'explain add package foo' | grep -q 'elevated' && echo "explain-shows-elevated"
+  ono -c 'explain add package foo' | grep -q 'linux.packages' && echo "explain-names-package-provider"
+
+  # A manager that does not answer in the declared machine format is a provider defect.
+  mkdir -p /tmp/shim /tmp/empty
+  cat > /tmp/shim/dpkg-query <<'SHIM'
+  #!/bin/sh
+  printf '\377\376 not a listing at all ~~~ %s\n' "$*"
+  SHIM
+  chmod +x /tmp/shim/dpkg-query
+  PATH=/tmp/shim:$PATH ono -c 'get package | to json' 2>&1 | grep -q 'Ono-Sendai-E0403' && echo "garbage-refused"
+  PATH=/tmp/shim:$PATH ono -c 'get package | to json' 2>/dev/null | grep -q 'not a listing' || echo "nothing-fabricated"
+
+  # No manager at all: the refusal names what was looked for.
+  PATH=/tmp/empty /usr/local/bin/ono -c 'get package | to json' 2>&1 | grep -q 'Ono-Sendai-E0401' && echo "no-manager-structured"
+  PATH=/tmp/empty /usr/local/bin/ono -c 'get package | to json' 2>&1 | grep -q 'dpkg' && echo "names-dpkg-looked-for"
+  echo "done"
+exit: 0
+stdout-contains: container-status=1
+stdout-contains: container-unavailable-structured
+stdout-contains: names-the-socket
+stdout-contains: image-unavailable-structured
+stdout-contains: honours-docker-host
+stdout-contains: mutation-refused-honestly
+stdout-contains: explain-names-container-provider
+stdout-contains: explain-shows-risk
+stdout-contains: bash-installed
+stdout-contains: has-version
+stdout-contains: names-dpkg
+stdout-contains: listed-many
+stdout-contains: install-denied-structured
+stdout-contains: install-status=1
+stdout-contains: remove-denied
+stdout-contains: hold-denied
+stdout-contains: explain-shows-elevated
+stdout-contains: explain-names-package-provider
+stdout-contains: garbage-refused
+stdout-contains: nothing-fabricated
+stdout-contains: no-manager-structured
+stdout-contains: names-dpkg-looked-for
+stdout-contains: done
+stdout-not-contains: WRONG

@@ -924,7 +924,6 @@ fn should_report_a_schema_violation_when_the_manager_prints_garbage() {
 // --- packages: mutations --------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_permission_denied_when_adding_a_package_unprivileged() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -937,7 +936,6 @@ fn should_fail_with_permission_denied_when_adding_a_package_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_permission_denied_when_removing_a_package_unprivileged() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -952,7 +950,6 @@ fn should_fail_with_permission_denied_when_removing_a_package_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_permission_denied_when_setting_a_package_version_unprivileged() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -963,7 +960,6 @@ fn should_fail_with_permission_denied_when_setting_a_package_version_unprivilege
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_name_the_provider_and_the_privilege_when_explaining_a_package_install() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
