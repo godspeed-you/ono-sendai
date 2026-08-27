@@ -22,6 +22,7 @@ pub mod repl;
 pub mod report;
 pub mod resolve;
 pub mod session;
+pub mod session_provider;
 pub mod sink;
 pub mod view;
 

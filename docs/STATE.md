@@ -93,6 +93,15 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [processes | 2026-08-27] **process family remainder** (`crates/ono-cli/tests/processes_missing.rs`
+  — `inspect process`, `get job`, `set process --priority`, `send signal`; and `--tree` /
+  `--user` in `options_and_selectors_missing.rs`) on branch `implementation-processes` — files:
+  `crates/ono-cli/src/{session_provider,session,providers,native,eval}.rs`,
+  `crates/ono-command/src/impls/{mod,mutate,inspect}.rs`, `crates/ono-provider-linux/src/process.rs`,
+  `docs/spec/commands/process.yaml`, `docs/spec/schemas/{process-detail.v1,deferred}.yaml`,
+  `docs/spec/providers/*.yaml`, `docker/acceptance/cases/040-processes-inspect-jobs-signals.case`.
+  ADR range 0090–0092.
+
 - [language | 2026-08-27] **language family** (`crates/ono-cli/tests/language_missing.rs`) on
   branch `implementation-language` — **all 31 tests green and un-ignored**; the gate is green
   at every commit. Delivered: `let`/`( … )`/`$( … )` capture (ADR-0069); callable functions and

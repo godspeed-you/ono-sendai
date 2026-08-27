@@ -573,6 +573,7 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
         model,
         values,
         failures,
+        started: Value::now(),
         handle,
     });
     Ok(ExitStatus::SUCCESS)

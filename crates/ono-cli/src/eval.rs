@@ -1053,6 +1053,7 @@ fn run_stage_list(
             .executor()
             .run_background(&built)
             .map_err(process_error)?;
+        session.note_job_started(id.number());
         eprintln!("[{id}]");
         return Ok(ExitStatus::SUCCESS);
     }

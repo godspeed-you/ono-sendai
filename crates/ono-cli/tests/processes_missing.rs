@@ -207,7 +207,6 @@ fn should_fail_structured_when_inspecting_a_pid_that_does_not_exist() {
 // --- get job ---------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_a_backgrounded_external_pipeline_as_a_job() {
     // Spec §18.4: "`get job` returns structured job objects". job.v1: an external job owns a
     // process group and the pids in it.
@@ -284,7 +283,6 @@ fn should_list_a_backgrounded_external_pipeline_as_a_job() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_a_detached_live_view_as_a_native_job() {
     // ADR-0024: a backgrounded watch is a job in the same table; job.v1: a native job owns no
     // process group and no pids.
@@ -318,7 +316,6 @@ fn should_list_a_detached_live_view_as_a_native_job() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_one_job_by_its_number() {
     // process.yaml: selector `id` — "Resolve one job by its job number."
     let run = ono(
@@ -344,7 +341,6 @@ fn should_resolve_one_job_by_its_number() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_finished_job_as_done_with_its_exit_status() {
     // job.v1: `exit_status` is null while running and the status once the job finished; the
     // contract example `get job | where state == running` shows `state` composes with `where`.

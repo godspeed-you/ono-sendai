@@ -30,6 +30,15 @@ providers:
     capabilities: [env.read]
     schemas: [ono.env-var/1]
 
+  - id: ono.shell
+    doc: >-
+      The shell's own tables, published by the session before each pipeline runs: the job table
+      of spec §18.4 today; the links and hosts of spec §21 when the remote family publishes them
+      (ADR-0090).
+    targets: [job]
+    capabilities: [job.list]
+    schemas: [ono.job/1]
+
   - id: linux.mountinfo
     doc: Mounts and filesystems, from /proc/self/mountinfo and statvfs.
     targets: [mount, filesystem]

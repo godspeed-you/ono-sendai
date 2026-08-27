@@ -14,6 +14,15 @@ use ono_provider_api::ProviderRegistry;
 /// KUANG/11 package will later extend a target without displacing what is already there
 /// (spec §31.23).
 pub fn registry(environment: impl IntoIterator<Item = (String, String)>) -> ProviderRegistry {
+    registry_with_tables(environment, Arc::default())
+}
+
+/// The same registry, with the shell's own tables (`ono.shell`) answering from `tables` — the
+/// job table the session publishes before each pipeline runs (spec §18.4, ADR-0090).
+pub fn registry_with_tables(
+    environment: impl IntoIterator<Item = (String, String)>,
+    tables: Arc<std::sync::Mutex<crate::session_provider::SessionTables>>,
+) -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
 
     ono_provider_linux::register(
@@ -27,6 +36,10 @@ pub fn registry(environment: impl IntoIterator<Item = (String, String)>) -> Prov
     registry.register(Arc::new(ono_provider_netlink::RouteProvider::new()));
     registry.register(Arc::new(ono_provider_netlink::NeighborProvider::new()));
     registry.register(Arc::new(ono_provider_netlink::SocketProvider::new()));
+
+    registry.register(Arc::new(crate::session_provider::SessionProvider::new(
+        tables,
+    )));
 
     registry
 }
