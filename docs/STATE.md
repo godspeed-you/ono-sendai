@@ -101,6 +101,25 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## Next up (ordered)
 
+- [ ] **Found by the wiki verification pass (2026-08-27), each reproducible with `ono -c`:**
+  (1) piped forms of shell-answered commands fall through to the registry and answer E0101
+  "implements nothing": `get link | remove|detach|set|rename link`, `get host | connect|link
+  host`, `get plugin | verify|load plugin`, `get assistant | ask assistant` — the head forms
+  work — exit test: a remote_missing/plugins_missing case per piped form; (2) `set env FOO =
+  bar` is invisible to `get env FOO` in the same session while `$FOO`/`printenv` see it —
+  exit test: a builtins case; (3) `watch container | take 1` / `watch host … | take 1` never
+  return when the listing is empty — an empty snapshot must still be an event (ADR-0024) —
+  exit test: a watch case over an empty provider; (4) `let` inside `while`/`if` is
+  block-scoped, so `let i = 0; while $i < 3 { …; let i = $i + 1 }` loops forever — decide the
+  scoping rule (ADR) — exit test: a language case; (5) `diff` of two fresh provider snapshots
+  of the same object reports `changed` (user, group, file, mount, service) although nothing
+  changed — volatile fields need excluding from the comparison — exit test: a data case;
+  (6) `get process <gone-pid> | count` prints E0301 *and* `VALUE 0` with exit 0; `each {
+  restart service @ }` drops the ActionResult rows; `get log`'s example `where level >=
+  error` compares strings alphabetically (level should order as severity); cosmetic:
+  `trace group root` → "command not found: trace", `get interface lo | stop interface` refuses
+  the piped record, `get config --problems | select code` fails, the E0701 bulk message has
+  runs of spaces, `trace connection --remote` without selector prints an empty name
 - [ ] One label rule for an object: `ObjectRef::of` (first default-view column outside the
   identity — a mount's source device, a service's state) and `ono_graph::label_of` (a form per
   schema — the mount point, `nginx.service`) disagree, so a resolved selector's ActionResult
