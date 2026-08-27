@@ -210,6 +210,63 @@ error_codes! {
         "More than one adapter claims the invocation and the resolution rules cannot separate them.";
     AdapterRequiredForStructuredPipeline => "Ono-Sendai-E0911", "adapter.required_for_structured_pipeline", Type,
         "A consumer demanded objects and no adapter can provide them for this invocation.";
+
+    // --- KUANG/11, spec §31.79: the K11 family of docs/spec/kuang/errors.v1.yaml, folded into
+    // the global model (ADR-0108). Numbering follows §31.79's families.
+    KuangPackageInvalid => "Ono-Sendai-K11001", "package.invalid", Parse,
+        "The package manifest is not a valid `kuang-package/1` document.";
+    KuangPackageIncompatible => "Ono-Sendai-K11002", "package.incompatible", Conflict,
+        "The package requires a host, platform or API version this system does not provide.";
+    KuangPackageIntegrityFailed => "Ono-Sendai-K11003", "package.integrity_failed", Safety,
+        "The package's bytes do not match the hash the reference named.";
+    KuangPackageSignatureInvalid => "Ono-Sendai-K11004", "package.signature_invalid", Safety,
+        "The package carries a signature and it does not verify.";
+    KuangPublisherUntrusted => "Ono-Sendai-K11005", "publisher.untrusted", Safety,
+        "The signing key or publisher is not one this system trusts.";
+    KuangLoadCapabilityDenied => "Ono-Sendai-K11101", "load.capability_denied", Permission,
+        "A capability the package declares as required was not granted.";
+    KuangLoadDependencyMissing => "Ono-Sendai-K11102", "load.dependency_missing", Resolution,
+        "A declared package or schema dependency could not be resolved.";
+    KuangLoadDependencyCycle => "Ono-Sendai-K11103", "load.dependency_cycle", Conflict,
+        "The package's dependencies form a cycle.";
+    KuangLoadRuntimeUnavailable => "Ono-Sendai-K11104", "load.runtime_unavailable", Provider,
+        "The isolation tier the package declares is not available on this host.";
+    KuangRuntimeTrap => "Ono-Sendai-K11201", "runtime.trap", External,
+        "The plugin instance trapped or crashed.";
+    KuangRuntimeTimeout => "Ono-Sendai-K11202", "runtime.timeout", Timeout,
+        "A host call or invocation exceeded its deadline.";
+    KuangRuntimeMemoryLimit => "Ono-Sendai-K11203", "runtime.memory_limit", External,
+        "The plugin instance exceeded its memory ceiling and was terminated.";
+    KuangRuntimeProtocolViolation => "Ono-Sendai-K11204", "runtime.protocol_violation", Provider,
+        "The plugin sent a message that is not valid under the negotiated host API.";
+    KuangRuntimeSchemaViolation => "Ono-Sendai-K11205", "runtime.schema_violation", Provider,
+        "The plugin emitted a value outside the schema its contribution advertises.";
+    KuangRuntimeBackpressureFailure => "Ono-Sendai-K11206", "runtime.backpressure_failure", Stream,
+        "A stream could not keep up and its policy was to fail rather than lose data.";
+    KuangCapabilityDenied => "Ono-Sendai-K11301", "capability.denied", Permission,
+        "The plugin asked for something it has not been granted.";
+    KuangCapabilityScopeViolation => "Ono-Sendai-K11302", "capability.scope_violation", Permission,
+        "The plugin holds the capability but the call fell outside its granted scope.";
+    KuangCapabilityLeaseExpired => "Ono-Sendai-K11303", "capability.lease_expired", Permission,
+        "The lease backing this call has expired, been used up, or its condition no longer holds.";
+    KuangStateQuotaExceeded => "Ono-Sendai-K11401", "state.quota_exceeded", Safety,
+        "The plugin's persistent state would exceed its quota.";
+    KuangStateMigrationFailed => "Ono-Sendai-K11402", "state.migration_failed", External,
+        "A plugin state migration did not complete.";
+    KuangViewProtocolError => "Ono-Sendai-K11501", "view.protocol_error", Provider,
+        "The plugin submitted a view tree the host cannot lay out.";
+    KuangModelProviderUnavailable => "Ono-Sendai-K11601", "model.provider_unavailable", Provider,
+        "No configured model provider satisfies the request.";
+    KuangModelPolicyDenied => "Ono-Sendai-K11602", "model.policy_denied", Safety,
+        "The request carries a data class this provider is not allowed to receive.";
+    KuangAssistantToolInvalid => "Ono-Sendai-K11603", "assistant.tool_invalid", Type,
+        "A tool intent named an unexposed tool, or arguments that do not fit its descriptor.";
+    KuangAssistantContextDenied => "Ono-Sendai-K11604", "assistant.context_denied", Permission,
+        "The assistant requested a context source it has not been granted.";
+    KuangRemoteExtensionUnavailable => "Ono-Sendai-K11701", "remote.extension_unavailable", Provider,
+        "The remote agent cannot run the requested extension component.";
+    KuangRemotePolicyDenied => "Ono-Sendai-K11702", "remote.policy_denied", Safety,
+        "The remote host's policy denies the capability, whatever the local grant says.";
 }
 
 impl ErrorCode {

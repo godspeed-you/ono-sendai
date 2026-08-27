@@ -105,6 +105,72 @@ impl SessionProvider {
         }
     }
 
+    /// The inspection of the one package the query selects (spec §31.33).
+    ///
+    /// What the record needs is gathered under the lock; the record itself is built by the
+    /// stream's producer, because an unloaded package may have to be run through its
+    /// handshake to learn what it contributes (ADR-0108 §3), and that is asynchronous.
+    fn inspect(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+        let id = query
+            .selectors()
+            .iter()
+            .find_map(|selector| match selector {
+                Selector::Field { name, value } if name == "id" => value.as_str().ok(),
+                _ => None,
+            })
+            .map(str::to_owned);
+        let (package, management, instance) = {
+            let tables = self.lock();
+            let Some(package) = id
+                .as_deref()
+                .and_then(|id| tables.kuang.installed_package(id))
+            else {
+                return Ok(ValueStream::from_values([]));
+            };
+            let management = tables.kuang.management(&package.manifest.package.id);
+            let instance = tables
+                .kuang
+                .instance(&package.manifest.package.id)
+                .map(|instance| crate::kuang_host::Instance {
+                    id: instance.id.clone(),
+                    plugin: Arc::clone(&instance.plugin),
+                    loaded_at: instance.loaded_at.clone(),
+                });
+            (package, management, instance)
+        };
+        Ok(ValueStream::spawn(
+            ono_pipeline::PipelineConfig::new(),
+            ono_pipeline::Boundedness::Bounded,
+            move |sink| async move {
+                use crate::kuang_host::{Contributions, discover, inspection_record};
+                let declares_files = package.manifest.contributions.is_some();
+                let (contributions, failure) = match &instance {
+                    Some(instance) => (Contributions::of(&instance.plugin), None),
+                    None if declares_files => (Contributions::default(), None),
+                    None => match discover(&package).await {
+                        Ok(contributions) => (contributions, None),
+                        Err(error) => (Contributions::default(), Some(error)),
+                    },
+                };
+                let record = inspection_record(
+                    &package,
+                    &management,
+                    instance.as_ref(),
+                    &contributions,
+                    failure,
+                );
+                match record {
+                    Ok(record) => {
+                        let _ = sink.send(record.into_value()).await;
+                    }
+                    Err(error) => {
+                        let _ = sink.fail(error).await;
+                    }
+                }
+            },
+        ))
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, SessionTables> {
         self.tables
             .lock()
@@ -127,6 +193,30 @@ impl SessionProvider {
             .map(|job| record(job, current == Some(job.number), &schema))
             .collect()
     }
+}
+
+/// A bounded stream of `values`, with each per-object failure after them: a package that cannot
+/// be read is one object's failure beside the others' records (spec §16.5).
+fn stream_of(values: Vec<Value>, failures: Vec<ErrorValue>) -> ValueStream {
+    if failures.is_empty() {
+        return ValueStream::from_values(values);
+    }
+    ValueStream::spawn(
+        ono_pipeline::PipelineConfig::new(),
+        ono_pipeline::Boundedness::Bounded,
+        move |sink| async move {
+            for value in values {
+                if sink.send(value).await.is_err() {
+                    return;
+                }
+            }
+            for failure in failures {
+                if sink.fail(failure).await.is_err() {
+                    return;
+                }
+            }
+        },
+    )
 }
 
 fn record(job: &JobRow, current: bool, schema: &Arc<Schema>) -> Result<RecordValue, ErrorValue> {
@@ -166,9 +256,13 @@ impl Provider for SessionProvider {
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
-        ["job", "plugin"]
+        Self::schema_of("job")
             .into_iter()
-            .filter_map(|target| Self::schema_of(target).ok())
+            .chain(
+                ["ono.plugin", "ono.plugin-package", "ono.plugin-inspection"]
+                    .into_iter()
+                    .filter_map(|name| crate::kuang_host::schema(name).ok()),
+            )
             .collect()
     }
 
@@ -176,6 +270,8 @@ impl Provider for SessionProvider {
         vec![
             Capability::new("job.list", Risk::Read),
             Capability::new("plugin.list", Risk::Read),
+            Capability::new("plugin.search", Risk::Read),
+            Capability::new("plugin.inspect", Risk::Read),
         ]
     }
 
@@ -185,6 +281,38 @@ impl Provider for SessionProvider {
 
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         let limit = query.max().unwrap_or(usize::MAX);
+        if query.target_name() == "plugin" {
+            // `find plugin <term>`: the search selector answers packages as their sources
+            // describe them, not installed rows (ADR-0108 §4).
+            let term = query
+                .selectors()
+                .iter()
+                .find_map(|selector| match selector {
+                    Selector::Field { name, value } if name == "query" => value.as_str().ok(),
+                    _ => None,
+                });
+            if let Some(term) = term {
+                let source = query
+                    .option_value("source")
+                    .and_then(|value| value.as_str().ok())
+                    .map(str::to_owned);
+                let (records, failures) =
+                    self.lock().kuang.package_records(term, source.as_deref())?;
+                return Ok(stream_of(
+                    records
+                        .into_iter()
+                        .take(limit)
+                        .map(RecordValue::into_value)
+                        .collect(),
+                    failures,
+                ));
+            }
+            // `inspect plugin <id>`: the detail query answers the inspection record (ADR-0091,
+            // ADR-0108 §3).
+            if query.flag("detail") {
+                return self.inspect(query);
+            }
+        }
         let (records, failures) = self.table(query.target_name())?;
         // `get plugin --state loaded`: the option is a filter on the state column (kuang.yaml).
         let state = query
@@ -202,27 +330,7 @@ impl Provider for SessionProvider {
             .take(limit)
             .map(RecordValue::into_value)
             .collect();
-        if failures.is_empty() {
-            return Ok(ValueStream::from_values(values));
-        }
-        // A package that cannot be read is one object's failure beside the others' records
-        // (spec §16.5): the stream carries both, and the run reports the failure.
-        Ok(ValueStream::spawn(
-            ono_pipeline::PipelineConfig::new(),
-            ono_pipeline::Boundedness::Bounded,
-            move |sink| async move {
-                for value in values {
-                    if sink.send(value).await.is_err() {
-                        return;
-                    }
-                }
-                for failure in failures {
-                    if sink.fail(failure).await.is_err() {
-                        return;
-                    }
-                }
-            },
-        ))
+        Ok(stream_of(values, failures))
     }
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {

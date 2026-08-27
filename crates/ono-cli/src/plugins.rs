@@ -37,16 +37,18 @@ pub fn installed(session: &mut Session) -> (Vec<Installed>, Vec<ErrorValue>) {
     session.with_kuang(|host| host.installed())
 }
 
-/// A supervisor error as the shell reports it.
-///
-/// The K11 code family folds into `ono_core::ErrorCode` in its own increment (ADR-0040 §3);
-/// until then the code travels in the message, never silently dropped.
+/// A supervisor error as the shell reports it: the K11 code itself (ADR-0108), with the
+/// message and help it carried.
 #[must_use]
 pub fn error_value(error: &KuangError) -> ErrorValue {
-    let mut value = ErrorValue::new(
-        ErrorCode::ProviderUnsupported,
-        format!("{}: {}", error.code().name(), error.message()),
-    );
+    let mut value = match ErrorCode::from_code(error.code().code()) {
+        Some(code) => ErrorValue::new(code, error.message()),
+        // A code this build's taxonomy does not carry stays visible in the message.
+        None => ErrorValue::new(
+            ErrorCode::ProviderUnsupported,
+            format!("{}: {}", error.code().name(), error.message()),
+        ),
+    };
     if let Some(help) = error.help() {
         value = value.with_help(help);
     }
@@ -237,6 +239,81 @@ pub fn load_plugin_with(
     );
     session.add_plugin(id.to_owned(), loaded);
     Ok(ExitStatus::SUCCESS)
+}
+
+/// A KUANG/11 management command the evaluator runs itself, seeding the rest of the pipeline
+/// with what it produced (ADR-0108 §2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Request {
+    /// `verify plugin <id | reference>` (spec §31.36).
+    VerifyPlugin,
+}
+
+/// What a management command produced: the values for the pipeline after it, and the failure
+/// that makes the run fail once they are shown.
+#[derive(Debug)]
+pub struct Produced {
+    /// The records the rest of the pipeline is seeded with.
+    pub values: Vec<Value>,
+    /// A failure to report after the values, which fails the run.
+    pub failure: Option<ErrorValue>,
+}
+
+/// Whether `stage` is a management command this module runs (spec §31.3's `<verb> plugin`).
+#[must_use]
+pub fn claims(stage: &ono_parser::Stage) -> Option<Request> {
+    let ono_parser::StageHead::Command(name) = &stage.head else {
+        return None;
+    };
+    if name.namespace.is_some() {
+        return None;
+    }
+    let target = stage
+        .arguments
+        .first()
+        .and_then(ono_parser::Argument::as_word)?;
+    match (name.name.as_str(), target) {
+        ("verify", "plugin") => Some(Request::VerifyPlugin),
+        _ => None,
+    }
+}
+
+/// Runs a management command over its words (the target word included).
+///
+/// # Errors
+///
+/// The structured refusal of the command.
+pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Produced> {
+    let arguments: Vec<&str> = words
+        .iter()
+        .skip(1)
+        .map(String::as_str)
+        .filter(|word| !word.starts_with("--"))
+        .collect();
+    match request {
+        Request::VerifyPlugin => {
+            let Some(reference) = arguments.first() else {
+                return Err(Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::ResolveTargetNotFound,
+                        "`verify plugin` needs the package to verify",
+                    )
+                    .with_help("an installed id, or `path:<directory>` (spec §31.36)"),
+                ));
+            };
+            session.publish_host();
+            let verification = session
+                .with_kuang(|host| {
+                    host.resolve(reference)
+                        .and_then(|resolved| host.verify(&resolved))
+                })
+                .map_err(Flow::Failed)?;
+            Ok(Produced {
+                values: vec![verification.record.into_value()],
+                failure: verification.blocking.into_iter().next(),
+            })
+        }
+    }
 }
 
 /// Whether `namespace` names a loaded package, by full id or by its last segment.

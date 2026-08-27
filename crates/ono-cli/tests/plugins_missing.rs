@@ -320,7 +320,6 @@ fn should_resolve_one_package_by_its_id_selector() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_show_manifest_contributions_and_capability_requests_when_inspected() {
     let home = plugin_home();
     let run = ono(&home, &format!("inspect plugin {ECHO} | to json"));
@@ -384,7 +383,6 @@ fn should_show_manifest_contributions_and_capability_requests_when_inspected() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_find_an_installed_package_without_loading_it() {
     let home = plugin_home();
     let run = ono(
@@ -432,7 +430,6 @@ fn should_find_an_installed_package_without_loading_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_find_an_uninstalled_package_in_a_path_source() {
     let home = plugin_home();
     let elsewhere = ono_testkit::scratch();
@@ -474,7 +471,6 @@ fn should_find_an_uninstalled_package_in_a_path_source() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_an_unsigned_local_package_as_compatible_when_verified() {
     let home = plugin_home();
     let run = ono(&home, &format!("verify plugin {ECHO} | to json"));
@@ -518,7 +514,6 @@ fn should_report_an_unsigned_local_package_as_compatible_when_verified() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_incompatibility_when_the_kuang_api_range_excludes_the_host() {
     let home = plugin_home();
     home.write(
@@ -546,7 +541,6 @@ fn should_report_incompatibility_when_the_kuang_api_range_excludes_the_host() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_load_an_incompatible_package() {
     let home = plugin_home();
     home.write(

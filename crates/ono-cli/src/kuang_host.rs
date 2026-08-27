@@ -11,9 +11,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ono_core::ErrorCode;
-use ono_kuang_protocol::{Manifest, PluginState, Role, RuntimeKind};
-use ono_kuang_supervisor::LoadedPlugin;
-use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value};
+use ono_kuang_protocol::{
+    CapabilityRequest, DeclarationClass, HOST_API, Manifest, PluginState, Role, RuntimeKind,
+    ShutdownReason,
+};
+use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Supervisor};
+use ono_value::{ErrorValue, MapValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
 /// One discovered package: its directory and its parsed manifest.
 #[derive(Debug, Clone)]
@@ -34,6 +37,9 @@ pub struct Management {
     /// The source reference `install plugin` resolved, when it was installed rather than placed.
     #[serde(default)]
     pub installed_from: Option<String>,
+    /// The content hash recorded at install, which `verify plugin` re-checks (spec §31.36).
+    #[serde(default)]
+    pub integrity: Option<String>,
 }
 
 const fn enabled_by_default() -> bool {
@@ -45,6 +51,7 @@ impl Default for Management {
         Self {
             enabled: true,
             installed_from: None,
+            integrity: None,
         }
     }
 }
@@ -503,4 +510,678 @@ fn io_error(path: &Path, error: &std::io::Error) -> ErrorValue {
         _ => ErrorCode::IoNotFound,
     };
     ErrorValue::new(code, format!("{}: {error}", path.display()))
+}
+
+// --- verification, spec §31.36 -----------------------------------------------------------------
+
+/// What `verify plugin` found: the record, and the errors of the checks that block.
+#[derive(Debug)]
+pub struct Verification {
+    /// The `ono.verification-result/1` record.
+    pub record: RecordValue,
+    /// One structured error per blocking check that failed, in check order.
+    pub blocking: Vec<ErrorValue>,
+}
+
+/// A package reference as `verify`, `find` and `install` resolve it: an installed id, or a
+/// `path:` reference to a directory (lifecycle.v1 `sources`).
+#[derive(Debug)]
+pub struct Resolved {
+    /// The reference as it will be recorded.
+    pub source: String,
+    /// The package, or why its manifest does not validate.
+    pub package: Result<Installed, ErrorValue>,
+}
+
+impl Host {
+    /// Resolves `reference`: `path:<dir>` reads that directory; anything else is an installed
+    /// package id.
+    ///
+    /// # Errors
+    ///
+    /// `resolve.target_not_found` when nothing answers to the reference.
+    pub fn resolve(&self, reference: &str) -> Result<Resolved, ErrorValue> {
+        if let Some(path) = reference.strip_prefix("path:") {
+            let directory = PathBuf::from(path);
+            return match read_package(&directory) {
+                Ok(Some(package)) => Ok(Resolved {
+                    source: reference.to_owned(),
+                    package: Ok(package),
+                }),
+                Ok(None) => Err(ErrorValue::new(
+                    ErrorCode::ResolveTargetNotFound,
+                    format!("{} holds no `manifest.yaml`", directory.display()),
+                )
+                .with_help("a `path:` reference names an unpacked package directory (spec §31.9)")),
+                Err(error) => Ok(Resolved {
+                    source: reference.to_owned(),
+                    package: Err(error),
+                }),
+            };
+        }
+        if let Some(scheme) = reference.split_once(':').map(|(scheme, _)| scheme)
+            && matches!(scheme, "file" | "registry" | "git" | "oci")
+        {
+            return Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!("the `{scheme}:` source scheme is not available in this build"),
+            )
+            .with_help("`path:<directory>` is the source this build resolves (spec §31.9)"));
+        }
+        let package = self.installed_package(reference).ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                format!("no installed package answers to `{reference}`"),
+            )
+            .with_help("`get plugin` lists the installed set (spec §31.8)")
+        })?;
+        Ok(Resolved {
+            source: format!("path:{}", package.directory.display()),
+            package: Ok(package),
+        })
+    }
+
+    /// Verifies a resolved package (spec §31.36).
+    ///
+    /// # Errors
+    ///
+    /// `provider.schema_violation` when the record does not fit its contract.
+    pub fn verify(&self, resolved: &Resolved) -> Result<Verification, ErrorValue> {
+        let management = resolved
+            .package
+            .as_ref()
+            .map(|package| self.management(&package.manifest.package.id))
+            .unwrap_or_default();
+        verification(resolved, &management)
+    }
+
+    /// The `ono.plugin-package/1` records of the packages matching `term` in the configured
+    /// sources, or in the one `--source` names (spec §31.9). Nothing is executed.
+    ///
+    /// # Errors
+    ///
+    /// The unreadable source, or a record that does not fit its contract.
+    pub fn package_records(
+        &self,
+        term: &str,
+        source: Option<&str>,
+    ) -> Result<(Vec<RecordValue>, Vec<ErrorValue>), ErrorValue> {
+        let schema = schema("ono.plugin-package")?;
+        let (installed, _) = self.installed();
+        let (candidates, failures) = match source {
+            None => (
+                installed
+                    .iter()
+                    .map(|package| {
+                        (
+                            format!("path:{}", package.directory.display()),
+                            package.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                Vec::new(),
+            ),
+            Some(reference) => {
+                let Some(path) = reference.strip_prefix("path:") else {
+                    return Err(ErrorValue::new(
+                        ErrorCode::ProviderUnsupported,
+                        format!("`{reference}` is not a source this build searches"),
+                    )
+                    .with_help("`--source path:<directory>` (spec §31.9)"));
+                };
+                let directory = PathBuf::from(path);
+                match read_package(&directory)? {
+                    Some(package) => (vec![(reference.to_owned(), package)], Vec::new()),
+                    None => {
+                        let (packages, failures) = packages_under(&directory);
+                        (
+                            packages
+                                .into_iter()
+                                .map(|package| {
+                                    (format!("path:{}", package.directory.display()), package)
+                                })
+                                .collect(),
+                            failures,
+                        )
+                    }
+                }
+            }
+        };
+        let needle = term.to_lowercase();
+        let mut records = Vec::new();
+        for (reference, package) in candidates {
+            let info = &package.manifest.package;
+            if !info.id.to_lowercase().contains(&needle)
+                && !info.name.to_lowercase().contains(&needle)
+            {
+                continue;
+            }
+            let already = installed.iter().any(|held| {
+                held.manifest.package.id == info.id && held.manifest.package.version == info.version
+            });
+            records.push(package_record(&schema, &package, &reference, already)?);
+        }
+        Ok((records, failures))
+    }
+}
+
+/// Builds the verification of `resolved` against what `management` recorded.
+///
+/// # Errors
+///
+/// `provider.schema_violation` when the record does not fit its contract.
+pub fn verification(
+    resolved: &Resolved,
+    management: &Management,
+) -> Result<Verification, ErrorValue> {
+    let schema = schema("ono.verification-result")?;
+    let mut blocking = Vec::new();
+    let mut warnings = vec![
+        "signature: absent".to_owned(),
+        "transparency: unknown".to_owned(),
+    ];
+    let (package_name, integrity, compatibility, manifest, runtime) = match &resolved.package {
+        Ok(package) => {
+            let integrity = match &management.integrity {
+                Some(recorded) if *recorded == integrity_of(package) => "valid",
+                Some(_) => {
+                    blocking.push(
+                        ErrorValue::new(
+                            ErrorCode::KuangPackageIntegrityFailed,
+                            format!(
+                                "the bytes of `{}` are not the ones recorded at install",
+                                package.manifest.package.id
+                            ),
+                        )
+                        .with_metadata("check", Value::string("integrity")),
+                    );
+                    "invalid"
+                }
+                None => {
+                    warnings.push("integrity: unknown, no hash was recorded".to_owned());
+                    "unknown"
+                }
+            };
+            let compatibility = match package
+                .manifest
+                .check_host(HOST_API, &ono_kuang_supervisor::host_platform())
+            {
+                Ok(()) => "compatible",
+                Err(error) => {
+                    blocking.push(
+                        crate::plugins::error_value(&error)
+                            .with_metadata("check", Value::string("compatibility")),
+                    );
+                    "incompatible"
+                }
+            };
+            (
+                package.manifest.package.id.clone(),
+                integrity,
+                compatibility,
+                "valid",
+                isolation(&package.manifest),
+            )
+        }
+        Err(error) => {
+            blocking.push(
+                error
+                    .clone()
+                    .with_metadata("check", Value::string("manifest")),
+            );
+            (
+                resolved.source.clone(),
+                "unknown",
+                "unknown",
+                "invalid",
+                "isolated-component",
+            )
+        }
+    };
+    let names = |names: &[String]| Value::list(names.iter().map(|name| Value::string(name)));
+    let record = RecordValue::builder(Arc::clone(&schema), provenance(&schema))
+        .set("package", Value::string(&package_name))?
+        .set("source", Value::string(&resolved.source))?
+        .set("integrity", Value::string(integrity))?
+        .set("signature", Value::string("absent"))?
+        .set("publisher", Value::Null)?
+        .set("key", Value::Null)?
+        .set("trust", Value::string("unknown"))?
+        .set("transparency", Value::string("unknown"))?
+        .set("compatibility", Value::string(compatibility))?
+        .set("manifest", Value::string(manifest))?
+        .set("runtime", Value::string(runtime))?
+        .set(
+            "blocking_failures",
+            Value::list(blocking.iter().map(|error| {
+                error
+                    .metadata()
+                    .get("check")
+                    .cloned()
+                    .unwrap_or_else(|| Value::string(error.code().name()))
+            })),
+        )?
+        .set("warnings", names(&warnings))?
+        .set("verified_at", Value::now())?
+        .build();
+    Ok(Verification { record, blocking })
+}
+
+// --- packages as a source offers them, spec §31.9 ---------------------------------------------
+
+/// A map value from string-keyed pairs.
+#[must_use]
+pub fn map(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
+    let mut map = MapValue::new();
+    for (key, value) in entries {
+        map.insert(key.into(), value);
+    }
+    Value::Map(Arc::new(map))
+}
+
+fn string_list(items: &[String]) -> Value {
+    Value::list(items.iter().map(|item| Value::string(item)))
+}
+
+/// A serde-kebab enum as the string its contract spells.
+fn kebab<T: serde::Serialize>(value: &T) -> Value {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|json| json.as_str().map(Value::string))
+        .unwrap_or(Value::Null)
+}
+
+/// A JSON object as a map value.
+fn json_map(object: Option<&serde_json::Map<String, serde_json::Value>>) -> Value {
+    object.map_or(Value::Null, |object| {
+        ono_value::from_json(
+            &serde_json::Value::Object(object.clone()),
+            ono_value::builtin_schemas(),
+        )
+        .unwrap_or(Value::Null)
+    })
+}
+
+fn request_row(request: &CapabilityRequest, class: DeclarationClass, state: &str) -> Value {
+    map([
+        ("capability", Value::string(request.capability.id())),
+        ("class", kebab(&class)),
+        ("scope", json_map(request.scope.as_ref())),
+        (
+            "roles",
+            request.roles.as_deref().map_or(Value::Null, string_list),
+        ),
+        (
+            "purpose",
+            request
+                .purpose
+                .as_deref()
+                .map_or(Value::Null, Value::string),
+        ),
+        ("state", Value::string(state)),
+    ])
+}
+
+/// Every capability request of `manifest` with its class, as `{capability, class, scope, roles,
+/// purpose, state}` rows (spec §31.17).
+#[must_use]
+pub fn capability_requests(manifest: &Manifest, plugin: Option<&LoadedPlugin>) -> Value {
+    let state = |request: &CapabilityRequest| match plugin {
+        Some(plugin) if plugin.contract().grant(request.capability.id()).is_some() => "granted",
+        Some(_) => "denied",
+        None => "not-requested-yet",
+    };
+    let rows = manifest
+        .required_capabilities
+        .iter()
+        .map(|request| request_row(request, DeclarationClass::Required, state(request)))
+        .chain(
+            manifest
+                .optional_capabilities
+                .iter()
+                .map(|request| request_row(request, DeclarationClass::Optional, state(request))),
+        )
+        .chain(
+            manifest
+                .runtime_requested_capabilities
+                .iter()
+                .map(|request| {
+                    request_row(request, DeclarationClass::RuntimeRequested, state(request))
+                }),
+        );
+    Value::list(rows)
+}
+
+/// The network declaration as a map: `outbound: none` is a stated answer (spec §31.21).
+#[must_use]
+pub fn network_of(manifest: &Manifest) -> Value {
+    map([
+        (
+            "outbound",
+            Value::string(match manifest.network.outbound {
+                ono_kuang_protocol::Outbound::None => "none",
+                ono_kuang_protocol::Outbound::Brokered => "brokered",
+            }),
+        ),
+        (
+            "destinations",
+            manifest
+                .network
+                .destinations
+                .as_ref()
+                .map_or(Value::Null, |destinations| {
+                    Value::list(destinations.iter().map(|entry| json_map(Some(entry))))
+                }),
+        ),
+    ])
+}
+
+/// What the manifest says the package contributes: the contribution files by kind.
+#[must_use]
+pub fn declared_contributions(manifest: &Manifest) -> Value {
+    let paths = manifest.contributions.as_ref();
+    let group = |select: fn(&ono_kuang_protocol::ContributionPaths) -> &Option<Vec<String>>| {
+        paths
+            .and_then(|paths| select(paths).as_deref())
+            .map_or_else(|| Value::list([]), string_list)
+    };
+    map([
+        ("commands", group(|paths| &paths.commands)),
+        ("schemas", group(|paths| &paths.schemas)),
+        ("targets", group(|paths| &paths.targets)),
+        ("views", group(|paths| &paths.views)),
+        ("relations", group(|paths| &paths.relations)),
+        ("annotations", group(|paths| &paths.annotations)),
+        ("tools", group(|paths| &paths.tools)),
+        ("adapters", group(|paths| &paths.adapters)),
+    ])
+}
+
+/// The `ono.plugin-package/1` record of a package as a source describes it.
+///
+/// # Errors
+///
+/// `provider.schema_violation` when the record does not fit its contract.
+pub fn package_record(
+    schema: &Arc<Schema>,
+    package: &Installed,
+    source: &str,
+    installed: bool,
+) -> Result<RecordValue, ErrorValue> {
+    let manifest = &package.manifest;
+    Ok(RecordValue::builder(Arc::clone(schema), provenance(schema))
+        .set("id", Value::string(&manifest.package.id))?
+        .set("name", Value::string(&manifest.package.name))?
+        .set("version", Value::string(&manifest.package.version))?
+        .set("publisher", Value::string(&manifest.package.publisher))?
+        .set("summary", Value::string(&manifest.package.description))?
+        .set("source", Value::string(source))?
+        .set("license", Value::string(&manifest.package.license))?
+        .set(
+            "kuang_api",
+            Value::string(manifest.compatibility.kuang_api.source()),
+        )?
+        .set("platforms", string_list(&manifest.compatibility.platforms))?
+        .set(
+            "roles",
+            Value::list(
+                manifest
+                    .roles
+                    .iter()
+                    .map(|role| Value::string(role_name(*role))),
+            ),
+        )?
+        .set("contributions", declared_contributions(manifest))?
+        .set(
+            "requested_capabilities",
+            capability_requests(manifest, None),
+        )?
+        .set("network", network_of(manifest))?
+        .set("integrity", Value::Null)?
+        .set("signature", Value::string("absent"))?
+        .set("trust", Value::string("local"))?
+        .set("installed", Value::Bool(installed))?
+        .set("size", Value::Null)?
+        .set("published_at", Value::Null)?
+        .build())
+}
+
+// --- inspection, spec §31.33 -------------------------------------------------------------------
+
+/// What an instance contributes, by kind — the resolved ids.
+#[derive(Debug, Clone, Default)]
+pub struct Contributions {
+    /// Command ids.
+    pub commands: Vec<String>,
+    /// Target names.
+    pub targets: Vec<String>,
+    /// Schema ids.
+    pub schemas: Vec<String>,
+}
+
+impl Contributions {
+    /// What a loaded instance registered.
+    #[must_use]
+    pub fn of(plugin: &LoadedPlugin) -> Self {
+        Self {
+            commands: plugin
+                .commands()
+                .iter()
+                .map(|command| command.contribution.id.clone())
+                .collect(),
+            targets: plugin
+                .targets()
+                .iter()
+                .map(|target| target.contribution.name.clone())
+                .collect(),
+            schemas: plugin
+                .targets()
+                .iter()
+                .map(|target| target.contribution.schema.clone())
+                .collect(),
+        }
+    }
+
+    fn value(&self) -> Value {
+        map([
+            ("commands", string_list(&self.commands)),
+            ("targets", string_list(&self.targets)),
+            ("schemas", string_list(&self.schemas)),
+        ])
+    }
+}
+
+/// Learns what an unloaded package contributes by running its handshake once, under the
+/// deny-all policy, and shutting the instance down (ADR-0108, spec deviation).
+///
+/// # Errors
+///
+/// The supervisor's refusal, when the package cannot be started.
+pub async fn discover(package: &Installed) -> Result<Contributions, ErrorValue> {
+    let entry = package
+        .manifest
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.entry.as_ref())
+        .map(|entry| package.directory.join(entry))
+        .ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::KuangPackageInvalid,
+                format!(
+                    "`{}` declares no runtime to start",
+                    package.manifest.package.id
+                ),
+            )
+        })?;
+    let loaded = Supervisor::load(LoadConfig::new(entry, package.manifest.clone()))
+        .await
+        .map_err(|error| crate::plugins::error_value(&error))?;
+    let contributions = Contributions::of(&loaded);
+    loaded.shutdown(ShutdownReason::Unload).await;
+    Ok(contributions)
+}
+
+/// The `ono.plugin-runtime/1` record of a loaded instance — the negotiated contract (spec §31.63).
+///
+/// # Errors
+///
+/// `provider.schema_violation` when the record does not fit its contract.
+pub fn runtime_record(package: &Installed, instance: &Instance) -> Result<RecordValue, ErrorValue> {
+    let schema = schema("ono.plugin-runtime")?;
+    let contract = instance.plugin.contract();
+    let manifest = &package.manifest;
+    let limits = &contract.limits;
+    let int = |value: u64| Value::Int(i128::from(value));
+    Ok(
+        RecordValue::builder(Arc::clone(&schema), provenance(&schema))
+            .set(
+                "instance",
+                Value::string(&format!(
+                    "{}@{}",
+                    instance.id,
+                    ono_value::canonical_text(&instance.loaded_at).unwrap_or_default()
+                )),
+            )?
+            .set("plugin", plugin_ref(manifest))?
+            .set("host_api", Value::string(&contract.host_api))?
+            .set("value_protocol", Value::string(&contract.value_protocol))?
+            .set("isolation", Value::string(isolation(manifest)))?
+            .set(
+                "granted",
+                Value::list(contract.granted.iter().map(|granted| {
+                    map([
+                        ("capability", Value::string(&granted.capability)),
+                        ("class", kebab(&granted.class)),
+                        ("scope", json_map(granted.scope.as_ref())),
+                        ("enforcement", kebab(&granted.enforcement)),
+                    ])
+                })),
+            )?
+            .set(
+                "denied",
+                Value::list(contract.denied.iter().map(|denied| {
+                    map([
+                        ("capability", Value::string(&denied.capability)),
+                        ("class", kebab(&denied.class)),
+                        ("reason", Value::string(&denied.reason)),
+                    ])
+                })),
+            )?
+            .set(
+                "disabled_features",
+                string_list(instance.plugin.disabled_features()),
+            )?
+            .set(
+                "limits",
+                map([
+                    (
+                        "memory_max",
+                        limits.memory_max.map_or(Value::Null, |bytes| {
+                            Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(bytes)))
+                        }),
+                    ),
+                    (
+                        "state_quota",
+                        Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(
+                            limits.state_quota,
+                        ))),
+                    ),
+                    ("queue_depth", int(u64::from(limits.queue_depth))),
+                    ("call_deadline_ms", int(limits.call_deadline_ms)),
+                    ("max_frame", int(u64::from(limits.max_frame))),
+                ]),
+            )?
+            .set("overflow", kebab(&contract.overflow))?
+            .set("network", network_of(manifest))?
+            .set("degraded", Value::Bool(contract.degraded))?
+            .set("started_at", instance.loaded_at.clone())?
+            .set("development_mode", Value::Bool(false))?
+            .build(),
+    )
+}
+
+/// The reference to a package version, as every KUANG/11 record carries it.
+#[must_use]
+pub fn plugin_ref(manifest: &Manifest) -> Value {
+    map([
+        ("id", Value::string(&manifest.package.id)),
+        ("version", Value::string(&manifest.package.version)),
+    ])
+}
+
+/// The `ono.plugin-inspection/1` record of one package (spec §31.33).
+///
+/// # Errors
+///
+/// `provider.schema_violation` when the record does not fit its contract.
+pub fn inspection_record(
+    package: &Installed,
+    management: &Management,
+    instance: Option<&Instance>,
+    contributions: &Contributions,
+    last_error: Option<ErrorValue>,
+) -> Result<RecordValue, ErrorValue> {
+    let schema = schema("ono.plugin-inspection")?;
+    let manifest = &package.manifest;
+    let plugin = instance.map(|instance| &*instance.plugin);
+    let manifest_value = std::fs::read_to_string(package.directory.join("manifest.yaml"))
+        .ok()
+        .and_then(|text| ono_value::from_yaml(&text, ono_value::builtin_schemas()).ok())
+        .unwrap_or(Value::Null);
+    let resolved = Resolved {
+        source: source_of(package, management),
+        package: Ok(package.clone()),
+    };
+    let verification = verification(&resolved, management)?;
+    let runtime = instance
+        .map(|instance| runtime_record(package, instance))
+        .transpose()?
+        .map_or(Value::Null, RecordValue::into_value);
+    let bytes = |bytes: u64| Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(bytes)));
+    let last_error = last_error.or_else(|| {
+        plugin
+            .and_then(LoadedPlugin::last_failure)
+            .map(|error| crate::plugins::error_value(&error))
+    });
+    Ok(
+        RecordValue::builder(Arc::clone(&schema), provenance(&schema))
+            .set("plugin", plugin_ref(manifest))?
+            .set("manifest", manifest_value)?
+            .set("origin", Value::string("plugin"))?
+            .set("contributions", contributions.value())?
+            .set("capability_grants", Value::list([]))?
+            .set("capability_requests", capability_requests(manifest, plugin))?
+            .set("verification", verification.record.into_value())?
+            .set("runtime", runtime)?
+            .set("memory_current", Value::Null)?
+            .set(
+                "memory_limit",
+                manifest
+                    .runtime
+                    .as_ref()
+                    .map_or(Value::Null, |runtime| bytes(runtime.memory_max)),
+            )?
+            .set("cpu_time", Value::Null)?
+            .set("host_calls", Value::Int(0))?
+            .set("open_streams", Value::Int(0))?
+            .set("queued_events", Value::Int(0))?
+            .set("dropped_events", Value::Int(0))?
+            .set(
+                "last_error",
+                last_error.map_or(Value::Null, ErrorValue::into_value),
+            )?
+            .set("restart_count", Value::Int(0))?
+            .set("network_destinations", Value::list([]))?
+            .set("state_usage", Value::Null)?
+            .set(
+                "state_quota",
+                manifest
+                    .state
+                    .as_ref()
+                    .and_then(|state| state.quota)
+                    .map_or(Value::Null, bytes),
+            )?
+            .set("jobs", Value::list([]))?
+            .build(),
+    )
 }
