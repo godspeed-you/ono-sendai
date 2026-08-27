@@ -28,6 +28,10 @@ jobs:
           toolchain: "1.94"
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          # xtask/tests/packaging.rs drives both packagers in the gate (ADR-0121)
+          tool: cargo-deb,cargo-generate-rpm
       - name: run the gate
         run: scripts/gate.sh
 
@@ -38,3 +42,21 @@ jobs:
       - uses: actions/checkout@v4
       - name: run the acceptance suite
         run: scripts/acceptance.sh --keep-image
+
+  packaging:
+    # The packages must not rot between releases: every push builds and installs them for
+    # x86_64 exactly the way the release workflow does (ADR-0121, ADR-0123).
+    name: installable packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm,cross
+      - name: build the packages
+        run: scripts/package.sh
+      - name: install and run them in fresh containers
+        run: scripts/package-check.sh
