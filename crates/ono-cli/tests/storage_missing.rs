@@ -321,8 +321,8 @@ fn should_report_a_failed_row_when_unmounting_the_root_filesystem_unprivileged()
     // between an unprivileged user and the root mount is the kernel's EPERM.
     assert_eq!(
         text(&row, "target"),
-        "/",
-        "spec §11.5: the row names the mount point it acted on, got {row:?}"
+        "ono.mount/1[/]",
+        "spec §11.5 / ADR-0068 §2: the row names the mount it acted on by its identity, got {row:?}"
     );
     assert!(
         is_mounted(std::path::Path::new("/")),
@@ -358,8 +358,8 @@ fn should_unmount_the_mounts_piped_in_from_get_mount() {
     let row = assert_refused(&run, "ono.filesystem.unmount", &[PERMISSION_DENIED]);
     assert_eq!(
         text(&row, "target"),
-        "/",
-        "the piped `ono.mount/1` record is the target, got {row:?}"
+        "ono.mount/1[/]",
+        "the piped `ono.mount/1` record is the target (ADR-0068 §2 form), got {row:?}"
     );
 }
 
