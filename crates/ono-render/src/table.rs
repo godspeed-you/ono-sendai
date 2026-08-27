@@ -20,6 +20,12 @@ const COLUMN_GAP: usize = 2;
 /// The narrowest a column may become before the table is abandoned for stacked records.
 const MIN_COLUMN_WIDTH: usize = 4;
 
+/// The narrowest a column that had to give up cells may become while the table is still a
+/// table (ADR-0073). Eight cells show a pid, a percentage, a byte size or a short name whole;
+/// a column cut below that shows mostly the truncation marker, and at that point stacked
+/// records — one field per line, every value whole — are the honest rendering (spec §13.2).
+const READABLE_COLUMN_WIDTH: usize = 8;
+
 /// How a column's values sit within their width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Align {
@@ -480,7 +486,10 @@ impl Layout {
     ///
     /// Columns start at their natural width — the widest of the header and every value. When
     /// that overflows, the widest columns give up cells first, so a table of short identifiers
-    /// beside one long path shortens the path rather than everything equally.
+    /// beside one long path shortens the path rather than everything equally. A column is cut
+    /// no further than [`READABLE_COLUMN_WIDTH`]: past that the width does not permit a table
+    /// (spec §13.2) and the records stack instead (ADR-0073). A single column is the exception —
+    /// stacking it shows nothing a table does not — so it shortens down to the marker.
     fn column_widths(&self, table: &Table, rows: &[Vec<Cell>]) -> Option<Vec<usize>> {
         let count = table.columns.len();
         let mut widths: Vec<usize> = table
@@ -504,12 +513,17 @@ impl Layout {
         }
 
         let budget = self.width - gaps;
+        let floor = if count > 1 {
+            READABLE_COLUMN_WIDTH
+        } else {
+            MIN_COLUMN_WIDTH
+        };
         while widths.iter().sum::<usize>() > budget {
             let (widest, _) = widths
                 .iter()
                 .enumerate()
                 .max_by_key(|(index, width)| (**width, std::cmp::Reverse(*index)))?;
-            if widths[widest] <= MIN_COLUMN_WIDTH {
+            if widths[widest] <= floor {
                 return None;
             }
             widths[widest] -= 1;

@@ -384,7 +384,6 @@ fn screen_of(columns: u16, script: &str) -> String {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_stack_records_instead_of_truncating_a_table_when_the_terminal_is_narrow() {
     // Spec §13.2: a compact table only "when records are homogeneous and terminal width
     // permits"; otherwise stacked records, one field per line, so that every value stays
