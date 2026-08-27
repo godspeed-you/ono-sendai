@@ -51,6 +51,12 @@ pub fn filesystem_id() -> SchemaId {
     SchemaId::new("ono.filesystem", 1)
 }
 
+/// `ono.device/1` — `docs/spec/schemas/device.v1.yaml`.
+#[must_use]
+pub fn device_id() -> SchemaId {
+    SchemaId::new("ono.device", 1)
+}
+
 /// `ono.env-var/1` — `docs/spec/schemas/env-var.v1.yaml`.
 #[must_use]
 pub fn env_var_id() -> SchemaId {
@@ -67,6 +73,7 @@ pub fn ids() -> Vec<SchemaId> {
         group_id(),
         mount_id(),
         filesystem_id(),
+        device_id(),
         env_var_id(),
     ]
 }

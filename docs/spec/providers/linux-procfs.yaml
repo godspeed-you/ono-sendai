@@ -35,3 +35,9 @@ providers:
     targets: [mount, filesystem]
     capabilities: [mount.list, filesystem.list]
     schemas: [ono.mount/1, ono.filesystem/1]
+
+  - id: linux.sysfs
+    doc: Block and character devices, from the nodes under /dev and their sysfs entries (ADR-0097).
+    targets: [device]
+    capabilities: [device.list]
+    schemas: [ono.device/1]

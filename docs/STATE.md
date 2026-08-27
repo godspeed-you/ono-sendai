@@ -93,6 +93,12 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [storage | 2026-08-27] **storage family** (`crates/ono-cli/tests/storage_missing.rs` remainder +
+  `get filesystem --mounted false` in `options_and_selectors_missing.rs`) on branch
+  `implementation-storage` — files: `crates/ono-provider-linux/src/{storage,device,lib,schemas}.rs`,
+  `crates/ono-command/src/impls/mutate.rs`, `docs/spec/schemas/{device.v1,deferred}.yaml`,
+  `docs/spec/providers/linux-procfs.yaml`, `docker/acceptance/cases/042-storage-devices-and-mounts.case`,
+  ADR-0097..0099.
 - [language | 2026-08-27] **language family** (`crates/ono-cli/tests/language_missing.rs`) on
   branch `implementation-language` — **all 31 tests green and un-ignored**; the gate is green
   at every commit. Delivered: `let`/`( … )`/`$( … )` capture (ADR-0069); callable functions and

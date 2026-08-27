@@ -162,7 +162,6 @@ fn integer(row: &Value, field: &str) -> i64 {
 // (block-device.v1.yaml); character devices have none.
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_devices_with_their_node_kind_and_numbers() {
     let run = ono("get device | to json");
     run.assert_success();
@@ -189,7 +188,6 @@ fn should_list_devices_with_their_node_kind_and_numbers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_describe_dev_null_as_character_device_one_three() {
     // The one device every Linux system has, with numbers fixed by Documentation/admin-guide/
     // devices.txt — so the assertion is deterministic on a host and in an empty container alike.
@@ -216,7 +214,6 @@ fn should_describe_dev_null_as_character_device_one_three() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restrict_to_character_devices_when_kind_char_is_given() {
     let run = ono("get device --kind char | to json");
     run.assert_success();
@@ -232,7 +229,6 @@ fn should_restrict_to_character_devices_when_kind_char_is_given() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_carry_a_size_for_every_block_device() {
     let run = ono("get device --kind block | to json");
     run.assert_success();

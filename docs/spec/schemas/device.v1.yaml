@@ -1,0 +1,45 @@
+# Device. Derived from spec §9.1 Storage — `get device` enumerates "filesystems/devices where
+# provider supports it" — §8.1, which makes `device` a system target, and §28.6, where a Mount
+# carries a `ref<ono.device/1>`. A device is a node under `/dev` together with the major/minor
+# pair the kernel identifies it by — the same pair `/proc/self/mountinfo` prints for a mount's
+# backing device, which is what makes the reference resolvable. Field set decided in ADR-0097.
+id: ono.device/1
+name: Device
+summary: A block or character device node under /dev, with the numbers the kernel identifies it by.
+identity: [path]
+fields:
+  path:
+    type: path
+    required: true
+    doc: The device node under `/dev`, `/dev/sda2`, `/dev/null`.
+  name:
+    type: string
+    required: true
+    doc: The node's name, `sda2`, `null` — the last component of `path`.
+  kind:
+    type: enum
+    required: true
+    values: [block, char]
+    doc: Whether the node is a block device or a character device.
+  major:
+    type: int
+    required: true
+    doc: The kernel's major device number.
+  minor:
+    type: int
+    required: true
+    doc: The kernel's minor device number.
+  size:
+    type: bytesize
+    nullable: true
+    doc: >-
+      The device's size, for a block device sysfs reports one for. Null for a character device,
+      and for a block device whose sysfs entry is not visible here.
+  subsystem:
+    type: string
+    nullable: true
+    doc: >-
+      The kernel subsystem the device belongs to as sysfs names it — `block`, `tty`, `mem`,
+      `input` — or null when sysfs does not show the device.
+default_view:
+  columns: [path, kind, major, minor, size, subsystem]

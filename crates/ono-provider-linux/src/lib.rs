@@ -1,6 +1,6 @@
 //! The Linux core providers of Ono-Sendai (spec §23, §28, §35.3).
 //!
-//! Five providers, each answering from a kernel or system interface and never from the output of
+//! Six providers, each answering from a kernel or system interface and never from the output of
 //! a program — spec §50's last bullet and AGENTS.md §6 both forbid the latter, and `/proc`,
 //! `statvfs` and NSS make it unnecessary:
 //!
@@ -11,6 +11,7 @@
 //! | `user`, `group` | [`IdentityProvider`] | NSS, and the account databases for enumeration |
 //! | `env` | [`EnvProvider`] | the session's own bindings |
 //! | `mount`, `filesystem` | [`StorageProvider`] | `/proc/self/mountinfo` and `statvfs(3)` |
+//! | `device` | [`DeviceProvider`] | the nodes under `/dev`, `stat(2)` and `/sys/dev` |
 //!
 //! # The three kinds of nothing
 //!
@@ -46,6 +47,7 @@
 
 pub mod accounts;
 mod common;
+mod device;
 mod env;
 mod file;
 mod identity;
@@ -59,6 +61,7 @@ use std::sync::Arc;
 use ono_provider_api::ProviderRegistry;
 
 pub use accounts::{Accounts, GroupAccount, NSS_TIMEOUT, NssAccounts, UserAccount};
+pub use device::DeviceProvider;
 pub use env::{EnvBinding, EnvProvider, EnvSource};
 pub use file::FileProvider;
 pub use identity::IdentityProvider;
@@ -79,4 +82,5 @@ pub fn register(
     registry.register(Arc::new(IdentityProvider::new()));
     registry.register(Arc::new(EnvProvider::new(environment)));
     registry.register(Arc::new(StorageProvider::new()));
+    registry.register(Arc::new(DeviceProvider::new()));
 }
