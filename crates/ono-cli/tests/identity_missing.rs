@@ -327,7 +327,6 @@ fn should_leave_the_group_unchanged_when_setting_a_group_fails() {
 // --- watch user / watch group --------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_a_user_watch_with_a_snapshot_when_bounded() {
     // ADR-0024: a subscription always begins with a snapshot; spec §18.3: bounded with `take`
     // and serialised, the stream is an ordinary document. identity.yaml declares no `--every`
@@ -343,7 +342,6 @@ fn should_begin_a_user_watch_with_a_snapshot_when_bounded() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_say_how_a_user_watch_observes_changes() {
     // Spec §18.2: polling is explicit in metadata. Every event says whether it came from a
     // provider subscription or from the runtime comparing snapshots (ADR-0034).
@@ -362,7 +360,6 @@ fn should_say_how_a_user_watch_observes_changes() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_a_group_watch_with_a_snapshot_when_bounded() {
     let run = ono("watch group | take 1 | select kind | to json");
     assert_not_unimplemented(&run);
@@ -377,7 +374,6 @@ fn should_begin_a_group_watch_with_a_snapshot_when_bounded() {
 // --- trace user -----------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_a_user_to_its_processes_and_groups() {
     // identity.yaml `ono.user.trace`: a user's processes, sessions, groups and owned files as
     // one `ono.graph/1`. Pid 1 is owned by root on every Linux system and root's primary group
@@ -429,7 +425,6 @@ fn should_trace_a_user_to_its_processes_and_groups() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_trace_a_user_that_does_not_exist() {
     let run = ono("trace user nobody-such-user-ono | to json");
     assert_not_unimplemented(&run);

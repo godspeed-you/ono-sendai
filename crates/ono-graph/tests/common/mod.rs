@@ -452,3 +452,55 @@ pub fn map(entries: &[(&str, Value)]) -> MapValue {
     }
     map
 }
+
+/// A user record, with the primary group as the `ref<ono.group/1>` the account provider emits.
+pub fn user(uid: i64, name: &str, primary_gid: i64) -> RecordValue {
+    let primary = RecordValue::builder(schema("ono.group"), provenance("ono.group"))
+        .set("gid", Value::Int(i128::from(primary_gid)))
+        .expect("the fixture group reference")
+        .build();
+    RecordValue::builder(schema("ono.user"), provenance("ono.user"))
+        .set("uid", Value::Int(i128::from(uid)))
+        .and_then(|builder| builder.set("name", Value::String(name.into())))
+        .and_then(|builder| builder.set("primary_group", primary.into_value()))
+        .expect("the fixture user record")
+        .build()
+}
+
+/// A group record with its member list.
+pub fn group(gid: i64, name: &str, members: &[&str]) -> RecordValue {
+    let members: Vec<Value> = members
+        .iter()
+        .map(|member| Value::String((*member).into()))
+        .collect();
+    RecordValue::builder(schema("ono.group"), provenance("ono.group"))
+        .set("gid", Value::Int(i128::from(gid)))
+        .and_then(|builder| builder.set("name", Value::String(name.into())))
+        .and_then(|builder| builder.set("members", Value::List(members.into())))
+        .expect("the fixture group record")
+        .build()
+}
+
+/// A process record that also says whose it is, as `/proc/<pid>/status` would.
+pub fn owned_process(pid: i64, name: &str, uid: i64, username: &str) -> RecordValue {
+    let owner = RecordValue::builder(schema("ono.user"), provenance("ono.user"))
+        .set("uid", Value::Int(i128::from(uid)))
+        .and_then(|builder| builder.set("name", Value::String(username.into())))
+        .expect("the fixture user reference")
+        .build();
+    let base = process(pid, Some(1), name);
+    RecordValue::builder(schema("ono.process"), provenance("ono.process"))
+        .set("pid", base.get("pid").cloned().unwrap_or(Value::Null))
+        .and_then(|builder| builder.set("ppid", Value::Int(1)))
+        .and_then(|builder| builder.set("name", Value::String(name.into())))
+        .and_then(|builder| builder.set("state", Value::String("sleeping".into())))
+        .and_then(|builder| {
+            builder.set(
+                "started",
+                base.get("started").cloned().unwrap_or(Value::Null),
+            )
+        })
+        .and_then(|builder| builder.set("user", owner.into_value()))
+        .expect("the fixture owned process record")
+        .build()
+}

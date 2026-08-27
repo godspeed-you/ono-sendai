@@ -13,7 +13,8 @@
 //!   [`ono_provider_api::Provider`] so that the KUANG/11 relationship contribution of spec §31.26
 //!   is not a special case of anything.
 //! - [`ProcessTree`], [`OpenFiles`], [`ProcessSockets`], [`SocketOwners`], [`ServiceProcesses`],
-//!   [`MountDevices`] — the exact relationships of spec §22.2, each read from the kernel.
+//!   [`MountDevices`], [`UserProcesses`], [`UserGroups`] — the exact relationships of spec §22.2
+//!   and §22.3, each read from the kernel or the account database.
 //! - [`RemoteHosts`] with [`Resolver`] — the derived one, marked as derived.
 //! - [`Tracer`] with [`TraceOptions`] — the bounded walk of spec §22.3.
 //! - [`Graph::trees`] — the ASCII shape of spec §22.4, through `ono-render`'s tree renderer.
@@ -73,7 +74,7 @@ pub use graph::{
 };
 pub use kernel::{
     MountDevices, OpenFiles, ProcessSockets, ProcessTree, RemoteHosts, Resolver, ServiceProcesses,
-    SocketOwners, kernel_relationships, rooted_relationships,
+    SocketOwners, UserGroups, UserProcesses, kernel_relationships, rooted_relationships,
 };
 pub use provider::{Relationship, RelationshipProvider, Relationships};
 pub use trace::{DEFAULT_DEPTH, DEFAULT_MAX_NODES, TraceOptions, Tracer, roots};

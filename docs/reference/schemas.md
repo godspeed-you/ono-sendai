@@ -411,6 +411,22 @@ Default view: `root`, `nodes`, `edges`
 | `nodes` | `list<ono.graph-node/1>` | — | required | Every object in the graph, each appearing exactly once. |
 | `edges` | `list<ono.graph-edge/1>` | — | required | The relationships between the nodes. |
 
+## GroupEvent — `ono.group-event/1`
+
+One change to one group, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `group`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `group` | `record` | — | optional | The group as it now is — or, for `removed`, as it last was. Identity is the gid (group.v1.yaml); a membership change is the same group changing, with `members` named in `changed`. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime compared NSS snapshots at the configured interval — explicit, as spec §18.2 requires. |
+
 ## Group — `ono.group/1`
 
 A group account.
@@ -937,6 +953,22 @@ Default view: `protocol`, `local`, `remote`, `state`, `process`
 | `process` | `ref<ono.process/1>` | — | nullable | The owning process; null when no process owns the socket, or when this user may not see the owner. Spec §10.5 forbids collapsing those two into an empty string. |
 | `user` | `ref<ono.user/1>` | — | nullable | The owning user. |
 | `inode` | `int` | — | nullable | The socket inode; the identity field, null when the provider cannot supply it. |
+
+## UserEvent — `ono.user-event/1`
+
+One change to one user account, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `user`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `user` | `record` | — | optional | The account as it now is — or, for `removed`, as it last was. Identity is the uid (user.v1.yaml), so a renamed account is the same object changing and a reused uid is a new one. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime compared NSS snapshots at the configured interval — explicit, as spec §18.2 requires. |
 
 ## User — `ono.user/1`
 

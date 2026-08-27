@@ -40,6 +40,7 @@ const CONTRACTS: &[&str] = &[
     include_str!("../../../docs/spec/schemas/graph-edge.v1.yaml"),
     include_str!("../../../docs/spec/schemas/graph-node.v1.yaml"),
     include_str!("../../../docs/spec/schemas/graph.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/group-event.v1.yaml"),
     include_str!("../../../docs/spec/schemas/group.v1.yaml"),
     include_str!("../../../docs/spec/schemas/http-exchange.v1.yaml"),
     include_str!("../../../docs/spec/schemas/interface-address.v1.yaml"),
@@ -58,6 +59,7 @@ const CONTRACTS: &[&str] = &[
     include_str!("../../../docs/spec/schemas/service.v1.yaml"),
     include_str!("../../../docs/spec/schemas/socket-event.v1.yaml"),
     include_str!("../../../docs/spec/schemas/socket.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/user-event.v1.yaml"),
     include_str!("../../../docs/spec/schemas/user.v1.yaml"),
 ];
 

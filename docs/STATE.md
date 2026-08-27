@@ -93,6 +93,13 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [watch | 2026-08-27] **`watch`/`trace` for the declared-but-unbound targets** (file, user,
+  group, interface, route, mount) — ADR-0078..0080 — files: `crates/ono-command/src/impls/{watch,trace,mod}.rs`,
+  `crates/ono-graph/src/kernel/{identity,mount,network,file}.rs`, `docs/spec/schemas/*-event.v1.yaml`,
+  `docs/spec/schemas/deferred.yaml`, the watch/trace tests of `*_missing.rs`. The remote five
+  (`watch link|host`, `trace link|host`) stay ignored: they need `link`/`host` as provider-backed
+  records first (context.rs `get_link` renders by hand).
+
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
   one `#[ignore = "REASON: …"]` (AGENTS.md §7) so the tree stays green; **the increment that

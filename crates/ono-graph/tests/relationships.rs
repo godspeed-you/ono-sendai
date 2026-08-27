@@ -6,13 +6,13 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    FixtureProvider, ProcFixture, TableResolver, edges, endpoint, file, make_readable, mount, node,
-    process, registry, service, socket, trace_with,
+    FixtureProvider, ProcFixture, TableResolver, edges, endpoint, file, group, make_readable,
+    mount, node, owned_process, process, registry, service, socket, trace_with, user,
 };
 use ono_core::ErrorCode;
 use ono_graph::{
     Confidence, MountDevices, OpenFiles, ProcessSockets, ProcessTree, RemoteHosts,
-    ServiceProcesses, SocketOwners, TraceOptions,
+    ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
 };
 use ono_provider_api::Provider;
 
@@ -426,5 +426,75 @@ async fn should_keep_an_inferred_edge_inferred_when_an_exact_edge_joins_the_same
             ("resolves-to", Confidence::Inferred)
         ],
         "an exact edge beside an inferred one promotes nothing"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_user_to_the_processes_running_as_it_by_uid_not_by_name() {
+    let processes: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.process",
+        &["process"],
+        vec![
+            owned_process(812, "postgres", 999, "postgres"),
+            owned_process(813, "postgres", 999, "postgres"),
+            // Same name, other uid: a lookalike account, not this user.
+            owned_process(900, "postgres", 1001, "postgres"),
+            owned_process(1, "systemd", 0, "root"),
+        ],
+    ))];
+    let registry = registry(processes);
+    let subject = user(999, "postgres", 999);
+
+    let graph = trace_with(
+        vec![Arc::new(UserProcesses::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        [
+            "runs -> process/812 postgres",
+            "runs -> process/813 postgres"
+        ],
+        "spec §23.6: a process belongs to a user by uid, in pid order"
+    );
+    assert!(
+        graph
+            .edges()
+            .iter()
+            .all(|edge| edge.confidence() == Confidence::Exact),
+        "the kernel reports a process's owner; nothing is inferred"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_user_to_its_primary_group_and_to_the_groups_that_list_it() {
+    let groups: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.group",
+        &["group"],
+        vec![
+            group(0, "root", &[]),
+            group(27, "sudo", &["alice", "bob"]),
+            group(1000, "alice", &[]),
+            group(44, "video", &["bob"]),
+        ],
+    ))];
+    let registry = registry(groups);
+    let subject = user(1000, "alice", 1000);
+
+    let graph = trace_with(
+        vec![Arc::new(UserGroups::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["member-of -> sudo", "primary-group -> alice"],
+        "the primary group comes from the account, the others from the group's own member \
+         list, in gid order; a group that does not list the user is not related to it"
     );
 }

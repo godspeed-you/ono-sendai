@@ -1753,7 +1753,7 @@ Emit account database changes as a live stream.
 | | |
 |---|---|
 | id | `ono.user.watch` |
-| stability | planned |
+| stability | experimental |
 | phase | F |
 | input | `null` |
 | output | `stream<ono.user-event/1>` |
@@ -1774,7 +1774,7 @@ Show a user's processes, sessions, groups and owned files.
 | | |
 |---|---|
 | id | `ono.user.trace` |
-| stability | planned |
+| stability | experimental |
 | phase | G |
 | input | `null | ono.user/1` |
 | output | `ono.graph/1` |
@@ -1828,7 +1828,7 @@ Emit group database changes as a live stream.
 | | |
 |---|---|
 | id | `ono.group.watch` |
-| stability | planned |
+| stability | experimental |
 | phase | F |
 | input | `null` |
 | output | `stream<ono.group-event/1>` |
