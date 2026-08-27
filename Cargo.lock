@@ -583,6 +583,9 @@ dependencies = [
  "ono-core",
  "ono-testkit",
  "ono-value",
+ "regex",
+ "serde",
+ "serde_yaml_ng",
 ]
 
 [[package]]
@@ -1484,9 +1487,11 @@ dependencies = [
 name = "xtask"
 version = "0.2.0"
 dependencies = [
+ "ono-adapter",
  "ono-core",
  "ono-parser",
  "ono-testkit",
+ "ono-value",
  "serde",
  "serde_yaml_ng",
 ]

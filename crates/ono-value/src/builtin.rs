@@ -27,6 +27,7 @@ use crate::schema::{FieldDef, FieldType, Schema, SchemaId, SchemaRegistry, Unit}
 /// which is the point of embedding them.
 const CONTRACTS: &[&str] = &[
     include_str!("../../../docs/spec/schemas/action-result.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/block-device.v1.yaml"),
     include_str!("../../../docs/spec/schemas/config-setting.v1.yaml"),
     include_str!("../../../docs/spec/schemas/context.v1.yaml"),
     include_str!("../../../docs/spec/schemas/endpoint.v1.yaml"),
@@ -42,6 +43,7 @@ const CONTRACTS: &[&str] = &[
     include_str!("../../../docs/spec/schemas/job.v1.yaml"),
     include_str!("../../../docs/spec/schemas/link.v1.yaml"),
     include_str!("../../../docs/spec/schemas/mount.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/namespace.v1.yaml"),
     include_str!("../../../docs/spec/schemas/neighbor.v1.yaml"),
     include_str!("../../../docs/spec/schemas/process-event.v1.yaml"),
     include_str!("../../../docs/spec/schemas/process.v1.yaml"),

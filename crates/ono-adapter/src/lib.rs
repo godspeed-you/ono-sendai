@@ -17,3 +17,13 @@ pub const RAW: &str = "raw";
 /// The stage keyword that forces adaptation: `adapt <program> [arguments]` (spec v0.3 §1.18,
 /// ADR-0054). The stage fails rather than downgrade to text when no adapter can answer.
 pub const ADAPT: &str = "adapt";
+
+mod contract;
+mod version;
+
+pub use contract::{
+    Adapter, AdapterPack, DecoderKind, DemandKind, Exactness, Fallback, FieldMap, Fixture,
+    Invocation, Match, Plan, Positionals, Problem, Stability, StdinMode, StrategyTier, Tier, Unit,
+    VersionProbe, first_party, validate,
+};
+pub use version::{Version, VersionRange};

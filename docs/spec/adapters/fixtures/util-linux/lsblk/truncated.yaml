@@ -1,0 +1,5 @@
+invocation: [lsblk]
+tool_version: "2.41.3"
+distro: debian
+expect:
+  error: adapter.decode_failed

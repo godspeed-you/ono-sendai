@@ -1,0 +1,8 @@
+{
+   "blockdevices": [
+      {
+         "name": "sda",
+         "path": "/dev/sda",
+         "type": "disk",
+         "size": 137438953472,
+         "fst

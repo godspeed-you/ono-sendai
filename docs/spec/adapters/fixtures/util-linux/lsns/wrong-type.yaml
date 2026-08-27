@@ -1,0 +1,7 @@
+# A field of the wrong type is a schema violation, not a guess (spec v0.3 §1.10: "no silent
+# best-effort field shifting").
+invocation: [lsns]
+tool_version: "2.41.3"
+distro: debian
+expect:
+  error: adapter.schema_violation

@@ -1,0 +1,23 @@
+{
+   "namespaces": [
+      {
+         "ns": 4026531832,
+         "type": "mnt",
+         "nprocs": 159,
+         "pid": 2120,
+         "ppid": 2098,
+         "user": "william",
+         "uid": 1000,
+         "command": "/usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only"
+      },{
+         "ns": 4026531833,
+         "type": "net",
+         "nprocs": 162,
+         "pid": 2120,
+         "ppid": 2098,
+         "user": "william",
+         "uid": 1000,
+         "command": "/usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only"
+      }
+   ]
+}

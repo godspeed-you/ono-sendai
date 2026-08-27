@@ -93,10 +93,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 4 — `ADAPT-009` the declarative adapter contract
-  (ADR-0055): `docs/spec/adapters/schema.yaml`, the first-party util-linux pack, fixtures, the
-  validator in `ono-adapter`, `spec-check` rules — files: `docs/spec/adapters/`,
-  `crates/ono-adapter/src/`, `xtask/src/contracts.rs`
+- [claude | 2026-08-27] v0.3 tranche, step 5 — `ADAPT-002` the registry: executable identity
+  pinning, invocation matching, negotiation states, deterministic conflict resolution, and the
+  plan's `adaptation` row — files: `crates/ono-adapter/src/`, `crates/ono-command/src/explain.rs`,
+  `crates/ono-cli/src/builtin.rs`
 
 ---
 
@@ -341,6 +341,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   open until an adapter emits one with the §1.65 payload
 - [x] v0.3 step 3 — ADAPT-003 the `raw` keyword; `adapt` spelled for §1.18 (ADR-0054) —
   case 072
+- [x] v0.3 step 4 — ADAPT-009 the declarative adapter contract, the util-linux pack with
+  fixtures, `ono.block-device/1` and `ono.namespace/1`, the validator and the spec-check rule
+  (ADR-0055) — `ono-adapter/tests/contracts.rs`, `xtask/tests/contracts.rs`
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

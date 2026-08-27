@@ -1,0 +1,20 @@
+{
+   "filesystems": [
+      {
+         "target": "/run",
+         "source": "tmpfs",
+         "fstype": "tmpfs",
+         "options": "rw,nosuid,nodev,size=12748800k,nr_inodes=819200,mode=755,inode64"
+      },{
+         "target": "/",
+         "source": "/dev/sda2",
+         "fstype": "ext4",
+         "options": "rw,relatime"
+      },{
+         "target": "/snap/bare/5",
+         "source": "/dev/loop0",
+         "fstype": "squashfs",
+         "options": "ro,nodev,relatime,errors=continue,threads=single"
+      }
+   ]
+}

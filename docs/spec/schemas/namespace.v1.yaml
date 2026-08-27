@@ -1,0 +1,42 @@
+# Canonical Namespace schema. Source: spec v0.3 §1.35 (`lsns | group type`). No v0.2 section
+# defines it; the fields are what the kernel exposes through /proc/<pid>/ns and what lsns
+# reports about them.
+id: ono.namespace/1
+name: Namespace
+summary: A kernel namespace and the processes that live in it.
+identity: [id]
+fields:
+  id:
+    type: int
+    required: true
+    doc: The namespace's inode number, which is its identity for the kernel's lifetime.
+  type:
+    type: string
+    required: true
+    doc: The namespace kind — `mnt`, `net`, `pid`, `user`, `uts`, `ipc`, `cgroup`, `time`, `pid_for_children`, `time_for_children`.
+  processes:
+    type: int
+    required: true
+    doc: How many processes are in the namespace.
+  pid:
+    type: int
+    nullable: true
+    doc: The lowest pid in the namespace.
+  parent_pid:
+    type: int
+    nullable: true
+    doc: The parent of that process.
+  user:
+    type: string
+    nullable: true
+    doc: The user that process runs as.
+  uid:
+    type: int
+    nullable: true
+    doc: That user's id.
+  command:
+    type: string
+    nullable: true
+    doc: That process's command line.
+default_view:
+  columns: [id, type, processes, pid, user, command]

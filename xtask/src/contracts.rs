@@ -79,8 +79,63 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
         &mut problems,
     );
     problems.extend(check_error_registry(root));
+    problems.extend(check_adapter_packs(root));
 
     problems.sort_by(|a, b| (&a.location, &a.detail).cmp(&(&b.location, &b.detail)));
+    problems
+}
+
+/// Checks every first-party adapter pack under `docs/spec/adapters/first-party/`.
+///
+/// Spec v0.3 §1.44 wants the pack format machine-validated; `ono_adapter::validate` is the
+/// validator the shell itself uses, so what passes here is what loads. A pack file that the
+/// binary does not bundle is a contract nobody keeps, and is reported as such.
+#[must_use]
+pub fn check_adapter_packs(root: &Path) -> Vec<Problem> {
+    let adapters = root.join("docs").join("spec").join("adapters");
+    let first_party = adapters.join("first-party");
+    if !first_party.is_dir() {
+        return Vec::new();
+    }
+    let fixtures = adapters.join("fixtures");
+    let bundled: BTreeSet<&str> = ono_adapter::first_party()
+        .iter()
+        .map(ono_adapter::AdapterPack::id)
+        .collect();
+    let mut problems = Vec::new();
+
+    for path in yaml_files(&first_party) {
+        let location = relative(root, &path);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let pack = match ono_adapter::AdapterPack::parse(&text) {
+            Ok(pack) => pack,
+            Err(error) => {
+                problems.push(Problem {
+                    location,
+                    detail: format!("does not parse as an adapter pack: {error}"),
+                });
+                continue;
+            }
+        };
+        if !bundled.contains(pack.id()) {
+            problems.push(Problem {
+                location: location.clone(),
+                detail: format!(
+                    "pack `{}` is not bundled by `ono-adapter`; add it to FIRST_PARTY so the \
+                     shell keeps the promise the file makes",
+                    pack.id()
+                ),
+            });
+        }
+        for problem in ono_adapter::validate(&pack, ono_value::builtin_schemas(), &fixtures) {
+            problems.push(Problem {
+                location: format!("{location} ({})", problem.location),
+                detail: problem.detail,
+            });
+        }
+    }
     problems
 }
 

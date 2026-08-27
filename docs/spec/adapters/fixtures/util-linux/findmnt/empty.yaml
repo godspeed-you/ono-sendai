@@ -1,0 +1,5 @@
+invocation: [findmnt, /nonesuch]
+tool_version: "2.41.3"
+distro: debian
+expect:
+  records: []

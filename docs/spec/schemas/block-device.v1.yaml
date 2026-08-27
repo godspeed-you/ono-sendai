@@ -1,0 +1,59 @@
+# Canonical BlockDevice schema. Source: spec v0.3 §1.35 (`lsblk | where type == disk | select
+# name size model`, tree relationships "represented structurally rather than encoded only
+# through indentation"). No v0.2 section defines it; the fields are the ones every block device
+# has in the kernel's view, spelled the way lsblk and udev spell them.
+id: ono.block-device/1
+name: BlockDevice
+summary: A block device the kernel exposes — a disk, a partition, a loop or a mapped device.
+identity: [path]
+fields:
+  name:
+    type: string
+    required: true
+    doc: The kernel name, `sda2`, `nvme0n1p1`, `loop0`.
+  path:
+    type: path
+    required: true
+    doc: The device node, `/dev/sda2`.
+  type:
+    type: string
+    required: true
+    doc: What the device is, as the kernel classifies it — `disk`, `part`, `loop`, `rom`, `lvm`, `crypt`, `raid1`, ….
+  size:
+    type: bytesize
+    required: true
+    doc: The device's size.
+  filesystem:
+    type: string
+    nullable: true
+    doc: The filesystem type detected on the device; null when none is.
+  mountpoints:
+    type: list<path>
+    required: true
+    doc: Where the device is mounted; empty when it is not.
+  model:
+    type: string
+    nullable: true
+    doc: The hardware model, for whole disks that report one.
+  serial:
+    type: string
+    nullable: true
+    doc: The hardware serial number, for whole disks that report one.
+  read_only:
+    type: bool
+    required: true
+    doc: Whether the kernel holds the device read-only.
+  removable:
+    type: bool
+    required: true
+    doc: Whether the kernel considers the device removable.
+  parent:
+    type: string
+    nullable: true
+    doc: The kernel name of the device this one sits on — a partition's disk, a mapped device's backing device — or null for a top-level device.
+  device_number:
+    type: string
+    required: true
+    doc: The `major:minor` device number.
+default_view:
+  columns: [name, type, size, filesystem, mountpoints]

@@ -279,3 +279,27 @@ fn should_find_every_documented_example_in_this_repository_parseable() {
             .join("\n")
     );
 }
+
+#[test]
+fn should_reject_an_adapter_pack_the_binary_does_not_bundle_or_that_names_an_unknown_schema() {
+    // Spec v0.3 §1.44: the pack format is machine-validated, and a pack file the shell does not
+    // bundle promises something nobody keeps (ADR-0055).
+    let repo = consistent();
+    repo.write(
+        "docs/spec/adapters/first-party/example.yaml",
+        "format: ono-adapter-pack/1\npackage:\n  id: org.ono.compat.example\n  name: Example\n  version: 0.1.0\n  publisher: org.ono\n  tier: first-party\nroles: [adapter]\ncapabilities:\n  process.exec:\n    executables: [example]\n    argv_policy: declared-invocations-only\nadapters:\n  - id: example\n    summary: An example.\n    executable:\n      names: [example]\n      versions: any\n    tier: A\n    output_demand: [structured]\n    fallback: raw\n    schema: ono.nonesuch/1\n    decoder:\n      kind: json\n    fields: {}\n    invocations:\n      - id: list\n        summary: example\n        match:\n          words: [[]]\n          flags:\n            allow: []\n            allow_with_value: []\n          positionals: forbid\n        plan:\n          argv: [example]\n          append_user_flags: false\n          env: {}\n          stdin: \"null\"\n    limits: []\n    fixtures: example\n",
+    );
+    let found = problems(&repo);
+    assert!(
+        found.iter().any(|p| p.contains("not bundled")),
+        "an unbundled pack is reported, got {found:?}"
+    );
+    assert!(
+        found.iter().any(|p| p.contains("ono.nonesuch/1")),
+        "an unregistered schema is reported, got {found:?}"
+    );
+    assert!(
+        found.iter().any(|p| p.contains("fixture directory")),
+        "a missing fixture directory is reported, got {found:?}"
+    );
+}

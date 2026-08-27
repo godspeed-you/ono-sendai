@@ -1,0 +1,8 @@
+invocation: [findmnt]
+tool_version: "2.41.3"
+distro: debian
+expect:
+  records:
+    - {source: tmpfs, target: /run, filesystem: tmpfs, options: [rw, nosuid, nodev, "size=12748800k", "nr_inodes=819200", "mode=755", inode64], read_only: false, device: null}
+    - {source: /dev/sda2, target: /, filesystem: ext4, options: [rw, relatime], read_only: false, device: null}
+    - {source: /dev/loop0, target: /snap/bare/5, filesystem: squashfs, options: [ro, nodev, relatime, "errors=continue", "threads=single"], read_only: true, device: null}

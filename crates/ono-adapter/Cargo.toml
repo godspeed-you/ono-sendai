@@ -12,6 +12,10 @@ authors.workspace = true
 ono-core.workspace = true
 ono-value.workspace = true
 
+regex.workspace = true
+serde = { workspace = true }
+serde_yaml_ng.workspace = true
+
 [dev-dependencies]
 ono-testkit.workspace = true
 

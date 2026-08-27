@@ -1,0 +1,148 @@
+# util-linux compatibility pack: `lsblk`, `findmnt`, `lsns` (spec v0.3 §1.35, §1.69 step 2).
+# All three speak JSON (`--json`), so every adapter here is tier A and version-independent
+# beyond the flags it relies on (`--json` since 2.27, `MOUNTPOINTS` since 2.37).
+format: ono-adapter-pack/1
+package:
+  id: org.ono.compat.util-linux
+  name: util-linux compatibility
+  version: 0.1.0
+  publisher: org.ono
+  tier: first-party
+roles: [adapter]
+capabilities:
+  process.exec:
+    executables: [lsblk, findmnt, lsns]
+    argv_policy: declared-invocations-only
+
+adapters:
+  - id: lsblk
+    summary: Block devices as `ono.block-device/1` records, from `lsblk --json --list --bytes`.
+    executable:
+      names: [lsblk]
+      versions: ">=2.37"
+      version_probe:
+        argv: ["--version"]
+        pattern: "util-linux ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: A
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.block-device/1
+    decoder:
+      kind: json
+      records: blockdevices
+    fields:
+      name: {from: name}
+      path: {from: path}
+      type: {from: type}
+      size: {from: size, unit: bytes}
+      filesystem: {from: fstype}
+      mountpoints: {from: mountpoints}
+      model: {from: model}
+      serial: {from: serial}
+      read_only: {from: ro}
+      removable: {from: rm}
+      parent: {from: pkname}
+      device_number: {from: "maj:min"}
+    invocations:
+      - id: list
+        summary: "lsblk [-a|--all] [-d|--nodeps] [device …]"
+        match:
+          words: [[]]
+          flags:
+            allow: [-a, --all, -d, --nodeps]
+            allow_with_value: []
+          positionals: allow
+        plan:
+          argv: [lsblk, --json, --list, --bytes, --output, "NAME,PATH,TYPE,SIZE,FSTYPE,MOUNTPOINTS,MODEL,SERIAL,RO,RM,PKNAME,MAJ:MIN"]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "Flags that change what a row means — `-p/--paths`, `-e/--exclude`, `-x/--sort`, `-o/--output`, `-f`, `-m`, `-t` — are not adapted; the invocation runs raw."
+      - "The tree lsblk draws is carried as `parent`, never as indentation."
+    fixtures: util-linux/lsblk
+
+  - id: findmnt
+    summary: Mounted filesystems as `ono.mount/1` records, from `findmnt --json --list --bytes`.
+    executable:
+      names: [findmnt]
+      versions: ">=2.37"
+      version_probe:
+        argv: ["--version"]
+        pattern: "util-linux ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: A
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.mount/1
+    decoder:
+      kind: json
+      records: filesystems
+    fields:
+      source: {from: source}
+      target: {from: target}
+      filesystem: {from: fstype}
+      options: {from: options, split: ","}
+      read_only: {from: options, split: ",", contains: ro}
+    invocations:
+      - id: list
+        summary: "findmnt [--real] [target|source]"
+        match:
+          words: [[]]
+          flags:
+            allow: [--real]
+            allow_with_value: []
+          positionals: allow
+        plan:
+          argv: [findmnt, --json, --list, --bytes, --output, "TARGET,SOURCE,FSTYPE,OPTIONS"]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`--fstab`, `--kernel`, `--mtab`, `--poll`, `--evaluate` and output selection are not adapted; the invocation runs raw."
+      - "`device` is null: findmnt names the source, not the device object."
+    fixtures: util-linux/findmnt
+
+  - id: lsns
+    summary: Namespaces as `ono.namespace/1` records, from `lsns --json`.
+    executable:
+      names: [lsns]
+      versions: ">=2.37"
+      version_probe:
+        argv: ["--version"]
+        pattern: "util-linux ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: A
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.namespace/1
+    decoder:
+      kind: json
+      records: namespaces
+    fields:
+      id: {from: ns}
+      type: {from: type}
+      processes: {from: nprocs}
+      pid: {from: pid}
+      parent_pid: {from: ppid}
+      user: {from: user}
+      uid: {from: uid}
+      command: {from: command}
+    invocations:
+      - id: list
+        summary: "lsns [-t|--type type]"
+        match:
+          words: [[]]
+          flags:
+            allow: []
+            allow_with_value: [-t, --type]
+          positionals: forbid
+        plan:
+          argv: [lsns, --json, --output, "NS,TYPE,NPROCS,PID,PPID,USER,UID,COMMAND"]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`lsns <namespace>` lists processes rather than namespaces and is not adapted."
+    fixtures: util-linux/lsns

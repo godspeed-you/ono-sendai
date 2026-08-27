@@ -99,6 +99,29 @@ Default view: `id`, `plugin`, `state`, `model`, `autonomy`, `tools`
 | `conversation` | `string` | — | nullable | The current conversation's id, when one is open. Null when there is none. |
 | `turns` | `int` | — | required | How many turns this assistant has taken in this session. Zero is a real answer. |
 
+## BlockDevice — `ono.block-device/1`
+
+A block device the kernel exposes — a disk, a partition, a loop or a mapped device.
+
+Identity: `path`
+
+Default view: `name`, `type`, `size`, `filesystem`, `mountpoints`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `name` | `string` | — | required | The kernel name, `sda2`, `nvme0n1p1`, `loop0`. |
+| `path` | `path` | — | required | The device node, `/dev/sda2`. |
+| `type` | `string` | — | required | What the device is, as the kernel classifies it — `disk`, `part`, `loop`, `rom`, `lvm`, `crypt`, `raid1`, …. |
+| `size` | `bytesize` | — | required | The device's size. |
+| `filesystem` | `string` | — | nullable | The filesystem type detected on the device; null when none is. |
+| `mountpoints` | `list<path>` | — | required | Where the device is mounted; empty when it is not. |
+| `model` | `string` | — | nullable | The hardware model, for whole disks that report one. |
+| `serial` | `string` | — | nullable | The hardware serial number, for whole disks that report one. |
+| `read_only` | `bool` | — | required | Whether the kernel holds the device read-only. |
+| `removable` | `bool` | — | required | Whether the kernel considers the device removable. |
+| `parent` | `string` | — | nullable | The kernel name of the device this one sits on — a partition's disk, a mapped device's backing device — or null for a top-level device. |
+| `device_number` | `string` | — | required | The `major:minor` device number. |
+
 ## CapabilityGrant — `ono.capability-grant/1`
 
 What one KUANG/11 package is permitted to do, in what scope, for how long.
@@ -461,6 +484,25 @@ Default view: `target`, `source`, `filesystem`, `read_only`
 | `options` | `list<string>` | — | required | The mount options, one element per option, never a single joined string. |
 | `read_only` | `bool` | — | required | Whether the mount is read-only. Extracted from the options because users filter on it. |
 | `device` | `ref<ono.device/1>` | — | nullable | The backing device; null for pseudo- and network filesystems. |
+
+## Namespace — `ono.namespace/1`
+
+A kernel namespace and the processes that live in it.
+
+Identity: `id`
+
+Default view: `id`, `type`, `processes`, `pid`, `user`, `command`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `int` | — | required | The namespace's inode number, which is its identity for the kernel's lifetime. |
+| `type` | `string` | — | required | The namespace kind — `mnt`, `net`, `pid`, `user`, `uts`, `ipc`, `cgroup`, `time`, `pid_for_children`, `time_for_children`. |
+| `processes` | `int` | — | required | How many processes are in the namespace. |
+| `pid` | `int` | — | nullable | The lowest pid in the namespace. |
+| `parent_pid` | `int` | — | nullable | The parent of that process. |
+| `user` | `string` | — | nullable | The user that process runs as. |
+| `uid` | `int` | — | nullable | That user's id. |
+| `command` | `string` | — | nullable | That process's command line. |
 
 ## Neighbor — `ono.neighbor/1`
 

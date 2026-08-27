@@ -1,0 +1,7 @@
+invocation: [lsns]
+tool_version: "2.41.3"
+distro: debian
+expect:
+  records:
+    - {id: 4026531832, type: mnt, processes: 159, pid: 2120, parent_pid: 2098, user: william, uid: 1000, command: "/usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only"}
+    - {id: 4026531833, type: net, processes: 162, pid: 2120, parent_pid: 2098, user: william, uid: 1000, command: "/usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only"}

@@ -1,0 +1,6 @@
+# What reaches the decoder is not JSON at all; the error names the decoder and keeps the bytes.
+invocation: [findmnt]
+tool_version: "2.41.3"
+distro: debian
+expect:
+  error: adapter.decode_failed

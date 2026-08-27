@@ -318,11 +318,15 @@ release line again.
       emitted error carries adapter id/version, executable identity/version, the original
       invocation, whether raw fallback is safe, and a recovery. Exit test: `errors.rs` coverage
       plus a rendered `adapter.unsupported_invocation`.
-- [ ] **ADAPT-009 — declarative manifest schema.** `docs/spec/adapters/schema.yaml` is versioned
-      and machine-validated; every first-party contract lives under
-      `docs/spec/adapters/first-party/*.yaml` in the shape of v0.3 §1.44; `spec-check` fails on
-      an unknown schema id, a missing decoder, a missing fixture directory or an executable
-      outside the declared `process.exec` set. Exit test: `xtask` negative cases.
+- [x] **ADAPT-009 — declarative manifest schema.** `docs/spec/adapters/schema.yaml` is versioned
+      (`ono-adapter-pack/1`) and machine-validated by `ono_adapter::validate`, the code the shell
+      loads a pack with; every first-party contract lives under
+      `docs/spec/adapters/first-party/*.yaml` in the shape of v0.3 §1.44 (util-linux first);
+      `spec-check` fails on an unknown schema id, a builtin decoder the binary lacks, a missing or
+      empty fixture directory, an executable outside the declared `process.exec` set, a
+      first-party id outside `org.ono.compat.*`, a tier C adapter without a builtin decoder, a
+      probe pattern without a capture, or a pack file the binary does not bundle — ADR-0055;
+      `ono-adapter/tests/contracts.rs` (eleven cases) and `xtask/tests/contracts.rs`.
 - [ ] **Canonical schemas are reused.** Adapted values conform to the existing `ono.*/1`
       schemas wherever an equivalent exists; adapter-specific schemas are added only where none
       does and are registered like every other schema (v0.3 §1.11, §2.2). Exit test: the
