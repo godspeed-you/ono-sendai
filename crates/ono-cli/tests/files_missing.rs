@@ -622,7 +622,6 @@ fn should_open_a_file_with_the_handler_named_explicitly() {
 // --- tail file ----------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_emit_the_last_lines_of_a_file_when_tailing() {
     let directory = scratch();
     directory.write("app.log", "one\ntwo\nthree\nfour\nfive\n");
@@ -639,7 +638,6 @@ fn should_emit_the_last_lines_of_a_file_when_tailing() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_follow_appended_lines_when_tailing() {
     let directory = scratch();
     let log = directory.write("app.log", "existing\n");

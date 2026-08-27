@@ -556,6 +556,120 @@ fn decode(data: Vec<u8>, encoding: Option<&str>, path: &Path) -> Result<Value, E
     }
 }
 
+/// `tail file`: the last `lines` existing lines, then — while `follow` — every line appended
+/// afterwards, one `string` per line without its terminator (ADR-0083 §3).
+///
+/// The follow polls the file by name every 100 ms, so a file replaced under the tail (log
+/// rotation) is picked up at its new inode on the next poll; a file that shrinks is read again
+/// from its start. Polling is explicit here because spec §18.2 asks that it be.
+async fn tail_lines(path: PathBuf, lines: usize, follow: bool, sink: StreamSink) {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+
+    let mut file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) => {
+            let _ = sink.fail(crate::common::io_error(&error, &path)).await;
+            return;
+        }
+    };
+    let mut existing = Vec::new();
+    if let Err(error) = file.read_to_end(&mut existing) {
+        let _ = sink.fail(crate::common::io_error(&error, &path)).await;
+        return;
+    }
+    let mut offset = existing.len() as u64;
+    // A last line without its newline is not a line yet: it stays pending, and the follow
+    // completes it when the writer does.
+    let complete = existing
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    let mut pending: Vec<u8> = existing[complete..].to_vec();
+    // Splitting `a\nb\n` gives `a`, `b` and a trailing empty piece that is no line.
+    let mut last: Vec<&[u8]> = existing[..complete].split(|byte| *byte == b'\n').collect();
+    last.pop();
+    let skip = last.len().saturating_sub(lines);
+    for line in last.into_iter().skip(skip) {
+        if sink.send(line_value(line)).await.is_err() {
+            return;
+        }
+    }
+    if !follow {
+        if !pending.is_empty() && lines > 0 && sink.send(line_value(&pending)).await.is_err() {
+            return;
+        }
+        return;
+    }
+
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        tick.tick().await;
+        if sink.is_cancelled() {
+            return;
+        }
+        // Reopen by name: rotation replaces the file, and the old descriptor would follow the
+        // renamed one forever.
+        let (length, reopened) = match std::fs::metadata(&path) {
+            Ok(metadata) => {
+                let same = std::os::unix::fs::MetadataExt::ino(&metadata)
+                    == file
+                        .metadata()
+                        .map(|m| std::os::unix::fs::MetadataExt::ino(&m))
+                        .unwrap_or(0);
+                (metadata.len(), !same)
+            }
+            Err(_) => continue,
+        };
+        if reopened || length < offset {
+            match std::fs::File::open(&path) {
+                Ok(fresh) => file = fresh,
+                Err(_) => continue,
+            }
+            offset = 0;
+            pending.clear();
+        }
+        if length == offset {
+            continue;
+        }
+        if file.seek(SeekFrom::Start(offset)).is_err() {
+            continue;
+        }
+        loop {
+            let read = match file.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(error) => {
+                    let _ = sink.fail(crate::common::io_error(&error, &path)).await;
+                    return;
+                }
+            };
+            offset += read as u64;
+            pending.extend_from_slice(&buffer[..read]);
+            while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<u8> = pending.drain(..=end).collect();
+                if sink
+                    .send(line_value(&line[..line.len() - 1]))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// A line as a string, or as bytes when it is not UTF-8 (spec §12.2: never lost).
+fn line_value(line: &[u8]) -> Value {
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    match std::str::from_utf8(line) {
+        Ok(text) => Value::string(text),
+        Err(_) => Value::Bytes(line.to_vec().into()),
+    }
+}
+
 #[async_trait::async_trait]
 impl Provider for FileProvider {
     fn id(&self) -> &str {
@@ -581,6 +695,7 @@ impl Provider for FileProvider {
             Capability::new("file.remove", Risk::Destructive),
             Capability::new("file.set", Risk::Mutate),
             Capability::new("file.open", Risk::Mutate),
+            Capability::new("file.watch", Risk::Observe),
             Capability::new("dir.list", Risk::Read),
         ]
     }
@@ -597,6 +712,24 @@ impl Provider for FileProvider {
             accounts: Arc::clone(&self.accounts),
         };
         let request = Request::from(query);
+        if query.verb() == "tail" {
+            let lines = query
+                .option_value("lines")
+                .and_then(|value| value.as_int().ok())
+                .and_then(|lines| usize::try_from(lines).ok())
+                .unwrap_or(10);
+            let follow = !matches!(query.option_value("follow"), Some(Value::Bool(false)));
+            let path = request.roots.into_iter().next().unwrap_or_default();
+            return Ok(ValueStream::spawn(
+                PipelineConfig::new(),
+                if follow {
+                    Boundedness::Unbounded
+                } else {
+                    Boundedness::Bounded
+                },
+                move |sink| async move { tail_lines(path, lines, follow, sink).await },
+            ));
+        }
         if query.verb() == "read" {
             let encoding = query
                 .option_value("encoding")
