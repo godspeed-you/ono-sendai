@@ -4,7 +4,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use ono_core::ErrorCode;
-use ono_value::ErrorValue;
+use ono_value::{ErrorValue, Provenance, RecordValue, SchemaId, Value};
 
 use crate::session::Session;
 
@@ -43,6 +43,15 @@ impl Namespace {
         }
     }
 }
+
+/// The statement keywords of `docs/spec/language.yaml`, step 1 of the order (ADR-0011).
+///
+/// The parser owns them — `if` at the head of a statement is a control form before it is
+/// anything else — and `resolve command` reports them as such rather than looking further.
+const KEYWORDS: &[&str] = &[
+    "let", "fn", "alias", "if", "else", "for", "while", "match", "try", "catch", "return", "break",
+    "continue", "use",
+];
 
 /// The commands the shell must implement itself.
 ///
@@ -105,6 +114,112 @@ pub fn resolve(
                 .ok_or_else(|| not_found(name, ""))
         }
     }
+}
+
+/// What a head word resolves to, as `resolve command` reports it (spec §6.5, ADR-0011,
+/// ADR-0093): one `ono.command/1` record naming the stage that answered — keyword, function,
+/// alias, native or external — and, for an external hit, its absolute path.
+///
+/// The order is the evaluator's own, so the report describes the resolution the shell would
+/// actually perform: functions and aliases are the session's, natives are the registry's verbs
+/// and the shell's builtins, and everything else is `PATH`. A forced namespace answers from its
+/// stage alone and is never retried elsewhere.
+///
+/// # Errors
+///
+/// `resolve.command_not_found` with discovery suggestions when no stage answers (spec §15.4).
+pub fn describe(session: &Session, namespace: Namespace, name: &str) -> Result<Value, ErrorValue> {
+    let native = || {
+        let verb = crate::native::registry()
+            .ok()
+            .and_then(|registry| registry.verb(name))
+            .map(|verb| verb.semantics().to_owned());
+        let builtin = BUILTINS.contains(&name);
+        match verb {
+            Some(semantics) => Some(("native", semantics)),
+            None if builtin => Some((
+                "native",
+                "a command the shell runs itself, because no child process could".to_owned(),
+            )),
+            None => None,
+        }
+    };
+    let function = || {
+        session.function(name).map(|function| {
+            (
+                "function",
+                format!("a user function declared at {}", function.declaration.span),
+            )
+        })
+    };
+    let external = || {
+        find_on_path(session, name).map(|path| {
+            (
+                path.clone(),
+                format!("an external program at {}", path.display()),
+            )
+        })
+    };
+
+    let (kind, summary, path) = match namespace {
+        Namespace::Native => native()
+            .map(|(kind, summary)| (kind, summary, None))
+            .ok_or_else(|| not_found(name, "ono:"))?,
+        Namespace::Function => function()
+            .map(|(kind, summary)| (kind, summary, None))
+            .ok_or_else(|| not_found(name, "fn:"))?,
+        Namespace::External => external()
+            .map(|(path, summary)| ("external", summary, Some(path)))
+            .ok_or_else(|| not_found(name, "exec:"))?,
+        Namespace::Any => {
+            if KEYWORDS.contains(&name) {
+                (
+                    "keyword",
+                    "a language keyword or control form".to_owned(),
+                    None,
+                )
+            } else if let Some((kind, summary)) = function() {
+                (kind, summary, None)
+            } else if let Some(alias) = session.alias(name) {
+                ("alias", format!("an alias for `{}`", alias.expansion), None)
+            } else if let Some((kind, summary)) = native() {
+                (kind, summary, None)
+            } else if let Some((path, summary)) = external() {
+                ("external", summary, Some(path))
+            } else {
+                let error = not_found(name, "");
+                let suggestions = suggestions(session, name);
+                return Err(if suggestions.is_empty() {
+                    error
+                } else {
+                    error.with_help(format!("did you mean: {}", suggestions.join(", ")))
+                });
+            }
+        }
+    };
+
+    let schema = ono_value::builtin_schemas()
+        .get(&SchemaId::new("ono.command", 1))
+        .ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::ProviderSchemaViolation,
+                "the `ono.command/1` schema is not built in",
+            )
+        })?;
+    let provenance =
+        Provenance::local("ono.shell", schema.id().clone()).from_source("resolution order");
+    let verb = (kind == "native").then(|| Value::string(name));
+    let record = RecordValue::builder(schema, provenance)
+        .set("spelling", Value::string(name))?
+        .set("kind", Value::string(kind))?
+        .set("verb", verb.unwrap_or(Value::Null))?
+        .set("summary", Value::string(&summary))?
+        .set(
+            "path",
+            path.map_or(Value::Null, |path| Value::Path(path.into())),
+        )?
+        .build();
+    Ok(record.into_value())
 }
 
 fn not_found(name: &str, namespace: &str) -> ErrorValue {

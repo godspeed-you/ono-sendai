@@ -6,13 +6,12 @@
 //! of a destructive pipeline (spec §15.3, §42) and `type` safe to type in front of an expensive
 //! one (spec §15.2).
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, ValueStream};
 use ono_value::{
-    ErrorValue, FieldAccess, FieldDef, FieldType, MapValue, Provenance, RecordValue, Schema,
-    SchemaId, Value,
+    ErrorValue, FieldAccess, MapValue, Provenance, RecordValue, Schema, SchemaId, Value,
 };
 
 use crate::contract::CommandContract;
@@ -300,36 +299,19 @@ fn not_a_pipeline(subject: &str) -> ErrorValue {
     .with_help("quote a whole pipeline, as in `explain \"get process | to json\"`")
 }
 
-/// The schema of `ono.command/1`: the registry's own objects.
+/// The schema of `ono.command/1` (`docs/spec/schemas/command.v1.yaml`).
 ///
-/// It lives here rather than in `docs/spec/schemas/` because it *is* the registry, described in
-/// the registry's own vocabulary; a hand-written copy elsewhere would be one more thing to drift.
+/// One schema serves the registry's own objects and the answer of `resolve command`, which the
+/// shell builds from the same contract (ADR-0093).
 fn command_schema() -> Result<Arc<Schema>, ErrorValue> {
-    static SCHEMA: OnceLock<Result<Arc<Schema>, ErrorValue>> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Schema::builder(SchemaId::new("ono.command", 1), "Command")
-                .doc("One command of the Ono-Sendai registry (spec §27).")
-                .field(FieldDef::new("id", FieldType::String).required())
-                .field(FieldDef::new("verb", FieldType::String).required())
-                .field(FieldDef::new("target", FieldType::String).nullable())
-                .field(FieldDef::new("spelling", FieldType::String).required())
-                .field(FieldDef::new("summary", FieldType::String).required())
-                .field(FieldDef::new("stability", FieldType::String).required())
-                .field(FieldDef::new("argument_mode", FieldType::String).required())
-                .field(FieldDef::new("input", FieldType::String).required())
-                .field(FieldDef::new("output", FieldType::String).required())
-                .field(FieldDef::new("capability", FieldType::String).nullable())
-                .field(FieldDef::new("privilege", FieldType::String).required())
-                .field(FieldDef::new("streaming", FieldType::Bool).required())
-                .field(FieldDef::new("phase", FieldType::String).required())
-                .field(FieldDef::new("examples", FieldType::list(FieldType::String)).nullable())
-                .identity(["id"])
-                .default_view(["spelling", "summary", "stability"])
-                .build()
-                .map(Arc::new)
+    ono_value::builtin_schemas()
+        .get(&SchemaId::new("ono.command", 1))
+        .ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::ProviderSchemaViolation,
+                "the `ono.command/1` schema is not built in",
+            )
         })
-        .clone()
 }
 
 fn command_record(contract: &CommandContract) -> Value {
@@ -341,6 +323,7 @@ fn command_record(contract: &CommandContract) -> Value {
         Provenance::local("ono.registry", schema.id().clone()).from_source("docs/spec/commands/");
     let built = RecordValue::builder(schema, provenance)
         .set("id", Value::string(contract.id()))
+        .and_then(|record| record.set("kind", Value::string("native")))
         .and_then(|record| record.set("verb", Value::string(contract.verb())))
         .and_then(|record| {
             record.set(

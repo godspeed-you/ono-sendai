@@ -1,0 +1,81 @@
+# Command. The registry's own objects (spec §27), and the answer of `resolve command` (spec §6.5,
+# ADR-0011, ADR-0093). One record serves both: `get command` streams the registry's entries, and
+# `resolve command <word>` reports the one thing a head word resolves to — which may be a
+# keyword, a user function, an alias or an external program, none of which has a registry id.
+# The `kind` field names the resolution stage; `id` and the registry fields are null for a
+# resolution that is not a registry entry.
+id: ono.command/1
+name: Command
+summary: One command of the registry, or what a head word resolves to.
+identity: [spelling]
+fields:
+  spelling:
+    type: string
+    required: true
+    doc: How the command is written — `get process` for a registry entry, the head word for a resolution.
+  kind:
+    type: enum
+    required: true
+    values: [keyword, function, alias, native, external]
+    doc: >-
+      The stage of the resolution order (spec §6.5, ADR-0011) that answers to the spelling:
+      a language keyword, a user function, an alias, a native command, or an external
+      executable on `PATH`. Every registry entry is `native`.
+  id:
+    type: string
+    nullable: true
+    doc: The stable command id, e.g. `ono.process.get`; null for anything that is not a registry entry.
+  verb:
+    type: string
+    nullable: true
+    doc: The verb of a registry entry, or the verb a native resolution names; null otherwise.
+  target:
+    type: string
+    nullable: true
+    doc: The target of a registry entry; null for a verb-only resolution and for every other kind.
+  path:
+    type: path
+    nullable: true
+    doc: The absolute path of an external executable (ADR-0011); null for every other kind.
+  summary:
+    type: string
+    nullable: true
+    doc: One line saying what the command does, from the registry or the verb's semantics.
+  stability:
+    type: string
+    nullable: true
+    doc: The stability level of a registry entry (spec §36.3); null otherwise.
+  argument_mode:
+    type: string
+    nullable: true
+    doc: "`words` or `expression` for a registry entry (ADR-0009); null otherwise."
+  input:
+    type: string
+    nullable: true
+    doc: The declared input type of a registry entry; null otherwise.
+  output:
+    type: string
+    nullable: true
+    doc: The declared output type of a registry entry; null otherwise.
+  capability:
+    type: string
+    nullable: true
+    doc: The provider capability a registry entry needs (spec §27.1); null when it needs none or is not an entry.
+  privilege:
+    type: string
+    nullable: true
+    doc: The privilege level a registry entry declares (spec §17); null otherwise.
+  streaming:
+    type: bool
+    nullable: true
+    doc: Whether a registry entry streams its output; null otherwise.
+  phase:
+    type: string
+    nullable: true
+    doc: The spec §37 phase that delivers a registry entry; null otherwise.
+  examples:
+    type: list<string>
+    nullable: true
+    doc: The documented examples of a registry entry, each of which parses and runs (spec §50).
+default_view:
+  columns: [spelling, kind, summary, stability]

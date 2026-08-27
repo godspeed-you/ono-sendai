@@ -152,6 +152,33 @@ Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_
 | `purpose` | `string` | — | nullable | What the package said it needed the capability for, as shown in the prompt (spec §31.18). Package-authored, sanitised, and attributed to the package rather than to Ono. |
 | `revoked_at` | `timestamp` | — | nullable | When it was revoked. Null while it stands. A revoked grant is retained rather than deleted, so the record of what was once permitted survives. |
 
+## Command — `ono.command/1`
+
+One command of the registry, or what a head word resolves to.
+
+Identity: `spelling`
+
+Default view: `spelling`, `kind`, `summary`, `stability`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `spelling` | `string` | — | required | How the command is written — `get process` for a registry entry, the head word for a resolution. |
+| `kind` | `enum` | — | required | The stage of the resolution order (spec §6.5, ADR-0011) that answers to the spelling: a language keyword, a user function, an alias, a native command, or an external executable on `PATH`. Every registry entry is `native`. |
+| `id` | `string` | — | nullable | The stable command id, e.g. `ono.process.get`; null for anything that is not a registry entry. |
+| `verb` | `string` | — | nullable | The verb of a registry entry, or the verb a native resolution names; null otherwise. |
+| `target` | `string` | — | nullable | The target of a registry entry; null for a verb-only resolution and for every other kind. |
+| `path` | `path` | — | nullable | The absolute path of an external executable (ADR-0011); null for every other kind. |
+| `summary` | `string` | — | nullable | One line saying what the command does, from the registry or the verb's semantics. |
+| `stability` | `string` | — | nullable | The stability level of a registry entry (spec §36.3); null otherwise. |
+| `argument_mode` | `string` | — | nullable | `words` or `expression` for a registry entry (ADR-0009); null otherwise. |
+| `input` | `string` | — | nullable | The declared input type of a registry entry; null otherwise. |
+| `output` | `string` | — | nullable | The declared output type of a registry entry; null otherwise. |
+| `capability` | `string` | — | nullable | The provider capability a registry entry needs (spec §27.1); null when it needs none or is not an entry. |
+| `privilege` | `string` | — | nullable | The privilege level a registry entry declares (spec §17); null otherwise. |
+| `streaming` | `bool` | — | nullable | Whether a registry entry streams its output; null otherwise. |
+| `phase` | `string` | — | nullable | The spec §37 phase that delivers a registry entry; null otherwise. |
+| `examples` | `list<string>` | — | nullable | The documented examples of a registry entry, each of which parses and runs (spec §50). |
+
 ## Commit — `ono.commit/1`
 
 One commit of a git history.

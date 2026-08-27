@@ -15,6 +15,7 @@ pub mod eval;
 pub mod expand;
 pub mod invocation;
 pub mod live;
+pub mod meta;
 pub mod native;
 pub mod plugins;
 pub mod providers;

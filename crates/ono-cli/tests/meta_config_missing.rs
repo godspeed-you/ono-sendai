@@ -122,7 +122,6 @@ fn assert_not_the_placeholder(run: &ono_testkit::Run) {
 // --- resolve command, spec §6.5 and ADR-0011 ----------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_an_external_program_to_its_path_when_nothing_earlier_claims_the_name() {
     let run = ono("resolve command ls | to json");
     assert_not_the_placeholder(&run);
@@ -145,7 +144,6 @@ fn should_resolve_an_external_program_to_its_path_when_nothing_earlier_claims_th
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_native_verb_to_the_registry_when_the_head_word_is_one() {
     let run = ono("resolve command get | to json");
     assert_not_the_placeholder(&run);
@@ -165,7 +163,6 @@ fn should_resolve_a_native_verb_to_the_registry_when_the_head_word_is_one() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_language_keyword_before_anything_else() {
     let run = ono("resolve command if | to json");
     assert_not_the_placeholder(&run);
@@ -180,7 +177,6 @@ fn should_resolve_a_language_keyword_before_anything_else() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_a_function_declared_in_the_same_script_before_the_registry_and_path() {
     let run = ono("fn hi() { echo hi }\nresolve command hi | to json");
     assert_not_the_placeholder(&run);
@@ -195,7 +191,6 @@ fn should_resolve_a_function_declared_in_the_same_script_before_the_registry_and
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_command_not_found_with_suggestions_when_no_stage_answers() {
     let run = ono("resolve command lss | to json");
     assert_not_the_placeholder(&run);
@@ -227,7 +222,6 @@ fn should_report_command_not_found_with_suggestions_when_no_stage_answers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_not_retry_another_namespace_when_the_head_word_forces_one() {
     // `ono:ls` asks for a native command only; ADR-0011 forbids falling back to PATH.
     let run = ono("resolve command ono:ls | to json");

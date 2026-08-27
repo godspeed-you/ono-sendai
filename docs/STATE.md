@@ -93,6 +93,13 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
+  `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
+  `implementation-meta` — files: `crates/ono-cli/src/{meta,resolve,settings,config,eval,native}.rs`,
+  `crates/ono-command/src/impls/{meta,convert}.rs`, `docs/spec/schemas/command.v1.yaml`,
+  `docs/spec/commands/identity.yaml`, acceptance case `041-config-and-resolve`. ADR-0093–0095.
+  Increment 1 done: `resolve command` (6 tests green, ADR-0093).
+
 - [language | 2026-08-27] **language family** (`crates/ono-cli/tests/language_missing.rs`) on
   branch `implementation-language` — **all 31 tests green and un-ignored**; the gate is green
   at every commit. Delivered: `let`/`( … )`/`$( … )` capture (ADR-0069); callable functions and
