@@ -100,6 +100,13 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## Next up (ordered)
 
+- [ ] **The v0.4 enhancement specification is unimplemented.**
+  `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` (3835 lines, "Spatial Systems
+  Interface") arrived on `main` on 2026-08-27, after the v0.3 tranche was complete. It is
+  checksummed and enumerated in AGENTS.md §2/§5.2, so the gate covers it, and nothing in the
+  0.3.0 release implements it. Starting it means the loop of AGENTS.md §7 from the top: read
+  §0 (relationship to the earlier specs) and §2 (core spatial invariants) first, decompose into
+  increments, write the RED suites — a tranche the size of the v0.3 one, not a follow-up.
 - [ ] Inside a link frame `get link` is sent to the other side (spec §14.4) and lists the
   remote agent's empty link table, so `get link | detach link` cannot be spelled from inside the
   link it would detach (seen while writing ADR-0118's detach case). Decide whether `get link`,

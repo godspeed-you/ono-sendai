@@ -51,6 +51,8 @@ ono-sendai/
     │                             base narrative spec (normative)
     ├── ono_sendai_shell_spec_v0.3_external_command_adapters.md
     │                             enhancement spec, layered on the base (§5.2)
+    ├── ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
+    │                             enhancement spec, layered on the base (§5.2)
     ├── STATE.md                  progress board (§9)
     ├── ACCEPTANCE.md             definition of release-ready + stopping rule (§15)
     ├── decisions/ADR-*.md        recorded agent decisions (§8)
@@ -141,8 +143,10 @@ Concretely:
 ## 5. Authority Order (what wins when sources disagree)
 
 ```
+0. docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
 0. docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md
-                                   enhancement spec (IMMUTABLE, read-only) — §5.2
+                                   the enhancement specs share level 0 (IMMUTABLE, read-only);
+                                   where two of them overlap, the later version wins — §5.2
 1. docs/ono_sendai_shell_spec_v0.2.md   base narrative spec — intent & semantics (IMMUTABLE, read-only)
 2. docs/spec/*.yaml, grammar.ebnf  machine-readable contracts (public API surface)
 3. docs/decisions/ADR-*.md         recorded agent decisions (fill gaps in 1 & 2)
@@ -170,6 +174,14 @@ things on every gate run (ADR-0026):
 - each narrative specification has a `sha256sum` line in `docs/spec.sha256`, so none of them can
   be edited unnoticed;
 - this file enumerates each enhancement by name, so no enhancement can sit in `docs/` unread.
+
+The enhancements present, newest first:
+
+- `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — the Spatial Systems
+  Interface. Added 2026-08-27, **not implemented**: it arrived after the v0.3 tranche was
+  complete and is the next body of work, not part of the 0.3.0 release.
+- `docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md` — the External Command
+  Adaptation Layer. Implemented (ADR-0052 … ADR-0067).
 
 Adding an enhancement is the user's action. Reconciling the code, the contracts and the ADRs with
 it is the agent's, and it is ordinary work in the loop of §7 — not a reason to stop and ask.
