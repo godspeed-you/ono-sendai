@@ -1,0 +1,8 @@
+# util-linux before 2.39 writes `"mountpoints": [null]` for a device that is not mounted; the
+# record says "not mounted" the same way whichever lsblk wrote it: an empty list.
+invocation: [lsblk, /dev/sda]
+tool_version: "2.38.1"
+distro: debian
+expect:
+  records:
+    - {name: sda, path: /dev/sda, type: disk, size: "137438953472 B", filesystem: null, mountpoints: [], model: "Virtual Disk", serial: "60022480658fae6a00e02ea9ca4d0955", read_only: false, removable: false, parent: null, device_number: "8:0"}

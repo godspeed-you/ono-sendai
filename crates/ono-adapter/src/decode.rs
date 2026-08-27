@@ -1235,6 +1235,18 @@ fn coerce_mapped(
     ctx: &Coercion<'_>,
 ) -> Result<Value, String> {
     let mut current = raw.clone();
+    // A null element of a list is a slot the tool had nothing for — lsblk before 2.39 writes
+    // `"mountpoints": [null]` for an unmounted device — and an unknown that is not there is
+    // simply absent (spec §35.3): the list carries what the tool knew.
+    if let Json::Array(items) = &current {
+        current = Json::Array(
+            items
+                .iter()
+                .filter(|item| !item.is_null())
+                .cloned()
+                .collect(),
+        );
+    }
     if let Some(template) = map.template() {
         current = match &current {
             Json::Object(object) => Json::String(fill(template, object)?),

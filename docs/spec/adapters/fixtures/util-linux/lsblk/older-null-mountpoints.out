@@ -1,0 +1,5 @@
+{
+   "blockdevices": [
+      {"name":"sda", "path":"/dev/sda", "type":"disk", "size":137438953472, "fstype":null, "mountpoints":[null], "model":"Virtual Disk", "serial":"60022480658fae6a00e02ea9ca4d0955", "ro":false, "rm":false, "pkname":null, "maj:min":"8:0"}
+   ]
+}
