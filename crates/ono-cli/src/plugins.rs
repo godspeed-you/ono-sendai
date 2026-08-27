@@ -247,6 +247,8 @@ pub fn load_plugin_with(
 pub enum Request {
     /// `verify plugin <id | reference>` (spec §31.36).
     VerifyPlugin,
+    /// `install plugin <reference> [--confirm]` (spec §31.9).
+    InstallPlugin,
 }
 
 /// What a management command produced: the values for the pipeline after it, and the failure
@@ -274,6 +276,7 @@ pub fn claims(stage: &ono_parser::Stage) -> Option<Request> {
         .and_then(ono_parser::Argument::as_word)?;
     match (name.name.as_str(), target) {
         ("verify", "plugin") => Some(Request::VerifyPlugin),
+        ("install", "plugin") => Some(Request::InstallPlugin),
         _ => None,
     }
 }
@@ -290,7 +293,20 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
         .map(String::as_str)
         .filter(|word| !word.starts_with("--"))
         .collect();
+    let flag = |name: &str| words.iter().any(|word| word == name);
     match request {
+        Request::InstallPlugin => {
+            let Some(reference) = arguments.first() else {
+                return Err(Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::ResolveTargetNotFound,
+                        "`install plugin` needs the package reference to install",
+                    )
+                    .with_help("`path:<directory>` (spec §31.9)"),
+                ));
+            };
+            install_plugin(session, reference, flag("--confirm"))
+        }
         Request::VerifyPlugin => {
             let Some(reference) = arguments.first() else {
                 return Err(Flow::Failed(
@@ -314,6 +330,104 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
             })
         }
     }
+}
+
+/// Runs `install plugin <reference>`: verify, plan, confirm, place (spec §31.9).
+fn install_plugin(session: &mut Session, reference: &str, confirmed: bool) -> Eval<Produced> {
+    use crate::kuang_host::{action, action_result, install_plan};
+    let started = std::time::Instant::now();
+    session.publish_host();
+    let resolved = session
+        .with_kuang(|host| host.resolve(reference))
+        .map_err(Flow::Failed)?;
+    // Verification comes first: a blocking check never produces a prompt offering to continue
+    // (lifecycle.v1, ADR-0015 rule 4).
+    let verification = session
+        .with_kuang(|host| host.verify(&resolved))
+        .map_err(Flow::Failed)?;
+    if let Some(failure) = verification.blocking.into_iter().next() {
+        return Err(Flow::Failed(failure));
+    }
+    let package = resolved.package.map_err(Flow::Failed)?;
+    let id = package.manifest.package.id.clone();
+    let version = package.manifest.package.version.clone();
+    let (destination, already) = session
+        .with_kuang(|host| {
+            host.install_destination(&package)
+                .map(|destination| (destination, host.is_installed(&id, &version)))
+        })
+        .map_err(Flow::Failed)?;
+    if already {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::IoAlreadyExists,
+                format!("`{id}` {version} is already installed"),
+            )
+            .with_help(
+                "`remove plugin` it first; a package version is never silently replaced \
+                 (spec §31.35)",
+            ),
+        ));
+    }
+
+    // The plan comes before any mutation (spec §31.9), and a script never waits for its
+    // prompt (spec §17.4): without `--confirm` the answer is a refusal that carries the plan.
+    let plan = install_plan(&package, &resolved.source, &destination);
+    if !confirmed {
+        if session.is_interactive() && !prompt_for_install(&plan) {
+            return Err(Flow::Failed(ErrorValue::new(
+                ErrorCode::SafetyConfirmationRequired,
+                format!("installing `{id}` was not confirmed"),
+            )));
+        }
+        if !session.is_interactive() {
+            return Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::SafetyConfirmationRequired,
+                    format!(
+                        "installing `{id}` {version} from {} needs the install plan confirmed",
+                        resolved.source
+                    ),
+                )
+                .with_help(
+                    "nothing was written. Write `--confirm` to accept the plan \
+                     non-interactively (spec §17.4, §31.9)",
+                )
+                .with_metadata("plan", plan),
+            ));
+        }
+    }
+
+    let outcome = session.with_kuang(|host| {
+        let action = action("install", &id, &version);
+        match host.install(&package, &resolved.source) {
+            Ok(_) => ono_provider_api::ActionOutcome::succeeded(&action, true),
+            Err(error) => ono_provider_api::ActionOutcome::failed(&action, error),
+        }
+    });
+    let failed = !outcome.is_success();
+    let failure = if failed {
+        outcome.error().cloned()
+    } else {
+        None
+    };
+    Ok(Produced {
+        values: vec![action_result(outcome, "ono.plugin.install", started)],
+        failure,
+    })
+}
+
+/// Shows the install plan and asks (spec §31.9's `proceed? [y/N]`); only an explicit yes is one.
+fn prompt_for_install(plan: &Value) -> bool {
+    let rendered = ono_value::to_yaml_data(plan).unwrap_or_default();
+    println!("INSTALL PLAN\n{rendered}");
+    print!("proceed? [y/N] ");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        return false;
+    }
+    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 /// Whether `namespace` names a loaded package, by full id or by its last segment.

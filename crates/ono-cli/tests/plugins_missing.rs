@@ -565,7 +565,6 @@ fn should_refuse_to_load_an_incompatible_package() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_install_a_package_from_a_path_reference_when_confirmed() {
     let home = plugin_home();
     let elsewhere = ono_testkit::scratch();
@@ -620,7 +619,6 @@ fn should_install_a_package_from_a_path_reference_when_confirmed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_install_without_confirmation_in_a_script() {
     let home = plugin_home();
     let elsewhere = ono_testkit::scratch();
@@ -648,7 +646,6 @@ fn should_refuse_to_install_without_confirmation_in_a_script() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_install_a_version_that_is_already_installed() {
     let home = plugin_home();
     let elsewhere = ono_testkit::scratch();
@@ -796,7 +793,6 @@ fn should_persist_enablement_across_sessions() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_remove_the_package_directory_when_removed() {
     let home = plugin_home();
     let run = ono(&home, &format!("remove plugin {ECHO} | to json"));
@@ -828,7 +824,6 @@ fn should_remove_the_package_directory_when_removed() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_unload_a_loaded_package_before_removing_it() {
     let home = plugin_home();
     let run = ono(

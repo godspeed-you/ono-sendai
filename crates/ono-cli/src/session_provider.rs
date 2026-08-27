@@ -16,7 +16,9 @@ use std::sync::{Arc, Mutex};
 
 use ono_core::{ErrorCode, ExitStatus};
 use ono_pipeline::ValueStream;
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+};
 use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
 /// The provider's stable id, as it appears in every record's provenance.
@@ -171,6 +173,54 @@ impl SessionProvider {
         ))
     }
 
+    /// The package id and version an action names.
+    fn plugin_identity(action: &Action) -> Result<(String, String), ErrorValue> {
+        let values = action.target().values();
+        match (values.first(), values.get(1)) {
+            (Some(Value::String(id)), Some(Value::String(version))) => {
+                Ok((id.to_string(), version.to_string()))
+            }
+            _ => Err(ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("{} is not a plugin identity", action.target()),
+            )),
+        }
+    }
+
+    /// Takes the instance of `id` out of the host and shuts it down (lifecycle.v1 `unload`).
+    async fn unload_instance(&self, id: &str) -> bool {
+        let instance = self.lock().kuang.remove_instance(id);
+        match instance {
+            Some(instance) => {
+                instance
+                    .plugin
+                    .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+                    .await;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `remove plugin` (spec §31.81): a loaded instance is unloaded first, the directory is
+    /// removed, and state is retained only when asked.
+    async fn remove_plugin(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let (id, _) = Self::plugin_identity(action)?;
+        let package = self.lock().kuang.installed_package(&id).ok_or_else(|| {
+            ErrorValue::new(ErrorCode::IoNotFound, format!("`{id}` is not installed"))
+        })?;
+        if action.is_dry_run() {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("would remove {}", package.directory.display()),
+            ));
+        }
+        self.unload_instance(&id).await;
+        let keep_state = action.argument("keep-state") == Some(&Value::Bool(true));
+        self.lock().kuang.remove_package(&package, keep_state)?;
+        Ok(ActionOutcome::succeeded(action, true))
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, SessionTables> {
         self.tables
             .lock()
@@ -272,6 +322,7 @@ impl Provider for SessionProvider {
             Capability::new("plugin.list", Risk::Read),
             Capability::new("plugin.search", Risk::Read),
             Capability::new("plugin.inspect", Risk::Read),
+            Capability::new("plugin.remove", Risk::Destructive),
         ]
     }
 
@@ -331,6 +382,16 @@ impl Provider for SessionProvider {
             .map(RecordValue::into_value)
             .collect();
         Ok(stream_of(values, failures))
+    }
+
+    async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        match (action.target_name(), action.operation()) {
+            ("plugin", "remove") => self.remove_plugin(action).await,
+            (target, operation) => Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!("{PROVIDER_ID} does not `{operation}` a {target}"),
+            )),
+        }
     }
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {

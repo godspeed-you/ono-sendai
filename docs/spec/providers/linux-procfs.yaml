@@ -37,7 +37,7 @@ providers:
       runtime instances this session started (ADR-0090, ADR-0107); the links and hosts of
       spec §21 when the remote family publishes them.
     targets: [job, plugin]
-    capabilities: [job.list, plugin.list, plugin.search, plugin.inspect]
+    capabilities: [job.list, plugin.list, plugin.search, plugin.inspect, plugin.remove]
     schemas: [ono.job/1, ono.plugin/1, ono.plugin-package/1, ono.plugin-inspection/1]
 
   - id: linux.mountinfo

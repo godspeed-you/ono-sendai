@@ -16,6 +16,7 @@ use ono_kuang_protocol::{
     ShutdownReason,
 };
 use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Supervisor};
+use ono_provider_api::{Action, ActionOutcome, ObjectId};
 use ono_value::{ErrorValue, MapValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
 /// One discovered package: its directory and its parsed manifest.
@@ -1184,4 +1185,197 @@ pub fn inspection_record(
             .set("jobs", Value::list([]))?
             .build(),
     )
+}
+
+// --- install and remove, spec §31.9 and §31.81 ------------------------------------------------
+
+/// The plan `install plugin` shows before it mutates anything (spec §31.9, lifecycle.v1
+/// `install_plan`): what will be added, what was requested, and what will be written.
+#[must_use]
+pub fn install_plan(package: &Installed, source: &str, destination: &Path) -> Value {
+    let manifest = &package.manifest;
+    map([
+        (
+            "package",
+            Value::string(&format!(
+                "{}@{}",
+                manifest.package.id, manifest.package.version
+            )),
+        ),
+        ("source", Value::string(source)),
+        ("integrity", Value::string(&integrity_of(package))),
+        ("signature", Value::string("unsigned")),
+        ("contributions", declared_contributions(manifest)),
+        ("capabilities", capability_requests(manifest, None)),
+        (
+            "filesystem",
+            Value::list([Value::Path(Arc::from(destination))]),
+        ),
+        (
+            "state",
+            manifest.state.as_ref().map_or(Value::Null, |state| {
+                map([
+                    (
+                        "persistence",
+                        Value::string(&format!("{:?}", state.persistence).to_lowercase()),
+                    ),
+                    (
+                        "quota",
+                        state.quota.map_or(Value::Null, |quota| {
+                            Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(quota)))
+                        }),
+                    ),
+                ])
+            }),
+        ),
+        ("network", network_of(manifest)),
+    ])
+}
+
+/// The identity of a package version as an action's object.
+#[must_use]
+pub fn object_id(id: &str, version: &str) -> ObjectId {
+    ObjectId::new(
+        SchemaId::new("ono.plugin", 1),
+        [Value::string(id), Value::string(version)],
+    )
+}
+
+/// The `ono.action-result/1` value of one management action (spec §11.5, ADR-0068).
+#[must_use]
+pub fn action_result(
+    outcome: ActionOutcome,
+    operation: &str,
+    started: std::time::Instant,
+) -> Value {
+    let elapsed = ono_value::Duration::from_nanoseconds(
+        i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),
+    );
+    outcome
+        .into_record(elapsed)
+        .with_operation(operation)
+        .into_value()
+}
+
+impl Host {
+    /// Where `install plugin` would place `package`: under the first directory of the plugin
+    /// path, by package id (ADR-0051).
+    ///
+    /// # Errors
+    ///
+    /// `io.not_found` when no plugin home is configured.
+    pub fn install_destination(&self, package: &Installed) -> Result<PathBuf, ErrorValue> {
+        let root = self.install_root().ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::IoNotFound,
+                "no plugin home is configured to install into",
+            )
+            .with_help("set `ONO_PLUGIN_PATH`, or `HOME` for `~/.config/ono/plugins` (ADR-0051)")
+        })?;
+        Ok(root.join(&package.manifest.package.id))
+    }
+
+    /// Whether this exact id and version is already in the plugin home.
+    #[must_use]
+    pub fn is_installed(&self, id: &str, version: &str) -> bool {
+        self.installed_package(id)
+            .is_some_and(|held| held.manifest.package.version == version)
+    }
+
+    /// Places a verified package in the plugin home and records where it came from. No
+    /// package code runs and nothing is granted (spec §31.9).
+    ///
+    /// # Errors
+    ///
+    /// `io.already_exists` when the same version is installed; the I/O failure otherwise.
+    pub fn install(&self, package: &Installed, source: &str) -> Result<Installed, ErrorValue> {
+        let manifest = &package.manifest;
+        let destination = self.install_destination(package)?;
+        if self.is_installed(&manifest.package.id, &manifest.package.version) {
+            return Err(ErrorValue::new(
+                ErrorCode::IoAlreadyExists,
+                format!(
+                    "`{}` {} is already installed",
+                    manifest.package.id, manifest.package.version
+                ),
+            )
+            .with_help("`remove plugin` it first; a package version is never silently replaced (spec §31.35)"));
+        }
+        if destination.exists() {
+            // Another version of the same package: one directory per id (ADR-0051), so the
+            // old version leaves. Its state stays (spec §31.81).
+            self.remove_directory(&destination)?;
+        }
+        copy_tree(&package.directory, &destination)?;
+        let installed = Installed {
+            directory: destination,
+            manifest: manifest.clone(),
+        };
+        let management = Management {
+            enabled: true,
+            installed_from: Some(source.to_owned()),
+            integrity: Some(integrity_of(&installed)),
+        };
+        self.write_management(&manifest.package.id, &management)?;
+        Ok(installed)
+    }
+
+    /// Removes an installed package's directory, and its management state unless `keep_state`
+    /// (spec §31.81). The caller unloads a running instance first.
+    ///
+    /// # Errors
+    ///
+    /// The I/O failure.
+    pub fn remove_package(&self, package: &Installed, keep_state: bool) -> Result<(), ErrorValue> {
+        self.remove_directory(&package.directory)?;
+        if !keep_state {
+            self.remove_management(&package.manifest.package.id);
+        }
+        Ok(())
+    }
+
+    fn remove_directory(&self, directory: &Path) -> Result<(), ErrorValue> {
+        // Only a directory under the plugin path is ever removed: a manifest elsewhere is a
+        // source, never an installation.
+        if !self
+            .plugin_path
+            .iter()
+            .any(|root| directory.starts_with(root))
+        {
+            return Err(ErrorValue::new(
+                ErrorCode::IoPermissionDenied,
+                format!(
+                    "{} is not under the plugin home and is not removed",
+                    directory.display()
+                ),
+            ));
+        }
+        std::fs::remove_dir_all(directory).map_err(|error| io_error(directory, &error))
+    }
+}
+
+/// Copies a package directory, file by file, keeping permissions so the runtime entry stays
+/// executable.
+fn copy_tree(from: &Path, to: &Path) -> Result<(), ErrorValue> {
+    std::fs::create_dir_all(to).map_err(|error| io_error(to, &error))?;
+    for entry in std::fs::read_dir(from).map_err(|error| io_error(from, &error))? {
+        let entry = entry.map_err(|error| io_error(from, &error))?;
+        let source = entry.path();
+        let target = to.join(entry.file_name());
+        let kind = entry
+            .file_type()
+            .map_err(|error| io_error(&source, &error))?;
+        if kind.is_dir() {
+            copy_tree(&source, &target)?;
+        } else {
+            std::fs::copy(&source, &target).map_err(|error| io_error(&source, &error))?;
+        }
+    }
+    Ok(())
+}
+
+/// The action an `ono.plugin/1` object is the target of, for the outcome records.
+#[must_use]
+pub fn action(operation: &str, id: &str, version: &str) -> Action {
+    Action::new("plugin", operation, object_id(id, version))
 }
