@@ -347,6 +347,16 @@ sections:
         type: list<path>
         nullable: true
         doc: View declarations (spec §31.27).
+      adapters:
+        type: list<path>
+        nullable: true
+        doc: >-
+          Adapter packs in the `ono-adapter-pack/1` format of `docs/spec/adapters/schema.yaml`
+          (spec v0.3 §1.44). Each pack's `package.id` and `publisher` must be the manifest's, its
+          tier `community` or `experimental`, and every executable its adapters name must be in
+          the package's `process.exec` `executables` scope. A package whose roles include
+          `adapter` and that contributes packs needs no `runtime`: the packs are declarative
+          (spec v0.3 §1.45, ADR-0065).
       relations:
         type: list<string>
         nullable: true

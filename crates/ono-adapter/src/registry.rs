@@ -189,6 +189,13 @@ pub enum Negotiation {
         /// The claimants.
         candidates: Vec<String>,
     },
+    /// The adapter exists but its pack may not influence structured output here.
+    Disabled {
+        /// The adapter that would have answered.
+        adapter: String,
+        /// Why the pack is held back.
+        reason: String,
+    },
 }
 
 impl Negotiation {
@@ -212,7 +219,7 @@ impl Negotiation {
             | Self::IncompatibleVersion { fallback, .. } => {
                 !matches!(demand, OutputDemand::Structured { .. }) && *fallback == Fallback::Raw
             }
-            Self::ExecutableMismatch { .. } | Self::Conflict { .. } => {
+            Self::ExecutableMismatch { .. } | Self::Conflict { .. } | Self::Disabled { .. } => {
                 !matches!(demand, OutputDemand::Structured { .. })
             }
         }
@@ -323,6 +330,17 @@ impl Negotiation {
             | Self::RawPreferred { .. }
             | Self::StructuredSupported { .. }
             | Self::StructuredSupportedWithLimits { .. } => return None,
+            Self::Disabled { adapter, reason } => payload(
+                ErrorValue::new(
+                    ErrorCode::AdapterDisabled,
+                    format!("adapter {adapter} is disabled here: {reason}"),
+                )
+                .with_help(format!(
+                    "`load plugin <package> --grant process.exec` enables a package's adapters \
+                     (spec v0.3 §1.22); `raw {invocation}` runs the program as typed"
+                )),
+                adapter,
+            ),
         })
     }
 
@@ -397,6 +415,14 @@ impl Negotiation {
             Self::Conflict { candidates } => {
                 format!("conflict: {} cannot be separated", candidates.join(" and "))
             }
+            Self::Disabled { adapter, reason } => {
+                let state = format!("adapter disabled: {adapter}, {reason}");
+                if structured {
+                    format!("{state}; fails")
+                } else {
+                    format!("raw ({state})")
+                }
+            }
         }
     }
 }
@@ -404,6 +430,8 @@ impl Negotiation {
 /// The installed adapters and the probe cache (spec v0.3 §1.24).
 pub struct Registry {
     packs: Vec<Arc<AdapterPack>>,
+    /// Why a pack, by index into `packs`, may not influence structured output (ADR-0065).
+    disabled: Vec<Option<String>>,
     prober: Prober,
     versions: Mutex<HashMap<Identity, Option<Version>>>,
 }
@@ -421,8 +449,10 @@ impl Registry {
     /// A registry over `packs`, probing versions through `prober`.
     #[must_use]
     pub fn new(packs: Vec<AdapterPack>, prober: Prober) -> Self {
+        let packs: Vec<Arc<AdapterPack>> = packs.into_iter().map(Arc::new).collect();
         Self {
-            packs: packs.into_iter().map(Arc::new).collect(),
+            disabled: vec![None; packs.len()],
+            packs,
             prober,
             versions: Mutex::new(HashMap::new()),
         }
@@ -437,15 +467,47 @@ impl Registry {
     /// Adds one pack. Load order never decides anything (spec v0.3 §1.25).
     #[must_use]
     pub fn with_pack(mut self, pack: AdapterPack) -> Self {
-        self.packs.push(Arc::new(pack));
+        self.add_pack(pack);
+        self
+    }
+
+    /// Adds a pack that is known but may not influence structured output — its process.exec
+    /// grant was denied, or its tier is not trusted yet (spec v0.3 §1.22, §1.56, ADR-0065).
+    #[must_use]
+    pub fn with_disabled_pack(mut self, pack: AdapterPack, reason: &str) -> Self {
+        self.add_disabled_pack(pack, reason);
         self
     }
 
     /// Adds several packs.
     #[must_use]
     pub fn with_packs(mut self, packs: Vec<AdapterPack>) -> Self {
-        self.packs.extend(packs.into_iter().map(Arc::new));
+        for pack in packs {
+            self.add_pack(pack);
+        }
         self
+    }
+
+    /// Adds a pack to a registry the session already holds; a pack of the same id replaces
+    /// the earlier one, so reloading a package never leaves two copies to conflict.
+    pub fn add_pack(&mut self, pack: AdapterPack) {
+        self.forget(pack.id());
+        self.packs.push(Arc::new(pack));
+        self.disabled.push(None);
+    }
+
+    /// Adds a disabled pack, replacing an earlier pack of the same id.
+    pub fn add_disabled_pack(&mut self, pack: AdapterPack, reason: &str) {
+        self.forget(pack.id());
+        self.packs.push(Arc::new(pack));
+        self.disabled.push(Some(reason.to_owned()));
+    }
+
+    fn forget(&mut self, id: &str) {
+        while let Some(index) = self.packs.iter().position(|pack| pack.id() == id) {
+            self.packs.remove(index);
+            self.disabled.remove(index);
+        }
     }
 
     /// The packs, in load order.
@@ -521,8 +583,13 @@ impl Registry {
                 if !adapter.output_demand().contains(&wanted) {
                     continue;
                 }
-                let answer =
-                    self.answer(pack, index, position, adapter, declared, executable, argv);
+                let answer = match &self.disabled[index] {
+                    Some(reason) => Negotiation::Disabled {
+                        adapter: adapter.full_id(),
+                        reason: reason.clone(),
+                    },
+                    None => self.answer(pack, index, position, adapter, declared, executable, argv),
+                };
                 let rank = Ranked {
                     exact_path: declared.contains('/'),
                     specificity: match &answer {

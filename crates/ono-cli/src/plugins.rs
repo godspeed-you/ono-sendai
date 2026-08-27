@@ -99,6 +99,56 @@ pub fn get_plugin(session: &mut Session) -> Eval<ExitStatus> {
 /// The structured refusals of validation and negotiation, exactly as the supervisor raises
 /// them — a denied required capability refuses before the binary ever starts.
 pub fn load_plugin(session: &mut Session, id: &str) -> Eval<ExitStatus> {
+    load_plugin_with(session, id, &LoadOptions::default())
+}
+
+/// What `load plugin` was told besides the package: explicit grants and allowances.
+#[derive(Debug, Default, Clone)]
+pub struct LoadOptions {
+    /// Capabilities granted for this load, `--grant <capability>` (spec §31.18: explicit).
+    pub grants: Vec<String>,
+    /// Whether an experimental adapter pack may influence structured output
+    /// (spec v0.3 §1.56), `--allow-experimental`.
+    pub allow_experimental: bool,
+}
+
+impl LoadOptions {
+    /// Reads the options out of the words after `load plugin`, answering the package id too.
+    #[must_use]
+    pub fn from_words(words: &[String]) -> (Option<String>, Self) {
+        let mut options = Self::default();
+        let mut id = None;
+        let mut iter = words.iter().filter(|word| *word != "plugin");
+        while let Some(word) = iter.next() {
+            match word.as_str() {
+                "--grant" => {
+                    if let Some(capability) = iter.next() {
+                        options.grants.push(capability.clone());
+                    }
+                }
+                "--allow-experimental" => options.allow_experimental = true,
+                other if other.starts_with("--") => {}
+                other => {
+                    if id.is_none() {
+                        id = Some(other.to_owned());
+                    }
+                }
+            }
+        }
+        (id, options)
+    }
+}
+
+/// Runs `load plugin <id> [--grant <capability>] [--allow-experimental]`.
+///
+/// # Errors
+///
+/// The structured refusals of validation and negotiation.
+pub fn load_plugin_with(
+    session: &mut Session,
+    id: &str,
+    options: &LoadOptions,
+) -> Eval<ExitStatus> {
     let (packages, _) = installed(session);
     let Some(package) = packages
         .into_iter()
@@ -113,6 +163,82 @@ pub fn load_plugin(session: &mut Session, id: &str) -> Eval<ExitStatus> {
         ));
     };
 
+    // The policy is default-deny; what the user said on the command line is the only grant
+    // (spec §31.18). A grant takes the scope the manifest asked for, never a wider one.
+    let mut policy = ono_kuang_supervisor::Policy::deny_all();
+    for granted in &options.grants {
+        let capability: ono_kuang_protocol::Capability = granted.parse().map_err(|_| {
+            Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::ResolveTargetNotFound,
+                    format!("`{granted}` is not a capability"),
+                )
+                .with_help("`help capabilities` lists them"),
+            )
+        })?;
+        let scope = package
+            .manifest
+            .required_capabilities
+            .iter()
+            .chain(&package.manifest.optional_capabilities)
+            .find(|request| request.capability == capability)
+            .and_then(|request| request.scope.clone());
+        policy = policy.grant(capability, scope);
+    }
+
+    // A declarative adapter package (spec v0.3 §1.45): packs, no runtime — or packs beside one.
+    let contributes_adapters = package
+        .manifest
+        .contributions
+        .as_ref()
+        .and_then(|contributions| contributions.adapters.as_ref())
+        .is_some_and(|paths| !paths.is_empty());
+    if contributes_adapters {
+        let packs = ono_kuang_supervisor::validate_package(&package.directory, &package.manifest)
+            .map_err(|error| {
+            Flow::Failed(
+                ErrorValue::new(error.code, error.message)
+                    .with_metadata("adapter", ono_value::Value::string(id)),
+            )
+        })?;
+        let granted = policy.grants_capability(ono_kuang_protocol::Capability::ProcessExec);
+        let mut listed = Vec::new();
+        for pack in packs {
+            let ids: Vec<String> = pack
+                .adapters()
+                .iter()
+                .map(ono_adapter::Adapter::full_id)
+                .collect();
+            let held = if !granted {
+                Some("process.exec was not granted (spec v0.3 §1.22)".to_owned())
+            } else if pack.tier() == ono_adapter::Tier::Experimental && !options.allow_experimental
+            {
+                Some(
+                    "the pack is experimental; `--allow-experimental` lets it answer \
+                     (spec v0.3 §1.56)"
+                        .to_owned(),
+                )
+            } else {
+                None
+            };
+            match &held {
+                Some(reason) => {
+                    listed.push(format!("{} [disabled: {reason}]", ids.join(" ")));
+                    session.adapters_mut().add_disabled_pack(pack, reason);
+                }
+                None => {
+                    listed.push(ids.join(" "));
+                    session.adapters_mut().add_pack(pack);
+                }
+            }
+        }
+        if package.manifest.runtime.is_none() {
+            println!("loaded {id} (adapters): {}", listed.join("; "));
+            return Ok(ExitStatus::SUCCESS);
+        }
+        println!("adapters of {id}: {}", listed.join("; "));
+    }
+
     let entry = package
         .manifest
         .runtime
@@ -125,7 +251,8 @@ pub fn load_plugin(session: &mut Session, id: &str) -> Eval<ExitStatus> {
                 format!("`{id}` declares no runtime to load"),
             ))
         })?;
-    let config = LoadConfig::new(entry, package.manifest);
+    let mut config = LoadConfig::new(entry, package.manifest);
+    config.policy = policy;
     let (runtime, _) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,

@@ -111,3 +111,65 @@ impl TestHost {
         Supervisor::load(config).await
     }
 }
+
+/// What the test host found in a declarative adapter package (spec v0.3 §1.45, §2.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdapterPackageReport {
+    /// Everything wrong, in order; empty when the package may be loaded.
+    pub problems: Vec<String>,
+    /// The full ids of the adapters the package contributes.
+    pub adapters: Vec<String>,
+    /// Whether the default-deny policy lets the packs influence structured output: never.
+    pub enabled_by_default: bool,
+    /// Whether an explicit `process.exec` grant would.
+    pub enabled_when_granted: bool,
+}
+
+/// Validates a declarative adapter package as the shell would before loading it: manifest,
+/// packs against the contract and their fixtures, the executables scope, and the policy.
+#[must_use]
+pub fn check_adapter_package(directory: &std::path::Path) -> AdapterPackageReport {
+    let mut report = AdapterPackageReport {
+        problems: Vec::new(),
+        adapters: Vec::new(),
+        enabled_by_default: false,
+        enabled_when_granted: false,
+    };
+    let manifest = match std::fs::read_to_string(directory.join("manifest.yaml"))
+        .map_err(|error| error.to_string())
+        .and_then(|text| Manifest::parse(&text).map_err(|error| error.to_string()))
+    {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            report.problems.push(format!("manifest.yaml: {error}"));
+            return report;
+        }
+    };
+    match ono_kuang_supervisor::validate_package(directory, &manifest) {
+        Ok(packs) => {
+            for pack in &packs {
+                report
+                    .adapters
+                    .extend(pack.adapters().iter().map(ono_adapter::Adapter::full_id));
+            }
+            let requested = manifest
+                .required_capabilities
+                .iter()
+                .chain(&manifest.optional_capabilities)
+                .any(|request| request.capability == Capability::ProcessExec);
+            report.enabled_by_default =
+                Policy::deny_all().grants_capability(Capability::ProcessExec);
+            report.enabled_when_granted = requested
+                && packs
+                    .iter()
+                    .all(|pack| pack.tier() == ono_adapter::Tier::Community);
+            if !requested {
+                report.problems.push(
+                    "the package requests no process.exec, so nothing could ever run".to_owned(),
+                );
+            }
+        }
+        Err(error) => report.problems.push(error.message),
+    }
+    report
+}

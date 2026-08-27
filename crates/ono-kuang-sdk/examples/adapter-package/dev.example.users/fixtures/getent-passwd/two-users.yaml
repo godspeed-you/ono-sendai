@@ -1,0 +1,7 @@
+invocation: [getent, passwd]
+tool_version: "2.36"
+distro: debian
+expect:
+  records:
+    - {uid: 0, name: root, primary_group: 0, home: /root, shell: /bin/bash, gecos: root}
+    - {uid: 1000, name: case, primary_group: 1000, home: /home/case, shell: /usr/local/bin/ono, gecos: ""}

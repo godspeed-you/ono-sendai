@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+ono-adapter.workspace = true
 ono-core.workspace = true
 ono-kuang-protocol.workspace = true
 ono-value.workspace = true

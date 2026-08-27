@@ -438,7 +438,7 @@ kuang_capabilities:
     summary: Execute an external program.
     risk: mutate
     elevation: conditional
-    scopes: [programs]
+    scopes: [programs, executables, argv_policy]
   - id: filesystem.read
     summary: Read files and directories.
     risk: read

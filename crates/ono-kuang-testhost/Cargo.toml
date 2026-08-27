@@ -9,9 +9,13 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+ono-adapter.workspace = true
 ono-kuang-protocol.workspace = true
 ono-kuang-supervisor.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
 
 [lints]
 workspace = true

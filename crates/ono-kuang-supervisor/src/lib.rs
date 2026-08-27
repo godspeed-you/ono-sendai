@@ -23,12 +23,14 @@
 //! real `CommandRegistry`/`TargetRegistry` with origin `plugin(...)` (spec §31.64) is the
 //! shell's integration step.
 
+mod adapters;
 mod negotiate;
 mod policy;
 mod state;
 mod supervisor;
 mod trail;
 
+pub use adapters::{AdapterPackageError, declared_executables, validate_package};
 pub use negotiate::{HostLimits, negotiate};
 pub use policy::{DenialSource, Evaluation, Grant, Policy, ScopeUse, denial_error};
 pub use state::StateStore;

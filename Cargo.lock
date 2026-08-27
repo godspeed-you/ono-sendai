@@ -715,6 +715,7 @@ version = "0.2.0"
 dependencies = [
  "globset",
  "jiff",
+ "ono-adapter",
  "ono-core",
  "ono-kuang-protocol",
  "ono-value",
@@ -728,8 +729,10 @@ dependencies = [
 name = "ono-kuang-testhost"
 version = "0.2.0"
 dependencies = [
+ "ono-adapter",
  "ono-kuang-protocol",
  "ono-kuang-supervisor",
+ "ono-testkit",
  "serde_json",
 ]
 

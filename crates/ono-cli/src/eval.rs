@@ -409,14 +409,13 @@ fn run_stage_list(
             crate::context::Request::GetLink => crate::context::get_link(session),
             crate::context::Request::GetPlugin => crate::plugins::get_plugin(session),
             crate::context::Request::LoadPlugin => {
-                let words = stage_arguments(session, stage, source)?;
-                let id = words
+                let words: Vec<String> = stage_arguments(session, stage, source)?
                     .iter()
-                    .map(|word| word.to_string_lossy())
-                    .find(|word| word != "plugin" && !word.starts_with("--"))
-                    .map(|word| word.into_owned());
+                    .map(|word| word.to_string_lossy().into_owned())
+                    .collect();
+                let (id, options) = crate::plugins::LoadOptions::from_words(&words);
                 match id {
-                    Some(id) => crate::plugins::load_plugin(session, &id),
+                    Some(id) => crate::plugins::load_plugin_with(session, &id, &options),
                     None => Err(Flow::Failed(
                         ErrorValue::new(
                             ErrorCode::ResolveTargetNotFound,

@@ -140,6 +140,21 @@ families:
         doc: >-
           Absolute paths of the programs that may be started, resolved before exec so a `PATH`
           shadow cannot substitute another binary (ADR-0015 T11).
+      executables:
+        type: id-list
+        enforcement: broker
+        doc: >-
+          For an adapter package (spec v0.3 §1.22): the program names or absolute paths its
+          adapter contracts may run, each resolved on the user's `PATH` and pinned per plan.
+          Every executable an adapter names must be in this list, or the package does not load
+          (ADR-0065).
+      argv_policy:
+        type: name-list
+        enforcement: broker
+        doc: >-
+          For an adapter package: `declared-invocations-only` — the package may run exactly the
+          argv its invocation plans produce, never `sh -c`, never a concatenated string
+          (spec v0.3 §1.22). The only policy there is.
         caveat: >-
           The scope bounds *what is started*, not what the started program then does. A program
           outside the component sandbox has the user's own authority, which is why this

@@ -153,7 +153,11 @@ capabilities! {
         [broker("signals", ScopeKind::SignalList), broker("selector", ScopeKind::Predicate)],
         "Delivering the listed signals to processes matching the selector.";
     ProcessExec => "process.exec", Mutate, Conditional,
-        [broker("programs", ScopeKind::PathGlob)],
+        [
+            broker("programs", ScopeKind::PathGlob),
+            broker("executables", ScopeKind::IdList),
+            broker("argv_policy", ScopeKind::NameList)
+        ],
         "Starting an external program through the host, with its stdio brokered.";
     FilesystemRead => "filesystem.read", Read, Conditional,
         [broker("paths", ScopeKind::PathGlob)],

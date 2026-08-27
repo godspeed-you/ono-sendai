@@ -1,0 +1,54 @@
+# The users pack: `getent passwd` is a colon-separated field protocol the name service
+# documents — tier B — into the canonical User schema.
+format: ono-adapter-pack/1
+package:
+  id: dev.example.users
+  name: users
+  version: 0.1.0
+  publisher: dev.example
+  tier: community
+roles: [adapter]
+capabilities:
+  process.exec:
+    executables: [getent]
+    argv_policy: declared-invocations-only
+
+adapters:
+  - id: getent-passwd
+    summary: Accounts as `ono.user/1` records, from `getent passwd`.
+    executable:
+      names: [getent]
+      versions: any
+    tier: B
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.user/1
+    decoder:
+      kind: lines
+      field_separator: ":"
+      record_separator: "\n"
+      columns: [name, password, uid, gid, gecos, home, shell]
+    fields:
+      uid: {from: uid}
+      name: {from: name}
+      primary_group: {from: gid}
+      home: {from: home}
+      shell: {from: shell}
+      gecos: {from: gecos}
+    invocations:
+      - id: passwd
+        summary: "getent passwd [name|uid …]"
+        match:
+          words: [[passwd]]
+          flags:
+            allow: []
+            allow_with_value: []
+          positionals: allow
+        plan:
+          argv: [getent, passwd]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "Only the `passwd` database is adapted; `group`, `hosts`, `services` and the rest run raw."
+    fixtures: fixtures/getent-passwd

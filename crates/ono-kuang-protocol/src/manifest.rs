@@ -218,6 +218,8 @@ pub struct ContributionPaths {
     pub annotations: Option<Vec<String>>,
     /// Assistant tool descriptors (spec §31.46).
     pub tools: Option<Vec<String>>,
+    /// Adapter packs in the `ono-adapter-pack/1` format (spec v0.3 §1.44, ADR-0065).
+    pub adapters: Option<Vec<String>>,
 }
 
 /// The `dependencies` section (spec §31.30). Composition stays protocol-mediated.
@@ -356,6 +358,7 @@ impl Manifest {
                 relations: raw.relations,
                 annotations: raw.annotations,
                 tools: raw.tools,
+                adapters: raw.adapters,
             }),
             dependencies: raw.dependencies.map(|raw| Dependencies {
                 packages: raw.packages,
@@ -514,6 +517,8 @@ struct RawContributions {
     annotations: Option<Vec<String>>,
     #[serde(default)]
     tools: Option<Vec<String>>,
+    #[serde(default)]
+    adapters: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]

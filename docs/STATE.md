@@ -93,11 +93,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 14 — `ADAPT-008` KUANG/11: `process.exec` with
-  `executables` and `argv_policy` in the capability contracts, `roles: [adapter]` and
-  `adapters:` in the package manifest, adapter packs loaded from packages under the broker,
-  the test host's adapter conformance, packs and trust tiers — files: `docs/spec/kuang/`,
-  `docs/spec/capabilities.yaml`, `crates/ono-kuang-*/`, `crates/ono-cli/src/plugins.rs`
+- [claude | 2026-08-27] v0.3 tranche, step 15 — `ADAPT-011` remote negotiation: an adapted
+  command inside a link frame runs on the remote side, provenance carries the host, a host
+  without the tool degrades to raw — files: `crates/ono-remote/`, `crates/ono-cli/src/native.rs`
 
 ---
 
@@ -380,6 +378,10 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] v0.3 step 13 — the `adapt` keyword of §1.18 (E0911 when nothing answers) and
   COMPAT-CURL: `ono.http-exchange/1`, the `curl-exchange-v1` decoder with the body kept as
   exact bytes, secrets never adapting (ADR-0064) — case 082
+- [x] v0.3 step 14 — ADAPT-008: `contributions.adapters`, the `executables`/`argv_policy`
+  scope of `process.exec`, packs loaded disabled under default deny and enabled by
+  `--grant process.exec` (experimental packs by `--allow-experimental` besides), the test
+  host's `check_adapter_package`, the SDK's example package (ADR-0065) — case 083
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

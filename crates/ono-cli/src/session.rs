@@ -360,6 +360,14 @@ impl Session {
             .map(|frame| frame.frame.target().to_owned())
     }
 
+    /// The adapter registry, to add a package's packs to (spec v0.3 §1.26).
+    pub fn adapters_mut(&mut self) -> &mut ono_adapter::Registry {
+        let _ = self.adapters();
+        self.adapters
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("just constructed"))
+    }
+
     /// Both registries a plan consults, borrowed together.
     pub fn registries(&mut self) -> (&ProviderRegistry, &ono_adapter::Registry) {
         let _ = self.providers();

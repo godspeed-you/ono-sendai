@@ -1,0 +1,26 @@
+# v0.3 §1.22, §1.26, §1.44–§1.45, §1.56, §2.3 (ADAPT-008): a third-party KUANG/11 package ships
+# a declarative adapter — no runtime component, one contract, one scoped process.exec request
+# — and the broker decides whether it may influence structured output: denied by default,
+# granted explicitly, never beyond its declared executables. The SDK's example package is the
+# package under test.
+case: a KUANG/11 package adapts getent under the broker, denied by default, granted explicitly
+timeout: 120
+run: |
+  home=$(mktemp -d); cp -r /opt/ono-examples/adapter-package/dev.example.users "$home/"
+  export ONO_PLUGIN_PATH="$home"
+  echo "== installed =="
+  ono -c 'get plugin'
+  echo "== default deny: known, disabled, raw still works =="
+  ono -c 'load plugin dev.example.users; getent passwd root | where uid == 0' 2>&1 | grep -c 'Ono-Sendai-E0902'
+  ono -c 'load plugin dev.example.users; getent passwd root | grep -c root'
+  echo "== granted: User records with provenance =="
+  ono -c 'load plugin dev.example.users --grant process.exec; getent passwd root | select uid name home shell | to json'
+  ono -c 'load plugin dev.example.users --grant process.exec; getent passwd | where uid == 1000 | select name | to json'
+  ono -c 'load plugin dev.example.users --grant process.exec; getent passwd root | inspect | to json' | grep -F 'adapter:dev.example.users.getent-passwd'
+  ono -c 'load plugin dev.example.users --grant process.exec; explain getent passwd | where uid == 0' | grep -F 'adapted by dev.example.users.getent-passwd'
+  echo "== the grant bounds what may run =="
+  sed -i 's/executables: \[getent\]/executables: [id]/' "$home/dev.example.users/manifest.yaml"
+  ono -c 'load plugin dev.example.users --grant process.exec' 2>&1 | grep -c 'Ono-Sendai-E0909'
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

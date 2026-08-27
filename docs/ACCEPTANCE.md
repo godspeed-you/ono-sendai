@@ -368,20 +368,31 @@ release line again.
       fixtures for its output families (basic, empty, truncated, not-JSON, newer fields, wrong
       type) — `ono-adapter/tests/conformance.rs` (including a deliberately wrong sidecar that
       must be reported), `xtask/src/contracts.rs`.
-- [ ] **ADAPT-008 — capability mapping.** `process.exec` with `executables` and
+- [x] **ADAPT-008 — capability mapping.** `process.exec` with `executables` and
       `argv_policy: declared-invocations-only` exists in `docs/spec/capabilities.yaml` and
-      `docs/spec/kuang/`, `roles: [adapter]` and `adapters:` are part of the manifest contract,
-      adapters run under the broker with default-deny, and no adapter can spawn outside its
-      declared set (v0.3 §1.22, §1.26, §2.3). Exit test: a conformance case where an adapter
-      package with an undeclared executable is refused.
-- [ ] **Adapter SDK and test host.** A third-party package can ship a declarative adapter
-      (`ono-kuang-sdk`), and the test host validates it — manifest, fixtures, capability denial,
-      malformed output — before it is loaded (v0.3 §1.45, §2.3). Exit test: an example adapter
-      package built by the SDK passing the test host and running in the container.
-- [ ] **Packs and trust.** First-party adapters are bundled; the package metadata distinguishes
-      first-party / recommended / community / experimental, and the trust policy of v0.3 §1.56
-      is applied before an adapter can influence structured output. Exit test: a trust-policy
-      case per tier.
+      `docs/spec/kuang/capabilities.v1.yaml`, `roles: [adapter]` and `contributions.adapters`
+      are part of the manifest contract, packs load under the default-deny broker as disabled
+      until `--grant process.exec`, and no adapter can spawn outside its declared set
+      (v0.3 §1.22, §1.26, §2.3, ADR-0065) — `ono-kuang-protocol/tests/manifest_validation.rs`,
+      `ono-adapter/tests/negotiation.rs` (`Disabled` → E0902), `ono-cli/tests/plugins.rs`
+      (`should_refuse_a_package_whose_adapter_runs_something_its_grant_does_not_name` → E0909),
+      case `083`.
+- [x] **Adapter SDK and test host.** A third-party package ships a declarative adapter with no
+      runtime component (`crates/ono-kuang-sdk/examples/adapter-package/dev.example.users`,
+      `getent passwd` → `ono.user/1`), and `ono_kuang_testhost::check_adapter_package` validates
+      it — manifest, packs, fixtures (including the malformed families), the executables scope,
+      what default deny and an explicit grant do — before it is loaded (v0.3 §1.45, §2.3,
+      ADR-0065) — `ono-kuang-testhost/tests/adapter_package.rs`, `ono-cli/tests/plugins.rs`,
+      case `083` (the example package installed and run in the container).
+- [x] **Packs and trust.** First-party adapters are bundled (`ono_adapter::first_party`, only
+      `org.ono.compat.*` may claim the tier); a package's packs are `community` or
+      `experimental`; a community pack answers once `process.exec` is granted, an experimental
+      pack only with `--allow-experimental` besides, and a pack claiming first-party or
+      recommended for itself does not load (v0.3 §1.27, §1.56, ADR-0065) —
+      `ono-adapter/tests/contracts.rs` (the first-party namespace), `ono-cli/tests/plugins.rs`
+      (`should_keep_an_experimental_pack_out_of_structured_output_unless_allowed`,
+      `should_adapt_through_a_third_party_pack_once_its_grant_is_explicit`),
+      `ono-kuang-supervisor::validate_package` (the tier rule), case `083`.
 
 #### 4.6.3 Compatibility program (v0.3 §2.5, §1.30, §1.31, COMPAT-*)
 

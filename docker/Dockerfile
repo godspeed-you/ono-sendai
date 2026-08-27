@@ -42,6 +42,7 @@ COPY --from=builder /usr/local/bin/kuang-example-plugin /usr/local/bin/kuang-exa
 # A non-root user, so privilege boundaries are exercised the way real users meet them.
 RUN useradd --create-home --shell /usr/local/bin/ono case
 COPY docker/acceptance/fixtures /opt/ono-fixtures
+COPY crates/ono-kuang-sdk/examples /opt/ono-examples
 RUN chown -R case:case /opt/ono-fixtures
 
 USER case

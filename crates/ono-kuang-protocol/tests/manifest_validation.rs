@@ -199,3 +199,48 @@ fn should_refuse_destinations_that_contradict_outbound_none() {
     let error = Manifest::parse(&manifest).unwrap_err();
     assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
 }
+
+#[test]
+fn should_carry_adapter_packs_and_the_executables_scope_of_an_adapter_package() {
+    // Spec v0.3 §1.22, §1.44: an adapter package declares its packs under contributions and a
+    // process.exec scope of executables with the declared-invocations-only policy (ADR-0065).
+    let manifest = r#"
+format: kuang-package/1
+package:
+  id: dev.example.users
+  name: users
+  version: 0.1.0
+  description: Accounts as User records.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.1 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64]
+roles: [adapter]
+capabilities:
+  optional:
+    - process.exec:
+        executables: [getent]
+        argv_policy: declared-invocations-only
+network:
+  outbound: none
+contributions:
+  adapters: [adapters.yaml]
+"#;
+    let parsed = Manifest::parse(manifest).expect("an adapter package without a runtime is valid");
+    assert_eq!(
+        parsed
+            .contributions
+            .as_ref()
+            .and_then(|c| c.adapters.clone()),
+        Some(vec!["adapters.yaml".to_owned()])
+    );
+    let exec = parsed
+        .optional_capabilities
+        .iter()
+        .find(|request| request.capability == Capability::ProcessExec)
+        .expect("process.exec is requested");
+    let scope = exec.scope.as_ref().expect("scoped");
+    assert!(scope.contains_key("executables") && scope.contains_key("argv_policy"));
+}

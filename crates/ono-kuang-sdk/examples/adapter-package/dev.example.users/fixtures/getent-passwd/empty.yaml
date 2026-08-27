@@ -1,0 +1,5 @@
+invocation: [getent, passwd, nonesuch]
+tool_version: "2.36"
+distro: debian
+expect:
+  records: []

@@ -1,0 +1,25 @@
+# A declarative KUANG/11 adapter package (spec v0.3 §1.26, §1.44, §1.45): no runtime
+# component, one adapter contract, one scoped capability. The example the SDK ships and the
+# test host validates (ADR-0065).
+format: kuang-package/1
+package:
+  id: dev.example.users
+  name: users
+  version: 0.1.0
+  description: Accounts from the name service, as User records.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.1 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64, linux-arm64]
+roles: [adapter]
+capabilities:
+  optional:
+    - process.exec:
+        executables: [getent]
+        argv_policy: declared-invocations-only
+network:
+  outbound: none
+contributions:
+  adapters: [adapters.yaml]

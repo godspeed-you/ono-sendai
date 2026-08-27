@@ -1,0 +1,2 @@
+root:x:0:0:root:/root:/bin/bash
+case:x:1000:1000::/home/case:/usr/local/bin/ono

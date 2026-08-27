@@ -256,9 +256,16 @@ fn should_resolve_two_adapters_claiming_one_invocation_the_same_way_every_time()
 fn should_report_a_conflict_when_one_adapter_is_installed_twice() {
     let dir = scratch();
     let lsblk = executable(&dir, "lsblk");
-    let twice = registry("2.41.3")
-        .0
-        .with_pack(AdapterPack::parse(UTIL_LINUX).unwrap());
+    // Adding a pack replaces an earlier one of the same id (ADR-0065), so the only way to hold
+    // two copies is to construct the registry with both — which is what a duplicated install
+    // directory amounts to.
+    let twice = Registry::new(
+        vec![
+            AdapterPack::parse(UTIL_LINUX).unwrap(),
+            AdapterPack::parse(UTIL_LINUX).unwrap(),
+        ],
+        Box::new(|_, _| Some("util-linux 2.41.3".into())),
+    );
     match twice.negotiate(&lsblk, &argv(&["lsblk"]), &structured()) {
         Negotiation::Conflict { candidates } => {
             assert_eq!(candidates.len(), 2);
@@ -438,5 +445,39 @@ fn should_decompose_combined_short_flags_where_the_contract_allows_it() {
             Negotiation::IncompatibleVersion { .. }
         ),
         "spec v0.3 §1.9 tier C: a version outside the pinned range is refused"
+    );
+}
+
+#[test]
+fn should_hold_a_disabled_pack_back_from_structured_output() {
+    // A pack whose process.exec grant was denied is registered disabled (spec v0.3 §1.22,
+    // ADR-0065): its adapters answer `adapter.disabled` under a structured demand and let the
+    // program run raw otherwise.
+    let dir = scratch();
+    let lsblk = executable(&dir, "lsblk");
+    let pack = AdapterPack::parse(UTIL_LINUX).unwrap();
+    let registry = Registry::new(
+        Vec::new(),
+        Box::new(|_, _| Some("util-linux 2.41.3".into())),
+    )
+    .with_disabled_pack(pack, "process.exec was not granted");
+    let negotiation = registry.negotiate(&lsblk, &argv(&["lsblk"]), &structured());
+    assert!(
+        matches!(&negotiation, Negotiation::Disabled { adapter, reason }
+        if adapter == "org.ono.compat.util-linux.lsblk" && reason.contains("process.exec")),
+        "got {negotiation:?}"
+    );
+    let error = negotiation
+        .refusal(&structured(), &lsblk, &argv(&["lsblk"]))
+        .expect("a structured demand cannot be met");
+    assert_eq!(error.code().name(), "adapter.disabled");
+    assert!(
+        negotiation.runs_raw(&OutputDemand::Interactive),
+        "at the terminal the program is itself"
+    );
+    assert!(
+        negotiation
+            .describe(&OutputDemand::Interactive)
+            .starts_with("raw (adapter disabled")
     );
 }
