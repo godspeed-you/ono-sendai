@@ -619,13 +619,16 @@ fn should_adapt_ss_with_combined_flags_or_say_why_not() {
         "typed sockets, got {:?}",
         run.stdout()
     );
-    let raw = ono("ss -tln | grep -c LISTEN");
+    // The header line is ss's own text and does not change between two invocations; a count of
+    // LISTEN rows does whenever another test opens a listener at the same time.
+    let raw = ono("ss -tln | head -1");
     raw.assert_success();
-    let bytes = ono("raw ss -tln | grep -c LISTEN");
-    assert_eq!(
+    let bytes = ono("raw ss -tln | head -1");
+    assert!(
+        raw.stdout().contains("State") && raw.stdout() == bytes.stdout(),
+        "bytes downstream keep ss's own output, got {:?} vs {:?}",
         raw.stdout(),
-        bytes.stdout(),
-        "bytes downstream keep ss's own output"
+        bytes.stdout()
     );
 }
 
