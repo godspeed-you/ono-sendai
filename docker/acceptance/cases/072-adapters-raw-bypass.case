@@ -1,0 +1,17 @@
+# v0.3 §1.17 (ADAPT-003): one concise raw path exists and is guaranteed. `raw <program> …` runs
+# the program with no argv rewrite, no decoder, no Ono renderer and its own exit status — and is
+# byte-identical to what bash produces for the same line, both at a pipe and at a terminal.
+case: raw runs a program with nothing between it and the terminal
+run: |
+  ono -c "raw printf '%s|%s\n' a-b --flag=1" > /tmp/ono.out
+  bash -c "printf '%s|%s\n' a-b --flag=1" > /tmp/bash.out
+  cmp /tmp/ono.out /tmp/bash.out && echo bytes=identical
+  ono -c 'raw ps -o pid=,comm= -p 1' > /tmp/ono.ps
+  bash -c 'ps -o pid=,comm= -p 1' > /tmp/bash.ps
+  cmp /tmp/ono.ps /tmp/bash.ps && echo ps=identical
+  ono -c "raw sh -c 'exit 3'"; echo "status=$?"
+  ono -c 'raw get process' 2>&1 | grep -c Ono-Sendai-E0101
+  ono -c 'explain raw ps aux | where cpu > 20' | grep -F 'adaptation   bypassed'
+  ono -c 'help raw' | grep -c raw
+exit: 0
+stdout-contains: status=3

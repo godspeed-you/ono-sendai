@@ -56,6 +56,8 @@ pub struct StagePlan {
     demand: Option<(OutputDemand, String)>,
     /// The input type the contract declares, before the upstream type was threaded in.
     declared_input: Option<String>,
+    /// Whether the stage is `raw <program>`, which bypasses adaptation (spec v0.3 §1.17).
+    raw: bool,
 }
 
 impl StagePlan {
@@ -146,6 +148,12 @@ impl StagePlan {
         &self.notes
     }
 
+    /// Whether the stage bypasses adaptation with the `raw` keyword (spec v0.3 §1.17).
+    #[must_use]
+    pub fn is_raw(&self) -> bool {
+        self.raw
+    }
+
     /// What the stage's stdout is asked to carry, for a stage that is a child process.
     ///
     /// Decided backwards from the consumer (spec v0.3 §1.4): a native command over objects asks
@@ -220,6 +228,13 @@ impl StagePlan {
         }
         row(into, "input", &self.input);
         row(into, "output", &self.output);
+        if self.raw {
+            row(
+                into,
+                "adaptation",
+                &format!("bypassed (`{}`, spec v0.3 §1.17)", ono_adapter::RAW),
+            );
+        }
         if let Some((demand, reason)) = &self.demand {
             row(into, "demand", &format!("{demand} ({reason})"));
         }
@@ -374,6 +389,13 @@ fn plan_demands(stages: &mut [StagePlan], list: &StageList, stdout: Stdout) {
         if !matches!(stages[index].resolution, Resolution::External { .. }) {
             continue;
         }
+        if stages[index].raw {
+            stages[index].demand = Some((
+                OutputDemand::RawBytes,
+                format!("`{}` bypasses adaptation", ono_adapter::RAW),
+            ));
+            continue;
+        }
         let redirected = list.stages.get(index).and_then(stdout_redirection);
         let (demand, reason) = match redirected {
             Some(Redirected::File(path)) => (
@@ -478,8 +500,37 @@ fn plan_stage(
             notes: vec!["the stage's head is a value, not a command".to_owned()],
             demand: None,
             declared_input: None,
+            raw: false,
         };
     };
+
+    if is_raw(stage) {
+        let program = raw_program(stage).unwrap_or(ono_adapter::RAW);
+        return StagePlan {
+            ordinal,
+            source: text,
+            resolution: Resolution::External {
+                head: program.to_owned(),
+            },
+            provider: None,
+            capability: None,
+            input: upstream.map_or_else(|| "bytes".to_owned(), |io| io.text().to_owned()),
+            output: "bytes".to_owned(),
+            element_schema: None,
+            streaming: true,
+            privilege: None,
+            risk: None,
+            fields,
+            notes: vec![
+                "the program on PATH, run with no argv rewrite, no decoder and no renderer \
+                 (spec v0.3 §1.17, ADR-0054)"
+                    .to_owned(),
+            ],
+            demand: None,
+            declared_input: None,
+            raw: true,
+        };
+    }
 
     let Ok(resolved) = registry.resolve(head, &stage.arguments) else {
         return StagePlan {
@@ -504,6 +555,7 @@ fn plan_stage(
             ],
             demand: None,
             declared_input: None,
+            raw: false,
         };
     };
 
@@ -574,6 +626,28 @@ fn plan_stage(
         notes,
         demand: None,
         declared_input: Some(contract.input().text().to_owned()),
+        raw: false,
+    }
+}
+
+/// Whether `stage` is `raw <program> …`, the bypass of spec v0.3 §1.17.
+///
+/// The keyword is a bare, unqualified head: `exec:raw` is a program called `raw`.
+#[must_use]
+pub fn is_raw(stage: &Stage) -> bool {
+    matches!(&stage.head, ono_parser::StageHead::Command(name)
+        if name.namespace.is_none() && name.name == ono_adapter::RAW)
+}
+
+/// The program word behind `raw`, when the stage is a `raw` stage and names one.
+#[must_use]
+pub fn raw_program(stage: &Stage) -> Option<&str> {
+    if !is_raw(stage) {
+        return None;
+    }
+    match stage.arguments.first() {
+        Some(Argument::Word(word)) => Some(&word.text),
+        _ => None,
     }
 }
 

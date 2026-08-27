@@ -263,11 +263,16 @@ release line again.
       (the plan), `ono-cli/tests/builtins.rs` (the rendering), cases `070` (at a pipe: structure
       for `where`, bytes for `grep`, bytes for a file, discard for `/dev/null`, the schema for
       `stop process`) and `071` (interactive at a PTY).
-- [ ] **ADAPT-003 — the raw path is guaranteed.** One spelling runs any external command with
-      byte semantics untouched no matter which adapters are installed (v0.3 §1.17), it is
-      documented in `help`, and byte semantics are preserved by default for every consumer that
-      is not an explicit structured demand (§1.2, §2.1). Exit test: an acceptance case proving
-      the raw spelling and `ps aux | grep` are byte-identical with and without adapters.
+- [x] **ADAPT-003 — the raw path is guaranteed.** `raw <program> …` runs any external command
+      with byte semantics untouched no matter which adapters are installed (v0.3 §1.17), it is
+      documented in `help raw`, and byte semantics are preserved by default for every consumer
+      that is not an explicit structured demand (§1.2, §2.1) — ADR-0054;
+      `ono-cli/tests/external.rs` (argv as typed, exit status, verbatim bytes at a PTY, no
+      native resolution, the program even where structure arrives),
+      `ono-cli/tests/builtins.rs` (`explain` shows the bypass, `help raw`), case `072`
+      (byte-identical to bash for `printf` and `ps` at a pipe, status 3 passes through).
+      The "with adapters installed" half of the guarantee is re-proven by every tool case of
+      §4.6.3, each of which runs its raw form beside its structured form.
 - [ ] **ADAPT-002 — deterministic registry and conflict resolution.** Adapters are resolved by
       executable identity, invocation and demand in a documented, deterministic order
       (v0.3 §1.24, §1.25); two adapters claiming one invocation resolve the same way on every

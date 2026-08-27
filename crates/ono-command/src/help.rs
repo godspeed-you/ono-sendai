@@ -632,6 +632,7 @@ fn overview(registry: &CommandRegistry) -> TopicHelp {
             "help capabilities      what a provider must be allowed to do".to_owned(),
             "help commands          every stable command".to_owned(),
             "help get process       one command in full".to_owned(),
+            "help raw               the escape hatch that bypasses adaptation".to_owned(),
         ],
     }
 }
@@ -683,6 +684,29 @@ fn builtin_topic(registry: &CommandRegistry, topic: &str) -> Option<TopicHelp> {
             summary: "Every command whose id and semantics are a compatibility promise.".to_owned(),
             entries: summaries(registry.with_stability(crate::contract::Stability::Stable)),
             see_also: vec!["help <command>         one command in full".to_owned()],
+        },
+        "raw" => TopicHelp {
+            name: "raw".to_owned(),
+            summary: "Run a program with nothing between it and the terminal (spec v0.3 §1.17)."
+                .to_owned(),
+            entries: vec![
+                (
+                    "raw <program> [arguments]".to_owned(),
+                    "the program on PATH, as typed: no argv rewrite, no decoder, no Ono \
+                     renderer, stdout and stderr as ordinary streams, its own exit status. The \
+                     guaranteed escape hatch when an adapter would otherwise adapt the command."
+                        .to_owned(),
+                ),
+                (
+                    "exec:<program> [arguments]".to_owned(),
+                    "the program rather than a native command of the same name; adaptation \
+                     still follows what the pipeline demands (ADR-0011, ADR-0054)."
+                        .to_owned(),
+                ),
+            ],
+            see_also: vec![
+                "explain raw <program>  the plan, with adaptation shown as bypassed".to_owned(),
+            ],
         },
         _ => return None,
     };

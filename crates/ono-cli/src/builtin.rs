@@ -382,7 +382,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     // half of the answer the plan cannot give (ADR-0011 T11: a shadowing binary is only
     // defensible if the shell will say which one it picked).
     for stage in &pipeline.head.stages {
-        let Some(name) = stage.head.name() else {
+        let Some(name) = ono_command::raw_program(stage).or_else(|| stage.head.name()) else {
             continue;
         };
         // A head the registry knows as a verb or as a command id is native, and the plan above

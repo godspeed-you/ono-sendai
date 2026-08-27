@@ -192,3 +192,38 @@ fn should_report_what_each_external_stage_is_asked_to_produce() {
         discarded.stdout()
     );
 }
+
+#[test]
+fn should_explain_that_raw_bypasses_adaptation() {
+    // Spec v0.3 §1.17: the bypass is inspectable like everything else. The plan names the
+    // program, says adaptation is bypassed, and the demand row shows bytes regardless of the
+    // consumer.
+    let run = Shell::new()
+        .args(["-c", "explain raw ps aux | where cpu > 20"])
+        .run();
+    run.assert_success();
+    let text = run.stdout();
+    assert!(
+        text.contains("adaptation   bypassed (`raw`, spec v0.3 §1.17)"),
+        "got {text:?}"
+    );
+    assert!(
+        text.contains("demand       bytes (`raw` bypasses adaptation)"),
+        "got {text:?}"
+    );
+    assert!(
+        text.contains("`ps` is an external program and resolves to"),
+        "the program behind `raw` is the one that is resolved, got {text:?}"
+    );
+}
+
+#[test]
+fn should_document_raw_in_help() {
+    let run = Shell::new().args(["-c", "help raw"]).run();
+    run.assert_success();
+    assert!(
+        run.stdout().contains("raw") && run.stdout().contains("adapt"),
+        "spec v0.3 §1.17: the escape hatch is documented where the rest is, got {:?}",
+        run.stdout()
+    );
+}

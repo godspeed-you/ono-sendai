@@ -707,6 +707,33 @@ fn build_command(session: &mut Session, stage: &Stage, source: &str) -> Eval<Com
         )));
     };
 
+    // `raw <program> …` runs the program on PATH and nothing else, with the arguments exactly as
+    // typed (spec v0.3 §1.17, ADR-0054). The keyword wins over a program called `raw`, as
+    // `explain` does; `exec:raw` reaches such a program.
+    if name.namespace.is_none() && name.name == ono_adapter::RAW {
+        let mut arguments = stage_arguments(session, stage, source)?;
+        if arguments.is_empty() {
+            return Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::ResolveCommandNotFound,
+                    "`raw` needs a program to run",
+                )
+                .with_help(
+                    "`raw <program> [arguments]` runs the program with nothing between it and \
+                     the terminal: no argv rewrite, no decoder, no renderer (spec v0.3 §1.17)",
+                ),
+            ));
+        }
+        let program = arguments.remove(0).to_string_lossy().into_owned();
+        let resolution =
+            resolve::resolve(session, Namespace::External, &program).map_err(|error| {
+                Flow::Failed(error.with_help(format!(
+                    "`raw` runs programs only; `{program}` is not one on PATH"
+                )))
+            })?;
+        return assemble_command(session, &resolution, arguments, stage, source);
+    }
+
     let namespace = Namespace::from_prefix(name.namespace.as_deref()).ok_or_else(|| {
         Flow::Failed(
             ErrorValue::new(
@@ -741,8 +768,17 @@ fn build_command(session: &mut Session, stage: &Stage, source: &str) -> Eval<Com
     })?;
 
     let arguments = stage_arguments(session, stage, source)?;
+    assemble_command(session, &resolution, arguments, stage, source)
+}
 
-    let mut command = Command::new(resolve::program_of(&resolution))
+fn assemble_command(
+    session: &mut Session,
+    resolution: &resolve::Resolution,
+    arguments: Vec<OsString>,
+    stage: &Stage,
+    source: &str,
+) -> Eval<Command> {
+    let mut command = Command::new(resolve::program_of(resolution))
         .args(arguments)
         .current_dir(session.cwd())
         .env_clear();

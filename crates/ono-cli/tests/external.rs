@@ -245,3 +245,99 @@ fn should_report_a_write_that_the_system_refused_rather_than_reporting_success()
         run.stderr()
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// The raw bypass (spec v0.3 §1.17, ADR-0054): `raw <program> …` runs the program with nothing
+// between it and the terminal — no argv rewrite, no decoder, no renderer, its own exit status.
+
+#[test]
+fn should_run_the_program_exactly_as_typed_under_raw() {
+    let run = ono("raw printf '%s|%s\\n' a-b --flag=1");
+    run.assert_success();
+    assert_eq!(run.stdout(), "a-b|--flag=1\n");
+}
+
+#[test]
+fn should_pass_the_programs_exit_status_through_under_raw() {
+    assert_eq!(ono("raw sh -c 'exit 3'").status().code(), 3);
+}
+
+#[test]
+fn should_keep_bytes_verbatim_at_a_terminal_under_raw() {
+    // At a terminal a high-confidence adapter may render (spec v0.3 §1.4); `raw` is the promise
+    // that it never does. A tab and a trailing space survive untouched.
+    let mut executor = ono_process::Executor::detached();
+    let command = ono_process::Command::new(ono_testkit::ono_binary())
+        .args(["-c", "raw printf 'a\\tb \\n'"])
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
+        .env("HOME", std::env::temp_dir().display().to_string());
+    let mut session = executor
+        .run_pty(&command, ono_process::WindowSize::new(24, 80))
+        .expect("a pseudo-terminal must be available");
+    let mut seen = Vec::new();
+    let mut buffer = [0u8; 4096];
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        match session.read_timeout(&mut buffer, std::time::Duration::from_millis(200)) {
+            Ok(Some(0)) | Err(_) => break,
+            Ok(Some(count)) => seen.extend_from_slice(&buffer[..count]),
+            Ok(None) => {}
+        }
+    }
+    assert!(
+        seen.windows(6).any(|window| window == b"a\tb \r\n"),
+        "the terminal sees the program's bytes (tab, trailing space, newline), got {:?}",
+        String::from_utf8_lossy(&seen)
+    );
+}
+
+#[test]
+fn should_refuse_raw_without_a_program() {
+    let run = ono("raw");
+    assert_eq!(
+        run.status().code(),
+        127,
+        "nothing to run is not found (ADR-0008), got {:?}",
+        run.stderr()
+    );
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0101") && run.stderr().contains("raw"),
+        "spec §43: the shell says what `raw` needs, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_never_resolve_a_native_command_under_raw() {
+    // `raw` means the program on PATH and nothing else: a native verb behind it is not found.
+    let run = ono("raw get process");
+    assert_ne!(run.status().code(), 0);
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0101"),
+        "`get` is not a program, so raw cannot run it, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_run_the_program_under_raw_even_where_structure_reaches_it() {
+    // `sort` after a stream of records is the transform (ADR-0028); `raw sort` is /usr/bin/sort,
+    // fed the rendered bytes, whatever arrives.
+    let run = ono("printf 'b\\na\\n' | raw sort");
+    run.assert_success();
+    assert_eq!(run.stdout(), "a\nb\n");
+    // Objects still need a representation before a program (spec §12.3); `raw` changes what
+    // runs, not what the join requires.
+    let counted = ono("get process | where pid == 1 | to json | raw wc -c");
+    counted.assert_success();
+    assert!(
+        counted
+            .stdout()
+            .trim()
+            .parse::<u32>()
+            .is_ok_and(|bytes| bytes > 0),
+        "`wc` counted the serialised bytes, got {:?}",
+        counted.stdout()
+    );
+}
