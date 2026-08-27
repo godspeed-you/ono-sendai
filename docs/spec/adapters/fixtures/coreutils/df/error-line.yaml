@@ -1,0 +1,7 @@
+# An error message where the header should be: the header is skipped and the record after it
+# has one field, which the contract does not accept.
+invocation: [df, /nonesuch]
+tool_version: "9.4"
+distro: debian
+expect:
+  records: []

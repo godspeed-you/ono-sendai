@@ -86,7 +86,8 @@ decoder:
     children:  {type: string, nullable: true, doc: "json: the records are the entries of this key inside each element of the list, and the element is their parent (`$parent.<field>`); an element without entries contributes nothing."}
     field_separator:  {type: string, nullable: true, doc: "lines: the byte between fields (`\\t`, `\\0`, …), or `whitespace` — runs of spaces or tabs, with the last column taking the rest of the record (`ps`); properties: the text between key and value (`=`). Required for both."}
     record_separator: {type: string, nullable: true, doc: "lines: `\\n` or `\\0`; properties: the text between records (`\\n\\n`). Required for both."}
-    columns:   {type: list<string>, nullable: true, doc: "lines: the decoded names of the fields, in the order the plan requests them. Required for `lines`."}
+    columns:   {type: list<string>, nullable: true, doc: "lines: the decoded names of the fields, in the order the plan requests them; the last column takes the rest of the record, separators included. Required for `lines`."}
+    header_lines: {type: int, nullable: true, doc: "lines: leading newline-separated records that are a header (`df`'s), skipped. Default 0."}
     id:        {type: string, nullable: true, doc: "builtin: the decoder's stable id, which must exist in the binary. Required for `builtin`."}
     stability: {type: "enum[stable, version-constrained]", nullable: true, doc: "builtin: required; `version-constrained` marks a brittle parser (spec v0.3 §1.9 Tier C)."}
 
@@ -96,6 +97,7 @@ field:
     from:      {type: string, required: true, doc: "The decoded field name, or `$parent.<field>` for a nested tree's parent; empty when `template` reads the whole record."}
     template:  {type: string, nullable: true, doc: "A text with `{field}` placeholders filled from the decoded record (`from` empty) or from each object in the list at `from`; the result is coerced like any string. Exactness `normalized`."}
     first:     {type: bool, nullable: true, doc: "Take the first element of the list at `from`, or the first character of the string there. Exactness `normalized`."}
+    basename:  {type: bool, nullable: true, doc: "Take the last path component of the string at `from`. Exactness `normalized`."}
     infer:     {type: "enum[ip-family, program-name, started-from-elapsed]", nullable: true, doc: "Derive the field: `ip-family` yields `inet` or `inet6` from an address at `from`; `program-name` the basename of the first word of a command line, brackets stripped; `started-from-elapsed` the instant this many seconds before the decoding. Exactness `inferred`."}
     unit:      {type: "enum[bytes, kib, mib, seconds, milliseconds, microseconds, percent]", nullable: true, doc: "How a bare number is to be read — for a timestamp, seconds/milliseconds/microseconds since the epoch; sets exactness to `normalized` when it converts."}
     split:     {type: string, nullable: true, doc: "Split a string on this separator into `list<string>`."}
@@ -125,6 +127,7 @@ plan:
     append_user_flags: {type: bool, required: true, doc: "Whether allowed user flags and positionals are appended after `argv`."}
     env:               {type: map, required: true, doc: "Environment stabilisation, e.g. `LC_ALL: C` (spec v0.3 §1.21). May be empty."}
     stdin:             {type: "enum[null, inherit]", required: true, doc: "Whether the child sees the pipeline's stdin."}
+    trailing_argv:     {type: list<string>, nullable: true, doc: "Words appended after the user's own — `find`'s `-printf` action, which must come last. Default none."}
     unbounded:         {type: bool, nullable: true, doc: "Whether the invocation may never end on its own (`journalctl -f`); its records are a live stream that renders in place at the terminal and needs a representation elsewhere (spec §18.3). Default false."}
 
 # ---------------------------------------------------------------------------------------------

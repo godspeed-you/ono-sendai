@@ -469,3 +469,50 @@ fn should_make_ps_compose_while_keeping_its_selection_and_its_bytes() {
         refused.stderr()
     );
 }
+
+#[test]
+fn should_adapt_df_and_refuse_human_units() {
+    // GNU df is on every Linux machine this suite runs on.
+    let run = ono("df / | select source type size available target | to json");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("\"target\": \"/\"") || run.stdout().contains("\"target\":\"/\""),
+        "the root filesystem as a typed record, got {:?}",
+        run.stdout()
+    );
+    let human = ono("df -h / | where available > 1MiB");
+    assert_ne!(human.status().code(), 0);
+    assert!(
+        human.stderr().contains("Ono-Sendai-E0903"),
+        "`-h` runs raw (spec v0.3 §1.39), got {:?}",
+        human.stderr()
+    );
+}
+
+#[test]
+fn should_adapt_gnu_stat_and_find_or_say_why_not() {
+    // The contracts are written for GNU coreutils and findutils; a machine with uutils' stat
+    // or bfs' find gets an honest version refusal (spec v0.3 §1.46) — and the container, which
+    // has the GNU tools, proves the structured path (case 079).
+    for (line, needle) in [
+        (
+            "stat /etc/hostname | select path kind size | to json",
+            "\"kind\":\"file\"",
+        ),
+        (
+            "find /etc/hostname -maxdepth 0 | select path kind | to json",
+            "\"kind\":\"file\"",
+        ),
+    ] {
+        let run = ono(line);
+        if run.status().code() == 0 {
+            assert!(run.stdout().contains(needle), "got {:?}", run.stdout());
+        } else {
+            assert!(
+                run.stderr().contains("Ono-Sendai-E0904"),
+                "only an incompatible version may refuse, got {:?}",
+                run.stderr()
+            );
+        }
+    }
+}

@@ -1,0 +1,9 @@
+# Times carry fractions of a second; NUL-terminated records keep a newline in a path.
+invocation: [find, /etc/default, -maxdepth, "1"]
+tool_version: "4.9.0"
+distro: debian
+expect:
+  records:
+    - {path: /etc/default, name: default, kind: dir, size: "4096B", mode: "755", owner: root, modified: "2026-08-20T13:12:33.184867482Z", inode: 524333, device: 2050}
+    - {path: /etc/default/dbus, name: dbus, kind: file, size: "297B", modified: "2026-03-03T09:49:51Z"}
+    - {path: "/etc/default/new\nline", name: "new\nline", kind: symlink, size: "11B"}

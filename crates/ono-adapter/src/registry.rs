@@ -651,6 +651,7 @@ impl Registry {
                     if invocation.plan().appends_user_flags() {
                         planned.extend(passthrough);
                     }
+                    planned.extend(invocation.plan().trailing_argv().iter().cloned());
                     // The plan's argv names the program as the contract spells it; the first
                     // element is shown as typed so `explain` reads naturally, and the pinned
                     // path is what actually runs.
@@ -794,8 +795,10 @@ fn match_invocation(
             return Err(format!("this form without `{required}`"));
         }
     }
-    let mut passthrough = Vec::new();
-    let mut words: Vec<&str> = Vec::new();
+    // Every token keeps its position, so what passes through is in the order typed: `find`'s
+    // paths come before its tests, as the user wrote them (ADR-0056, ADR-0060).
+    let mut passthrough: Vec<(usize, String)> = Vec::new();
+    let mut words: Vec<(usize, &str)> = Vec::new();
     let mut index = 0;
     while index < arguments.len() {
         let argument = arguments[index].as_str();
@@ -816,7 +819,7 @@ fn match_invocation(
                     .iter()
                     .any(|allowed| allowed == flag)
                 {
-                    passthrough.push(argument.to_owned());
+                    passthrough.push((index, argument.to_owned()));
                 }
             } else if matcher
                 .allowed_flags()
@@ -824,25 +827,32 @@ fn match_invocation(
                 .any(|allowed| allowed == flag)
                 && inline_value.is_none()
             {
-                passthrough.push(argument.to_owned());
+                passthrough.push((index, argument.to_owned()));
             } else if matcher
                 .allowed_flags_with_value()
                 .iter()
                 .any(|allowed| allowed == flag)
             {
-                passthrough.push(argument.to_owned());
+                passthrough.push((index, argument.to_owned()));
                 if inline_value.is_none() {
                     index += 1;
                     match arguments.get(index) {
-                        Some(value) => passthrough.push(value.clone()),
+                        Some(value) => passthrough.push((index, value.clone())),
                         None => return Err(format!("`{flag}` without its value")),
                     }
                 }
             } else {
                 return Err(format!("`{argument}`"));
             }
+        } else if matcher
+            .allowed_flags()
+            .iter()
+            .any(|allowed| allowed == argument)
+        {
+            // A bare word the contract lists among its flags — `!`, `(`, `)` for find.
+            passthrough.push((index, argument.to_owned()));
         } else {
-            words.push(argument);
+            words.push((index, argument));
         }
         index += 1;
     }
@@ -853,23 +863,26 @@ fn match_invocation(
         .words()
         .iter()
         .filter(|alternative| {
-            words.len() >= alternative.len() && alternative.iter().zip(&words).all(|(a, b)| a == b)
+            words.len() >= alternative.len()
+                && alternative.iter().zip(&words).all(|(a, (_, b))| a == b)
         })
         .max_by_key(|alternative| alternative.len());
     let Some(alternative) = selected else {
         return Err(format!(
             "`{}`",
-            words.first().copied().unwrap_or("this form")
+            words.first().map_or("this form", |(_, word)| word)
         ));
     };
     let rest = &words[alternative.len()..];
     if !rest.is_empty() {
         if matcher.positionals() == Positionals::Forbid {
-            return Err(format!("`{}`", rest.join(" ")));
+            let spelled: Vec<&str> = rest.iter().map(|(_, word)| *word).collect();
+            return Err(format!("`{}`", spelled.join(" ")));
         }
-        passthrough.extend(rest.iter().map(|word| (*word).to_owned()));
+        passthrough.extend(rest.iter().map(|(at, word)| (*at, (*word).to_owned())));
     }
-    Ok(passthrough)
+    passthrough.sort_by_key(|(at, _)| *at);
+    Ok(passthrough.into_iter().map(|(_, word)| word).collect())
 }
 
 /// The schema fields the adapter's map never reports, which is what makes its support

@@ -1,0 +1,69 @@
+# GNU findutils compatibility pack: `find` (spec v0.3 §1.38, §1.69 step 7). The user's paths
+# and tests are passed through unchanged and the adapter appends its own `-printf` action with
+# NUL-terminated records, so a filename with a newline or a tab is still one record and the
+# path — the one field that may hold anything — comes last.
+format: ono-adapter-pack/1
+package:
+  id: org.ono.compat.findutils
+  name: GNU findutils compatibility
+  version: 0.1.0
+  publisher: org.ono
+  tier: first-party
+roles: [adapter]
+capabilities:
+  process.exec:
+    executables: [find]
+    argv_policy: declared-invocations-only
+
+adapters:
+  - id: find
+    summary: Found files as `ono.file/1` records, streamed from `find … -printf` with NUL-terminated records.
+    executable:
+      names: [find]
+      versions: ">=4.4"
+      version_probe:
+        argv: ["--version"]
+        pattern: "GNU findutils\\) ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: B
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.file/1
+    decoder:
+      kind: lines
+      field_separator: "\t"
+      record_separator: "\0"
+      columns: [kind, size, mode, owner, group, modified, accessed, inode, device, path]
+    fields:
+      path: {from: path}
+      name: {from: path, basename: true}
+      kind:
+        from: kind
+        map: {f: file, d: dir, l: symlink, s: socket, p: fifo, c: device, b: device, D: other, U: other, N: other}
+      size: {from: size, unit: bytes}
+      owner: {from: owner}
+      group: {from: group}
+      mode: {from: mode}
+      modified: {from: modified, unit: seconds}
+      accessed: {from: accessed, unit: seconds}
+      inode: {from: inode}
+      device: {from: device}
+    invocations:
+      - id: search
+        summary: "find [-H|-L|-P] [path …] [tests …] — every test, no action"
+        match:
+          words: [[]]
+          flags:
+            allow: [-H, -L, -P, -xdev, -mount, -depth, -empty, -executable, -readable, -writable, -not, -a, -and, -o, -or, -prune, -nogroup, -nouser, -daystart, -follow, "!", "(", ")"]
+            allow_with_value: [-maxdepth, -mindepth, -type, -xtype, -name, -iname, -path, -ipath, -wholename, -regex, -iregex, -regextype, -lname, -ilname, -mtime, -atime, -ctime, -mmin, -amin, -cmin, -newer, -anewer, -cnewer, -newermt, -newerat, -newerct, -size, -user, -uid, -group, -gid, -perm, -links, -inum, -samefile, -fstype, -used]
+          positionals: allow
+        plan:
+          argv: [find]
+          append_user_flags: true
+          trailing_argv: ["-printf", "%y\\t%s\\t%m\\t%u\\t%g\\t%T@\\t%A@\\t%i\\t%D\\t%p\\0"]
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "Actions — `-exec`, `-execdir`, `-ok`, `-delete`, `-ls`, `-print`, `-print0`, `-printf`, `-fprint` — make it a different command and run raw."
+      - "`created` and `target` are not reported: find has no birth time, and a link target with a tab in it cannot share a record with the path."
+    fixtures: findutils/find

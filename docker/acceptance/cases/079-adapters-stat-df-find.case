@@ -1,0 +1,24 @@
+# v0.3 §1.38, §1.39, §1.69 step 7 (COMPAT-STAT/DF/FIND-001): the GNU explicit-field protocols
+# become File and Filesystem records, NUL-safe for hostile names, streamed for find; human
+# units and find actions run raw.
+case: stat, df and find compose as File and Filesystem records, NUL-safe
+run: |
+  mkdir -p "/tmp/hostile dir" && printf 'x' > "/tmp/hostile dir/tab	name" && printf 'yy' > "$(printf '/tmp/hostile dir/new\nline')"
+  echo "== stat =="
+  ono -c 'stat /etc/hostname | select path name kind size mode | to json'
+  ono -c 'stat "/tmp/hostile dir/tab	name" | select name size | to json' | grep -c 'tab\\tname'
+  echo "== df =="
+  ono -c 'df / | select source type target | to json'
+  ono -c 'df | where available > 0 | count | to text'
+  ono -c 'df -h / | where available > 1MiB' 2>&1 | grep -c 'Ono-Sendai-E0903'
+  echo "== find =="
+  ono -c 'find "/tmp/hostile dir" -type f | select name size | to json'
+  ono -c 'find "/tmp/hostile dir" -type f | count | to text'
+  ono -c 'find /etc -maxdepth 1 -name "host*" | where size > 0 | select path | to json'
+  ono -c 'find /tmp -delete | count' 2>&1 | grep -c 'Ono-Sendai-E0903'
+  echo "== provenance and raw =="
+  ono -c 'stat /etc/hostname | inspect | to json' | grep -F 'stat --printf='
+  ono -c 'raw find /etc/hostname' > /tmp/raw.out; bash -c 'find /etc/hostname' > /tmp/bash.out; cmp /tmp/raw.out /tmp/bash.out && echo raw=identical
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

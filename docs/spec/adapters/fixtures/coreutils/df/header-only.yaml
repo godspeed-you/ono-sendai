@@ -1,0 +1,5 @@
+invocation: [df, -t, nonesuch]
+tool_version: "9.4"
+distro: debian
+expect:
+  records: []

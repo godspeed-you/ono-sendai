@@ -1,0 +1,5 @@
+invocation: [stat, /etc/hostname]
+tool_version: "9.4"
+distro: debian
+expect:
+  error: adapter.decode_failed

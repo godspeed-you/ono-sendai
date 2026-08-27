@@ -420,8 +420,12 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       `docs/spec/adapters/first-party/procps.yaml` with fixtures, `ono-adapter/tests/decode.rs`,
       `ono-cli/tests/adapters.rs` (`should_make_ps_compose_while_keeping_its_selection_and_its_bytes`),
       case `078`.
-- [ ] **COMPAT-STAT / DF / FIND-001** — `stat --printf`, `df --output`, `find -printf … \0`
-      into `ono.file/1` and `ono.filesystem/1`, NUL-safe for hostile names (v0.3 §1.38, §1.39).
+- [x] **COMPAT-STAT / DF / FIND-001** — `stat --printf`, `df --output --block-size=1`,
+      `find … -printf … \0` into `ono.file/1` and `ono.filesystem/1`, NUL-terminated records
+      with the path last so hostile names survive, `find` streaming, human units and actions
+      run raw (v0.3 §1.38, §1.39, ADR-0061) — `docs/spec/adapters/first-party/{coreutils,findutils}.yaml`
+      with fixtures (a tab and a newline in a name), `ono-adapter/tests/negotiation.rs`,
+      `ono-cli/tests/adapters.rs`, case `079`.
 - [ ] **COMPAT-GIT-001/002** — `git status --porcelain=v2 -z` and `git log` with an explicit
       format into repository records (v0.3 §1.42).
 - [ ] **COMPAT-LSOF** — `lsof -F` field mode into open-file records (v0.3 §1.40).

@@ -93,9 +93,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 10 — Tier B: `stat --printf`, `df --output`,
-  `find -printf … \0` → `ono.file/1` / `ono.filesystem/1` (COMPAT-STAT/DF/FIND-001) — files:
-  `docs/spec/adapters/first-party/coreutils.yaml`, `docs/spec/adapters/first-party/findutils.yaml`
+- [claude | 2026-08-27] v0.3 tranche, step 11 — Tier B: `git status --porcelain=v2 -z` and
+  `git log` with an explicit format (COMPAT-GIT-001/002), `lsof -F` (COMPAT-LSOF) — files:
+  `docs/spec/adapters/first-party/git.yaml`, `docs/spec/adapters/first-party/lsof.yaml`,
+  new schemas under `docs/spec/schemas/`
 
 ---
 
@@ -364,6 +365,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   lsof (ADR-0059) — case 077
 - [x] v0.3 step 9 — COMPAT-PS: the procps pack, whitespace columns, `first` on strings,
   `program-name`/`started-from-elapsed` inferences, streaming `lines` (ADR-0060) — case 078
+- [x] v0.3 step 10 — COMPAT-STAT/DF/FIND: the coreutils and findutils packs, trailing argv,
+  header lines, basename, NUL records with the path last, typed-order pass-through
+  (ADR-0061) — case 079
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

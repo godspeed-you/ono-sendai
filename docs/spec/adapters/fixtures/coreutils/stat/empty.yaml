@@ -1,0 +1,5 @@
+invocation: [stat, /nonesuch]
+tool_version: "9.4"
+distro: debian
+expect:
+  records: []

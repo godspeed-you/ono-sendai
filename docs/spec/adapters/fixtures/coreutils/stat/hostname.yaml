@@ -1,0 +1,10 @@
+# NUL ends a record and the path comes last, so a name with a tab and a newline in it is still
+# one record; a birth time of 0 is unknown, which is null.
+invocation: [stat, /etc/hostname, /tmp, "/tmp/odd\tname\nhere"]
+tool_version: "9.4"
+distro: debian
+expect:
+  records:
+    - {path: /etc/hostname, name: hostname, kind: file, size: "12B", owner: root, group: root, mode: "644", modified: "2026-08-18T09:00:30Z", created: null, inode: 527071, device: 2050, target: null}
+    - {path: /tmp, name: tmp, kind: dir, size: "4096B", mode: "1777", created: "2026-08-20T14:47:40Z", inode: 1}
+    - {path: "/tmp/odd\tname\nhere", name: "odd\tname\nhere", kind: file, size: "7B", owner: case}

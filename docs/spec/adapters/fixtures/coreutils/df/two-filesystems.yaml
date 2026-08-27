@@ -1,0 +1,9 @@
+# The header line is skipped, sizes are bytes because the plan asks for them, and the mount
+# point — last — keeps its spaces.
+invocation: [df]
+tool_version: "9.4"
+distro: debian
+expect:
+  records:
+    - {source: /dev/sda2, type: ext4, size: "133569777664B", used: "101448642560B", available: "25288876032B", target: /, uuid: null, read_only: null}
+    - {source: tmpfs, type: tmpfs, size: "32636928000B", used: "242274304B", available: "32394653696B", target: "/mnt/with space"}

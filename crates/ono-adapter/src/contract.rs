@@ -19,6 +19,8 @@ const FIRST_PARTY: &[&str] = &[
     include_str!("../../../docs/spec/adapters/first-party/iproute2.yaml"),
     include_str!("../../../docs/spec/adapters/first-party/systemd.yaml"),
     include_str!("../../../docs/spec/adapters/first-party/procps.yaml"),
+    include_str!("../../../docs/spec/adapters/first-party/coreutils.yaml"),
+    include_str!("../../../docs/spec/adapters/first-party/findutils.yaml"),
 ];
 
 /// The decoders implemented in Rust that a `builtin` decoder may name.
@@ -276,6 +278,8 @@ pub struct Decoder {
     #[serde(default)]
     columns: Option<Vec<String>>,
     #[serde(default)]
+    header_lines: Option<usize>,
+    #[serde(default)]
     id: Option<String>,
     #[serde(default)]
     stability: Option<Stability>,
@@ -290,6 +294,8 @@ pub struct FieldMap {
     template: Option<String>,
     #[serde(default)]
     first: Option<bool>,
+    #[serde(default)]
+    basename: Option<bool>,
     #[serde(default)]
     infer: Option<Inference>,
     #[serde(default)]
@@ -344,6 +350,8 @@ pub struct Plan {
     stdin: StdinMode,
     #[serde(default)]
     unbounded: bool,
+    #[serde(default)]
+    trailing_argv: Vec<String>,
 }
 
 /// A fixture's sidecar: where the bytes came from and what they must decode to.
@@ -593,6 +601,12 @@ impl Decoder {
         self.columns.as_deref()
     }
 
+    /// lines: leading records that are a header, not data.
+    #[must_use]
+    pub fn header_lines(&self) -> usize {
+        self.header_lines.unwrap_or(0)
+    }
+
     /// builtin: the decoder id.
     #[must_use]
     pub fn id(&self) -> Option<&str> {
@@ -623,6 +637,12 @@ impl FieldMap {
     #[must_use]
     pub fn takes_first(&self) -> bool {
         self.first.unwrap_or(false)
+    }
+
+    /// Whether only the last path component of the string at `from` is taken.
+    #[must_use]
+    pub fn takes_basename(&self) -> bool {
+        self.basename.unwrap_or(false)
     }
 
     /// The derivation performed, if any.
@@ -666,6 +686,7 @@ impl FieldMap {
             || self.map.is_some()
             || self.template.is_some()
             || self.first.is_some()
+            || self.basename.is_some()
         {
             Exactness::Normalized
         } else {
@@ -761,6 +782,12 @@ impl Plan {
     #[must_use]
     pub fn is_unbounded(&self) -> bool {
         self.unbounded
+    }
+
+    /// Words appended after the user's own — `find`'s `-printf` action, which must come last.
+    #[must_use]
+    pub fn trailing_argv(&self) -> &[String] {
+        &self.trailing_argv
     }
 }
 
@@ -1088,6 +1115,13 @@ fn validate_adapter(
             }
             if decoder.records().is_some() || decoder.nested().is_some() || decoder.id().is_some() {
                 report("a `lines` decoder takes no `records`, `nested` or `id`".to_owned());
+            }
+            if decoder.header_lines() > 0
+                && decoder
+                    .record_separator()
+                    .is_some_and(|separator| separator != "\\n" && separator != "\n")
+            {
+                report("`header_lines` only makes sense for newline-separated records".to_owned());
             }
         }
         DecoderKind::Builtin => {

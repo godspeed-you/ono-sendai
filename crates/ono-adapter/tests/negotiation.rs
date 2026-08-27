@@ -361,3 +361,40 @@ fn should_require_a_flag_when_the_contract_says_so_and_pin_the_family() {
         "words after the alias pass through in order"
     );
 }
+
+#[test]
+fn should_append_trailing_argv_after_the_users_own_words() {
+    // find's action must come after the user's paths and tests (spec v0.3 §1.38).
+    let dir = scratch();
+    let find = executable(&dir, "find");
+    let registry = Registry::bundled(Box::new(|_, _| Some("find (GNU findutils) 4.9.0".into())));
+    let plan = registry
+        .negotiate(
+            &find,
+            &argv(&["find", "/etc", "-type", "f", "-name", "*.conf"]),
+            &structured(),
+        )
+        .plan()
+        .cloned()
+        .expect("`find /etc -type f -name *.conf` is adapted");
+    assert_eq!(
+        plan.argv(),
+        argv(&[
+            "find",
+            "/etc",
+            "-type",
+            "f",
+            "-name",
+            "*.conf",
+            "-printf",
+            r"%y\t%s\t%m\t%u\t%g\t%T@\t%A@\t%i\t%D\t%p\0"
+        ])
+    );
+    assert!(
+        matches!(
+            registry.negotiate(&find, &argv(&["find", "/etc", "-delete"]), &structured()),
+            Negotiation::UnsupportedInvocation { .. }
+        ),
+        "an action is a different command"
+    );
+}

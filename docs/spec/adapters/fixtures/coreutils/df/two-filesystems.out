@@ -1,0 +1,3 @@
+Filesystem     Type     1B-blocks         Used       Avail Mounted on
+/dev/sda2      ext4  133569777664 101448642560 25288876032 /
+tmpfs          tmpfs  32636928000    242274304 32394653696 /mnt/with space

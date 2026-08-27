@@ -146,10 +146,14 @@ impl<'a> Decoding<'a> {
             return Vec::new();
         }
         let separator = self.record_separator();
+        let header = self.adapter().decoder().header_lines();
         let mut outcomes = Vec::new();
         while let Some(end) = self.buffer.iter().position(|byte| *byte == separator) {
             let line: Vec<u8> = self.buffer.drain(..=end).collect();
             self.line += 1;
+            if self.line <= header {
+                continue;
+            }
             let line = &line[..line.len() - 1];
             if line.iter().all(u8::is_ascii_whitespace) {
                 continue;
@@ -452,6 +456,7 @@ fn line_records(adapter: &Adapter, bytes: &[u8], trace: &Trace) -> Result<Vec<It
     for (index, record) in bytes
         .split(|byte| record_separator.contains(byte))
         .enumerate()
+        .skip(decoder.header_lines())
     {
         if record.iter().all(u8::is_ascii_whitespace) {
             continue;
@@ -492,9 +497,11 @@ fn line_item(adapter: &Adapter, record: &[u8], number: usize) -> Result<Item, St
         }
         parts
     } else {
+        // The last column takes the rest of the record, separators included: it is where a
+        // contract puts the one field that may hold anything (a path).
         let separator = unescape(field_separator);
         record
-            .split(|byte| separator.contains(byte))
+            .splitn(columns.len(), |byte| separator.contains(byte))
             .map(|part| String::from_utf8_lossy(part).into_owned())
             .collect()
     };
@@ -784,6 +791,19 @@ fn coerce_mapped(raw: &Json, map: &FieldMap, ty: &FieldType) -> Result<Value, St
             return Ok(Value::Null);
         }
     }
+    if map.takes_basename() {
+        current = match &current {
+            Json::String(text) => Json::String(
+                text.trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(text)
+                    .to_owned(),
+            ),
+            other => return Err(format!("cannot take the basename of {}", json_kind(other))),
+        };
+    }
     if let Some(inference) = map.infer() {
         current = match inference {
             crate::contract::Inference::IpFamily => match &current {
@@ -886,7 +906,9 @@ fn coerce_mapped(raw: &Json, map: &FieldMap, ty: &FieldType) -> Result<Value, St
 /// Coerces a decoded value into the declared type, or says why it cannot.
 fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, String> {
     // A field protocol reports everything as text; a number in a declared unit is a number.
+    // Seconds with a fraction stay text so the nanoseconds survive.
     if let (Some(_), Json::String(text)) = (unit, raw)
+        && !(matches!(ty, FieldType::Timestamp) && text.contains('.'))
         && let Ok(number) = serde_json::from_str::<serde_json::Number>(text.trim())
     {
         return coerce(&Json::Number(number), ty, unit);
@@ -961,6 +983,18 @@ fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, Strin
                 Some(Unit::Milliseconds) => jiff::Timestamp::from_millisecond(amount).ok(),
                 _ => jiff::Timestamp::from_second(amount).ok(),
             };
+            // `find -printf %T@` writes seconds with a fractional part; the fraction is kept
+            // to the nanosecond, which is what the kernel stores.
+            let fractional = |text: &str| -> Option<jiff::Timestamp> {
+                if !matches!(unit, None | Some(Unit::Seconds)) {
+                    return None;
+                }
+                let (whole, fraction) = text.split_once('.')?;
+                let seconds: i64 = whole.parse().ok()?;
+                let digits: String = fraction.chars().take(9).collect();
+                let nanos: i32 = format!("{digits:0<9}").parse().ok()?;
+                jiff::Timestamp::new(seconds, nanos).ok()
+            };
             match raw {
                 Json::String(text) => {
                     let text = text.trim();
@@ -969,6 +1003,7 @@ fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, Strin
                             .parse::<i64>()
                             .ok()
                             .and_then(epoch)
+                            .or_else(|| fractional(text))
                             .map(Value::Timestamp)
                             .ok_or_else(|| wrong("timestamp"));
                     }

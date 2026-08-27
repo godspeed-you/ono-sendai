@@ -1,0 +1,115 @@
+# GNU coreutils compatibility pack: `stat` and `df` (spec v0.3 §1.39, §1.69 step 7). Both
+# expose explicit field formats — `stat --printf`, `df --output` — which are tier B protocols
+# the adapter owns: the columns are its, NUL ends a stat record so any filename survives, and
+# sizes are requested in bytes so no human unit ever reaches the decoder.
+format: ono-adapter-pack/1
+package:
+  id: org.ono.compat.coreutils
+  name: GNU coreutils compatibility
+  version: 0.1.0
+  publisher: org.ono
+  tier: first-party
+roles: [adapter]
+capabilities:
+  process.exec:
+    executables: [stat, df]
+    argv_policy: declared-invocations-only
+
+adapters:
+  - id: stat
+    summary: Files as `ono.file/1` records, from `stat --printf` with NUL-terminated records.
+    executable:
+      names: [stat]
+      versions: ">=8.0"
+      version_probe:
+        argv: ["--version"]
+        pattern: "GNU coreutils\\) ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: B
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.file/1
+    decoder:
+      kind: lines
+      field_separator: "\t"
+      record_separator: "\0"
+      columns: [size, kind, mode, owner, group, modified, accessed, created, inode, device, path]
+    fields:
+      path: {from: path}
+      name: {from: path, basename: true}
+      kind:
+        from: kind
+        map: {"regular file": file, "regular empty file": file, "directory": dir, "symbolic link": symlink, "socket": socket, "fifo": fifo, "character special file": device, "block special file": device}
+      size: {from: size, unit: bytes}
+      owner: {from: owner}
+      group: {from: group}
+      mode: {from: mode}
+      modified: {from: modified, unit: seconds}
+      accessed: {from: accessed, unit: seconds}
+      created: {from: created, map: {"0": null}, unit: seconds}
+      inode: {from: inode}
+      device: {from: device}
+    invocations:
+      - id: files
+        summary: "stat [-L|--dereference] <path …>"
+        match:
+          words: [[]]
+          flags:
+            allow: [-L, --dereference]
+            allow_with_value: []
+          positionals: allow
+        plan:
+          argv: [stat, "--printf=%s\\t%F\\t%a\\t%U\\t%G\\t%Y\\t%X\\t%W\\t%i\\t%d\\t%n\\0"]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`-f/--file-system`, `-c/--format`, `--printf` and `-t/--terse` change what a row is and run raw."
+      - "`target` is not reported: `stat`'s `%N` quotes the link target in a locale-dependent way; `find -printf %l` answers it."
+      - "A `kind` stat spells differently from the eight it knows is a schema violation, never `other`."
+    fixtures: coreutils/stat
+
+  - id: df
+    summary: Filesystems as `ono.filesystem/1` records, from `df --output` in bytes.
+    executable:
+      names: [df]
+      versions: ">=8.21"
+      version_probe:
+        argv: ["--version"]
+        pattern: "GNU coreutils\\) ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: B
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.filesystem/1
+    decoder:
+      kind: lines
+      field_separator: whitespace
+      record_separator: "\n"
+      header_lines: 1
+      columns: [source, type, size, used, available, target]
+    fields:
+      source: {from: source}
+      type: {from: type}
+      size: {from: size, unit: bytes}
+      used: {from: used, unit: bytes}
+      available: {from: available, unit: bytes}
+      target: {from: target}
+    invocations:
+      - id: usage
+        summary: "df [-a|--all] [-l|--local] [-t|--type <fs>] [-x|--exclude-type <fs>] [path …]"
+        match:
+          words: [[]]
+          flags:
+            allow: [-a, --all, -l, --local, --sync, --no-sync]
+            allow_with_value: [-t, --type, -x, --exclude-type]
+          positionals: allow
+        plan:
+          argv: [df, --block-size=1, "--output=source,fstype,size,used,avail,target"]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`-h`, `-H`, `-k`, `-B`, `-i`, `--output` and `-P` change the columns or the units and run raw; the adapter always asks for bytes."
+      - "`uuid`, `label`, `read_only` and `device` are not reported: `get filesystem` answers them."
+    fixtures: coreutils/df

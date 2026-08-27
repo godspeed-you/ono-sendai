@@ -1,0 +1,5 @@
+invocation: [find, /x]
+tool_version: "4.9.0"
+distro: debian
+expect:
+  error: adapter.schema_violation

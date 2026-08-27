@@ -1,0 +1,5 @@
+invocation: [find, /etc/default, -name, nonesuch]
+tool_version: "4.9.0"
+distro: debian
+expect:
+  records: []
