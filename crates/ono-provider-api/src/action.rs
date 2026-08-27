@@ -233,7 +233,7 @@ impl ActionOutcome {
         // The reference names the identity, which is what `inspect` resolves, and the label a
         // person knows the object by — `ono.socket/1[620332]` says nothing, `tcp/:443` does.
         // A label the identity already shows — `/` on `ono.mount/1[/]` — adds nothing and is
-        // left off (ADR-0107 §1).
+        // left off (ADR-0116 §1).
         let reference = match &self.label {
             Some(label) if !self.target.shows(label) => format!("{} {label}", self.target),
             _ => self.target.to_string(),

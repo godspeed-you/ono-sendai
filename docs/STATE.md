@@ -230,7 +230,7 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 - [ ] One label rule for an object: `ObjectRef::of` (first default-view column outside the
   identity — a mount's source device, a service's state) and `ono_graph::label_of` (a form per
   schema — the mount point, `nginx.service`) disagree, so a resolved selector's ActionResult
-  row and a piped record's read differently for the same object (ADR-0088 §4, ADR-0107) —
+  row and a piped record's read differently for the same object (ADR-0088 §4, ADR-0116) —
   exit test: `unmount filesystem /` and `get mount / | unmount filesystem` render the same
   `target`
 - [ ] `select error.name` on an `ono.action-result/1` row yields the whole `ono.error/1` under

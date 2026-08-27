@@ -347,7 +347,7 @@ impl ProviderMutation {
         // the outcome of the act (ADR-0082 §1). That holds for a command acting on the
         // target's own objects; one whose input names another schema — `unmount filesystem`
         // acts on `ono.mount/1` — has the provider resolve the path to that object
-        // (ADR-0107 §2).
+        // (ADR-0116 §2).
         if matches!(spec.declared_type(), DeclaredType::Path) && acts_on_own_objects(ctx, target) {
             let schema = schema_of(ctx, target);
             return Ok(paths_of(&value)
@@ -419,7 +419,7 @@ fn schema_of(ctx: &Invocation<'_>, target: &str) -> SchemaId {
 
 /// Whether the command acts on objects of its target's own schema: its input names no stream of
 /// another schema. `remove file` takes `stream<ono.file/1>`; `unmount filesystem` takes
-/// `stream<ono.mount/1>` and acts on mounts (ADR-0107 §2).
+/// `stream<ono.mount/1>` and acts on mounts (ADR-0116 §2).
 fn acts_on_own_objects(ctx: &Invocation<'_>, target: &str) -> bool {
     let own = format!("ono.{target}/");
     ctx.contract()

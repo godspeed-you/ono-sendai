@@ -546,7 +546,7 @@ impl IdentityProvider {
     async fn user_change(&self, action: &Action) -> Result<Vec<AccountCommand>, ErrorValue> {
         let name = user_name_of(&self.accounts, action).await?;
         // An account that is not there is that target's outcome before privilege is asked
-        // for: the database is readable by anyone, so the provider can look first (ADR-0108).
+        // for: the database is readable by anyone, so the provider can look first (ADR-0117).
         if matches!(action.operation(), "remove" | "set")
             && self.accounts.user_named(&name).await.is_none()
         {
@@ -598,7 +598,7 @@ impl IdentityProvider {
     async fn group_change(&self, action: &Action) -> Result<Vec<AccountCommand>, ErrorValue> {
         let name = group_name_of(&self.accounts, action).await?;
         let members = member_arguments(action)?;
-        // As for a user: a group that is not there is answered before privilege (ADR-0108).
+        // As for a user: a group that is not there is answered before privilege (ADR-0117).
         // `add --member` extends a group the same way and needs it to exist too.
         let acts_on_existing =
             matches!(action.operation(), "remove" | "set") || !members.is_empty();
