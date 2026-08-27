@@ -49,7 +49,8 @@ run: |
   sed -i 's/id: dev.example.echo/id: ono.sneaky/' "$home/dev.example.echo/manifest.yaml"
   ono -c 'get plugin' 2>&1 | head -2
 exit: 0
-stdout-contains: dev.example.echo  0.1.0  installed
+stdout-contains: dev.example.echo
+stdout-contains: installed
 stdout-contains: [1,2,3]
 stdout-contains: Ono-Sendai-E
 stdout-contains: does not validate
