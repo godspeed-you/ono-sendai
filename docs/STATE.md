@@ -93,7 +93,56 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- (empty — the v0.3 tranche is complete; the release verdict is `scripts/release-check.sh`)
+- [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
+  request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
+  one `#[ignore = "REASON: …"]` (AGENTS.md §7) so the tree stays green; **the increment that
+  delivers a family removes the ignore lines of its tests in the same commit** — a family is
+  done when its file has no `#[ignore` left and the gate is green. Work order: cross-cutting
+  seams first (registry-dispatched `set`/`remove`, ActionResult exit status and error shape,
+  generic `enter`/`watch`/`trace` for object targets), then the families. Each file is one
+  family; each test asserts the behaviour the contract promises, never mere presence:
+  - `crates/ono-cli/tests/files_missing.rs` (34) — read/write/copy/move/remove/set/open/tail/
+    watch/trace/enter file, remove/set dir, globs for native selectors
+  - `crates/ono-cli/tests/language_missing.rs` (31) — `let` capturing a pipeline, `$(…)`/`(…)`
+    values, callable `fn`, `alias`, `now()`, timestamp literals, `FOO=bar cmd`, `each { … }`,
+    string `+`, keyless `sort`, `kill %N`
+  - `crates/ono-cli/tests/options_and_selectors_missing.rs` (15) — `--user/--tree`, `find file`
+    options, `--mounted`, `trace socket --port`, `--human`, `get user 0`, `where local.port`
+  - `crates/ono-cli/tests/meta_config_missing.rs` (24) — `resolve command`, `get config` layers/
+    source/line, `set config` typed + effective (`render.table.max_rows`)
+  - `crates/ono-cli/tests/processes_missing.rs` (18) — `inspect process`, `get job`, `enter
+    process`, `set process --priority`, `send signal`, failed ActionResult ⇒ exit 1 (ADR-0006)
+  - `crates/ono-cli/tests/identity_missing.rs` (25) — `get session`, user/group mutations,
+    watch/trace/enter user|group
+  - `crates/ono-cli/tests/network_missing.rs` (31) — `resolve dns`, `test port`, watch/trace/
+    enter interface|route|socket, route/interface/socket mutations
+  - `crates/ono-cli/tests/services_logs_missing.rs` (15) — `set service`, `get journal`,
+    `tail journal`, `get log`
+  - `crates/ono-cli/tests/storage_missing.rs` (22) — `get device`, mount/unmount, mount verbs,
+    watch/trace/enter mount
+  - `crates/ono-cli/tests/data_missing.rs` (15) + `crates/ono-command/tests/completion_missing.rs`
+    (6) — `tail`, `join`, `diff`, stacked records on narrow terminals, fields after `where`
+  - `crates/ono-cli/tests/remote_missing.rs` (36) — `get link` as data, host commands, link
+    definitions, detach/rename, agentless visibility, mutations across a link
+  - `crates/ono-cli/tests/plugins_missing.rs` (32) — `ono.plugin/1` records, inspect/find/
+    verify/install/unload/set/remove plugin, capabilities, audit, reload, assistants/models
+  - `crates/ono-cli/tests/containers_packages_missing.rs` (25) — a fake engine-API socket and
+    fake package managers on PATH; E0401 when none answers
+
+  Wiki claims found stale while writing them (already work, no test added): `get route
+  --table/--family`, `format --max-rows`, backgrounding native stages, `let i = $i + 1`.
+
+  Contract gaps the suites had to resolve by reading — each needs an ADR (or a registry change)
+  before its GREEN increment: `alias` statement syntax (grammar.ebnf/language.yaml have none);
+  `ono.command/1` resolution `kind` field; `set config` unknown key ⇒ E0202; `ono.device/1`
+  shape (path/kind/major/minor); `ono.session/1` fields; `ono.link/1` lacks a `host` field;
+  `ono.container/1`, `ono.image/1`, `ono.package/1` schemas and the runtime knobs
+  (`DOCKER_HOST`/`CONTAINER_HOST`, managers found on PATH); `get journal`/`get log` reference
+  `ono.log-record/1` which neither exists nor is deferred; `join`/`diff` output shape and
+  `--identity [pid]` spelling; failed ActionResult rows nest the error as
+  `error.error.code = "io.permission_denied"` instead of `error.code = "Ono-Sendai-E…"`, and
+  `operation` carries the bare verb instead of the command id; K11 codes not folded into
+  `Ono-Sendai-K11xxx`; `--agentless` is accepted and ignored by `context.rs::link`.
 
 ---
 
