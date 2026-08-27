@@ -929,10 +929,29 @@ impl Session {
         }
     }
 
-    /// Binds `name` in the innermost scope. A further `let` rebinds it (ADR-0009).
+    /// Declares `name` in the innermost scope, shadowing any outer binding of the name: what a
+    /// loop variable, a parameter, a `catch` name and a block's `@` do.
     pub fn bind(&mut self, name: impl Into<String>, value: Value) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.into(), value);
+        }
+    }
+
+    /// What `let name = …` does (ADR-0009, ADR-0119): rebinds the innermost visible binding of
+    /// `name` where there is one, so a block or a function body can advance a counter of the
+    /// enclosing scope; otherwise declares it in the innermost scope, where it stays local.
+    pub fn assign(&mut self, name: impl Into<String>, value: Value) {
+        let name = name.into();
+        match self
+            .scopes
+            .iter_mut()
+            .rev()
+            .find(|scope| scope.contains_key(&name))
+        {
+            Some(scope) => {
+                scope.insert(name, value);
+            }
+            None => self.bind(name, value),
         }
     }
 

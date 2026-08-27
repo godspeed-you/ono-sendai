@@ -498,3 +498,65 @@ fn should_stop_a_native_job_when_kill_names_it_by_job_number() {
         run.output()
     );
 }
+
+// --- `let` and block scope (ADR-0119) ---------------------------------------------------------
+
+#[test]
+fn should_rebind_an_enclosing_binding_when_let_names_it_inside_a_loop_body() {
+    // ADR-0119: `let` on a name an enclosing scope already binds rebinds that binding, the way
+    // every shell's assignment does — otherwise a counter loop can never terminate.
+    let run = Shell::new()
+        .args([
+            "-c",
+            "let i = 0; while $i < 3 { echo $i; let i = $i + 1 }; echo done",
+        ])
+        .timeout(std::time::Duration::from_secs(10))
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout(),
+        "0\n1\n2\ndone\n",
+        "`let i = $i + 1` in the body advances the `i` the condition reads, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_rebind_an_enclosing_binding_when_let_names_it_inside_an_if_branch() {
+    let run = ono("let n = 1; if true { let n = 2 }; echo $n");
+    run.assert_success();
+    assert_eq!(
+        run.stdout(),
+        "2\n",
+        "ADR-0119: the branch's `let n` rebinds the enclosing `n`, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_keep_a_name_first_bound_inside_a_block_local_to_that_block() {
+    let run = ono("if true { let inner = 9 }; echo \"<$inner>\"");
+    run.assert_success();
+    assert_eq!(
+        run.stdout(),
+        "<>\n",
+        "ADR-0119: a name introduced inside a block does not outlive it, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_let_a_function_body_rebind_a_binding_of_the_calling_scope() {
+    // Shell-like, as ADR-0119 fixes it: a function has no `local`; a parameter of the same name
+    // is the only thing that shadows.
+    let run = ono(
+        "fn bump() { let n = $n + 1 }; fn keep(n: Int = 0) { let n = 99 }; let n = 1; bump; keep 5; echo $n",
+    );
+    run.assert_success();
+    assert_eq!(
+        run.stdout(),
+        "2\n",
+        "`bump` rebinds the caller's `n`; `keep`'s `let n` rebinds its own parameter, got {:?}",
+        run.stdout()
+    );
+}

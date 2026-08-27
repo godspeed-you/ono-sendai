@@ -105,7 +105,7 @@ pub fn run_statement(
         Statement::Pipeline(pipeline) => run_pipeline(session, pipeline, source),
         Statement::Let(binding) => {
             let (value, status) = binding_value(session, &binding.value, source)?;
-            session.bind(binding.name.clone(), value);
+            session.assign(binding.name.clone(), value);
             Ok(status)
         }
         Statement::If(branch) => run_if(session, branch, source),
