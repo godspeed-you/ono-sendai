@@ -165,6 +165,12 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## Next up (ordered)
 
+- [ ] Acceptance case 049 (`a remote link answers from the other side, visibly`) ended with
+  exit 129 (128+SIGHUP) three times in full-suite runs on 2026-08-27 while five agent builds
+  loaded the machine, and passes alone and through the harness in isolation: `exit` with a live
+  link races the hangup `script` sends when its piped stdin reaches EOF. Confirm under low load;
+  if it recurs, make link teardown at exit not wait on the agent — exit test: the case green in
+  three consecutive full runs
 - [ ] `explain get process` inside a frame prints the narrowed spelling (`get process 1`,
   `get process --user root`) — ADR-0023 promised it, ADR-0076 made the arguments available —
   exit test: a context.rs case explaining inside `enter process 1`
