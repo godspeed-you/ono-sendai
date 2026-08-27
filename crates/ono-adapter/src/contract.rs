@@ -23,10 +23,16 @@ const FIRST_PARTY: &[&str] = &[
     include_str!("../../../docs/spec/adapters/first-party/findutils.yaml"),
     include_str!("../../../docs/spec/adapters/first-party/git.yaml"),
     include_str!("../../../docs/spec/adapters/first-party/lsof.yaml"),
+    include_str!("../../../docs/spec/adapters/first-party/curl.yaml"),
 ];
 
 /// The decoders implemented in Rust that a `builtin` decoder may name.
-const BUILTIN_DECODERS: &[&str] = &["git-status-v2", "lsof-fields-v1", "ss-text-v6"];
+const BUILTIN_DECODERS: &[&str] = &[
+    "git-status-v2",
+    "lsof-fields-v1",
+    "ss-text-v6",
+    "curl-exchange-v1",
+];
 
 /// Something a pack promises that the contract does not allow.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -623,3 +623,82 @@ fn should_adapt_ss_with_combined_flags_or_say_why_not() {
         "bytes downstream keep ss's own output"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Forced adaptation (spec v0.3 §1.18, ADR-0054): `adapt <program> …` must produce structure or
+// fail — never downgrade to text — and curl is the tool that only ever adapts when asked.
+
+#[test]
+fn should_keep_curl_bytes_unless_adaptation_is_asked_for() {
+    let classic = ono("curl -s file:///etc/hostname | cat");
+    classic.assert_success();
+    let expected = std::fs::read_to_string("/etc/hostname").unwrap_or_default();
+    assert_eq!(
+        classic.stdout(),
+        expected,
+        "spec v0.3 §1.41: stdout is the body"
+    );
+
+    let adapted =
+        ono("adapt curl file:///etc/hostname | select scheme status redirects size | to json");
+    if adapted.status().code() != 0 && adapted.stderr().contains("Ono-Sendai-E0101") {
+        return; // no curl on this machine; the container has it (case 082)
+    }
+    adapted.assert_success();
+    assert!(
+        adapted.stdout().contains("\"scheme\":\"file\"")
+            && adapted.stdout().contains("\"status\":null"),
+        "an exchange record with a null status for a local scheme, got {:?}",
+        adapted.stdout()
+    );
+    // Bytes serialise as hex (spec §33.5), so the body is compared in that form.
+    let body = ono("adapt curl file:///etc/hostname | select body | to json");
+    body.assert_success();
+    let hex: String = expected.bytes().map(|b| format!("{b:02x}")).collect();
+    assert!(
+        body.stdout().contains(&hex),
+        "the body is a bytes field of the record, exact, got {:?}",
+        body.stdout()
+    );
+}
+
+#[test]
+fn should_fail_forced_adaptation_when_no_adapter_can_answer() {
+    let none = ono("adapt grep x /etc/hostname");
+    assert_ne!(none.status().code(), 0);
+    assert!(
+        none.stderr().contains("Ono-Sendai-E0911"),
+        "spec v0.3 §1.18: a forced structured invocation fails rather than downgrades, got {:?}",
+        none.stderr()
+    );
+    let refused = ono("adapt lsblk -p > /dev/null");
+    assert_ne!(refused.status().code(), 0);
+    assert!(
+        refused.stderr().contains("Ono-Sendai-E0903"),
+        "the specific refusal, got {:?}",
+        refused.stderr()
+    );
+    let bare = ono("adapt");
+    assert_eq!(bare.status().code(), 127, "got {:?}", bare.stderr());
+}
+
+#[test]
+fn should_explain_and_document_forced_adaptation() {
+    let run = Shell::new()
+        .args(["-c", "explain adapt ps aux | grep x"])
+        .run();
+    run.assert_success();
+    assert!(
+        run.stdout()
+            .contains("demand       structured (`adapt` requires structure)"),
+        "got {:?}",
+        run.stdout()
+    );
+    let help = Shell::new().args(["-c", "help adapt"]).run();
+    help.assert_success();
+    assert!(
+        help.stdout().contains("adapt") && help.stdout().contains("raw"),
+        "got {:?}",
+        help.stdout()
+    );
+}

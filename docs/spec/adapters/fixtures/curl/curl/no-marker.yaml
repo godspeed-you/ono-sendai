@@ -1,0 +1,6 @@
+# curl failed before its write-out (a refused connection, a bad URL): no marker, no exchange.
+invocation: [curl, "http://127.0.0.1:9/"]
+tool_version: "8.18.0"
+distro: debian
+expect:
+  error: adapter.decode_failed

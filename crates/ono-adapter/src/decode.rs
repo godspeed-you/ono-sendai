@@ -195,6 +195,8 @@ impl<'a> Decoding<'a> {
                     .map_err(|reason| decode_failed(adapter, &self.trace, &bytes, reason)),
                 Some("ss-text-v6") => ss_text_v6(&bytes)
                     .map_err(|reason| decode_failed(adapter, &self.trace, &bytes, reason)),
+                Some("curl-exchange-v1") => curl_exchange_v1(&bytes, self.observed)
+                    .map_err(|reason| decode_failed(adapter, &self.trace, &bytes, reason)),
                 other => Err(decode_failed(
                     adapter,
                     &self.trace,
@@ -295,6 +297,7 @@ impl<'a> Decoding<'a> {
         let item = Item {
             fields,
             parent: None,
+            raw: BTreeMap::new(),
         };
         build_record(
             adapter,
@@ -338,6 +341,8 @@ fn registered_schema(
 struct Item {
     fields: serde_json::Map<String, Json>,
     parent: Option<serde_json::Map<String, Json>>,
+    /// Fields that are bytes and must stay exact — a response body — beside the JSON ones.
+    raw: BTreeMap<String, Vec<u8>>,
 }
 
 fn json_records(adapter: &Adapter, bytes: &[u8], trace: &Trace) -> Result<Vec<Item>, ErrorValue> {
@@ -414,6 +419,7 @@ fn json_records(adapter: &Adapter, bytes: &[u8], trace: &Trace) -> Result<Vec<It
                         items.push(Item {
                             fields: fields.clone(),
                             parent: Some(parent.clone()),
+                            raw: BTreeMap::new(),
                         });
                     }
                 }
@@ -464,6 +470,7 @@ fn flatten(
         into.push(Item {
             fields: fields.clone(),
             parent: parent.cloned(),
+            raw: BTreeMap::new(),
         });
         if let Some(Json::Array(children)) = children {
             flatten(adapter, &children, Some(&fields), into, depth + 1)?;
@@ -550,6 +557,7 @@ fn line_item(adapter: &Adapter, record: &[u8], number: usize) -> Result<Item, St
     Ok(Item {
         fields,
         parent: None,
+        raw: BTreeMap::new(),
     })
 }
 
@@ -653,6 +661,7 @@ fn git_status_v2(bytes: &[u8]) -> Result<Vec<Item>, String> {
         items.push(Item {
             fields,
             parent: None,
+            raw: BTreeMap::new(),
         });
     }
     Ok(items)
@@ -681,6 +690,7 @@ fn lsof_fields_v1(bytes: &[u8]) -> Result<Vec<Item>, String> {
             items.push(Item {
                 fields,
                 parent: None,
+                raw: BTreeMap::new(),
             });
         }
     };
@@ -892,9 +902,63 @@ fn ss_text_v6(bytes: &[u8]) -> Result<Vec<Item>, String> {
         items.push(Item {
             fields,
             parent: None,
+            raw: BTreeMap::new(),
         });
     }
     Ok(items)
+}
+
+/// curl's stdout under the exchange plan (ADR-0064): the body, then a unit-separator byte
+/// (0x1f), then the write-out fields separated by tabs and ended by a newline. The last
+/// separator byte is the split, so a body that happens to contain one is still whole.
+fn curl_exchange_v1(bytes: &[u8], observed: jiff::Timestamp) -> Result<Vec<Item>, String> {
+    let Some(split) = bytes.iter().rposition(|byte| *byte == 0x1f) else {
+        return Err(
+            "no write-out after the body: curl ended before reporting the exchange".to_owned(),
+        );
+    };
+    let body = &bytes[..split];
+    let meta = String::from_utf8_lossy(&bytes[split + 1..]);
+    let meta = meta.trim_end_matches('\n');
+    let columns = [
+        "status",
+        "content_type",
+        "size",
+        "time",
+        "url",
+        "remote_address",
+        "remote_port",
+        "scheme",
+        "redirects",
+    ];
+    let parts: Vec<&str> = meta.split('\t').collect();
+    if parts.len() != columns.len() {
+        return Err(format!(
+            "the write-out has {} fields where the plan asked for {}",
+            parts.len(),
+            columns.len()
+        ));
+    }
+    let mut fields = serde_json::Map::new();
+    for (column, part) in columns.iter().zip(parts) {
+        fields.insert(
+            (*column).to_owned(),
+            if part.is_empty() {
+                Json::Null
+            } else {
+                Json::String(part.to_owned())
+            },
+        );
+    }
+    fields.insert("requested".into(), Json::String(observed.to_string()));
+    fields.insert("body".into(), Json::Null);
+    let mut raw = BTreeMap::new();
+    raw.insert("body".to_owned(), body.to_vec());
+    Ok(vec![Item {
+        fields,
+        parent: None,
+        raw,
+    }])
 }
 
 fn unescape(text: &str) -> Vec<u8> {
@@ -981,6 +1045,7 @@ fn property_records(
         items.push(Item {
             fields,
             parent: None,
+            raw: BTreeMap::new(),
         });
     }
     Ok(items)
@@ -1053,9 +1118,13 @@ fn build_record(
         if let Some(template) = map.template() {
             referenced.extend(placeholders(template));
         }
-        let value = match raw {
-            None | Some(Json::Null) => Value::Null,
-            Some(raw) => coerce_mapped(raw, map, field.ty(), &coercion)
+        let value = match (item.raw.get(map.from()), raw) {
+            // A byte field the decoder kept exact goes in untouched (ADR-0064).
+            (Some(bytes), _) if matches!(field.ty(), FieldType::Bytes) => {
+                Value::Bytes(bytes.clone().into())
+            }
+            (_, None | Some(Json::Null)) => Value::Null,
+            (_, Some(raw)) => coerce_mapped(raw, map, field.ty(), &coercion)
                 .map_err(|why| format!("field `{target}` of {} {why}", schema.id()))?,
         };
         builder = builder

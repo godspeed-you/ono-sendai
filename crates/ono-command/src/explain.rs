@@ -484,6 +484,13 @@ fn plan_demands(stages: &mut [StagePlan], list: &StageList, stdout: Stdout) {
             ));
             continue;
         }
+        if list.stages.get(index).is_some_and(is_adapt) {
+            stages[index].demand = Some((
+                OutputDemand::Structured { schema: None },
+                format!("`{}` requires structure", ono_adapter::ADAPT),
+            ));
+            continue;
+        }
         let redirected = list.stages.get(index).and_then(stdout_redirection);
         let (demand, reason) = match redirected {
             Some(Redirected::File(path)) => (
@@ -565,7 +572,12 @@ fn plan_adaptations(
             continue;
         };
         let mut argv = vec![head.clone()];
-        argv.extend(literal_arguments(stage, source));
+        let literal = literal_arguments(stage, source);
+        argv.extend(if is_adapt(stage) {
+            literal.into_iter().skip(1).collect::<Vec<String>>()
+        } else {
+            literal
+        });
         let negotiation = adapters.negotiate(&path, &argv, demand);
         let (argv, candidates) = match &negotiation {
             Negotiation::StructuredSupported {
@@ -699,6 +711,35 @@ fn plan_stage(
         };
     }
 
+    if is_adapt(stage) {
+        let program = adapt_program(stage).unwrap_or(ono_adapter::ADAPT);
+        return StagePlan {
+            ordinal,
+            source: text,
+            resolution: Resolution::External {
+                head: program.to_owned(),
+            },
+            provider: None,
+            capability: None,
+            input: upstream.map_or_else(|| "bytes".to_owned(), |io| io.text().to_owned()),
+            output: "stream<any>".to_owned(),
+            element_schema: None,
+            streaming: true,
+            privilege: None,
+            risk: None,
+            fields,
+            notes: vec![
+                "forced adaptation: the program's output must become values, or the stage fails \
+                 (spec v0.3 §1.18, ADR-0064)"
+                    .to_owned(),
+            ],
+            demand: None,
+            declared_input: None,
+            raw: false,
+            adaptation: None,
+        };
+    }
+
     let Ok(resolved) = registry.resolve(head, &stage.arguments) else {
         return StagePlan {
             ordinal,
@@ -804,16 +845,33 @@ fn plan_stage(
 /// The keyword is a bare, unqualified head: `exec:raw` is a program called `raw`.
 #[must_use]
 pub fn is_raw(stage: &Stage) -> bool {
+    is_keyword(stage, ono_adapter::RAW)
+}
+
+/// Whether `stage` is `adapt <program> …`, the forced adaptation of spec v0.3 §1.18.
+#[must_use]
+pub fn is_adapt(stage: &Stage) -> bool {
+    is_keyword(stage, ono_adapter::ADAPT)
+}
+
+fn is_keyword(stage: &Stage, keyword: &str) -> bool {
     matches!(&stage.head, ono_parser::StageHead::Command(name)
-        if name.namespace.is_none() && name.name == ono_adapter::RAW)
+        if name.namespace.is_none() && name.name == keyword)
 }
 
 /// The program word behind `raw`, when the stage is a `raw` stage and names one.
 #[must_use]
 pub fn raw_program(stage: &Stage) -> Option<&str> {
-    if !is_raw(stage) {
-        return None;
-    }
+    is_raw(stage).then(|| keyword_program(stage)).flatten()
+}
+
+/// The program word behind `adapt`, when the stage is an `adapt` stage and names one.
+#[must_use]
+pub fn adapt_program(stage: &Stage) -> Option<&str> {
+    is_adapt(stage).then(|| keyword_program(stage)).flatten()
+}
+
+fn keyword_program(stage: &Stage) -> Option<&str> {
     match stage.arguments.first() {
         Some(Argument::Word(word)) => Some(&word.text),
         _ => None,

@@ -425,6 +425,28 @@ Default view: `gid`, `name`, `members`
 | `name` | `string` | — | nullable | The group name; null when the identity provider cannot resolve the gid. |
 | `members` | `list<string>` | — | nullable | Login names listed as supplementary members. Names rather than user references, because the account database stores names and they need not resolve to an account. Users whose primary group this is are not listed here; null when the provider cannot enumerate them. |
 
+## HttpExchange — `ono.http-exchange/1`
+
+One request and its response, as curl observed it.
+
+Identity: `url`, `requested`
+
+Default view: `status`, `scheme`, `size`, `time`, `url`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `url` | `string` | — | required | The effective URL after redirects. |
+| `scheme` | `string` | — | required | The scheme curl used — `http`, `https`, `file`, …. |
+| `status` | `int` | — | nullable | The HTTP status; null for a scheme that has none. |
+| `content_type` | `string` | — | nullable | The response's media type, when the server named one. |
+| `size` | `bytesize` | — | required | The body's size as transferred. |
+| `time` | `duration` | — | required | The whole exchange, from start to the last byte. |
+| `remote_address` | `ip` | — | nullable | The server that answered; null for a local scheme. |
+| `remote_port` | `port` | — | nullable | The server's port; null for a local scheme. |
+| `redirects` | `int` | — | required | How many redirects were followed. |
+| `requested` | `timestamp` | — | required | When the exchange was decoded — its observation time. |
+| `body` | `bytes` | — | required | The response body, exactly as curl wrote it. |
+
 ## InterfaceAddress — `ono.interface-address/1`
 
 One address configured on a network interface.

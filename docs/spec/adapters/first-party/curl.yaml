@@ -1,0 +1,66 @@
+# curl compatibility pack (spec v0.3 §1.41, §1.69 step 11). stdout of `curl` is the body, so the
+# adapter answers a structured demand only — `curl … | from json` stays bytes, and `adapt curl …`
+# is the spelling for the exchange as an object — and it keeps the body as bytes of the record,
+# split from curl's write-out metadata by a unit-separator byte (0x1f) curl prints after the body.
+format: ono-adapter-pack/1
+package:
+  id: org.ono.compat.curl
+  name: curl compatibility
+  version: 0.1.0
+  publisher: org.ono
+  tier: first-party
+roles: [adapter]
+capabilities:
+  process.exec:
+    executables: [curl]
+    argv_policy: declared-invocations-only
+
+adapters:
+  - id: curl
+    summary: An HTTP exchange as one `ono.http-exchange/1` record — metadata from curl's write-out, the body as bytes.
+    executable:
+      names: [curl]
+      versions: ">=7.75"
+      version_probe:
+        argv: ["--version"]
+        pattern: "curl ([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: B
+    output_demand: [structured]
+    fallback: error
+    schema: ono.http-exchange/1
+    decoder:
+      kind: builtin
+      id: curl-exchange-v1
+      stability: stable
+    fields:
+      url: {from: url}
+      scheme: {from: scheme}
+      status: {from: status, map: {"000": null}}
+      content_type: {from: content_type}
+      size: {from: size, unit: bytes}
+      time: {from: time, unit: seconds}
+      remote_address: {from: remote_address}
+      remote_port: {from: remote_port, map: {"-1": null}}
+      redirects: {from: redirects}
+      requested: {from: requested}
+      body: {from: body}
+    invocations:
+      - id: fetch
+        summary: "adapt curl [-L] [-k] [-f] [-4|-6] [--compressed] [-X <method>] [-d <data>] [-m <seconds>] <url …>"
+        match:
+          words: [[]]
+          flags:
+            allow: [-s, -S, -L, --location, -k, --insecure, -f, --fail, -4, -6, --compressed, --http1.1, --http2, --no-progress-meter]
+            allow_with_value: [-X, --request, -d, --data, --data-raw, --data-binary, -m, --max-time, --connect-timeout, --retry, -A, --user-agent, -e, --referer]
+          positionals: allow
+        plan:
+          argv: [curl, -s, -S, -w, "\u001f%{http_code}\t%{content_type}\t%{size_download}\t%{time_total}\t%{url_effective}\t%{remote_ip}\t%{remote_port}\t%{scheme}\t%{num_redirects}\n"]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "The body is buffered into the record: this adapter answers a structured demand only, and a plain `curl` stays the streaming bytes it always was (spec v0.3 §1.41)."
+      - "`-H`, `-u`, `--user`, `-b`, `--cookie`, `-o`, `-O`, `-w`, `-D`, `-i`, `-I`, `-v` and `--config` run raw: headers and credentials never enter provenance or history."
+      - "Redirect chains and TLS details are not fields; they wait for schema semantics of their own."
+    fixtures: curl/curl

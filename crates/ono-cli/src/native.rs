@@ -62,6 +62,11 @@ enum Segment {
 /// reaches it, and nowhere else (ADR-0028).
 #[must_use]
 pub fn claims(session: &mut Session, list: &StageList) -> bool {
+    // A forced adaptation is this module's to run — or to refuse — wherever it stands
+    // (spec v0.3 §1.18).
+    if list.stages.iter().any(ono_command::is_adapt) {
+        return true;
+    }
     segments(session, list, 0, false).is_some_and(|segments| {
         segments
             .iter()
@@ -110,6 +115,12 @@ fn adaptable_program(session: &Session, stage: &Stage) -> Option<(String, std::p
     if ono_command::is_raw(stage) {
         return None;
     }
+    // `adapt <program>`: the program is the word after the keyword (ADR-0064).
+    if ono_command::is_adapt(stage) {
+        let program = ono_command::adapt_program(stage)?;
+        let path = crate::resolve::find_on_path(session, program)?;
+        return Some((program.to_owned(), path));
+    }
     let StageHead::Command(name) = &stage.head else {
         return None;
     };
@@ -135,7 +146,12 @@ fn negotiate_literally(
 ) -> Option<ono_adapter::Negotiation> {
     let (name, path) = adaptable_program(session, stage)?;
     let mut argv = vec![name];
-    argv.extend(literal_words(stage));
+    let words = literal_words(stage);
+    argv.extend(if ono_command::is_adapt(stage) {
+        words.into_iter().skip(1).collect::<Vec<String>>()
+    } else {
+        words
+    });
     Some(session.adapters().negotiate(&path, &argv, demand))
 }
 
@@ -178,8 +194,9 @@ fn segments(
         } else {
             // An adapted program hands structure on (spec v0.3 §1.4), so `lsblk | sort size`
             // is the transform where `printf x | sort` is the program (ADR-0028, ADR-0057).
-            negotiate_literally(session, stage, &OutputDemand::Structured { schema: None })
-                .is_some_and(|negotiation| negotiation.plan().is_some())
+            ono_command::is_adapt(stage)
+                || negotiate_literally(session, stage, &OutputDemand::Structured { schema: None })
+                    .is_some_and(|negotiation| negotiation.plan().is_some())
         };
 
         match segments.last_mut() {
@@ -779,6 +796,9 @@ fn external_demand(
     last: bool,
 ) -> Option<OutputDemand> {
     let stage = &list.stages[*indices.last()?];
+    if ono_command::is_adapt(stage) {
+        return Some(OutputDemand::Structured { schema: None });
+    }
     if redirects_stdout(stage) {
         return None;
     }
@@ -821,14 +841,35 @@ fn negotiate_stage(
         return Ok(None);
     };
     let mut argv = vec![name];
+    let forced = ono_command::is_adapt(stage);
     argv.extend(
         crate::eval::stage_arguments(session, stage, source)?
             .into_iter()
+            .skip(usize::from(forced))
             .map(|word| word.to_string_lossy().into_owned()),
     );
     let negotiation = session.adapters().negotiate(&path, &argv, &demand);
     if let Some(error) = negotiation.refusal(&demand, &path, &argv) {
         return Err(Flow::Failed(error));
+    }
+    if forced && negotiation.plan().is_none() {
+        // Spec v0.3 §1.18: a forced structured invocation fails rather than silently
+        // downgrading to raw text.
+        let invocation = argv.join(" ");
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::AdapterRequiredForStructuredPipeline,
+                format!("no adapter can give `{invocation}` structured output"),
+            )
+            .with_help(format!(
+                "`raw {invocation}` runs the program as typed; `{invocation} | from <format>` \
+                 decodes its output yourself; `get command {}` lists what adapts it",
+                argv.first().map_or("", String::as_str)
+            ))
+            .with_metadata("invocation", Value::string(&invocation))
+            .with_metadata("raw_fallback_safe", Value::Bool(true))
+            .with_metadata("recovery", Value::string(&format!("raw {invocation}"))),
+        ));
     }
     Ok(negotiation.plan().cloned().map(|plan| (plan, argv, demand)))
 }

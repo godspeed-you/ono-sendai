@@ -855,6 +855,26 @@ fn build_command(session: &mut Session, stage: &Stage, source: &str) -> Eval<Com
     // `raw <program> …` runs the program on PATH and nothing else, with the arguments exactly as
     // typed (spec v0.3 §1.17, ADR-0054). The keyword wins over a program called `raw`, as
     // `explain` does; `exec:raw` reaches such a program.
+    if name.namespace.is_none() && name.name == ono_adapter::ADAPT {
+        // The native runner claims every `adapt` stage; reaching here means the stage had
+        // nothing to adapt — `adapt` alone — or a form the runner does not take (a
+        // background job), and a forced adaptation never runs as a plain program.
+        let arguments = stage_arguments(session, stage, source)?;
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                if arguments.is_empty() {
+                    "`adapt` needs a program to adapt".to_owned()
+                } else {
+                    "`adapt` cannot run here".to_owned()
+                },
+            )
+            .with_help(
+                "`adapt <program> [arguments]` forces the program's output into values \
+                 (spec v0.3 §1.18); run it in the foreground",
+            ),
+        ));
+    }
     if name.namespace.is_none() && name.name == ono_adapter::RAW {
         let mut arguments = stage_arguments(session, stage, source)?;
         if arguments.is_empty() {

@@ -633,6 +633,7 @@ fn overview(registry: &CommandRegistry) -> TopicHelp {
             "help commands          every stable command".to_owned(),
             "help get process       one command in full".to_owned(),
             "help raw               the escape hatch that bypasses adaptation".to_owned(),
+            "help adapt             force a program's output into values".to_owned(),
         ],
     }
 }
@@ -706,6 +707,29 @@ fn builtin_topic(registry: &CommandRegistry, topic: &str) -> Option<TopicHelp> {
             ],
             see_also: vec![
                 "explain raw <program>  the plan, with adaptation shown as bypassed".to_owned(),
+            ],
+        },
+        "adapt" => TopicHelp {
+            name: "adapt".to_owned(),
+            summary: "Force a program's output into values, or fail (spec v0.3 §1.18).".to_owned(),
+            entries: vec![
+                (
+                    "adapt <program> [arguments]".to_owned(),
+                    "the program through its adapter whatever the consumer: the records it \
+                     produces, or `adapter.required_for_structured_pipeline` when no adapter \
+                     answers — never text. `adapt curl <url> | inspect` shows an HTTP exchange \
+                     as an object."
+                        .to_owned(),
+                ),
+                (
+                    "raw <program> [arguments]".to_owned(),
+                    "the opposite: no adapter, bytes as the program wrote them (ADR-0054)."
+                        .to_owned(),
+                ),
+            ],
+            see_also: vec![
+                "explain adapt <program>  the plan, the adapter chosen, the demand forced"
+                    .to_owned(),
             ],
         },
         _ => return None,

@@ -93,15 +93,20 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 13 — the `adapt` keyword (§1.18) and `curl`
-  exchange metadata with the body kept separate (COMPAT-CURL-001) — files:
-  `docs/spec/adapters/first-party/curl.yaml`, `docs/spec/schemas/http-exchange.v1.yaml`,
-  `crates/ono-cli/src/{native,eval}.rs`, `crates/ono-command/src/explain.rs`
+- [claude | 2026-08-27] v0.3 tranche, step 14 — `ADAPT-008` KUANG/11: `process.exec` with
+  `executables` and `argv_policy` in the capability contracts, `roles: [adapter]` and
+  `adapters:` in the package manifest, adapter packs loaded from packages under the broker,
+  the test host's adapter conformance, packs and trust tiers — files: `docs/spec/kuang/`,
+  `docs/spec/capabilities.yaml`, `crates/ono-kuang-*/`, `crates/ono-cli/src/plugins.rs`
 
 ---
 
 ## Next up (ordered)
 
+- [ ] `to bytes --field body` refuses a record ("a record has no raw byte form") although
+  `--field` names the one bytes field to emit — the natural way to write an adapted `curl`
+  body to a file (`adapt curl url | to bytes --field body > page.html`) — exit test: a
+  data_codecs case emitting one bytes field verbatim
 - [ ] The pre-flight field check (spec §11.3) and `type` do not know an adapted stage's
   schema: `lsblk | where colour == 1` runs lsblk before failing per record, and `type lsblk`
   says bytes. The plan already knows the adapter's schema (ADR-0056) — thread it into
@@ -372,6 +377,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   `ono.git-status-entry/1`, `ono.commit/1`, `ono.open-file/1`, hex escapes (ADR-0062) — case 080
 - [x] v0.3 step 12 — COMPAT-SS: combined flags, nested record coercion, the `ss-text-v6`
   version-constrained parser, required flags as specificity (ADR-0063) — case 081
+- [x] v0.3 step 13 — the `adapt` keyword of §1.18 (E0911 when nothing answers) and
+  COMPAT-CURL: `ono.http-exchange/1`, the `curl-exchange-v1` decoder with the body kept as
+  exact bytes, secrets never adapting (ADR-0064) — case 082
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

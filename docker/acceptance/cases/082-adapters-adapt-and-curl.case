@@ -1,0 +1,22 @@
+# v0.3 §1.18, §1.41, §1.69 step 11 (COMPAT-CURL-001 and the `adapt` keyword): a forced structured
+# invocation produces structure or fails — never text — and curl, whose stdout is the body, only
+# adapts when asked: `adapt curl …` is one HttpExchange record with the body as bytes, a plain
+# `curl` is the bytes it always was. Networking is off; the file scheme exercises the mechanics.
+case: adapt forces structure and curl keeps its body unless asked
+run: |
+  echo "== classic curl is bytes =="
+  ono -c 'curl -s file:///etc/hostname | cat' > /tmp/a; bash -c 'curl -s file:///etc/hostname' > /tmp/b; cmp /tmp/a /tmp/b && echo bytes=identical
+  echo "== adapt curl is an exchange =="
+  ono -c 'adapt curl file:///etc/hostname | select scheme status size redirects | to json'
+  hex=$(od -An -v -tx1 /etc/hostname | tr -d ' \n'); ono -c 'adapt curl file:///etc/hostname | select body | to json' | grep -c "$hex"
+  ono -c 'adapt curl file:///etc/hostname | inspect | to json' | grep -F 'adapter:org.ono.compat.curl.curl'
+  echo "== headers and credentials never adapt =="
+  ono -c 'adapt curl -H "Authorization: x" file:///etc/hostname' 2>&1 | grep -c 'Ono-Sendai-E0903'
+  echo "== forced adaptation fails rather than downgrades =="
+  ono -c 'adapt grep x /etc/hostname' 2>&1 | grep -c 'Ono-Sendai-E0911'
+  ono -c 'adapt curl http://127.0.0.1:9/' 2>&1 | grep -c 'Ono-Sendai-E0501'
+  ono -c 'explain adapt curl file:///etc/hostname' | grep -F 'adapted by org.ono.compat.curl.curl'
+  ono -c 'help adapt' | grep -c adapt
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

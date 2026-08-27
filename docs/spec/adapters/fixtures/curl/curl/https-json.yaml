@@ -1,0 +1,6 @@
+invocation: [curl, -L, "https://example.org/api"]
+tool_version: "8.18.0"
+distro: debian
+expect:
+  records:
+    - {url: "https://example.org/api", scheme: https, status: 200, content_type: application/json, size: "11B", time: "52000000ns", remote_address: "93.184.216.34", remote_port: 443, redirects: 1, body: "{\"ok\":true}"}

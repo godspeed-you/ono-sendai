@@ -440,8 +440,10 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       with nested `ono.endpoint/1` records, `LC_ALL=C` forced (v0.3 §1.32, §1.9 Tier C,
       ADR-0063) — the iproute2 pack's `ss*` fixtures through the harness,
       `ono-adapter/tests/{negotiation,decode}.rs`, `ono-cli/tests/adapters.rs`, case `081`.
-- [ ] **COMPAT-CURL-001** — `curl` exchange metadata split from the body, the body staying
-      bytes (v0.3 §1.41).
+- [x] **COMPAT-CURL-001** — `adapt curl …` is one `ono.http-exchange/1` record with the
+      body as bytes and curl's write-out as the metadata; a plain `curl` stays the bytes it
+      always was; headers and credentials never adapt (v0.3 §1.41, ADR-0064) — the curl pack's
+      fixtures through the harness, `ono-cli/tests/adapters.rs`, case `082`.
 - [ ] **Text tools stay raw.** No first-party adapter claims `cat`, `grep`, `sed`, `awk`,
       `head`, `tail`, `sort`, `less`, editors or REPLs (v0.3 §1.70); terminal-owning tools keep
       the PTY (§1.19, §1.43). Exit test: a registry case asserting `NotApplicable` for each.

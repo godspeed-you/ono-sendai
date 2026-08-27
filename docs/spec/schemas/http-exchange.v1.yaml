@@ -1,0 +1,55 @@
+# Canonical HttpExchange schema. Source: spec v0.3 §1.41 — an HTTP exchange "as a compound result
+# with explicit body semantics": response metadata, transfer metrics and the body as bytes, kept
+# separate so a body is never mistaken for a table. Redirect and TLS details stay in the extension
+# map until they have schema semantics of their own (§1.41 rules).
+id: ono.http-exchange/1
+name: HttpExchange
+summary: One request and its response, as curl observed it.
+identity: [url, requested]
+fields:
+  url:
+    type: string
+    required: true
+    doc: The effective URL after redirects.
+  scheme:
+    type: string
+    required: true
+    doc: The scheme curl used — `http`, `https`, `file`, ….
+  status:
+    type: int
+    nullable: true
+    doc: The HTTP status; null for a scheme that has none.
+  content_type:
+    type: string
+    nullable: true
+    doc: The response's media type, when the server named one.
+  size:
+    type: bytesize
+    required: true
+    doc: The body's size as transferred.
+  time:
+    type: duration
+    required: true
+    doc: The whole exchange, from start to the last byte.
+  remote_address:
+    type: ip
+    nullable: true
+    doc: The server that answered; null for a local scheme.
+  remote_port:
+    type: port
+    nullable: true
+    doc: The server's port; null for a local scheme.
+  redirects:
+    type: int
+    required: true
+    doc: How many redirects were followed.
+  requested:
+    type: timestamp
+    required: true
+    doc: When the exchange was decoded — its observation time.
+  body:
+    type: bytes
+    required: true
+    doc: The response body, exactly as curl wrote it.
+default_view:
+  columns: [status, scheme, size, time, url]
