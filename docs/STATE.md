@@ -93,11 +93,7 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 17 — release evidence (§4.6.5): adapter reference
-  pages and the compatibility matrix generated from `docs/spec/adapters/` (`xtask/src/reference.rs`,
-  `docs/reference/adapters/`), the live-conformance and overhead evidence as acceptance cases,
-  the README section for the adapter layer — files: `xtask/`, `docs/reference/adapters/`,
-  `docker/acceptance/cases/`, `README.md`
+- (empty — the v0.3 tranche is complete; the release verdict is `scripts/release-check.sh`)
 
 ---
 
@@ -385,6 +381,10 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] v0.3 step 16 — integration surfaces: adapted stages are producers for the pre-flight
   check, `type`, completion and history; text tools pinned raw; the §1.71 session, script
   determinism and the muscle-memory diff as cases (ADR-0067) — cases 085, 086, 087
+- [x] v0.3 step 17 — release evidence: generated adapter reference pages and the compatibility
+  matrix, live conformance for every first-party adapter (case 088), measured overhead
+  (case 089), the README section with examples that parse and run under xtask — all §4.6
+  boxes ticked
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

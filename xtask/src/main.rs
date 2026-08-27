@@ -111,6 +111,7 @@ fn spec_check() -> ExitCode {
     problems.extend(
         narrative::check(&root)
             .into_iter()
+            .chain(narrative::check_readme_examples(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 

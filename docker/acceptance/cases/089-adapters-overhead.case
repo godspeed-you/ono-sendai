@@ -1,0 +1,32 @@
+# v0.3 §1.50, §1.68 item 13 (overhead is measured): the adapter path — lookup, version probe,
+# rewrite, decode — costs a bounded amount over running the same tool raw. Measured in the
+# container as a per-run average over many runs; the bound is the spec §34 figure for the first
+# rows of a native producer (50 ms), because an adapted `ps` is a producer like `get process`.
+# The figures are printed either way, so a regression inside the bound is still visible.
+case: the adapter path adds a bounded, measured cost over the raw program
+timeout: 300
+run: |
+  average_ms() {
+    local runs=20 start end
+    "$@" >/dev/null 2>&1
+    start=$(date +%s%N)
+    for _ in $(seq $runs); do "$@" >/dev/null 2>&1; done
+    end=$(date +%s%N)
+    echo $(( (end - start) / 1000000 / runs ))
+  }
+  raw=$(average_ms ono -c 'raw ps aux')
+  adapted=$(average_ms ono -c 'ps aux | count')
+  planned=$(average_ms ono -c 'explain ps aux | count')
+  overhead=$(( adapted - raw ))
+  echo "raw ps aux: ${raw}ms; ps aux | count (negotiate, rewrite, decode, count): ${adapted}ms; explain only: ${planned}ms"
+  echo "adapter overhead: ${overhead}ms (bound 50ms)"
+  if [ "$overhead" -le 50 ]; then echo "overhead: within budget"; else echo "overhead: OVER BUDGET"; fi
+  raw=$(average_ms ono -c 'raw lsblk')
+  adapted=$(average_ms ono -c 'lsblk | count')
+  overhead=$(( adapted - raw ))
+  echo "raw lsblk: ${raw}ms; lsblk | count: ${adapted}ms; adapter overhead: ${overhead}ms (bound 50ms)"
+  if [ "$overhead" -le 50 ]; then echo "lsblk overhead: within budget"; else echo "lsblk overhead: OVER BUDGET"; fi
+exit: 0
+stdout-contains: overhead: within budget
+stdout-contains: lsblk overhead: within budget
+stdout-not-contains: OVER BUDGET

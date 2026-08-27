@@ -1,0 +1,73 @@
+# v0.3 §1.48, §1.68 (live conformance): every first-party adapter is negotiated and decoded
+# against the real executable the image installs — `xtask/tests/adapter_evidence.rs` checks
+# that this file names every adapter the contracts declare. The container has no journald and
+# no systemd as PID 1, so the systemd adapters answer through the shims of case 077 (§1.48
+# "where applicable"); everything else runs the installed tool. A tool whose version cannot be
+# established degrades to raw with a visible reason.
+case: every first-party adapter adapts its real tool live, and an unusable tool degrades visibly
+timeout: 300
+run: |
+  export GIT_AUTHOR_NAME=Case GIT_AUTHOR_EMAIL=case@example.org GIT_COMMITTER_NAME=Case GIT_COMMITTER_EMAIL=case@example.org
+  mkdir -p /tmp/live && cd /tmp/live && git init -q && printf 'x\n' > a.txt && git add a.txt && git commit -qm first && printf 'y\n' >> a.txt
+  mkdir -p /tmp/shim
+  cat > /tmp/shim/journalctl <<'SH'
+  #!/bin/sh
+  if [ "$1" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi
+  cat /opt/ono-fixtures/adapters/journalctl.jsonl
+  SH
+  cat > /tmp/shim/systemctl <<'SH'
+  #!/bin/sh
+  if [ "$1" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi
+  case "$1" in
+    list-units) cat /opt/ono-fixtures/adapters/systemctl-list-units.json ;;
+    show) cat /opt/ono-fixtures/adapters/systemctl-show.txt ;;
+    *) echo "unexpected: $*" >&2; exit 2 ;;
+  esac
+  SH
+  chmod +x /tmp/shim/journalctl /tmp/shim/systemctl
+  export PATH=/tmp/shim:$PATH
+  live() {
+    local id="$1" line="$2" attempt
+    if ! ono -c "explain $line | count" | grep -qF "adapted by $id"; then
+      echo "NOT ADAPTED: $id ($line)"; ono -c "explain $line | count"; return
+    fi
+    # lsns is known to exit 1 under load when a namespace vanishes mid-scan; three tries.
+    for attempt in 1 2 3; do
+      if ono -c "$line | count | to text" > /tmp/live.out 2> /tmp/live.err; then
+        echo "live: $id -> $(cat /tmp/live.out) records"; return
+      fi
+    done
+    echo "FAILED LIVE: $id ($line)"; cat /tmp/live.err
+  }
+  live org.ono.compat.coreutils.stat 'stat /etc/hostname'
+  live org.ono.compat.coreutils.df 'df'
+  live org.ono.compat.curl.curl 'adapt curl file:///etc/hostname'
+  live org.ono.compat.findutils.find 'find /etc/default -maxdepth 1'
+  live org.ono.compat.git.git-status 'git status'
+  live org.ono.compat.git.git-log 'git log -n 1'
+  live org.ono.compat.iproute2.ip-address 'ip address'
+  live org.ono.compat.iproute2.ip-link 'ip link'
+  live org.ono.compat.iproute2.ip-neigh 'ip neigh'
+  live org.ono.compat.iproute2.ip-route 'ip route'
+  live org.ono.compat.iproute2.ip-route6 'ip -6 route'
+  live org.ono.compat.iproute2.ss-tcp 'ss -tlnp'
+  live org.ono.compat.iproute2.ss-udp 'ss -ulnp'
+  live org.ono.compat.iproute2.ss 'ss -tunap'
+  live org.ono.compat.lsof.lsof 'lsof -c ono'
+  live org.ono.compat.procps.ps 'ps aux'
+  live org.ono.compat.systemd.journalctl 'journalctl -n 2'
+  live org.ono.compat.systemd.systemctl-list-units 'systemctl list-units'
+  live org.ono.compat.systemd.systemctl-show 'systemctl show ssh.service'
+  live org.ono.compat.util-linux.lsblk 'lsblk'
+  live org.ono.compat.util-linux.findmnt 'findmnt'
+  live org.ono.compat.util-linux.lsns 'lsns'
+  echo "== a tool whose version cannot be established degrades to raw, and says why =="
+  mkdir -p /tmp/shadow && printf '#!/bin/sh\necho shadow-lsblk-output\n' > /tmp/shadow/lsblk && chmod +x /tmp/shadow/lsblk
+  PATH=/tmp/shadow:$PATH ono -c 'explain lsblk' | grep -F 'version incompatible: org.ono.compat.util-linux.lsblk supports >=2.37, found undetected'
+  PATH=/tmp/shadow:$PATH ono -c 'lsblk' | grep -F 'shadow-lsblk-output' && echo degraded=raw
+  echo done=ok
+exit: 0
+stdout-contains: done=ok
+stdout-contains: degraded=raw
+stdout-not-contains: NOT ADAPTED
+stdout-not-contains: FAILED LIVE

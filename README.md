@@ -159,8 +159,9 @@ Each phase is tagged in git (`phase-a` … `phase-j`) with the acceptance case t
 | **H** ✓ | Remote links — the protocol, the agent, `ono --agent`, capability negotiation |
 | **I** ✓ | KUANG/11 extension runtime — broker, audit, SDK, deterministic test host |
 | **J** ✓ | Advanced TUI views — `view`, the cursor that sets `@`, only where semantics justify |
+| **v0.3** ✓ | External command adapters — `ps`, `ip`, `ss`, `lsblk`, `findmnt`, `lsns`, `stat`, `df`, `find`, `git`, `lsof`, `curl`, `systemctl`, `journalctl` become typed when a typed consumer follows, and stay raw otherwise |
 
-Written in Rust — 21 crates, ~1 400 outcome tests. Latency is treated as a product feature and
+Written in Rust — 22 crates, ~1 400 outcome tests. Latency is treated as a product feature and
 *measured* like one, in the container, on every acceptance run: cold start, parse, and the
 first rows of `get process` all inside their spec §34 budgets, with the keystroke-to-render
 path bounded in the editor's own suite.
@@ -209,6 +210,30 @@ enter service nginx                     get process now means that service's pro
 link host prod-db                       remote hosts become places; the prompt says where
 ```
 
+### The Unix tools you already know become typed
+
+An external program is never trapped: `ps aux | grep foo` gives you the bytes `ps` writes,
+byte for byte. But when a *typed* consumer follows — `where`, `select`, `sort`, `count`, a
+table at the terminal — a first-party adapter rewrites the invocation to the tool's own
+machine-readable form and decodes it into the same schemas the native providers use, with the
+provenance to prove it. Nothing new to learn, and `explain` shows every step:
+
+```ono
+ps aux | where pid == 1 | select pid user name
+lsblk | where type == "disk" | select name size
+findmnt | where target == "/" | count
+ip route | where interface == "lo" | count
+ss -tunap | where state == "listen" | count
+explain ss -tunap | where state == "established"
+raw ps aux | head -3
+```
+
+`raw <command>` bypasses the layer unconditionally; `adapt <command>` demands structure and
+fails visibly rather than degrading to text. Which tools adapt, at which versions, through which
+invocations — and what each adapter deliberately does not carry — is generated from the
+contracts into [`docs/reference/adapters/`](docs/reference/adapters/README.md). Text tools
+(`grep`, `sed`, `awk`, `less`, editors) stay raw by design.
+
 KUANG/11 packages install as files: a directory under `~/.config/ono/plugins` (or
 `$ONO_PLUGIN_PATH`) holding a `manifest.yaml` and its runtime. `get plugin` lists them,
 `load plugin <id>` negotiates capabilities before the binary ever starts, and a loaded
@@ -222,6 +247,7 @@ the same registries the shell answers `help` from, so they cannot drift:
 | | |
 |---|---|
 | `docs/reference/` | generated reference: every command, verb, target, schema, error, capability |
+| `docs/reference/adapters/` | generated: the compatibility matrix and a page per adapter pack — invocations, schemas, limits |
 | `docs/ono_sendai_shell_spec_v0.2.md` | the immutable base specification — product, language, KUANG/11 |
 | `docs/*_shell_spec_*.md` | enhancement specifications, layered on the base (AGENTS.md §5.2) |
 | `docs/spec/` | machine-readable contracts: commands, schemas, verbs, errors, providers |

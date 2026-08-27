@@ -506,18 +506,29 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       (`should_publish_a_page_per_adapter_pack_and_a_compatibility_matrix_when_generated`,
       `should_find_this_repositorys_committed_reference_docs_up_to_date_when_checked`),
       `spec-check` on every gate run.
-- [ ] **Live conformance in the container.** The acceptance image installs every Tier A/B/C
+- [x] **Live conformance in the container.** The acceptance image installs every Tier A/B/C
       tool, and each adapter has at least one live case against the real executable
-      (v0.3 §1.48); adapters for tools absent on a host degrade to raw with a visible reason.
-- [ ] **Overhead is measured.** The adapter path adds a bounded, measured cost over the raw
+      (v0.3 §1.48); adapters for tools absent on a host degrade to raw with a visible reason. — case `088` (every first-party adapter
+      negotiated and decoded against the installed tool; systemd through the shims of case
+      `077`; an undetectable version degrades to raw with the reason), `xtask/tests/adapter_evidence.rs`
+      (`should_have_a_live_acceptance_case_for_every_first_party_adapter`: the contracts and
+      the cases cannot drift apart).
+- [x] **Overhead is measured.** The adapter path adds a bounded, measured cost over the raw
       path — negotiation, rewrite and decode — reported by an acceptance case inside the §34
-      budgets (v0.3 §1.50).
-- [ ] **Limitations are documented.** Every first-party adapter's reference page states its
+      budgets (v0.3 §1.50). — case `089` (`ps aux | count` and `lsblk | count`
+      against `raw ps aux` / `raw lsblk`, per-run average, overhead bounded by the §34 first-rows
+      figure of 50 ms, figures printed on every run).
+- [x] **Limitations are documented.** Every first-party adapter's reference page states its
       unsupported invocations and known limits, and `README.md` presents the adapter layer to a
-      new user with examples that run. Exit test: doc examples parse and run under `xtask`.
-- [ ] **Delivery.** `docs/STATE.md` has an empty *In progress*, no `#[ignore]`d tests exist
+      new user with examples that run. Exit test: doc examples parse and run under `xtask`. — `docs/reference/adapters/*.md` (a *Limits* section
+      per adapter, generated), `README.md` (*The Unix tools you already know become typed*),
+      `xtask/tests/adapter_evidence.rs` (`should_find_ono_examples_in_the_readme_that_parse`,
+      `should_run_every_readme_example_of_the_adapter_layer`), `spec-check` parsing the README's
+      examples on every gate run.
+- [x] **Delivery.** `docs/STATE.md` has an empty *In progress*, no `#[ignore]`d tests exist
       without a *Deferred* entry, the acceptance suite and CI are green on `implementation`,
-      and this subsection has no unticked box.
+      and this subsection has no unticked box. — `scripts/release-check.sh`; `docs/STATE.md` *In progress* is empty, no
+      `#[ignore]` exists in the tree, CI runs the gate and the acceptance suite on every push.
 
 ## 5. Stopping rule
 

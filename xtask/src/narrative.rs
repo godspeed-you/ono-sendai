@@ -106,3 +106,53 @@ fn check_instructions(root: &Path, base: &str, enhancements: &[String]) -> Vec<P
     }
     problems
 }
+
+/// The example lines inside every ```ono fence of a markdown document: the lines a reader is
+/// invited to type, without blank lines and `#` comments.
+#[must_use]
+pub fn ono_examples(markdown: &str) -> Vec<String> {
+    let mut examples = Vec::new();
+    let mut inside = false;
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            inside = !inside && trimmed.trim_start_matches('`').trim() == "ono";
+            continue;
+        }
+        if inside && !trimmed.is_empty() && !trimmed.starts_with('#') {
+            examples.push(trimmed.to_owned());
+        }
+    }
+    examples
+}
+
+/// Every ```ono example in `markdown` that does not parse as a complete statement, reported
+/// against `location`.
+#[must_use]
+pub fn check_examples_in(markdown: &str, location: &str) -> Vec<Problem> {
+    ono_examples(markdown)
+        .into_iter()
+        .filter_map(|example| {
+            let parsed = ono_parser::parse(&example);
+            if !parsed.has_errors() && parsed.is_complete() {
+                return None;
+            }
+            let complaint = parsed.diagnostics().first().map_or_else(
+                || "the line is unfinished".to_owned(),
+                |diagnostic| format!("{}: {}", diagnostic.code().code(), diagnostic.message()),
+            );
+            Some(Problem {
+                location: location.to_owned(),
+                detail: format!("the example `{example}` does not parse: {complaint}"),
+            })
+        })
+        .collect()
+}
+
+/// The README's ```ono examples must parse (spec §36.5: a doc example that no longer parses is
+/// contract drift); running them is the job of `xtask/tests/adapter_evidence.rs`.
+#[must_use]
+pub fn check_readme_examples(root: &Path) -> Vec<Problem> {
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap_or_default();
+    check_examples_in(&readme, "README.md")
+}
