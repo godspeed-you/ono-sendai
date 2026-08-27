@@ -191,3 +191,68 @@ fn lists_member(group: &RecordValue, name: &str) -> bool {
         _ => false,
     }
 }
+
+/// The user a process runs as, read from the process's own `user` reference.
+///
+/// Exact: the uid is what the kernel reports in `/proc/<pid>/status`, and the user object is
+/// whatever the account provider says that uid is. Registered on request — `trace file …
+/// --users` (spec §22.3) — rather than on every trace, so a process graph stays about
+/// processes unless the question was about people.
+#[derive(Debug)]
+pub struct ProcessUsers {
+    registry: Arc<ProviderRegistry>,
+    snapshots: Arc<SharedSnapshots>,
+}
+
+impl ProcessUsers {
+    /// A provider reading through `registry`'s user provider.
+    #[must_use]
+    pub fn new(registry: Arc<ProviderRegistry>) -> Self {
+        Self {
+            registry,
+            snapshots: Arc::default(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RelationshipProvider for ProcessUsers {
+    fn id(&self) -> &str {
+        "linux.process-users"
+    }
+
+    fn subjects(&self) -> &[&str] {
+        &["ono.process/1"]
+    }
+
+    fn relations(&self) -> &[&str] {
+        &["runs-as"]
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![Capability::new("user.list", Risk::Read)]
+    }
+
+    async fn relationships(&self, subject: &Node) -> Relationships {
+        let Some(uid) = reference_id(subject.field("user"), "uid") else {
+            return Relationships::failed(missing_field(subject, "user"));
+        };
+        match self
+            .snapshots
+            .one(&self.registry, "user", "uid", &Value::Int(i128::from(uid)))
+            .await
+        {
+            Ok(Some(record)) => {
+                let mut found = Relationships::new();
+                if let Some(node) = Node::of(&record) {
+                    found.push(Relationship::exact(subject, node, "runs-as", self.id()));
+                }
+                found
+            }
+            // A uid the account database cannot name is still the process's owner (spec §23.6),
+            // but there is no user object to draw an edge to.
+            Ok(None) => Relationships::new(),
+            Err(error) => Relationships::failed(error),
+        }
+    }
+}

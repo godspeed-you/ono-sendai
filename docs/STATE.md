@@ -93,12 +93,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [watch | 2026-08-27] **`watch`/`trace` for the declared-but-unbound targets** (file, user,
-  group, interface, route, mount) — ADR-0078..0080 — files: `crates/ono-command/src/impls/{watch,trace,mod}.rs`,
-  `crates/ono-graph/src/kernel/{identity,mount,network,file}.rs`, `docs/spec/schemas/*-event.v1.yaml`,
-  `docs/spec/schemas/deferred.yaml`, the watch/trace tests of `*_missing.rs`. The remote five
-  (`watch link|host`, `trace link|host`) stay ignored: they need `link`/`host` as provider-backed
-  records first (context.rs `get_link` renders by hand).
+- [watch | 2026-08-27] **`watch`/`trace` for the declared-but-unbound targets** — done for
+  file, user, group, interface, route and mount (ADR-0078..0080; commits on
+  `implementation-watch`). Left ignored: the remote five in `remote_missing.rs` (`watch
+  link|host`, `trace link|host`) — they need `link`/`host` as provider-backed records first
+  (context.rs `get_link` renders by hand); the remote family picks them up.
 
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
@@ -180,9 +179,15 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 - [ ] Phase I remainder (ADR-0040): wasm-component tier, objects/streams/views/models host
   domains, install/verify/signing, on-disk state + migrations, hot reload, binary frame encoding
   (a `perf` increment)
-- [ ] Remaining `*-event/1` schemas (service, socket, interface, route, mount, file, user,
-  group, container, link, host) — each un-deferred as its watch is exercised; the watch runtime
-  is generic already — exit test: a watch.rs case per target
+- [ ] Remaining `*-event/1` schemas (container, link, host) — each un-deferred as its watch is
+  exercised; service, socket, interface, route, mount, file, user and group are written
+  (ADR-0034, ADR-0078..0080) — exit test: a watch case per target
+- [ ] `trace mount` propagation peers (storage.yaml promises them; ADR-0079 leaves them out
+  until a peer group has an object to stand for it) — exit test: a storage case over a bind
+  mount with `shared:` in mountinfo
+- [ ] `watch file` through inotify and `watch interface|route` through the rtnetlink multicast
+  groups, switching `source` to `subscription` (ADR-0078, ADR-0080) — exit test: a file
+  created between two polls arrives before the next poll would
 - [ ] `kill %N` for a native job (today: `fg` then Ctrl-C collects it) — exit test: a
   jobs_native.rs case
 - [ ] Provider-native subscriptions (netlink, D-Bus signals) switching `source` to

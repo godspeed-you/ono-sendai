@@ -1202,7 +1202,7 @@ Emit filesystem change events for a path or tree.
 | | |
 |---|---|
 | id | `ono.file.watch` |
-| stability | planned |
+| stability | experimental |
 | phase | F |
 | input | `null` |
 | output | `stream<ono.file-event/1>` |

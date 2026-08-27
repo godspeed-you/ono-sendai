@@ -244,8 +244,7 @@ commands:
     verb: watch
     target: file
     summary: Emit filesystem change events for a path or tree.
-    stability: planned                    # spec §52, file/watch = "L?"
-    validation_required: true
+    stability: experimental               # spec §52, file/watch = "L?" — delivered by ADR-0078
     argument_mode: words
     input: "null"
     output: stream<ono.file-event/1>

@@ -34,6 +34,7 @@ const CONTRACTS: &[&str] = &[
     include_str!("../../../docs/spec/schemas/endpoint.v1.yaml"),
     include_str!("../../../docs/spec/schemas/env-var.v1.yaml"),
     include_str!("../../../docs/spec/schemas/error.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/file-event.v1.yaml"),
     include_str!("../../../docs/spec/schemas/file.v1.yaml"),
     include_str!("../../../docs/spec/schemas/filesystem.v1.yaml"),
     include_str!("../../../docs/spec/schemas/git-status-entry.v1.yaml"),

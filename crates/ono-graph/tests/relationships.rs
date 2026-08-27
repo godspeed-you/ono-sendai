@@ -12,9 +12,9 @@ use common::{
 };
 use ono_core::ErrorCode;
 use ono_graph::{
-    Confidence, InterfaceSockets, MountDevices, MountFilesystems, MountUsers, OpenFiles,
-    ProcessSockets, ProcessTree, RemoteHosts, RouteInterfaces, ServiceProcesses, SocketOwners,
-    TraceOptions, UserGroups, UserProcesses,
+    Confidence, FileHolders, InterfaceSockets, MountDevices, MountFilesystems, MountUsers,
+    OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, RouteInterfaces,
+    ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
 };
 use ono_provider_api::Provider;
 use ono_value::Value;
@@ -730,4 +730,72 @@ async fn should_link_an_interface_to_sockets_bound_to_its_addresses_and_mark_wil
         "spec §22.2: a socket on the interface's own address is observed; a wildcard binding is \
          inferred and says so"
     );
+}
+
+#[tokio::test]
+async fn should_link_a_file_to_the_processes_holding_it_open() {
+    let proc = ProcFixture::new();
+    proc.process(300).fd(0, "/srv/data/held.txt", 0);
+    proc.process(301).fd(5, "/srv/data/other.txt", 1);
+    proc.process(302).fd(7, "/srv/data/held.txt", 1);
+    let processes: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.process",
+        &["process"],
+        vec![
+            process(300, Some(1), "sleep"),
+            process(301, Some(1), "cat"),
+            process(302, Some(1), "tee"),
+        ],
+    ))];
+    let registry = registry(processes);
+    let subject = file("/srv/data/held.txt", "file", 2049, 41);
+
+    let graph = trace_with(
+        vec![Arc::new(FileHolders::new(registry).rooted(proc.root()))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["holder -> process/300 sleep", "holder -> process/302 tee"],
+        "spec §22.3: the holders are the processes whose descriptor tables name the file, in \
+         pid order"
+    );
+    let access: Vec<Option<String>> = graph
+        .edges()
+        .iter()
+        .map(|edge| {
+            edge.metadata()
+                .get("access")
+                .and_then(|value| value.as_str().ok().map(str::to_owned))
+        })
+        .collect();
+    assert_eq!(
+        access,
+        [Some("read".to_owned()), Some("write".to_owned())],
+        "each edge says how the holder opened the file"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_process_to_the_user_it_runs_as() {
+    let users: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.user",
+        &["user"],
+        vec![user(0, "root", 0), user(999, "postgres", 999)],
+    ))];
+    let registry = registry(users);
+    let subject = owned_process(812, "postgres", 999, "postgres");
+
+    let graph = trace_with(
+        vec![Arc::new(ProcessUsers::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(edges(&graph), ["runs-as -> postgres"]);
+    assert_eq!(graph.edges()[0].confidence(), Confidence::Exact);
 }

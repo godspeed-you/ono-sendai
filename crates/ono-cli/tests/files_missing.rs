@@ -688,7 +688,6 @@ fn should_follow_appended_lines_when_tailing() {
 // --- watch file (spec §18.2, ADR-0024) ----------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_a_file_watch_with_a_snapshot() {
     let directory = scratch();
     directory.write("src/main.rs", "fn main() {}\n");
@@ -707,7 +706,6 @@ fn should_begin_a_file_watch_with_a_snapshot() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_created_file_as_an_event_when_watching() {
     let directory = scratch();
     let watched = directory.path().join("src");
@@ -730,7 +728,6 @@ fn should_report_a_created_file_as_an_event_when_watching() {
 // --- trace file (spec §22.3) --------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_name_the_process_holding_a_file_when_tracing() {
     let directory = scratch();
     let held = directory.write("held.txt", "h");
@@ -751,7 +748,6 @@ fn should_name_the_process_holding_a_file_when_tracing() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_include_the_users_behind_the_holders_when_asked() {
     let directory = scratch();
     let held = directory.write("held.txt", "h");

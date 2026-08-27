@@ -280,6 +280,22 @@ Default view: `kind`, `reference`, `source`, `samples`, `observed_at`
 | `command` | `string` | — | nullable | An Ono command that reproduces the observation, for `kind: command`. It must parse and be runnable — spec §31.87 asks that the same question be investigable manually from the citations. Null for the other kinds. |
 | `unavailable_reason` | `string` | — | nullable | Why the observation could not be made, for `kind: unavailable`. Null otherwise. |
 
+## FileEvent — `ono.file-event/1`
+
+One change to one file or directory entry, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `file`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024). Identity is `(device, inode)` (file.v1.yaml), so a file written in place is `changed` with `size`/`modified` named, a rename is `changed` with `path` named, and a replacement is `removed` + `added`. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `file` | `record` | — | optional | The entry as it now is — or, for `removed`, as it last was. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime walked the path again at the configured interval — explicit, as spec §18.2 requires. |
+
 ## File — `ono.file/1`
 
 A filesystem object and its metadata.

@@ -120,7 +120,8 @@ fn implementation_of(
         | "ono.group.watch"
         | "ono.mount.watch"
         | "ono.interface.watch"
-        | "ono.route.watch" => Arc::new(watch::WatchCommand::new(id)),
+        | "ono.route.watch"
+        | "ono.file.watch" => Arc::new(watch::WatchCommand::new(id)),
         "ono.process.trace"
         | "ono.service.trace"
         | "ono.socket.trace"
@@ -128,7 +129,8 @@ fn implementation_of(
         | "ono.user.trace"
         | "ono.mount.trace"
         | "ono.interface.trace"
-        | "ono.route.trace" => Arc::new(trace::TraceCommand::new(id)),
+        | "ono.route.trace"
+        | "ono.file.trace" => Arc::new(trace::TraceCommand::new(id)),
         "ono.context.get" => Arc::new(MetaCommand::new(id, meta::Kind::GetContext, registry)),
         "ono.meta.help" => Arc::new(MetaCommand::new(id, meta::Kind::Help, registry)),
         "ono.meta.explain" => Arc::new(MetaCommand::new(id, meta::Kind::Explain, registry)),

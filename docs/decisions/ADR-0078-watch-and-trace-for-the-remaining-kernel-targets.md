@@ -38,11 +38,13 @@ subscriptions stay in `docs/STATE.md` → *Next up*, as ADR-0034 left them).
 
 `watch file <path>` is `get file <path>` re-run — one entry, whose mtime moves — only if a
 watch of a directory were meant to report the directory. It is not: spec §18.2's example is a
-tree, and the contract's `--recursive` says "watch the whole tree". So the watch queries the
-file provider with the `root` selector — the walk `find file` performs — one level deep unless
-`--recursive`, and a file created under the path arrives as an `added` event carrying the new
-`ono.file/1`. Identity is `(device, inode)`, so a rename is a `changed` event and a replacement
-is a `removed` plus an `added`.
+tree, and the contract's `--recursive` says "watch the whole tree". So for a directory the watch
+queries the file provider's listing (`get dir`, hidden entries included, one level deep unless
+`--recursive`), and a file created under the path arrives as an `added` event carrying the new
+`ono.file/1`; the directory's own record, whose mtime would say the same thing less
+precisely, is not part of the stream. A path that is not a directory is watched as the one
+entry it is. Identity is `(device, inode)`, so a rename is a `changed` event and a
+replacement is a `removed` plus an `added`.
 
 ### The delivered commands leave `planned`
 
@@ -58,6 +60,14 @@ watch, so `spec-check` never sees a stale deferral or an unwritten promise.
 | `ono.user/1` | `runs` | `ono.process/1` | process `user.uid == uid` | exact |
 | `ono.user/1` | `primary-group` | `ono.group/1` | the account's `primary_group.gid` | exact |
 | `ono.user/1` | `member-of` | `ono.group/1` | the group's own `members` list | exact |
+| `ono.file/1` | `holder` | `ono.process/1` | a descriptor in `/proc/<pid>/fd` naming the file's canonical path | exact |
+| `ono.process/1` | `runs-as` | `ono.user/1` | the process's `user.uid`; **only with `--users`** | exact |
+
+`trace file … --users` (spec §22.3) is the one option that changes the provider set: a process
+graph stays about processes unless the question was about people, so `ProcessUsers` is added
+to the tracer only when `--users` is written — for any trace, not only a file's. A holder this
+user may not look into is counted and reported once on the failure channel, as `SocketOwners`
+does; a uid the account database cannot name gets no user node rather than an invented one.
 
 Identity is numeric (spec §23.6): a process belongs to a user by uid, never by a name two
 accounts could share. Targets are listed in pid / gid order so two traces of one machine draw
@@ -73,8 +83,10 @@ Further families (storage, network, files) extend this table in the ADRs that de
 - `trace user` of an account that owns many processes expands each of them one hop further
   (their children, descriptors, sockets), bounded by `DEFAULT_MAX_NODES`; the shared per-trace
   snapshots of `ono-graph` keep that to one enumeration per target.
-- Tests: `crates/ono-cli/tests/identity_missing.rs` (watch user/group, trace user) and
-  `crates/ono-graph/tests/relationships.rs` (the user providers against fixtures).
+- Tests: `crates/ono-cli/tests/identity_missing.rs` (watch user/group, trace user),
+  `crates/ono-cli/tests/files_missing.rs` (watch file, trace file, `--users`) and
+  `crates/ono-graph/tests/relationships.rs` (the user, holder and process-user providers
+  against fixtures).
 
 ## Alternatives considered
 
