@@ -754,7 +754,7 @@ Join two record streams on a key.
 |---|---|
 | id | `ono.data.join` |
 | stability | experimental |
-| phase | planned |
+| phase | B |
 | input | `stream<any>` |
 | output | `stream<record>` |
 | privilege | none |

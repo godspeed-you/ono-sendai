@@ -19,8 +19,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use ono_core::ErrorCode;
-use ono_parser::{BinaryOp, CurrentSelector, Expr, NumberValue, RecordKey, StrPart, UnaryOp, Unit};
+use ono_core::{ErrorCode, Span};
+use ono_parser::{
+    BinaryOp, CurrentSelector, Expr, NumberValue, ParenValue, RecordKey, StrPart, UnaryOp, Unit,
+};
 use ono_value::{
     ByteSize, Duration, ErrorValue, FieldStep, MapValue, Percent, RegexValue, Schema, Value,
 };
@@ -47,6 +49,7 @@ pub struct Scope {
     current: Option<Value>,
     previous: Vec<Value>,
     items: Vec<Value>,
+    pipelines: BTreeMap<Span, Value>,
 }
 
 impl Scope {
@@ -87,10 +90,26 @@ impl Scope {
         self
     }
 
+    /// Records the value a parenthesised pipeline produced, keyed by the span of the
+    /// parentheses, so an expression that names `(get socket)` reads the values the evaluator
+    /// already collected (ADR-0072 §4). Running a pipeline is the evaluator's job, not this
+    /// crate's (ADR-0005); the evaluator finds them with [`nested_pipelines`].
+    #[must_use]
+    pub fn with_pipeline_result(mut self, span: Span, value: Value) -> Self {
+        self.pipelines.insert(span, value);
+        self
+    }
+
     /// The value bound to `$name`, if anything is.
     #[must_use]
     pub fn variable(&self, name: &str) -> Option<&Value> {
         self.variables.get(name)
+    }
+
+    /// The pre-run value of the parenthesised pipeline at `span`, if the evaluator ran it.
+    #[must_use]
+    pub fn pipeline_result(&self, span: Span) -> Option<&Value> {
+        self.pipelines.get(&span)
     }
 
     /// The value bound to `@`, if the scope carries one of its own.
@@ -226,8 +245,12 @@ pub fn evaluate(expression: &Expr, current: &Value, scope: &Scope) -> Result<Val
         }
         Expr::Paren(inner) => match inner.expression() {
             Some(expression) => evaluate(expression, current, scope),
-            // A parenthesised pipeline has to be run, and running one is the evaluator's job.
-            None => Err(needs_evaluator("a parenthesised pipeline")),
+            // A parenthesised pipeline has to be run, and running one is the evaluator's job:
+            // it hands the result in through the scope, or this is an honest refusal.
+            None => scope
+                .pipeline_result(inner.span)
+                .cloned()
+                .ok_or_else(|| needs_evaluator("a parenthesised pipeline")),
         },
         Expr::Block(_) => Err(needs_evaluator("a block")),
         Expr::Unary(unary) => {
@@ -276,6 +299,67 @@ pub fn evaluate_to_value(expression: &Expr, current: &Value, scope: &Scope) -> V
 #[must_use]
 pub fn is_true(value: &Value) -> bool {
     matches!(value, Value::Bool(true))
+}
+
+/// Every parenthesised pipeline `expression` contains, outermost first.
+///
+/// The evaluator runs these before the stage that names them and hands the results in through
+/// [`Scope::with_pipeline_result`] (ADR-0072 §4). A pipeline nested inside another one's
+/// arguments is that pipeline's to run, so the walk stops at the parentheses.
+#[must_use]
+pub fn nested_pipelines(expression: &Expr) -> Vec<&ParenValue> {
+    let mut found = Vec::new();
+    collect_pipelines(expression, &mut found);
+    found
+}
+
+fn collect_pipelines<'a>(expression: &'a Expr, found: &mut Vec<&'a ParenValue>) {
+    match expression {
+        Expr::Paren(inner) => match inner.expression() {
+            Some(expression) => collect_pipelines(expression, found),
+            None => found.push(inner),
+        },
+        Expr::Unary(unary) => collect_pipelines(&unary.operand, found),
+        Expr::Binary(binary) => {
+            collect_pipelines(&binary.lhs, found);
+            collect_pipelines(&binary.rhs, found);
+        }
+        Expr::Field(access) => collect_pipelines(&access.base, found),
+        Expr::Index(index) => {
+            collect_pipelines(&index.base, found);
+            collect_pipelines(&index.index, found);
+        }
+        Expr::List(list) => list
+            .items
+            .iter()
+            .for_each(|item| collect_pipelines(item, found)),
+        Expr::Record(record) => record
+            .fields
+            .iter()
+            .for_each(|field| collect_pipelines(&field.value, found)),
+        Expr::Call(call) => {
+            collect_pipelines(&call.callee, found);
+            call.arguments
+                .iter()
+                .for_each(|argument| collect_pipelines(argument, found));
+        }
+        Expr::Str(literal) => literal.parts.iter().for_each(|part| {
+            if let StrPart::Expr(inner) = part {
+                collect_pipelines(inner, found);
+            }
+        }),
+        Expr::Number(_)
+        | Expr::Unit(_)
+        | Expr::Regex(_)
+        | Expr::Ip(_)
+        | Expr::Bool(_, _)
+        | Expr::Null(_)
+        | Expr::Variable(_)
+        | Expr::CurrentValue(_)
+        | Expr::Path(_)
+        | Expr::Block(_)
+        | Expr::Error(_) => {}
+    }
 }
 
 /// Checks every bare field name `expression` reads against `schema`, before anything runs.

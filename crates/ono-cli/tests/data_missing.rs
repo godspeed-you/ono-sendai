@@ -164,7 +164,6 @@ const USERS: &str = r#"let users = [{"uid":0,"name":"root"},{"uid":7,"name":"nob
 const PROCS: &str = r#"let procs = [{"pid":1,"uid":0},{"pid":2,"uid":1}]"#;
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pair_records_that_share_the_key_in_an_inner_join() {
     let run = ono(&format!(
         "{USERS}; {PROCS}; $procs | join $users --on uid | to json"
@@ -190,7 +189,6 @@ fn should_pair_records_that_share_the_key_in_an_inner_join() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_unmatched_left_rows_with_a_null_right_side_when_kind_is_left() {
     let run = ono(&format!(
         "{USERS}; {PROCS}; $procs | join $users --on uid --kind left | to json"
@@ -213,7 +211,6 @@ fn should_keep_unmatched_left_rows_with_a_null_right_side_when_kind_is_left() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_the_unmatched_rows_of_both_sides_in_an_outer_join() {
     let run = ono(&format!(
         "{USERS}; {PROCS}; $procs | join $users --on uid --kind outer | to json"
@@ -237,7 +234,6 @@ fn should_keep_the_unmatched_rows_of_both_sides_in_an_outer_join() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_join_provider_records_given_as_a_parenthesised_pipeline() {
     // data.yaml's own example spells the right side as `(get socket)`; the process provider
     // stands in for the socket provider so the test needs no privilege.

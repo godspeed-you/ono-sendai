@@ -388,6 +388,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Done
 
+- [x] data family (ADR-0072) — `tail N [--follow]` (commit 0f68fe0), `join <right> --on key
+  --kind inner|left|right|outer` with `$variables` and pre-run `(pipelines)` visible to native
+  stages — `crates/ono-cli/tests/data_missing.rs`, case 036
 - [x] v0.3 step 1 — ADAPT-001 OutputDemand computed backwards from the consumer, reported
   by `explain` (ADR-0052) — cases 070, 071
 - [x] v0.3 step 2 — the `adapter.*` error family E0901–E0911 in `docs/spec/errors.yaml` and

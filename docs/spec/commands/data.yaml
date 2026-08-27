@@ -349,11 +349,13 @@ commands:
       - {name: kind, type: string, default: inner, doc: "`inner`, `left`, `right` or `outer`."}
     privilege: none
     streaming: false
-    phase: planned
+    phase: B
     note: >-
       Spec §53: "Relational joins are powerful but complex. Syntax should not be frozen until
-      common shell use cases justify it." The entry exists so the id is reserved and the
-      semantics are written down; the surface is not a promise yet.
+      common shell use cases justify it." Delivered experimental (ADR-0072): the right side is
+      a `$variable` or a parenthesised pipeline, one `--on` key reads both sides, and each row
+      is an `ono.join/1` record — `key`, `left`, `right` — rather than a flat merge, so no
+      field-collision rule is frozen before a use case justifies one.
     examples:
       - get process | join (get socket) --on pid
 
