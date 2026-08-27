@@ -140,6 +140,20 @@ impl fmt::Display for ArgumentMode {
     }
 }
 
+/// When a command's `--confirm` option must be written for it to act (spec §11.6, §17.4).
+///
+/// Every mutating command with a `confirm` option refuses a bulk selection above the threshold
+/// unless it is written. A command whose single action is already destructive — closing a
+/// socket under a running process — declares `confirmation: always` and refuses without it
+/// every time, so a script never reaches an action it did not spell out (ADR-0088).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Confirmation {
+    /// `--confirm` is needed for a selection above the bulk threshold.
+    Bulk,
+    /// `--confirm` is needed for every run.
+    Always,
+}
+
 /// The spec §37 phase that delivers a command, where one does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Phase {
@@ -548,6 +562,7 @@ pub struct CommandContract {
     note: Option<String>,
     stability: Stability,
     validation_required: bool,
+    confirmation: Confirmation,
     argument_mode: ArgumentMode,
     input: IoType,
     output: IoType,
@@ -610,6 +625,12 @@ impl CommandContract {
     #[must_use]
     pub fn stability(&self) -> Stability {
         self.stability
+    }
+
+    /// When the command's `--confirm` option is required rather than merely honoured.
+    #[must_use]
+    pub fn confirmation(&self) -> Confirmation {
+        self.confirmation
     }
 
     /// Whether the entry records a `?` cell of the §52 matrix whose usefulness must be validated
@@ -711,6 +732,8 @@ pub(crate) struct RawCommand {
     stability: String,
     #[serde(default)]
     validation_required: bool,
+    #[serde(default)]
+    confirmation: Option<String>,
     argument_mode: String,
     input: String,
     output: String,
@@ -834,6 +857,16 @@ impl RawCommand {
             "conditional" => Privilege::Conditional,
             other => return Err(contract_error(&id, format!("unknown privilege `{other}`"))),
         };
+        let confirmation = match self.confirmation.as_deref() {
+            None | Some("bulk") => Confirmation::Bulk,
+            Some("always") => Confirmation::Always,
+            Some(other) => {
+                return Err(contract_error(
+                    &id,
+                    format!("unknown confirmation `{other}`; it is `bulk` or `always`"),
+                ));
+            }
+        };
         let phase = match self.phase.as_str() {
             "planned" => Phase::Planned,
             letter if letter.len() == 1 && letter.starts_with(|c: char| c.is_ascii_uppercase()) => {
@@ -853,6 +886,7 @@ impl RawCommand {
             note: self.note,
             stability,
             validation_required: self.validation_required,
+            confirmation,
             argument_mode,
             input: IoType { text: self.input },
             output: IoType { text: self.output },

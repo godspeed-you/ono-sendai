@@ -55,6 +55,15 @@ impl InterfaceNames {
         self.by_index.get(&index).map(|name| &**name)
     }
 
+    /// The index of the interface with this name, if the dump carried one.
+    #[must_use]
+    pub fn index_of(&self, name: &str) -> Option<u32> {
+        self.by_index
+            .iter()
+            .find(|(_, candidate)| &***candidate == name)
+            .map(|(index, _)| *index)
+    }
+
     /// How many interfaces were named.
     #[must_use]
     pub fn len(&self) -> usize {

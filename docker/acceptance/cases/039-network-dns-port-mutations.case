@@ -19,9 +19,21 @@ run: |
   for _ in 1 2 3 4 5 6 7 8 9 10; do ono -c 'test port 127.0.0.1 4711 | select reachable | to json' | grep -q true && break; sleep 0.5; done
   ono -c 'test port 127.0.0.1 4711 --timeout 2s | select host port reachable error | to json'
   ono -c 'test port 127.0.0.1 1 | select reachable | to json'; echo "closed-port-status=$?"
+  echo "== a network mutation, refused by the kernel for an unprivileged user =="
+  ono -c 'add route 10.99.0.0/24 --gateway 127.0.0.1 --interface lo | select operation status error | to json'
+  echo "add-route-status=$?"
+  ono -c 'get route | to json' | grep -c '10.99.0.0/24' | sed 's/^/routes-added=/'
+  echo "== stop socket in a script needs --confirm =="
+  ono -c 'get socket --listening | take 1 | stop socket | to json' 2>&1 | grep -o 'Ono-Sendai-E0701' | head -1
+  ono -c 'test port 127.0.0.1 4711 | select reachable | to json'
   kill "$listener" 2>/dev/null
   echo "checked"
 exit: 0
+stdout-contains: {"error":{"code":"Ono-Sendai-E0302"
+stdout-contains: "operation":"ono.route.add","status":"failed"
+stdout-contains: add-route-status=1
+stdout-contains: routes-added=0
+stdout-contains: Ono-Sendai-E0701
 stdout-contains: [{"address":"127.0.0.1","name":"localhost","type":"A"}]
 stdout-contains: [{"type":"PTR"}]
 stdout-contains: Ono-Sendai-E0

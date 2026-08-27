@@ -10,6 +10,7 @@ pub struct Action {
     target: String,
     operation: String,
     object: ObjectId,
+    label: Option<String>,
     arguments: Vec<(String, Value)>,
     dry_run: bool,
 }
@@ -22,9 +23,24 @@ impl Action {
             target: target.into(),
             operation: operation.into(),
             object,
+            label: None,
             arguments: Vec::new(),
             dry_run: false,
         }
+    }
+
+    /// Names the object the way a person knows it — `nginx.service`, `tcp/:443` — so the
+    /// outcome can say which object it was without the reader decoding an identity.
+    #[must_use]
+    pub fn labelled(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// The object's human label, when the caller gave one.
+    #[must_use]
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     /// Adds an argument, such as the signal a `kill` should send.
@@ -97,6 +113,7 @@ impl Action {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActionOutcome {
     target: ObjectId,
+    label: Option<String>,
     operation: String,
     status: ActionStatus,
     changed: bool,
@@ -110,6 +127,7 @@ impl ActionOutcome {
     pub fn succeeded(action: &Action, changed: bool) -> Self {
         Self {
             target: action.target().clone(),
+            label: action.label().map(ToOwned::to_owned),
             operation: action.operation().to_owned(),
             status: ActionStatus::Success,
             changed,
@@ -123,6 +141,7 @@ impl ActionOutcome {
     pub fn skipped(action: &Action, why: impl Into<String>) -> Self {
         Self {
             target: action.target().clone(),
+            label: action.label().map(ToOwned::to_owned),
             operation: action.operation().to_owned(),
             status: ActionStatus::Skipped,
             changed: false,
@@ -136,6 +155,7 @@ impl ActionOutcome {
     pub fn failed(action: &Action, error: ErrorValue) -> Self {
         Self {
             target: action.target().clone(),
+            label: action.label().map(ToOwned::to_owned),
             operation: action.operation().to_owned(),
             status: ActionStatus::Failed,
             changed: false,
@@ -148,6 +168,12 @@ impl ActionOutcome {
     #[must_use]
     pub fn target(&self) -> &ObjectId {
         &self.target
+    }
+
+    /// The short human label the object was acted on under, when one was known.
+    #[must_use]
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     /// What was asked for.
@@ -184,8 +210,16 @@ impl ActionOutcome {
     /// The outcome as the `ActionResult` record that flows through a pipeline (spec §11.5).
     #[must_use]
     pub fn into_record(self, duration: ono_value::Duration) -> ActionResult {
+        // The reference names the identity, which is what `inspect` resolves, and the label a
+        // person knows the object by — `ono.socket/1[620332]` says nothing, `tcp/:443` does.
+        let reference = match &self.label {
+            Some(label) if label != &self.target.to_string() => {
+                format!("{} {label}", self.target)
+            }
+            _ => self.target.to_string(),
+        };
         let mut result = ActionResult::new(
-            ono_value::ValueRef::name(&self.target.to_string()),
+            ono_value::ValueRef::name(&reference),
             &self.operation,
             self.status,
         )

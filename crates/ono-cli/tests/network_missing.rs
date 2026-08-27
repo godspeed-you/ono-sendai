@@ -767,7 +767,6 @@ fn should_trace_the_entered_socket_without_a_selector() {
 // --- route write paths ------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_permission_failure_when_adding_a_route_unprivileged() {
     if !unprivileged() {
         return;
@@ -786,7 +785,6 @@ fn should_report_a_permission_failure_when_adding_a_route_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_permission_failure_when_removing_a_route_unprivileged() {
     if !unprivileged() {
         return;
@@ -797,7 +795,6 @@ fn should_report_a_permission_failure_when_removing_a_route_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_permission_failure_when_setting_a_route_unprivileged() {
     if !unprivileged() {
         return;
@@ -816,7 +813,6 @@ fn loopback() -> Value {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_permission_failure_when_setting_an_interface_unprivileged() {
     if !unprivileged() {
         return;
@@ -833,7 +829,6 @@ fn should_report_a_permission_failure_when_setting_an_interface_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_permission_failure_when_starting_an_interface_unprivileged() {
     if !unprivileged() {
         return;
@@ -844,7 +839,6 @@ fn should_report_a_permission_failure_when_starting_an_interface_unprivileged() 
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_permission_failure_when_stopping_an_interface_unprivileged() {
     if !unprivileged() {
         return;
@@ -861,7 +855,6 @@ fn should_report_a_permission_failure_when_stopping_an_interface_unprivileged() 
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_permission_failure_when_adding_an_interface_unprivileged() {
     if !unprivileged() {
         return;
@@ -880,7 +873,6 @@ fn should_report_a_permission_failure_when_adding_an_interface_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_permission_failure_when_removing_an_address_unprivileged() {
     if !unprivileged() {
         return;
@@ -901,7 +893,6 @@ fn should_report_a_permission_failure_when_removing_an_address_unprivileged() {
 // --- stop socket ------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_stop_a_socket_in_a_script_without_confirm() {
     let (_listener, port) = listener();
     // network.yaml marks closing a socket destructive and gives `--confirm` for the
@@ -925,7 +916,6 @@ fn should_refuse_to_stop_a_socket_in_a_script_without_confirm() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_permission_failure_when_stopping_a_socket_unprivileged_with_confirm() {
     if !unprivileged() {
         return;

@@ -6,8 +6,25 @@
 
 use ono_value::{RecordValue, Value, canonical_text};
 
-/// The text spec §22.4 draws for `record`.
-pub(crate) fn label_of(record: &RecordValue) -> String {
+/// The text spec §22.4 draws for `record`: `nginx.service`, `process/921 nginx`, `tcp/:443`.
+///
+/// ```
+/// use ono_graph::label_of;
+/// use ono_value::{RecordValue, Value, builtin_schemas, Provenance, SchemaId};
+/// use std::sync::Arc;
+///
+/// let schema = builtin_schemas().get(&SchemaId::new("ono.service", 1)).expect("the contract");
+/// let record = RecordValue::builder(
+///     Arc::clone(&schema),
+///     Provenance::local("test", schema.id().clone()),
+/// )
+/// .set("name", Value::string("nginx.service"))?
+/// .build();
+/// assert_eq!(label_of(&record), "nginx.service");
+/// # Ok::<(), ono_value::ErrorValue>(())
+/// ```
+#[must_use]
+pub fn label_of(record: &RecordValue) -> String {
     match record.schema_id().name() {
         "ono.process" => {
             let name = text(record, "name").unwrap_or_else(|| "process".to_owned());

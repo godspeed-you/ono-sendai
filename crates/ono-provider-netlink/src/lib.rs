@@ -58,6 +58,7 @@
 
 #![forbid(unsafe_code)]
 
+mod act;
 mod decoded;
 mod interface;
 mod neighbor;

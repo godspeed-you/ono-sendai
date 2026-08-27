@@ -19,7 +19,19 @@ use ono_pipeline::StreamEvent;
 use ono_provider_api::{Action, ActionOutcome, ObjectId, Selector};
 use ono_value::{ErrorValue, Value};
 
+use crate::contract::Confirmation;
 use crate::invoke::{CommandImpl, Invocation, Outcome, OutcomeFuture, must_be_awaited};
+
+/// One object to act on: its identity, how a person knows it, and whether anything resolved it.
+#[derive(Debug)]
+struct Target {
+    id: ObjectId,
+    label: Option<String>,
+    /// The selector the user wrote, when nothing answered to it. The provider is then the one
+    /// to say whether the object exists — the kernel refuses a caller without privilege before
+    /// it looks, and that refusal outranks "not found" (ADR-0088 §2).
+    unresolved: Option<(String, Value)>,
+}
 
 /// A mutation over whichever provider owns the contract's target.
 #[derive(Debug)]
@@ -79,6 +91,20 @@ impl ProviderMutation {
         let mut failures = Vec::new();
         let targets = self.targets(ctx, target, &spelling, &mut failures).await?;
 
+        // A command whose single action is destructive needs `--confirm` every time (spec
+        // §17.4): a script never waits for a prompt, so without the flag it acts on nothing
+        // and says so (ADR-0088 §3).
+        let confirmed = ctx.arguments().option("confirm") == Some(&Value::Bool(true));
+        if contract.confirmation() == Confirmation::Always && !confirmed {
+            return Err(ErrorValue::new(
+                ErrorCode::SafetyConfirmationRequired,
+                format!("`{spelling}` is destructive and was not confirmed"),
+            )
+            .with_help(format!(
+                "nothing was changed. Write `{spelling} --confirm` to act (spec §17.4)"
+            )));
+        }
+
         // The bulk guard of spec §11.6 and §17.4: a selection above the threshold mutates
         // nothing unless the confirmation was written. The refusal names the scope — the count
         // is exactly what the user needed shown before acting — and it comes before the first
@@ -86,7 +112,6 @@ impl ProviderMutation {
         // until configuration reaches invocations; a documented guard that exists strictly is
         // better than a configurable one that does not.
         const BULK_THRESHOLD: usize = 10;
-        let confirmed = ctx.arguments().option("confirm") == Some(&Value::Bool(true));
         if contract.option("confirm").is_some() && targets.len() > BULK_THRESHOLD && !confirmed {
             return Err(ErrorValue::new(
                 ErrorCode::SafetyConfirmationRequired,
@@ -106,7 +131,10 @@ impl ProviderMutation {
         outcomes.append(&mut failures);
         let dry_run = ctx.arguments().option("dry-run") == Some(&Value::Bool(true));
         for object in targets {
-            let mut action = Action::new(target, &operation, object);
+            let mut action = Action::new(target, &operation, object.id);
+            if let Some(label) = object.label {
+                action = action.labelled(label);
+            }
             // A declared `--dry-run` is the ask-without-obeying of spec §11.6, not an ordinary
             // argument a provider might ignore: it travels in the action's own field, and a
             // provider that honours it answers `skipped` with what would have happened.
@@ -118,11 +146,27 @@ impl ProviderMutation {
                     action = action.with(name, value.clone());
                 }
             }
+            if let Some((name, value)) = &object.unresolved {
+                action = action.with(name, value.clone());
+            }
             match providers.act(&action).await {
                 Ok(outcome) => outcomes.push(outcome),
                 // The provider could not attempt it at all. That is still this target's outcome,
-                // not the pipeline's: the other targets keep going (spec §16.5).
-                Err(error) => outcomes.push(ActionOutcome::failed(&action, error)),
+                // not the pipeline's: the other targets keep going (spec §16.5). For an object
+                // nothing resolved, "could not attempt" means it is not there to be acted on
+                // (ADR-0068 §2).
+                Err(error) => outcomes.push(match &object.unresolved {
+                    Some((name, value)) => ActionOutcome::failed(
+                        &action,
+                        ErrorValue::new(
+                            ErrorCode::IoNotFound,
+                            format!("no {target} answers to {name} {value}"),
+                        )
+                        .with_help(format!("`get {target}` lists what is there"))
+                        .with_source(error),
+                    ),
+                    None => ActionOutcome::failed(&action, error),
+                }),
             }
         }
         Ok(Outcome::Actions(outcomes))
@@ -135,13 +179,17 @@ impl ProviderMutation {
         target: &str,
         spelling: &str,
         failures: &mut Vec<ActionOutcome>,
-    ) -> Result<Vec<ObjectId>, ErrorValue> {
+    ) -> Result<Vec<Target>, ErrorValue> {
         if let Some(mut input) = ctx.take_input() {
             let mut objects = Vec::new();
             while let Some(event) = input.recv().await {
                 match event {
                     StreamEvent::Value(Value::Record(record)) => match ObjectId::of(&record) {
-                        Some(id) => objects.push(id),
+                        Some(id) => objects.push(Target {
+                            id,
+                            label: Some(ono_graph::label_of(&record)),
+                            unresolved: None,
+                        }),
                         None => {
                             return Err(ErrorValue::new(
                                 ErrorCode::TypeMismatch,
@@ -195,30 +243,32 @@ impl ProviderMutation {
                 ))
             })?;
 
-        let objects: Vec<ObjectId> = ctx
+        let mut objects: Vec<Target> = ctx
             .providers()
             .resolve(target, &Selector::field(name, value.clone()))
             .await?
             .iter()
-            .map(|reference| reference.id().clone())
+            .map(|reference| Target {
+                id: reference.id().clone(),
+                label: Some(reference.label().to_owned()),
+                unresolved: None,
+            })
             .collect();
         // A selector that names nothing is not an empty selection: the user asked to act on
-        // one particular thing, and "it is not there" is that thing's outcome (spec §16.5,
-        // ADR-0068 §2). An empty stream would be the answer to a filter that matched nothing.
+        // one particular thing, and that thing is still the target (spec §16.5, ADR-0068 §2).
+        // Whether it exists is the provider's to say — a creation names what does not exist
+        // yet, and a kernel refuses an unprivileged caller before it looks — so the provider is
+        // asked, on the object as the user named it (ADR-0088 §2). An empty stream would be the
+        // answer to a filter that matched nothing.
         if objects.is_empty() {
-            let object = ObjectId::new(
-                ono_value::SchemaId::new(&format!("ono.{target}"), 1),
-                [value.clone()],
-            );
-            let action = Action::new(target, ctx.contract().verb(), object);
-            failures.push(ActionOutcome::failed(
-                &action,
-                ErrorValue::new(
-                    ErrorCode::IoNotFound,
-                    format!("no {target} answers to {name} {value}"),
-                )
-                .with_help(format!("`get {target}` lists what is there")),
-            ));
+            objects.push(Target {
+                id: ObjectId::new(
+                    ono_value::SchemaId::new(&format!("ono.{target}"), 1),
+                    [value.clone()],
+                ),
+                label: None,
+                unresolved: Some((name.to_owned(), value.clone())),
+            });
         }
         Ok(objects)
     }

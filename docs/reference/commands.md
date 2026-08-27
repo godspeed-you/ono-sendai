@@ -3121,7 +3121,7 @@ Add a routing table entry.
 |---|---|
 | id | `ono.route.add` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `route.set` |
@@ -3157,7 +3157,7 @@ Remove a routing table entry.
 |---|---|
 | id | `ono.route.remove` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.route/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `route.set` |
@@ -3190,7 +3190,7 @@ Modify an existing routing table entry.
 |---|---|
 | id | `ono.route.set` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.route/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `route.set` |
@@ -3224,7 +3224,7 @@ Change an interface's configuration or administrative state.
 |---|---|
 | id | `ono.interface.set` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.interface/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `interface.set` |
@@ -3257,8 +3257,8 @@ Bring an interface up.
 | | |
 |---|---|
 | id | `ono.interface.start` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | C |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `interface.set` |
@@ -3284,8 +3284,8 @@ Bring an interface down.
 | | |
 |---|---|
 | id | `ono.interface.stop` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | C |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `interface.set` |
@@ -3311,8 +3311,8 @@ Create a virtual interface, or add an address to an existing one.
 | | |
 |---|---|
 | id | `ono.interface.add` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | C |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `interface.set` |
@@ -3345,8 +3345,8 @@ Delete a virtual interface, or remove an address from one.
 | | |
 |---|---|
 | id | `ono.interface.remove` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | C |
 | input | `null` |
 | output | `ono.action-result/1` |
 | provider capability | `interface.set` |
@@ -3432,8 +3432,8 @@ Force a socket closed.
 | | |
 |---|---|
 | id | `ono.socket.stop` |
-| stability | planned |
-| phase | planned |
+| stability | experimental |
+| phase | C |
 | input | `null | stream<ono.socket/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `socket.close` |
@@ -3444,7 +3444,7 @@ Force a socket closed.
 
 | name | type | meaning |
 |---|---|---|
-| `--confirm` | `bool` | Confirm non-interactively; closing a socket under a running process is destructive. |
+| `--confirm` | `bool` | Required: closing a socket under a running process is destructive, and a script never waits for a prompt (spec §17.4). Without it nothing is closed and the run fails with `safety.confirmation_required`. |
 
 **Examples**
 

@@ -249,7 +249,10 @@ pub(crate) fn error_message(payload: &[u8]) -> ErrorValue {
 pub(crate) fn errno_error(errno: i32) -> ErrorValue {
     let code = match errno {
         1 | 13 => ErrorCode::IoPermissionDenied,
-        2 => ErrorCode::IoNotFound,
+        // `ESRCH` is what the routing code answers for a route that is not there, and
+        // `ENODEV` what the link code answers for an interface that is not.
+        2 | 3 | 19 => ErrorCode::IoNotFound,
+        17 => ErrorCode::IoAlreadyExists,
         _ => ErrorCode::ProviderUnavailable,
     };
     ErrorValue::new(
@@ -267,8 +270,13 @@ fn strerror(errno: i32) -> String {
         0 => "no error".to_owned(),
         1 => "operation not permitted (EPERM)".to_owned(),
         2 => "no such file or directory (ENOENT)".to_owned(),
+        3 => "no such process (ESRCH)".to_owned(),
         13 => "permission denied (EACCES)".to_owned(),
+        17 => "file exists (EEXIST)".to_owned(),
+        19 => "no such device (ENODEV)".to_owned(),
         22 => "invalid argument (EINVAL)".to_owned(),
+        95 => "operation not supported (EOPNOTSUPP)".to_owned(),
+        101 => "network is unreachable (ENETUNREACH)".to_owned(),
         92 => "protocol not available (ENOPROTOOPT)".to_owned(),
         93 => "protocol not supported (EPROTONOSUPPORT)".to_owned(),
         other => format!("errno {other}"),
@@ -289,4 +297,40 @@ pub(crate) fn control(kind: u16) -> bool {
         kind,
         sys::NLMSG_NOOP | sys::NLMSG_DONE | sys::NLMSG_ERROR | sys::NLMSG_OVERRUN
     )
+}
+
+/// Appends one `rtattr` — header, payload, padding to the netlink alignment — to `into`.
+///
+/// The encoder is the mirror of [`attributes`]: a request is built exactly the way a reply is
+/// read, so the kernel sees the layout its own headers describe.
+pub(crate) fn push_attribute(into: &mut Vec<u8>, kind: u16, payload: &[u8]) {
+    let length = sys::ATTR_HEADER + payload.len();
+    let declared = u16::try_from(length).unwrap_or(u16::MAX);
+    into.extend_from_slice(&declared.to_ne_bytes());
+    into.extend_from_slice(&kind.to_ne_bytes());
+    into.extend_from_slice(payload);
+    into.resize(into.len() + (align(length) - length), 0);
+}
+
+/// Appends one nested `rtattr` whose payload is itself a run of attributes.
+pub(crate) fn push_nested(into: &mut Vec<u8>, kind: u16, build: impl FnOnce(&mut Vec<u8>)) {
+    let mut payload = Vec::new();
+    build(&mut payload);
+    push_attribute(into, kind, &payload);
+}
+
+/// The bytes of an address as netlink carries them: four for IPv4, sixteen for IPv6.
+pub(crate) fn address_bytes(address: IpAddr) -> Vec<u8> {
+    match address {
+        IpAddr::V4(v4) => v4.octets().to_vec(),
+        IpAddr::V6(v6) => v6.octets().to_vec(),
+    }
+}
+
+/// The netlink family number of an address.
+pub(crate) fn family_of(address: IpAddr) -> u8 {
+    match address {
+        IpAddr::V4(_) => sys::AF_INET,
+        IpAddr::V6(_) => sys::AF_INET6,
+    }
 }

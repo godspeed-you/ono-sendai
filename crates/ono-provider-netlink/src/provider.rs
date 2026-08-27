@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
-use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
+use ono_provider_api::{
+    Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+};
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 
 use crate::decoded::Decoded;
@@ -93,7 +95,10 @@ impl Provider for InterfaceProvider {
     }
 
     fn capabilities(&self) -> Vec<Capability> {
-        vec![Capability::new("interface.list", Risk::Read)]
+        vec![
+            Capability::new("interface.list", Risk::Read),
+            Capability::new("interface.set", Risk::Mutate).needing_elevation(),
+        ]
     }
 
     fn availability(&self) -> Availability {
@@ -106,6 +111,11 @@ impl Provider for InterfaceProvider {
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
         references(read_on_a_blocking_thread(read_interfaces).await?, selector)
+    }
+
+    async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let action = action.clone();
+        act_on_a_blocking_thread(move || crate::act::interface(&action)).await
     }
 }
 
@@ -124,7 +134,10 @@ impl Provider for RouteProvider {
     }
 
     fn capabilities(&self) -> Vec<Capability> {
-        vec![Capability::new("route.list", Risk::Read)]
+        vec![
+            Capability::new("route.list", Risk::Read),
+            Capability::new("route.set", Risk::Mutate).needing_elevation(),
+        ]
     }
 
     fn availability(&self) -> Availability {
@@ -142,6 +155,11 @@ impl Provider for RouteProvider {
             read_on_a_blocking_thread(|| read_routes(None)).await?,
             selector,
         )
+    }
+
+    async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let action = action.clone();
+        act_on_a_blocking_thread(move || crate::act::route(&action)).await
     }
 }
 
@@ -194,6 +212,7 @@ impl Provider for SocketProvider {
         vec![
             Capability::new("socket.list", Risk::Read),
             Capability::new("connection.list", Risk::Read),
+            Capability::new("socket.close", Risk::Destructive).needing_elevation(),
         ]
     }
 
@@ -218,6 +237,11 @@ impl Provider for SocketProvider {
             read_on_a_blocking_thread(|| read_sockets(None, false)).await?,
             selector,
         )
+    }
+
+    async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let action = action.clone();
+        act_on_a_blocking_thread(move || crate::act::socket(&action)).await
     }
 }
 
@@ -365,6 +389,20 @@ where
     }
 }
 
+/// Runs one netlink write on the runtime's blocking pool.
+async fn act_on_a_blocking_thread<F>(act: F) -> Result<ActionOutcome, ErrorValue>
+where
+    F: FnOnce() -> Result<ActionOutcome, ErrorValue> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(act).await {
+        Ok(outcome) => outcome,
+        Err(joined) => Err(ErrorValue::new(
+            ErrorCode::ProviderUnavailable,
+            format!("the netlink writer stopped before answering: {joined}"),
+        )),
+    }
+}
+
 /// The objects a selector names, as references.
 fn references(decoded: Decoded, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
     Ok(decoded
@@ -414,7 +452,10 @@ fn read_neighbors() -> Result<Decoded, ErrorValue> {
 /// One dump per protocol and family, plus the Unix table.
 ///
 /// `owners` is scanned at most once for the whole answer, never once per socket.
-fn read_sockets(protocol: Option<&str>, with_owners: bool) -> Result<Decoded, ErrorValue> {
+pub(crate) fn read_sockets(
+    protocol: Option<&str>,
+    with_owners: bool,
+) -> Result<Decoded, ErrorValue> {
     let socket = NetlinkSocket::open_diag()?;
     let mut decoded = Decoded::new();
 
