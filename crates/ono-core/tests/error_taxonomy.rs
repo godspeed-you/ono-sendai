@@ -7,16 +7,23 @@ use ono_core::{ErrorCode, ErrorKind};
 fn should_render_every_code_in_the_specified_form_when_displayed() {
     for code in ErrorCode::ALL {
         let rendered = code.code();
-        assert!(
-            rendered.starts_with("Ono-Sendai-E"),
-            "spec section 43 writes codes as `Ono-Sendai-ENNNN`, got {rendered}"
-        );
-        let digits = &rendered["Ono-Sendai-E".len()..];
-        assert_eq!(
-            digits.len(),
-            4,
-            "code numbers are four digits, got {rendered}"
-        );
+        // Spec section 43 writes the core codes as `Ono-Sendai-ENNNN`; the KUANG/11 family of
+        // spec section 31.79 renders in the same shape as `Ono-Sendai-K11NNN` (ADR-0022,
+        // docs/spec/kuang/errors.v1.yaml), folded into the one taxonomy by ADR-0108.
+        let digits = rendered
+            .strip_prefix("Ono-Sendai-E")
+            .filter(|digits| digits.len() == 4)
+            .or_else(|| {
+                rendered
+                    .strip_prefix("Ono-Sendai-K11")
+                    .filter(|digits| digits.len() == 3)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "spec section 43 writes codes as `Ono-Sendai-ENNNN` and section 31.79 as \
+                     `Ono-Sendai-K11NNN`, got {rendered}"
+                )
+            });
         assert!(
             digits.chars().all(|c| c.is_ascii_digit()),
             "code numbers are numeric, got {rendered}"
