@@ -88,6 +88,8 @@ impl SessionProvider {
         match target {
             "job" => Self::schema(),
             "plugin" => crate::kuang_host::schema("ono.plugin"),
+            "capability" => crate::kuang_host::schema("ono.capability-grant"),
+            "audit" => crate::kuang_host::schema("ono.plugin-audit-event"),
             other => Err(ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
                 format!("{PROVIDER_ID} has no table `{other}`"),
@@ -100,6 +102,8 @@ impl SessionProvider {
         match target {
             "job" => Ok((self.jobs()?, Vec::new())),
             "plugin" => self.lock().kuang.plugin_records(),
+            "capability" => Ok((self.lock().kuang.capability_records(None)?, Vec::new())),
+            "audit" => Ok((self.lock().kuang.audit_records()?, Vec::new())),
             other => Err(ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
                 format!("{PROVIDER_ID} has no table `{other}`"),
@@ -258,6 +262,60 @@ impl SessionProvider {
         Ok(ActionOutcome::succeeded(action, true))
     }
 
+    /// `revoke capability` (spec §31.18: every grant is revocable): the grant is marked revoked
+    /// and the running instance's broker evaluates the new policy at its next call.
+    async fn revoke_capability(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let Some(Value::Uuid(id)) = action.target().values().first() else {
+            return Err(ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("{} is not a grant identity", action.target()),
+            ));
+        };
+        let only = action
+            .argument("plugin")
+            .and_then(|value| value.as_str().ok())
+            .map(str::to_owned);
+        let (grant, instance, policy) = {
+            let mut tables = self.lock();
+            let Some(grant) = tables
+                .kuang
+                .grants()
+                .iter()
+                .find(|grant| grant.id == *id)
+                .cloned()
+            else {
+                return Ok(ActionOutcome::failed(
+                    action,
+                    ErrorValue::new(ErrorCode::IoNotFound, "no such grant"),
+                ));
+            };
+            if only.as_deref().is_some_and(|plugin| plugin != grant.plugin) {
+                return Ok(ActionOutcome::skipped(
+                    action,
+                    format!("the grant belongs to `{}`", grant.plugin),
+                ));
+            }
+            if grant.revoked_at.is_some() {
+                return Ok(ActionOutcome::skipped(action, "already revoked"));
+            }
+            if action.is_dry_run() {
+                return Ok(ActionOutcome::skipped(
+                    action,
+                    format!("would revoke {} from `{}`", grant.capability, grant.plugin),
+                ));
+            }
+            tables.kuang.revoke(*id);
+            let instance = tables.kuang.plugin(&grant.plugin);
+            let policy = tables.kuang.policy_for(&grant.plugin);
+            (grant, instance, policy)
+        };
+        if let Some(instance) = instance {
+            instance.update_policy(policy).await;
+        }
+        let _ = grant;
+        Ok(ActionOutcome::succeeded(action, true))
+    }
+
     /// `remove plugin` (spec §31.81): a loaded instance is unloaded first, the directory is
     /// removed, and state is retained only when asked.
     async fn remove_plugin(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
@@ -358,16 +416,22 @@ impl Provider for SessionProvider {
     }
 
     fn targets(&self) -> &[&str] {
-        &["job", "plugin"]
+        &["job", "plugin", "capability", "audit"]
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
         Self::schema_of("job")
             .into_iter()
             .chain(
-                ["ono.plugin", "ono.plugin-package", "ono.plugin-inspection"]
-                    .into_iter()
-                    .filter_map(|name| crate::kuang_host::schema(name).ok()),
+                [
+                    "ono.plugin",
+                    "ono.plugin-package",
+                    "ono.plugin-inspection",
+                    "ono.capability-grant",
+                    "ono.plugin-audit-event",
+                ]
+                .into_iter()
+                .filter_map(|name| crate::kuang_host::schema(name).ok()),
             )
             .collect()
     }
@@ -381,6 +445,9 @@ impl Provider for SessionProvider {
             Capability::new("plugin.remove", Risk::Destructive),
             Capability::new("plugin.unload", Risk::Mutate),
             Capability::new("plugin.set", Risk::Mutate),
+            Capability::new("capability.list", Risk::Read),
+            Capability::new("capability.revoke", Risk::Mutate),
+            Capability::new("audit.list", Risk::Read),
         ]
     }
 
@@ -422,7 +489,47 @@ impl Provider for SessionProvider {
                 return self.inspect(query);
             }
         }
-        let (records, failures) = self.table(query.target_name())?;
+        let plugin = query
+            .option_value("plugin")
+            .and_then(|value| value.as_str().ok())
+            .map(str::to_owned);
+        let (records, failures) = match (query.target_name(), plugin.as_deref()) {
+            // `get capability --plugin <id>`: that package's requests and grants, no definitions.
+            ("capability", Some(plugin)) => (
+                self.lock().kuang.capability_records(Some(plugin))?,
+                Vec::new(),
+            ),
+            (target, _) => self.table(target)?,
+        };
+        // `--plugin`, `--capability` and `--since` restrict the audit trail (kuang.yaml).
+        let capability = query
+            .option_value("capability")
+            .and_then(|value| value.as_str().ok())
+            .map(str::to_owned);
+        let since = query.option_value("since").cloned();
+        let records: Vec<RecordValue> = if query.target_name() == "audit" {
+            records
+                .into_iter()
+                .filter(|record| {
+                    let field = |name: &str| record.get(name).and_then(|value| value.as_str().ok());
+                    plugin
+                        .as_deref()
+                        .is_none_or(|wanted| field("plugin") == Some(wanted))
+                        && capability
+                            .as_deref()
+                            .is_none_or(|wanted| field("capability") == Some(wanted))
+                        && since.as_ref().is_none_or(|since| {
+                            record
+                                .get("at")
+                                .and_then(|at| at.as_timestamp().ok())
+                                .zip(since.as_timestamp().ok())
+                                .is_none_or(|(at, since)| at >= since)
+                        })
+                })
+                .collect()
+        } else {
+            records
+        };
         // `get plugin --state loaded`: the option is a filter on the state column (kuang.yaml).
         let state = query
             .option_value("state")
@@ -447,6 +554,7 @@ impl Provider for SessionProvider {
             ("plugin", "remove") => self.remove_plugin(action).await,
             ("plugin", "unload") => self.unload_plugin(action).await,
             ("plugin", "set") => self.set_plugin(action).await,
+            ("capability", "revoke") => self.revoke_capability(action).await,
             (target, operation) => Err(ErrorValue::new(
                 ErrorCode::ProviderUnsupported,
                 format!("{PROVIDER_ID} does not `{operation}` a {target}"),
@@ -455,10 +563,40 @@ impl Provider for SessionProvider {
     }
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
+        // `revoke capability <selector>`: the grant to revoke, by its capability or its id
+        // (kuang.yaml); definitions are not grants and are never resolved.
+        if let Selector::Field { name, value } = selector
+            && name == "selector"
+        {
+            let text = value.as_str().ok().map(str::to_owned);
+            let wanted = |record: &RecordValue| {
+                let matches = |field: &str| {
+                    record
+                        .get(field)
+                        .and_then(|held| ono_value::canonical_text(held).ok())
+                        .is_some_and(|held| Some(held) == text)
+                };
+                matches("capability") || matches("id")
+            };
+            let (grants, _) = self.table("capability")?;
+            return Ok(grants
+                .iter()
+                .filter(|record| {
+                    record.get("plugin").is_some_and(|plugin| !plugin.is_null())
+                        && record
+                            .get("revoked_at")
+                            .is_none_or(ono_value::Value::is_null)
+                        && record.get("decision").and_then(|d| d.as_str().ok()) == Some("allow")
+                })
+                .filter(|record| wanted(record))
+                .filter_map(ObjectRef::of)
+                .collect());
+        }
         // A selector carries no target; every table is asked, which is unambiguous because the
-        // tables' identity fields are typed differently (a job's `id` is a number).
+        // tables' identity fields are typed differently (a job's `id` is a number, a grant's a
+        // uuid).
         let mut found = Vec::new();
-        for target in ["job", "plugin"] {
+        for target in ["job", "plugin", "capability"] {
             let (records, _) = self.table(target)?;
             found.extend(
                 records

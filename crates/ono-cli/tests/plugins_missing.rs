@@ -850,7 +850,6 @@ fn should_unload_a_loaded_package_before_removing_it() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_capability_definitions() {
     let home = plugin_home();
     let run = ono(&home, "get capability | to json");
@@ -863,7 +862,6 @@ fn should_list_capability_definitions() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_show_a_grant_made_at_load_for_the_package() {
     let home = plugin_home();
     let run = ono(
@@ -901,7 +899,6 @@ fn should_show_a_grant_made_at_load_for_the_package() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_grant_and_revoke_a_capability_at_runtime() {
     let home = plugin_home();
     let granted = ono(
@@ -961,7 +958,6 @@ fn should_grant_and_revoke_a_capability_at_runtime() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_grant_an_unknown_capability() {
     let home = plugin_home();
     let run = ono(
@@ -980,7 +976,6 @@ fn should_refuse_to_grant_an_unknown_capability() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_record_a_capability_use_in_the_audit_trail() {
     let home = plugin_home();
     let run = ono(
@@ -1018,7 +1013,6 @@ fn should_record_a_capability_use_in_the_audit_trail() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_record_a_denied_capability_use_in_the_audit_trail() {
     let home = plugin_home();
     let run = ono(
@@ -1038,7 +1032,6 @@ fn should_record_a_denied_capability_use_in_the_audit_trail() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_filter_the_audit_trail_by_package() {
     let home = plugin_home();
     let run = ono(
@@ -1057,7 +1050,6 @@ fn should_filter_the_audit_trail_by_package() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_reject_an_unknown_field_on_the_audit_stream() {
     let home = plugin_home();
     let run = ono(&home, "get audit | where plugn == \"x\"");

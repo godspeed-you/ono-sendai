@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use ono_core::ErrorCode;
 use ono_kuang_protocol::{
-    CapabilityRequest, DeclarationClass, HOST_API, Manifest, PluginState, Role, RuntimeKind,
-    ShutdownReason,
+    AuditEvent, Capability, CapabilityRequest, DeclarationClass, HOST_API, Manifest, PluginState,
+    Role, RuntimeKind, ShutdownReason, WireError,
 };
-use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Supervisor};
+use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Policy, Supervisor};
 use ono_provider_api::{Action, ActionOutcome, ObjectId};
 use ono_value::{ErrorValue, MapValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
@@ -73,12 +73,39 @@ pub struct Instance {
     pub loaded_at: Value,
 }
 
-/// The host: where packages are, and which of them run.
+/// One capability grant this session made to a package (spec §31.18, `ono.capability-grant/1`).
+#[derive(Debug, Clone)]
+pub struct Grant {
+    /// The grant's own identity.
+    pub id: ono_value::Uuid,
+    /// The package it was made to.
+    pub plugin: String,
+    /// The granted family.
+    pub capability: Capability,
+    /// The scope, when the manifest asked for one.
+    pub scope: Option<serde_json::Map<String, serde_json::Value>>,
+    /// How the package declared the capability, when it did.
+    pub class: Option<DeclarationClass>,
+    /// Where the decision came from: `session` for `--grant` at load, `prompt` for
+    /// `grant capability` afterwards.
+    pub source: &'static str,
+    /// When it was made.
+    pub granted_at: Value,
+    /// When it was revoked; `None` while it stands.
+    pub revoked_at: Option<Value>,
+}
+
+/// The host: where packages are, which of them run, and what they were granted.
 #[derive(Debug, Default)]
 pub struct Host {
     plugin_path: Vec<PathBuf>,
     state_dir: Option<PathBuf>,
     instances: Vec<Instance>,
+    grants: Vec<Grant>,
+    minted: u64,
+    /// The trails of instances that are gone, and the host's own events: an unload does not
+    /// erase what a package did (spec §31.37).
+    retained_audit: Vec<AuditEvent>,
 }
 
 impl Host {
@@ -215,6 +242,214 @@ impl Host {
             .iter()
             .position(|instance| instance.id == id)?;
         Some(self.instances.remove(index))
+    }
+
+    /// A fresh identity for a grant or a host event, stable within the session.
+    fn mint(&mut self) -> ono_value::Uuid {
+        self.minted += 1;
+        let mut bytes = [0_u8; 16];
+        bytes[6] = 0x40;
+        bytes[8] = 0x80;
+        bytes[10..].copy_from_slice(&self.minted.to_be_bytes()[2..]);
+        ono_value::Uuid::from_bytes(bytes)
+    }
+
+    /// Records a grant of `capability` to `plugin`, answering it (spec §31.18).
+    pub fn grant(
+        &mut self,
+        plugin: &str,
+        capability: Capability,
+        scope: Option<serde_json::Map<String, serde_json::Value>>,
+        class: Option<DeclarationClass>,
+        source: &'static str,
+    ) -> Grant {
+        let grant = Grant {
+            id: self.mint(),
+            plugin: plugin.to_owned(),
+            capability,
+            scope,
+            class,
+            source,
+            granted_at: Value::now(),
+            revoked_at: None,
+        };
+        self.grants.push(grant.clone());
+        self.record_host_event(plugin, capability.id(), "capability.grant", true);
+        grant
+    }
+
+    /// Revokes the grant with this identity, answering whether one stood.
+    pub fn revoke(&mut self, id: ono_value::Uuid) -> Option<Grant> {
+        let index = self
+            .grants
+            .iter()
+            .position(|grant| grant.id == id && grant.revoked_at.is_none())?;
+        self.grants[index].revoked_at = Some(Value::now());
+        let grant = self.grants[index].clone();
+        self.record_host_event(
+            &grant.plugin,
+            grant.capability.id(),
+            "capability.revoke",
+            true,
+        );
+        Some(grant)
+    }
+
+    /// The grants that stand for `plugin`, oldest first.
+    pub fn standing_grants(&self, plugin: &str) -> impl Iterator<Item = &Grant> {
+        self.grants
+            .iter()
+            .filter(move |grant| grant.plugin == plugin && grant.revoked_at.is_none())
+    }
+
+    /// Every grant ever made, revoked ones included: a revoked grant is retained rather than
+    /// deleted (`ono.capability-grant/1`).
+    #[must_use]
+    pub fn grants(&self) -> &[Grant] {
+        &self.grants
+    }
+
+    /// The broker policy the standing grants of `plugin` amount to (spec §31.19).
+    #[must_use]
+    pub fn policy_for(&self, plugin: &str) -> Policy {
+        self.standing_grants(plugin)
+            .fold(Policy::deny_all(), |policy, grant| {
+                policy.grant(grant.capability, grant.scope.clone())
+            })
+    }
+
+    /// Keeps the trail of an instance that is going away.
+    pub fn retain_audit(&mut self, events: Vec<AuditEvent>) {
+        self.retained_audit.extend(events);
+    }
+
+    /// Records a host-side action about a package — a load, a grant, a revocation — in the
+    /// same trail the packages' own actions go to (spec §31.37).
+    pub fn record_host_event(&mut self, plugin: &str, capability: &str, action: &str, ok: bool) {
+        let id = self.mint();
+        self.retained_audit.push(AuditEvent {
+            id: id.to_string(),
+            plugin: plugin.to_owned(),
+            invocation: "host".to_owned(),
+            capability: capability.to_owned(),
+            scope: None,
+            enforcement: ono_kuang_protocol::Enforcement::Broker,
+            action: action.to_owned(),
+            target: None,
+            at: jiff::Timestamp::now().to_string(),
+            result: if ok {
+                ono_kuang_protocol::AuditResult::Success
+            } else {
+                ono_kuang_protocol::AuditResult::Denied
+            },
+            user_confirmation: None,
+            lease: None,
+            link: None,
+            error: None,
+        });
+    }
+
+    /// Every audit event the host knows: the retained ones, then each running instance's.
+    #[must_use]
+    pub fn audit_events(&self) -> Vec<AuditEvent> {
+        let mut events = self.retained_audit.clone();
+        for instance in &self.instances {
+            events.extend(instance.plugin.audit());
+        }
+        events
+    }
+
+    /// The `ono.plugin-audit-event/1` records (spec §31.37).
+    ///
+    /// # Errors
+    ///
+    /// `provider.schema_violation` when a record does not fit its contract.
+    pub fn audit_records(&self) -> Result<Vec<RecordValue>, ErrorValue> {
+        let schema = schema("ono.plugin-audit-event")?;
+        self.audit_events()
+            .iter()
+            .map(|event| audit_record(&schema, event))
+            .collect()
+    }
+
+    /// The `ono.capability-grant/1` records: with `plugin`, that package's declared requests
+    /// merged with its grants; without, the capability definitions the broker knows followed by
+    /// every package's rows (`kuang.yaml`, ADR-0111).
+    ///
+    /// # Errors
+    ///
+    /// `provider.schema_violation` when a record does not fit its contract.
+    pub fn capability_records(&self, plugin: Option<&str>) -> Result<Vec<RecordValue>, ErrorValue> {
+        let schema = schema("ono.capability-grant")?;
+        let (installed, _) = self.installed();
+        let mut records = Vec::new();
+        if plugin.is_none() {
+            for capability in Capability::ALL {
+                records.push(definition_record(&schema, *capability)?);
+            }
+        }
+        for package in installed
+            .iter()
+            .filter(|package| plugin.is_none_or(|id| package.manifest.package.id == id))
+        {
+            let id = &package.manifest.package.id;
+            let instance = self.instance(id);
+            let declared: Vec<(&CapabilityRequest, DeclarationClass)> = package
+                .manifest
+                .required_capabilities
+                .iter()
+                .map(|request| (request, DeclarationClass::Required))
+                .chain(
+                    package
+                        .manifest
+                        .optional_capabilities
+                        .iter()
+                        .map(|request| (request, DeclarationClass::Optional)),
+                )
+                .chain(
+                    package
+                        .manifest
+                        .runtime_requested_capabilities
+                        .iter()
+                        .map(|request| (request, DeclarationClass::RuntimeRequested)),
+                )
+                .collect();
+            for (request, class) in &declared {
+                let grant = self
+                    .standing_grants(id)
+                    .find(|grant| grant.capability == request.capability);
+                records.push(grant_record(
+                    &schema,
+                    id,
+                    request.capability,
+                    *class,
+                    grant,
+                    request.purpose.as_deref(),
+                    instance,
+                )?);
+            }
+            for grant in self
+                .grants
+                .iter()
+                .filter(|grant| grant.plugin == *id)
+                .filter(|grant| {
+                    !declared
+                        .iter()
+                        .any(|(request, _)| request.capability == grant.capability)
+                })
+            {
+                records.push(grant_record(
+                    &schema,
+                    id,
+                    grant.capability,
+                    grant.class.unwrap_or(DeclarationClass::RuntimeRequested),
+                    Some(grant),
+                    None,
+                    instance,
+                )?);
+            }
+        }
+        Ok(records)
     }
 
     /// The `ono.plugin/1` records of the installed set, with this session's runtime states over
@@ -1384,4 +1619,202 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), ErrorValue> {
 #[must_use]
 pub fn action(operation: &str, id: &str, version: &str) -> Action {
     Action::new("plugin", operation, object_id(id, version))
+}
+
+// --- capabilities and audit, spec §31.16–§31.19 and §31.37 -------------------------------------
+
+/// A definition's identity: the same capability is the same row in every session.
+fn definition_id(capability: Capability) -> ono_value::Uuid {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(capability.id().as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = 0x40 | (bytes[6] & 0x0f);
+    bytes[8] = 0x80 | (bytes[8] & 0x3f);
+    ono_value::Uuid::from_bytes(bytes)
+}
+
+/// What the broker knows about a capability family before any package asks for it: denied by
+/// default (spec §31.80), with the enforcement its scope keys declare.
+fn definition_record(
+    schema: &Arc<Schema>,
+    capability: Capability,
+) -> Result<RecordValue, ErrorValue> {
+    Ok(RecordValue::builder(Arc::clone(schema), provenance(schema))
+        .set("id", Value::Uuid(definition_id(capability)))?
+        .set("plugin", Value::Null)?
+        .set("capability", Value::string(capability.id()))?
+        .set("class", Value::Null)?
+        .set("decision", Value::string("deny"))?
+        .set("scope", Value::Null)?
+        .set("enforcement", Value::string("broker"))?
+        .set("duration", Value::string("always"))?
+        .set("granted_at", Value::Null)?
+        .set("expires_at", Value::Null)?
+        .set("max_uses", Value::Null)?
+        .set("uses", Value::Int(0))?
+        .set("actions", Value::Null)?
+        .set("selector", Value::Null)?
+        .set("condition", Value::Null)?
+        .set("source", Value::string("default"))?
+        .set("link", Value::Null)?
+        .set("purpose", Value::string(capability_summary(capability)))?
+        .set("revoked_at", Value::Null)?
+        .build())
+}
+
+fn capability_summary(capability: Capability) -> &'static str {
+    match capability.risk() {
+        ono_kuang_protocol::Risk::Read => "read",
+        ono_kuang_protocol::Risk::Observe => "observe",
+        ono_kuang_protocol::Risk::Mutate => "mutate",
+        ono_kuang_protocol::Risk::Destructive => "destructive",
+    }
+}
+
+/// One package's standing with one capability: what it declared, and what it holds.
+fn grant_record(
+    schema: &Arc<Schema>,
+    plugin: &str,
+    capability: Capability,
+    class: DeclarationClass,
+    grant: Option<&Grant>,
+    purpose: Option<&str>,
+    instance: Option<&Instance>,
+) -> Result<RecordValue, ErrorValue> {
+    let standing = grant.filter(|grant| grant.revoked_at.is_none());
+    let enforcement = instance
+        .and_then(|instance| {
+            instance
+                .plugin
+                .contract()
+                .grant(capability.id())
+                .map(|granted| kebab(&granted.enforcement))
+        })
+        .unwrap_or_else(|| Value::string("broker"));
+    Ok(RecordValue::builder(Arc::clone(schema), provenance(schema))
+        .set(
+            "id",
+            grant.map_or_else(
+                || Value::Uuid(definition_id(capability)),
+                |grant| Value::Uuid(grant.id),
+            ),
+        )?
+        .set("plugin", Value::string(plugin))?
+        .set("capability", Value::string(capability.id()))?
+        .set("class", kebab(&class))?
+        .set(
+            "decision",
+            Value::string(if standing.is_some() { "allow" } else { "deny" }),
+        )?
+        .set(
+            "scope",
+            grant.map_or(Value::Null, |grant| json_map(grant.scope.as_ref())),
+        )?
+        .set("enforcement", enforcement)?
+        .set("duration", Value::string("session"))?
+        .set(
+            "granted_at",
+            grant.map_or(Value::Null, |grant| grant.granted_at.clone()),
+        )?
+        .set("expires_at", Value::Null)?
+        .set("max_uses", Value::Null)?
+        .set("uses", Value::Int(0))?
+        .set("actions", Value::Null)?
+        .set("selector", Value::Null)?
+        .set("condition", Value::Null)?
+        .set(
+            "source",
+            Value::string(grant.map_or("default", |grant| grant.source)),
+        )?
+        .set("link", Value::Null)?
+        .set("purpose", purpose.map_or(Value::Null, Value::string))?
+        .set(
+            "revoked_at",
+            grant
+                .and_then(|grant| grant.revoked_at.clone())
+                .unwrap_or(Value::Null),
+        )?
+        .build())
+}
+
+/// The `ono.capability-grant/1` record of one grant as it was just made.
+///
+/// # Errors
+///
+/// `provider.schema_violation` when the record does not fit its contract.
+pub fn grant_value(
+    grant: &Grant,
+    purpose: Option<&str>,
+    instance: Option<&Instance>,
+) -> Result<Value, ErrorValue> {
+    let schema = schema("ono.capability-grant")?;
+    Ok(grant_record(
+        &schema,
+        &grant.plugin,
+        grant.capability,
+        grant.class.unwrap_or(DeclarationClass::RuntimeRequested),
+        Some(grant),
+        purpose,
+        instance,
+    )?
+    .into_value())
+}
+
+/// A wire error as an error value: the code itself where this build knows it.
+#[must_use]
+pub fn wire_error_value(error: &WireError) -> ErrorValue {
+    let mut value = match ErrorCode::from_code(&error.code) {
+        Some(code) => ErrorValue::new(code, error.message.as_str()),
+        None => ErrorValue::new(
+            ErrorCode::ProviderUnsupported,
+            format!("{}: {}", error.name, error.message),
+        ),
+    };
+    if let Some(help) = &error.help {
+        value = value.with_help(help.as_str());
+    }
+    value
+}
+
+fn json_value(json: Option<&serde_json::Value>) -> Value {
+    json.and_then(|json| ono_value::from_json(json, ono_value::builtin_schemas()).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// One audit event as its record (spec §31.37).
+fn audit_record(schema: &Arc<Schema>, event: &AuditEvent) -> Result<RecordValue, ErrorValue> {
+    let text_or_null = |text: Option<&String>| text.map_or(Value::Null, |text| Value::string(text));
+    Ok(RecordValue::builder(Arc::clone(schema), provenance(schema))
+        .set(
+            "id",
+            ono_value::Uuid::parse(&event.id)
+                .map_or_else(|_| Value::string(&event.id), Value::Uuid),
+        )?
+        .set("plugin", Value::string(&event.plugin))?
+        .set("invocation", Value::string(&event.invocation))?
+        .set("capability", Value::string(&event.capability))?
+        .set("scope", json_value(event.scope.as_ref()))?
+        .set("enforcement", kebab(&event.enforcement))?
+        .set("action", Value::string(&event.action))?
+        .set("target", json_value(event.target.as_ref()))?
+        .set(
+            "at",
+            Value::parse_timestamp(&event.at).unwrap_or_else(|_| Value::string(&event.at)),
+        )?
+        .set("result", kebab(&event.result))?
+        .set(
+            "user_confirmation",
+            text_or_null(event.user_confirmation.as_ref()),
+        )?
+        .set("lease", text_or_null(event.lease.as_ref()))?
+        .set("link", text_or_null(event.link.as_ref()))?
+        .set(
+            "error",
+            event
+                .error
+                .as_ref()
+                .map_or(Value::Null, |error| wire_error_value(error).into_value()),
+        )?
+        .build())
 }

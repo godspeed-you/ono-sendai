@@ -36,10 +36,11 @@ providers:
       of spec §18.4, and the KUANG/11 packages of spec §31.8 — the plugin home overlaid with the
       runtime instances this session started (ADR-0090, ADR-0107); the links and hosts of
       spec §21 when the remote family publishes them.
-    targets: [job, plugin]
+    targets: [job, plugin, capability, audit]
     capabilities: [job.list, plugin.list, plugin.search, plugin.inspect, plugin.remove,
-                   plugin.unload, plugin.set]
-    schemas: [ono.job/1, ono.plugin/1, ono.plugin-package/1, ono.plugin-inspection/1]
+                   plugin.unload, plugin.set, capability.list, capability.revoke, audit.list]
+    schemas: [ono.job/1, ono.plugin/1, ono.plugin-package/1, ono.plugin-inspection/1,
+              ono.capability-grant/1, ono.plugin-audit-event/1]
 
   - id: linux.mountinfo
     doc: Mounts and filesystems, from /proc/self/mountinfo and statvfs.
