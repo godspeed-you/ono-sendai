@@ -93,10 +93,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 7 — the `ip` pack (COMPAT-IP-001…003 + neigh):
-  contract, schemas (`ono.interface-address/1`), fixtures, acceptance — files:
-  `docs/spec/adapters/first-party/iproute2.yaml`, `docs/spec/adapters/fixtures/iproute2/`,
-  `docs/spec/schemas/interface-address.v1.yaml`
+- [claude | 2026-08-27] v0.3 tranche, step 8 — the systemd pack (COMPAT-JOURNAL-001,
+  COMPAT-SYSTEMD-001): the json-lines decoder that streams (ADAPT-005), `journalctl -o json`
+  → journal events, `systemctl list-units`/`show` → `ono.service/1` and unit records; the
+  container gains the tools of steps 8–12 — files: `docs/spec/adapters/first-party/systemd.yaml`,
+  `crates/ono-adapter/src/decode.rs`, `docker/Dockerfile`
 
 ---
 
@@ -356,6 +357,8 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   through `ono-process`, the json decoder, adapter provenance in `inspect`, the fixture
   harness in `spec-check`, util-linux end to end (ADR-0057) — `ono-cli/tests/adapters.rs`,
   cases 074, 075. ADAPT-005's streaming half waits for the first line-protocol tool.
+- [x] v0.3 step 7 — COMPAT-IP: the iproute2 pack, `ono.interface-address/1`, the field-map
+  derivations children/template/first/infer/literals/require (ADR-0058) — case 076
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

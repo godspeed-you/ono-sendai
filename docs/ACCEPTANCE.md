@@ -389,9 +389,14 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       (the real tools, structured and raw, the undeclared flag), cases `073` (the plan), `074`
       (structured, provenance, raw byte-identical to bash, `--poll` refused) and `075` (the
       typed table at a PTY, `raw` keeps findmnt's own, a redirection keeps bytes).
-- [ ] **COMPAT-IP-001…003 + neigh** — `ip address` → `ono.interface-address/1`, `ip link` →
-      `ono.interface/1`, `ip route` → `ono.route/1`, `ip neigh` → `ono.neighbor/1`, all via
-      `-j` (v0.3 §1.33).
+- [x] **COMPAT-IP-001…003 + neigh** — `ip address` → `ono.interface-address/1` (one record
+      per address), `ip link` → `ono.interface/1`, `ip route` / `ip -6 route` → `ono.route/1`
+      with the family pinned by the invocation, `ip neigh` → `ono.neighbor/1`, all via `-j`
+      (v0.3 §1.33, ADR-0058) — `docs/spec/adapters/first-party/iproute2.yaml` with fixtures,
+      `ono-adapter/tests/{decode,negotiation}.rs`, `ono-cli/tests/adapters.rs`
+      (`should_adapt_the_ip_family_into_canonical_network_records`, `-s` refused), case `076`
+      (structured, provenance naming `ip -j address show`, raw byte-identical to bash, bytes
+      downstream untouched, `explain`).
 - [ ] **COMPAT-JOURNAL-001** — `journalctl` via `-o json` streaming into event records, with
       cursor and boot fields preserved (v0.3 §1.37).
 - [ ] **COMPAT-SYSTEMD-001** — `systemctl list-units`/`show` read surfaces → `ono.service/1`

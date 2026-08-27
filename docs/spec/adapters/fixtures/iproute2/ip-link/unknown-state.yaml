@@ -1,0 +1,6 @@
+# An operational state the schema's vocabulary does not have is a violation, not a guess.
+invocation: [ip, link]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  error: adapter.schema_violation

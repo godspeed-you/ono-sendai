@@ -1,0 +1,5 @@
+invocation: [ip, address, show, nonesuch]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records: []

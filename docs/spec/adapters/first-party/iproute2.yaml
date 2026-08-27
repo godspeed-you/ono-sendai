@@ -1,0 +1,234 @@
+# iproute2 compatibility pack: `ip address`, `ip link`, `ip route`, `ip neigh` (spec v0.3 §1.33,
+# §1.69 step 3). Every subcommand speaks JSON with `-j`, so every adapter is tier A. `ss`
+# belongs to iproute2 too but is a tier C parser and gets its own pack later.
+format: ono-adapter-pack/1
+package:
+  id: org.ono.compat.iproute2
+  name: iproute2 compatibility
+  version: 0.1.0
+  publisher: org.ono
+  tier: first-party
+roles: [adapter]
+capabilities:
+  process.exec:
+    executables: [ip]
+    argv_policy: declared-invocations-only
+
+adapters:
+  - id: ip-address
+    summary: Addresses as `ono.interface-address/1` records, one per address, from `ip -j address`.
+    executable:
+      names: [ip]
+      versions: ">=5.10"
+      version_probe:
+        argv: ["-V"]
+        pattern: "iproute2-([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: A
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.interface-address/1
+    decoder:
+      kind: json
+      children: addr_info
+    fields:
+      interface: {from: $parent.ifname}
+      index: {from: $parent.ifindex}
+      family: {from: family}
+      address: {from: "", template: "{local}/{prefixlen}"}
+      scope: {from: scope}
+      label: {from: label}
+      dynamic: {from: dynamic}
+    invocations:
+      - id: show
+        summary: "ip [-4|-6] address|addr|a [show] [dev <name>] [scope <scope>] [up]"
+        match:
+          words: [[address], [addr], [a]]
+          flags:
+            allow: [-4, -6]
+            allow_with_value: []
+          positionals: allow
+        plan:
+          argv: [ip, -j, address, show]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`-s/-statistics`, `-d/-details`, `-br/-brief` and `-o/-oneline` change the shape of the answer and are not adapted; the invocation runs raw."
+      - "Lifetimes and the `noprefixroute`/`mngtmpaddr` flags are kept in the extension map, not as canonical fields."
+    fixtures: iproute2/ip-address
+
+  - id: ip-link
+    summary: Interfaces as `ono.interface/1` records, from `ip -j address` so the addresses come along.
+    executable:
+      names: [ip]
+      versions: ">=5.10"
+      version_probe:
+        argv: ["-V"]
+        pattern: "iproute2-([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: A
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.interface/1
+    decoder:
+      kind: json
+    fields:
+      name: {from: ifname}
+      index: {from: ifindex}
+      mac: {from: address}
+      state:
+        from: operstate
+        map: {UP: up, DOWN: down, UNKNOWN: unknown, DORMANT: dormant, TESTING: testing, LOWERLAYERDOWN: lower-layer-down, NOTPRESENT: not-present}
+      mtu: {from: mtu}
+      addresses: {from: addr_info, template: "{local}/{prefixlen}"}
+    invocations:
+      - id: show
+        summary: "ip [-4|-6] link|l [show] [dev <name>] [up]"
+        match:
+          words: [[link], [l]]
+          flags:
+            allow: [-4, -6]
+            allow_with_value: []
+          positionals: allow
+        plan:
+          argv: [ip, -j, address, show]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`rx_bytes` and `tx_bytes` are not reported: they need `-s`, which is not adapted."
+      - "`ip link set …` and every other mutation stay ordinary external commands (spec v0.3 §1.36)."
+    fixtures: iproute2/ip-link
+
+  - id: ip-route
+    summary: Routes as `ono.route/1` records, from `ip -j route`.
+    executable:
+      names: [ip]
+      versions: ">=5.10"
+      version_probe:
+        argv: ["-V"]
+        pattern: "iproute2-([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: A
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.route/1
+    decoder:
+      kind: json
+    fields:
+      destination: {from: dst, map: {default: "0.0.0.0/0"}}
+      gateway: {from: gateway}
+      interface: {from: dev}
+      source: {from: prefsrc}
+      type: {from: type}
+      scope: {from: scope, map: {global: universe}}
+      protocol: {from: protocol}
+      metric: {from: metric}
+      table: {from: table}
+    invocations:
+      - id: show
+        summary: "ip [-4] route|r [show] [table <table>] [dev <name>] [proto <protocol>]"
+        match:
+          words: [[route], [r]]
+          flags:
+            allow: [-4]
+            allow_with_value: []
+          positionals: allow
+        plan:
+          argv: [ip, -j, route, show]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    literals: {family: inet}
+    limits:
+      - "`ip -6 route` is the `ip-route6` adapter; `ip route get`, `add`, `del`, `change` and `replace` are not adapted."
+    fixtures: iproute2/ip-route
+
+  - id: ip-route6
+    summary: IPv6 routes as `ono.route/1` records, from `ip -j -6 route`.
+    executable:
+      names: [ip]
+      versions: ">=5.10"
+      version_probe:
+        argv: ["-V"]
+        pattern: "iproute2-([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: A
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.route/1
+    decoder:
+      kind: json
+    fields:
+      destination: {from: dst, map: {default: "::/0"}}
+      gateway: {from: gateway}
+      interface: {from: dev}
+      source: {from: prefsrc}
+      type: {from: type}
+      scope: {from: scope, map: {global: universe}}
+      protocol: {from: protocol}
+      metric: {from: metric}
+      table: {from: table}
+    invocations:
+      - id: show
+        summary: "ip -6 route|r [show] [table <table>] [dev <name>]"
+        match:
+          words: [[route], [r]]
+          flags:
+            allow: []
+            allow_with_value: []
+            require: [-6]
+          positionals: allow
+        plan:
+          argv: [ip, -j, -6, route, show]
+          append_user_flags: false
+          env: {LC_ALL: C}
+          stdin: "null"
+    literals: {family: inet6}
+    limits:
+      - "User positionals are not forwarded: the plan already pins the family."
+    fixtures: iproute2/ip-route6
+
+  - id: ip-neigh
+    summary: ARP and NDP entries as `ono.neighbor/1` records, from `ip -j neigh`.
+    executable:
+      names: [ip]
+      versions: ">=5.10"
+      version_probe:
+        argv: ["-V"]
+        pattern: "iproute2-([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: A
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.neighbor/1
+    decoder:
+      kind: json
+    fields:
+      address: {from: dst}
+      mac: {from: lladdr}
+      interface: {from: dev}
+      family: {from: dst, infer: ip-family}
+      state:
+        from: state
+        first: true
+        map: {INCOMPLETE: incomplete, REACHABLE: reachable, STALE: stale, DELAY: delay, PROBE: probe, FAILED: failed, PERMANENT: permanent, NOARP: noarp, NONE: none}
+      router: {from: router}
+    invocations:
+      - id: show
+        summary: "ip [-4|-6] neigh|neighbour|neighbor|n [show] [dev <name>]"
+        match:
+          words: [[neigh], [neighbour], [neighbor], [n]]
+          flags:
+            allow: [-4, -6]
+            allow_with_value: []
+          positionals: allow
+        plan:
+          argv: [ip, -j, neigh, show]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "`updated` is not reported: the kernel's timestamps need `-s`, which is not adapted."
+    fixtures: iproute2/ip-neigh

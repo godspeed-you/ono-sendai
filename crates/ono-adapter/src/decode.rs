@@ -139,6 +139,59 @@ fn json_records(adapter: &Adapter, bytes: &[u8], trace: &Trace) -> Result<Vec<It
         },
     };
     let mut items = Vec::new();
+    if let Some(key) = adapter.decoder().children() {
+        for (index, entry) in list.iter().enumerate() {
+            let Json::Object(parent) = entry else {
+                return Err(decode_failed(
+                    adapter,
+                    trace,
+                    bytes,
+                    format!(
+                        "record {} is {}, not an object",
+                        index + 1,
+                        json_kind(entry)
+                    ),
+                ));
+            };
+            match parent.get(key) {
+                None | Some(Json::Null) => {}
+                Some(Json::Array(children)) => {
+                    for (position, child) in children.iter().enumerate() {
+                        let Json::Object(fields) = child else {
+                            return Err(decode_failed(
+                                adapter,
+                                trace,
+                                bytes,
+                                format!(
+                                    "`{key}` entry {} of record {} is {}, not an object",
+                                    position + 1,
+                                    index + 1,
+                                    json_kind(child)
+                                ),
+                            ));
+                        };
+                        items.push(Item {
+                            fields: fields.clone(),
+                            parent: Some(parent.clone()),
+                        });
+                    }
+                }
+                Some(other) => {
+                    return Err(decode_failed(
+                        adapter,
+                        trace,
+                        bytes,
+                        format!(
+                            "`{key}` of record {} is {}, not a list",
+                            index + 1,
+                            json_kind(other)
+                        ),
+                    ));
+                }
+            }
+        }
+        return Ok(items);
+    }
     flatten(adapter, &list, None, &mut items, 0)
         .map_err(|reason| decode_failed(adapter, trace, bytes, reason))?;
     Ok(items)
@@ -290,9 +343,17 @@ fn build_record(
         let Some(field) = schema.field(target) else {
             return Err(format!("`{target}` is not a field of {}", schema.id()));
         };
-        let raw = lookup(item, map.from());
-        if !map.from().starts_with("$parent.") {
+        let whole = Json::Object(item.fields.clone());
+        let raw = if map.from().is_empty() {
+            Some(&whole)
+        } else {
+            lookup(item, map.from())
+        };
+        if !map.from().starts_with("$parent.") && !map.from().is_empty() {
             referenced.push(map.from());
+        }
+        if let Some(template) = map.template() {
+            referenced.extend(placeholders(template));
         }
         let value = match raw {
             None | Some(Json::Null) => Value::Null,
@@ -311,6 +372,19 @@ fn build_record(
                 adapter_trace = adapter_trace.field_exactness(target, "inferred");
             }
         }
+    }
+
+    // Fields the invocation itself implies — `family` for `ip -6 route` — are constants the
+    // contract states; the tool never printed them, so they are not decoded, only set.
+    for (target, literal) in adapter.literals() {
+        let Some(field) = schema.field(target) else {
+            return Err(format!("`{target}` is not a field of {}", schema.id()));
+        };
+        let value = coerce(&yaml_to_json(literal), field.ty(), None)
+            .map_err(|why| format!("literal `{target}` of {} {why}", schema.id()))?;
+        builder = builder
+            .set(target, value)
+            .map_err(|error| error.message().to_owned())?;
     }
 
     // What the tool reported and the contract did not map stays visible under the adapter's
@@ -343,8 +417,87 @@ fn lookup<'a>(item: &'a Item, from: &str) -> Option<&'a Json> {
 }
 
 /// Applies the map's translations, then coerces into the schema's type.
+/// The `{field}` names a template reads.
+fn placeholders(template: &str) -> Vec<&str> {
+    template
+        .split('{')
+        .skip(1)
+        .filter_map(|rest| rest.split_once('}').map(|(name, _)| name))
+        .collect()
+}
+
+/// Fills a template from one decoded object; a placeholder the object lacks is an error,
+/// because a half-filled address would be a fabricated one.
+fn fill(template: &str, object: &serde_json::Map<String, Json>) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some((literal, after)) = rest.split_once('{') {
+        out.push_str(literal);
+        let (name, tail) = after
+            .split_once('}')
+            .ok_or_else(|| format!("template `{template}` has an unclosed placeholder"))?;
+        match object.get(name).and_then(scalar_text) {
+            Some(text) => out.push_str(&text),
+            None => {
+                return Err(format!(
+                    "the tool reported no `{name}` for template `{template}`"
+                ));
+            }
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 fn coerce_mapped(raw: &Json, map: &FieldMap, ty: &FieldType) -> Result<Value, String> {
     let mut current = raw.clone();
+    if let Some(template) = map.template() {
+        current = match &current {
+            Json::Object(object) => Json::String(fill(template, object)?),
+            Json::Array(items) => Json::Array(
+                items
+                    .iter()
+                    .map(|item| match item {
+                        Json::Object(object) => fill(template, object).map(Json::String),
+                        other => Err(format!("cannot fill a template from {}", json_kind(other))),
+                    })
+                    .collect::<Result<Vec<Json>, String>>()?,
+            ),
+            other => return Err(format!("cannot fill a template from {}", json_kind(other))),
+        };
+    }
+    if map.takes_first() {
+        current = match &current {
+            Json::Array(items) => items.first().cloned().unwrap_or(Json::Null),
+            other => return Err(format!("cannot take the first of {}", json_kind(other))),
+        };
+        if current.is_null() {
+            return Ok(Value::Null);
+        }
+    }
+    if let Some(inference) = map.infer() {
+        current = match inference {
+            crate::contract::Inference::IpFamily => match &current {
+                Json::String(text) => {
+                    let address = text.split('/').next().unwrap_or(text);
+                    if address.parse::<std::net::Ipv6Addr>().is_ok() {
+                        Json::String("inet6".to_owned())
+                    } else if address.parse::<std::net::Ipv4Addr>().is_ok() {
+                        Json::String("inet".to_owned())
+                    } else {
+                        return Err(format!("cannot infer an address family from `{text}`"));
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "cannot infer an address family from {}",
+                        json_kind(other)
+                    ));
+                }
+            },
+        };
+    }
     if let Some(translations) = map.map()
         && let Some(key) = scalar_text(&current)
         && let Some(translated) = translations.get(&key)
@@ -550,7 +703,17 @@ fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, Strin
             Json::Object(_) => Ok(plain(raw)),
             _ => Err(wrong("a map")),
         },
-        FieldType::Regex | FieldType::Record(_) | FieldType::Ref(_) | FieldType::Error => {
+        // A reference is carried the way the native providers carry one: the name (or the
+        // number) that identifies the object, which `trace` and `get` resolve on demand.
+        FieldType::Ref(_) => match raw {
+            Json::String(text) => Ok(Value::string(text)),
+            Json::Number(number) => number
+                .as_i64()
+                .map(|n| Value::Int(i128::from(n)))
+                .ok_or_else(|| wrong("a reference")),
+            _ => Err(wrong("a reference")),
+        },
+        FieldType::Regex | FieldType::Record(_) | FieldType::Error => {
             Err(format!("is declared as {ty}, which no adapter can decode"))
         }
     }

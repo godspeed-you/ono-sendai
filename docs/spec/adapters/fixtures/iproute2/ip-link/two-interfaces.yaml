@@ -1,0 +1,10 @@
+# `ip link` runs `ip -j address` so the canonical Interface gets its addresses; the operational
+# state is translated into the schema's vocabulary, counters are not reported.
+invocation: [ip, link]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records:
+    - {name: lo, index: 1, mac: "00:00:00:00:00:00", state: unknown, mtu: 65536, addresses: ["127.0.0.1/8"], rx_bytes: null, tx_bytes: null}
+    - {name: eth0, index: 2, mac: "00:15:5d:00:2a:00", state: up, mtu: 1500, addresses: ["192.168.0.167/24", "fe80::215:5dff:fe00:2a00/64"], rx_bytes: null, tx_bytes: null}
+    - {name: dummy0, index: 3, mac: "6e:14:5c:2c:0c:8a", state: down, mtu: 1500, addresses: [], rx_bytes: null, tx_bytes: null}

@@ -173,3 +173,32 @@ fn should_fail_closed_on_an_unknown_field() {
         "sections are closed: an unknown field invalidates the pack"
     );
 }
+
+#[test]
+fn should_bundle_the_iproute2_pack_with_its_five_adapters() {
+    let pack = ono_adapter::first_party()
+        .iter()
+        .find(|pack| pack.id() == "org.ono.compat.iproute2")
+        .expect("spec v0.3 §1.69 step 3: the ip family is bundled");
+    let ids: Vec<&str> = pack.adapters().iter().map(|a| a.id()).collect();
+    assert_eq!(
+        ids,
+        ["ip-address", "ip-link", "ip-route", "ip-route6", "ip-neigh"]
+    );
+}
+
+#[test]
+fn should_reject_a_template_that_names_no_placeholder() {
+    let iproute2 = include_str!("../../../docs/spec/adapters/first-party/iproute2.yaml");
+    let yaml = iproute2.replacen(
+        "address: {from: \"\", template: \"{local}/{prefixlen}\"}",
+        "address: {from: \"\", template: \"plain\"}",
+        1,
+    );
+    let pack = AdapterPack::parse(&yaml).expect("the pack parses");
+    let problems = validate(&pack, ono_value::builtin_schemas(), &fixtures_root());
+    assert!(
+        problems.iter().any(|p| p.detail.contains("template")),
+        "a template without `{{field}}` placeholders cannot derive anything, got {problems:?}"
+    );
+}

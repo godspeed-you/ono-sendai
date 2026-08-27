@@ -226,3 +226,49 @@ fn should_fall_back_to_the_captured_bytes_at_the_terminal_when_decoding_fails() 
     let runs = std::fs::read_to_string(dir.path().join("lsblk.count")).unwrap_or_default();
     assert_eq!(runs.lines().count(), 1, "the tool ran exactly once");
 }
+
+#[test]
+fn should_adapt_the_ip_family_into_canonical_network_records() {
+    // Spec v0.3 §1.33: `ip address | where family == inet6`, `ip link | where state == up`,
+    // `ip route | where protocol == static`, `ip neigh | where state == reachable`. Loopback
+    // exists everywhere; the rest is asserted by shape, not by this machine's network.
+    let addresses = ono("ip address | where interface == \"lo\" | select family address | to json");
+    addresses.assert_success();
+    assert!(
+        addresses.stdout().contains("127.0.0.1/8"),
+        "one record per address with a typed ipnetwork, got {:?}",
+        addresses.stdout()
+    );
+
+    let links = ono("ip link | where name == \"lo\" | select name state mtu | to json");
+    links.assert_success();
+    assert!(
+        links.stdout().contains("\"mtu\"") && links.stdout().contains("\"state\""),
+        "canonical Interface fields (spec §28.5), got {:?}",
+        links.stdout()
+    );
+
+    let routes = ono("ip route | where family == \"inet\" | count | to text");
+    routes.assert_success();
+    assert!(
+        routes.stdout().trim().parse::<u64>().is_ok(),
+        "routes decode, family from the invocation, got {:?}",
+        routes.stdout()
+    );
+
+    let neighbours = ono("ip neigh | select address family state | count | to text");
+    neighbours.assert_success();
+    assert!(
+        neighbours.stdout().trim().parse::<u64>().is_ok(),
+        "got {:?}",
+        neighbours.stdout()
+    );
+
+    let unsupported = ono("ip -s link | where state == \"up\"");
+    assert_ne!(unsupported.status().code(), 0);
+    assert!(
+        unsupported.stderr().contains("Ono-Sendai-E0903") && unsupported.stderr().contains("`-s`"),
+        "statistics change the shape and are not adapted (spec v0.3 §1.14), got {:?}",
+        unsupported.stderr()
+    );
+}

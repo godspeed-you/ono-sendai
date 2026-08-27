@@ -1,0 +1,7 @@
+invocation: [ip, -6, route]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records:
+    - {destination: "2a02:3100:6291:8800::/64", gateway: null, interface: eth0, family: inet6, protocol: ra, metric: 100}
+    - {destination: "::/0", gateway: "fe80::1eed:6fff:fe3f:7512", interface: eth0, family: inet6, protocol: ra, metric: 100}

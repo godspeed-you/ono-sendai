@@ -388,6 +388,24 @@ Default view: `gid`, `name`, `members`
 | `name` | `string` | — | nullable | The group name; null when the identity provider cannot resolve the gid. |
 | `members` | `list<string>` | — | nullable | Login names listed as supplementary members. Names rather than user references, because the account database stores names and they need not resolve to an account. Users whose primary group this is are not listed here; null when the provider cannot enumerate them. |
 
+## InterfaceAddress — `ono.interface-address/1`
+
+One address configured on a network interface.
+
+Identity: `index`, `address`
+
+Default view: `interface`, `family`, `address`, `scope`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `interface` | `ref<ono.interface/1>` | — | required | The interface the address belongs to, by name. |
+| `index` | `int` | — | required | The interface's index, which is its stable identity (spec §23.2). |
+| `family` | `enum` | — | required | The address family. |
+| `address` | `ipnetwork` | — | required | The address with its prefix length. |
+| `scope` | `string` | — | required | The address scope as the kernel names it — `global`, `link`, `host`, `site`. |
+| `label` | `string` | — | nullable | The address label, where one is set; null otherwise. |
+| `dynamic` | `bool` | — | nullable | Whether the address was configured dynamically (DHCP, SLAAC); null when the tool does not say. |
+
 ## Interface — `ono.interface/1`
 
 A network interface with its addresses, operational state and counters.

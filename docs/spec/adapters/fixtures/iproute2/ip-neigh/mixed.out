@@ -1,0 +1,1 @@
+[{"dst":"172.17.0.2","dev":"docker0","lladdr":"ea:cc:99:72:9b:6b","state":["REACHABLE"]},{"dst":"192.168.0.63","dev":"eth0","lladdr":"0e:37:0a:5a:f5:03","state":["STALE"]},{"dst":"fe80::d409:54ff:feae:c6b7","dev":"eth0","lladdr":"d6:09:54:ae:c6:b7","router":null,"state":["STALE"]},{"dst":"192.168.0.9","dev":"eth0","state":["FAILED"]}]

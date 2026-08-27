@@ -65,6 +65,7 @@ adapter:
     schema:        {type: string, required: true, doc: "A registered canonical schema id, `ono.<name>/<major>` (spec v0.3 §1.11)."}
     decoder:       {type: record, required: true, doc: "See `decoder`."}
     fields:        {type: map, required: true, doc: "Schema field → `field` mapping; see `field`. A schema field the map omits is `null` on every record."}
+    literals:      {type: map, nullable: true, doc: "Schema field → constant the adapter's invocation implies (`family: inet6` for `ip -6 route`). Exact, because the invocation states it."}
     invocations:   {type: list<record>, required: true, doc: "At least one; see `invocation`."}
     limits:        {type: list<string>, required: true, doc: "What the adapter does not do, in prose the reference page prints (spec v0.3 §1.68 item 14). May be empty."}
     fixtures:      {type: string, required: true, doc: "Directory under `docs/spec/adapters/fixtures/`, holding at least one fixture per invocation (see `fixture`)."}
@@ -82,6 +83,7 @@ decoder:
     kind:      {type: "enum[json, lines, builtin]", required: true, doc: "`json`: a JSON document. `lines`: an explicit field protocol. `builtin`: a decoder implemented in Rust, the only kind allowed for tier C."}
     records:   {type: string, nullable: true, doc: "json: the key holding the record list; absent when the document is the list or a single record."}
     nested:    {type: string, nullable: true, doc: "json: a key whose children are records too; they are flattened with the parent's identity field carried as `$parent.<field>`."}
+    children:  {type: string, nullable: true, doc: "json: the records are the entries of this key inside each element of the list, and the element is their parent (`$parent.<field>`); an element without entries contributes nothing."}
     field_separator:  {type: string, nullable: true, doc: "lines: the byte between fields (`\\t`, `\\0`, …). Required for `lines`."}
     record_separator: {type: string, nullable: true, doc: "lines: `\\n` or `\\0`. Required for `lines`."}
     columns:   {type: list<string>, nullable: true, doc: "lines: the decoded names of the fields, in the order the plan requests them. Required for `lines`."}
@@ -91,7 +93,10 @@ decoder:
 field:
   closed: true
   fields:
-    from:      {type: string, required: true, doc: "The decoded field name, or `$parent.<field>` for a nested tree's parent."}
+    from:      {type: string, required: true, doc: "The decoded field name, or `$parent.<field>` for a nested tree's parent; empty when `template` reads the whole record."}
+    template:  {type: string, nullable: true, doc: "A text with `{field}` placeholders filled from the decoded record (`from` empty) or from each object in the list at `from`; the result is coerced like any string. Exactness `normalized`."}
+    first:     {type: bool, nullable: true, doc: "Take the first element of the list at `from`. Exactness `normalized`."}
+    infer:     {type: "enum[ip-family]", nullable: true, doc: "Derive the field: `ip-family` yields `inet` or `inet6` from an address at `from`. Exactness `inferred`."}
     unit:      {type: "enum[bytes, kib, mib, seconds, milliseconds, percent]", nullable: true, doc: "How a bare number is to be read; sets exactness to `normalized` when it converts."}
     split:     {type: string, nullable: true, doc: "Split a string on this separator into `list<string>`."}
     contains:  {type: string, nullable: true, doc: "After `split`: the field is `true` when the list holds this literal. Exactness `normalized`."}
@@ -110,7 +115,7 @@ match:
   closed: true
   fields:
     words:       {type: list<list<string>>, required: true, doc: "Alternatives of positional words that select the invocation, in order, e.g. `[[address], [addr], [a]]`; `[[]]` selects the bare program."}
-    flags:       {type: record, required: true, doc: "`allow`: flags that may appear and pass through unchanged. `allow_with_value`: flags that take the next word. Any other flag is `adapter.unsupported_invocation` (spec v0.3 §1.14)."}
+    flags:       {type: record, required: true, doc: "`allow`: flags that may appear and pass through unchanged. `allow_with_value`: flags that take the next word. `require` (optional): flags that must all be present for the invocation to match. Any other flag is `adapter.unsupported_invocation` (spec v0.3 §1.14)."}
     positionals: {type: "enum[allow, forbid]", required: true, doc: "Whether further non-flag words (a device, an interface) may follow and pass through."}
 
 plan:

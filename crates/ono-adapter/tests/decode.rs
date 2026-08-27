@@ -233,3 +233,111 @@ fn should_never_panic_on_hostile_bytes() {
         let _ = ono_adapter::decode(adapter("lsblk"), &input, &trace("lsblk"), builtin_schemas());
     }
 }
+
+fn ip_adapter(id: &str) -> &'static Adapter {
+    ono_adapter::first_party()
+        .iter()
+        .find(|pack| pack.id() == "org.ono.compat.iproute2")
+        .unwrap()
+        .adapters()
+        .iter()
+        .find(|adapter| adapter.id() == id)
+        .unwrap()
+}
+
+#[test]
+fn should_derive_records_from_children_with_templates_literals_and_inference() {
+    let bytes = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/spec/adapters/fixtures/iproute2/ip-address/two-interfaces.out"),
+    )
+    .unwrap();
+    let addresses = records(
+        ono_adapter::decode(
+            ip_adapter("ip-address"),
+            &bytes,
+            &trace("ip"),
+            builtin_schemas(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        addresses.len(),
+        3,
+        "children are the records, an interface without addresses adds none"
+    );
+    assert!(
+        matches!(addresses[1].get("address"), Some(Value::IpNetwork(network)) if network.to_string() == "192.168.0.167/24"),
+        "a template over two decoded fields becomes one typed ipnetwork, got {:?}",
+        addresses[1].get("address")
+    );
+    assert_eq!(addresses[1].get("interface"), Some(&Value::string("eth0")));
+    assert_eq!(
+        addresses[0]
+            .provenance()
+            .adapter()
+            .unwrap()
+            .exactness()
+            .get("address"),
+        Some(&"normalized".to_owned()),
+        "a templated field is normalized"
+    );
+
+    let neigh = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/spec/adapters/fixtures/iproute2/ip-neigh/mixed.out"),
+    )
+    .unwrap();
+    let neighbours = records(
+        ono_adapter::decode(
+            ip_adapter("ip-neigh"),
+            &neigh,
+            &trace("ip"),
+            builtin_schemas(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(neighbours[2].get("family"), Some(&Value::string("inet6")));
+    assert_eq!(
+        neighbours[2]
+            .provenance()
+            .adapter()
+            .unwrap()
+            .exactness()
+            .get("family"),
+        Some(&"inferred".to_owned()),
+        "spec v0.3 §1.8: an inferred field says so"
+    );
+    assert_eq!(
+        neighbours[0].get("state"),
+        Some(&Value::string("reachable")),
+        "`first` then `map`"
+    );
+
+    let route =
+        br#"[{"dst":"default","gateway":"10.0.0.1","dev":"eth0","protocol":"static","flags":[]}]"#;
+    let trace6 = Trace {
+        user_invocation: vec!["ip".into(), "-6".into(), "route".into()],
+        actual_invocation: vec![
+            "ip".into(),
+            "-j".into(),
+            "-6".into(),
+            "route".into(),
+            "show".into(),
+        ],
+        ..trace("ip")
+    };
+    let routes = records(
+        ono_adapter::decode(ip_adapter("ip-route6"), route, &trace6, builtin_schemas()).unwrap(),
+    );
+    assert_eq!(
+        routes[0].get("family"),
+        Some(&Value::string("inet6")),
+        "a literal from the invocation"
+    );
+    assert!(
+        matches!(routes[0].get("destination"), Some(Value::IpNetwork(network)) if network.to_string() == "::/0"),
+        "`default` maps to the family's whole space, got {:?}",
+        routes[0].get("destination")
+    );
+}

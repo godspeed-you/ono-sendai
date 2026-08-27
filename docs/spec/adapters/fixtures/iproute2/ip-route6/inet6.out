@@ -1,0 +1,1 @@
+[{"dst":"2a02:3100:6291:8800::/64","dev":"eth0","protocol":"ra","metric":100,"flags":[],"pref":"medium"},{"dst":"default","gateway":"fe80::1eed:6fff:fe3f:7512","dev":"eth0","protocol":"ra","metric":100,"flags":[],"pref":"medium"}]

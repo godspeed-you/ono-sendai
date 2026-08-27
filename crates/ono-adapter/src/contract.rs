@@ -14,9 +14,10 @@ use serde::Deserialize;
 use crate::version::VersionRange;
 
 /// The first-party packs bundled with the shell, as data (spec v0.3 §1.66).
-const FIRST_PARTY: &[&str] = &[include_str!(
-    "../../../docs/spec/adapters/first-party/util-linux.yaml"
-)];
+const FIRST_PARTY: &[&str] = &[
+    include_str!("../../../docs/spec/adapters/first-party/util-linux.yaml"),
+    include_str!("../../../docs/spec/adapters/first-party/iproute2.yaml"),
+];
 
 /// The decoders implemented in Rust that a `builtin` decoder may name.
 const BUILTIN_DECODERS: &[&str] = &[];
@@ -127,6 +128,14 @@ pub enum Exactness {
     Inferred,
 }
 
+/// A derivation the decoder performs that the tool did not state (spec v0.3 §1.8 `inferred`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Inference {
+    /// `inet` or `inet6` from an IP address or network.
+    IpFamily,
+}
+
 /// Whether further positional words may follow the matched ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -197,6 +206,8 @@ pub struct Adapter {
     schema: String,
     decoder: Decoder,
     fields: BTreeMap<String, FieldMap>,
+    #[serde(default)]
+    literals: BTreeMap<String, serde_yaml_ng::Value>,
     invocations: Vec<Invocation>,
     limits: Vec<String>,
     fixtures: String,
@@ -235,6 +246,8 @@ pub struct Decoder {
     #[serde(default)]
     nested: Option<String>,
     #[serde(default)]
+    children: Option<String>,
+    #[serde(default)]
     field_separator: Option<String>,
     #[serde(default)]
     record_separator: Option<String>,
@@ -251,6 +264,12 @@ pub struct Decoder {
 #[serde(deny_unknown_fields)]
 pub struct FieldMap {
     from: String,
+    #[serde(default)]
+    template: Option<String>,
+    #[serde(default)]
+    first: Option<bool>,
+    #[serde(default)]
+    infer: Option<Inference>,
     #[serde(default)]
     unit: Option<Unit>,
     #[serde(default)]
@@ -289,6 +308,8 @@ pub struct Match {
 pub struct Flags {
     allow: Vec<String>,
     allow_with_value: Vec<String>,
+    #[serde(default)]
+    require: Vec<String>,
 }
 
 /// The machine-oriented invocation (spec v0.3 §1.7).
@@ -446,6 +467,12 @@ impl Adapter {
         &self.fields
     }
 
+    /// Canonical fields the adapter's invocation implies, as constants.
+    #[must_use]
+    pub fn literals(&self) -> &BTreeMap<String, serde_yaml_ng::Value> {
+        &self.literals
+    }
+
     /// The invocations, in contract order.
     #[must_use]
     pub fn invocations(&self) -> &[Invocation] {
@@ -518,6 +545,12 @@ impl Decoder {
         self.nested.as_deref()
     }
 
+    /// json: the key whose entries are the records, inside each element.
+    #[must_use]
+    pub fn children(&self) -> Option<&str> {
+        self.children.as_deref()
+    }
+
     /// lines: the field separator.
     #[must_use]
     pub fn field_separator(&self) -> Option<&str> {
@@ -556,6 +589,24 @@ impl FieldMap {
         &self.from
     }
 
+    /// A `{field}` template over the record or over each object in the list.
+    #[must_use]
+    pub fn template(&self) -> Option<&str> {
+        self.template.as_deref()
+    }
+
+    /// Whether only the first element of the list is taken.
+    #[must_use]
+    pub fn takes_first(&self) -> bool {
+        self.first.unwrap_or(false)
+    }
+
+    /// The derivation performed, if any.
+    #[must_use]
+    pub fn infer(&self) -> Option<Inference> {
+        self.infer
+    }
+
     /// The unit a bare number carries.
     #[must_use]
     pub fn unit(&self) -> Option<Unit> {
@@ -583,17 +634,19 @@ impl FieldMap {
     /// The exactness, defaulted as the contract says.
     #[must_use]
     pub fn exactness(&self) -> Exactness {
-        self.exactness.unwrap_or(
-            if self.unit.is_some()
-                || self.split.is_some()
-                || self.contains.is_some()
-                || self.map.is_some()
-            {
-                Exactness::Normalized
-            } else {
-                Exactness::Exact
-            },
-        )
+        self.exactness.unwrap_or(if self.infer.is_some() {
+            Exactness::Inferred
+        } else if self.unit.is_some()
+            || self.split.is_some()
+            || self.contains.is_some()
+            || self.map.is_some()
+            || self.template.is_some()
+            || self.first.is_some()
+        {
+            Exactness::Normalized
+        } else {
+            Exactness::Exact
+        })
     }
 }
 
@@ -640,6 +693,12 @@ impl Match {
     #[must_use]
     pub fn allowed_flags_with_value(&self) -> &[String] {
         &self.flags.allow_with_value
+    }
+
+    /// Flags that must all be present.
+    #[must_use]
+    pub fn required_flags(&self) -> &[String] {
+        &self.flags.require
     }
 
     /// Whether further words may follow.
@@ -911,6 +970,14 @@ fn validate_adapter(
             adapter.schema()
         )),
         Some(schema) => {
+            for target in adapter.literals().keys() {
+                if schema.field(target).is_none() {
+                    report(format!(
+                        "`literals.{target}` names a field `{}` does not have",
+                        adapter.schema()
+                    ));
+                }
+            }
             for (target, map) in adapter.fields() {
                 if schema.field(target).is_none() {
                     report(format!(
@@ -918,8 +985,15 @@ fn validate_adapter(
                         adapter.schema()
                     ));
                 }
-                if map.from().trim().is_empty() {
+                if map.from().trim().is_empty() && map.template().is_none() {
                     report(format!("`fields.{target}.from` is empty"));
+                }
+                if let Some(template) = map.template()
+                    && !template.contains('{')
+                {
+                    report(format!(
+                        "`fields.{target}.template` names no `{{field}}` placeholder, so it derives nothing"
+                    ));
                 }
                 if map.contains().is_some() && map.split().is_none() {
                     report(format!(
@@ -940,7 +1014,10 @@ fn validate_adapter(
                 || decoder.id().is_some()
                 || decoder.stability().is_some()
             {
-                report("a `json` decoder takes only `records` and `nested`".to_owned());
+                report("a `json` decoder takes only `records`, `nested` and `children`".to_owned());
+            }
+            if decoder.nested().is_some() && decoder.children().is_some() {
+                report("a `json` decoder is either `nested` or `children`, not both".to_owned());
             }
         }
         DecoderKind::Lines => {

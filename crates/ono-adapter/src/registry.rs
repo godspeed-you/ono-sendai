@@ -789,6 +789,11 @@ fn match_invocation(
     arguments: &[String],
 ) -> Result<Vec<String>, String> {
     let matcher = invocation.matcher();
+    for required in matcher.required_flags() {
+        if !arguments.iter().any(|argument| argument == required) {
+            return Err(format!("this form without `{required}`"));
+        }
+    }
     let mut passthrough = Vec::new();
     let mut words: Vec<&str> = Vec::new();
     let mut index = 0;
@@ -799,6 +804,21 @@ fn match_invocation(
                 .split_once('=')
                 .map_or((argument, None), |(f, v)| (f, Some(v)));
             if matcher
+                .required_flags()
+                .iter()
+                .any(|required| required == flag)
+                && inline_value.is_none()
+            {
+                // A required flag is what selected the invocation; the plan already spells it,
+                // unless the contract also allows it through.
+                if matcher
+                    .allowed_flags()
+                    .iter()
+                    .any(|allowed| allowed == flag)
+                {
+                    passthrough.push(argument.to_owned());
+                }
+            } else if matcher
                 .allowed_flags()
                 .iter()
                 .any(|allowed| allowed == flag)

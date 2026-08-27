@@ -1,0 +1,8 @@
+# One interface, two addresses: the records are the addresses, the interface is their parent.
+invocation: [ip, address, show, lo]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records:
+    - {interface: lo, index: 1, family: inet, address: "127.0.0.1/8", scope: host, label: lo, dynamic: null}
+    - {interface: lo, index: 1, family: inet6, address: "::1/128", scope: host, label: null, dynamic: null}

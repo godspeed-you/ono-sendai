@@ -1,0 +1,10 @@
+# `default` is the whole address space of the invocation's family; `global` scope is the
+# kernel's `universe`; the family comes from the invocation, never from a guess.
+invocation: [ip, route]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records:
+    - {destination: "0.0.0.0/0", gateway: "192.168.0.1", interface: eth0, source: "192.168.0.167", family: inet, type: null, scope: null, protocol: dhcp, metric: 100, table: null}
+    - {destination: "172.17.0.0/16", gateway: null, interface: docker0, source: "172.17.0.1", family: inet, type: null, scope: link, protocol: kernel, metric: null, table: null}
+    - {destination: "192.168.0.0/24", gateway: null, interface: eth0, source: "192.168.0.167", family: inet, type: null, scope: link, protocol: kernel, metric: 100, table: null}

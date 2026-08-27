@@ -1,0 +1,10 @@
+# An interface without addresses contributes no record; the dynamic flag is exact where ip
+# prints it and null where it does not.
+invocation: [ip, address]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records:
+    - {interface: lo, index: 1, family: inet, address: "127.0.0.1/8", scope: host, label: lo, dynamic: null}
+    - {interface: eth0, index: 2, family: inet, address: "192.168.0.167/24", scope: global, label: eth0, dynamic: true}
+    - {interface: eth0, index: 2, family: inet6, address: "fe80::215:5dff:fe00:2a00/64", scope: link, label: null, dynamic: null}

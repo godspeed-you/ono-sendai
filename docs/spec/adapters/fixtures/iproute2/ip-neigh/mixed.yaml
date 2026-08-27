@@ -1,0 +1,11 @@
+# The family is inferred from the address and says so in provenance; a failed entry has no
+# link-layer address, which is null (spec §10.5).
+invocation: [ip, neigh]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records:
+    - {address: "172.17.0.2", mac: "ea:cc:99:72:9b:6b", interface: docker0, family: inet, state: reachable, router: null, updated: null}
+    - {address: "192.168.0.63", mac: "0e:37:0a:5a:f5:03", interface: eth0, family: inet, state: stale, router: null, updated: null}
+    - {address: "fe80::d409:54ff:feae:c6b7", mac: "d6:09:54:ae:c6:b7", interface: eth0, family: inet6, state: stale, router: null, updated: null}
+    - {address: "192.168.0.9", mac: null, interface: eth0, family: inet, state: failed, router: null, updated: null}

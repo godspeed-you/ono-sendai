@@ -1,0 +1,27 @@
+# v0.3 §1.33, §1.69 step 3 (COMPAT-IP-001…003 + neigh): the ip family runs through its bundled
+# adapters as an unprivileged user with networking disabled — loopback is all there is, and
+# that is enough to prove one record per address, the canonical Interface, routes with the
+# family pinned by the invocation, and refusals for shapes the contract does not cover.
+case: ip address, link, route and neigh compose as canonical network records
+run: |
+  echo "== addresses: one record per address =="
+  ono -c 'ip address | where interface == "lo" | select family address scope | to json'
+  ono -c 'ip a | where family == "inet" | count | to text'
+  echo "== link: canonical Interface with its addresses =="
+  ono -c 'ip link | where name == "lo" | select name state mtu addresses | to json'
+  echo "== route: family from the invocation =="
+  ono -c 'ip route | count | to text'
+  ono -c 'ip -6 route | where family == "inet6" | count | to text'
+  echo "== neigh =="
+  ono -c 'ip neigh | count | to text'
+  echo "== provenance names the rewritten invocation =="
+  ono -c 'ip address | take 1 | inspect | to json' | grep -F 'ip -j address show'
+  ono -c 'ip address | take 1 | inspect | to json' | grep -F '"address": "normalized"'
+  echo "== refusals and raw =="
+  ono -c 'ip -s link | where state == "up"' 2>&1 | grep -c 'Ono-Sendai-E0903'
+  ono -c 'raw ip -j link show lo' > /tmp/raw.out; bash -c 'ip -j link show lo' > /tmp/bash.out; cmp /tmp/raw.out /tmp/bash.out && echo raw=identical
+  ono -c 'ip link show lo | grep -c LOOPBACK'
+  ono -c 'explain ip a | where family == "inet6"' | grep -F 'adapted by org.ono.compat.iproute2.ip-address'
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

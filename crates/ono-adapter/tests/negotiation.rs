@@ -335,3 +335,29 @@ fn should_describe_every_state_in_the_words_of_the_diagnostics_section() {
         unsupported.describe(&OutputDemand::Interactive)
     );
 }
+
+#[test]
+fn should_require_a_flag_when_the_contract_says_so_and_pin_the_family() {
+    let dir = scratch();
+    let ip = executable(&dir, "ip");
+    let registry = Registry::bundled(Box::new(|_, _| Some("ip utility, iproute2-6.19.0".into())));
+    let v6 = registry.negotiate(&ip, &argv(&["ip", "-6", "route"]), &structured());
+    let plan = v6.plan().expect("`ip -6 route` is adapted");
+    assert_eq!(
+        plan.adapter().id(),
+        "ip-route6",
+        "the -6 form selects the IPv6 adapter"
+    );
+    assert_eq!(plan.argv(), argv(&["ip", "-j", "-6", "route", "show"]));
+    let v4 = registry.negotiate(&ip, &argv(&["ip", "route"]), &structured());
+    assert_eq!(
+        v4.plan().expect("`ip route` is adapted").adapter().id(),
+        "ip-route"
+    );
+    let words = registry.negotiate(&ip, &argv(&["ip", "a", "show", "dev", "lo"]), &structured());
+    assert_eq!(
+        words.plan().expect("`ip a show dev lo` is adapted").argv(),
+        argv(&["ip", "-j", "address", "show", "show", "dev", "lo"]),
+        "words after the alias pass through in order"
+    );
+}

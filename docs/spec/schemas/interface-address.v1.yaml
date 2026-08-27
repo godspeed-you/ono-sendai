@@ -1,0 +1,39 @@
+# Canonical InterfaceAddress schema. Source: spec v0.3 §1.33 (`ip address | where family ==
+# inet6` yields `Stream<InterfaceAddress>`): one record per address, so a person can filter on
+# what an address is, where `ono.interface/1` carries the addresses of one interface as a list.
+id: ono.interface-address/1
+name: InterfaceAddress
+summary: One address configured on a network interface.
+identity: [index, address]
+fields:
+  interface:
+    type: ref<ono.interface/1>
+    required: true
+    doc: The interface the address belongs to, by name.
+  index:
+    type: int
+    required: true
+    doc: The interface's index, which is its stable identity (spec §23.2).
+  family:
+    type: enum
+    required: true
+    values: [inet, inet6]
+    doc: The address family.
+  address:
+    type: ipnetwork
+    required: true
+    doc: The address with its prefix length.
+  scope:
+    type: string
+    required: true
+    doc: The address scope as the kernel names it — `global`, `link`, `host`, `site`.
+  label:
+    type: string
+    nullable: true
+    doc: The address label, where one is set; null otherwise.
+  dynamic:
+    type: bool
+    nullable: true
+    doc: Whether the address was configured dynamically (DHCP, SLAAC); null when the tool does not say.
+default_view:
+  columns: [interface, family, address, scope]
