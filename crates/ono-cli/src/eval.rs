@@ -973,6 +973,18 @@ fn run_stage_list(
         return crate::context::enter_piped(session, last, source, &values);
     }
 
+    // `get link | remove link`, `get plugin | verify plugin`: a shell-answered command reached
+    // through a pipe (ADR-0118). The stages before it run as the native pipeline they are, their
+    // values are the command's targets, and what it produces seeds the stages after it — exactly
+    // as the head form does. A command whose contract declares no stream input is refused before
+    // anything runs, with the head form named.
+    if !background && let Some((index, piped)) = crate::piped::claims(list) {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        return crate::piped::run(session, list, source, index, piped);
+    }
+
     // `enter` and `leave` change what later commands mean, which is session state: the same
     // reason `cd` runs in the shell (spec §14.1, ADR-0023).
     if list.stages.len() == 1

@@ -19,6 +19,7 @@ pub mod kuang_host;
 pub mod live;
 pub mod meta;
 pub mod native;
+pub mod piped;
 pub mod plugins;
 pub mod providers;
 pub mod remote;

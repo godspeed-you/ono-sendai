@@ -323,6 +323,77 @@ pub fn claims(stage: &ono_parser::Stage) -> Option<Request> {
     }
 }
 
+/// The piped form, `get plugin | verify plugin` (ADR-0118): the packages arrive as
+/// `ono.plugin/1` records and each is handled as `<verb> plugin <id>` would be. `ask assistant`
+/// declares `input: null | any`, so whatever arrives is its context and the assistant is still
+/// named on the stage (spec §7.1); `install plugin` and `grant capability` declare no input.
+///
+/// # Errors
+///
+/// The structured refusal of the command, or a type error for a command with no stream input
+/// or for a piped value that is not an `ono.plugin/1` record.
+pub fn run_piped(
+    session: &mut Session,
+    request: Request,
+    words: &[String],
+    targets: &[Value],
+) -> Eval<Produced> {
+    match request {
+        Request::VerifyPlugin => {
+            let ids = crate::remote::piped_names("verify plugin", "ono.plugin", "id", targets)
+                .map_err(Flow::Failed)?;
+            let mut produced = Produced {
+                values: Vec::new(),
+                failure: None,
+            };
+            for id in ids {
+                let one = run(session, request, &["plugin".to_owned(), id])?;
+                produced.values.extend(one.values);
+                produced.failure = produced.failure.or(one.failure);
+            }
+            Ok(produced)
+        }
+        Request::AskAssistant => run(session, request, words),
+        Request::InstallPlugin => Err(Flow::Failed(crate::remote::no_stream_input(
+            "install plugin",
+            "plugin",
+        ))),
+        Request::GrantCapability => Err(Flow::Failed(crate::remote::no_stream_input(
+            "grant capability",
+            "capability",
+        ))),
+    }
+}
+
+/// The piped form of `load plugin` (ADR-0118): `get plugin | load plugin [--grant …]` loads
+/// every package that arrived, with the stage's options applying to each.
+///
+/// # Errors
+///
+/// The first load that is refused, after the packages before it were loaded; a type error when
+/// the stage also names a package, or a piped value is not an `ono.plugin/1` record.
+pub fn load_piped(session: &mut Session, words: &[String], targets: &[Value]) -> Eval<ExitStatus> {
+    let (named, options) = LoadOptions::from_words(words);
+    if let Some(named) = named {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!(
+                    "`load plugin` takes its packages from the pipe or by name, not both (`{named}`)"
+                ),
+            )
+            .with_help("`get plugin | load plugin` or `load plugin <id>` (spec §31.8)"),
+        ));
+    }
+    let ids = crate::remote::piped_names("load plugin", "ono.plugin", "id", targets)
+        .map_err(Flow::Failed)?;
+    let mut status = ExitStatus::SUCCESS;
+    for id in ids {
+        status = load_plugin_with(session, &id, &options)?;
+    }
+    Ok(status)
+}
+
 /// Runs a management command over its words (the target word included).
 ///
 /// # Errors

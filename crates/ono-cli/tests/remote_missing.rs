@@ -519,6 +519,110 @@ fn should_begin_a_host_watch_with_an_empty_snapshot_when_no_host_is_known() {
     );
 }
 
+// --- the piped forms: `get link | remove link` and friends (ADR-0118) -----------------------
+
+#[test]
+fn should_remove_the_piped_links_when_remove_link_follows_get_link() {
+    // remote.yaml `remove link`: input `null | stream<ono.link/1>` — the piped records are the
+    // targets, and the shell answers exactly as it does for `remove link <name>`.
+    let run = ono(&format!(
+        "{LINK}; get link | remove link | select status operation | to json; get link | count"
+    ));
+    run.assert_success();
+    assert!(
+        run.stdout()
+            .contains(r#"[{"operation":"ono.link.remove","status":"success"}]"#),
+        "one ono.action-result/1 per piped link, got {:?}",
+        run.output()
+    );
+    assert!(
+        run.stdout().trim_end().ends_with("VALUE\n0"),
+        "the piped link is gone afterwards, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_detach_the_piped_link_when_detach_link_follows_get_link() {
+    // Outside the link's frame (inside it, spec §14.4 sends `get link` to the other side) there
+    // is nothing to detach from — and that is the head form's own answer: a success row that
+    // changed nothing, never E0101.
+    let run = ono(&format!(
+        "{LINK}; get link | detach link | select changed status | to json"
+    ));
+    run.assert_success();
+    assert_eq!(
+        last_line(&run),
+        r#"[{"changed":false,"status":"success"}]"#,
+        "the piped link is answered as `detach link testbox` would be, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_modify_the_piped_links_when_set_link_follows_get_link() {
+    let run = ono("add link devbox --host devbox.example --transport ssh; \
+         get link | set link --transport local | select status | to json; \
+         get link | select transport | to json");
+    run.assert_success();
+    assert!(
+        run.stdout().contains(r#"[{"status":"success"}]"#),
+        "the piped definition is modified, got {:?}",
+        run.output()
+    );
+    assert_eq!(
+        last_line(&run),
+        r#"[{"transport":"local"}]"#,
+        "remote.yaml `set link --transport`: the option applies to the piped link, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_rename_the_piped_link_when_rename_link_follows_get_link() {
+    // remote.yaml `rename link`: input `null | ono.link/1` — one record, and the one remaining
+    // selector is the new name.
+    let run = ono("add link devbox --host devbox.example --transport ssh; \
+         get link devbox | rename link prodbox; get link | to json");
+    run.assert_success();
+    assert_eq!(
+        names(&rows(&run)),
+        ["prodbox"],
+        "only the new name remains, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_refuse_a_piped_host_with_a_type_error_naming_the_head_form_for_connect_and_link_host() {
+    // remote.yaml declares `input: "null"` for `connect host` and `link host`: the honest answer
+    // to `get host | connect host` is a type error that says how to spell it — never E0101.
+    let home = scratch();
+    for verb in ["connect", "link"] {
+        let run = ono_at_home(&home, &format!("get host | {verb} host"));
+        assert!(
+            !run.status().is_success(),
+            "`get host | {verb} host` is refused, got {:?}",
+            run.output()
+        );
+        assert!(
+            run.stderr().contains("Ono-Sendai-E0201"),
+            "the refusal is the type error of spec §43, got {:?}",
+            run.stderr()
+        );
+        assert!(
+            run.stderr().contains(&format!("{verb} host <name>")),
+            "the refusal names the head form, got {:?}",
+            run.stderr()
+        );
+        assert!(
+            !run.stderr().contains("E0101"),
+            "a declared, implemented command never claims to be unimplemented, got {:?}",
+            run.stderr()
+        );
+    }
+}
+
 // --- link definitions: add, set, rename, remove, detach ---------------------------------------
 
 #[test]

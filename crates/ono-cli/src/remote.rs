@@ -49,6 +49,13 @@ impl Request {
         }
     }
 
+    fn target(self) -> &'static str {
+        match self {
+            Self::ConnectHost | Self::TestHost => "host",
+            _ => "link",
+        }
+    }
+
     fn command_id(self) -> &'static str {
         match self {
             Self::AddLink => "ono.link.add",
@@ -104,19 +111,145 @@ pub fn answer(
     request: Request,
 ) -> Eval<Vec<Value>> {
     let _ = source;
-    let started = std::time::Instant::now();
-    let registry = crate::native::registry().map_err(Flow::Failed)?;
-    let resolved = registry
-        .resolve(request.verb(), &stage.arguments)
-        .map_err(Flow::Failed)?;
-    let bound = resolved
-        .contract
-        .bind(resolved.arguments)
-        .map_err(Flow::Failed)?;
+    let bound = bind(request, stage)?;
     let name = bound
         .require_selector("name")
         .map_err(Flow::Failed)?
         .to_string();
+    act(session, request, &name, &bound)
+}
+
+/// The piped form, `get link | remove link` (ADR-0118): the links to act on arrive as
+/// `ono.link/1` records and the stage holds only the options — or, for `rename link`, the new
+/// name. One `ono.action-result/1` per piped link; a link that cannot be acted on is a `failed`
+/// row rather than the end of the run (spec §16.5, ADR-0006).
+///
+/// # Errors
+///
+/// A type error when the command declares no stream input (`connect host`, `test host`, `add
+/// link`), when a piped value is not an `ono.link/1` record, or when `rename link` is handed
+/// anything but exactly one link.
+pub fn answer_piped(
+    session: &mut Session,
+    stage: &Stage,
+    request: Request,
+    targets: &[Value],
+) -> Eval<Vec<Value>> {
+    let spelling = format!("{} {}", request.verb(), request.target());
+    if matches!(
+        request,
+        Request::AddLink | Request::ConnectHost | Request::TestHost
+    ) {
+        return Err(Flow::Failed(no_stream_input(&spelling, request.target())));
+    }
+    let bound = bind(request, stage)?;
+    let names = piped_names(&spelling, "ono.link", "name", targets).map_err(Flow::Failed)?;
+    if request == Request::RenameLink && names.len() != 1 {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!(
+                    "`rename link` renames one link, {} arrived through the pipe",
+                    names.len()
+                ),
+            )
+            .with_help(
+                "`get link <name> | rename link <new-name>` (remote.yaml: input ono.link/1)",
+            ),
+        ));
+    }
+    let mut rows = Vec::with_capacity(names.len());
+    for name in names {
+        match act(session, request, &name, &bound) {
+            Ok(values) => rows.extend(values),
+            Err(Flow::Failed(error)) => {
+                rows.push(failed_row(&name, request.command_id(), error));
+            }
+            Err(other) => return Err(other),
+        }
+    }
+    Ok(rows)
+}
+
+/// The type error for a command whose contract declares `input: "null"`: the pipe cannot name
+/// its target, so the answer says how the head form is spelled (ADR-0118).
+pub(crate) fn no_stream_input(spelling: &str, target: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::TypeMismatch,
+        format!(
+            "`{spelling}` takes nothing from the pipe: name the {target} — `{spelling} <name>`"
+        ),
+    )
+    .with_help(format!(
+        "the contract declares `input: null` for `{spelling}`; `get {target} | select name` \
+         shows the names to choose from"
+    ))
+}
+
+/// The identities the piped records name: every value must be a `<schema>` record carrying a
+/// string `<field>`, or the stage was handed something it cannot act on.
+pub(crate) fn piped_names(
+    spelling: &str,
+    schema: &str,
+    field: &str,
+    targets: &[Value],
+) -> Result<Vec<String>, ErrorValue> {
+    targets
+        .iter()
+        .map(|value| {
+            let name = value
+                .as_record()
+                .ok()
+                .filter(|record| record.schema_id().name() == schema)
+                .and_then(|record| record.get(field))
+                .and_then(|name| name.as_str().ok().map(str::to_owned));
+            name.ok_or_else(|| {
+                ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!(
+                        "`{spelling}` acts on {schema}/1 records, and {} arrived through the pipe",
+                        value.type_name()
+                    ),
+                )
+                .with_help(format!(
+                    "`get {} | {spelling}` is the piped form",
+                    schema.trim_start_matches("ono.")
+                ))
+            })
+        })
+        .collect()
+}
+
+/// The `failed` row for one piped link that could not be acted on.
+fn failed_row(name: &str, operation: &str, error: ErrorValue) -> Value {
+    let mut identity = MapValue::new();
+    identity.insert("name".into(), Value::string(name));
+    let target = ValueRef::object(SchemaId::new("ono.link", 1), identity);
+    ActionResult::new(target, operation, ActionStatus::Failed)
+        .with_error(error)
+        .into_value()
+}
+
+/// Binds the stage's arguments to the command's contract.
+fn bind(request: Request, stage: &Stage) -> Eval<ono_command::BoundArguments> {
+    let registry = crate::native::registry().map_err(Flow::Failed)?;
+    let resolved = registry
+        .resolve(request.verb(), &stage.arguments)
+        .map_err(Flow::Failed)?;
+    resolved
+        .contract
+        .bind(resolved.arguments)
+        .map_err(Flow::Failed)
+}
+
+/// Acts on the link (or host) called `name` as `request` asks, with the bound options.
+fn act(
+    session: &mut Session,
+    request: Request,
+    name: &str,
+    bound: &ono_command::BoundArguments,
+) -> Eval<Vec<Value>> {
+    let started = std::time::Instant::now();
     let option = |option: &str| {
         bound
             .option(option)
@@ -125,7 +258,7 @@ pub fn answer(
     };
 
     let (changed, message) = match request {
-        Request::ConnectHost => return connect_host(session, &name, option("transport")),
+        Request::ConnectHost => return connect_host(session, name, option("transport")),
         Request::TestHost => {
             let timeout = bound.option("timeout").and_then(|value| match value {
                 Value::Duration(duration) => u64::try_from(duration.nanoseconds())
@@ -133,23 +266,34 @@ pub fn answer(
                     .map(std::time::Duration::from_nanos),
                 _ => None,
             });
-            return test_host(session, &name, timeout);
+            return test_host(session, name, timeout);
         }
-        Request::AddLink => add_link(session, &name, option("host"), option("transport"))?,
-        Request::SetLink => set_link(session, &name, option("host"), option("transport"))?,
+        Request::AddLink => add_link(session, name, option("host"), option("transport"))?,
+        Request::SetLink => set_link(session, name, option("host"), option("transport"))?,
         Request::RenameLink => {
+            // Head form: `rename link <name> <new-name>`. Piped form: the link arrived, so the
+            // one positional left is the new name and binds as `name` (ADR-0118).
             let new_name = bound
-                .require_selector("new-name")
-                .map_err(Flow::Failed)?
+                .selector("new-name")
+                .or_else(|| bound.selector("name"))
+                .ok_or_else(|| {
+                    Flow::Failed(
+                        ErrorValue::new(
+                            ErrorCode::ResolveTargetNotFound,
+                            "`rename link` needs the new name",
+                        )
+                        .with_help("`rename link <name> <new-name>` (spec §9.1)"),
+                    )
+                })?
                 .to_string();
-            rename_link(session, &name, &new_name)?
+            rename_link(session, name, &new_name)?
         }
-        Request::RemoveLink => remove_link(session, &name)?,
-        Request::DetachLink => detach_link(session, &name)?,
+        Request::RemoveLink => remove_link(session, name)?,
+        Request::DetachLink => detach_link(session, name)?,
     };
 
     let mut identity = MapValue::new();
-    identity.insert("name".into(), Value::string(&name));
+    identity.insert("name".into(), Value::string(name));
     let target = ValueRef::object(SchemaId::new("ono.link", 1), identity);
     let elapsed = ono_value::Duration::from_nanoseconds(
         i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),

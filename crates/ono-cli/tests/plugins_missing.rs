@@ -561,6 +561,66 @@ fn should_refuse_to_load_an_incompatible_package() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// the piped forms: `get plugin | verify plugin`, `get plugin | load plugin` (ADR-0118)
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn should_verify_the_piped_packages_when_verify_plugin_follows_get_plugin() {
+    // kuang.yaml `verify plugin`: input `null | stream<ono.plugin/1>` — each piped record is
+    // verified as `verify plugin <id>` would.
+    let home = plugin_home();
+    let run = ono(&home, "get plugin | verify plugin | to json");
+    run.assert_success();
+    let value = last_json(&run);
+    let result = only(&run, &value);
+    assert_eq!(
+        str_field(result, "package"),
+        ECHO,
+        "verification-result.v1: the piped package is the one verified, got {result:?}"
+    );
+    assert_eq!(
+        str_field(result, "compatibility"),
+        "compatible",
+        "the piped form answers exactly as the head form does"
+    );
+}
+
+#[test]
+fn should_load_the_piped_packages_when_load_plugin_follows_get_plugin() {
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        "get plugin | load plugin --grant clock.read; get plugin | where state == \"loaded\" | count | to json",
+    );
+    run.assert_success();
+    assert_eq!(
+        last_line(&run),
+        "[1]",
+        "kuang.yaml `load plugin`: the piped package is loaded, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_refuse_to_ask_when_no_assistant_is_named_after_get_assistant() {
+    // kuang.yaml `ask assistant`: input `null | any` — the pipe is context, the assistant is
+    // still selected explicitly (spec §7.1). Nothing loaded answers, and that is E0102, not a
+    // claim that the command is unimplemented.
+    let home = plugin_home();
+    let run = ono(&home, "get assistant | ask assistant");
+    assert_refused_with(
+        &run,
+        "Ono-Sendai-E0102",
+        "the piped form gives the head form's structured refusal",
+    );
+    assert!(
+        !run.stderr().contains("E0101"),
+        "a declared, implemented command never claims to be unimplemented, got {:?}",
+        run.stderr()
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
 // `install plugin` — spec §31.9, lifecycle.v1 `install`
 // ---------------------------------------------------------------------------------------------
 
