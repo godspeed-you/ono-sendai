@@ -959,8 +959,37 @@ security review — and because re-testing these later costs nothing if they are
 
 ## Deferred / blocked
 
-_(empty — an entry here needs a reason, the ignored test's path, and the ADR that states the
-assumption)_
+**The v0.4 RED suites** (written 2026-08-27, before any implementation). Every test in the files
+below is `#[ignore]`d with the specification section that governs it, so the gate stays green
+while the tests exist. **The increment that delivers a section removes the ignore lines of the
+tests naming it, in the same commit** — a file is done when it has no `#[ignore` left. Reason
+for deferral: the v0.4 Spatial Systems Interface is unimplemented; these are its executable
+requirements, not blocked work.
+
+- `crates/ono-cli/tests/spatial_navigation_missing.rs` — the spatial command language on its
+  non-interactive surface: `look`, `near`, `enter`, `follow`, `jump`, `back`, `up`, `home`,
+  `trail`, `find`, script ambiguity (v0.4 §6, §20, §27–§29, §40, §44.6)
+- `crates/ono-cli/tests/spatial_topology_missing.rs` — root `SYSTEM`, the six canonical
+  domains, discovery before naming (§2, §3, §4, §7, §9, §12, §13, §17, §18, §44.1, §44.2)
+- `crates/ono-cli/tests/spatial_identity_missing.rs` — identity tiers, process lifetime,
+  tombstones, permission honesty, hierarchy vs graph (§10, §11, §33, §35, §42, §44.7, §44.8)
+- `crates/ono-cli/tests/spatial_map_missing.rs` — the map data contract, semantic zoom,
+  clustering, landmarks, text rendering and ASCII fallback (§8, §22, §23, §24, §26, §39)
+- `crates/ono-cli/tests/spatial_relationships_missing.rs` — relationship traversal and live
+  spatial state (§11, §12–§16, §25, §31, §32, §44.4, §44.5, §44.9)
+- `crates/ono-cli/tests/spatial_storage_missing.rs` — storage spaces, mount boundaries and the
+  cwd/place distinction (§7.4, §15, §30, §44.3)
+- `crates/ono-cli/tests/spatial_remote_missing.rs` — remote systems as space (§19, §20, §43.7)
+- `crates/ono-cli/tests/spatial_contracts_missing.rs` — the machine-readable spatial registry,
+  the error model, provider conformance, KUANG/11 and v0.3 adapter integration, session state,
+  configuration and budgets (§34, §36, §37, §40, §41, §42, §46, §47)
+- `crates/ono-cli/tests/spatial_interactive_missing.rs` — the interactive surface through a PTY:
+  startup horizon, prompt/HUD, ambiguity picker, full-screen map, focus vs place, Ctrl-C, resize,
+  raw shell continuity (§5, §21, §23, §27, §39, §43.4, §44.10)
+
+The end-to-end half lives beside them as `docker/acceptance/cases/*.case.v04` — the ten §44
+scenarios, held out of the runner's `*.case` glob until the increment that delivers a scenario
+renames its file. `docker/acceptance/cases/README-v0.4.md` carries the mapping.
 
 ---
 
