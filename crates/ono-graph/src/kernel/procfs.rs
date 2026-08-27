@@ -156,6 +156,19 @@ pub(crate) fn cgroups(proc: &Path, pid: i64) -> Result<Vec<String>, ErrorValue> 
         .collect())
 }
 
+/// Where one of a process's magic links points: its `root`, its `cwd`, a namespace under `ns/`.
+///
+/// `who` is a pid, or `self` for the reader.
+///
+/// # Errors
+///
+/// Returns the structured error the kernel gave: `io.permission_denied` for a process this user
+/// may not look into, `io.not_found` for one that has exited.
+pub(crate) fn link_target(proc: &Path, who: &str, name: &str) -> Result<PathBuf, ErrorValue> {
+    let path = proc.join(who).join(name);
+    fs::read_link(&path).map_err(|error| io_error(&error, &path))
+}
+
 /// The process ids under `/proc`, in numeric order.
 ///
 /// # Errors

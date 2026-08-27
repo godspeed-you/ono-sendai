@@ -114,6 +114,16 @@ impl ProcessFixture {
     }
 
     /// Writes `/proc/<pid>/cgroup`.
+    /// Points one of the process's magic links — `root`, `cwd`, `ns/mnt` — at a target.
+    pub fn link(self, name: &str, target: &str) -> Self {
+        let path = self.dir.join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("the link's directory");
+        }
+        std::os::unix::fs::symlink(target, path).expect("the magic link");
+        self
+    }
+
     pub fn cgroup(self, text: &str) -> Self {
         fs::write(self.dir.join("cgroup"), format!("{text}\n")).expect("the cgroup file");
         self
@@ -502,5 +512,22 @@ pub fn owned_process(pid: i64, name: &str, uid: i64, username: &str) -> RecordVa
         })
         .and_then(|builder| builder.set("user", owner.into_value()))
         .expect("the fixture owned process record")
+        .build()
+}
+
+/// A filesystem record, as the mountinfo provider answers for one mount.
+pub fn filesystem(source: &str, target: &str, kind: &str, uuid: &str) -> RecordValue {
+    RecordValue::builder(schema("ono.filesystem"), provenance("ono.filesystem"))
+        .set("source", Value::String(source.into()))
+        .and_then(|builder| builder.set("type", Value::String(kind.into())))
+        .and_then(|builder| {
+            builder.set(
+                "uuid",
+                Value::Uuid(ono_value::Uuid::parse(uuid).expect("a well-formed fixture uuid")),
+            )
+        })
+        .and_then(|builder| builder.set("target", Value::Path(Arc::from(Path::new(target)))))
+        .and_then(|builder| builder.set("read_only", Value::Bool(false)))
+        .expect("the fixture filesystem record")
         .build()
 }

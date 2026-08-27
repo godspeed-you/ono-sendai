@@ -6,13 +6,14 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    FixtureProvider, ProcFixture, TableResolver, edges, endpoint, file, group, make_readable,
-    mount, node, owned_process, process, registry, service, socket, trace_with, user,
+    FixtureProvider, ProcFixture, TableResolver, edges, endpoint, file, filesystem, group,
+    make_readable, mount, node, owned_process, process, registry, service, socket, trace_with,
+    user,
 };
 use ono_core::ErrorCode;
 use ono_graph::{
-    Confidence, MountDevices, OpenFiles, ProcessSockets, ProcessTree, RemoteHosts,
-    ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
+    Confidence, MountDevices, MountFilesystems, MountUsers, OpenFiles, ProcessSockets, ProcessTree,
+    RemoteHosts, ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
 };
 use ono_provider_api::Provider;
 
@@ -496,5 +497,101 @@ async fn should_link_a_user_to_its_primary_group_and_to_the_groups_that_list_it(
         ["member-of -> sudo", "primary-group -> alice"],
         "the primary group comes from the account, the others from the group's own member \
          list, in gid order; a group that does not list the user is not related to it"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_mount_to_the_filesystem_at_the_same_mount_point() {
+    let filesystems: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.filesystem",
+        &["filesystem"],
+        vec![
+            filesystem(
+                "/dev/sda2",
+                "/",
+                "ext4",
+                "5d6c1406-0b18-4cb7-8f0b-2a6aec04847e",
+            ),
+            filesystem(
+                "/dev/sdb1",
+                "/srv/data",
+                "xfs",
+                "0f7c2b1e-9a3d-4e55-8c21-1d2e3f4a5b6c",
+            ),
+        ],
+    ))];
+    let registry = registry(filesystems);
+    let subject = mount("/dev/sdb1", "/srv/data", "xfs");
+
+    let graph = trace_with(
+        vec![Arc::new(MountFilesystems::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["filesystem -> filesystem/0f7c2b1e-9a3d-4e55-8c21-1d2e3f4a5b6c"],
+        "the filesystem is the one at the mount's own target, not the root's"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_mount_to_the_processes_rooted_or_working_on_it() {
+    let proc = ProcFixture::new();
+    proc.process(700)
+        .link("root", "/")
+        .link("cwd", "/srv/data/pg");
+    proc.process(701)
+        .link("root", "/")
+        .link("cwd", "/home/alice");
+    // The mount a path lies on is its longest-prefix mount, so `/srv/data` is not `/srv`.
+    proc.process(702).link("root", "/").link("cwd", "/srv");
+    let providers: Vec<Arc<dyn Provider>> = vec![
+        Arc::new(FixtureProvider::new(
+            "fixture.mount",
+            &["mount"],
+            vec![
+                mount("/dev/sda2", "/", "ext4"),
+                mount("/dev/sdb1", "/srv/data", "xfs"),
+                mount("/dev/sdc1", "/srv", "ext4"),
+                mount("/dev/sdd1", "/home", "ext4"),
+            ],
+        )),
+        Arc::new(FixtureProvider::new(
+            "fixture.process",
+            &["process"],
+            vec![
+                process(700, Some(1), "postgres"),
+                process(701, Some(1), "bash"),
+                process(702, Some(1), "nginx"),
+            ],
+        )),
+    ];
+    let registry = registry(providers);
+    let subject = mount("/dev/sdb1", "/srv/data", "xfs");
+
+    let graph = trace_with(
+        vec![Arc::new(MountUsers::new(registry).rooted(proc.root()))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["cwd -> process/700 postgres"],
+        "only the process whose working directory lies on this mount uses it; the roots are \
+         on `/`, and `/srv` is another mount"
+    );
+    let edge = &graph.edges()[0];
+    assert_eq!(edge.confidence(), Confidence::Exact);
+    assert_eq!(
+        edge.metadata().get("path"),
+        Some(&ono_value::Value::Path(Arc::from(std::path::Path::new(
+            "/srv/data/pg"
+        )))),
+        "the edge names the path it was read from"
     );
 }

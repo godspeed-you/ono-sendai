@@ -17,7 +17,7 @@ mod service;
 
 pub use dns::{RemoteHosts, Resolver};
 pub use identity::{UserGroups, UserProcesses};
-pub use mount::MountDevices;
+pub use mount::{MountDevices, MountFilesystems, MountUsers};
 pub use process::{OpenFiles, ProcessSockets, ProcessTree, SocketOwners};
 pub use service::ServiceProcesses;
 
@@ -58,6 +58,12 @@ pub fn rooted_relationships(
         Arc::new(OpenFiles::new(Arc::clone(&registry)).rooted(root)),
         Arc::new(SocketOwners::new(Arc::clone(&registry)).rooted(root)),
         Arc::new(MountDevices::new(Arc::clone(&registry))),
+        Arc::new(MountFilesystems::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
+        Arc::new(
+            MountUsers::new(Arc::clone(&registry))
+                .rooted(root)
+                .sharing(Arc::clone(&snapshots)),
+        ),
         Arc::new(UserProcesses::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
         Arc::new(UserGroups::new(registry).sharing(snapshots)),
     ]

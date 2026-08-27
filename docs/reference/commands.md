@@ -5155,7 +5155,7 @@ Emit mount and unmount events as a live stream.
 | | |
 |---|---|
 | id | `ono.mount.watch` |
-| stability | planned |
+| stability | experimental |
 | phase | F |
 | input | `null` |
 | output | `stream<ono.mount-event/1>` |
@@ -5176,7 +5176,7 @@ Show a mount's device, filesystem, propagation peers and the processes using it.
 | | |
 |---|---|
 | id | `ono.mount.trace` |
-| stability | planned |
+| stability | experimental |
 | phase | G |
 | input | `null | ono.mount/1` |
 | output | `ono.graph/1` |

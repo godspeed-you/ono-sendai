@@ -1,0 +1,39 @@
+# MountEvent. The envelope of spec §31.14 over `ono.mount/1`. The mount table is read from
+# `/proc/self/mountinfo` and compared at the configured interval, and `source` says so
+# (ADR-0034, ADR-0079).
+id: ono.mount-event/1
+name: MountEvent
+summary: One mount, unmount or remount, as a live stream emits it.
+identity: []
+fields:
+  kind:
+    type: enum
+    required: true
+    values: [snapshot, added, changed, removed]
+    doc: >-
+      What happened. A subscription always begins with `snapshot` events carrying the current
+      state (ADR-0024), so no consumer has to reconstruct the starting point. A mount is
+      `added`, an unmount `removed`, a remount `changed` with `options` or `read_only` named.
+  at:
+    type: timestamp
+    required: true
+    doc: When the change was observed.
+  mount:
+    type: record
+    required: false
+    doc: >-
+      The mount as it now is — or, for `removed`, as it last was. Identity is the mount point
+      (mount.v1.yaml), so a device remounted elsewhere is a new object.
+  changed:
+    type: list<string>
+    required: false
+    doc: For `changed`, the names of the fields whose values moved. Null for every other kind.
+  source:
+    type: enum
+    required: true
+    values: [subscription, poll]
+    doc: >-
+      How the change was observed. `poll` means the runtime compared mount tables at the
+      configured interval — explicit, as spec §18.2 requires.
+default_view:
+  columns: [kind, at, mount, changed]

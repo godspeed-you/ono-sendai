@@ -582,6 +582,22 @@ Default view: `name`, `kind`, `location`, `context_window`, `tools`, `data_polic
 | `available` | `bool` | — | required | Whether the provider can answer right now. |
 | `unavailable_reason` | `string` | — | nullable | Why it cannot, when it cannot (spec §35.3). Null when it is available. |
 
+## MountEvent — `ono.mount-event/1`
+
+One mount, unmount or remount, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `mount`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. A mount is `added`, an unmount `removed`, a remount `changed` with `options` or `read_only` named. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `mount` | `record` | — | optional | The mount as it now is — or, for `removed`, as it last was. Identity is the mount point (mount.v1.yaml), so a device remounted elsewhere is a new object. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime compared mount tables at the configured interval — explicit, as spec §18.2 requires. |
+
 ## Mount — `ono.mount/1`
 
 A mounted filesystem, with its options kept as data rather than as one option string.
