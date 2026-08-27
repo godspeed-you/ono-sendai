@@ -102,7 +102,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   generic `enter`/`watch`/`trace` for object targets), then the families. Each file is one
   family; each test asserts the behaviour the contract promises, never mere presence:
   - `crates/ono-cli/tests/files_missing.rs` (34) — read/write/copy/move/remove/set/open/tail/
-    watch/trace/enter file, remove/set dir, globs for native selectors
+    watch/trace/enter file, remove/set dir, globs for native selectors — **claimed** by
+    [files | 2026-08-27] on branch `implementation-files` (everything except the four
+    watch/trace tests); files: `crates/ono-provider-linux/src/file.rs`,
+    `crates/ono-command/src/impls/{mutate,mod}.rs`, `crates/ono-cli/src/{native,expand}.rs`,
+    `docs/spec/commands/file.yaml`, `docs/spec/providers/linux-procfs.yaml`, ADR-0081–0083
   - `crates/ono-cli/tests/language_missing.rs` (31) — `let` capturing a pipeline, `$(…)`/`(…)`
     values, callable `fn`, `alias`, `now()`, timestamp literals, `FOO=bar cmd`, `each { … }`,
     string `+`, keyless `sort`, `kill %N`
