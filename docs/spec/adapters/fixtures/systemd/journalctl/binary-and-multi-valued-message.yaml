@@ -1,0 +1,12 @@
+# The two encodings `journalctl -o json` documents for a field that is not one UTF-8 string
+# (journalctl(1), "json"): a value that is not valid UTF-8 is serialized as an array of byte
+# values, and a field that occurs more than once in an entry as an array of strings. The first is
+# decoded lossily — `caf\xe9` is the Latin-1 `café`, and the byte that is not UTF-8 becomes
+# U+FFFD — and the second joins its values with newlines, so a `message` is always a string.
+invocation: [journalctl, -n, "2"]
+tool_version: "259"
+distro: ubuntu
+expect:
+  records:
+    - {timestamp: "2026-08-27T08:46:40Z", priority: 6, message: "caf� printed", identifier: printer, unit: cups.service, pid: 4242, uid: 7, host: deck}
+    - {timestamp: "2026-08-27T08:46:41Z", priority: 3, message: "first line\nsecond line", identifier: twice, unit: null, pid: 4243, uid: 0, host: deck}
