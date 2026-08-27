@@ -493,7 +493,6 @@ fn should_list_images_from_the_engine_api_when_a_runtime_socket_answers() {
 // --- containers: mutations -----------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_start_a_container_through_the_engine_api_when_the_runtime_accepts() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -509,7 +508,6 @@ fn should_start_a_container_through_the_engine_api_when_the_runtime_accepts() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_stop_a_container_through_the_engine_api_when_the_runtime_accepts() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -525,7 +523,6 @@ fn should_stop_a_container_through_the_engine_api_when_the_runtime_accepts() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restart_a_container_through_the_engine_api_when_the_runtime_accepts() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -541,7 +538,6 @@ fn should_restart_a_container_through_the_engine_api_when_the_runtime_accepts() 
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_remove_a_container_through_the_engine_api_when_the_runtime_accepts() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -560,7 +556,6 @@ fn should_remove_a_container_through_the_engine_api_when_the_runtime_accepts() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_update_a_memory_limit_through_the_engine_api_when_setting_a_container() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -576,7 +571,6 @@ fn should_update_a_memory_limit_through_the_engine_api_when_setting_a_container(
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_not_found_when_stopping_a_container_the_runtime_does_not_know() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -593,7 +587,6 @@ fn should_fail_with_not_found_when_stopping_a_container_the_runtime_does_not_kno
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_permission_denied_when_the_runtime_refuses_the_stop() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Refusing);
@@ -609,7 +602,6 @@ fn should_fail_with_permission_denied_when_the_runtime_refuses_the_stop() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_name_the_provider_and_the_risk_when_explaining_a_container_stop() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);

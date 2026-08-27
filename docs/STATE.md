@@ -102,6 +102,8 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   `046-containers-and-packages`. ADR-0112–0115.
   Increment 1 done: `ono-provider-container` — the engine API over the runtime's Unix socket,
   `get container`/`get image`, E0401 naming the sockets tried (4 tests green, ADR-0112).
+  Increment 2 done: start/stop/restart/remove/set container as engine requests, the engine's
+  status as the per-target outcome (8 tests green, ADR-0113).
 
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch

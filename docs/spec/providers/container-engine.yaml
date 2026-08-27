@@ -11,5 +11,5 @@ providers:
       `GET /images/json` over the runtime's Unix socket — never from `docker ps` (spec §23,
       §31.57).
     targets: [container, image]
-    capabilities: [container.list, image.list]
+    capabilities: [container.list, image.list, container.manage]
     schemas: [ono.container/1, ono.image/1]
