@@ -243,6 +243,173 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
       workspace holds none at all, which `cargo xtask spec-check`'s unfinished-work scan keeps
       true.
 
+### 4.6 The v0.3 tranche — External Command Adaptation Layer
+
+`docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md` layers the adapter layer on the
+released v0.2 shell (ADR-0026, ADR-0027). This subsection is its definition of done: the six
+areas of its Integration Checklist (v0.3 §2.1–§2.6), the work packages of §1.67 and the release
+bar of §1.68, in boxes a script can check. Every box is ticked only by a named automated proof
+that runs in the gate or in the container — never on judgement (§3). The v0.3 tranche is
+finished when this subsection has no unticked box and `scripts/release-check.sh` prints the
+release line again.
+
+#### 4.6.1 Core runtime (v0.3 §2.1, ADAPT-001 … ADAPT-007, ADAPT-011)
+
+- [ ] **ADAPT-001 — OutputDemand is part of planning.** The planner computes the stdout demand
+      of every external stage backwards from its consumer — `RawBytes`, `Text`,
+      `Structured(schema?)`, `Interactive`, `Discard` (v0.3 §1.4, §1.5) — before anything is
+      spawned, and `explain <pipeline>` reports it per stage. Exit test: an `explain` case
+      showing `ps aux | where cpu > 20` demanding structure and `ps aux | grep x` demanding
+      bytes.
+- [ ] **ADAPT-003 — the raw path is guaranteed.** One spelling runs any external command with
+      byte semantics untouched no matter which adapters are installed (v0.3 §1.17), it is
+      documented in `help`, and byte semantics are preserved by default for every consumer that
+      is not an explicit structured demand (§1.2, §2.1). Exit test: an acceptance case proving
+      the raw spelling and `ps aux | grep` are byte-identical with and without adapters.
+- [ ] **ADAPT-002 — deterministic registry and conflict resolution.** Adapters are resolved by
+      executable identity, invocation and demand in a documented, deterministic order
+      (v0.3 §1.24, §1.25); two adapters claiming one invocation resolve the same way on every
+      run and `explain` names the candidates and the winner; an unresolvable tie is
+      `adapter.conflict`, never a coin toss. Exit test: a registry test with two competing
+      contracts.
+- [ ] **Negotiation states are explicit.** An adapter answers `NotApplicable`, `RawPreferred`,
+      `StructuredSupported`, `StructuredSupportedWithLimits`, `UnsupportedInvocation` or
+      `IncompatibleVersion` (v0.3 §1.6); unsupported invocations and incompatible versions
+      demonstrably fall back to raw or fail structured with the matching `adapter.*` error, and
+      limits are visible in provenance (§1.16). Exit test: one case per state.
+- [ ] **ADAPT-004 — the process subsystem executes the plan.** Adapters compile to an
+      `ExternalAdapterPlan` (v0.3 §1.7) and the existing spawn/PTY/signal/job machinery runs it —
+      adapters never spawn; exit status and stderr keep Unix semantics (§1.20): a failing child
+      never becomes success because its output decoded. Exit test: a case where the tool exits
+      non-zero with decodable stdout.
+- [ ] **ADAPT-005 — streaming decoders that cannot crash the shell.** Decoded values flow
+      while the child runs; malformed, truncated, non-UTF-8 and hostile output produce
+      `adapter.decode_failed` (with the raw bytes retained and inspectable), never a panic —
+      proven by a seeded fuzz/corpus test over every first-party decoder (§1.47, §2.6).
+- [ ] **ADAPT-006 — version detection is bounded and cached.** Version probes are declared in
+      the contract, run at most once per executable identity (path, device/inode, mtime, size —
+      v0.3 §1.46) and a failed probe makes a version-constrained parser refuse rather than
+      assume. Exit test: a probe counter over repeated invocations plus a refusal case.
+- [ ] **ADAPT-007 — provenance on every adapted value.** `inspect … --provenance` answers all
+      ten questions of v0.3 §1.8 (executable, version, user and actual invocation, adapter
+      id/version, decoder, timestamp, host, per-field exactness, source stability) and
+      partial/limited semantics are explicit (§2.2). Exit test: a provenance case asserting each
+      field on an adapted record.
+- [ ] **Executable identity is pinned.** An adapter matches only executables whose resolved
+      identity satisfies its contract (names/paths, version range — v0.3 §1.14, §1.44); a
+      shadowing binary of the same name yields `adapter.executable_mismatch` and the raw path.
+      Exit test: a PATH-shadowed `ps` in a temp dir.
+- [ ] **ADAPT-011 — remote negotiation.** Inside a link frame an adapted command is planned
+      and executed on the remote side against the remote executable, provenance carries the
+      host, and a host lacking the tool or version degrades to raw with a visible reason
+      (v0.3 §1.54). Exit test: a remote case against the child agent.
+
+#### 4.6.2 Contracts, errors and KUANG/11 (v0.3 §2.2, §2.3, ADAPT-008 … ADAPT-010)
+
+- [ ] **`adapter.*` error family.** The eleven codes of v0.3 §1.65 exist in
+      `docs/spec/errors.yaml` as a new block mapped onto the spec §43 kinds (ADR-0006), and each
+      emitted error carries adapter id/version, executable identity/version, the original
+      invocation, whether raw fallback is safe, and a recovery. Exit test: `errors.rs` coverage
+      plus a rendered `adapter.unsupported_invocation`.
+- [ ] **ADAPT-009 — declarative manifest schema.** `docs/spec/adapters/schema.yaml` is versioned
+      and machine-validated; every first-party contract lives under
+      `docs/spec/adapters/first-party/*.yaml` in the shape of v0.3 §1.44; `spec-check` fails on
+      an unknown schema id, a missing decoder, a missing fixture directory or an executable
+      outside the declared `process.exec` set. Exit test: `xtask` negative cases.
+- [ ] **Canonical schemas are reused.** Adapted values conform to the existing `ono.*/1`
+      schemas wherever an equivalent exists; adapter-specific schemas are added only where none
+      does and are registered like every other schema (v0.3 §1.11, §2.2). Exit test: the
+      conformance harness checks every contract's `schema:` against the registry.
+- [ ] **ADAPT-010 — fixture conformance harness.** Generated from the contracts: fixture bytes
+      → decoder → canonical value → schema conformance → provenance assertions, and exact argv
+      for every rewrite (v0.3 §1.47); every first-party adapter ships fixtures for each
+      supported output family, including empty, error, permission-limited, unknown-field and
+      malformed cases. Exit test: the harness itself, one generated case per fixture.
+- [ ] **ADAPT-008 — capability mapping.** `process.exec` with `executables` and
+      `argv_policy: declared-invocations-only` exists in `docs/spec/capabilities.yaml` and
+      `docs/spec/kuang/`, `roles: [adapter]` and `adapters:` are part of the manifest contract,
+      adapters run under the broker with default-deny, and no adapter can spawn outside its
+      declared set (v0.3 §1.22, §1.26, §2.3). Exit test: a conformance case where an adapter
+      package with an undeclared executable is refused.
+- [ ] **Adapter SDK and test host.** A third-party package can ship a declarative adapter
+      (`ono-kuang-sdk`), and the test host validates it — manifest, fixtures, capability denial,
+      malformed output — before it is loaded (v0.3 §1.45, §2.3). Exit test: an example adapter
+      package built by the SDK passing the test host and running in the container.
+- [ ] **Packs and trust.** First-party adapters are bundled; the package metadata distinguishes
+      first-party / recommended / community / experimental, and the trust policy of v0.3 §1.56
+      is applied before an adapter can influence structured output. Exit test: a trust-policy
+      case per tier.
+
+#### 4.6.3 Compatibility program (v0.3 §2.5, §1.30, §1.31, COMPAT-*)
+
+Each tool box requires, in one increment: a first-party contract, fixtures, the structured and
+the raw pipeline acceptance-tested in the container against the real executable, an
+unsupported-flag case that falls back safely, and `explain` showing the plan (v0.3 §1.68).
+
+- [ ] **COMPAT-LSBLK / FINDMNT / LSNS** — util-linux JSON: `lsblk` → block-device records,
+      `findmnt` → `ono.mount/1`, `lsns` → namespace records (v0.3 §1.35).
+- [ ] **COMPAT-IP-001…003 + neigh** — `ip address` → `ono.interface-address/1`, `ip link` →
+      `ono.interface/1`, `ip route` → `ono.route/1`, `ip neigh` → `ono.neighbor/1`, all via
+      `-j` (v0.3 §1.33).
+- [ ] **COMPAT-JOURNAL-001** — `journalctl` via `-o json` streaming into event records, with
+      cursor and boot fields preserved (v0.3 §1.37).
+- [ ] **COMPAT-SYSTEMD-001** — `systemctl list-units`/`show` read surfaces → `ono.service/1`
+      and unit records, never the human table (v0.3 §1.36).
+- [ ] **COMPAT-PS-001** — `ps` with explicit `-o` field lists → `ono.process/1`, so that
+      `ps aux | where cpu > 20` composes and `ps aux | grep x` stays text (v0.3 §1.34, §1.71).
+- [ ] **COMPAT-STAT / DF / FIND-001** — `stat --printf`, `df --output`, `find -printf … \0`
+      into `ono.file/1` and `ono.filesystem/1`, NUL-safe for hostile names (v0.3 §1.38, §1.39).
+- [ ] **COMPAT-GIT-001/002** — `git status --porcelain=v2 -z` and `git log` with an explicit
+      format into repository records (v0.3 §1.42).
+- [ ] **COMPAT-LSOF** — `lsof -F` field mode into open-file records (v0.3 §1.40).
+- [ ] **COMPAT-SS-001/002** — an invocation matcher and a version-constrained decoder for `ss`
+      into `ono.socket/1`, with locale forced and the brittle-parser metadata visible
+      (v0.3 §1.32, §1.9 Tier C).
+- [ ] **COMPAT-CURL-001** — `curl` exchange metadata split from the body, the body staying
+      bytes (v0.3 §1.41).
+- [ ] **Text tools stay raw.** No first-party adapter claims `cat`, `grep`, `sed`, `awk`,
+      `head`, `tail`, `sort`, `less`, editors or REPLs (v0.3 §1.70); terminal-owning tools keep
+      the PTY (§1.19, §1.43). Exit test: a registry case asserting `NotApplicable` for each.
+
+#### 4.6.4 Integration surfaces (v0.3 §2.4)
+
+- [ ] **Invisible on success.** Adapted commands render exactly like native results at a TTY
+      and compose in pipelines without new syntax; the prompt, tables and `@` reuse work on
+      adapted values. Exit test: the §1.71 session as an acceptance case.
+- [ ] **Inspectable on demand.** `type`, `inspect` and `explain` show the selected adaptation
+      plan, the negotiation state and the diagnostics of v0.3 §1.57, §1.61 for any external
+      stage. Exit test: an explain case per negotiation state.
+- [ ] **Adapter-aware completion invents nothing.** Completion after an adapted executable
+      offers only invocations the contract declares and marks the rest as raw pass-through
+      (v0.3 §1.59). Exit test: an `ono-editor` completion case.
+- [ ] **History records adaptation.** Each history entry names the adapter and plan used, and
+      the history view can explain it (v0.3 §1.58). Exit test: an `ono-history` case.
+- [ ] **Scripts are deterministic.** The same invocation selects the same adapter with output
+      redirected, in `-c`, in a script and at a TTY; redirection and TTY regressions are tested
+      (v0.3 §1.53, §1.68 item 11). Exit test: an acceptance case comparing the three modes.
+- [ ] **Unix muscle memory holds.** `ps aux | grep foo`, `ip a | head`, `find . | wc -l` and
+      `git status` produce the bytes the tool produces (v0.3 §1.2, §2.4). Exit test: an
+      acceptance case diffing against a bash run of the same lines.
+
+#### 4.6.5 Release evidence (v0.3 §2.6, §1.68)
+
+- [ ] **Support claims are machine-readable and published.** `docs/reference/adapters/` — a
+      page per adapter and a compatibility matrix (tool, versions, invocations, schema, tier,
+      limits) — is generated from the contracts and identical to the committed files (§1.66).
+      Exit test: `xtask/tests/reference.rs` extended to the adapter pages.
+- [ ] **Live conformance in the container.** The acceptance image installs every Tier A/B/C
+      tool, and each adapter has at least one live case against the real executable
+      (v0.3 §1.48); adapters for tools absent on a host degrade to raw with a visible reason.
+- [ ] **Overhead is measured.** The adapter path adds a bounded, measured cost over the raw
+      path — negotiation, rewrite and decode — reported by an acceptance case inside the §34
+      budgets (v0.3 §1.50).
+- [ ] **Limitations are documented.** Every first-party adapter's reference page states its
+      unsupported invocations and known limits, and `README.md` presents the adapter layer to a
+      new user with examples that run. Exit test: doc examples parse and run under `xtask`.
+- [ ] **Delivery.** `docs/STATE.md` has an empty *In progress*, no `#[ignore]`d tests exist
+      without a *Deferred* entry, the acceptance suite and CI are green on `implementation`,
+      and this subsection has no unticked box.
+
 ## 5. Stopping rule
 
 An agent stops when `scripts/release-check.sh` prints `release-check: the shell is

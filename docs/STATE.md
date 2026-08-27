@@ -49,18 +49,36 @@ is an **enhancement layered on it** — the External Command Adaptation Layer �
 immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a checksum line in
 `docs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
-**v0.3 is the next tranche, not part of this one.** Its §0 and §0.5 call it "a new product input
-for a later revision" after the frozen v0.2 baseline, so `docs/ACCEPTANCE.md` and
-`scripts/release-check.sh` keep measuring v0.2 and the stopping rule of AGENTS.md §15 is
-unchanged. **ADR-0027 carries the whole analysis**: what v0.3 requires, which five existing
-decisions grow (ADR-0006, -0011, -0013, -0016, -0022), where v0.2 and v0.3 read differently, and
-the fifteen-step decomposition of the tranche (`ADAPT-001`…, then Tier A, B, C tools). Read
-ADR-0027 before starting it; do not re-derive it from the 2182-line document.
+**The v0.3 tranche is in progress (started 2026-08-27).** v0.2 was released as `v0.2.0` from
+`main` at `090d759`; the External Command Adaptation Layer is implemented on `implementation`
+in the same loop, against the same referee. Its definition of done is `docs/ACCEPTANCE.md`
+§4.6 — 39 boxes derived from v0.3 §2.1–§2.6, §1.67 and §1.68 — and `scripts/release-check.sh`
+is red until every one of them is ticked by a named automated proof. **ADR-0027 carries the
+analysis**: what v0.3 requires, which five existing decisions grow (ADR-0006, -0011, -0013,
+-0016, -0022), where v0.2 and v0.3 read differently, and the decomposition of the tranche. Read
+ADR-0027 and §4.6 before picking a task; do not re-derive them from the 2182-line document.
 
-One constraint from it binds work happening **now**: the pipeline planner computes `OutputDemand`
-backwards from the consumer, because v0.3 §1.5 says the demand model "MUST be part of execution
-planning, not an after-the-fact renderer trick", and retrofitting that into a forward planner is
-the expensive kind of shortcut.
+Build order (v0.3 §1.69, one increment per line, each one RED-first):
+
+1. `ADAPT-001` OutputDemand computed backwards from the consumer, reported by `explain`
+2. `adapter.*` error family (E09xx) in `docs/spec/errors.yaml`
+3. `ADAPT-003` guaranteed raw spelling
+4. `ADAPT-009` manifest schema + `docs/spec/adapters/`, `spec-check` drift rules
+5. `ADAPT-002` registry, identity pinning, negotiation states, conflict resolution
+6. `ADAPT-004`/`005` plan execution through `ono-process`, streaming decoders, fuzz corpus
+7. `ADAPT-007` provenance on adapted values, `inspect --provenance`
+8. `ADAPT-006` version probe cache
+9. `ADAPT-010` fixture harness generated from the contracts
+10. Tier A tools: util-linux (`lsblk`/`findmnt`/`lsns`), `ip`, `journalctl`, `systemctl`
+11. Tier B tools: `ps`, `stat`/`df`/`find`, `git`, `lsof`
+12. Tier C tools: `ss`, `curl`
+13. `ADAPT-008` KUANG/11 capability mapping, SDK, test host, packs and trust
+14. `ADAPT-011` remote negotiation
+15. integration surfaces: completion, history, script determinism, muscle-memory diff
+16. release evidence: reference pages + compat matrix, overhead measurement, README
+
+The container image gains the tools of step 10–12 when step 10 starts; a tool adapter is not
+delivered until its live case runs there (`docs/ACCEPTANCE.md` §4.6.3).
 
 ---
 
@@ -75,10 +93,9 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-_(empty — the run's phases are complete; everything further lives under Next up)_
-
-_No agent claims are outstanding; the six that ran (command implementations, graph, protocol,
-KUANG/11 contracts, adversarial review, security review) have all reported and landed._
+- [claude | 2026-08-27] v0.3 tranche, step 1 — `ADAPT-001` OutputDemand in the planner —
+  files: `crates/ono-cli/src/native.rs`, `crates/ono-cli/src/eval.rs`, `crates/ono-command/src/`,
+  `crates/ono-adapter/` (new)
 
 ---
 
