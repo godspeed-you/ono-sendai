@@ -252,7 +252,17 @@ pub fn load_plugin_with(
                 .join(" ")
         }
     );
-    session.add_plugin(id.to_owned(), loaded);
+    // Re-loading replaces (spec §31.72, ADR-0110 §3): the instance that was running is shut
+    // down once the new one is kept, so a reload is never a moment without the package.
+    if let Some(previous) = session.add_plugin(id.to_owned(), loaded)
+        && let Some(runtime) = session.runtime_handle()
+    {
+        runtime.block_on(
+            previous
+                .plugin
+                .shutdown(ono_kuang_protocol::ShutdownReason::Upgrade),
+        );
+    }
     Ok(ExitStatus::SUCCESS)
 }
 

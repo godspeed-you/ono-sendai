@@ -1078,7 +1078,6 @@ fn should_reject_an_unknown_field_on_the_audit_stream() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_show_the_new_version_when_a_loaded_package_is_reloaded() {
     let home = plugin_home();
     let manifest_path = format!("plugins/{ECHO}/manifest.yaml");
