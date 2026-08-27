@@ -1,0 +1,3 @@
+LISTEN 0      4096       127.0.0.1:631  0.0.0.0:* ino:210353836 sk:60b3 cgroup:/system.slice/system-cups.slice/cups.service <->                                 
+LISTEN 0      4096         0.0.0.0:22   0.0.0.0:* users:(("sshd",pid=1234,fd=3)) uid:0 ino:11978 sk:1002 cgroup:/system.slice/ssh.socket <->
+ESTAB  0      0      192.168.0.167:40960 34.107.243.93:443 users:(("firefox",pid=59902,fd=88)) timer:(keepalive,31sec,0) uid:1000 ino:225468374 sk:4284 <->

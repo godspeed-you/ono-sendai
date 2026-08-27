@@ -49,7 +49,7 @@ pub fn decode(
     adapter: &Adapter,
     bytes: &[u8],
     trace: &Trace,
-    schemas: &SchemaRegistry,
+    schemas: &'static SchemaRegistry,
 ) -> Result<Vec<Value>, ErrorValue> {
     let mut decoding = Decoding::borrowed(adapter, trace.clone(), schemas)?;
     let mut values = Vec::new();
@@ -75,6 +75,7 @@ pub struct Decoding<'a> {
     held: Held<'a>,
     trace: Trace,
     schema: Arc<Schema>,
+    schemas: &'static SchemaRegistry,
     buffer: Vec<u8>,
     line: usize,
     observed: jiff::Timestamp,
@@ -89,13 +90,14 @@ impl<'a> Decoding<'a> {
     pub fn borrowed(
         adapter: &'a Adapter,
         trace: Trace,
-        schemas: &SchemaRegistry,
+        schemas: &'static SchemaRegistry,
     ) -> Result<Self, ErrorValue> {
         let schema = registered_schema(adapter, &trace, schemas)?;
         Ok(Self {
             held: Held::Borrowed(adapter),
             trace,
             schema,
+            schemas,
             buffer: Vec::new(),
             line: 0,
             observed: jiff::Timestamp::now(),
@@ -110,13 +112,14 @@ impl<'a> Decoding<'a> {
     pub fn for_plan(
         plan: crate::registry::AdapterPlan,
         trace: Trace,
-        schemas: &SchemaRegistry,
+        schemas: &'static SchemaRegistry,
     ) -> Result<Decoding<'static>, ErrorValue> {
         let schema = registered_schema(plan.adapter(), &trace, schemas)?;
         Ok(Decoding {
             held: Held::Owned(plan),
             trace,
             schema,
+            schemas,
             buffer: Vec::new(),
             line: 0,
             observed: jiff::Timestamp::now(),
@@ -190,6 +193,8 @@ impl<'a> Decoding<'a> {
                     .map_err(|reason| decode_failed(adapter, &self.trace, &bytes, reason)),
                 Some("lsof-fields-v1") => lsof_fields_v1(&bytes)
                     .map_err(|reason| decode_failed(adapter, &self.trace, &bytes, reason)),
+                Some("ss-text-v6") => ss_text_v6(&bytes)
+                    .map_err(|reason| decode_failed(adapter, &self.trace, &bytes, reason)),
                 other => Err(decode_failed(
                     adapter,
                     &self.trace,
@@ -208,15 +213,21 @@ impl<'a> Decoding<'a> {
         let mut outcomes = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
             outcomes.push(
-                build_record(adapter, &self.schema, item, &self.trace, self.observed).map_err(
-                    |reason| {
-                        violation(
-                            adapter,
-                            &self.trace,
-                            format!("record {}: {reason}", index + 1),
-                        )
-                    },
-                ),
+                build_record(
+                    adapter,
+                    &self.schema,
+                    self.schemas,
+                    item,
+                    &self.trace,
+                    self.observed,
+                )
+                .map_err(|reason| {
+                    violation(
+                        adapter,
+                        &self.trace,
+                        format!("record {}: {reason}", index + 1),
+                    )
+                }),
             );
             if outcomes.last().is_some_and(Result::is_err) {
                 break;
@@ -245,15 +256,21 @@ impl<'a> Decoding<'a> {
         if adapter.decoder().kind() == DecoderKind::Lines {
             let item = line_item(adapter, line, self.line)
                 .map_err(|reason| decode_failed(adapter, &self.trace, line, reason))?;
-            return build_record(adapter, &self.schema, &item, &self.trace, self.observed).map_err(
-                |reason| {
-                    violation(
-                        adapter,
-                        &self.trace,
-                        format!("record {}: {reason}", self.line),
-                    )
-                },
-            );
+            return build_record(
+                adapter,
+                &self.schema,
+                self.schemas,
+                &item,
+                &self.trace,
+                self.observed,
+            )
+            .map_err(|reason| {
+                violation(
+                    adapter,
+                    &self.trace,
+                    format!("record {}: {reason}", self.line),
+                )
+            });
         }
         let document: Json = serde_json::from_slice(line).map_err(|error| {
             decode_failed(
@@ -279,7 +296,15 @@ impl<'a> Decoding<'a> {
             fields,
             parent: None,
         };
-        build_record(adapter, &self.schema, &item, &self.trace, self.observed).map_err(|reason| {
+        build_record(
+            adapter,
+            &self.schema,
+            self.schemas,
+            &item,
+            &self.trace,
+            self.observed,
+        )
+        .map_err(|reason| {
             violation(
                 adapter,
                 &self.trace,
@@ -706,6 +731,172 @@ fn lsof_fields_v1(bytes: &[u8]) -> Result<Vec<Item>, String> {
     Ok(items)
 }
 
+/// `ss -H -O` (ADR-0063, tier C): one socket per line, columns separated by runs of spaces —
+/// `[Netid] State Recv-Q Send-Q Local Peer [extended…]` — read by position and vocabulary,
+/// never by width. The Netid column is present only when more than one socket type is listed;
+/// a State keyword in the first column says it is absent.
+fn ss_text_v6(bytes: &[u8]) -> Result<Vec<Item>, String> {
+    const STATES: &[(&str, Option<&str>)] = &[
+        ("ESTAB", Some("established")),
+        ("SYN-SENT", Some("syn-sent")),
+        ("SYN-RECV", Some("syn-recv")),
+        ("FIN-WAIT-1", Some("fin-wait-1")),
+        ("FIN-WAIT-2", Some("fin-wait-2")),
+        ("TIME-WAIT", Some("time-wait")),
+        ("CLOSE-WAIT", Some("close-wait")),
+        ("LAST-ACK", Some("last-ack")),
+        ("LISTEN", Some("listen")),
+        ("CLOSING", Some("closing")),
+        ("CLOSED", Some("close")),
+        ("UNCONN", None),
+        ("UNKNOWN", Some("unknown")),
+    ];
+    const NETIDS: &[(&str, &str, &str)] = &[
+        ("tcp", "tcp", "inet"),
+        ("udp", "udp", "inet"),
+        ("raw", "raw", "inet"),
+        ("sctp", "sctp", "inet"),
+        ("dccp", "dccp", "inet"),
+        ("u_str", "unix", "unix"),
+        ("u_dgr", "unix", "unix"),
+        ("u_seq", "unix", "unix"),
+        ("p_raw", "packet", "packet"),
+        ("p_dgr", "packet", "packet"),
+        ("nl", "unknown", "netlink"),
+    ];
+    let text = String::from_utf8_lossy(bytes);
+    let mut items = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut tokens = line.split_whitespace();
+        let first = tokens.next().unwrap_or("");
+        let (netid, state_word) = if STATES.iter().any(|(word, _)| *word == first) {
+            (None, first)
+        } else if let Some(netid) = NETIDS.iter().find(|(word, _, _)| *word == first) {
+            (Some(netid), tokens.next().unwrap_or(""))
+        } else {
+            return Err(format!(
+                "line {} starts with `{first}`, which is neither a socket type nor a state ss prints",
+                number + 1
+            ));
+        };
+        let Some((_, state)) = STATES.iter().find(|(word, _)| *word == state_word) else {
+            return Err(format!(
+                "line {}: `{state_word}` is not a state ss prints",
+                number + 1
+            ));
+        };
+        let recv = tokens.next().unwrap_or("");
+        let send = tokens.next().unwrap_or("");
+        let local = tokens.next().unwrap_or("");
+        let peer = tokens.next().unwrap_or("");
+        if local.is_empty() || peer.is_empty() {
+            return Err(format!("line {} has no endpoints", number + 1));
+        }
+        let unix = netid.is_some_and(|(_, _, family)| *family == "unix");
+        // Unix sockets print `* <inode> * <peer-inode>`: the endpoints are nothing ss can name.
+        let (local, peer, unix_inode) = if unix {
+            let inode = peer.parse::<i64>().ok();
+            (None, None, inode)
+        } else {
+            (Some(local), Some(peer), None)
+        };
+        let mut fields = serde_json::Map::new();
+        let mut family = netid.map_or("inet", |(_, _, family)| *family).to_owned();
+        let endpoint = |spec: &str,
+                        fields: &mut serde_json::Map<String, Json>,
+                        family: &mut String,
+                        key: &str| {
+            let (address, port) = spec.rsplit_once(':').unwrap_or((spec, "*"));
+            let (address, scope) = address.split_once('%').unwrap_or((address, ""));
+            let address = address.trim_start_matches('[').trim_end_matches(']');
+            if address.contains(':') {
+                *family = "inet6".to_owned();
+            }
+            if !scope.is_empty() {
+                fields.insert(format!("{key}_scope"), Json::String(scope.to_owned()));
+            }
+            let mut object = serde_json::Map::new();
+            object.insert(
+                "address".to_owned(),
+                if address == "*" || address.is_empty() {
+                    Json::Null
+                } else {
+                    Json::String(address.to_owned())
+                },
+            );
+            object.insert(
+                "port".to_owned(),
+                port.parse::<u16>()
+                    .map_or(Json::Null, |port| Json::Number(port.into())),
+            );
+            Json::Object(object)
+        };
+        let local_value = local.map_or(Json::Null, |spec| {
+            endpoint(spec, &mut fields, &mut family, "local")
+        });
+        let remote_value = peer.map_or(Json::Null, |spec| {
+            endpoint(spec, &mut fields, &mut family, "remote")
+        });
+        if let Some((_, protocol, _)) = netid {
+            fields.insert("protocol".into(), Json::String((*protocol).to_owned()));
+        }
+        fields.insert("family".into(), Json::String(family));
+        fields.insert(
+            "state".into(),
+            state.map_or(Json::Null, |s| Json::String(s.to_owned())),
+        );
+        fields.insert("local".into(), local_value);
+        fields.insert("remote".into(), remote_value);
+        fields.insert("recv_queue".into(), Json::String(recv.to_owned()));
+        fields.insert("send_queue".into(), Json::String(send.to_owned()));
+        fields.insert("process".into(), Json::Null);
+        fields.insert("user".into(), Json::Null);
+        fields.insert(
+            "inode".into(),
+            unix_inode.map_or(Json::Null, |i| Json::Number(i.into())),
+        );
+        // Extended columns are `key:value` words, with `users:(("name",pid=N,fd=M))` the one
+        // the schema asks about; the rest stays in the extension map.
+        for token in tokens {
+            if let Some(users) = token.strip_prefix("users:") {
+                if let Some(pid) = users
+                    .split("pid=")
+                    .nth(1)
+                    .and_then(|rest| rest.split(',').next())
+                    .and_then(|pid| pid.parse::<i64>().ok())
+                {
+                    fields.insert("process".into(), Json::Number(pid.into()));
+                }
+                if let Some(name) = users.split('"').nth(1) {
+                    fields.insert("process_name".into(), Json::String(name.to_owned()));
+                }
+            } else if let Some(uid) = token.strip_prefix("uid:") {
+                fields.insert(
+                    "user".into(),
+                    uid.parse::<i64>()
+                        .map_or(Json::Null, |u| Json::Number(u.into())),
+                );
+            } else if let Some(ino) = token.strip_prefix("ino:") {
+                fields.insert(
+                    "inode".into(),
+                    ino.parse::<i64>()
+                        .map_or(Json::Null, |i| Json::Number(i.into())),
+                );
+            } else if let Some((key, value)) = token.split_once(':') {
+                fields.insert(key.to_owned(), Json::String(value.to_owned()));
+            }
+        }
+        items.push(Item {
+            fields,
+            parent: None,
+        });
+    }
+    Ok(items)
+}
+
 fn unescape(text: &str) -> Vec<u8> {
     let mut out = Vec::new();
     let mut chars = text.chars();
@@ -798,6 +989,7 @@ fn property_records(
 fn build_record(
     adapter: &Adapter,
     schema: &Arc<Schema>,
+    schemas: &'static SchemaRegistry,
     item: &Item,
     trace: &Trace,
     observed: jiff::Timestamp,
@@ -839,6 +1031,10 @@ fn build_record(
     .from_source(&actual)
     .observed_at(observed);
 
+    let coercion = Coercion {
+        schemas,
+        provenance: &provenance,
+    };
     let mut builder = RecordValue::builder(Arc::clone(schema), provenance.clone());
     let mut referenced: Vec<&str> = Vec::new();
     for (target, map) in adapter.fields() {
@@ -859,7 +1055,7 @@ fn build_record(
         }
         let value = match raw {
             None | Some(Json::Null) => Value::Null,
-            Some(raw) => coerce_mapped(raw, map, field.ty())
+            Some(raw) => coerce_mapped(raw, map, field.ty(), &coercion)
                 .map_err(|why| format!("field `{target}` of {} {why}", schema.id()))?,
         };
         builder = builder
@@ -882,7 +1078,7 @@ fn build_record(
         let Some(field) = schema.field(target) else {
             return Err(format!("`{target}` is not a field of {}", schema.id()));
         };
-        let value = coerce(&yaml_to_json(literal), field.ty(), None)
+        let value = coerce(&yaml_to_json(literal), field.ty(), None, &coercion)
             .map_err(|why| format!("literal `{target}` of {} {why}", schema.id()))?;
         builder = builder
             .set(target, value)
@@ -952,7 +1148,19 @@ fn fill(template: &str, object: &serde_json::Map<String, Json>) -> Result<String
     Ok(out)
 }
 
-fn coerce_mapped(raw: &Json, map: &FieldMap, ty: &FieldType) -> Result<Value, String> {
+/// What a coercion needs beyond the value: the registry for nested records, and the record's
+/// provenance, which a nested record shares.
+struct Coercion<'a> {
+    schemas: &'static SchemaRegistry,
+    provenance: &'a Provenance,
+}
+
+fn coerce_mapped(
+    raw: &Json,
+    map: &FieldMap,
+    ty: &FieldType,
+    ctx: &Coercion<'_>,
+) -> Result<Value, String> {
     let mut current = raw.clone();
     if let Some(template) = map.template() {
         current = match &current {
@@ -1091,18 +1299,23 @@ fn coerce_mapped(raw: &Json, map: &FieldMap, ty: &FieldType) -> Result<Value, St
         };
         current = Json::Bool(parts.iter().any(|part| part.as_str() == Some(literal)));
     }
-    coerce(&current, ty, map.unit())
+    coerce(&current, ty, map.unit(), ctx)
 }
 
 /// Coerces a decoded value into the declared type, or says why it cannot.
-fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, String> {
+fn coerce(
+    raw: &Json,
+    ty: &FieldType,
+    unit: Option<Unit>,
+    ctx: &Coercion<'_>,
+) -> Result<Value, String> {
     // A field protocol reports everything as text; a number in a declared unit is a number.
     // Seconds with a fraction stay text so the nanoseconds survive.
     if let (Some(_), Json::String(text)) = (unit, raw)
         && !(matches!(ty, FieldType::Timestamp) && text.contains('.'))
         && let Ok(number) = serde_json::from_str::<serde_json::Number>(text.trim())
     {
-        return coerce(&Json::Number(number), ty, unit);
+        return coerce(&Json::Number(number), ty, unit, ctx);
     }
     let wrong =
         |expected: &str| format!("must be {expected} but the tool reported {}", describe(raw));
@@ -1309,7 +1522,7 @@ fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, Strin
         FieldType::List(inner) => match raw {
             Json::Array(items) => items
                 .iter()
-                .map(|item| coerce(item, inner, unit))
+                .map(|item| coerce(item, inner, unit, ctx))
                 .collect::<Result<Vec<Value>, String>>()
                 .map(Value::list),
             _ => Err(wrong("a list")),
@@ -1328,7 +1541,38 @@ fn coerce(raw: &Json, ty: &FieldType, unit: Option<Unit>) -> Result<Value, Strin
                 .ok_or_else(|| wrong("a reference")),
             _ => Err(wrong("a reference")),
         },
-        FieldType::Regex | FieldType::Record(_) | FieldType::Error => {
+        // A nested record — an endpoint on a socket — is built from an object the decoder
+        // emitted, field by field against the nested schema, sharing the record's provenance.
+        FieldType::Record(id) => match raw {
+            Json::Object(object) => {
+                let nested = ctx
+                    .schemas
+                    .get(id)
+                    .ok_or_else(|| format!("is declared as {id}, which is not registered"))?;
+                let mut builder = RecordValue::builder(Arc::clone(&nested), ctx.provenance.clone());
+                for (key, value) in object {
+                    let Some(field) = nested.field(key) else {
+                        return Err(format!("has no field `{key}` on {id}"));
+                    };
+                    let coerced = if value.is_null() {
+                        Value::Null
+                    } else {
+                        coerce(value, field.ty(), None, ctx)
+                            .map_err(|why| format!("field `{key}` of {id} {why}"))?
+                    };
+                    builder = builder
+                        .set(key, coerced)
+                        .map_err(|e| e.message().to_owned())?;
+                }
+                let record = builder.build();
+                nested
+                    .validate(&record)
+                    .map_err(|e| e.message().to_owned())?;
+                Ok(record.into_value())
+            }
+            _ => Err(wrong(&format!("a {id} record"))),
+        },
+        FieldType::Regex | FieldType::Error => {
             Err(format!("is declared as {ty}, which no adapter can decode"))
         }
     }

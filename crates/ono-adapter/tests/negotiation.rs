@@ -398,3 +398,45 @@ fn should_append_trailing_argv_after_the_users_own_words() {
         "an action is a different command"
     );
 }
+
+#[test]
+fn should_decompose_combined_short_flags_where_the_contract_allows_it() {
+    // Spec v0.3 §1.32's own spelling is `ss -tunap`.
+    let dir = scratch();
+    let ss = executable(&dir, "ss");
+    let registry = Registry::bundled(Box::new(|_, _| Some("ss utility, iproute2-6.19.0".into())));
+    let plan = registry
+        .negotiate(&ss, &argv(&["ss", "-tunap"]), &structured())
+        .plan()
+        .cloned()
+        .expect("`ss -tunap` is adapted");
+    assert_eq!(
+        plan.adapter().id(),
+        "ss",
+        "-t and -u together select the mixed adapter"
+    );
+    assert_eq!(
+        plan.argv(),
+        argv(&["ss", "-H", "-O", "-n", "-e", "-t", "-u", "-n", "-a", "-p"])
+    );
+    let tcp = registry.negotiate(&ss, &argv(&["ss", "-tlnp"]), &structured());
+    assert_eq!(
+        tcp.plan().expect("`ss -tlnp` is adapted").adapter().id(),
+        "ss-tcp"
+    );
+    assert!(
+        matches!(
+            registry.negotiate(&ss, &argv(&["ss", "-txn"]), &structured()),
+            Negotiation::UnsupportedInvocation { reason, .. } if reason.contains("-x")
+        ),
+        "an undeclared letter inside a combined flag is named"
+    );
+    assert!(
+        matches!(
+            Registry::bundled(Box::new(|_, _| Some("ss utility, iproute2-7.1.0".into())))
+                .negotiate(&ss, &argv(&["ss", "-t"]), &structured()),
+            Negotiation::IncompatibleVersion { .. }
+        ),
+        "spec v0.3 §1.9 tier C: a version outside the pinned range is refused"
+    );
+}

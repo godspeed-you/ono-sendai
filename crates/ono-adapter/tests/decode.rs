@@ -427,3 +427,44 @@ fn should_stream_a_lines_decoder_record_by_record() {
     assert_eq!(rest.len(), 2);
     assert!(decoding.finish().is_empty());
 }
+
+#[test]
+fn should_decode_ss_endpoints_into_nested_endpoint_records() {
+    let adapter = ono_adapter::first_party()
+        .iter()
+        .find(|pack| pack.id() == "org.ono.compat.iproute2")
+        .unwrap()
+        .adapters()
+        .iter()
+        .find(|adapter| adapter.id() == "ss-tcp")
+        .unwrap();
+    let bytes = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/spec/adapters/fixtures/iproute2/ss-tcp/listening.out"),
+    )
+    .unwrap();
+    let rows =
+        records(ono_adapter::decode(adapter, &bytes, &trace("ss"), builtin_schemas()).unwrap());
+    let Some(Value::Record(local)) = rows[0].get("local") else {
+        panic!(
+            "`local` is an ono.endpoint/1 record, got {:?}",
+            rows[0].get("local")
+        );
+    };
+    assert_eq!(local.schema_id().to_string(), "ono.endpoint/1");
+    assert!(matches!(local.get("address"), Some(Value::Ip(ip)) if ip.to_string() == "127.0.0.1"));
+    assert_eq!(local.get("port"), Some(&Value::Port(631)));
+    let Some(Value::Record(peer)) = rows[0].get("remote") else {
+        panic!("a wildcard peer is still an endpoint record");
+    };
+    assert_eq!(
+        peer.get("port"),
+        Some(&Value::Null),
+        "`*` is an unknown port, not zero"
+    );
+    assert_eq!(
+        rows[0].provenance().adapter().unwrap().stability(),
+        "version-constrained",
+        "spec v0.3 §1.8: a human-output parser says so"
+    );
+}

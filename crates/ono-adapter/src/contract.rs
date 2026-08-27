@@ -26,7 +26,7 @@ const FIRST_PARTY: &[&str] = &[
 ];
 
 /// The decoders implemented in Rust that a `builtin` decoder may name.
-const BUILTIN_DECODERS: &[&str] = &["git-status-v2", "lsof-fields-v1"];
+const BUILTIN_DECODERS: &[&str] = &["git-status-v2", "lsof-fields-v1", "ss-text-v6"];
 
 /// Something a pack promises that the contract does not allow.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -340,6 +340,8 @@ pub struct Flags {
     allow_with_value: Vec<String>,
     #[serde(default)]
     require: Vec<String>,
+    #[serde(default)]
+    combined: bool,
 }
 
 /// The machine-oriented invocation (spec v0.3 §1.7).
@@ -746,6 +748,12 @@ impl Match {
     #[must_use]
     pub fn required_flags(&self) -> &[String] {
         &self.flags.require
+    }
+
+    /// Whether `-tunap` is read as `-t -u -n -a -p`.
+    #[must_use]
+    pub fn combines_flags(&self) -> bool {
+        self.flags.combined
     }
 
     /// Whether further words may follow.

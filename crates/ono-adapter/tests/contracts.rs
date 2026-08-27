@@ -175,7 +175,7 @@ fn should_fail_closed_on_an_unknown_field() {
 }
 
 #[test]
-fn should_bundle_the_iproute2_pack_with_its_five_adapters() {
+fn should_bundle_the_iproute2_pack_with_its_ip_and_ss_adapters() {
     let pack = ono_adapter::first_party()
         .iter()
         .find(|pack| pack.id() == "org.ono.compat.iproute2")
@@ -183,7 +183,16 @@ fn should_bundle_the_iproute2_pack_with_its_five_adapters() {
     let ids: Vec<&str> = pack.adapters().iter().map(|a| a.id()).collect();
     assert_eq!(
         ids,
-        ["ip-address", "ip-link", "ip-route", "ip-route6", "ip-neigh"]
+        [
+            "ip-address",
+            "ip-link",
+            "ip-route",
+            "ip-route6",
+            "ip-neigh",
+            "ss-tcp",
+            "ss-udp",
+            "ss"
+        ]
     );
 }
 

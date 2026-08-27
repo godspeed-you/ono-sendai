@@ -1,0 +1,16 @@
+# v0.3 §1.32, §1.69 step 10 (COMPAT-SS-001/002): the archetypal tier C adapter. `ss -tunap`
+# composes as Socket records with nested endpoints; a version-constrained parser pinned to
+# iproute2 5–6 says so in provenance; `-x` and filters run raw; `ss | grep` stays bytes.
+case: ss -tunap composes as Socket records through a version-constrained parser
+run: |
+  ono -c 'ss -tunap | select protocol state local remote process | count | to text'
+  ono -c 'ss -tlnp | select protocol local state | to json'
+  ono -c 'ss -uan | where family == "inet" | count | to text'
+  ono -c 'ss -tunap | take 1 | inspect | to json' | grep -F '"stability": "version-constrained"'
+  ono -c 'ss -tunap | take 1 | inspect | to json' | grep -F 'ss -H -O -n -e'
+  ono -c 'ss -txn | where state == "listen"' 2>&1 | grep -c 'Ono-Sendai-E0903'
+  ono -c 'ss -tln | grep -c LISTEN' > /tmp/a; ono -c 'raw ss -tln | grep -c LISTEN' > /tmp/b; cmp /tmp/a /tmp/b && echo bytes=identical
+  ono -c 'explain ss -tunap | where state == "established"' | grep -F 'adapted by org.ono.compat.iproute2.ss'
+  echo done=ok
+exit: 0
+stdout-contains: done=ok

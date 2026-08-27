@@ -596,3 +596,30 @@ fn should_adapt_lsof_for_the_callers_own_process() {
         run.stdout()
     );
 }
+
+#[test]
+fn should_adapt_ss_with_combined_flags_or_say_why_not() {
+    // Spec v0.3 §1.32: `ss -tunap | where state == established | select local remote process`.
+    let run = ono("ss -tlnp | select protocol local state | to json");
+    if run.status().code() != 0 {
+        assert!(
+            run.stderr().contains("Ono-Sendai-E0904") || run.stderr().contains("Ono-Sendai-E0101"),
+            "got {:?}",
+            run.stderr()
+        );
+        return;
+    }
+    assert!(
+        run.stdout().starts_with('['),
+        "typed sockets, got {:?}",
+        run.stdout()
+    );
+    let raw = ono("ss -tln | grep -c LISTEN");
+    raw.assert_success();
+    let bytes = ono("raw ss -tln | grep -c LISTEN");
+    assert_eq!(
+        raw.stdout(),
+        bytes.stdout(),
+        "bytes downstream keep ss's own output"
+    );
+}

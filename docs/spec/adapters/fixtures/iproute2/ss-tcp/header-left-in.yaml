@@ -1,0 +1,7 @@
+# A header where records should be means the invocation was not what the plan said (`-H`
+# missing); the parser refuses rather than reading a title as a socket.
+invocation: [ss, -t]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  error: adapter.decode_failed

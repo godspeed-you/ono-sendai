@@ -1,0 +1,2 @@
+UNCONN 0      0                                    127.0.0.54:53                        0.0.0.0:*     uid:989 ino:10527 sk:6 cgroup:/system.slice/systemd-resolved.service <->
+ESTAB  0      0                            192.168.0.167%eth0:68                    192.168.0.1:67     uid:0 ino:20000 sk:7 <->

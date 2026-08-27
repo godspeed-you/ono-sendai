@@ -93,10 +93,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 12 — Tier C: `ss` with an invocation matcher and a
-  version-constrained decoder (COMPAT-SS-001/002), `curl` metadata split from the body
-  (COMPAT-CURL-001) — files: `docs/spec/adapters/first-party/{iproute2-ss,curl}.yaml`,
-  `crates/ono-adapter/src/decode.rs`
+- [claude | 2026-08-27] v0.3 tranche, step 13 — the `adapt` keyword (§1.18) and `curl`
+  exchange metadata with the body kept separate (COMPAT-CURL-001) — files:
+  `docs/spec/adapters/first-party/curl.yaml`, `docs/spec/schemas/http-exchange.v1.yaml`,
+  `crates/ono-cli/src/{native,eval}.rs`, `crates/ono-command/src/explain.rs`
 
 ---
 
@@ -370,6 +370,8 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   (ADR-0061) — case 079
 - [x] v0.3 step 11 — COMPAT-GIT/LSOF: builtin decoders `git-status-v2` and `lsof-fields-v1`,
   `ono.git-status-entry/1`, `ono.commit/1`, `ono.open-file/1`, hex escapes (ADR-0062) — case 080
+- [x] v0.3 step 12 — COMPAT-SS: combined flags, nested record coercion, the `ss-text-v6`
+  version-constrained parser, required flags as specificity (ADR-0063) — case 081
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

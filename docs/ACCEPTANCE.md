@@ -435,9 +435,11 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       builtin decoder, with the visibility limits stated (v0.3 §1.40, ADR-0062) —
       `docs/spec/adapters/first-party/lsof.yaml` with fixtures, `ono-cli/tests/adapters.rs`,
       case `080`.
-- [ ] **COMPAT-SS-001/002** — an invocation matcher and a version-constrained decoder for `ss`
-      into `ono.socket/1`, with locale forced and the brittle-parser metadata visible
-      (v0.3 §1.32, §1.9 Tier C).
+- [x] **COMPAT-SS-001/002** — combined-flag matching (`-tunap`) and the `ss-text-v6` decoder,
+      pinned to iproute2 5–6 and marked `version-constrained` in provenance, into `ono.socket/1`
+      with nested `ono.endpoint/1` records, `LC_ALL=C` forced (v0.3 §1.32, §1.9 Tier C,
+      ADR-0063) — the iproute2 pack's `ss*` fixtures through the harness,
+      `ono-adapter/tests/{negotiation,decode}.rs`, `ono-cli/tests/adapters.rs`, case `081`.
 - [ ] **COMPAT-CURL-001** — `curl` exchange metadata split from the body, the body staying
       bytes (v0.3 §1.41).
 - [ ] **Text tools stay raw.** No first-party adapter claims `cat`, `grep`, `sed`, `awk`,

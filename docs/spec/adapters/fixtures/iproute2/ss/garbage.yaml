@@ -1,0 +1,5 @@
+invocation: [ss]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  error: adapter.decode_failed

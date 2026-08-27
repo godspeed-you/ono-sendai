@@ -526,15 +526,14 @@ impl Registry {
                 let rank = Ranked {
                     exact_path: declared.contains('/'),
                     specificity: match &answer {
+                        // More words matched and more flags required both mean a narrower
+                        // invocation: `ss -t` is the TCP adapter's before the catch-all's.
                         Negotiation::StructuredSupported { plan, .. }
-                        | Negotiation::StructuredSupportedWithLimits { plan, .. } => plan
-                            .invocation()
-                            .matcher()
-                            .words()
-                            .iter()
-                            .map(Vec::len)
-                            .max()
-                            .unwrap_or(0),
+                        | Negotiation::StructuredSupportedWithLimits { plan, .. } => {
+                            let matcher = plan.invocation().matcher();
+                            matcher.words().iter().map(Vec::len).max().unwrap_or(0)
+                                + matcher.required_flags().len()
+                        }
                         _ => 0,
                     },
                     tier: pack.tier(),
@@ -790,6 +789,38 @@ fn match_invocation(
     arguments: &[String],
 ) -> Result<Vec<String>, String> {
     let matcher = invocation.matcher();
+    // `-tunap` is `-t -u -n -a -p` where the contract says so (spec v0.3 §1.32's own spelling);
+    // a combined word the contract knows as a whole stays whole.
+    let expanded: Vec<String>;
+    let arguments: &[String] = if matcher.combines_flags() {
+        expanded = arguments
+            .iter()
+            .flat_map(|argument| {
+                let known = matcher.allowed_flags().iter().any(|f| f == argument)
+                    || matcher
+                        .allowed_flags_with_value()
+                        .iter()
+                        .any(|f| f == argument)
+                    || matcher.required_flags().iter().any(|f| f == argument);
+                if !known
+                    && argument.len() > 2
+                    && argument.starts_with('-')
+                    && !argument.starts_with("--")
+                    && argument[1..].chars().all(char::is_alphanumeric)
+                {
+                    argument[1..]
+                        .chars()
+                        .map(|letter| format!("-{letter}"))
+                        .collect::<Vec<String>>()
+                } else {
+                    vec![argument.clone()]
+                }
+            })
+            .collect();
+        &expanded
+    } else {
+        arguments
+    };
     for required in matcher.required_flags() {
         if !arguments.iter().any(|argument| argument == required) {
             return Err(format!("this form without `{required}`"));

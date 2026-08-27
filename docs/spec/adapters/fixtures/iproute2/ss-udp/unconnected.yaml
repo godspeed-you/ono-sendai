@@ -1,0 +1,9 @@
+# An unconnected UDP socket has no state in the schema's vocabulary — null, not `unknown`; a
+# `%scope` on the address is stripped into the extension map.
+invocation: [ss, -uan]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records:
+    - {protocol: udp, family: inet, state: null, user: 989, inode: 10527}
+    - {protocol: udp, family: inet, state: established, user: 0, inode: 20000}

@@ -1,0 +1,10 @@
+# With the Netid column: the protocol comes from it, IPv6 addresses are bracketed, and a unix
+# stream socket has no endpoints ss can name.
+invocation: [ss, -tuan]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records:
+    - {protocol: udp, family: inet6, state: null, inode: 16810}
+    - {protocol: tcp, family: inet, state: listen, process: 1702354, user: 1000, inode: 71065084}
+    - {protocol: unix, family: unix, state: established, local: null, remote: null, inode: 210358302}

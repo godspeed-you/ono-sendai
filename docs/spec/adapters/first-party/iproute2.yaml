@@ -1,6 +1,7 @@
 # iproute2 compatibility pack: `ip address`, `ip link`, `ip route`, `ip neigh` (spec v0.3 §1.33,
-# §1.69 step 3). Every subcommand speaks JSON with `-j`, so every adapter is tier A. `ss`
-# belongs to iproute2 too but is a tier C parser and gets its own pack later.
+# §1.69 step 3) — every subcommand speaks JSON with `-j`, so those adapters are tier A — and
+# `ss` (spec v0.3 §1.32, §1.69 step 10), the archetypal tier C adapter: no machine format, so a
+# version-constrained parser over `ss -H -O` reads the columns ss documents, never their widths.
 format: ono-adapter-pack/1
 package:
   id: org.ono.compat.iproute2
@@ -11,7 +12,7 @@ package:
 roles: [adapter]
 capabilities:
   process.exec:
-    executables: [ip]
+    executables: [ip, ss]
     argv_policy: declared-invocations-only
 
 adapters:
@@ -232,3 +233,148 @@ adapters:
     limits:
       - "`updated` is not reported: the kernel's timestamps need `-s`, which is not adapted."
     fixtures: iproute2/ip-neigh
+
+  - id: ss-tcp
+    summary: TCP sockets as `ono.socket/1` records, from `ss -t` (tier C parser).
+    executable:
+      names: [ss]
+      versions: ">=5.0 <7"
+      version_probe:
+        argv: ["-V"]
+        pattern: "iproute2-([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: C
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.socket/1
+    decoder:
+      kind: builtin
+      id: ss-text-v6
+      stability: version-constrained
+    fields:
+      protocol: {from: protocol}
+      family: {from: family}
+      local: {from: local}
+      remote: {from: remote}
+      state: {from: state}
+      process: {from: process}
+      user: {from: user}
+      inode: {from: inode}
+    literals: {protocol: tcp}
+    invocations:
+      - id: sockets
+        summary: "ss -t[a|l][n][p][e][4|6] — TCP only, so the Netid column is absent and the protocol is the invocation's"
+        match:
+          words: [[]]
+          flags:
+            allow: [-t, -a, -l, -n, -p, -e, -4, -6, -m, -i, -o]
+            allow_with_value: []
+            require: [-t]
+            combined: true
+          positionals: forbid
+        plan:
+          argv: [ss, -H, -O, -n, -e]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "Unix, raw, packet and netlink sockets (`-x`, `-w`, `-0`, `-A`) and filters (`state …`, `dport …`) are not adapted; the invocation runs raw."
+      - "`process` is the owning pid where `-p` and permissions allow, else null with the name in the extension map (spec v0.3 §1.32); queues, timers and cgroups are extensions."
+      - "The parser is pinned to iproute2 5.x–6.x and refuses other versions rather than guessing (spec v0.3 §1.9 tier C)."
+    fixtures: iproute2/ss-tcp
+
+  - id: ss-udp
+    summary: UDP sockets as `ono.socket/1` records, from `ss -u` (tier C parser).
+    executable:
+      names: [ss]
+      versions: ">=5.0 <7"
+      version_probe:
+        argv: ["-V"]
+        pattern: "iproute2-([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: C
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.socket/1
+    decoder:
+      kind: builtin
+      id: ss-text-v6
+      stability: version-constrained
+    fields:
+      protocol: {from: protocol}
+      family: {from: family}
+      local: {from: local}
+      remote: {from: remote}
+      state: {from: state}
+      process: {from: process}
+      user: {from: user}
+      inode: {from: inode}
+    literals: {protocol: udp}
+    invocations:
+      - id: sockets
+        summary: "ss -u[a|l][n][p][e][4|6] — UDP only"
+        match:
+          words: [[]]
+          flags:
+            allow: [-u, -a, -l, -n, -p, -e, -4, -6, -m, -i, -o]
+            allow_with_value: []
+            require: [-u]
+            combined: true
+          positionals: forbid
+        plan:
+          argv: [ss, -H, -O, -n, -e]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "Unix, raw, packet and netlink sockets (`-x`, `-w`, `-0`, `-A`) and filters (`state …`, `dport …`) are not adapted; the invocation runs raw."
+      - "`process` is the owning pid where `-p` and permissions allow, else null with the name in the extension map (spec v0.3 §1.32); queues, timers and cgroups are extensions."
+      - "The parser is pinned to iproute2 5.x–6.x and refuses other versions rather than guessing (spec v0.3 §1.9 tier C)."
+    fixtures: iproute2/ss-udp
+
+  - id: ss
+    summary: Sockets of every kind ss shows by default, or `-t -u` together, as `ono.socket/1` records (tier C parser).
+    executable:
+      names: [ss]
+      versions: ">=5.0 <7"
+      version_probe:
+        argv: ["-V"]
+        pattern: "iproute2-([0-9]+(?:\\.[0-9]+)+)"
+        cache: executable-identity
+    tier: C
+    output_demand: [structured, interactive]
+    fallback: raw
+    schema: ono.socket/1
+    decoder:
+      kind: builtin
+      id: ss-text-v6
+      stability: version-constrained
+    fields:
+      protocol: {from: protocol}
+      family: {from: family}
+      local: {from: local}
+      remote: {from: remote}
+      state: {from: state}
+      process: {from: process}
+      user: {from: user}
+      inode: {from: inode}
+    invocations:
+      - id: sockets
+        summary: "ss [-t -u][a|l][n][p][e][4|6] — with the Netid column"
+        match:
+          words: [[]]
+          flags:
+            allow: [-t, -u, -a, -l, -n, -p, -e, -4, -6, -m, -i, -o]
+            allow_with_value: []
+            combined: true
+          positionals: forbid
+        plan:
+          argv: [ss, -H, -O, -n, -e]
+          append_user_flags: true
+          env: {LC_ALL: C}
+          stdin: "null"
+    limits:
+      - "Unix, raw, packet and netlink sockets (`-x`, `-w`, `-0`, `-A`) and filters (`state …`, `dport …`) are not adapted; the invocation runs raw."
+      - "`process` is the owning pid where `-p` and permissions allow, else null with the name in the extension map (spec v0.3 §1.32); queues, timers and cgroups are extensions."
+      - "The parser is pinned to iproute2 5.x–6.x and refuses other versions rather than guessing (spec v0.3 §1.9 tier C)."
+    fixtures: iproute2/ss

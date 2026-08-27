@@ -117,7 +117,7 @@ match:
   closed: true
   fields:
     words:       {type: list<list<string>>, required: true, doc: "Alternatives of positional words that select the invocation, in order, e.g. `[[address], [addr], [a]]`; `[[]]` selects the bare program."}
-    flags:       {type: record, required: true, doc: "`allow`: flags that may appear and pass through unchanged. `allow_with_value`: flags that take the next word. `require` (optional): flags that must all be present for the invocation to match. Any other flag is `adapter.unsupported_invocation` (spec v0.3 §1.14)."}
+    flags:       {type: record, required: true, doc: "`allow`: flags that may appear and pass through unchanged. `allow_with_value`: flags that take the next word. `require` (optional): flags that must all be present for the invocation to match. `combined` (optional, default false): a single-dash word of several letters (`-tunap`) is read as the single-letter flags it combines, each of which must be allowed. Any other flag is `adapter.unsupported_invocation` (spec v0.3 §1.14)."}
     positionals: {type: "enum[allow, forbid]", required: true, doc: "Whether further non-flag words (a device, an interface) may follow and pass through."}
 
 plan:

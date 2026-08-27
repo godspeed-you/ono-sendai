@@ -1,0 +1,10 @@
+# `ss -t`: no Netid column, the protocol is the invocation's; a wildcard peer is a null
+# endpoint; the owning process is a pid where `-p` and permissions allow.
+invocation: [ss, -tlnp]
+tool_version: "6.19.0"
+distro: debian
+expect:
+  records:
+    - {protocol: tcp, family: inet, state: listen, process: null, user: null, inode: 210353836}
+    - {protocol: tcp, family: inet, state: listen, process: 1234, user: 0, inode: 11978}
+    - {protocol: tcp, family: inet, state: established, process: 59902, user: 1000, inode: 225468374}
