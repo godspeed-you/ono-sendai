@@ -1,0 +1,115 @@
+# v0.4 §44.4 (process -> file -> process), with §12 (process places), §15.5 (file places),
+# §11.2 (the relationship graph), §11.4 (every displayed relationship is inspectable),
+# §11.5 (confidence), §28.2/§28.3 (a pipeline result is enterable) and §35.2 (empty, unknown and
+# denied are three different answers).
+#
+# The fixture is real: `web-service.pl` holds a known file open for its whole lifetime, and a
+# second `sleep` process holds the same file through an inherited descriptor. Two openers is
+# what makes the reverse direction of §44.4 meaningful — a file place that names one opener
+# proves nothing about direction.
+#
+# Every descriptor used here belongs to this user, so the container can answer without
+# privilege; the denied half of the same relation is case 097.
+case: a process names the file it holds, and the file names the processes that hold it
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  # Only what the last statement printed is asserted on: `enter` and `near` print too, and a
+  # check that matched their output would prove nothing about the place actually reached.
+  place() {
+    ono -c "$1; echo ---PLACE---; $2" 2>&1 | sed -n '/---PLACE---/,$p'
+  }
+
+  mkdir -p /tmp/spatial/data
+  HELD=/tmp/spatial/data/held.txt
+  LONELY=/tmp/spatial/data/lonely.txt
+  printf 'fixture payload\n' > "$HELD"
+  printf 'nobody holds this\n' > "$LONELY"
+  # The fixture's own output goes to a file: a background process holding the case's stdout open
+  # would make the harness wait for it instead of for the case.
+  /opt/ono-fixtures/spatial/web-service.pl 18080 "$HELD" 2 150 /tmp/fixture-spatial.state \
+    > /tmp/spatial/server.log 2>&1 &
+  for _ in $(seq 40); do [ -s /tmp/fixture-spatial.state ] && break; sleep 0.5; done
+  . /tmp/fixture-spatial.state
+  bash -c "exec 9< $HELD; exec sleep 150" > /dev/null 2>&1 &
+  SECOND=$!
+  sleep 1
+  echo "fixture: server=$FIXTURE_WEB_MAIN second-holder=$SECOND file=$HELD"
+  PROC="enter process $FIXTURE_WEB_MAIN"
+
+  echo "== the process names the file it holds (§12, §44.4) =="
+  prove 44.4a "the process place offers its open files as an exit (§12, §24.2)" \
+    'place "$PROC" "look --json" | tr "A-Z" "a-z" | grep -qF "file"'
+  prove 44.4b "near --type file names the file this process really holds (§6.2, §12)" \
+    'place "$PROC" "near --type file | to json" | grep -qF "$HELD"'
+  prove 44.4c "follow file crosses the relationship edge to the file place (§6.4, §15.5)" \
+    'place "$PROC; follow file $HELD" "look --json" | grep -qF "$HELD"'
+  prove 44.4d "the file place is reached without typing the path, through the neighbourhood (§28.3)" \
+    'place "$PROC; near --type file | take 1 | enter" "look --json" | grep -qF "$HELD"'
+
+  echo "== and the file names the processes that hold it (§15.5, §44.4 both directions) =="
+  prove 44.4e "the file place names the server process that holds it (§15.5 open-by)" \
+    'place "enter $HELD" "near --type process | to json" > /tmp/openers.json;
+     grep -qF "$FIXTURE_WEB_MAIN" /tmp/openers.json'
+  prove 44.4f "the file place names the second holder too — the reverse edge is not one-sided (§44.4)" \
+    'grep -qF "$SECOND" /tmp/openers.json'
+  prove 44.4g "following back from the file returns to a real process place (§6.4, §11.2)" \
+    'place "enter $HELD; follow process $FIXTURE_WEB_MAIN" "look --json" | grep -qF "$FIXTURE_WEB_MAIN"'
+
+  echo "== every displayed relationship is inspectable (§11.4, §11.5) =="
+  # §11.4 spells this `inspect relation @edge-17` "or equivalent structured selection"; the
+  # equivalent here is the v0.2 pipeline.
+  prove 44.4h "inspect relation returns the full edge record (§11.4)" \
+    'place "$PROC" "near --type file | take 1 | inspect relation | to json" > /tmp/edge.json;
+     for key in relation source target direction provider provenance confidence observed_at; do
+       grep -qF "$key" /tmp/edge.json || { echo "edge record is missing: $key"; exit 1; }
+     done'
+  prove 44.4i "a kernel-observed edge is not guessed: its confidence is exact or strong (§11.5)" \
+    'grep -qE "\"confidence\" *: *\"(exact|strong)\"" /tmp/edge.json'
+  prove 44.4j "the edge names the evidence it came from (§11.4 raw evidence, §37.2)" \
+    'grep -qE "/proc/|lsof|fd" /tmp/edge.json'
+
+  echo "== unknown, empty and denied stay three different answers (§35.2, §53) =="
+  prove 44.4k "a file nobody holds has an empty opener set, not an unknown one (§35.2)" \
+    'test "$(place "enter $LONELY" "near --type process | count | to text" | tail -1)" = "0"'
+  prove 44.4l "and the empty set is reported as empty rather than as denied (§35.2)" \
+    'place "enter $LONELY" "look --json" > /tmp/lonely.json;
+     grep -qF "$LONELY" /tmp/lonely.json && ! grep -qE "unknown|permission_denied" /tmp/lonely.json'
+
+  echo "== the graph is not a silo: the same objects flow through the pipeline (§28, §49.7) =="
+  prove 44.4m "a pipeline result is enterable and lands on the same process place (§28.2, §28.3)" \
+    'place "get process | where pid == $FIXTURE_WEB_MAIN | enter" "look --json" \
+       | grep -qF "$FIXTURE_WEB_MAIN"'
+  prove 44.4n "near is an ordinary stream that where and count operate on (§29.4)" \
+    'test "$(place "$PROC" "near --type file | where object contains \"held\" | count | to text" | tail -1)" -ge 1'
+
+  kill $FIXTURE_WEB_MAIN $FIXTURE_WEB_WORKERS "$SECOND" 2>/dev/null
+  echo "fixture: stopped"
+exit: 0
+stdout-contains: PROVED 44.4a
+stdout-contains: PROVED 44.4b
+stdout-contains: PROVED 44.4c
+stdout-contains: PROVED 44.4d
+stdout-contains: PROVED 44.4e
+stdout-contains: PROVED 44.4f
+stdout-contains: PROVED 44.4g
+stdout-contains: PROVED 44.4h
+stdout-contains: PROVED 44.4i
+stdout-contains: PROVED 44.4j
+stdout-contains: PROVED 44.4k
+stdout-contains: PROVED 44.4l
+stdout-contains: PROVED 44.4m
+stdout-contains: PROVED 44.4n
+stdout-contains: fixture: stopped
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

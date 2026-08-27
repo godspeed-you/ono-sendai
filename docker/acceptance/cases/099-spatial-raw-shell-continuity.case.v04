@@ -1,0 +1,136 @@
+# v0.4 §44.10 (raw shell continuity), with §23.3 (the full-screen map and its controls), §23.4
+# (focus is not place), §43.4 (the PTY checks: map opening and closing, focus without place
+# change, Enter changes place, external interactive programs still work after map exit),
+# §30 (cwd survives spatial navigation) and §49.8 (Ono is not a permanent full-screen shell).
+#
+# §44.10 names `vim`, `ssh`, `less` and `cargo test`. The acceptance image ships none of the
+# first, second or fourth on purpose — it is a clean Debian runtime — so the stand-ins are the
+# programs it does have and that exercise the same three properties: `less` takes the terminal
+# into raw mode and the alternate screen and must give it back (as case 031 already proves for
+# v0.2), `git` is an ordinary external command whose exit status must be carried, and a
+# backgrounded `sleep` is a job that must still be a job. If the image ever gains an editor,
+# this case is the place to add it.
+#
+# Six of these assertions already hold for the v0.2 shell, because there is no map to disturb
+# anything yet. That is deliberate: §44.10 is a scenario about what must *still* be true once a
+# full-screen map exists, so those six are the regression half of the case and the four map
+# assertions are the new half.
+#
+# Each session runs `ono` under a nested `script(1)`: that gives it a genuine controlling
+# terminal while the case still generates the keystrokes, which is the only way to send Tab,
+# Enter and Esc as keys rather than as text.
+case: after full-screen map use the terminal, the working directory and external programs are intact
+timeout: 240
+env: TERM=xterm
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  # Terminal output without its escape sequences, so two renderings of the same place compare
+  # equal even when the cursor took a different route.
+  plain() {
+    sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\x1b[()][A-Z0-9]//g' -e 's/\r//g' "$1"
+  }
+  session() {
+    script --quiet --return --command 'stty rows 30 cols 100 2>/dev/null; ono' /dev/null
+  }
+
+  printf 'line one\nline two\nline three\n' > /tmp/pager-input.txt
+
+  echo "== the full-screen map opens, moves focus, and closes without moving the user (§23.3, §23.4) =="
+  {
+    printf 'home\n';         sleep 1
+    printf 'enter compute\n'; sleep 1
+    printf 'echo BEFORE-MAP\n'; sleep 1
+    printf 'look\n';          sleep 2
+    printf 'map\n';           sleep 3
+    printf '\t';              sleep 1
+    printf '\t';              sleep 1
+    printf '\033';            sleep 2
+    printf 'echo AFTER-MAP\n'; sleep 1
+    printf 'look\n';          sleep 2
+    printf 'exit\n';          sleep 1
+  } | session > /tmp/map-focus.out 2>&1
+  plain /tmp/map-focus.out > /tmp/map-focus.txt
+  sed -n '/BEFORE-MAP/,/^.*map$/p' /tmp/map-focus.txt > /tmp/before-map.txt
+  sed -n '/AFTER-MAP/,$p'          /tmp/map-focus.txt > /tmp/after-map.txt
+  prove 44.10a "the map takes the whole terminal when it is opened interactively (§23.3)" \
+    'grep -q "1049" /tmp/map-focus.out && grep -qiE "processes|services" /tmp/map-focus.txt'
+  prove 44.10b "moving focus with Tab does not move the shell (§23.4)" \
+    'test -s /tmp/before-map.txt && test -s /tmp/after-map.txt &&
+     grep -qiF "compute" /tmp/before-map.txt && grep -qiF "compute" /tmp/after-map.txt'
+  prove 44.10c "Esc closes the map and leaves the terminal to the shell (§23.3, §49.8)" \
+    'grep -qiE "processes|services" /tmp/after-map.txt && tail -3 /tmp/map-focus.txt | grep -qF "local:"'
+
+  echo "== Enter inside the map does move the shell (§23.3, §23.4) =="
+  {
+    printf 'home\n';          sleep 1
+    printf 'enter compute\n'; sleep 1
+    printf 'map\n';           sleep 3
+    printf '\t';              sleep 1
+    printf '\r';              sleep 2
+    printf 'echo AFTER-ENTER\n'; sleep 1
+    printf 'look\n';          sleep 2
+    printf 'exit\n';          sleep 1
+  } | session > /tmp/map-enter.out 2>&1
+  plain /tmp/map-enter.out | sed -n '/AFTER-ENTER/,$p' > /tmp/after-enter.txt
+  prove 44.10d "Enter on the focused node changes the current place (§23.3, §23.4)" \
+    'test -s /tmp/after-enter.txt && test -s /tmp/after-map.txt &&
+     ! diff -q <(grep -v "AFTER" /tmp/after-map.txt) <(grep -v "AFTER" /tmp/after-enter.txt) >/dev/null'
+
+  echo "== and afterwards this is still a Unix shell (§44.10, §43.4, §49.8) =="
+  {
+    printf 'cd /etc\n';        sleep 1
+    printf 'home\n';           sleep 1
+    printf 'enter compute\n';  sleep 1
+    printf 'map\n';            sleep 3
+    printf '\033';             sleep 2
+    printf 'pwd\n';            sleep 1
+    printf 'less /tmp/pager-input.txt\n'; sleep 3
+    printf 'q';                sleep 2
+    printf 'git --version\n';  sleep 2
+    printf 'false\n';          sleep 1
+    printf 'echo status=$?\n'; sleep 1
+    printf 'sleep 5 &\n';      sleep 1
+    printf 'jobs\n';           sleep 1
+    printf 'stty -a | head -1\n'; sleep 2
+    printf 'echo continuity-ok\n'; sleep 1
+    printf 'exit\n';           sleep 1
+  } | session > /tmp/continuity.out 2>&1
+  plain /tmp/continuity.out > /tmp/continuity.txt
+  prove 44.10e "the working directory survives the spatial navigation and the map (§30, §44.10)" \
+    'grep -qx "/etc" /tmp/continuity.txt'
+  prove 44.10f "a full-screen program still takes and returns the terminal afterwards (§44.10)" \
+    'grep -qF "line one" /tmp/continuity.txt && grep -qF "line three" /tmp/continuity.txt'
+  prove 44.10g "the terminal is still the size it was, in cooked mode (§44.10, §43.4)" \
+    'grep -qF "rows 30" /tmp/continuity.txt'
+  prove 44.10h "an ordinary external command runs and its exit status is carried (§44.10)" \
+    'grep -qF "git version" /tmp/continuity.txt && grep -qF "status=1" /tmp/continuity.txt'
+  prove 44.10i "background jobs are still jobs after the map (§43.4, v0.2 job control)" \
+    'grep -qE "running .*sleep 5" /tmp/continuity.txt'
+  prove 44.10j "and the session ends normally (§49.8: no permanent full-screen shell)" \
+    'grep -qF "continuity-ok" /tmp/continuity.txt'
+
+  echo "continuity checks done"
+exit: 0
+stdout-contains: PROVED 44.10a
+stdout-contains: PROVED 44.10b
+stdout-contains: PROVED 44.10c
+stdout-contains: PROVED 44.10d
+stdout-contains: PROVED 44.10e
+stdout-contains: PROVED 44.10f
+stdout-contains: PROVED 44.10g
+stdout-contains: PROVED 44.10h
+stdout-contains: PROVED 44.10i
+stdout-contains: PROVED 44.10j
+stdout-contains: continuity checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

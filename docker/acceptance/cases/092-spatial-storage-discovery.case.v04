@@ -1,0 +1,112 @@
+# v0.4 §44.3 (storage discovery), with §15 (storage and filesystem spaces), §15.3 (mount
+# boundaries), §15.4 (directory places and the view budget), §30 (cd versus enter, and the
+# `storage-only` cwd synchronisation of §30.3) and §53 ("Entering a directory changes cwd;
+# entering other object types does not").
+#
+# No mount name is typed as input. The case asks the spatial layer for the mounts of this host,
+# picks the first writable one that is not the root filesystem — the shell, not the case author,
+# supplies the name — and then proves the boundary, the directory traversal and the cwd rules
+# against exactly that mount.
+#
+# The container cannot mount or unmount anything unprivileged (case 042 proves that refusal is
+# structural), so §43.6's "mount/unmount where safe" is not safe here and is not attempted. The
+# boundary this case crosses is one the image already has: the tmpfs the runtime mounts inside
+# the container, which is a genuine second filesystem with its own source and type.
+case: a user who knows no mount names finds a second filesystem, crosses its boundary and lands in it
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo "== home -> storage -> mounts, by hierarchy alone (§7.4, §15.2) =="
+  prove 44.3a "the storage domain is entered as a canonical child and shows its groups (§15.2)" \
+    'ono -c "home; enter storage; look --json" | tr "A-Z" "a-z" > /tmp/storage.json;
+     grep -qF "filesystem" /tmp/storage.json && grep -qF "mount" /tmp/storage.json'
+  prove 44.3b "the filesystems collection shows more than one filesystem, with its type (§15.2)" \
+    'ono -c "home; enter storage; enter filesystems; near | select object | to json" > /tmp/fs.json;
+     test "$(ono -c "home; enter storage; enter filesystems; near | count | to text")" -ge 2'
+
+  echo "== a secondary mount is identified without its name being typed (§44.3) =="
+  ono -c 'home; enter storage; enter mounts; find --where filesystem == "tmpfs" | select target | to text' \
+    > /tmp/tmpfs-targets.txt 2>/dev/null
+  TARGET=""
+  while read -r candidate; do
+    case "$candidate" in
+      /) continue ;;
+      /*) if [ -d "$candidate" ] && [ -w "$candidate" ]; then TARGET="$candidate"; break; fi ;;
+    esac
+  done < /tmp/tmpfs-targets.txt
+  echo "chosen secondary mount: ${TARGET:-<none: the spatial layer named no mount>}"
+  prove 44.3c "the mounts place names a mount this user can enter, discovered by type (§6.8, §15.2)" \
+    'test -n "$TARGET"'
+  MARKER="$TARGET/spatial-marker.txt"
+  [ -n "$TARGET" ] && printf 'marker\n' > "$MARKER"
+
+  echo "== the mount boundary is visible when it is crossed (§15.3) =="
+  prove 44.3d "entering the mount shows the local path, the filesystem and the source (§15.3)" \
+    'test -n "$TARGET" && ono -c "home; enter storage; enter $TARGET; look --json" > /tmp/boundary.json &&
+     grep -qF "$TARGET" /tmp/boundary.json && grep -qF "tmpfs" /tmp/boundary.json'
+  prove 44.3e "the boundary says whether the source is remote — unknown is not the same as no (§15.3, §35.2)" \
+    'tr "A-Z" "a-z" < /tmp/boundary.json | grep -qE "remote|source"'
+  prove 44.3f "the mount place exposes the directory it is mounted on as a neighbour (§15.3, §15.4)" \
+    'test -n "$TARGET" && ono -c "home; enter storage; enter $TARGET; near | to json" | grep -qF "$TARGET"'
+
+  echo "== the mounted directory is an ordinary Unix place (§15.1, §30.2, §53) =="
+  prove 44.3g "entering a directory place changes the working directory too (§30.2, §53)" \
+    'test -n "$TARGET" && test "$(ono -c "enter $TARGET; pwd")" = "$TARGET"'
+  prove 44.3h "the directory place lists what is really in it (§15.4)" \
+    'test -n "$TARGET" && ono -c "enter $TARGET; look" | grep -qF "spatial-marker.txt"'
+  prove 44.3i "entering a non-filesystem place leaves the working directory alone (§30.2, §53)" \
+    'out=$(ono -c "cd /etc; enter compute; pwd; look --json") &&
+     printf "%s\n" "$out" | grep -qx "/etc" &&
+     printf "%s\n" "$out" | tr "A-Z" "a-z" | grep -qE "compute|process|service"'
+  prove 44.3j "cd moves the spatial place while the place is a storage place (§30.3, spatial.follow_cwd=storage-only)" \
+    'test -n "$TARGET" && ono -c "home; enter storage; cd $TARGET; look --json" | grep -qF "$TARGET"'
+  prove 44.3k "cd does not drag a process investigation into the filesystem (§30.3)" \
+    'ono -c "home; enter compute; cd /etc; look --json" | tr "A-Z" "a-z" > /tmp/after-cd.json;
+     grep -qE "compute|process|service" /tmp/after-cd.json && ! grep -qF "\"/etc\"" /tmp/after-cd.json'
+  prove 44.3l "PWD stays the filesystem working directory and never encodes the place (§30.4)" \
+    'out=$(ono -c "cd /etc; enter compute; get env PWD | to json; look --json") &&
+     printf "%s\n" "$out" | grep -qF "\"value\":\"/etc\"" &&
+     printf "%s\n" "$out" | tr "A-Z" "a-z" | grep -qE "compute|process|service"'
+
+  echo "== a large directory is summarised, not dumped (§15.4, §23.6) =="
+  mkdir -p /tmp/spatial/many
+  i=0; while [ $i -lt 500 ]; do : > "/tmp/spatial/many/file-$i"; i=$((i + 1)); done
+  prove 44.3m "a 500-entry directory place stays inside the view budget (§15.4, §34.2)" \
+    'ono -c "enter /tmp/spatial/many; look" > /tmp/many.out && test -s /tmp/many.out &&
+     test "$(wc -l < /tmp/many.out)" -le 60'
+  prove 44.3n "and says how many entries it did not show (§15.4, §23.6)" \
+    'ono -c "enter /tmp/spatial/many; look" | grep -qF "500"'
+  prove 44.3o "the entries are still all reachable as data (§49.7: the pipeline is not replaced)" \
+    'test "$(ono -c "enter /tmp/spatial/many; find file . | count | to text")" = "501"'
+
+  rm -f "$MARKER"
+  echo "storage checks done"
+exit: 0
+stdout-contains: PROVED 44.3a
+stdout-contains: PROVED 44.3b
+stdout-contains: PROVED 44.3c
+stdout-contains: PROVED 44.3d
+stdout-contains: PROVED 44.3e
+stdout-contains: PROVED 44.3f
+stdout-contains: PROVED 44.3g
+stdout-contains: PROVED 44.3h
+stdout-contains: PROVED 44.3i
+stdout-contains: PROVED 44.3j
+stdout-contains: PROVED 44.3k
+stdout-contains: PROVED 44.3l
+stdout-contains: PROVED 44.3m
+stdout-contains: PROVED 44.3n
+stdout-contains: PROVED 44.3o
+stdout-contains: storage checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

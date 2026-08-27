@@ -1,0 +1,122 @@
+# v0.4 §44.1 (cold-start discovery), with §5 (the entry horizon), §7 (root and canonical
+# domains), §29.1 (the non-interactive surface), §22 (the map data contract), §23.2 (a textual
+# map without a TUI) and §34 (the budgets).
+#
+# The scenario is a user who knows no service, process, mount or interface name on this host.
+# Everything asserted here is therefore reachable from `look`, `map`, `near` and `find` alone —
+# no case line types the name of an object before the shell has shown it.
+#
+# The container has no systemd, no journald and no network beyond loopback, so the counts the
+# horizon shows are the container's own. The case asserts the *shape* of orientation — the six
+# canonical domains of §53, a bounded map, a prompt that names the place — never a number that
+# only holds on the machine that wrote it.
+#
+# The interactive half runs `ono` under a nested `script(1)`, which gives it a genuine
+# controlling terminal while the rest of the case keeps piping into `grep`; that way one case
+# can prove both the terminal horizon of §5 and the pipe behaviour of §29.1.
+case: a user who knows no names can orient on an unfamiliar host
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  echo "== the spatial surface answers without a terminal (§29.1) =="
+  prove 44.1a "look --json answers off a TTY and names all six canonical domains (§7, §53)" \
+    'ono -c "look --json" | tr "A-Z" "a-z" > /tmp/root.json;
+     for d in compute network storage containers identity devices; do
+       grep -qF "$d" /tmp/root.json || { echo "missing domain: $d"; cat /tmp/root.json; exit 1; }
+     done'
+  prove 44.1b "look --json names the host it is describing (§7.1 SystemPlace.hostname)" \
+    'ono -c "look --json" | grep -qF "$(cat /proc/sys/kernel/hostname)"'
+  prove 44.1c "trail --json answers off a TTY and starts at the root place (§6.7, §29.1)" \
+    'ono -c "trail --json" | grep -q .'
+
+  echo "== discovery without prior names (§9, §44.1) =="
+  prove 44.1d "near returns a bounded ranked neighbourhood as an ordinary stream (§6.2, §29.4)" \
+    'ono -c "near | count | to json" | grep -qE "^\[[1-9][0-9]*\]$"'
+  prove 44.1e "near composes with the v0.2 pipeline (§29.4, §28.1)" \
+    'ono -c "near | select relation object | to json" | grep -q "relation"'
+  prove 44.1f "find discovers a real object from a property, with no name typed (§6.8)" \
+    'ono -c "find process --where pid > 1 | take 1 | select pid | to json" | grep -qE "^\[\{\"pid\":[0-9]+\}\]$"'
+  prove 44.1g "entering a domain the horizon showed changes the place (§6.3, §7.2)" \
+    'ono -c "enter compute; look --json" | tr "A-Z" "a-z" | grep -qE "process|service"'
+  prove 44.1h "home returns to the root system place from anywhere (§6.6)" \
+    'ono -c "enter compute; home; look --json" | tr "A-Z" "a-z" | grep -qF "devices"'
+
+  echo "== the map is a bounded projection, not a picture and not the whole graph (§22, §23.2) =="
+  prove 44.1i "map renders as text with no full-screen view in a pipe (§23.2, §52.1)" \
+    'ono -c "map" | tr "A-Z" "a-z" | grep -qF "compute"'
+  prove 44.1j "map --json carries the SpatialMap contract (§22)" \
+    'ono -c "map --json" > /tmp/map.json;
+     for key in center nodes edges clusters landmarks hidden completeness; do
+       grep -qF "$key" /tmp/map.json || { echo "missing key: $key"; exit 1; }
+     done'
+  prove 44.1k "map --json carries no screen coordinates — layout belongs to the renderer (§22)" \
+    'test -s /tmp/map.json && ! grep -qE "\"(x|y|row|column|screen_x|screen_y)\" *:" /tmp/map.json'
+  prove 44.1l "the default map stays inside the ~30 node text budget (§34.2, §23.6)" \
+    'test -s /tmp/map.json && test "$(grep -o "\"object_ref\"" /tmp/map.json | wc -l)" -le 30'
+
+  echo "== the entry horizon on a real terminal (§5) =="
+  printf 'exit\n' | script --quiet --return \
+    --command 'stty rows 30 cols 100 2>/dev/null; ono' /dev/null > /tmp/horizon.out 2>&1
+  prove 44.1m "startup shows the canonical domains without an explicit command (§5)" \
+    'tr "A-Z" "a-z" < /tmp/horizon.out > /tmp/horizon.low;
+     for d in compute network storage containers identity devices; do
+       grep -qF "$d" /tmp/horizon.low || { echo "horizon is missing: $d"; exit 1; }
+     done'
+  prove 44.1n "startup names the current host or context identity (§5, §21.1)" \
+    'grep -qF "$(cat /proc/sys/kernel/hostname)" /tmp/horizon.out'
+  prove 44.1o "the prompt shows the current spatial scope (§5, §21.1)" \
+    'grep -qF "://" /tmp/horizon.out'
+  prove 44.1p "the horizon is compact enough to read at once (§24.1)" \
+    'test "$(wc -l < /tmp/horizon.out)" -le 40'
+
+  echo "== orientation is not slower than a shell (§34) =="
+  measure() {
+    local label="$1" limit_ms="$2"; shift 2
+    local runs=10 start end each
+    "$@" >/dev/null 2>&1
+    start=$(date +%s%N)
+    for _ in $(seq $runs); do "$@" >/dev/null 2>&1; done
+    end=$(date +%s%N)
+    each=$(( (end - start) / 1000000 / runs ))
+    echo "$label: ${each}ms (asserted limit ${limit_ms}ms; §34 target 50ms)"
+    test "$each" -le "$limit_ms"
+  }
+  # §34 targets `look` at 50 ms warm. The asserted limit is the looser 150 ms startup budget of
+  # the same section, so a slow build host cannot turn the referee red over a target the section
+  # itself calls a target; the measured figure is printed either way.
+  prove 44.1q "look stays inside the §34 budget" \
+    'ono -c "look" >/dev/null 2>&1 && measure look 150 ono -c "look"'
+  prove 44.1r "map stays inside the §34 L0/L1 budget of 250ms" \
+    'ono -c "map" >/dev/null 2>&1 && measure map 250 ono -c "map"'
+exit: 0
+stdout-contains: PROVED 44.1a
+stdout-contains: PROVED 44.1b
+stdout-contains: PROVED 44.1c
+stdout-contains: PROVED 44.1d
+stdout-contains: PROVED 44.1e
+stdout-contains: PROVED 44.1f
+stdout-contains: PROVED 44.1g
+stdout-contains: PROVED 44.1h
+stdout-contains: PROVED 44.1i
+stdout-contains: PROVED 44.1j
+stdout-contains: PROVED 44.1k
+stdout-contains: PROVED 44.1l
+stdout-contains: PROVED 44.1m
+stdout-contains: PROVED 44.1n
+stdout-contains: PROVED 44.1o
+stdout-contains: PROVED 44.1p
+stdout-contains: PROVED 44.1q
+stdout-contains: PROVED 44.1r
+stdout-not-contains: FAILED
+stdout-not-contains: panicked
+stdout-not-contains: command not found

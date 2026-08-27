@@ -1,0 +1,117 @@
+# v0.4 §44.6 (back versus up), with §6.6 (back follows history, up follows canonical hierarchy,
+# home returns to the root), §11.3 (a deterministic canonical parent that does not claim other
+# relationships are less real), §20.1 (the trail schema and its movement kinds), §20.2
+# (breadcrumbs) and §40 (`spatial.history_empty`, `spatial.no_parent`).
+#
+# This is the scenario that most easily degrades into "two spellings of the same command", so
+# the case asserts the difference twice over: after `follow socket`, `back` MUST land on the
+# process it came from and `up` MUST NOT — it lands in the canonical network hierarchy.
+#
+# The service manager is the `systemctl` fixture (the image runs no systemd); the process and
+# the listening socket are real.
+case: back walks the way the user came, up walks the hierarchy, and they are not the same move
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  # Only what the last statement printed is asserted on: every navigation statement prints too.
+  place() {
+    ono -c "$1; echo ---PLACE---; $2" 2>&1 | sed -n '/---PLACE---/,$p'
+  }
+
+  mkdir -p /tmp/spatial/bin /tmp/spatial/data
+  cp /opt/ono-fixtures/spatial/systemctl /tmp/spatial/bin/systemctl
+  chmod +x /tmp/spatial/bin/systemctl
+  export PATH=/tmp/spatial/bin:$PATH
+  printf 'fixture payload\n' > /tmp/spatial/data/held.txt
+  /opt/ono-fixtures/spatial/web-service.pl 18080 /tmp/spatial/data/held.txt 1 150 \
+    /tmp/fixture-spatial.state > /tmp/spatial/server.log 2>&1 &
+  for _ in $(seq 40); do [ -s /tmp/fixture-spatial.state ] && break; sleep 0.5; done
+  . /tmp/fixture-spatial.state
+  echo "fixture: server=$FIXTURE_WEB_MAIN listener=:$FIXTURE_WEB_PORT"
+
+  # SYSTEM -> COMPUTE -> SERVICES -> service --follow--> process --follow--> socket (§44.6)
+  PATH_TO_SOCKET="home; enter compute; enter services; find --where state == \"active\" | take 1 | enter; follow process $FIXTURE_WEB_MAIN; follow socket"
+
+  echo "== the path of §44.6 is walked to its end =="
+  prove 44.6a "the walk ends on the listening socket of the service (§44.6)" \
+    'place "$PATH_TO_SOCKET" "look --json" | grep -qF "$FIXTURE_WEB_PORT"'
+
+  echo "== back follows history (§6.6) =="
+  prove 44.6b "back from the socket returns to the process it was followed from (§44.6)" \
+    'place "$PATH_TO_SOCKET; back" "look --json" > /tmp/back.json;
+     grep -qF "$FIXTURE_WEB_MAIN" /tmp/back.json'
+  prove 44.6c "and back has really left the socket behind (§6.6)" \
+    'grep -qF "$FIXTURE_WEB_MAIN" /tmp/back.json && ! grep -qF "$FIXTURE_WEB_PORT" /tmp/back.json'
+  prove 44.6d "a second back returns to the service, in reverse order of travel (§20.1)" \
+    'place "$PATH_TO_SOCKET; back; back" "look --json" | grep -qF "fixture-web.service"'
+  prove 44.6e "back after up returns to the socket: up is itself a step in the history (§20.1)" \
+    'place "$PATH_TO_SOCKET; up; back" "look --json" | grep -qF "$FIXTURE_WEB_PORT"'
+
+  echo "== up follows the canonical hierarchy, which is a different thing (§6.6, §11.3) =="
+  prove 44.6f "up from the socket reaches its canonical network parent (§44.6, §14.1)" \
+    'place "$PATH_TO_SOCKET; up" "look --json" | tr "A-Z" "a-z" > /tmp/up.json;
+     grep -qE "network|socket|listener" /tmp/up.json'
+  prove 44.6g "up does not return to the process the socket was followed from (§44.6, §43.2)" \
+    'grep -qE "network|socket|listener" /tmp/up.json && ! grep -qF "$FIXTURE_WEB_MAIN" /tmp/up.json'
+  prove 44.6h "up is deterministic: the same walk reaches the same parent twice (§11.3)" \
+    'place "$PATH_TO_SOCKET; up" "look --json" > /tmp/up1.json;
+     place "$PATH_TO_SOCKET; up" "look --json" > /tmp/up2.json;
+     grep -qiE "network|socket|listener" /tmp/up1.json && cmp -s /tmp/up1.json /tmp/up2.json'
+  prove 44.6i "home returns to the root system place from the end of the walk (§6.6)" \
+    'place "$PATH_TO_SOCKET; home" "look --json" | tr "A-Z" "a-z" | grep -qF "devices"'
+
+  echo "== the trail is the record of what happened, not of what was typed (§20.1, §6.7) =="
+  prove 44.6j "the trail names every movement kind that was used (§20.1)" \
+    'place "$PATH_TO_SOCKET; back; up" "trail --json" > /tmp/trail.json;
+     for movement in enter follow back up; do
+       grep -qF "$movement" /tmp/trail.json || { echo "trail is missing the movement: $movement"; exit 1; }
+     done'
+  prove 44.6k "the trail records the relation each follow traversed (§20.1)" \
+    'grep -qF "socket" /tmp/trail.json && grep -qF "process" /tmp/trail.json'
+  prove 44.6l "the trail carries a timestamp and both ends of every step (§20.1)" \
+    'for key in timestamp from to movement; do
+       grep -qF "$key" /tmp/trail.json || { echo "trail step is missing: $key"; exit 1; }
+     done'
+  prove 44.6m "trail --compact stays a breadcrumb rather than the whole history (§6.7, §20.2)" \
+    'place "$PATH_TO_SOCKET" "trail --compact" > /tmp/compact.txt;
+     grep -qF "fixture-web.service" /tmp/compact.txt && test "$(wc -l < /tmp/compact.txt)" -le 5'
+
+  echo "== the ends of both walks are structured errors, not silence (§40) =="
+  prove 44.6n "back with nothing to return to is spatial.history_empty (§40)" \
+    'out=$(ono -c "home; back" 2>&1); status=$?;
+     printf "%s\n" "$out" | grep -qF "spatial.history_empty" && test "$status" -ne 0'
+  prove 44.6o "up from the root is spatial.no_parent (§40)" \
+    'out=$(ono -c "home; up" 2>&1); status=$?;
+     printf "%s\n" "$out" | grep -qF "spatial.no_parent" && test "$status" -ne 0'
+
+  kill $FIXTURE_WEB_MAIN $FIXTURE_WEB_WORKERS 2>/dev/null
+  echo "fixture: stopped"
+exit: 0
+stdout-contains: PROVED 44.6a
+stdout-contains: PROVED 44.6b
+stdout-contains: PROVED 44.6c
+stdout-contains: PROVED 44.6d
+stdout-contains: PROVED 44.6e
+stdout-contains: PROVED 44.6f
+stdout-contains: PROVED 44.6g
+stdout-contains: PROVED 44.6h
+stdout-contains: PROVED 44.6i
+stdout-contains: PROVED 44.6j
+stdout-contains: PROVED 44.6k
+stdout-contains: PROVED 44.6l
+stdout-contains: PROVED 44.6m
+stdout-contains: PROVED 44.6n
+stdout-contains: PROVED 44.6o
+stdout-contains: fixture: stopped
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

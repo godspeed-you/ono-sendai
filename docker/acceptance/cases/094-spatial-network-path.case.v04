@@ -1,0 +1,128 @@
+# v0.4 §44.5 (the network path service -> process -> socket -> connection), with §14 (network
+# spaces and their canonical hierarchy), §14.4 (connection places), §14.5 (cross-host
+# following), §19 (remote systems as space), §35.4 (a jump never opens a connection by itself)
+# and §43.7 (no accidental local/remote identity merge).
+#
+# The listener, the client and the established connection are real: `web-service.pl` accepts and
+# holds the connection `client.pl` opens, so both endpoints exist in the kernel while the case
+# runs. The service manager is the `systemctl` fixture, because the image runs no systemd.
+#
+# The remote half uses the link transport v0.2 already ships and case 049 proves: `link host
+# testbox --transport local` starts a second `ono --agent` over a pipe pair. It is a genuine
+# second system scope with its own process view — and because it happens to run on the same
+# kernel, it is also the sharpest available test of §43.7: the same pid on both sides MUST NOT
+# collapse into one spatial object.
+case: a listening service is followed to its socket and on to a live connection, locally and across a link
+timeout: 240
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  # Only what the last statement printed is asserted on: `enter`, `find` and `link` print too,
+  # and a check that matched their output would prove nothing about the place actually reached.
+  place() {
+    ono -c "$1; echo ---PLACE---; $2" 2>&1 | sed -n '/---PLACE---/,$p'
+  }
+
+  mkdir -p /tmp/spatial/bin /tmp/spatial/data
+  cp /opt/ono-fixtures/spatial/systemctl /tmp/spatial/bin/systemctl
+  chmod +x /tmp/spatial/bin/systemctl
+  export PATH=/tmp/spatial/bin:$PATH
+  printf 'fixture payload\n' > /tmp/spatial/data/held.txt
+  /opt/ono-fixtures/spatial/web-service.pl 18080 /tmp/spatial/data/held.txt 1 200 \
+    /tmp/fixture-spatial.state > /tmp/spatial/server.log 2>&1 &
+  for _ in $(seq 40); do [ -s /tmp/fixture-spatial.state ] && break; sleep 0.5; done
+  . /tmp/fixture-spatial.state
+  /opt/ono-fixtures/spatial/client.pl 127.0.0.1 "$FIXTURE_WEB_PORT" 200 > /tmp/spatial/client.log 2>&1 &
+  CLIENT=$!
+  for _ in $(seq 40); do [ -s /tmp/spatial/client.log ] && break; sleep 0.5; done
+  CLIENT_ENDPOINT=$(sed -n 's/^LOCAL=\([^ ]*\).*/\1/p' /tmp/spatial/client.log)
+  CLIENT_PORT=${CLIENT_ENDPOINT##*:}
+  echo "fixture: server=$FIXTURE_WEB_MAIN listener=:$FIXTURE_WEB_PORT client=$CLIENT from $CLIENT_ENDPOINT"
+
+  echo "== the canonical network hierarchy exists (§14.1) =="
+  prove 44.5a "NETWORK offers interfaces, listeners and connections as groups (§14.1)" \
+    'place "home; enter network" "look --json" | tr "A-Z" "a-z" > /tmp/network.json;
+     for group in interface listener connection namespace route; do
+       grep -qF "$group" /tmp/network.json || { echo "network is missing: $group"; exit 1; }
+     done'
+
+  echo "== service -> process -> socket -> connection (§44.5) =="
+  SERVICE="home; enter compute; enter services; find --where state == \"active\" | take 1 | enter"
+  prove 44.5b "the service is followed to its main process (§13, §6.4)" \
+    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN" "look --json" | grep -qF "$FIXTURE_WEB_MAIN"'
+  prove 44.5c "the process is followed to the socket it owns (§12, §14.3)" \
+    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; follow socket" "look --json" \
+       | grep -qF "$FIXTURE_WEB_PORT"'
+  prove 44.5d "the listening socket names the connections it has accepted (§14.3)" \
+    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; follow socket" \
+       "near --type connection | to json" > /tmp/conns.json;
+     grep -qF "$CLIENT_PORT" /tmp/conns.json'
+  prove 44.5e "follow connection reaches the connection place (§6.4, §14.4)" \
+    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; follow socket; near --type connection | take 1 | enter" \
+       "look --json" > /tmp/conn.json;
+     grep -qF "$CLIENT_PORT" /tmp/conn.json'
+  prove 44.5f "the connection place shows both endpoints and its owner (§14.4)" \
+    'grep -qF "$FIXTURE_WEB_PORT" /tmp/conn.json && grep -qF "127.0.0.1" /tmp/conn.json'
+  prove 44.5g "the other end of the connection is a real, named process here (§14.4 owner, §11.5)" \
+    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; follow socket; near --type connection | take 1 | enter" \
+       "near | to json" | grep -qF "$CLIENT"'
+  prove 44.5h "closing the connection makes the connection place gone, not stale (§20.3, §35.2)" \
+    'kill "$CLIENT"; sleep 2;
+     place "$SERVICE; follow process $FIXTURE_WEB_MAIN; follow socket" \
+       "near --type connection | to json" > /tmp/conns-after.json;
+     grep -qF "\"" /tmp/conns-after.json && ! grep -qF "$CLIENT_PORT" /tmp/conns-after.json'
+
+  echo "== remote systems are places, and the boundary is visible (§19) =="
+  LINK='link host testbox --transport local'
+  prove 19a "the root place lists the links of this host (§19.1)" \
+    'place "$LINK; home" "look --json" | grep -qF "testbox"'
+  prove 19b "jump reaches the remote system root (§19.2)" \
+    'place "$LINK; jump testbox" "look --json" | grep -qF "testbox"'
+  prove 19c "crossing to the remote scope is stated, not silent (§19.2, §2, §21.3)" \
+    'place "$LINK; jump testbox" "trail --json" | tr "A-Z" "a-z" | grep -qE "cross|boundary|scope|remote"'
+  prove 19d "a host that was never linked is refused structurally, and nothing is dialled (§35.4, §40)" \
+    'out=$(ono -c "jump nowhere.example" 2>&1); status=$?;
+     printf "%s\n" "$out" | grep -qE "spatial\.(remote_unavailable|not_found)" && test "$status" -ne 0'
+  prove 19e "map links shows the federated map when it is asked for (§19.3)" \
+    'place "$LINK" "map links" | grep -qF "testbox"'
+  prove 19f "the default root map does not expand the remote graph (§19.3)" \
+    'place "$LINK; home" "map" > /tmp/rootmap.txt;
+     grep -qiE "compute|storage" /tmp/rootmap.txt &&
+     ! grep -qE "testbox/(process|socket|service|mount)" /tmp/rootmap.txt'
+  prove 19g "the same pid on both sides is not the same spatial object (§43.7, §10.2)" \
+    'place "enter process 1" "look --json" > /tmp/local-pid1.json;
+     place "$LINK; jump testbox; enter process 1" "look --json" > /tmp/remote-pid1.json;
+     test -s /tmp/local-pid1.json && test -s /tmp/remote-pid1.json &&
+     ! cmp -s /tmp/local-pid1.json /tmp/remote-pid1.json &&
+     grep -qF "testbox" /tmp/remote-pid1.json'
+
+  kill $FIXTURE_WEB_MAIN $FIXTURE_WEB_WORKERS "$CLIENT" 2>/dev/null
+  echo "fixture: stopped"
+exit: 0
+stdout-contains: PROVED 44.5a
+stdout-contains: PROVED 44.5b
+stdout-contains: PROVED 44.5c
+stdout-contains: PROVED 44.5d
+stdout-contains: PROVED 44.5e
+stdout-contains: PROVED 44.5f
+stdout-contains: PROVED 44.5g
+stdout-contains: PROVED 44.5h
+stdout-contains: PROVED 19a
+stdout-contains: PROVED 19b
+stdout-contains: PROVED 19c
+stdout-contains: PROVED 19d
+stdout-contains: PROVED 19e
+stdout-contains: PROVED 19f
+stdout-contains: PROVED 19g
+stdout-contains: fixture: stopped
+stdout-not-contains: FAILED
+stdout-not-contains: panicked
