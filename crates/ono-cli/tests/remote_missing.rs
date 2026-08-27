@@ -679,7 +679,6 @@ fn should_answer_again_from_a_detached_link_when_it_is_entered_again() {
 // --- agentless mode ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_the_agentless_mode_visible_in_the_link_table() {
     // Spec §21.3: "Fallback MUST be visible because semantics and performance may differ." A
     // link asked for in agentless mode says so wherever the link is described.
@@ -693,7 +692,6 @@ fn should_keep_the_agentless_mode_visible_in_the_link_table() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_explain_that_a_query_runs_in_agentless_mode() {
     let run = ono("link host testbox --transport local --agentless; \
          enter link testbox; explain get process");
@@ -771,7 +769,6 @@ fn should_fail_the_run_when_a_remote_mutation_fails() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_explain_the_remote_context_of_a_mutation() {
     // Spec §42.2: while connected, the plan of a mutation shows the execution context —
     // `link prod-app (remote)` — so the risk of acting on the wrong machine is inspectable.
@@ -791,7 +788,6 @@ fn should_explain_the_remote_context_of_a_mutation() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_explain_the_effect_of_a_remote_mutation() {
     // Spec §42.2: `operation signal TERM` — the plan says what the mutation does, not only
     // which capability it needs.

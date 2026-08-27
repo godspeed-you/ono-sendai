@@ -385,6 +385,7 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
     let mut host = None;
     let mut transport = "ssh".to_owned();
     let mut take_transport = false;
+    let mut agentless = false;
     for word in &words {
         let text = word.to_string_lossy();
         if take_transport {
@@ -394,6 +395,8 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
             take_transport = true;
         } else if let Some(value) = text.strip_prefix("--transport=") {
             transport = value.to_owned();
+        } else if text == "--agentless" {
+            agentless = true;
         } else if text == "host" {
             // the target word of `link host <name>`
         } else if !text.starts_with("--") {
@@ -413,8 +416,16 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
     let connection = establish(session, &host, &transport, None)?;
     let targets = connection.targets();
 
+    // Spec §21.3: the agentless fallback MUST be visible. This build has no agentless provider
+    // set yet, so the mode is recorded and reported wherever the link is described, and the
+    // summary says who actually answers (ADR-0106).
     println!(
-        "linked {host} ({transport}): {}",
+        "linked {host} ({transport}{}): {}",
+        if agentless {
+            ", agentless requested — served by the agent until the fallback exists"
+        } else {
+            ""
+        },
         if targets.is_empty() {
             "no targets negotiated".to_owned()
         } else {
@@ -425,7 +436,7 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
         name: host.clone(),
         host,
         transport,
-        agentless: false,
+        agentless,
         persistent: true,
         connection: Some(connection),
     });

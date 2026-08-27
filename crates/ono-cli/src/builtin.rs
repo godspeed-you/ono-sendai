@@ -460,6 +460,65 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     // bytes would survive into a file (ADR-0015 T1, T9, T11).
     print_safely(&plan.render());
 
+    // Spec §42.2: while connected, the plan shows the execution context, so the risk of acting
+    // on the wrong machine is inspectable; and a mutation says what it does, not only which
+    // capability it needs (ADR-0106).
+    if let Some(host) = &remote_host
+        && let Some(link) = session.link(host)
+    {
+        let mut block = String::from("EXECUTION CONTEXT\n");
+        plan_row(&mut block, "link", &format!("{host} (remote)"));
+        plan_row(&mut block, "transport", &link.transport);
+        plan_row(
+            &mut block,
+            "mode",
+            if link.agentless {
+                "agentless — requested; this build serves it through the agent (spec §21.3)"
+            } else {
+                "agent"
+            },
+        );
+        plan_row(
+            &mut block,
+            "identity",
+            &session.env_var("USER").map_or_else(
+                || "unknown".to_owned(),
+                |user| user.to_string_lossy().into_owned(),
+            ),
+        );
+        print_safely(&block);
+    }
+    for (stage, planned) in pipeline.head.stages.iter().zip(plan.stages()) {
+        let Some(risk) = planned.risk().filter(|risk| risk.changes_the_world()) else {
+            continue;
+        };
+        let mut block = String::from("MUTATION\n");
+        plan_row(
+            &mut block,
+            "stage",
+            &format!("{}. {}", planned.ordinal(), planned.source()),
+        );
+        plan_row(
+            &mut block,
+            "operation",
+            &mutation_operation(registry, stage),
+        );
+        plan_row(&mut block, "targets", planned.input());
+        plan_row(
+            &mut block,
+            "risk",
+            &if remote_host.is_some() {
+                format!("{risk} + remote")
+            } else {
+                risk.to_string()
+            },
+        );
+        if let Some(privilege) = planned.privilege() {
+            plan_row(&mut block, "privilege", privilege.as_str());
+        }
+        print_safely(&block);
+    }
+
     if let Some(host) = remote_host {
         for (stage, planned) in pipeline.head.stages.iter().zip(plan.stages()) {
             let Some(demand) = planned.demand() else {
@@ -525,6 +584,54 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         println!("  configuration mode: none of this would be allowed to run");
     }
     Ok(ExitStatus::SUCCESS)
+}
+
+/// One row of a plan block, aligned as `ExecutionPlan::render` aligns its rows.
+fn plan_row(into: &mut String, label: &str, value: &str) {
+    use std::fmt::Write as _;
+    let _ = writeln!(into, "   {label:<12} {value}");
+}
+
+/// What a mutating stage does, in the words of spec §42.2 (`signal TERM`): the effect, not the
+/// capability. The signal commands name their signal; any other mutation is its verb and
+/// target.
+fn mutation_operation(
+    registry: &ono_command::CommandRegistry,
+    stage: &ono_parser::Stage,
+) -> String {
+    let Some(verb) = stage.head.name() else {
+        return "unknown".to_owned();
+    };
+    let Ok(resolved) = registry.resolve(verb, &stage.arguments) else {
+        return verb.to_owned();
+    };
+    let contract = resolved.contract;
+    let bound = contract.bind(resolved.arguments).ok();
+    let signal = |name: &str| {
+        bound
+            .as_ref()
+            .and_then(|bound| bound.option(name).or_else(|| bound.selector(name)))
+            .filter(|value| !matches!(value, ono_value::Value::Null))
+            .map(ToString::to_string)
+            .or_else(|| {
+                contract
+                    .option(name)
+                    .and_then(|option| option.default_text().map(str::to_owned))
+            })
+    };
+    match contract.id() {
+        // `stop` is graceful termination with default TERM semantics (process.yaml).
+        "ono.process.stop" => "signal TERM".to_owned(),
+        "ono.process.kill" | "ono.signal.send" => format!(
+            "signal {}",
+            signal("signal").unwrap_or_else(|| "SIGKILL".to_owned())
+        ),
+        _ => format!(
+            "{} {}",
+            contract.verb(),
+            contract.target().unwrap_or_default()
+        ),
+    }
 }
 
 /// Writes text that came from the system, with every control character neutralised.
