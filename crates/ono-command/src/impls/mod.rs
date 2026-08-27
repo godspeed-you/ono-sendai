@@ -24,6 +24,7 @@
 //!   resolution the shell would not actually perform.
 
 pub(crate) mod convert;
+mod inspect;
 pub(crate) mod meta;
 pub(crate) mod mutate;
 pub(crate) mod producer;
@@ -181,6 +182,7 @@ fn implementation_of(
         | "ono.interface.trace"
         | "ono.route.trace"
         | "ono.file.trace" => Arc::new(trace::TraceCommand::new(id)),
+        "ono.process.inspect" => Arc::new(inspect::InspectCommand::new(id)),
         "ono.context.get" => Arc::new(MetaCommand::new(id, meta::Kind::GetContext, registry)),
         "ono.meta.help" => Arc::new(MetaCommand::new(id, meta::Kind::Help, registry)),
         "ono.meta.explain" => Arc::new(MetaCommand::new(id, meta::Kind::Explain, registry)),

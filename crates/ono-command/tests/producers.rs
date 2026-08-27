@@ -180,9 +180,13 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             // evaluator owns.
             "ono.env.set",
             "ono.port.test",
-            // `inspect process` promises `ono.process-detail/1`, which no provider produces yet.
-            // Answering it with `ono.process/1` would be a different value wearing the name.
-            "ono.process.inspect",
+            // A provider delivers `set process` by advertising `process.set` (ADR-0068 §3,
+            // ADR-0092); a table built without providers binds only the verbs every `act`
+            // speaks.
+            "ono.process.set",
+            // Likewise `send signal`, delivered by the provider that claims `signal` and
+            // advertises `process.signal` (ADR-0092 §2).
+            "ono.signal.send",
         ]
         .iter()
         .copied()

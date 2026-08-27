@@ -1,0 +1,67 @@
+# The process family beyond `get`/`kill`: spec §9.1 (`inspect process` returns a ProcessDetail),
+# §33.1 (the detail view: parent, cgroup, open files, sockets), §18.4 (`get job` returns
+# structured job objects), §52 process/set validated as `set process --priority` (ADR-0092),
+# §7.1 `send signal` as the pipeline spelling of a signal, and `--tree` on `get process`
+# (ADR-0091). Every mutation answers with ActionResult rows and a failed row makes the exit
+# status 1 (spec §16.5, ADR-0006). Runs unprivileged: raising priority is exactly what the
+# container's user may not do, and the refusal is the structured answer this case proves.
+case: processes are inspected, jobs are objects, and signals and priorities reach a process
+timeout: 120
+run: |
+  # inspect process: the detail view of init carries the pid and the §33.1 fields.
+  out=$(ono -c 'inspect process 1 | select pid | to json')
+  if [ "$out" = '[{"pid":1}]' ]; then echo "detail-of-init"; else echo "WRONG detail: $out"; fi
+  ono -c 'inspect process 1 | to json' | grep -q '"cgroup"' && echo "detail-has-cgroup"
+  ono -c 'inspect process 1 | to json' | grep -q '"open_files"' && echo "detail-has-open-files"
+
+  # The object may arrive through the pipeline, and a pid nothing answers to is E0301.
+  out=$(ono -c 'get process 1 | inspect process | select pid | to json')
+  if [ "$out" = '[{"pid":1}]' ]; then echo "detail-from-pipeline"; fi
+  ono -c 'inspect process 4000000 | to json'; echo "inspect-missing-status=$?"
+
+  # get job: a backgrounded external pipeline is a job with a process group and pids.
+  ono -c 'sleep 5 > /dev/null 2> /dev/null &; get job | select id kind state current | to json'
+  ono -c 'sleep 5 > /dev/null 2> /dev/null &; get job 1 | select process_group | to json' | grep -q '"process_group":[0-9]' && echo "job-has-process-group"
+  # A detached live view is a native job in the same table (ADR-0024).
+  ono -c 'watch process --every 200ms &; get job | select kind state | to json'
+
+  # set process --priority on a child this user owns: lowering priority is allowed and the
+  # kernel's niceness afterwards is what was asked for (field 19 of /proc/<pid>/stat).
+  sleep 30 > /dev/null 2> /dev/null &
+  child=$!
+  ono -c "get process $child | set process --priority 10 | select status changed | to json"
+  nice=$(awk '{print $19}' "/proc/$child/stat")
+  echo "niceness=$nice"
+  # Raising it is denied to an unprivileged user: a failed row with E0302, and exit status 1.
+  ono -c "get process $child | set process --priority -5 | to json" | grep -q 'Ono-Sendai-E0302' && echo "raise-denied-structured"
+  ono -c "get process $child | set process --priority -5 | to json" > /dev/null; echo "raise-status=$?"
+
+  # send signal: the signal is the selector, the process comes through the pipeline, and the
+  # child dies of exactly that signal (128 + 15).
+  ono -c "get process $child | send signal SIGTERM | select status | to json"
+  wait "$child"; echo "child-status=$?"
+
+  # --tree: the stream carries the roots, never the whole table as top-level rows.
+  flat=$(ono -c 'get process | count | to json' | tr -d '[]')
+  roots=$(ono -c 'get process --tree | count | to json' | tr -d '[]')
+  if [ "$roots" -lt "$flat" ] 2>/dev/null; then echo "tree-has-fewer-roots"; fi
+  ono -c 'get process --tree | to json' | grep -q '"children"' && echo "tree-nests-children"
+exit: 0
+stdout-contains: detail-of-init
+stdout-contains: detail-has-cgroup
+stdout-contains: detail-has-open-files
+stdout-contains: detail-from-pipeline
+stdout-contains: Ono-Sendai-E0301
+stdout-contains: inspect-missing-status=1
+stdout-contains: [{"current":true,"id":1,"kind":"external","state":"running"}]
+stdout-contains: job-has-process-group
+stdout-contains: [{"kind":"native","state":"running"}]
+stdout-contains: [{"changed":true,"status":"success"}]
+stdout-contains: niceness=10
+stdout-contains: raise-denied-structured
+stdout-contains: raise-status=1
+stdout-contains: [{"status":"success"}]
+stdout-contains: child-status=143
+stdout-contains: tree-has-fewer-roots
+stdout-contains: tree-nests-children
+stdout-not-contains: WRONG

@@ -186,8 +186,7 @@ commands:
     verb: set
     target: process
     summary: Adjust mutable process attributes such as scheduling priority.
-    stability: planned                    # spec §52, process/set = "M?"
-    validation_required: true
+    stability: stable                     # spec §52, process/set = "M?"; validated and delivered by ADR-0092
     argument_mode: words
     input: "null | stream<ono.process/1>"
     output: stream<ono.action-result/1>
@@ -195,32 +194,31 @@ commands:
     selectors:
       - {name: pid, type: int, doc: "The process to modify."}
     options:
-      - {name: priority, type: int, doc: "The scheduling niceness to apply."}
+      - {name: priority, type: int, doc: "The scheduling niceness to apply, -20 to 19; raising priority (a negative value) needs CAP_SYS_NICE."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - set process 4419 --priority 10
 
   - id: ono.signal.send
     verb: send
     target: signal
-    summary: Deliver a signal to a process or job.
-    stability: planned                    # spec §7.1 lists `signal` among `send`'s targets; §9.1 defines no such command
-    validation_required: true
+    summary: Deliver a signal to the processes arriving through the pipeline.
+    stability: stable                     # spec §7.1 lists `signal` among `send`'s targets; validated and delivered by ADR-0092
     note: >-
-      Overlaps `ono.process.kill --signal` entirely. Kept in the registry because §7.1 names the
-      pair, and marked planned because two spellings for one operation is exactly the kind of
-      symmetry §52 warns against; one of the two should be withdrawn before either is stable.
+      The pipeline spelling of a signal: `kill process` names a process and takes the signal as
+      an option, `send signal` names the signal and takes the processes from the pipeline
+      (ADR-0092 §2).
     argument_mode: words
     input: "null | stream<ono.process/1>"
     output: stream<ono.action-result/1>
     provider_capability: process.signal
     selectors:
-      - {name: signal, type: string, doc: "The signal to deliver."}
+      - {name: signal, type: string, doc: "The signal to deliver, named as in signal(7): SIGHUP, TERM, 15."}
     options: []
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - get process 4419 | send signal SIGHUP

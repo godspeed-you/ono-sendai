@@ -97,7 +97,19 @@ impl ProviderMutation {
         }
 
         let mut failures = Vec::new();
+        let piped = ctx.has_input();
         let targets = self.targets(ctx, target, &spelling, &mut failures).await?;
+        // When the objects came through the pipeline, a selector selected nothing: it is the
+        // operation's payload — the signal of `send signal SIGHUP` — and travels to the provider
+        // as an argument (ADR-0092 §2).
+        let mut arguments = arguments;
+        if piped {
+            for selector in contract.selectors() {
+                if let Some(value) = ctx.arguments().selector(selector.name()) {
+                    arguments.push((selector.name().to_owned(), value.clone()));
+                }
+            }
+        }
 
         // The bulk guard of spec §11.6 and §17.4: a selection above the threshold mutates
         // nothing unless the confirmation was written. The refusal names the scope — the count

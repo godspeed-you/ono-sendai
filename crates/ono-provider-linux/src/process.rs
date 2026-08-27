@@ -91,6 +91,61 @@ pub trait Signals: Send + Sync + std::fmt::Debug {
     fn send(&self, pid: i32, signal: i32) -> Result<(), ErrorValue>;
 }
 
+/// Reading and setting a process's scheduling niceness.
+///
+/// Injectable for the same reason as [`Signals`]: a test that proves the refusal paths must not
+/// be able to renice an unrelated process on the machine it runs on.
+pub trait Priorities: Send + Sync + std::fmt::Debug {
+    /// The niceness of `pid`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured form of the kernel's refusal.
+    fn get(&self, pid: i32) -> Result<i32, ErrorValue>;
+
+    /// Sets the niceness of `pid`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured form of the kernel's refusal — `io.permission_denied` when raising
+    /// priority without `CAP_SYS_NICE`.
+    fn set(&self, pid: i32, niceness: i32) -> Result<(), ErrorValue>;
+}
+
+/// `getpriority(2)` and `setpriority(2)`.
+#[derive(Debug, Default)]
+pub struct KernelPriorities;
+
+impl KernelPriorities {
+    fn pid(pid: i32) -> Result<rustix::process::Pid, ErrorValue> {
+        rustix::process::Pid::from_raw(pid).ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("{pid} is not a process id"),
+            )
+        })
+    }
+
+    fn failure(errno: rustix::io::Errno, pid: i32) -> ErrorValue {
+        errno_error(
+            nix::errno::Errno::from_raw(errno.raw_os_error()),
+            &PathBuf::from(format!("/proc/{pid}")),
+        )
+    }
+}
+
+impl Priorities for KernelPriorities {
+    fn get(&self, pid: i32) -> Result<i32, ErrorValue> {
+        rustix::process::getpriority_process(Some(Self::pid(pid)?))
+            .map_err(|errno| Self::failure(errno, pid))
+    }
+
+    fn set(&self, pid: i32, niceness: i32) -> Result<(), ErrorValue> {
+        rustix::process::setpriority_process(Some(Self::pid(pid)?), niceness)
+            .map_err(|errno| Self::failure(errno, pid))
+    }
+}
+
 /// `kill(2)`.
 #[derive(Debug, Default)]
 pub struct KernelSignals;
@@ -138,6 +193,7 @@ struct Reader {
 pub struct ProcessProvider {
     reader: Reader,
     signals: Arc<dyn Signals>,
+    priorities: Arc<dyn Priorities>,
 }
 
 impl Default for ProcessProvider {
@@ -171,6 +227,7 @@ impl ProcessProvider {
                 samples: Arc::new(Mutex::new(HashMap::new())),
             },
             signals: Arc::new(KernelSignals),
+            priorities: Arc::new(KernelPriorities),
         }
     }
 
@@ -195,12 +252,79 @@ impl ProcessProvider {
         self
     }
 
+    /// Reads and sets niceness through `priorities`.
+    #[must_use]
+    pub fn with_priorities(mut self, priorities: Arc<dyn Priorities>) -> Self {
+        self.priorities = priorities;
+        self
+    }
+
     /// Treats the system as having booted `seconds` after the epoch, for a fixture whose
     /// `/proc/stat` is not the running kernel's.
     #[must_use]
     pub fn with_boot_time(mut self, seconds: i64) -> Self {
         self.reader.boot_seconds = Some(seconds);
         self
+    }
+
+    /// `set process --priority N` (ADR-0092): the niceness, through `setpriority(2)`.
+    ///
+    /// The identity is confirmed first, as for a signal, so a recycled pid is never reniced.
+    /// A refusal — raising priority without `CAP_SYS_NICE` — is the target's failed outcome
+    /// with the kernel's `io.permission_denied`, never an error that stops a bulk `set`.
+    fn set_attributes(
+        &self,
+        action: &Action,
+        pid: i32,
+        expected: Option<Timestamp>,
+    ) -> Result<ActionOutcome, ErrorValue> {
+        let niceness = match action.argument("priority") {
+            Some(Value::Int(niceness)) => i32::try_from(*niceness)
+                .ok()
+                .filter(|niceness| (-20..=19).contains(niceness))
+                .ok_or_else(|| {
+                    ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!("a niceness is -20 to 19, not {niceness}"),
+                    )
+                })?,
+            Some(other) => {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`--priority` is a niceness, not {}", other.type_name()),
+                ));
+            }
+            None => {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    "`set process` changes nothing without an attribute to set",
+                )
+                .with_help("`set process <pid> --priority N` sets the scheduling niceness"));
+            }
+        };
+        if let Err(error) = self.reader.confirm(i64::from(pid), expected) {
+            return Ok(ActionOutcome::failed(action, error));
+        }
+        let current = match self.priorities.get(pid) {
+            Ok(current) => current,
+            Err(error) => return Ok(ActionOutcome::failed(action, error)),
+        };
+        if current == niceness {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("pid {pid} already has niceness {niceness}"),
+            ));
+        }
+        if action.is_dry_run() {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("would set the niceness of pid {pid} from {current} to {niceness}"),
+            ));
+        }
+        match self.priorities.set(pid, niceness) {
+            Ok(()) => Ok(ActionOutcome::succeeded(action, true)),
+            Err(error) => Ok(ActionOutcome::failed(action, error)),
+        }
     }
 
     /// The pid a selector pins the query to, when one does.
@@ -320,6 +444,72 @@ impl Reader {
         .set("container", Value::Null)?
         .build();
         Ok(record)
+    }
+
+    /// Reads the detail view of one process (spec §33.1): the record, plus what only a closer
+    /// look answers — the parent by name, the cgroup, the open files and the sockets.
+    async fn read_detail(
+        &self,
+        pid: i64,
+        process: &Arc<Schema>,
+        detail: &Arc<Schema>,
+    ) -> Result<RecordValue, ErrorValue> {
+        let record = self.read(pid, process).await?;
+        let dir = self.proc_root.join(pid.to_string());
+        let mut sources = vec![record.provenance().source().unwrap_or_default().to_owned()];
+
+        let mut builder =
+            RecordValue::builder(Arc::clone(detail), provenance(PROVIDER_ID, detail.id(), ""));
+        for field in detail.fields() {
+            if let Some(value) = record.get(field.name()) {
+                builder = builder.set(field.name(), value.clone())?;
+            }
+        }
+        let parent = match record.get("ppid") {
+            Some(Value::Int(ppid)) => self.parent_ref(*ppid, process, &mut sources),
+            _ => Value::Null,
+        };
+        let (open_files, sockets) = descriptors(&dir, &mut sources);
+        let record = builder
+            .set("parent", parent)?
+            .set("cgroup", cgroup(&dir, &mut sources))?
+            .set("open_files", open_files)?
+            .set("sockets", sockets)?
+            .provenance(provenance(PROVIDER_ID, detail.id(), &sources.join(" + ")))
+            .build();
+        Ok(record)
+    }
+
+    /// The parent as a reference: its pid, and — while the parent can still be read — its name
+    /// and the start time that completes its identity.
+    fn parent_ref(&self, ppid: i128, process: &Arc<Schema>, sources: &mut Vec<String>) -> Value {
+        let stat_path = self.proc_root.join(ppid.to_string()).join("stat");
+        let stat = fs::read_to_string(&stat_path)
+            .ok()
+            .and_then(|text| procfs::parse_stat(&text));
+        if stat.is_some() {
+            sources.push(stat_path.display().to_string());
+        }
+        let mut reference = RecordValue::builder(
+            Arc::clone(process),
+            provenance(PROVIDER_ID, process.id(), &stat_path.display().to_string()),
+        );
+        // The schema declares these fields; a name the schema declares cannot be unknown to it.
+        if let Ok(with_pid) = reference.clone().set("pid", Value::Int(ppid)) {
+            reference = with_pid;
+        }
+        if let Some(stat) = stat {
+            if let Ok(with_name) = reference.clone().set("name", Value::string(&stat.comm)) {
+                reference = with_name;
+            }
+            if let Some(started) = self.started(&stat)
+                && let Ok(with_started) =
+                    reference.clone().set("started", Value::Timestamp(started))
+            {
+                reference = with_started;
+            }
+        }
+        Value::Record(Arc::new(reference.build()))
     }
 
     /// The `user` and `group` references, keeping a numeric id whichever way the read went.
@@ -456,6 +646,66 @@ fn parent(ppid: i64) -> Value {
     }
 }
 
+/// The unified-hierarchy control group path of `/proc/<pid>/cgroup`: a path, `null` on a kernel
+/// without cgroups, an error when the file is hidden.
+fn cgroup(dir: &Path, sources: &mut Vec<String>) -> Value {
+    let path = dir.join("cgroup");
+    match fs::read_to_string(&path) {
+        Ok(text) => {
+            sources.push(path.display().to_string());
+            // `hierarchy:controllers:path`; the unified hierarchy is `0::<path>`, and on a v1
+            // machine the first line's path is still the process's group.
+            text.lines()
+                .filter_map(|line| line.splitn(3, ':').nth(2))
+                .find(|group| !group.is_empty())
+                .map_or(Value::Null, |group| {
+                    Value::Path(Arc::from(Path::new(group)))
+                })
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
+        Err(error) => io_error(&error, &path).into_value(),
+    }
+}
+
+/// What `/proc/<pid>/fd` holds: the open files as paths, and the sockets as inodes. Both carry
+/// the read error when this user may not look into the descriptor table (spec §10.5).
+fn descriptors(dir: &Path, sources: &mut Vec<String>) -> (Value, Value) {
+    let path = dir.join("fd");
+    let entries = match fs::read_dir(&path) {
+        Ok(entries) => entries,
+        Err(error) => {
+            let failure = io_error(&error, &path).into_value();
+            return (failure.clone(), failure);
+        }
+    };
+    sources.push(path.display().to_string());
+    let mut numbered: Vec<(u32, String)> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let fd = entry.file_name().to_str()?.parse::<u32>().ok()?;
+            // A descriptor closed between the listing and the read is a process going about
+            // its business, not a failure.
+            let target = fs::read_link(entry.path()).ok()?;
+            Some((fd, target.to_string_lossy().into_owned()))
+        })
+        .collect();
+    numbered.sort_unstable();
+    let mut files = Vec::new();
+    let mut sockets = Vec::new();
+    for (_, target) in numbered {
+        if let Some(inode) = target
+            .strip_prefix("socket:[")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .and_then(|inode| inode.parse::<i128>().ok())
+        {
+            sockets.push(Value::Int(inode));
+        } else if target.starts_with('/') && !target.ends_with(" (deleted)") {
+            files.push(Value::Path(Arc::from(Path::new(&target))));
+        }
+    }
+    (Value::list(files), Value::list(sockets))
+}
+
 /// A `/proc` magic link: a path, `null` when the kernel has none, an error when it is hidden.
 fn link(path: &Path, sources: &mut Vec<String>) -> Value {
     match fs::read_link(path) {
@@ -518,12 +768,15 @@ impl Provider for ProcessProvider {
     }
 
     fn targets(&self) -> &[&str] {
-        &["process"]
+        // `signal` is the target of `send signal`, whose objects are the processes that arrive
+        // through the pipeline (ADR-0092 §2); nothing enumerates it.
+        &["process", "signal"]
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
-        schemas::require(&schemas::process_id())
-            .into_iter()
+        [schemas::process_id(), schemas::process_detail_id()]
+            .iter()
+            .filter_map(|id| schemas::require(id).ok())
             .collect()
     }
 
@@ -532,6 +785,7 @@ impl Provider for ProcessProvider {
             Capability::new("process.list", Risk::Read),
             Capability::new("process.inspect", Risk::Read),
             Capability::new("process.signal", Risk::Mutate),
+            Capability::new("process.set", Risk::Mutate),
         ]
     }
 
@@ -548,6 +802,12 @@ impl Provider for ProcessProvider {
 
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
         let schema = schemas::require(&schemas::process_id())?;
+        // `inspect process` asks for the detail view (spec §33.1): the same enumeration, each
+        // process read closer (ADR-0091).
+        let detail = query
+            .flag("detail")
+            .then(|| schemas::require(&schemas::process_detail_id()))
+            .transpose()?;
         let reader = self.reader.clone();
         let pinned = Self::pinned_pid(query);
         let pids = match pinned {
@@ -556,17 +816,47 @@ impl Provider for ProcessProvider {
         };
         let enumerating = pinned.is_none();
         let limit = query.max().unwrap_or(usize::MAX);
+        let tree = query.flag("tree");
         let query = query.clone();
         Ok(ValueStream::spawn(
             PipelineConfig::new(),
             Boundedness::Bounded,
             move |sink| async move {
+                if tree {
+                    // `--tree` needs the whole table before the first root can be emitted: a
+                    // root is a process whose parent is not in the stream (ADR-0091 §3).
+                    let mut records = Vec::new();
+                    for pid in pids {
+                        match reader.read(pid, &schema).await {
+                            Ok(record) if understood_selectors_match(&query, &record) => {
+                                records.push(record);
+                            }
+                            Ok(_) => {}
+                            Err(error) if error.code() == ErrorCode::IoNotFound => {}
+                            Err(error) => {
+                                if sink.fail(error).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    for root in nest(records).into_iter().take(limit) {
+                        if sink.send(root).await.is_err() {
+                            return;
+                        }
+                    }
+                    return;
+                }
                 let mut sent = 0;
                 for pid in pids {
                     if sent >= limit {
                         break;
                     }
-                    match reader.read(pid, &schema).await {
+                    let read = match &detail {
+                        Some(detail) => reader.read_detail(pid, &schema, detail).await,
+                        None => reader.read(pid, &schema).await,
+                    };
+                    match read {
                         Ok(record) => {
                             if !understood_selectors_match(&query, &record) {
                                 continue;
@@ -617,7 +907,7 @@ impl Provider for ProcessProvider {
 
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let operation = action.operation();
-        if !matches!(operation, "signal" | "kill" | "stop") {
+        if !matches!(operation, "signal" | "send" | "kill" | "stop" | "set") {
             return Err(ErrorValue::new(
                 ErrorCode::ProviderUnsupported,
                 format!("{PROVIDER_ID} has no operation `{operation}`"),
@@ -640,6 +930,9 @@ impl Provider for ProcessProvider {
             .get(1)
             .and_then(|value| value.as_timestamp().ok());
 
+        if operation == "set" {
+            return self.set_attributes(action, pid, expected);
+        }
         let signal = requested_signal(action)?;
         if let Err(error) = self.reader.confirm(i64::from(pid), expected) {
             return Ok(ActionOutcome::failed(action, error));
@@ -655,6 +948,87 @@ impl Provider for ProcessProvider {
             Err(error) => Ok(ActionOutcome::failed(action, error)),
         }
     }
+}
+
+/// The process tree of `records`: the roots, each carrying its descendants under the extension
+/// key `children` (spec §10.4, ADR-0091 §3).
+///
+/// Built deepest-first rather than recursively, so a chain of parents as long as the table
+/// cannot overflow the stack. A parent that is not among the records — filtered out, or pid 0 —
+/// makes its children roots.
+fn nest(records: Vec<RecordValue>) -> Vec<Value> {
+    let pid_of = |record: &RecordValue| match record.get("pid") {
+        Some(Value::Int(pid)) => Some(*pid),
+        _ => None,
+    };
+    let parent_of = |record: &RecordValue| match record.get("ppid") {
+        Some(Value::Int(ppid)) => Some(*ppid),
+        _ => None,
+    };
+    let present: HashMap<i128, usize> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(index, record)| pid_of(record).map(|pid| (pid, index)))
+        .collect();
+    let parent = |record: &RecordValue| parent_of(record).filter(|ppid| present.contains_key(ppid));
+
+    // The depth of each process is the length of its chain of present parents; a cycle —
+    // impossible in a kernel table, cheap to guard against in a fixture — ends the walk.
+    let depth_of = |record: &RecordValue| {
+        let mut depth = 0usize;
+        let mut current = parent(record);
+        while let Some(ppid) = current
+            && depth <= records.len()
+        {
+            depth += 1;
+            current = present
+                .get(&ppid)
+                .and_then(|index| parent(&records[*index]));
+        }
+        depth
+    };
+    let mut order: Vec<(usize, usize)> = records
+        .iter()
+        .enumerate()
+        .map(|(index, record)| (depth_of(record), index))
+        .collect();
+    order.sort_by(|left, right| right.cmp(left));
+
+    let mut children: HashMap<i128, Vec<Value>> = HashMap::new();
+    let mut roots = Vec::new();
+    for (_, index) in order {
+        let record = &records[index];
+        let own = pid_of(record)
+            .and_then(|pid| children.remove(&pid))
+            .unwrap_or_default();
+        let value = with_children(record, own);
+        match parent(record) {
+            Some(ppid) => children.entry(ppid).or_default().push(value),
+            None => roots.push(value),
+        }
+    }
+    // Deepest-first building reversed the order within each level; the table's order is pid
+    // order, which is what a reader expects of siblings.
+    roots.reverse();
+    roots
+}
+
+/// `record` with `children` nested beneath it.
+fn with_children(record: &RecordValue, mut children: Vec<Value>) -> Value {
+    children.reverse();
+    let mut builder =
+        RecordValue::builder(Arc::clone(record.schema()), record.provenance().clone());
+    for field in record.schema().fields() {
+        if let Some(value) = record.get(field.name())
+            && let Ok(with_field) = builder.clone().set(field.name(), value.clone())
+        {
+            builder = with_field;
+        }
+    }
+    builder
+        .set_extra("children", Value::list(children))
+        .build()
+        .into_value()
 }
 
 /// Whether the selectors this provider understands accept `record`.

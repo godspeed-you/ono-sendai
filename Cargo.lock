@@ -594,6 +594,7 @@ dependencies = [
 name = "ono-cli"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "ono-adapter",
  "ono-command",
  "ono-core",
@@ -806,6 +807,7 @@ dependencies = [
  "ono-provider-api",
  "ono-testkit",
  "ono-value",
+ "rustix",
  "tempfile",
  "tokio",
 ]
