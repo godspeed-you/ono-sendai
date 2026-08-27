@@ -406,7 +406,6 @@ fn should_run_a_command_per_item_when_the_each_block_contains_one() {
 // --- string arithmetic (spec §6.3 string operations) ----------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_concatenate_strings_when_let_adds_two_of_them() {
     let run = ono(r#"let s = "a" + "b"; $s | to json"#);
     run.assert_success();

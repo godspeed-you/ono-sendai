@@ -103,8 +103,10 @@ fn scalar_factor(value: &Value) -> Option<f64> {
 impl Value {
     /// Adds two values.
     ///
-    /// Numbers add as numbers, quantities add within their own dimension, and a duration added to
-    /// a timestamp moves the instant.
+    /// Numbers add as numbers, quantities add within their own dimension, a duration added to
+    /// a timestamp moves the instant, and two strings concatenate (spec §6.3 "string
+    /// operations", ADR-0071 §6). Only two strings: `"1" + 1` has two defensible answers, so it
+    /// has none.
     ///
     /// # Errors
     ///
@@ -128,6 +130,12 @@ impl Value {
             (Value::Percent(a), Value::Percent(b)) => Ok(Value::Percent(a.plus(*b))),
             (Value::Timestamp(instant), Value::Duration(span))
             | (Value::Duration(span), Value::Timestamp(instant)) => shift(*instant, *span),
+            (Value::String(a), Value::String(b)) => {
+                let mut joined = String::with_capacity(a.len() + b.len());
+                joined.push_str(a);
+                joined.push_str(b);
+                Ok(Value::String(joined.into()))
+            }
             _ => Err(incompatible(self, other, "add")),
         }
     }
