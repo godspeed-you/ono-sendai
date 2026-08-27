@@ -115,6 +115,31 @@ showcase: a live view of the machine should feel like instrumentation, not like 
   ADR-0037 §6 (today `mode: agentless` is recorded and the agent answers, visibly); a
   `watch host` that probes reachability; the multiplexed streams of `trace link`; the
   execution context in the `ono.execution-plan/1` value.
+- [containers | 2026-08-27] **container and package families** (`crates/ono-cli/tests/containers_packages_missing.rs`)
+  on branch `implementation-containers` — files: `crates/ono-provider-container/`,
+  `crates/ono-provider-linux/src/packages.rs`, `crates/ono-graph/src/kernel/container.rs`,
+  `crates/ono-command/src/impls/{mod,meta}.rs`, `crates/ono-cli/src/providers.rs`,
+  `docs/spec/commands/{container,package}.yaml`, `docs/spec/schemas/{container,image,package,container-event}.v1.yaml`,
+  `docs/spec/providers/{container-engine,linux-packages}.yaml`, acceptance case
+  `046-containers-and-packages`. ADR-0112–0115.
+  Increment 1 done: `ono-provider-container` — the engine API over the runtime's Unix socket,
+  `get container`/`get image`, E0401 naming the sockets tried (4 tests green, ADR-0112).
+  Increment 2 done: start/stop/restart/remove/set container as engine requests, the engine's
+  status as the per-target outcome (8 tests green, ADR-0113). Increment 3 done: `enter
+  container` as a `container` frame, `watch container` over the engine listing, `trace
+  container` with the exact `image` edge (4 tests green, ADR-0114). Increment 4 done:
+  `linux.packages` — `get package`/`find package` from `dpkg-query -W -f` and `apt-cache
+  search`, E0401 naming dpkg and rpm, E0403 for a listing outside the machine format (5 tests
+  green, ADR-0115). Increment 5 done: `add`/`remove`/`set package` through `apt-get` and
+  `apt-mark`, the unprivileged refusal as a failed E0302 row before anything runs (4 tests
+  green, ADR-0115 §5). **All 25 tests green and un-ignored**; the gate is green at every
+  commit. Acceptance case `docker/acceptance/cases/046-containers-and-packages.case` is
+  written and dry-run against the binary; **the integrator runs it in the container** when
+  merging the branch. Left open (not in the RED suite): an rpm/dnf package provider (the
+  refusal names it); `trace container` edges to namespaces, cgroups, mounts and processes
+  (need `State.Pid` joined to procfs); `watch container` over the engine's `/events` instead
+  of polling; `enter container` as an execution context (`container.exec`); a root acceptance
+  case for the package mutations' success path.
 
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch

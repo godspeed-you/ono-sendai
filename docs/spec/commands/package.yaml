@@ -1,7 +1,7 @@
-# Command family: Package. Source: spec §9.1 Package, complete. No phase of spec §37 delivers a
-# package provider, so every command here is `phase: planned` while remaining `stability: stable`
-# — §9.1 names them, so their ids and semantics are a promise; only their delivery is unscheduled
-# (ADR-0012). Conventions as documented at the head of process.yaml.
+# Command family: Package. Source: spec §9.1 Package, complete. Delivered by the
+# `linux.packages` provider, which speaks dpkg's and apt's machine formats and never parses
+# their human listings (spec §31.58, ADR-0115). Conventions as documented at the head of
+# process.yaml.
 
 version: 1
 family: package
@@ -23,7 +23,7 @@ commands:
       - {name: provider, type: string, doc: "Query one named package provider."}
     privilege: none
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - get package
       - get package nginx
@@ -43,7 +43,7 @@ commands:
       - {name: provider, type: string, doc: "Search one named package provider."}
     privilege: none
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - find package postgres
 
@@ -62,7 +62,7 @@ commands:
       - {name: version, type: string, doc: "Install this version rather than the newest available."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - add package nginx
 
@@ -81,7 +81,7 @@ commands:
       - {name: purge, type: bool, doc: "Remove configuration as well as the package. Destructive, so never the default."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - remove package nginx
 
@@ -101,6 +101,6 @@ commands:
       - {name: hold, type: bool, doc: "Pin the package at its current version."}
     privilege: elevated
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - set package nginx --version 1.24.0

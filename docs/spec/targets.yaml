@@ -162,8 +162,8 @@ targets:
     name: package
     category: system
     summary: An installed or available package, through a package provider.
-    schema: null
-    phase: planned
+    schema: ono.package/1
+    phase: C
   - id: ono.target.kernel
     name: kernel
     category: system
@@ -180,8 +180,8 @@ targets:
     name: container
     category: system
     summary: A container, through an installed container provider.
-    schema: null
-    phase: planned
+    schema: ono.container/1
+    phase: C
   - id: ono.target.namespace
     name: namespace
     category: system
@@ -374,8 +374,8 @@ targets:
     name: image
     category: infrastructure
     summary: A container or machine image.
-    schema: null
-    phase: planned
+    schema: ono.image/1
+    phase: C
     provider_qualified: true
   - id: ono.target.volume
     name: volume

@@ -1,0 +1,30 @@
+# Canonical Image schema. Source: spec §9.1 Container (`get image` → `Stream<Image>`) and §8.3.
+# Read from the engine API's `GET /images/json` (ADR-0112). Identity is the content digest; a
+# reference is a tag that may move between images, so it names one rather than identifying it.
+id: ono.image/1
+name: Image
+summary: A container image as the engine that holds it reports it.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The image's content digest, as `sha256:…`.
+  reference:
+    type: string
+    nullable: true
+    doc: The image's first repository tag, as `nginx:1.27`; null for an untagged image.
+  tags:
+    type: list<string>
+    nullable: true
+    doc: Every repository tag the image carries.
+  size:
+    type: bytesize
+    nullable: true
+    doc: The image's size on disk, as the engine reports it.
+  created:
+    type: timestamp
+    nullable: true
+    doc: When the image was built.
+default_view:
+  columns: [reference, id, size, created]

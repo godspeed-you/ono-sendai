@@ -53,6 +53,7 @@ mod env;
 mod file;
 mod file_mutations;
 mod identity;
+mod packages;
 mod process;
 mod procfs;
 pub mod schemas;
@@ -68,6 +69,7 @@ pub use device::DeviceProvider;
 pub use env::{EnvBinding, EnvProvider, EnvSource};
 pub use file::FileProvider;
 pub use identity::IdentityProvider;
+pub use packages::{PACKAGE_PROVIDER_ID, PackageProvider, package_schema};
 pub use process::{
     Clock, KernelPriorities, KernelSignals, Priorities, ProcessProvider, Signals, SystemClock,
 };
@@ -88,4 +90,5 @@ pub fn register(
     registry.register(Arc::new(EnvProvider::new(environment)));
     registry.register(Arc::new(StorageProvider::new()));
     registry.register(Arc::new(DeviceProvider::new()));
+    registry.register(Arc::new(PackageProvider::new()));
 }

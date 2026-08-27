@@ -218,6 +218,40 @@ Default view: `key`, `value`, `layer`, `source`
 | `default_value` | `value` | — | nullable | The built-in default, so the user can see what they have overridden. |
 | `description` | `string` | — | nullable | One line describing what the setting does, shown by `help` and by completion. |
 
+## ContainerEvent — `ono.container-event/1`
+
+One change to one container, as a live stream emits it.
+
+Identity: 
+
+Default view: `kind`, `at`, `container`, `changed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What happened. A subscription always begins with `snapshot` events carrying the current state (ADR-0024), so no consumer has to reconstruct the starting point. |
+| `at` | `timestamp` | — | required | When the change was observed. |
+| `container` | `record` | — | optional | The container as it now is — or, for `removed`, as it last was. Identity lives inside it. |
+| `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
+| `source` | `enum` | — | required | How the change was observed. `poll` means the runtime compared engine listings at the configured interval — explicit, as spec §18.2 requires. |
+
+## Container — `ono.container/1`
+
+A container as the engine that runs it reports it.
+
+Identity: `id`
+
+Default view: `id`, `name`, `image`, `state`, `created`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The engine's full container id. |
+| `name` | `string` | — | nullable | The container's first name, without the leading slash the engine API carries. |
+| `image` | `string` | — | nullable | The image reference the container was created from, as `nginx:1.27`. |
+| `image_id` | `string` | — | nullable | The content digest of that image — the identity of the `ono.image/1` it relates to. |
+| `state` | `enum` | — | required | The engine's lifecycle state. The values are Docker's, plus the ones Podman adds; a state this shell does not model is `unknown`, never a guess (spec §10.5). |
+| `created` | `timestamp` | — | nullable | When the container was created. |
+| `labels` | `map` | — | nullable | The container's labels, as the engine holds them. |
+
 ## Context — `ono.context/1`
 
 One frame of the context stack — where commands run and what narrows them.
@@ -572,6 +606,22 @@ Default view: `status`, `scheme`, `size`, `time`, `url`
 | `requested` | `timestamp` | — | required | When the exchange was decoded — its observation time. |
 | `body` | `bytes` | — | required | The response body, exactly as curl wrote it. |
 
+## Image — `ono.image/1`
+
+A container image as the engine that holds it reports it.
+
+Identity: `id`
+
+Default view: `reference`, `id`, `size`, `created`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The image's content digest, as `sha256:…`. |
+| `reference` | `string` | — | nullable | The image's first repository tag, as `nginx:1.27`; null for an untagged image. |
+| `tags` | `list<string>` | — | nullable | Every repository tag the image carries. |
+| `size` | `bytesize` | — | nullable | The image's size on disk, as the engine reports it. |
+| `created` | `timestamp` | — | nullable | When the image was built. |
+
 ## InterfaceAddress — `ono.interface-address/1`
 
 One address configured on a network interface.
@@ -836,6 +886,22 @@ Default view: `pid`, `process`, `fd`, `kind`, `name`
 | `kind` | `string` | — | required | What is open, as lsof classifies it — `REG`, `DIR`, `CHR`, `FIFO`, `unix`, `IPv4`, `IPv6`, …. |
 | `name` | `string` | — | required | What lsof prints in its NAME column — a path, a socket endpoint, a device. |
 | `path` | `path` | — | nullable | The name as a path, when the kind is a filesystem object. |
+
+## Package — `ono.package/1`
+
+A package the active package manager knows, installed or available.
+
+Identity: `provider`, `name`
+
+Default view: `name`, `version`, `installed`, `description`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `name` | `string` | — | required | The package name, as the manager spells it. |
+| `version` | `string` | — | nullable | The installed version; null for a package that is known but not installed. |
+| `installed` | `bool` | — | nullable | Whether the package is installed. Null when the manager could not say — never a guess (spec §35.3). |
+| `description` | `string` | — | nullable | The manager's one-line description, where the query that produced the record carried one. |
+| `provider` | `string` | — | required | The package manager that answered, such as `dpkg`; part of the identity. |
 
 ## PluginAuditEvent — `ono.plugin-audit-event/1`
 

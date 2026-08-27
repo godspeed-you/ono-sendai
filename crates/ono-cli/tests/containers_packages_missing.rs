@@ -397,7 +397,6 @@ fn ono_without_runtime(directory: &Scratch, script: &str) -> ono_testkit::Run {
 // --- containers: enumeration --------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_provider_unavailable_when_no_container_runtime_answers() {
     let directory = scratch();
     // Spec §43 / errors.yaml E0401: "no container runtime socket" is the provider's honest
@@ -411,7 +410,6 @@ fn should_report_provider_unavailable_when_no_container_runtime_answers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_provider_unavailable_when_no_runtime_answers_for_images() {
     let directory = scratch();
     let run = ono_without_runtime(&directory, "get image | to json");
@@ -423,7 +421,6 @@ fn should_report_provider_unavailable_when_no_runtime_answers_for_images() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_containers_from_the_engine_api_when_a_runtime_socket_answers() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -456,7 +453,6 @@ fn should_list_containers_from_the_engine_api_when_a_runtime_socket_answers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_images_from_the_engine_api_when_a_runtime_socket_answers() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -497,7 +493,6 @@ fn should_list_images_from_the_engine_api_when_a_runtime_socket_answers() {
 // --- containers: mutations -----------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_start_a_container_through_the_engine_api_when_the_runtime_accepts() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -513,7 +508,6 @@ fn should_start_a_container_through_the_engine_api_when_the_runtime_accepts() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_stop_a_container_through_the_engine_api_when_the_runtime_accepts() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -529,7 +523,6 @@ fn should_stop_a_container_through_the_engine_api_when_the_runtime_accepts() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_restart_a_container_through_the_engine_api_when_the_runtime_accepts() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -545,7 +538,6 @@ fn should_restart_a_container_through_the_engine_api_when_the_runtime_accepts() 
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_remove_a_container_through_the_engine_api_when_the_runtime_accepts() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -564,7 +556,6 @@ fn should_remove_a_container_through_the_engine_api_when_the_runtime_accepts() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_update_a_memory_limit_through_the_engine_api_when_setting_a_container() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -580,7 +571,6 @@ fn should_update_a_memory_limit_through_the_engine_api_when_setting_a_container(
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_not_found_when_stopping_a_container_the_runtime_does_not_know() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -597,7 +587,6 @@ fn should_fail_with_not_found_when_stopping_a_container_the_runtime_does_not_kno
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_permission_denied_when_the_runtime_refuses_the_stop() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Refusing);
@@ -613,7 +602,6 @@ fn should_fail_with_permission_denied_when_the_runtime_refuses_the_stop() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_name_the_provider_and_the_risk_when_explaining_a_container_stop() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -641,7 +629,6 @@ fn should_name_the_provider_and_the_risk_when_explaining_a_container_stop() {
 // --- containers: context, watch, trace ---------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_push_a_container_frame_when_entering_a_container() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -677,7 +664,6 @@ fn should_push_a_container_frame_when_entering_a_container() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pop_the_container_frame_when_leaving_it() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -702,7 +688,6 @@ fn should_pop_the_container_frame_when_leaving_it() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_begin_with_a_snapshot_when_watching_containers() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -721,7 +706,6 @@ fn should_begin_with_a_snapshot_when_watching_containers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_relate_a_container_to_its_image_when_tracing_it() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -832,7 +816,6 @@ fn ono_with_path(bin: &Path, script: &str) -> ono_testkit::Run {
 // --- packages: enumeration and search ----------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_provider_unavailable_when_no_package_manager_is_on_the_path() {
     let directory = scratch();
     let empty = directory.path().join("empty-bin");
@@ -851,7 +834,6 @@ fn should_report_provider_unavailable_when_no_package_manager_is_on_the_path() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_installed_packages_when_dpkg_query_answers_in_its_machine_format() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -878,7 +860,6 @@ fn should_list_installed_packages_when_dpkg_query_answers_in_its_machine_format(
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_resolve_one_package_when_getting_it_by_name() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -904,7 +885,6 @@ fn should_resolve_one_package_when_getting_it_by_name() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_search_the_repositories_when_finding_a_package() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -925,7 +905,6 @@ fn should_search_the_repositories_when_finding_a_package() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_a_schema_violation_when_the_manager_prints_garbage() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::Garbage);
@@ -945,7 +924,6 @@ fn should_report_a_schema_violation_when_the_manager_prints_garbage() {
 // --- packages: mutations --------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_permission_denied_when_adding_a_package_unprivileged() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -958,7 +936,6 @@ fn should_fail_with_permission_denied_when_adding_a_package_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_permission_denied_when_removing_a_package_unprivileged() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -973,7 +950,6 @@ fn should_fail_with_permission_denied_when_removing_a_package_unprivileged() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_fail_with_permission_denied_when_setting_a_package_version_unprivileged() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);
@@ -984,7 +960,6 @@ fn should_fail_with_permission_denied_when_setting_a_package_version_unprivilege
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_name_the_provider_and_the_privilege_when_explaining_a_package_install() {
     let directory = scratch();
     let bin = fake_managers(&directory, Listing::TwoPackages);

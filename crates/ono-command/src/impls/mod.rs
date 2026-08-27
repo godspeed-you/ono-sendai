@@ -175,7 +175,8 @@ fn implementation_of(
         | "ono.route.watch"
         | "ono.file.watch"
         | "ono.link.watch"
-        | "ono.host.watch" => Arc::new(watch::WatchCommand::new(id)),
+        | "ono.host.watch"
+        | "ono.container.watch" => Arc::new(watch::WatchCommand::new(id)),
         "ono.process.trace"
         | "ono.service.trace"
         | "ono.socket.trace"
@@ -186,7 +187,8 @@ fn implementation_of(
         | "ono.route.trace"
         | "ono.file.trace"
         | "ono.host.trace"
-        | "ono.link.trace" => Arc::new(trace::TraceCommand::new(id)),
+        | "ono.link.trace"
+        | "ono.container.trace" => Arc::new(trace::TraceCommand::new(id)),
         "ono.process.inspect" => Arc::new(inspect::InspectCommand::new(id)),
         "ono.context.get" => Arc::new(MetaCommand::new(id, meta::Kind::GetContext, registry)),
         "ono.meta.help" => Arc::new(MetaCommand::new(id, meta::Kind::Help, registry)),

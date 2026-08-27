@@ -27,10 +27,10 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `session` | system | `—` | C | A login or seat session. |
 | `env` | system | `ono.env-var/1` | C | The environment, as records rather than as a flat string namespace. |
 | `command` | system | `—` | D | A native or external command and its metadata, as discoverable data. |
-| `package` | system | `—` | planned | An installed or available package, through a package provider. |
+| `package` | system | `ono.package/1` | C | An installed or available package, through a package provider. |
 | `kernel` | system | `—` | planned | The running kernel, its version and its parameters. |
 | `module` | system | `—` | planned | A loaded kernel module. |
-| `container` | system | `—` | planned | A container, through an installed container provider. |
+| `container` | system | `ono.container/1` | C | A container, through an installed container provider. |
 | `namespace` | system | `—` | planned | A kernel namespace. Spec §8.3 lists a Kubernetes namespace under the same word; the two are distinguished by provider qualification — `get linux:namespace` and `get k8s:namespace`. |
 | `cgroup` | system | `—` | planned | A control group and its resource accounting. |
 | `journal` | system | `ono.journal-event/1` | C | The structured system journal. |
@@ -59,7 +59,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `pod` | infrastructure | `—` | planned | A Kubernetes pod. |
 | `node` | infrastructure | `—` | planned | A cluster node. |
 | `vm` | infrastructure | `—` | planned | A virtual machine. |
-| `image` | infrastructure | `—` | planned | A container or machine image. |
+| `image` | infrastructure | `ono.image/1` | C | A container or machine image. |
 | `volume` | infrastructure | `—` | planned | A storage volume managed by an infrastructure provider. |
 | `network` | infrastructure | `—` | planned | A managed virtual network. |
 | `secret` | infrastructure | `—` | planned | A managed secret. Values carry the secret semantic type: redacted by default, revealed only by an explicit action, and never entering history through renderer output (§17.5). |

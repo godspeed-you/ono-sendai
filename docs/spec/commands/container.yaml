@@ -1,6 +1,7 @@
 # Command family: Container. Sources: spec §9.1 Container and the `container` row of the §52
-# matrix. No phase of spec §37 delivers a container provider, so everything here is
-# `phase: planned` (ADR-0012). Conventions as documented at the head of process.yaml.
+# matrix. Delivered by the `container-engine` provider, which speaks the Docker Engine API over
+# the runtime's Unix socket — Docker and Podman both serve it — and never parses `docker ps`
+# (spec §23, §31.57, ADR-0112). Conventions as documented at the head of process.yaml.
 
 version: 1
 family: container
@@ -18,11 +19,14 @@ commands:
     selectors:
       - {name: id, type: string, doc: "Resolve one container by id or name."}
     options:
-      - {name: all, type: bool, doc: "Include containers that are not running."}
       - {name: provider, type: string, doc: "Query one named container provider."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
+    note: >-
+      Every container the engine knows is listed, running or not: the pipeline filters, as the
+      example shows, and a listing that hid stopped containers would be a `docker ps` habit, not
+      an enumeration (spec §5, ADR-0112).
     examples:
       - get container
       - get container | where state == running
@@ -41,7 +45,7 @@ commands:
     options: []
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - start container web-1
 
@@ -60,7 +64,7 @@ commands:
       - {name: timeout, type: duration, doc: "How long to wait for a graceful stop before forcing it."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - stop container web-1
 
@@ -78,25 +82,25 @@ commands:
     options: []
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - restart container web-1
 
   - id: ono.container.enter
     verb: enter
     target: container
-    summary: Push a container's execution context onto the context stack.
+    summary: Push a container's context onto the context stack.
     stability: stable
     argument_mode: words
     input: "null | ono.container/1"
     output: ono.context/1
     provider_capability: container.exec
     selectors:
-      - {name: id, type: string, doc: "The container to enter."}
+      - {name: name, type: string, doc: "The container to enter, by name or by id."}
     options: []
     privilege: conditional
     streaming: false
-    phase: planned
+    phase: C
     examples:
       - enter container web-1
 
@@ -115,7 +119,7 @@ commands:
       - {name: depth, type: int, doc: "How many relationship hops to follow."}
     privilege: conditional
     streaming: false
-    phase: planned
+    phase: C
     examples:
       - trace container web-1
 
@@ -134,7 +138,7 @@ commands:
       - {name: provider, type: string, doc: "Query one named container provider."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - get image
 
@@ -152,7 +156,7 @@ commands:
     options: []
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - watch container
 
@@ -172,7 +176,7 @@ commands:
       - {name: volumes, type: bool, doc: "Remove the container's anonymous volumes too."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - remove container web-1
 
@@ -192,6 +196,6 @@ commands:
       - {name: cpus, type: float, doc: "New CPU allowance."}
     privilege: conditional
     streaming: true
-    phase: planned
+    phase: C
     examples:
       - set container web-1 --memory 2GiB
