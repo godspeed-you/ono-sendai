@@ -30,27 +30,23 @@ impl CommandImpl for ProviderProducer {
 
     fn invoke(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
         // The query is built from the contract, so a new target is a new registry entry and no
-        // new code (ADR-0012, ADR-0021).
-        let mut query = ctx.contract().query(ctx.arguments())?;
-        for frame in ctx.context() {
-            // A filesystem frame's whole effect is the working directory it already changed
-            // (spec §14.2); only an object frame narrows what a provider is asked (§14.3).
-            if frame.kind() == crate::FrameKind::Object {
-                query = query.with(ambient_selector(ctx.contract(), ctx.providers(), frame)?);
-            }
-        }
+        // new code (ADR-0012, ADR-0021). What a context frame narrows is already in the
+        // arguments: the command table filled it in before this ran (spec §14.3, ADR-0076).
+        let query = ctx.contract().query(ctx.arguments())?;
         let stream = ctx.providers().snapshot(&query)?;
         Ok(Outcome::Values(stream))
     }
 }
 
-/// The implicit selector one context frame contributes to this query (spec §14.3, ADR-0023).
+/// The implicit selector one context frame contributes to a provider query, for a command that
+/// builds its query itself (spec §14.3, ADR-0023).
 ///
-/// Inside `enter service nginx`, `get process` asks for that service's processes — the frame
-/// becomes the selector `--service nginx.service` (spec §14.5). A query for the entered target
-/// itself narrows to that one object by name. A target whose schema cannot carry the frame's
-/// field is refused with the reason, because falling back to the whole machine would mean a
-/// command acting on state the user cannot see — exactly what spec §14.3 forbids.
+/// The command table already narrows the arguments of every command (ADR-0076); this is the
+/// query-level form `watch` still composes. A query for the entered target narrows to that one
+/// object by its identity fields; a query for another target narrows on the field named after
+/// the frame's target, and a target whose schema cannot carry it is refused with the reason,
+/// because falling back to the whole machine would mean a command acting on state the user
+/// cannot see — exactly what spec §14.3 forbids.
 pub(super) fn ambient_selector(
     contract: &crate::CommandContract,
     providers: &ono_provider_api::ProviderRegistry,
@@ -59,7 +55,19 @@ pub(super) fn ambient_selector(
     use ono_provider_api::Selector;
 
     if contract.target() == Some(frame.target()) {
-        return Ok(Selector::field("name", frame.identity().clone()));
+        let identity = contract.target().and_then(|target| {
+            providers
+                .for_target(target)
+                .iter()
+                .flat_map(|provider| provider.schemas())
+                .flat_map(|schema| schema.identity().to_vec())
+                .find_map(|field| {
+                    frame
+                        .handle(&field)
+                        .map(|value| Selector::field(field.to_string(), value.clone()))
+                })
+        });
+        return Ok(identity.unwrap_or_else(|| Selector::field("name", frame.identity().clone())));
     }
 
     // The schema that decides is the one the answering provider advertises, because that is the

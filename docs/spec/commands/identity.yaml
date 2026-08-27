@@ -268,8 +268,7 @@ commands:
     verb: enter
     target: user
     summary: Push a user onto the context stack.
-    stability: planned                    # spec §52, user/enter = "C?"
-    validation_required: true
+    stability: stable                     # spec §52, user/enter = "C?"; delivered by ADR-0075
     note: >-
       Not a privilege change. Spec §17.2's elevated context is a separate mechanism and must
       stay unmistakably distinct from entering a user object.
@@ -308,8 +307,7 @@ commands:
     verb: enter
     target: group
     summary: Push a group onto the context stack.
-    stability: planned                    # spec §52, group/enter = "C?"
-    validation_required: true
+    stability: stable                     # spec §52, group/enter = "C?"; delivered by ADR-0075
     argument_mode: words
     input: "null | ono.group/1"
     output: ono.context/1

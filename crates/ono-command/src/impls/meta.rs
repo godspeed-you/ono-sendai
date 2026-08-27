@@ -610,7 +610,12 @@ fn context_records(ctx: &Invocation<'_>) -> Vec<Value> {
         entry.insert("depth".into(), Value::Int(index as i128 + 1));
         entry.insert("kind".into(), Value::string(kind_name(frame)));
         entry.insert("target".into(), Value::string(frame.target()));
-        entry.insert("identity".into(), frame.identity().clone());
+        // context.v1 renders the identity the way the prompt shows it: as text, whatever the
+        // object's own identity type is.
+        entry.insert(
+            "identity".into(),
+            Value::string(&frame.identity().to_string()),
+        );
         // Everything a frame contributes can be written out explicitly (spec §14.5, ADR-0023).
         entry.insert(
             "selector".into(),

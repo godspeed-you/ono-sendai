@@ -372,7 +372,6 @@ fn should_report_a_finished_job_as_done_with_its_exit_status() {
 // --- enter process ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_push_an_object_frame_when_entering_a_process() {
     // context.v1: an entered object is a frame of kind `object` whose target names what was
     // entered and whose identity is rendered the way the prompt shows it.
@@ -403,7 +402,6 @@ fn should_push_an_object_frame_when_entering_a_process() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_narrow_get_process_to_the_entered_process() {
     // Spec §14.3: the object context provides an implicit selector; ADR-0023: a frame narrows.
     let run = ono("enter process 1; get process | select pid | to json");
@@ -423,7 +421,6 @@ fn should_narrow_get_process_to_the_entered_process() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_trace_the_entered_process_without_a_selector() {
     // Spec §14.3 again, for a command whose selector is otherwise mandatory. The entered process
     // is one the test owns, so a trace rooted anywhere else (say, at init) is visibly wrong.
@@ -449,7 +446,6 @@ fn should_trace_the_entered_process_without_a_selector() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pop_the_process_frame_when_leaving() {
     // Spec §14.1: `leave` pops the frame `enter` pushed — quietly, because there was one to pop.
     let run = ono("enter process 1; leave; get context | to json");
@@ -468,7 +464,6 @@ fn should_pop_the_process_frame_when_leaving() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_refuse_to_enter_a_process_that_does_not_exist() {
     let run = ono("enter process 4000000");
     assert!(

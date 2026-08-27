@@ -393,6 +393,32 @@ fn run_stage_list(
         }
     }
 
+    // `… | enter socket`: the object to enter arrives through the pipeline (spec §14.3). The
+    // stages before it run as the native pipeline they are, with their result kept for the
+    // frame instead of shown, and the last stage pushes the frame (ADR-0075).
+    if list.stages.len() > 1
+        && let Some(last) = list.stages.last()
+        && matches!(
+            crate::context::claims(last),
+            Some(crate::context::Request::Enter)
+        )
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        let head = &list.stages[..list.stages.len() - 1];
+        let prefix = StageList {
+            stages: head.to_vec(),
+            span: Span::new(
+                list.span.start(),
+                head.last()
+                    .map_or(list.span.end(), |stage| stage.span.end()),
+            ),
+        };
+        let values = crate::native::run_collecting(session, &prefix, source)?;
+        return crate::context::enter_piped(session, last, source, &values);
+    }
+
     // `enter` and `leave` change what later commands mean, which is session state: the same
     // reason `cd` runs in the shell (spec §14.1, ADR-0023).
     if list.stages.len() == 1

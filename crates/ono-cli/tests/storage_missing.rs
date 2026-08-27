@@ -608,7 +608,6 @@ fn should_report_not_found_when_tracing_a_path_that_is_no_mount_point() {
 // --- enter mount ------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_push_an_object_frame_when_entering_a_mount() {
     let run = ono("enter mount /; get context | to json");
     run.assert_success();
@@ -644,7 +643,6 @@ fn should_push_an_object_frame_when_entering_a_mount() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_keep_the_working_directory_when_entering_a_mount() {
     let directory = scratch();
     let run = Shell::new()
@@ -666,7 +664,6 @@ fn should_keep_the_working_directory_when_entering_a_mount() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_narrow_get_mount_to_the_entered_mount() {
     // Spec §14.3 / ADR-0023: the frame contributes an implicit selector, so `get mount` inside
     // `enter mount /` is `get mount /` — one record, the mount that was entered.
@@ -680,7 +677,6 @@ fn should_narrow_get_mount_to_the_entered_mount() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_pop_the_mount_frame_when_leaving() {
     let run =
         ono("enter mount /; get context | count | to json; leave; get context | count | to json");

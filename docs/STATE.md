@@ -150,6 +150,13 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## Next up (ordered)
 
+- [ ] `explain get process` inside a frame prints the narrowed spelling (`get process 1`,
+  `get process --user root`) — ADR-0023 promised it, ADR-0076 made the arguments available —
+  exit test: a context.rs case explaining inside `enter process 1`
+- [ ] `watch` composes `producer::ambient_selector` into its query on top of the narrowed
+  arguments of ADR-0076 §5; move it onto the argument seam and delete the query-level form —
+  exit test: a watch.rs case inside `enter process 1` (watch family)
+
 - [ ] `to bytes --field body` refuses a record ("a record has no raw byte form") although
   `--field` names the one bytes field to emit — the natural way to write an adapted `curl`
   body to a file (`adapt curl url | to bytes --field body > page.html`) — exit test: a
@@ -406,6 +413,13 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
   schema fields with their docs after `where`/`select` (ADR-0074) —
   `crates/ono-cli/tests/data_missing.rs` (15/15), `crates/ono-command/tests/
   completion_missing.rs` (6/6), case 036
+- [x] the context stack for every object target — `enter` of process/user/group/interface/
+  socket/mount/file by word or by pipe (`get socket 443 | enter socket`), frames narrowing
+  every later command at the command-table seam (`pid 1`, `--user root`, `--interface lo`,
+  `--port 443`), `--user`/`--group` honoured by the procfs provider, `--interface` declared on
+  `get route`, `--port` honoured by `trace socket` — ADR-0075, ADR-0076 — 24 tests un-ignored
+  in `crates/ono-cli/tests/{processes,identity,network,storage,files}_missing.rs`
+
 - [x] v0.3 step 1 — ADAPT-001 OutputDemand computed backwards from the consumer, reported
   by `explain` (ADR-0052) — cases 070, 071
 - [x] v0.3 step 2 — the `adapter.*` error family E0901–E0911 in `docs/spec/errors.yaml` and

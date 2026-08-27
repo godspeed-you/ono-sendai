@@ -264,8 +264,7 @@ commands:
     verb: enter
     target: file
     summary: Push a file onto the context stack as the active object.
-    stability: planned                    # spec §52, file/enter = "C?"
-    validation_required: true
+    stability: stable                     # spec §52, file/enter = "C?"; delivered by ADR-0075
     argument_mode: words
     input: "null | ono.file/1"
     output: ono.context/1

@@ -1235,7 +1235,7 @@ Push a file onto the context stack as the active object.
 | | |
 |---|---|
 | id | `ono.file.enter` |
-| stability | planned |
+| stability | stable |
 | phase | E |
 | input | `null | ono.file/1` |
 | output | `ono.context/1` |
@@ -1801,7 +1801,7 @@ Push a user onto the context stack.
 | | |
 |---|---|
 | id | `ono.user.enter` |
-| stability | planned |
+| stability | stable |
 | phase | E |
 | input | `null | ono.user/1` |
 | output | `ono.context/1` |
@@ -1849,7 +1849,7 @@ Push a group onto the context stack.
 | | |
 |---|---|
 | id | `ono.group.enter` |
-| stability | planned |
+| stability | stable |
 | phase | E |
 | input | `null | ono.group/1` |
 | output | `ono.context/1` |
@@ -2837,6 +2837,7 @@ Enumerate routing table entries.
 |---|---|---|
 | `--table` | `string` | Query one routing table instead of the main one. |
 | `--family` | `string` | Restrict to one address family. |
+| `--interface` | `string` | Restrict to routes over this interface — what `enter interface` fills in (spec §14.3). |
 
 **Examples**
 
@@ -3404,7 +3405,7 @@ Push an interface onto the context stack.
 | | |
 |---|---|
 | id | `ono.interface.enter` |
-| stability | planned |
+| stability | stable |
 | phase | E |
 | input | `null | ono.interface/1` |
 | output | `ono.context/1` |
@@ -3458,7 +3459,7 @@ Push a socket onto the context stack.
 | | |
 |---|---|
 | id | `ono.socket.enter` |
-| stability | planned |
+| stability | stable |
 | phase | E |
 | input | `null | ono.socket/1` |
 | output | `ono.context/1` |
@@ -3466,10 +3467,17 @@ Push a socket onto the context stack.
 | privilege | conditional |
 | arguments | parsed in words mode (ADR-0009) |
 
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `port` | `port` | The socket bound to or connected on this port; the first that answers is entered. |
+
 **Examples**
 
 ```text
 get socket | take 1 | enter socket
+enter socket 443
 ```
 
 ## package
@@ -3671,6 +3679,7 @@ Enumerate or resolve processes.
 | name | type | meaning |
 |---|---|---|
 | `--user` | `ref<ono.user/1>` | Restrict to processes of one user. |
+| `--group` | `ref<ono.group/1>` | Restrict to processes whose effective group is this one. |
 | `--tree` | `bool` | Emit the parent/child structure rather than a flat stream. |
 
 **Examples**
@@ -3883,7 +3892,7 @@ Push a process onto the context stack so later commands need no selector.
 | | |
 |---|---|
 | id | `ono.process.enter` |
-| stability | planned |
+| stability | stable |
 | phase | E |
 | input | `null | ono.process/1` |
 | output | `ono.context/1` |
@@ -5203,7 +5212,7 @@ Push a mount onto the context stack.
 | | |
 |---|---|
 | id | `ono.mount.enter` |
-| stability | planned |
+| stability | stable |
 | phase | E |
 | input | `null | ono.mount/1` |
 | output | `ono.context/1` |

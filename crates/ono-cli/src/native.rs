@@ -422,6 +422,23 @@ pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitSt
     run_from(session, list, source, 0, None)
 }
 
+/// Runs a native pipeline and answers its values instead of showing them.
+///
+/// What `… | enter socket` needs (spec §14.3, ADR-0075): the object the stages before `enter`
+/// produced, without a table on the way. Nothing is retained for `@-1` either — a result that
+/// was never shown is not one the user can point at.
+///
+/// # Errors
+///
+/// Exactly what [`run`] reports.
+pub fn run_collecting(session: &mut Session, list: &StageList, source: &str) -> Eval<Vec<Value>> {
+    session.begin_capture();
+    let outcome = run_from(session, list, source, 0, None);
+    let captured = session.end_capture();
+    outcome?;
+    Ok(captured)
+}
+
 /// Backgrounds a native pipeline as a job (spec §18.4, ADR-0024).
 ///
 /// The stream chain is built exactly as a foreground run builds it, then driven by a task on the

@@ -58,6 +58,10 @@ pub struct BoundArguments {
     spelling: String,
     selectors: Vec<(String, Binding)>,
     options: Vec<(String, Binding)>,
+    /// Narrowing conditions a context frame contributed on a field the command declares no
+    /// parameter for (spec §14.3, ADR-0076). They reach the provider as selectors and nothing
+    /// else — an implementation reading its declared parameters never sees them.
+    ambient: Vec<(String, Value)>,
 }
 
 impl BoundArguments {
@@ -113,6 +117,41 @@ impl BoundArguments {
     #[must_use]
     pub fn option_expression(&self, name: &str) -> Option<&Expr> {
         self.option_binding(name).and_then(Binding::expression)
+    }
+
+    /// The selectors a context frame contributed on fields no parameter declares.
+    #[must_use]
+    pub fn ambient(&self) -> &[(String, Value)] {
+        &self.ambient
+    }
+
+    /// These arguments with `name` bound to `value` as a selector, unless it is bound already.
+    ///
+    /// What was typed wins over what a context fills in: a frame supplies the arguments the user
+    /// did not write, never overrides the ones they did (spec §14.5, ADR-0076).
+    #[must_use]
+    pub fn with_selector(mut self, name: &str, value: Value) -> Self {
+        if find(&self.selectors, name).is_none() {
+            self.selectors
+                .push((name.to_owned(), Binding::Value(value)));
+        }
+        self
+    }
+
+    /// These arguments with `name` bound to `value` as an option, unless it is bound already.
+    #[must_use]
+    pub fn with_option(mut self, name: &str, value: Value) -> Self {
+        if find(&self.options, name).is_none() {
+            self.options.push((name.to_owned(), Binding::Value(value)));
+        }
+        self
+    }
+
+    /// These arguments with an ambient narrowing on `field`.
+    #[must_use]
+    pub fn with_ambient(mut self, field: &str, value: Value) -> Self {
+        self.ambient.push((field.to_owned(), value));
+        self
     }
 
     /// Whether a boolean option was given and is true.
@@ -270,6 +309,7 @@ impl CommandContract {
             spelling: self.spelling(),
             selectors: merge(selectors, self.selectors()),
             options: merge(options, self.options()),
+            ambient: Vec::new(),
         })
     }
 
@@ -465,6 +505,9 @@ impl CommandContract {
             if let Some(value) = binding.value() {
                 query = query.option(name, value.clone());
             }
+        }
+        for (field, value) in arguments.ambient() {
+            query = query.with(ono_provider_api::Selector::field(field, value.clone()));
         }
         Ok(query)
     }

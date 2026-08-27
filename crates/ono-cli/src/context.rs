@@ -8,7 +8,6 @@
 use ono_command::ContextFrame;
 use ono_core::{ErrorCode, ExitStatus};
 use ono_parser::{Stage, StageHead};
-use ono_provider_api::{Query, Selector};
 use ono_value::{ErrorValue, Value};
 
 use crate::eval::{Eval, Flow};
@@ -105,14 +104,7 @@ pub fn enter(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
             "`enter dir` needs a directory",
         ))),
         ("link", Some(name)) => enter_link(session, name),
-        (target, Some(identity)) => enter_object(session, target, identity),
-        (target, None) => Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::ResolveTargetNotFound,
-                format!("`enter {target}` needs the identity of the object to enter"),
-            )
-            .with_help(format!("`enter {target} <name>` (spec §14.3)")),
-        )),
+        (target, _) => enter_object(session, stage, target),
     }
 }
 
@@ -164,7 +156,11 @@ fn enter_link(session: &mut Session, name: String) -> Eval<ExitStatus> {
 
 /// Spec §14.3: entering an object is a statement about a real object, so the object is resolved
 /// first — a frame that narrowed every later query to nothing would be worse than an error now.
-fn enter_object(session: &mut Session, target: &str, identity: String) -> Eval<ExitStatus> {
+///
+/// The object is named the way the `enter <target>` contract declares — `pid` for a process,
+/// `path` for a file, `target` for a mount — and the provider that serves the target answers
+/// (ADR-0075).
+fn enter_object(session: &mut Session, stage: &Stage, target: &str) -> Eval<ExitStatus> {
     let registry = crate::native::registry().map_err(Flow::Failed)?;
     let contract = registry.find("enter", Some(target)).ok_or_else(|| {
         Flow::Failed(
@@ -175,20 +171,35 @@ fn enter_object(session: &mut Session, target: &str, identity: String) -> Eval<E
             .with_help("`help enter` lists the targets that carry a context"),
         )
     })?;
-    if contract.stability() != ono_command::Stability::Stable {
+    let resolved = registry
+        .resolve("enter", &stage.arguments)
+        .map_err(Flow::Failed)?;
+    let bound = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
+    if bound.selectors().is_empty() {
+        let help = match contract.selectors().first() {
+            Some(selector) => format!(
+                "`enter {target} <{}>` (spec §14.3), or pipe the object in: `get {target} … | \
+                 enter {target}`",
+                selector.name()
+            ),
+            None => format!("pipe the object in: `get {target} … | enter {target}` (spec §14.3)"),
+        };
         return Err(Flow::Failed(
             ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
-                format!(
-                    "`enter {target}` is declared but not delivered ({})",
-                    contract.stability()
-                ),
+                format!("`enter {target}` needs the identity of the object to enter"),
             )
-            .with_help("spec §52 asks for its usefulness to be validated first"),
+            .with_help(help),
         ));
     }
+    let asked = bound
+        .selectors()
+        .iter()
+        .filter_map(|(name, binding)| binding.value().map(|value| format!("{name} {value}")))
+        .collect::<Vec<_>>()
+        .join(" ");
 
-    let query = Query::target(target).with(Selector::field("name", Value::string(&identity)));
+    let query = contract.query(&bound).map_err(Flow::Failed)?;
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -200,28 +211,136 @@ fn enter_object(session: &mut Session, target: &str, identity: String) -> Eval<E
         .block_on(async { Ok::<_, ErrorValue>(providers.snapshot(&query)?.collect().await) })
         .map_err(Flow::Failed)?;
 
-    let Some(found) = collected.values().first() else {
+    let found = collected
+        .values()
+        .iter()
+        .find_map(|value| value.as_record().ok().cloned());
+    let Some(record) = found else {
         if let Some(failure) = collected.errors().first() {
             return Err(Flow::Failed(failure.clone()));
         }
         return Err(Flow::Failed(
             ErrorValue::new(
                 ErrorCode::ResolveTargetNotFound,
-                format!("no {target} answers to `{identity}`"),
+                format!("no {target} answers to `{asked}`"),
             )
             .with_help(format!("`get {target}` shows what exists")),
         ));
     };
+    enter_record(session, target, &record)
+}
 
-    // The identity kept is the one the object itself reports — `nginx` normalises to
-    // `nginx.service` — so the prompt and the implicit selector agree with the provider.
-    let identity = found
-        .as_record()
-        .ok()
-        .and_then(|record| record.get("name").cloned())
-        .unwrap_or_else(|| Value::string(&identity));
+/// Runs `… | enter <target>`: the object arrives through the pipeline (spec §14.3, ADR-0075).
+///
+/// # Errors
+///
+/// `resolve.target_not_found` when nothing arrived, or the first value is not an object of the
+/// named target.
+pub fn enter_piped(
+    session: &mut Session,
+    stage: &Stage,
+    source: &str,
+    values: &[Value],
+) -> Eval<ExitStatus> {
+    let words = crate::eval::stage_arguments(session, stage, source)?;
+    let Some(target) = words
+        .first()
+        .map(|word| word.to_string_lossy().into_owned())
+    else {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                "`enter` needs a target: what should be entered?",
+            )
+            .with_help("`get socket 443 | enter socket` (spec §14.3)"),
+        ));
+    };
+    let registry = crate::native::registry().map_err(Flow::Failed)?;
+    if registry.find("enter", Some(&target)).is_none() {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                format!("nothing declared can be entered as `{target}`"),
+            )
+            .with_help("`help enter` lists the targets that carry a context"),
+        ));
+    }
+    let expected = format!("ono.{target}");
+    let record = values
+        .iter()
+        .find_map(|value| value.as_record().ok().cloned())
+        .filter(|record| record.schema_id().name() == expected);
+    let Some(record) = record else {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                format!("nothing arrived that `enter {target}` could enter"),
+            )
+            .with_help(format!(
+                "pipe one `{expected}/1` object in, as in `get {target} … | take 1 | enter {target}`"
+            )),
+        ));
+    };
+    enter_record(session, &target, &record)
+}
+
+/// Pushes the frame for an object that exists.
+///
+/// The identity kept is the one the object itself reports for the handle `enter` takes —
+/// `nginx` normalises to `nginx.service` — so the prompt and the implicit selector agree with
+/// the provider. A target entered only through the pipeline is shown by its first identity
+/// field (ADR-0075).
+fn enter_record(
+    session: &mut Session,
+    target: &str,
+    record: &ono_value::RecordValue,
+) -> Eval<ExitStatus> {
+    let registry = crate::native::registry().map_err(Flow::Failed)?;
+    let handle = registry.find("enter", Some(target)).and_then(|contract| {
+        contract
+            .selectors()
+            .first()
+            .map(|spec| spec.name().to_owned())
+    });
+    let frame = ContextFrame::of_record(target, Value::Null, record);
+    let identity = handle
+        .as_deref()
+        .and_then(|field| {
+            // A handle that lives inside a structural sub-record — a socket's port inside its
+            // local endpoint — names the whole endpoint: `127.0.0.1:443` is how the prompt
+            // shows the socket, and the port alone is not.
+            if record.get(field).is_none()
+                && let Some(endpoint) = record.schema().fields().iter().find_map(|top| match record
+                    .get(top.name())
+                {
+                    Some(Value::Record(nested)) if nested.get(field).is_some() => Some(nested),
+                    _ => None,
+                })
+            {
+                let rendered: Vec<String> = endpoint
+                    .schema()
+                    .fields()
+                    .iter()
+                    .filter_map(|nested| match endpoint.get(nested.name()) {
+                        Some(Value::Null) | None => None,
+                        Some(value) => Some(value.to_string()),
+                    })
+                    .collect();
+                return Some(Value::string(&rendered.join(":")));
+            }
+            frame.handle(field).cloned()
+        })
+        .or_else(|| {
+            record
+                .schema()
+                .identity()
+                .iter()
+                .find_map(|field| frame.handle(field).cloned())
+        })
+        .unwrap_or_else(|| Value::string(&record.identity().to_string()));
+    let frame = ContextFrame::of_record(target, identity, record);
     session.push_frame(ShellFrame {
-        frame: ContextFrame::new(target, identity),
+        frame,
         restore_cwd: None,
     });
     Ok(ExitStatus::SUCCESS)
