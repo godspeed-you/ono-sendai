@@ -1,0 +1,15 @@
+# The provider that answers over the Docker Engine API from whichever runtime socket answers —
+# Docker's or Podman's, found through DOCKER_HOST / CONTAINER_HOST or the well-known paths
+# (ADR-0112). Registered even where no runtime answers: unavailability naming the sockets tried
+# is a different answer from "there are no containers" (spec §35.3). See linux-procfs.yaml for
+# what this registry is and what enforces it.
+
+providers:
+  - id: container-engine
+    doc: >-
+      Containers and images, from `GET /containers/json`, `GET /containers/{id}/json` and
+      `GET /images/json` over the runtime's Unix socket — never from `docker ps` (spec §23,
+      §31.57).
+    targets: [container, image]
+    capabilities: [container.list, image.list]
+    schemas: [ono.container/1, ono.image/1]

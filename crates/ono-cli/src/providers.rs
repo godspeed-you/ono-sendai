@@ -24,13 +24,23 @@ pub fn registry_with_tables(
     tables: Arc<std::sync::Mutex<crate::session_provider::SessionTables>>,
 ) -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
+    let environment: Vec<(String, String)> = environment.into_iter().collect();
 
     ono_provider_linux::register(
         &mut registry,
         environment
-            .into_iter()
+            .iter()
             .map(|(name, value)| ono_provider_linux::EnvBinding::inherited(name, value)),
     );
+    // The container runtime is found the way `docker` and `podman` find it: through
+    // DOCKER_HOST / CONTAINER_HOST, or the well-known sockets (ADR-0112).
+    registry.register(Arc::new(
+        ono_provider_container::ContainerProvider::from_environment(
+            environment
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        ),
+    ));
 
     registry.register(Arc::new(ono_provider_netlink::InterfaceProvider::new()));
     registry.register(Arc::new(ono_provider_netlink::RouteProvider::new()));

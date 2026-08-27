@@ -1,0 +1,43 @@
+# Canonical Container schema. Source: spec §9.1 Container (`Stream<Container>`) and §8.3. The
+# fields are what the engine API reports for a container — Docker's and Podman's `GET
+# /containers/json` and `GET /containers/{id}/json` — never what `docker ps` prints (spec §23,
+# §31.57, ADR-0112). Identity is the engine's full container id; the name is a label the engine
+# lets a user change, so it is not identity. Unknown is null, never fabricated (spec §35.3).
+id: ono.container/1
+name: Container
+summary: A container as the engine that runs it reports it.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The engine's full container id.
+  name:
+    type: string
+    nullable: true
+    doc: The container's first name, without the leading slash the engine API carries.
+  image:
+    type: string
+    nullable: true
+    doc: The image reference the container was created from, as `nginx:1.27`.
+  image_id:
+    type: string
+    nullable: true
+    doc: The content digest of that image — the identity of the `ono.image/1` it relates to.
+  state:
+    type: enum
+    required: true
+    values: [created, running, paused, restarting, removing, exited, dead, stopping, stopped, configured, unknown]
+    doc: >-
+      The engine's lifecycle state. The values are Docker's, plus the ones Podman adds; a state
+      this shell does not model is `unknown`, never a guess (spec §10.5).
+  created:
+    type: timestamp
+    nullable: true
+    doc: When the container was created.
+  labels:
+    type: map
+    nullable: true
+    doc: The container's labels, as the engine holds them.
+default_view:
+  columns: [id, name, image, state, created]

@@ -14,7 +14,7 @@ Enumerate containers through the installed provider or providers.
 |---|---|
 | id | `ono.container.get` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null` |
 | output | `stream<ono.container/1>` |
 | provider capability | `container.list` |
@@ -31,7 +31,6 @@ Enumerate containers through the installed provider or providers.
 
 | name | type | meaning |
 |---|---|---|
-| `--all` | `bool` | Include containers that are not running. |
 | `--provider` | `string` | Query one named container provider. |
 
 **Examples**
@@ -49,7 +48,7 @@ Start a container.
 |---|---|
 | id | `ono.container.start` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.container/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `container.manage` |
@@ -76,7 +75,7 @@ Stop a container.
 |---|---|
 | id | `ono.container.stop` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.container/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `container.manage` |
@@ -109,7 +108,7 @@ Restart a container.
 |---|---|
 | id | `ono.container.restart` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.container/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `container.manage` |
@@ -130,13 +129,13 @@ restart container web-1
 
 ### `enter container`
 
-Push a container's execution context onto the context stack.
+Push a container's context onto the context stack.
 
 | | |
 |---|---|
 | id | `ono.container.enter` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null | ono.container/1` |
 | output | `ono.context/1` |
 | provider capability | `container.exec` |
@@ -147,7 +146,7 @@ Push a container's execution context onto the context stack.
 
 | name | type | meaning |
 |---|---|---|
-| `id` | `string` | The container to enter. |
+| `name` | `string` | The container to enter, by name or by id. |
 
 **Examples**
 
@@ -163,7 +162,7 @@ Show a container's namespaces, cgroups, mounts, processes, sockets and image.
 |---|---|
 | id | `ono.container.trace` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null | ono.container/1` |
 | output | `ono.graph/1` |
 | provider capability | `container.trace` |
@@ -196,7 +195,7 @@ Enumerate container images.
 |---|---|
 | id | `ono.image.get` |
 | stability | stable |
-| phase | planned |
+| phase | C |
 | input | `null` |
 | output | `stream<ono.image/1>` |
 | provider capability | `image.list` |
@@ -229,7 +228,7 @@ Emit container lifecycle events as a live stream.
 |---|---|
 | id | `ono.container.watch` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null` |
 | output | `stream<ono.container-event/1>` |
 | provider capability | `container.list` |
@@ -256,7 +255,7 @@ Remove a container.
 |---|---|
 | id | `ono.container.remove` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.container/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `container.manage` |
@@ -290,7 +289,7 @@ Change a container's mutable configuration, such as its resource limits.
 |---|---|
 | id | `ono.container.set` |
 | stability | experimental |
-| phase | planned |
+| phase | C |
 | input | `null | stream<ono.container/1>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `container.manage` |

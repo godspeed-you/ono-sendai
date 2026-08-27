@@ -397,7 +397,6 @@ fn ono_without_runtime(directory: &Scratch, script: &str) -> ono_testkit::Run {
 // --- containers: enumeration --------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_provider_unavailable_when_no_container_runtime_answers() {
     let directory = scratch();
     // Spec §43 / errors.yaml E0401: "no container runtime socket" is the provider's honest
@@ -411,7 +410,6 @@ fn should_report_provider_unavailable_when_no_container_runtime_answers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_report_provider_unavailable_when_no_runtime_answers_for_images() {
     let directory = scratch();
     let run = ono_without_runtime(&directory, "get image | to json");
@@ -423,7 +421,6 @@ fn should_report_provider_unavailable_when_no_runtime_answers_for_images() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_containers_from_the_engine_api_when_a_runtime_socket_answers() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);
@@ -456,7 +453,6 @@ fn should_list_containers_from_the_engine_api_when_a_runtime_socket_answers() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_list_images_from_the_engine_api_when_a_runtime_socket_answers() {
     let directory = scratch();
     let runtime = FakeRuntime::start(&directory, Runtime::Accepting);

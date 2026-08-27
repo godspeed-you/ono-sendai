@@ -111,7 +111,7 @@ fn should_register_a_producer_for_every_delivered_target() {
 #[test]
 fn should_not_register_a_command_whose_phase_has_not_been_delivered() {
     let table = table();
-    for id in ["ono.plugin.install", "ono.host.link", "ono.container.get"] {
+    for id in ["ono.plugin.install", "ono.host.link"] {
         assert!(
             !table.contains(id),
             "`{id}` is scheduled for a later phase, and a stub would be worse than an honest \
@@ -164,6 +164,10 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             "ono.config.get",
             "ono.config.set",
             // The context stack of spec §14.1 is the session's too.
+            "ono.container.enter",
+            // `trace container` is bound by the increment that adds its relationship
+            // provider (ADR-0114); until then it is honestly absent.
+            "ono.container.trace",
             "ono.dir.enter",
             // Nothing claims the `dns` or `port` targets, so there is no provider to ask.
             "ono.dns.resolve",

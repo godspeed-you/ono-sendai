@@ -93,6 +93,16 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [containers | 2026-08-27] **container and package families** (`crates/ono-cli/tests/containers_packages_missing.rs`)
+  on branch `implementation-containers` — files: `crates/ono-provider-container/`,
+  `crates/ono-provider-linux/src/packages.rs`, `crates/ono-graph/src/kernel/container.rs`,
+  `crates/ono-command/src/impls/{mod,meta}.rs`, `crates/ono-cli/src/providers.rs`,
+  `docs/spec/commands/{container,package}.yaml`, `docs/spec/schemas/{container,image,package,container-event}.v1.yaml`,
+  `docs/spec/providers/{container-engine,linux-packages}.yaml`, acceptance case
+  `046-containers-and-packages`. ADR-0112–0115.
+  Increment 1 done: `ono-provider-container` — the engine API over the runtime's Unix socket,
+  `get container`/`get image`, E0401 naming the sockets tried (4 tests green, ADR-0112).
+
 - [meta | 2026-08-27] **meta family** (`crates/ono-cli/tests/meta_config_missing.rs`, plus the
   `--human` and uid/gid cases of `options_and_selectors_missing.rs`) on branch
   `implementation-meta` — files: `crates/ono-cli/src/{meta,resolve,settings,config,eval,native}.rs`,
