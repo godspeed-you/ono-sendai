@@ -270,6 +270,56 @@ fn should_descend_through_a_symlinked_directory_when_follow_symlinks_is_set() {
     );
 }
 
+#[test]
+fn should_list_a_directory_under_every_symlink_that_reaches_it_when_follow_symlinks_is_set() {
+    // ADR-0083 §3 / ADR-0120: following symlinks lists a directory by every name it is reached
+    // by. A guard that remembered every directory ever visited let whichever of `aaa`, `sub`
+    // and `zzz` readdir yielded first win — and readdir order differs between filesystems.
+    let dir = scratch();
+    dir.write("sub/c.md", "c\n");
+    for link in ["aaa", "zzz"] {
+        std::os::unix::fs::symlink(dir.path().join("sub"), dir.path().join(link))
+            .expect("a symlink inside the scratch directory");
+    }
+    let run = ono(&format!(
+        "find file {} --follow-symlinks | select path | to json",
+        dir.path().display()
+    ));
+    run.assert_success();
+    let paths: Vec<String> = rows(&run).iter().map(|row| text(row, "path")).collect();
+    for reached in ["/aaa/c.md", "/sub/c.md", "/zzz/c.md"] {
+        assert!(
+            paths.iter().any(|path| path.ends_with(reached)),
+            "`--follow-symlinks` lists `c.md` under every name that reaches `sub`, but \
+             {reached} is missing from {paths:?}"
+        );
+    }
+}
+
+#[test]
+fn should_cut_a_symlink_cycle_when_follow_symlinks_is_set() {
+    // ADR-0120: a cycle is a directory that is one of its own ancestors on the current walk
+    // path. `sub/back -> ..` is listed as the entry it is and never descended into.
+    let dir = scratch();
+    dir.write("sub/c.md", "c\n");
+    std::os::unix::fs::symlink(dir.path(), dir.path().join("sub").join("back"))
+        .expect("a symlink inside the scratch directory");
+    let run = ono(&format!(
+        "find file {} --follow-symlinks | select path | to json",
+        dir.path().display()
+    ));
+    run.assert_success();
+    let paths: Vec<String> = rows(&run).iter().map(|row| text(row, "path")).collect();
+    assert!(
+        paths.iter().any(|path| path.ends_with("/sub/back")),
+        "the cycling link is still an entry, got {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|path| path.contains("/sub/back/")),
+        "nothing is listed beneath the link that closes the cycle, got {paths:?}"
+    );
+}
+
 // --- get filesystem --mounted ----------------------------------------------------------------
 
 #[test]

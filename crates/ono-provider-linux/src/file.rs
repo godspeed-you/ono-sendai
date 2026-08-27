@@ -471,13 +471,15 @@ async fn walk_root(
     // redirected out of the tree by a swapped component (T14): a symlink appearing anywhere in
     // the recorded path makes the open fail loudly instead of following it. At most two
     // descriptors are ever held: the root, and the directory being read.
-    let mut queue: VecDeque<(PathBuf, PathBuf, usize)> = VecDeque::new();
-    queue.push_back((PathBuf::new(), root_path.to_path_buf(), 0));
-    // With `--follow-symlinks` a directory can be reached by more than one name, and a link
-    // can point at its own ancestor: each directory is listed once, by `(device, inode)`.
-    let mut visited: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::new();
+    // With `--follow-symlinks` a directory can be reached by more than one name, and each name
+    // lists it; a link can also point at its own ancestor, and that is the one thing not
+    // descended into. So every queued directory carries the `(device, inode)` chain of the
+    // directories above it on its own walk path — not a set of everything visited, which would
+    // let readdir order decide which of two names to a directory gets listed (ADR-0120).
+    let mut queue: VecDeque<(PathBuf, PathBuf, usize, Vec<(u64, u64)>)> = VecDeque::new();
+    queue.push_back((PathBuf::new(), root_path.to_path_buf(), 0, Vec::new()));
 
-    while let Some((relative, path, depth)) = queue.pop_front() {
+    while let Some((relative, path, depth, mut ancestors)) = queue.pop_front() {
         let fd = if relative.as_os_str().is_empty() {
             match root.try_clone() {
                 Ok(fd) => fd,
@@ -517,9 +519,12 @@ async fn walk_root(
         };
         if request.follow_symlinks
             && let Ok(stat) = nix::sys::stat::fstat(&fd)
-            && !visited.insert((stat.st_dev, stat.st_ino))
         {
-            continue;
+            let this = (stat.st_dev, stat.st_ino);
+            if ancestors.contains(&this) {
+                continue;
+            }
+            ancestors.push(this);
         }
         let names = match entry_names(&fd, &path) {
             Ok(names) => names,
@@ -563,7 +568,12 @@ async fn walk_root(
                 }
             };
             if kind == "dir" && depth + 1 < request.max_depth {
-                queue.push_back((relative.join(&name), child_path, depth + 1));
+                queue.push_back((
+                    relative.join(&name),
+                    child_path,
+                    depth + 1,
+                    ancestors.clone(),
+                ));
             }
         }
     }
