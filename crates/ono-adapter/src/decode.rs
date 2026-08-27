@@ -945,6 +945,10 @@ fn curl_exchange_v1(bytes: &[u8], observed: jiff::Timestamp) -> Result<Vec<Item>
             (*column).to_owned(),
             if part.is_empty() {
                 Json::Null
+            } else if *column == "scheme" {
+                // curl before 8.x writes `%{scheme}` in upper case; the record's scheme is
+                // canonical whichever curl wrote it.
+                Json::String(part.to_ascii_lowercase())
             } else {
                 Json::String(part.to_owned())
             },

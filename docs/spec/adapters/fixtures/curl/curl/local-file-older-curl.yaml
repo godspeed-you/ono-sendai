@@ -1,0 +1,8 @@
+# curl before 8.x writes `%{scheme}` in upper case (`FILE`, `HTTP`); the record carries the
+# scheme in its canonical lower-case form whichever curl wrote it.
+invocation: [curl, "file:///etc/hostname"]
+tool_version: "7.88.1"
+distro: debian
+expect:
+  records:
+    - {url: "file:///etc/hostname", scheme: file, status: null, content_type: null, size: "5B", time: "322000ns", remote_address: null, remote_port: null, redirects: 0, body: "deck\n"}
