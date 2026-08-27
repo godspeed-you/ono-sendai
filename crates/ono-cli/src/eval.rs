@@ -1462,6 +1462,7 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
                 })?;
             Ok(Value::Ip(address))
         }
+        Expr::Timestamp(literal) => Ok(Value::parse_timestamp(&literal.text)?),
         Expr::Regex(literal) => {
             // Flags become an inline group, which is how the regex engine spells them and keeps
             // the pattern one thing rather than a pattern plus a side channel.
@@ -1528,13 +1529,22 @@ pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval
             let key = eval_expr(session, &index.index, source)?;
             Ok(index_into(&base, &key)?)
         }
-        Expr::Call(call) => Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::ResolveCommandNotFound,
-                format!("no function to call at {}", call.span),
-            )
-            .with_help("user functions arrive with the module system of spec §19.6"),
-        )),
+        Expr::Call(call) => {
+            // `now()` is the one builtin function language.yaml declares (spec §6.3, ADR-0071).
+            if ono_command::is_now_call(call) {
+                return Ok(Value::now());
+            }
+            Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::ResolveCommandNotFound,
+                    format!("no function to call at {}", call.span),
+                )
+                .with_help(
+                    "`now()` is the only function an expression can call; a user function is \
+                     called as a command (spec §19.3, ADR-0070)",
+                ),
+            ))
+        }
         Expr::CurrentValue(current) => match current.selector {
             // Spec §20.2: previous structured results are reusable without screen scraping. A
             // list splices when it starts a pipeline (ADR-0019), so `@-1 | where …` streams the

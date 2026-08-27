@@ -13,8 +13,8 @@ use crate::ast::{
     IfBranch, IfStmt, IndexExpr, LetStmt, ListExpr, MatchArm, MatchArmBody, MatchStmt, NumberLit,
     NumberValue, OptionArg, Param, ParenInner, ParenValue, Pattern, Pipeline, Program,
     QualifiedName, RecordExpr, RecordField, RecordKey, RedirectOp, RedirectTarget, Redirection,
-    RegexLit, ReturnStmt, Stage, StageHead, StageList, Statement, StrLit, StrPart, TryStmt,
-    TypeRef, UnaryExpr, UnaryOp, UnitLit, UseStmt, Variable, WhileStmt, WordArg,
+    RegexLit, ReturnStmt, Stage, StageHead, StageList, Statement, StrLit, StrPart, TimestampLit,
+    TryStmt, TypeRef, UnaryExpr, UnaryOp, UnitLit, UseStmt, Variable, WhileStmt, WordArg,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{LexMode, Token, TokenKind, is_ident_continue, is_ident_start, next_token};
@@ -1695,6 +1695,13 @@ impl Parser<'_> {
             | TokenKind::RawStr
             | TokenKind::UnterminatedStr
             | TokenKind::UnterminatedRawStr => self.parse_string(token),
+            TokenKind::Timestamp => {
+                self.bump(LexMode::ExprOperand);
+                Expr::Timestamp(TimestampLit {
+                    text: token.text(self.source).to_owned(),
+                    span: token.span,
+                })
+            }
             TokenKind::Ip => {
                 self.bump(LexMode::ExprOperand);
                 Expr::Ip(crate::ast::IpLit {

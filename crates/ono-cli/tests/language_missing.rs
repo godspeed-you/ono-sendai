@@ -268,7 +268,6 @@ fn should_name_the_alias_and_its_expansion_when_explain_inspects_the_resolution(
 // --- now() and the timestamp literal (spec §6.3, language.yaml `builtin_functions`) --------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_evaluate_now_to_a_timestamp() {
     let run = ono("let t = (now()); $t | type | to json");
     run.assert_success();
@@ -283,7 +282,6 @@ fn should_evaluate_now_to_a_timestamp() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_compare_a_file_time_against_now_plus_a_duration() {
     let dir = scratch();
     let file = dir.write("f.txt", "x");
@@ -308,7 +306,6 @@ fn should_compare_a_file_time_against_now_plus_a_duration() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_compare_a_file_time_against_an_iso_8601_literal() {
     let dir = scratch();
     let file = dir.write("f.txt", "x");
@@ -328,7 +325,6 @@ fn should_compare_a_file_time_against_an_iso_8601_literal() {
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_type_an_iso_8601_literal_as_a_timestamp() {
     let run = ono("let t = (2000-01-01T00:00:00Z); $t | type | to json");
     run.assert_success();

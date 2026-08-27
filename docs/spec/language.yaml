@@ -178,6 +178,12 @@ literals:
     doc: >-
       A regex literal only in expression mode at operand position. In words mode `/etc/passwd`
       is a path word.
+  timestamp:
+    form: "2000-01-01T00:00:00Z"
+    doc: >-
+      An instant, in the RFC 3339 profile of ISO 8601 (spec §6.3 dates, §10.2): a full date, `T`,
+      a time and a zone. Only in expression operand position; a date alone is not a literal
+      (ADR-0071).
   boolean: {forms: ["true", "false"]}
   null: {forms: ["null"], doc: "Unknown or unavailable data. Never fabricated and never zero (spec §10.5)."}
 

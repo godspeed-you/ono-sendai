@@ -60,8 +60,8 @@ pub use ast::{
     IfBranch, IfStmt, IndexExpr, IpLit, LetStmt, ListExpr, MatchArm, MatchArmBody, MatchStmt,
     NumberLit, NumberValue, OptionArg, Param, ParenInner, ParenValue, Pattern, Pipeline, Program,
     QualifiedName, RecordExpr, RecordField, RecordKey, RedirectOp, RedirectTarget, Redirection,
-    RegexLit, ReturnStmt, Stage, StageHead, StageList, Statement, StrLit, StrPart, TryStmt,
-    TypeRef, UnaryExpr, UnaryOp, Unit, UnitLit, UseStmt, Variable, WhileStmt, WordArg,
+    RegexLit, ReturnStmt, Stage, StageHead, StageList, Statement, StrLit, StrPart, TimestampLit,
+    TryStmt, TypeRef, UnaryExpr, UnaryOp, Unit, UnitLit, UseStmt, Variable, WhileStmt, WordArg,
 };
 pub use diagnostic::Diagnostic;
 pub use lexer::{Token, TokenKind};

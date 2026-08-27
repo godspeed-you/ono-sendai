@@ -91,7 +91,7 @@ block          = "{" { statement } "}" ;
 
 (* --- literals ---------------------------------------------------------------------------- *)
 
-literal        = number | string | regex | address | "true" | "false" | "null" ;
+literal        = number | string | regex | address | timestamp | "true" | "false" | "null" ;
 number         = int | float | bytesize | duration | percent ;
 int            = DEC | "0x" HEX { HEX } | "0b" BIN { BIN } ;
 float          = DEC "." DEC [ ( "e" | "E" ) [ "+" | "-" ] DEC ] ;
@@ -115,6 +115,13 @@ regex          = "/" { regex_char } "/" { "i" | "m" | "s" | "x" } ;
  * identifier is part of the address, because an address without its zone is a different address.
  *)
 address        = ipv4 | ipv6 ;
+
+(* A timestamp literal is the RFC 3339 profile of ISO 8601 -- the spelling `to json` emits --
+ * recognised only where an operand is expected (ADR-0071). A date without a time and a zone is
+ * not a literal: `2000-01-01` would be indistinguishable from subtraction.
+ *)
+timestamp      = DEC DEC DEC DEC "-" DEC DEC "-" DEC DEC "T" DEC DEC ":" DEC DEC
+                 [ ":" DEC DEC [ "." DEC { DEC } ] ] ( "Z" | ( "+" | "-" ) DEC DEC ":" DEC DEC ) ;
 ipv4           = DEC "." DEC "." DEC "." DEC ;
 ipv6           = { HEX | ":" | "." } [ "%" IDENT ] ;
 

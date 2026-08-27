@@ -159,6 +159,7 @@ pub fn evaluate(expression: &Expr, current: &Value, scope: &Scope) -> Result<Val
             }
             Ok(Value::string(&text))
         }
+        Expr::Timestamp(literal) => Value::parse_timestamp(&literal.text),
         Expr::Regex(literal) => {
             // Flags become an inline group, which is how the engine spells them and keeps the
             // pattern one thing rather than a pattern plus a side channel.
@@ -245,16 +246,27 @@ pub fn evaluate(expression: &Expr, current: &Value, scope: &Scope) -> Result<Val
             }
         }
         Expr::Binary(binary) => binary_op(binary, current, scope),
+        Expr::Call(call) if is_now_call(call) => Ok(Value::now()),
         Expr::Call(call) => Err(ErrorValue::new(
             ErrorCode::ResolveCommandNotFound,
             format!("no function to call at {}", call.span),
         )
-        .with_help("user functions arrive with the module system of spec §19.6")),
+        .with_help(
+            "`now()` is the only function an expression can call; a user function is called as \
+             a command (spec §19.3, ADR-0070)",
+        )),
         Expr::Error(span) => Err(ErrorValue::new(
             ErrorCode::ParseSyntax,
             format!("this expression could not be read at {span}"),
         )),
     }
+}
+
+/// Whether a call is `now()`, the one builtin function `language.yaml` declares (spec §6.3,
+/// ADR-0071).
+#[must_use]
+pub fn is_now_call(call: &ono_parser::CallExpr) -> bool {
+    matches!(&call.callee, Expr::Path(path) if path.name == "now") && call.arguments.is_empty()
 }
 
 /// Evaluates `expression` and reports a failure as the error *value* it is.
@@ -334,6 +346,7 @@ pub fn check_fields(expression: &Expr, schema: &Schema) -> Result<(), ErrorValue
         Expr::Number(_)
         | Expr::Unit(_)
         | Expr::Regex(_)
+        | Expr::Timestamp(_)
         | Expr::Ip(_)
         | Expr::Bool(_, _)
         | Expr::Null(_)
