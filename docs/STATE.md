@@ -93,24 +93,17 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [processes | 2026-08-27] **process family remainder** (`crates/ono-cli/tests/processes_missing.rs`
-  — `inspect process`, `get job`, `set process --priority`, `send signal`; and `--tree` /
-  `--user` in `options_and_selectors_missing.rs`) on branch `implementation-processes` — files:
-  `crates/ono-cli/src/{session_provider,session,providers,native,eval}.rs`,
-  `crates/ono-command/src/impls/{mod,mutate,inspect}.rs`, `crates/ono-provider-linux/src/process.rs`,
-  `docs/spec/commands/process.yaml`, `docs/spec/schemas/{process-detail.v1,deferred}.yaml`,
-  `docs/spec/providers/*.yaml`, `docker/acceptance/cases/040-processes-inspect-jobs-signals.case`.
-  ADR range 0090–0092.
-
-- [language | 2026-08-27] **language family** (`crates/ono-cli/tests/language_missing.rs`) on
-  branch `implementation-language` — **all 31 tests green and un-ignored**; the gate is green
-  at every commit. Delivered: `let`/`( … )`/`$( … )` capture (ADR-0069); callable functions and
-  `alias` (ADR-0070); `now()`, the RFC 3339 timestamp literal, prefix assignment
-  `NAME=value cmd`, `each { … }` blocks, string `+`, keyless `sort`, `kill %N` (ADR-0071).
-  Acceptance case `docker/acceptance/cases/035-scripting-language.case` is written and
-  dry-run against the binary; **the integrator runs it in the container** when merging the
-  branch. Left open (not in the RED suite): `explain` of a `NAME=value cmd` stage, functions
-  and aliases in completion candidates, a function in a non-head pipeline position.
+- [processes | 2026-08-27] **process family remainder** (`crates/ono-cli/tests/processes_missing.rs`;
+  `--tree`/`--user` in `options_and_selectors_missing.rs`) on branch `implementation-processes`
+  — **all 18 process tests and the 3 option tests green and un-ignored**; the gate is green at
+  every commit. Delivered: `get job` from the session provider `ono.shell` (ADR-0090);
+  `inspect process` → `ono.process-detail/1` and `get process --tree` (ADR-0091); `set process
+  --priority` via setpriority(2) and `send signal` as the pipeline spelling of a signal
+  (ADR-0092). Acceptance case `docker/acceptance/cases/040-processes-inspect-jobs-signals.case`
+  is written and dry-run against the binary; **the integrator runs it in the container** when
+  merging the branch. Left open (not in the RED suite): a tree renderer for `--tree` at the
+  terminal (the table shows the roots' columns; spec §22.4's tree view is the graph family's);
+  `link`/`host` rows in `SessionTables` (remote family, ADR-0090 §3).
 
 - [agent | 2026-08-27] **RED suites for everything v0.2 declares but does not build** (user
   request; wiki pages "Command Index" and "What Is Not Built Yet"). 329 outcome tests, every
@@ -412,6 +405,10 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Done
 
+- [x] process family — `get job` (session provider, ADR-0090) — commit 0cc0730; `inspect process`
+  (`ono.process-detail/1`, ADR-0091) — commit d512f03; `get process --tree` — commit b3f91a4;
+  `set process --priority` (ADR-0092) — commit 730b1a3; `send signal` — commit d9cd7f8;
+  `processes_missing.rs` (18) and the three `--user`/`--tree` tests un-ignored
 - [x] seams 1 — `set`/`remove` of system targets dispatch through the registry — commit 7ec0d83
   (ADR-0068 §1; `crates/ono-cli/tests/builtins.rs`)
 - [x] seams 2 — ActionResult contract: a failed row exits 1, a missing target is an E0301 row,
