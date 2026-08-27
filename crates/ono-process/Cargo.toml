@@ -10,7 +10,7 @@ authors.workspace = true
 
 [dependencies]
 ono-core.workspace = true
-nix = { workspace = true, features = ["fs", "ioctl", "poll", "process", "signal", "term"] }
+nix = { workspace = true, features = ["fs", "ioctl", "poll", "process", "signal", "term", "user"] }
 thiserror.workspace = true
 
 [dev-dependencies]
