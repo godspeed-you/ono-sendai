@@ -93,10 +93,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-08-27] v0.3 tranche, step 5 — `ADAPT-002` the registry: executable identity
-  pinning, invocation matching, negotiation states, deterministic conflict resolution, and the
-  plan's `adaptation` row — files: `crates/ono-adapter/src/`, `crates/ono-command/src/explain.rs`,
-  `crates/ono-cli/src/builtin.rs`
+- [claude | 2026-08-27] v0.3 tranche, step 6 — `ADAPT-004`/`005`/`007`/`010`: adapted
+  execution through `ono-process`, the json decoder with schema-driven coercion, adapter
+  provenance, the fixture conformance harness, `lsblk`/`findmnt`/`lsns` end to end (ADR-0057)
+  — files: `crates/ono-adapter/src/{decode,conformance}.rs`, `crates/ono-value/src/provenance.rs`,
+  `crates/ono-cli/src/native.rs`, `crates/ono-command/src/impls/meta.rs`
 
 ---
 
@@ -344,6 +345,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] v0.3 step 4 — ADAPT-009 the declarative adapter contract, the util-linux pack with
   fixtures, `ono.block-device/1` and `ono.namespace/1`, the validator and the spec-check rule
   (ADR-0055) — `ono-adapter/tests/contracts.rs`, `xtask/tests/contracts.rs`
+- [x] v0.3 step 5 — ADAPT-002 registry, negotiation states, identity pinning, conflict
+  resolution, the probe cache of ADAPT-006, and `explain`'s `adaptation`/`argv`/`candidates`
+  rows (ADR-0056) — `ono-adapter/tests/negotiation.rs`, case 073
 
 - [x] `get service <name>` reaches unloaded on-disk units, and the listing no longer reports
       `not-found` stubs. Investigation showed the by-name path already resolved through

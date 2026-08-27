@@ -27,3 +27,7 @@ pub use contract::{
     VersionProbe, first_party, validate,
 };
 pub use version::{Version, VersionRange};
+
+mod registry;
+
+pub use registry::{AdapterPlan, Negotiation, Prober, Registry};

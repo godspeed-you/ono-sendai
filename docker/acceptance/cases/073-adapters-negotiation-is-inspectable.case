@@ -1,0 +1,22 @@
+# v0.3 §1.6, §1.23, §1.25, §1.57 (ADAPT-002): before an adapted command ever runs, `explain`
+# says which adapter answers, why it won over the other candidates, the exact invocation it will
+# run, and — for every refusal — the state in the words of §1.57. util-linux's lsblk is the first
+# adapted tool (§1.69 step 2) and is installed in the image.
+case: explain names the adapter, the candidates, the rewritten argv and every refusal
+run: |
+  ono -c 'explain lsblk | where type == disk' | grep -F 'adaptation   adapted by org.ono.compat.util-linux.lsblk'
+  ono -c 'explain lsblk | where type == disk' | grep -F 'argv         lsblk --json --list --bytes --output NAME,PATH,TYPE,SIZE,FSTYPE,MOUNTPOINTS,MODEL,SERIAL,RO,RM,PKNAME,MAJ:MIN'
+  ono -c 'explain lsblk | where type == disk' | grep -F 'candidates   org.ono.compat.util-linux.lsblk (the only candidate)'
+  ono -c 'explain lsblk -p | where type == disk' | grep -F 'unsupported invocation: org.ono.compat.util-linux.lsblk cannot guarantee `-p`; fails'
+  ono -c 'explain lsblk -p' | grep -F 'adaptation   raw (unsupported invocation'
+  ono -c 'explain lsblk | grep sda' | grep -F 'adaptation   raw (downstream bytes)'
+  ono -c 'explain findmnt | where filesystem == ext4' | grep -F 'with limits: `device` is not reported by findmnt'
+  ono -c 'explain lsns -t net | where processes > 1' | grep -F 'argv         lsns --json --output NS,TYPE,NPROCS,PID,PPID,USER,UID,COMMAND -t net'
+  ono -c 'explain grep x | where a == 1' | grep -F 'adaptation   raw (no adapter)'
+  # PATH shadowing: a different binary of the same name is not the one the contract was written
+  # for, so the shadow is probed on its own and refused for lack of a version (§1.22, §1.46).
+  mkdir -p /tmp/shadow && printf '#!/bin/sh\nexit 0\n' > /tmp/shadow/lsblk && chmod +x /tmp/shadow/lsblk
+  PATH=/tmp/shadow:$PATH ono -c 'explain lsblk | where type == disk' | grep -F 'version incompatible: org.ono.compat.util-linux.lsblk supports >=2.37, found undetected'
+  echo negotiated=ok
+exit: 0
+stdout-contains: negotiated=ok

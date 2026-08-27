@@ -57,6 +57,9 @@ pub struct Session {
     links: Vec<SessionLink>,
     /// The KUANG/11 packages this session loaded (spec §31.10), by their manifest ids.
     plugins: Vec<(String, ono_kuang_supervisor::LoadedPlugin)>,
+    /// The external command adapters (spec v0.3 §1.24), built on first use: the registry holds
+    /// the version probe cache, which is per session by design (§1.46).
+    adapters: Option<ono_adapter::Registry>,
 }
 
 /// One held remote link: the connection, and the registry its providers are mounted in.
@@ -151,6 +154,7 @@ impl Session {
             selection: None,
             links: Vec::new(),
             plugins: Vec::new(),
+            adapters: None,
         }
     }
 
@@ -333,6 +337,29 @@ impl Session {
 
     /// The providers this session can ask, built the first time one is needed.
     ///
+    /// The adapter registry (spec v0.3 §1.24), built on first use.
+    ///
+    /// Version probes run through `probe_version`: a declared, bounded, non-interactive
+    /// invocation with stdin closed and `LC_ALL=C`, whose output is read whole (ADR-0056).
+    pub fn adapters(&mut self) -> &ono_adapter::Registry {
+        if self.adapters.is_none() {
+            self.adapters = Some(ono_adapter::Registry::bundled(Box::new(probe_version)));
+        }
+        self.adapters
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("just constructed"))
+    }
+
+    /// Both registries a plan consults, borrowed together.
+    pub fn registries(&mut self) -> (&ProviderRegistry, &ono_adapter::Registry) {
+        let _ = self.providers();
+        let _ = self.adapters();
+        match (&self.providers, &self.adapters) {
+            (Some(providers), Some(adapters)) => (providers, adapters),
+            _ => unreachable!("just constructed"),
+        }
+    }
+
     /// Building them opens sockets and speaks D-Bus, so it happens here rather than at startup.
     /// A provider that cannot be reached is still registered: it reports its own unavailability
     /// with a reason, which is a different answer from there being none of the thing asked for.
@@ -491,4 +518,22 @@ impl Session {
     pub fn stay(&mut self) {
         self.leaving = None;
     }
+}
+
+/// Runs an adapter's version probe and returns what the program wrote (spec v0.3 §1.46).
+///
+/// The probe is not a job: it has no terminal, no stdin and no place in the job table, so the
+/// standard library's process API is the right tool rather than the executor of spec §18.
+fn probe_version(executable: &std::path::Path, argv: &[String]) -> Option<String> {
+    let output = std::process::Command::new(executable)
+        .args(argv)
+        .env("LC_ALL", "C")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .ok()?;
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    Some(text)
 }

@@ -7,7 +7,9 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use ono_adapter::{Consumer, OutputDemand, Stdout};
+use std::path::PathBuf;
+
+use ono_adapter::{Consumer, Negotiation, OutputDemand, Stdout};
 use ono_parser::{Argument, Expr, Pipeline, RedirectOp, RedirectTarget, Stage, StageList};
 use ono_provider_api::{ProviderRegistry, Risk};
 use ono_value::{MapValue, Value};
@@ -58,6 +60,42 @@ pub struct StagePlan {
     declared_input: Option<String>,
     /// Whether the stage is `raw <program>`, which bypasses adaptation (spec v0.3 §1.17).
     raw: bool,
+    /// What the adapter registry answered for an external stage (spec v0.3 §1.6).
+    adaptation: Option<Adaptation>,
+}
+
+/// The adapter registry's answer for one external stage, as the plan shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Adaptation {
+    /// The state in the words of spec v0.3 §1.57.
+    pub state: String,
+    /// The invocation that will actually run, when the stage is adapted.
+    pub argv: Option<Vec<String>>,
+    /// Every adapter that answered and why the winner won, when more than none did.
+    pub candidates: Option<(Vec<String>, String)>,
+    /// The negotiation itself, for the executor.
+    pub negotiation: Negotiation,
+}
+
+/// What a plan is made against besides the registries: where stdout goes, which adapters are
+/// installed, and how a program name resolves on `PATH` (ADR-0056).
+#[derive(Clone, Copy)]
+pub struct PlanContext<'a> {
+    /// Where the shell's own stdout goes.
+    pub stdout: Stdout,
+    /// The adapter registry, when adaptation is to be planned.
+    pub adapters: Option<&'a ono_adapter::Registry>,
+    /// Resolves a program name to the path the shell would run, when `PATH` is known.
+    pub executables: Option<&'a dyn Fn(&str) -> Option<PathBuf>>,
+}
+
+impl std::fmt::Debug for PlanContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlanContext")
+            .field("stdout", &self.stdout)
+            .field("adapters", &self.adapters.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl StagePlan {
@@ -154,6 +192,12 @@ impl StagePlan {
         self.raw
     }
 
+    /// What the adapter registry answered, for an external stage planned with a registry.
+    #[must_use]
+    pub fn adaptation(&self) -> Option<&Adaptation> {
+        self.adaptation.as_ref()
+    }
+
     /// What the stage's stdout is asked to carry, for a stage that is a child process.
     ///
     /// Decided backwards from the consumer (spec v0.3 §1.4): a native command over objects asks
@@ -202,6 +246,12 @@ impl StagePlan {
             self.demand()
                 .map_or(Value::Null, |demand| Value::string(&demand.to_string())),
         );
+        map.insert(
+            "adaptation".into(),
+            self.adaptation
+                .as_ref()
+                .map_or(Value::Null, |adaptation| Value::string(&adaptation.state)),
+        );
         Value::Map(Arc::new(map))
     }
 
@@ -237,6 +287,19 @@ impl StagePlan {
         }
         if let Some((demand, reason)) = &self.demand {
             row(into, "demand", &format!("{demand} ({reason})"));
+        }
+        if let Some(adaptation) = &self.adaptation {
+            row(into, "adaptation", &adaptation.state);
+            if let Some(argv) = &adaptation.argv {
+                row(into, "argv", &argv.join(" "));
+            }
+            if let Some((candidates, selection)) = &adaptation.candidates {
+                row(
+                    into,
+                    "candidates",
+                    &format!("{} ({selection})", candidates.join(", ")),
+                );
+            }
         }
         row(into, "streaming", if self.streaming { "yes" } else { "no" });
         if let Some(privilege) = self.privilege {
@@ -349,6 +412,30 @@ pub fn plan_for(
     source: &str,
     stdout: Stdout,
 ) -> ExecutionPlan {
+    plan_with(
+        registry,
+        providers,
+        pipeline,
+        source,
+        &PlanContext {
+            stdout,
+            adapters: None,
+            executables: None,
+        },
+    )
+}
+
+/// The plan for `pipeline` in `context`: with the adapter registry and `PATH` resolution
+/// available, every external stage also reports what the registry answered (spec v0.3 §1.23).
+#[must_use]
+pub fn plan_with(
+    registry: &CommandRegistry,
+    providers: Option<&ProviderRegistry>,
+    pipeline: &Pipeline,
+    source: &str,
+    context: &PlanContext<'_>,
+) -> ExecutionPlan {
+    let stdout = context.stdout;
     let mut stages: Vec<StagePlan> = Vec::new();
     let mut ordinal = 1;
 
@@ -371,6 +458,7 @@ pub fn plan_for(
             ordinal += 1;
         }
         plan_demands(&mut stages[first..], list, stdout);
+        plan_adaptations(&mut stages[first..], list, source, context);
     }
 
     ExecutionPlan {
@@ -447,6 +535,82 @@ fn plan_demands(stages: &mut [StagePlan], list: &StageList, stdout: Stdout) {
     }
 }
 
+/// Asks the adapter registry about every external stage that has a demand (spec v0.3 §1.6).
+///
+/// Nothing here runs the subject: the registry may run a declared version probe of a different
+/// program, which ADR-0056 allows `explain` because a guessed version could contradict the run.
+fn plan_adaptations(
+    stages: &mut [StagePlan],
+    list: &StageList,
+    source: &str,
+    context: &PlanContext<'_>,
+) {
+    let (Some(adapters), Some(executables)) = (context.adapters, context.executables) else {
+        return;
+    };
+    for (index, planned) in stages.iter_mut().enumerate() {
+        let Resolution::External { head } = &planned.resolution else {
+            continue;
+        };
+        if planned.raw {
+            continue;
+        }
+        let Some((demand, _)) = &planned.demand else {
+            continue;
+        };
+        let Some(stage) = list.stages.get(index) else {
+            continue;
+        };
+        let Some(path) = executables(head) else {
+            continue;
+        };
+        let mut argv = vec![head.clone()];
+        argv.extend(literal_arguments(stage, source));
+        let negotiation = adapters.negotiate(&path, &argv, demand);
+        let (argv, candidates) = match &negotiation {
+            Negotiation::StructuredSupported {
+                plan,
+                candidates,
+                selection,
+            }
+            | Negotiation::StructuredSupportedWithLimits {
+                plan,
+                candidates,
+                selection,
+                ..
+            } => (
+                Some(plan.argv().to_vec()),
+                Some((candidates.clone(), selection.clone())),
+            ),
+            _ => (None, None),
+        };
+        planned.adaptation = Some(Adaptation {
+            state: negotiation.describe(demand),
+            argv,
+            candidates,
+            negotiation,
+        });
+    }
+}
+
+/// The stage's arguments as the words the program would see, as far as the source can say
+/// without evaluating anything: a word is itself, an option is its spelling, a value is its
+/// source text.
+fn literal_arguments(stage: &Stage, source: &str) -> Vec<String> {
+    stage
+        .arguments
+        .iter()
+        .map(|argument| match argument {
+            Argument::Word(word) => word.text.clone(),
+            Argument::Option(option) => match &option.value {
+                Some(value) => format!("--{}={}", option.name, value.span().of(source)),
+                None => format!("--{}", option.name),
+            },
+            other => other.span().of(source).to_owned(),
+        })
+        .collect()
+}
+
 /// Where a stage's stdout redirection sends it, when it has one.
 enum Redirected {
     File(String),
@@ -501,6 +665,7 @@ fn plan_stage(
             demand: None,
             declared_input: None,
             raw: false,
+            adaptation: None,
         };
     };
 
@@ -529,6 +694,7 @@ fn plan_stage(
             demand: None,
             declared_input: None,
             raw: true,
+            adaptation: None,
         };
     }
 
@@ -556,6 +722,7 @@ fn plan_stage(
             demand: None,
             declared_input: None,
             raw: false,
+            adaptation: None,
         };
     };
 
@@ -627,6 +794,7 @@ fn plan_stage(
         demand: None,
         declared_input: Some(contract.input().text().to_owned()),
         raw: false,
+        adaptation: None,
     }
 }
 

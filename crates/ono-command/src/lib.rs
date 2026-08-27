@@ -68,7 +68,10 @@ pub use contract::{
     ArgumentMode, CapabilitySpec, CommandContract, DeclaredType, Elevation, IoType, ParameterSpec,
     Phase, Privilege, Stability, TargetSpec, VerbSpec,
 };
-pub use explain::{ExecutionPlan, Resolution, StagePlan, is_raw, plan, plan_for, raw_program};
+pub use explain::{
+    Adaptation, ExecutionPlan, PlanContext, Resolution, StagePlan, is_raw, plan, plan_for,
+    plan_with, raw_program,
+};
 pub use expr::{Scope, check_fields, evaluate, evaluate_to_value, is_true};
 pub use help::{CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help};
 pub use impls::builtin_commands;

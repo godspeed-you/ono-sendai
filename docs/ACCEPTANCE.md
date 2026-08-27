@@ -273,12 +273,15 @@ release line again.
       (byte-identical to bash for `printf` and `ps` at a pipe, status 3 passes through).
       The "with adapters installed" half of the guarantee is re-proven by every tool case of
       §4.6.3, each of which runs its raw form beside its structured form.
-- [ ] **ADAPT-002 — deterministic registry and conflict resolution.** Adapters are resolved by
-      executable identity, invocation and demand in a documented, deterministic order
-      (v0.3 §1.24, §1.25); two adapters claiming one invocation resolve the same way on every
-      run and `explain` names the candidates and the winner; an unresolvable tie is
-      `adapter.conflict`, never a coin toss. Exit test: a registry test with two competing
-      contracts.
+- [x] **ADAPT-002 — deterministic registry and conflict resolution.** Adapters are resolved by
+      executable identity, invocation and demand in a documented, deterministic order — exact
+      path, invocation specificity, tier, id; never load order (v0.3 §1.24, §1.25, ADR-0056);
+      two adapters claiming one invocation resolve the same way under both load orders and
+      `explain` names the candidates and the selection reason; one adapter installed twice is
+      `adapter.conflict`, never a coin toss — `ono-adapter/tests/negotiation.rs`
+      (`should_resolve_two_adapters_claiming_one_invocation_the_same_way_every_time`,
+      `should_report_a_conflict_when_one_adapter_is_installed_twice`), `ono-cli/tests/builtins.rs`,
+      case `073`.
 - [ ] **Negotiation states are explicit.** An adapter answers `NotApplicable`, `RawPreferred`,
       `StructuredSupported`, `StructuredSupportedWithLimits`, `UnsupportedInvocation` or
       `IncompatibleVersion` (v0.3 §1.6); unsupported invocations and incompatible versions
@@ -293,19 +296,26 @@ release line again.
       while the child runs; malformed, truncated, non-UTF-8 and hostile output produce
       `adapter.decode_failed` (with the raw bytes retained and inspectable), never a panic —
       proven by a seeded fuzz/corpus test over every first-party decoder (§1.47, §2.6).
-- [ ] **ADAPT-006 — version detection is bounded and cached.** Version probes are declared in
+- [x] **ADAPT-006 — version detection is bounded and cached.** Version probes are declared in
       the contract, run at most once per executable identity (path, device/inode, mtime, size —
       v0.3 §1.46) and a failed probe makes a version-constrained parser refuse rather than
-      assume. Exit test: a probe counter over repeated invocations plus a refusal case.
+      assume — `ono-adapter/tests/negotiation.rs`
+      (`should_probe_an_executable_once_per_identity`: one probe for three negotiations, a
+      second after the binary changes; `should_refuse_when_the_version_cannot_be_detected`;
+      `should_refuse_an_executable_outside_the_supported_versions`), and case `073`'s shadowed
+      `lsblk` that answers no version.
 - [ ] **ADAPT-007 — provenance on every adapted value.** `inspect … --provenance` answers all
       ten questions of v0.3 §1.8 (executable, version, user and actual invocation, adapter
       id/version, decoder, timestamp, host, per-field exactness, source stability) and
       partial/limited semantics are explicit (§2.2). Exit test: a provenance case asserting each
       field on an adapted record.
-- [ ] **Executable identity is pinned.** An adapter matches only executables whose resolved
-      identity satisfies its contract (names/paths, version range — v0.3 §1.14, §1.44); a
-      shadowing binary of the same name yields `adapter.executable_mismatch` and the raw path.
-      Exit test: a PATH-shadowed `ps` in a temp dir.
+- [x] **Executable identity is pinned.** An adapter matches only executables whose resolved
+      identity satisfies its contract (names/paths, version range — v0.3 §1.14, §1.44, ADR-0056
+      point 2) and the plan pins the resolved path; a shadowing binary of the same name is
+      refused as `adapter.executable_mismatch` when the contract names a path, and fails the
+      version probe when it names a name — either way the raw path —
+      `ono-adapter/tests/negotiation.rs` (`should_refuse_a_binary_that_is_not_the_one_the_contract_pins`,
+      `plan.executable()` asserted), case `073` (a PATH-shadowed `lsblk` script).
 - [ ] **ADAPT-011 — remote negotiation.** Inside a link frame an adapted command is planned
       and executed on the remote side against the remote executable, provenance carries the
       host, and a host lacking the tool or version degrades to raw with a visible reason

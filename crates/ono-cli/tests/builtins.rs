@@ -227,3 +227,58 @@ fn should_document_raw_in_help() {
         run.stdout()
     );
 }
+
+#[test]
+fn should_explain_which_adapter_answers_and_what_it_will_run() {
+    // Spec v0.3 §1.23, §1.57: the hidden machinery is inspectable. lsblk is on every Linux
+    // machine this suite runs on (util-linux), so the bundled adapter answers.
+    let adapted = Shell::new()
+        .args(["-c", "explain lsblk | where type == disk"])
+        .run();
+    adapted.assert_success();
+    let text = adapted.stdout();
+    assert!(
+        text.contains("adaptation   adapted by org.ono.compat.util-linux.lsblk"),
+        "the winner is named, got {text:?}"
+    );
+    assert!(
+        text.contains("argv         lsblk --json --list --bytes --output"),
+        "the rewritten invocation is shown (spec v0.3 §1.8), got {text:?}"
+    );
+    assert!(
+        text.contains("candidates   org.ono.compat.util-linux.lsblk (the only candidate)"),
+        "spec v0.3 §1.25: candidates and the selection reason, got {text:?}"
+    );
+
+    let unsupported = Shell::new()
+        .args(["-c", "explain lsblk -p | where type == disk"])
+        .run();
+    unsupported.assert_success();
+    assert!(
+        unsupported
+            .stdout()
+            .contains("adaptation   unsupported invocation: org.ono.compat.util-linux.lsblk cannot guarantee `-p`; fails"),
+        "spec v0.3 §1.16, §1.18: an undeclared flag under a structured demand fails rather than downgrades, got {:?}",
+        unsupported.stdout()
+    );
+
+    let bytes = Shell::new().args(["-c", "explain lsblk | grep sda"]).run();
+    bytes.assert_success();
+    assert!(
+        bytes
+            .stdout()
+            .contains("adaptation   raw (downstream bytes)"),
+        "got {:?}",
+        bytes.stdout()
+    );
+
+    let none = Shell::new()
+        .args(["-c", "explain grep x | where a == 1"])
+        .run();
+    none.assert_success();
+    assert!(
+        none.stdout().contains("adaptation   raw (no adapter)"),
+        "spec v0.3 §1.70: text tools stay raw, got {:?}",
+        none.stdout()
+    );
+}

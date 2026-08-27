@@ -365,12 +365,27 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     } else {
         ono_adapter::Stdout::Stream
     };
-    let plan = ono_command::plan_for(
+    // What each program resolves to is looked up once, up front: the plan needs it to ask the
+    // adapter registry (spec v0.3 §1.23), and the report below quotes it.
+    let resolved: std::collections::BTreeMap<String, Option<std::path::PathBuf>> = pipeline
+        .head
+        .stages
+        .iter()
+        .filter_map(|stage| ono_command::raw_program(stage).or_else(|| stage.head.name()))
+        .map(|name| (name.to_owned(), crate::resolve::find_on_path(session, name)))
+        .collect();
+    let executables = |name: &str| resolved.get(name).cloned().flatten();
+    let (providers, adapters) = session.registries();
+    let plan = ono_command::plan_with(
         registry,
-        Some(session.providers()),
+        Some(providers),
         pipeline,
         &source,
-        stdout,
+        &ono_command::PlanContext {
+            stdout,
+            adapters: Some(adapters),
+            executables: Some(&executables),
+        },
     );
     // The plan quotes the source it was given and the paths it resolved, both of which are
     // attacker-controlled: a program named with an OSC sequence sitting on `PATH` would otherwise
@@ -399,7 +414,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             ));
             continue;
         }
-        match crate::resolve::find_on_path(session, name) {
+        match resolved.get(name).cloned().flatten() {
             Some(path) => print_safely(&format!(
                 "  `{name}` is an external program and resolves to {}",
                 path.display()
