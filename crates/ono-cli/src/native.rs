@@ -1600,6 +1600,12 @@ fn stage_scope(
     for (name, value) in session.bindings() {
         scope = scope.with_variable(&name, value);
     }
+    // The session's effective settings travel as `config.<key>` bindings, so a command that
+    // reads configuration — the bulk threshold of spec §11.6 (ADR-0082 §5) — sees the value
+    // `set config` and the layers of ADR-0094 resolved, at its declared type.
+    for (key, value) in session.settings().effective_values() {
+        scope = scope.with_variable(&format!("config.{key}"), value.clone());
+    }
     for (_, arguments) in bound {
         for (_, binding) in arguments.selectors().iter().chain(arguments.options()) {
             for expression in binding.expressions() {

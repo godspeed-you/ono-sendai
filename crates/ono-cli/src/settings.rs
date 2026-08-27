@@ -286,6 +286,13 @@ impl Settings {
         self.layers.get(key).and_then(|stack| stack.last())
     }
 
+    /// Every setting's key with its effective value, in catalogue order.
+    pub fn effective_values(&self) -> impl Iterator<Item = (&'static str, &Value)> {
+        self.layers
+            .iter()
+            .filter_map(|(key, stack)| stack.last().map(|resolved| (*key, &resolved.value)))
+    }
+
     /// The effective value of an integer setting.
     #[must_use]
     pub fn int(&self, key: &str) -> Option<i128> {
