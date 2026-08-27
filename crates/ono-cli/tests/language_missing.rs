@@ -341,7 +341,6 @@ fn should_type_an_iso_8601_literal_as_a_timestamp() {
 // --- prefix assignment (spec §54, Unix muscle memory) ---------------------------------------
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_set_a_variable_for_one_command_only_when_it_is_prefixed_to_the_command() {
     let run = ono(r#"FOO=bar sh -c 'echo $FOO'; sh -c 'echo "[$FOO]"'"#);
     run.assert_success();
@@ -356,7 +355,6 @@ fn should_set_a_variable_for_one_command_only_when_it_is_prefixed_to_the_command
 }
 
 #[test]
-#[ignore = "REASON: RED suite for a component v0.2 declares but does not build yet; un-ignored by the increment that delivers it (docs/STATE.md)"]
 fn should_leave_the_shell_environment_alone_after_a_prefix_assignment() {
     let run = ono("FOO=bar sh -c 'echo $FOO'; get env FOO | to json");
     run.assert_success();

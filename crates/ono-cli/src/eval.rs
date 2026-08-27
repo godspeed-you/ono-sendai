@@ -4,10 +4,10 @@
 //! an `ono_process::Pipeline` and runs in the foreground; the native stages of phase B slot in
 //! beside them without changing the shape of anything here.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
-use ono_core::{ErrorCode, ExitStatus};
+use ono_core::{ErrorCode, ExitStatus, Span};
 use ono_parser::{
     Argument, BinaryOp, Block, Expr, NumberValue, Pipeline, RedirectOp, RedirectTarget,
     Redirection, Stage, StageHead, StageList, Statement, StrPart, UnaryOp, Unit,
@@ -151,6 +151,116 @@ pub fn run_statement(
             format!("this statement could not be read at {span}"),
         ))),
     }
+}
+
+// --- prefix assignment (spec §54, ADR-0071 §2) ------------------------------------------------
+
+/// The `NAME=value` words that lead a stage of `list`, with the list as it reads without them.
+///
+/// `None` when no stage starts with an assignment. A stage that is nothing but assignments is
+/// refused: a lasting binding has two explicit spellings already.
+fn prefix_assignments(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+) -> Eval<Option<(Vec<(String, OsString)>, StageList)>> {
+    let Some((index, stage)) = list
+        .stages
+        .iter()
+        .enumerate()
+        .find(|(_, stage)| stage.head.name().is_some_and(is_assignment_word))
+    else {
+        return Ok(None);
+    };
+    let StageHead::Command(head) = &stage.head else {
+        return Ok(None);
+    };
+    if head.namespace.is_some() {
+        return Ok(None);
+    }
+
+    let mut assignments = Vec::new();
+    let mut arguments = stage.arguments.iter().peekable();
+    let mut pending: Option<(String, Span)> = Some((head.name.clone(), head.span));
+    loop {
+        let Some((word, span)) = pending.take() else {
+            break;
+        };
+        let (name, value) = word.split_once('=').unwrap_or((&word, ""));
+        let value = if value.is_empty()
+            && let Some(Argument::Value(expression)) = arguments.peek()
+            && expression.span().start() == span.end()
+        {
+            // `NAME="a b"`: the lexer ends the word at the quote, so the string that follows
+            // without a gap is the value.
+            let expression = expression.clone();
+            arguments.next();
+            OsString::from(text_of(&eval_expr(session, &expression, source)?)?)
+        } else {
+            expand::expand_to_one(session, value)?
+        };
+        assignments.push((name.to_owned(), value));
+        if let Some(Argument::Word(next)) = arguments.peek()
+            && is_assignment_word(&next.text)
+        {
+            pending = Some((next.text.clone(), next.span));
+            arguments.next();
+        }
+    }
+
+    let Some(Argument::Word(command)) = arguments.next() else {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::ResolveCommandNotFound,
+                format!(
+                    "`{}` names no command to run with that environment",
+                    head.name
+                ),
+            )
+            .with_help(
+                "a prefix assignment is scoped to the command after it (spec §54); for a lasting \
+                 binding write `set env NAME = value` or `let name = value`",
+            ),
+        ));
+    };
+    let (namespace, name) = match command.text.split_once(':') {
+        Some((namespace, name))
+            if !namespace.is_empty()
+                && !name.is_empty()
+                && !name.contains(['/', ':'])
+                && namespace
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-') =>
+        {
+            (Some(namespace.to_owned()), name.to_owned())
+        }
+        _ => (None, command.text.clone()),
+    };
+    let mut rewritten = stage.clone();
+    rewritten.head = StageHead::Command(ono_parser::QualifiedName {
+        namespace,
+        name,
+        span: command.span,
+    });
+    rewritten.arguments = arguments.cloned().collect();
+    let mut stripped = list.clone();
+    stripped.stages[index] = rewritten;
+    Ok(Some((assignments, stripped)))
+}
+
+/// Whether a word spells `NAME=…` with an environment variable's name before the `=`.
+fn is_assignment_word(word: &str) -> bool {
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 // --- aliases (spec §6.5, ADR-0070) ------------------------------------------------------------
@@ -565,6 +675,25 @@ fn run_stage_list(
         && let Some(function) = called_function(session, stage)
     {
         return call_function(session, &function, list, source);
+    }
+
+    // Spec §54: `NAME=value command …` sets the variable for this pipeline alone (ADR-0071 §2).
+    if let Some((assignments, stripped)) = prefix_assignments(session, list, source)? {
+        let previous: Vec<(String, Option<OsString>)> = assignments
+            .iter()
+            .map(|(name, _)| (name.clone(), session.env_var(name).map(OsStr::to_os_string)))
+            .collect();
+        for (name, value) in &assignments {
+            session.set_env(name.as_str(), value.clone());
+        }
+        let outcome = run_stage_list(session, &stripped, source, background);
+        for (name, value) in previous {
+            match value {
+                Some(value) => session.set_env(name, value),
+                None => session.remove_env(&name),
+            }
+        }
+        return outcome;
     }
 
     // Step 3: an alias is expanded exactly once and the result resolved again from the top
