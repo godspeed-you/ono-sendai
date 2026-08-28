@@ -100,6 +100,29 @@ the nine `crates/ono-cli/tests/spatial_*_missing.rs` suites (175 tests) and the 
 §50's own dependency-driven sequence, and a phase is done when its suites are un-ignored and
 green — never by judgement:
 
+**A phase is done when the tests the map assigns to it are green — not when a suite is.** The
+test-to-phase analysis of 2026-08-28 (175 tests read body by body) gives the counts below and
+found that §50 leaves eleven normative areas unassigned; they are slotted here, and the S4 block
+is split, because 102 of the 175 tests first become attemptable when the command surface exists:
+
+| Phase | Tests | Also owns (areas §50 never assigns) |
+|---|---:|---|
+| S1 | 5 | §47 configuration declarations |
+| S2 | 1 | §18 device spaces — §50's identity list omits Device although §7.7 makes DEVICES a domain |
+| S3 | 3 | — (`find place` + the ADR-0124 rewrite in one commit) |
+| S4a `look`/`near` + domains | ~30 | §31 `trace` interop (a trace never moves the place) |
+| S4b `enter`/`follow` | ~30 | §30 `cd`/place integration, §35 permission honesty |
+| S4c `back`/`up`/`home`/`trail`/`jump`/`pin` | ~25 | §46 session state, §29.2 script isolation |
+| S4d storage and the cwd distinction | ~12 | §15 mount boundaries |
+| S4e the `spatial.enabled` refusal path and the §34 budgets | ~5 | §47 behaviour half |
+| S5 | 27 | §26 landmark engine, §39 ASCII fallback |
+| S6 | 13 | §5 startup horizon, §21 prompt/HUD, §27.2 picker, §9.4 completion |
+| S7 | 7 | — |
+| S8 | 12 | — |
+| S9 | 2 | — |
+| S10 | 3 | — |
+| S11 | 0 | the ten `.case.v04` scenarios renamed and green, the §34 budgets as gates, **`docs/ACCEPTANCE.md` §4.7 written from v0.4 §52** — without it `release-check.sh` cannot see this tranche |
+
 | Phase | Delivers (§50) | Suites it turns green |
 |---|---|---|
 | S1 | spatial core contracts: `SpatialId`, projection, canonical places, relation registry, hierarchy, trail, structured errors, machine-readable registries | `spatial_contracts_missing` (registry, errors) |
