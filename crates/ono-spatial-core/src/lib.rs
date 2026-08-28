@@ -38,7 +38,10 @@ pub mod trail;
 pub mod types;
 
 pub use edge::{EdgeId, HierarchicalEdge, HierarchyKind, RelationshipEdge, ValidityWindow};
-pub use hierarchy::{ParentRule, canonical_parent, parent_of_space, parent_rules, path_to_space};
+pub use hierarchy::{
+    PATH_PARENT, ParentRule, canonical_parent, canonical_parent_with, parent_of_space,
+    parent_rules, path_to_space,
+};
 pub use id::{BootIdentity, IdentityTier, ProcessIdentity, SpatialId, SpatialIdentity};
 pub use landmark::{Landmark, LandmarkReason, LandmarkSource};
 pub use neighborhood::{Completeness, Freshness, Neighborhood, NeighborhoodGroup, PermissionState};

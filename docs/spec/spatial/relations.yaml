@@ -128,9 +128,12 @@ relations:
     direction: outbound
     canonical_label: process
     inverse_label: container
-    confidence: exact
+    confidence: exact_or_provider_declared
     cost_class: normal
-    doc: A process running inside the container's scope (§3.5, §16.1).
+    doc: >-
+      A process running inside the container's scope (§3.5, §16.1). A runtime that lists its own
+      processes observes this; the kernel does not report it, and the derivation from the
+      container id in `/proc/<pid>/cgroup` is `strong` rather than `exact` (§11.5, ADR-0135).
 
   # --- network ---------------------------------------------------------------------------------
   - id: socket.connected_to

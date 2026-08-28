@@ -303,6 +303,71 @@ impl Projection {
         })
     }
 
+    /// Projects a place a provider *named* inside another object's record but does not serve as
+    /// a record of its own (§42.3, §16.2, §16.3, §14.4).
+    ///
+    /// The far end of a connection, the control group a process reports, the pid namespace it
+    /// runs in: each is a fact a provider stated, and each is a place a user can stand in. None
+    /// of them arrives as a record, so none of them can go through [`Projection::project_as`].
+    ///
+    /// `schema` and `field` say what the place would be if a provider did serve it, and `key` is
+    /// the value of that field — so a derived place and a served one reduce to the **same**
+    /// identity when both name the same object, which is what lets a cgroup composed from
+    /// `/proc/<pid>/cgroup` reconcile with an `ono.cgroup/1` record a future provider emits
+    /// (§42.1).
+    ///
+    /// `provenance` is the provenance of the record that named the place. The spatial layer
+    /// composes; it does not observe (§2.16).
+    #[must_use]
+    pub fn derive(
+        &self,
+        object_type: SpatialType,
+        schema: ono_value::SchemaId,
+        field: &str,
+        key: &str,
+        provenance: Provenance,
+    ) -> SpatialObject {
+        let identity = SpatialIdentity::new(
+            object_type.identity_tier(),
+            object_type,
+            [
+                ("scope".to_owned(), self.scope_chain()),
+                (field.to_owned(), key.to_owned()),
+            ],
+        );
+        let canonical_ref = ObjectRef::derived(
+            ono_provider_api::ObjectId::new(schema, [ono_value::Value::string(key)]),
+            key,
+            provenance.clone(),
+        );
+        let mut capabilities = BTreeSet::new();
+        capabilities.insert(SpatialCapability::Enter);
+        if crate::relation::exits_from(object_type).next().is_some() {
+            capabilities.insert(SpatialCapability::Follow);
+        }
+        SpatialObject {
+            spatial_id: identity.spatial_id(),
+            object_type,
+            canonical_ref,
+            display_name: key.to_owned(),
+            scope: self.scope.clone(),
+            lifetime: LifetimeDescriptor::observed(identity.tier(), self.at),
+            provenance,
+            capabilities,
+            identity,
+        }
+    }
+
+    /// The scope chain, as the identity of every object in it spells it.
+    fn scope_chain(&self) -> String {
+        self.scope
+            .chain()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
     /// Projects `record` into a spatial object, taking its type from the geography.
     ///
     /// # Errors
@@ -376,15 +441,7 @@ impl Projection {
         }
 
         let tier = object_type.identity_tier();
-        let mut components: Vec<(String, String)> = vec![(
-            "scope".to_owned(),
-            self.scope
-                .chain()
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("/"),
-        )];
+        let mut components: Vec<(String, String)> = vec![("scope".to_owned(), self.scope_chain())];
         for (field, value) in record
             .schema()
             .identity()

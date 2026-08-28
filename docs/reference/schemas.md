@@ -152,6 +152,20 @@ Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_
 | `purpose` | `string` | — | nullable | What the package said it needed the capability for, as shown in the prompt (spec §31.18). Package-authored, sanitised, and attributed to the package rather than to Ono. |
 | `revoked_at` | `timestamp` | — | nullable | When it was revoked. Null while it stands. A revoked grant is retained rather than deleted, so the record of what was once permitted survives. |
 
+## Cgroup — `ono.cgroup/1`
+
+A control group, named by the path the kernel gives it in the unified hierarchy.
+
+Identity: `path`
+
+Default view: `path`, `name`, `parent`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `path` | `path` | — | required | The control group's path in the unified hierarchy, `/system.slice/nginx.service`, as `/proc/<pid>/cgroup` reports it. The kernel's own identity for the group. |
+| `name` | `string` | — | required | The last component of the path, `nginx.service` — what a place view shows. |
+| `parent` | `path` | — | nullable | The path of the enclosing control group; null for the root of the hierarchy. |
+
 ## Command — `ono.command/1`
 
 One command of the registry, or what a head word resolves to.

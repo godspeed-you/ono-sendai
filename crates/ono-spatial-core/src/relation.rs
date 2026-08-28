@@ -452,7 +452,10 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "process",
         inverse_label: "container",
-        confidence: ConfidenceClaim::Fixed(Confidence::Exact),
+        // The kernel does not report container membership. A runtime that lists its own
+        // processes observes it; the container id in `/proc/<pid>/cgroup` is strong evidence
+        // and not an observation, so the claim is the provider's per edge (§11.5, ADR-0135).
+        confidence: ConfidenceClaim::ProviderDeclared,
         cost_class: CostClass::Normal,
     },
     RelationSpec {

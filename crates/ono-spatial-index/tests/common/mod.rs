@@ -82,3 +82,22 @@ pub fn socket_with(inode: i64, state: Option<&str>, remote: Option<&str>) -> Rec
     }
     record("ono.socket/1", &fields)
 }
+
+/// The same record with one more field set — how a fixture adds an owner or a peer.
+pub fn with(record: RecordValue, field: &str, value: Value) -> RecordValue {
+    let mut builder = RecordValue::builder(record.schema().clone(), record.provenance().clone());
+    for declared in record.schema().fields() {
+        if declared.name() == field {
+            continue;
+        }
+        if let Some(existing) = record.get(declared.name()) {
+            builder = builder
+                .set(declared.name(), existing.clone())
+                .expect("a field the record already carried");
+        }
+    }
+    builder
+        .set(field, value)
+        .expect("the field the fixture sets")
+        .build()
+}

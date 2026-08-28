@@ -169,14 +169,16 @@ spaces:
     kind: collection
     object_type: Cgroup
     member_type: Cgroup
-    schema: null
+    schema: ono.cgroup/1
     enterable: true
     commands: [look, map, near, enter, find place, pin]
     summary_fields: [count]
     doc: >-
-      The cgroup tree §7.2 requires access to. No provider answers for cgroups as objects yet,
-      so the collection is visible and carries an `unsupported` state rather than disappearing
-      (§4, §35.2); the `process.member_of_cgroup` relation already names them.
+      The cgroup tree §7.2 requires access to. No provider answers `get cgroup`: the control
+      group path is a fact `/proc/<pid>/cgroup` carries and `ono.process-detail/1` reports, and
+      the spatial bridge composes an `ono.cgroup/1` place from it (§16.3, ADR-0135). A process
+      that nobody has looked at closely yet leaves the collection empty rather than absent
+      (§4, §35.2).
 
   - id: compute.workloads
     label: workloads

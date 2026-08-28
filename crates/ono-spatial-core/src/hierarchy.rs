@@ -12,6 +12,17 @@
 
 use crate::{HierarchicalEdge, HierarchyKind, RelationshipEdge, SpatialId, SpatialType, space};
 
+/// The canonical-parent step that is not a relationship: the enclosing directory of the Unix path
+/// tree (§15.1, §3.4).
+///
+/// §3.4 lists "Directory -> child Directory" among the *hierarchical* edges, and §15.1 requires
+/// Ono to preserve "canonical Unix filesystem paths and directory semantics". The path tree is
+/// therefore hierarchy, not a relationship: no `RelationshipEdge` carries it, and no relation in
+/// `relations.yaml` declares it. It appears in a rule chain under this reserved id, and the
+/// caller supplies the parent it resolves to, because only the index knows which directories have
+/// been observed.
+pub const PATH_PARENT: &str = "path.parent";
+
 /// One step a canonical parent may be reached by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParentRule {
@@ -42,7 +53,14 @@ pub fn parent_rules(object_type: SpatialType) -> &'static [ParentRule] {
     const ADDRESS: &[ParentRule] = &[rule("interface.has_address", Containment)];
     const MOUNT: &[ParentRule] = &[rule("filesystem.mounted_at", Containment)];
     const FILESYSTEM: &[ParentRule] = &[rule("device.backs_filesystem", Containment)];
-    const PATH: &[ParentRule] = &[rule("mount.backs_directory", Containment)];
+    // §15.3: a mount is a boundary of the path tree, so `up` from the directory a mount provides
+    // arrives at the mount and the crossing is discoverable. Every other directory, and every
+    // file, goes up the Unix path tree, which §15.1 requires Ono to preserve.
+    const DIRECTORY: &[ParentRule] = &[
+        rule("mount.backs_directory", Containment),
+        rule(PATH_PARENT, Containment),
+    ];
+    const FILE: &[ParentRule] = &[rule(PATH_PARENT, Containment)];
     match object_type {
         SpatialType::Process => PROCESS,
         SpatialType::Socket | SpatialType::Listener => SOCKET,
@@ -50,7 +68,8 @@ pub fn parent_rules(object_type: SpatialType) -> &'static [ParentRule] {
         SpatialType::Address => ADDRESS,
         SpatialType::Mount => MOUNT,
         SpatialType::Filesystem => FILESYSTEM,
-        SpatialType::Directory | SpatialType::File => PATH,
+        SpatialType::Directory => DIRECTORY,
+        SpatialType::File => FILE,
         _ => &[],
     }
 }
@@ -67,11 +86,34 @@ pub fn canonical_parent(
     object_type: SpatialType,
     edges: &[RelationshipEdge],
 ) -> Option<HierarchicalEdge> {
+    canonical_parent_with(subject, object_type, edges, None)
+}
+
+/// The canonical parent, with the enclosing directory the caller knows about (§15.1).
+///
+/// `path_parent` is the place the Unix path tree leads to — the directory `/etc/nginx` for
+/// `/etc/nginx/nginx.conf` — where the caller has observed it. It is consulted at exactly the
+/// position [`PATH_PARENT`] holds in the type's rule chain, so a mount point still goes up to its
+/// mount (§15.3) while an ordinary file goes up its own path.
+///
+/// Returns `None` only for an object that is nowhere in the geography — the root, and the off-map
+/// endpoints of §42.3 — and that `None` is what `up` reports as `spatial.no_parent` (§40).
+#[must_use]
+pub fn canonical_parent_with(
+    subject: &SpatialId,
+    object_type: SpatialType,
+    edges: &[RelationshipEdge],
+    path_parent: Option<&SpatialId>,
+) -> Option<HierarchicalEdge> {
     for rule in parent_rules(object_type) {
-        let found = edges
-            .iter()
-            .filter(|edge| edge.relation().as_str() == rule.relation)
-            .find_map(|edge| edge.other_end(subject));
+        let found = if rule.relation == PATH_PARENT {
+            path_parent
+        } else {
+            edges
+                .iter()
+                .filter(|edge| edge.relation().as_str() == rule.relation)
+                .find_map(|edge| edge.other_end(subject))
+        };
         if let Some(parent) = found {
             return Some(HierarchicalEdge::new(
                 parent.clone(),

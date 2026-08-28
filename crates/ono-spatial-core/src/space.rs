@@ -264,7 +264,7 @@ pub const SPACES: &[CanonicalSpace] = &[
         kind: SpaceKind::Collection,
         object_type: SpatialType::Cgroup,
         member_type: Some(SpatialType::Cgroup),
-        schema: None,
+        schema: Some("ono.cgroup/1"),
         enterable: true,
         commands: &["look", "map", "near", "enter", "find place", "pin"],
         summary_fields: &["count"],

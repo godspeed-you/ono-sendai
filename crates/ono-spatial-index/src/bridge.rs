@@ -22,8 +22,11 @@ use std::collections::BTreeMap;
 
 use jiff::Timestamp;
 use ono_core::ErrorCode;
-use ono_spatial_core::{Projection, SpatialId, SpatialObject, SpatialType};
-use ono_value::{ErrorValue, RecordValue, Value};
+use ono_spatial_core::{
+    Confidence, Projection, RelationSpec, RelationshipEdge, SpatialId, SpatialObject, SpatialType,
+    relation,
+};
+use ono_value::{ErrorValue, Provenance, RecordValue, SchemaId, Value};
 
 use crate::{Registration, SpatialIndex};
 
@@ -187,6 +190,46 @@ fn text(value: Option<&Value>) -> Option<String> {
     }
 }
 
+// --- the relations a record asserts ------------------------------------------------------------
+
+/// Where the far end of an asserted relation is.
+#[derive(Debug, Clone)]
+enum FarEnd {
+    /// A place some provider serves; the bridge looks it up by the key another record names it by.
+    Known {
+        object_type: SpatialType,
+        key: String,
+    },
+    /// A place a provider named inside this record but serves no record for — the far end of a
+    /// connection, a control group, a namespace (§42.3, §16.2, §16.3).
+    Composed {
+        object_type: SpatialType,
+        schema: &'static str,
+        field: &'static str,
+        key: String,
+    },
+}
+
+/// One relation a record asserted, from the object the record described to somewhere else.
+#[derive(Debug, Clone)]
+struct Fact {
+    subject: SpatialId,
+    /// Whether the record's own object is the relation's declared source or its target.
+    subject_is_source: bool,
+    relation: &'static RelationSpec,
+    far: FarEnd,
+    confidence: Confidence,
+    provenance: Provenance,
+    attributes: Vec<(&'static str, Value)>,
+}
+
+/// The directory the Unix path tree puts an object inside, waiting for that directory to be seen.
+#[derive(Debug, Clone)]
+struct PathParent {
+    child: SpatialId,
+    parent_path: String,
+}
+
 /// What absorbing a batch of provider records did (§42.1).
 #[derive(Debug, Clone, Default)]
 pub struct Absorbed {
@@ -194,6 +237,7 @@ pub struct Absorbed {
     reconciled: Vec<SpatialId>,
     unplaced: Vec<String>,
     refused: Vec<ErrorValue>,
+    edges: usize,
 }
 
 impl Absorbed {
@@ -231,6 +275,13 @@ impl Absorbed {
     pub fn registered(&self) -> usize {
         self.added.len() + self.reconciled.len()
     }
+
+    /// How many relationship edges the batch settled — including facts an earlier batch asserted
+    /// whose far end only arrived now.
+    #[must_use]
+    pub fn edges(&self) -> usize {
+        self.edges
+    }
 }
 
 /// The bridge from one provider scope's records into the spatial index (§45.2, §50 Phase S2).
@@ -242,6 +293,13 @@ impl Absorbed {
 pub struct ProviderBridge {
     projection: Projection,
     keys: BTreeMap<(SpatialType, String), SpatialId>,
+    /// Relations asserted by a record whose far end nobody had observed yet. Discovery is not
+    /// ordered — sockets can be listed before processes — and §42.3 forbids an edge to an
+    /// unknown id, so the assertion waits here rather than becoming a dangling edge or being
+    /// lost.
+    pending: Vec<Fact>,
+    /// The same, for the enclosing directory of the Unix path tree (§15.1).
+    pending_paths: Vec<PathParent>,
 }
 
 impl ProviderBridge {
@@ -251,6 +309,8 @@ impl ProviderBridge {
         Self {
             projection,
             keys: BTreeMap::new(),
+            pending: Vec::new(),
+            pending_paths: Vec::new(),
         }
     }
 
@@ -280,7 +340,12 @@ impl ProviderBridge {
         self.projection.project_as(record, object_type)
     }
 
-    /// Registers every record of `records` that names a place, at `at`.
+    /// Registers every record of `records` that names a place, then records the relations those
+    /// records assert between places the index holds (§42.1, §42.3).
+    ///
+    /// Registration comes first and relations second, so that two records of one batch that name
+    /// each other both land. An assertion whose far end nobody has observed is kept rather than
+    /// dropped: discovery is not ordered, and the edge is made the moment the far end arrives.
     ///
     /// Records that name no place are counted and skipped; records that name one and cannot
     /// become one are refused with the provider's own diagnostic rather than dropped, because a
@@ -292,6 +357,9 @@ impl ProviderBridge {
         at: Timestamp,
     ) -> Absorbed {
         let mut outcome = Absorbed::default();
+        let mut facts = std::mem::take(&mut self.pending);
+        let mut paths = std::mem::take(&mut self.pending_paths);
+
         for record in records {
             let Some(object_type) = spatial_type_of(record) else {
                 let schema = record.schema().id().to_string();
@@ -319,8 +387,99 @@ impl ProviderBridge {
             for key in reference_keys(object_type, record) {
                 self.keys.insert((object_type, key), id.clone());
             }
+            facts.extend(facts_of(&id, object_type, record));
+            if let Some(parent) = enclosing_directory(object_type, record) {
+                paths.push(PathParent {
+                    child: id,
+                    parent_path: parent,
+                });
+            }
+        }
+
+        // Composed places first: an edge to one of them can always be settled, and a place the
+        // index does not hold cannot be an edge's end (§42.3).
+        for fact in &facts {
+            if let FarEnd::Composed {
+                object_type,
+                schema,
+                field,
+                key,
+            } = &fact.far
+                && self.resolve(*object_type, key).is_none()
+            {
+                let Ok(schema) = schema.parse::<SchemaId>() else {
+                    continue;
+                };
+                let place = self.projection.derive(
+                    *object_type,
+                    schema,
+                    field,
+                    key,
+                    fact.provenance.clone(),
+                );
+                let id = place.spatial_id().clone();
+                match index.register(place, at) {
+                    Ok(Registration::Added) => outcome.added.push(id.clone()),
+                    Ok(Registration::Reconciled) => outcome.reconciled.push(id.clone()),
+                    Err(error) => {
+                        outcome.refused.push(error);
+                        continue;
+                    }
+                }
+                self.keys.insert((*object_type, key.clone()), id);
+            }
+        }
+
+        for fact in facts {
+            match self.settle(&fact, at) {
+                Some(edge) => {
+                    index.record_edge(edge);
+                    outcome.edges += 1;
+                }
+                // The far end is still unobserved, and the subject is still a place: keep the
+                // assertion for the batch that brings the other half.
+                None if index.contains(&fact.subject) => self.pending.push(fact),
+                None => {}
+            }
+        }
+        for path in paths {
+            let resolved = self
+                .resolve(SpatialType::Directory, &path.parent_path)
+                .cloned();
+            match resolved {
+                Some(parent) if index.set_path_parent(&path.child, &parent) => {}
+                _ if index.contains(&path.child) => self.pending_paths.push(path),
+                _ => {}
+            }
         }
         outcome
+    }
+
+    /// The edge a fact asserts, once both its ends are places the index holds.
+    fn settle(&self, fact: &Fact, at: Timestamp) -> Option<RelationshipEdge> {
+        let far = match &fact.far {
+            FarEnd::Known { object_type, key }
+            | FarEnd::Composed {
+                object_type, key, ..
+            } => self.resolve(*object_type, key)?,
+        };
+        let (source, target) = if fact.subject_is_source {
+            (fact.subject.clone(), far.clone())
+        } else {
+            (far.clone(), fact.subject.clone())
+        };
+        let mut edge = RelationshipEdge::new(
+            source,
+            target,
+            fact.relation.relation_type(),
+            fact.confidence,
+            fact.provenance.clone(),
+            at,
+        );
+        for (key, value) in &fact.attributes {
+            edge = edge.with_attribute(key, value.clone());
+        }
+        Some(edge)
     }
 
     /// The place of `object_type` that another record's reference to `key` names, where the
@@ -347,4 +506,300 @@ impl ProviderBridge {
                     .find_map(|kind| self.keys.get(&(*kind, key.to_owned())))
             })
     }
+}
+
+/// The relation `id` must be declared, and every fact below names one that is.
+///
+/// A `RelationSpec` exists only for a relation `docs/spec/spatial/relations.yaml` declares, so a
+/// fact that could not find one is a fact the bridge does not assert (§2.5: every edge is
+/// explainable, starting with being declared).
+fn declared(id: &'static str) -> Option<&'static RelationSpec> {
+    relation::spec(id)
+}
+
+/// Everything the record `record` says about how its object relates to other places.
+///
+/// Every entry is a fact the *provider* stated: a parent pid, a unit name, a uid, an open
+/// descriptor, a cgroup path, a peer endpoint. §2.16 allows the spatial layer to compose those
+/// into a graph and nothing else — so the confidence is `exact` wherever the record states the
+/// relation outright, and weaker only where the join is evidence rather than an observation.
+fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> Vec<Fact> {
+    let mut facts = Vec::new();
+    let provenance = record.provenance().clone();
+    let mut push = |relation: &'static str,
+                    subject_is_source: bool,
+                    far: FarEnd,
+                    confidence: Confidence,
+                    attributes: Vec<(&'static str, Value)>| {
+        if let Some(spec) = declared(relation) {
+            facts.push(Fact {
+                subject: id.clone(),
+                subject_is_source,
+                relation: spec,
+                far,
+                confidence,
+                provenance: provenance.clone(),
+                attributes,
+            });
+        }
+    };
+    let known = |object_type: SpatialType, key: String| FarEnd::Known { object_type, key };
+
+    match object_type {
+        SpatialType::Process => {
+            if let Some(key) = record.get("ppid").and_then(|value| text(Some(value))) {
+                // The record's object is the *child*, and `process.parent_of` runs from parent
+                // to child, so the subject is the relation's target.
+                push(
+                    "process.parent_of",
+                    false,
+                    known(SpatialType::Process, key),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+            if let Some(key) = reference_of(record, "service", SpatialType::Service) {
+                push(
+                    "service.controls_process",
+                    false,
+                    known(SpatialType::Service, key),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+            if let Some(key) = reference_of(record, "user", SpatialType::User) {
+                push(
+                    "user.owns_process",
+                    false,
+                    known(SpatialType::User, key),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+            if let Some(key) = reference_of(record, "container", SpatialType::Container) {
+                // The provider stated it outright, so this half is an observation.
+                push(
+                    "container.contains_process",
+                    false,
+                    known(SpatialType::Container, key),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+            if let Some(key) = record
+                .get("pid_namespace")
+                .and_then(|value| text(Some(value)))
+            {
+                push(
+                    "process.in_namespace",
+                    true,
+                    FarEnd::Composed {
+                        object_type: SpatialType::Namespace,
+                        schema: "ono.namespace/1",
+                        field: "id",
+                        key,
+                    },
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+            if let Some(path) = record.get("cgroup").and_then(|value| text(Some(value))) {
+                push(
+                    "process.member_of_cgroup",
+                    true,
+                    FarEnd::Composed {
+                        object_type: SpatialType::Cgroup,
+                        schema: "ono.cgroup/1",
+                        field: "path",
+                        key: path.clone(),
+                    },
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+                if let Some(container) = container_id_in(&path) {
+                    // §11.5: the kernel does not report container membership. The runtime id in
+                    // the cgroup path leaves no serious alternative, which is `strong`, and the
+                    // path travels with the edge as the evidence §11.4 requires.
+                    push(
+                        "container.contains_process",
+                        false,
+                        known(SpatialType::Container, container),
+                        Confidence::Strong,
+                        vec![("evidence", Value::string(&path))],
+                    );
+                }
+            }
+            for path in list_of(record, "open_files") {
+                push(
+                    "process.opened_file",
+                    true,
+                    known(SpatialType::File, path),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+        }
+        SpatialType::Socket | SpatialType::Listener | SpatialType::Connection => {
+            if let Some(key) = reference_of(record, "process", SpatialType::Process) {
+                push(
+                    "process.owns_socket",
+                    false,
+                    known(SpatialType::Process, key),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+            if let Some(peer) = endpoint_name(record, "remote") {
+                push(
+                    "socket.connected_to",
+                    true,
+                    FarEnd::Composed {
+                        object_type: SpatialType::Endpoint,
+                        schema: "ono.endpoint/1",
+                        field: "endpoint",
+                        key: peer,
+                    },
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+        }
+        SpatialType::File | SpatialType::Directory => {
+            if let Some(key) = reference_of(record, "owner", SpatialType::User) {
+                push(
+                    "user.owns_file",
+                    false,
+                    known(SpatialType::User, key),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+        }
+        SpatialType::Filesystem => {
+            if let Some(target) = record.get("target").and_then(|value| text(Some(value))) {
+                push(
+                    "filesystem.mounted_at",
+                    true,
+                    known(SpatialType::Mount, target),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+            if let Some(source) = record.get("source").and_then(|value| text(Some(value))) {
+                // The filesystem's source and the device node are the same string because the
+                // kernel spells them the same way; that is a join, not an observation (§11.5).
+                push(
+                    "device.backs_filesystem",
+                    false,
+                    known(SpatialType::BlockDevice, source.clone()),
+                    Confidence::Strong,
+                    vec![("evidence", Value::string(&source))],
+                );
+            }
+        }
+        SpatialType::Mount => {
+            if let Some(target) = record.get("target").and_then(|value| text(Some(value))) {
+                push(
+                    "mount.backs_directory",
+                    true,
+                    known(SpatialType::Directory, target),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+        }
+        SpatialType::Address => {
+            if let Some(key) = reference_of(record, "interface", SpatialType::Interface) {
+                push(
+                    "interface.has_address",
+                    false,
+                    known(SpatialType::Interface, key),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+        }
+        SpatialType::Route => {
+            if let Some(key) = reference_of(record, "interface", SpatialType::Interface) {
+                push(
+                    "route.via_interface",
+                    true,
+                    known(SpatialType::Interface, key),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+        }
+        SpatialType::User => {
+            if let Some(key) = reference_of(record, "primary_group", SpatialType::Group) {
+                push(
+                    "user.member_of_group",
+                    true,
+                    known(SpatialType::Group, key),
+                    Confidence::Exact,
+                    Vec::new(),
+                );
+            }
+        }
+        _ => {}
+    }
+    facts
+}
+
+/// The value of a reference field, as the key the far end answers to.
+fn reference_of(record: &RecordValue, field: &str, object_type: SpatialType) -> Option<String> {
+    reference_key(record.get(field)?, object_type)
+}
+
+/// The elements of a list field, as text.
+fn list_of(record: &RecordValue, field: &str) -> Vec<String> {
+    match record.get(field) {
+        Some(Value::List(items)) => items.iter().filter_map(|item| text(Some(item))).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// How an endpoint sub-record names the place at the far end of a connection (§14.4, §42.3).
+///
+/// `10.0.0.5:5432` for an internet peer, the socket path for a Unix one. The far end is a place
+/// even where Ono cannot say which host it is, which is what §42.3 calls an explicit unresolved
+/// endpoint object.
+fn endpoint_name(record: &RecordValue, field: &str) -> Option<String> {
+    let endpoint = record.get(field)?.as_record().ok()?;
+    if let Some(path) = text(endpoint.get("path")) {
+        return Some(path);
+    }
+    let address = text(endpoint.get("address"))?;
+    Some(match text(endpoint.get("port")) {
+        Some(port) => format!("{address}:{port}"),
+        None => address,
+    })
+}
+
+/// The container runtime id a control-group path names, where it names one (§16.1).
+///
+/// Docker writes `/docker/<id>` or `…/docker-<id>.scope`, Podman `…/libpod-<id>.scope`,
+/// Kubernetes `…/cri-containerd-<id>.scope` and `…/crio-<id>.scope`. All of them end in the
+/// runtime's own 64-character container id, which is the identity `ono.container/1` carries — so
+/// the join is to the engine's own id and never to a name a user can change.
+fn container_id_in(cgroup: &str) -> Option<String> {
+    cgroup.rsplit('/').find_map(|segment| {
+        let segment = segment.strip_suffix(".scope").unwrap_or(segment);
+        let candidate = segment.rsplit('-').next().unwrap_or(segment);
+        (candidate.len() == 64 && candidate.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| candidate.to_owned())
+    })
+}
+
+/// The path of the directory the Unix path tree puts a path object inside (§15.1).
+///
+/// `None` for anything that is not a path object, and for `/`, which has no enclosing directory.
+fn enclosing_directory(object_type: SpatialType, record: &RecordValue) -> Option<String> {
+    if !matches!(object_type, SpatialType::File | SpatialType::Directory) {
+        return None;
+    }
+    let path = text(record.get("path"))?;
+    let parent = std::path::Path::new(&path).parent()?;
+    let parent = parent.to_str()?;
+    (parent != path && !parent.is_empty()).then(|| parent.to_owned())
 }

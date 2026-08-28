@@ -157,16 +157,26 @@ fn should_resolve_one_process_seen_through_two_schemas_to_one_place() {
     let mut bridge = bridge();
     let first = bridge.absorb(&mut index, &[listed], common::NOW);
     let second = bridge.absorb(&mut index, &[inspected], common::NOW);
+    assert!(first.refused().is_empty(), "{:?}", first.refused());
+    assert!(second.refused().is_empty(), "{:?}", second.refused());
 
-    assert_eq!(first.added().len(), 1, "{:?}", first.refused());
-    assert_eq!(
-        second.reconciled().len(),
-        1,
-        "the detail record is the same process, not a second one: {:?}",
-        second.refused()
+    let listed_id = bridge
+        .resolve(SpatialType::Process, "1842")
+        .expect("the listed process is a place")
+        .clone();
+    assert!(
+        first.added().contains(&listed_id),
+        "the first observation put the process in the index"
     );
-    assert_eq!(first.added(), second.reconciled());
-    assert_eq!(index.len(), 1, "one process, one place");
+    assert!(
+        second.reconciled().contains(&listed_id),
+        "the detail record is the same process, not a second one"
+    );
+    assert_eq!(
+        index.of_type(SpatialType::Process).len(),
+        1,
+        "one process, one place — whatever schema carried it"
+    );
 }
 
 #[test]
@@ -220,7 +230,7 @@ fn should_resolve_one_disk_seen_through_the_kernel_and_through_an_adapter_to_one
         "one disk, seen twice, is one place — not one per schema: {:?}",
         second.refused()
     );
-    assert_eq!(index.len(), 1);
+    assert_eq!(index.of_type(SpatialType::BlockDevice).len(), 1);
 }
 
 #[test]

@@ -17,7 +17,7 @@ use ono_core::ErrorCode;
 use ono_provider_api::ObjectRef;
 use ono_spatial_core::{
     CostClass, Freshness, HierarchicalEdge, Landmark, NeighborhoodGroup, PermissionState,
-    RelationshipEdge, SpatialId, SpatialObject, SpatialType, canonical_parent, relation,
+    RelationshipEdge, SpatialId, SpatialObject, SpatialType, canonical_parent_with, relation,
 };
 use ono_value::ErrorValue;
 
@@ -29,6 +29,7 @@ pub struct IndexEntry {
     object: SpatialObject,
     aliases: BTreeSet<String>,
     canonical_parent: Option<HierarchicalEdge>,
+    path_parent: Option<SpatialId>,
     edges: Vec<RelationshipEdge>,
     landmarks: Vec<Landmark>,
     observed_at: Timestamp,
@@ -194,7 +195,8 @@ impl SpatialIndex {
                     IndexEntry {
                         object,
                         aliases,
-                        canonical_parent: canonical_parent(&id, object_type, &[]),
+                        canonical_parent: canonical_parent_with(&id, object_type, &[], None),
+                        path_parent: None,
                         edges: Vec::new(),
                         landmarks: Vec::new(),
                         observed_at,
@@ -239,8 +241,31 @@ impl SpatialIndex {
             }
             entry.edges.push(edge.clone());
             let object_type = entry.object.object_type();
-            entry.canonical_parent = canonical_parent(&end, object_type, &entry.edges);
+            entry.canonical_parent =
+                canonical_parent_with(&end, object_type, &entry.edges, entry.path_parent.as_ref());
         }
+    }
+
+    /// Records the directory the Unix path tree puts `child` inside (§15.1, §3.4).
+    ///
+    /// This is hierarchy, not a relationship: no edge carries it, and `up` consults it at exactly
+    /// the position [`ono_spatial_core::PATH_PARENT`] holds in the type's rule chain — after the
+    /// mount that provides a mount point (§15.3), before the collection space.
+    ///
+    /// Returns whether the index holds both ends. It refuses a cycle, because a directory that is
+    /// its own ancestor would make `up` loop forever.
+    pub fn set_path_parent(&mut self, child: &SpatialId, parent: &SpatialId) -> bool {
+        if child == parent || !self.entries.contains_key(parent) {
+            return false;
+        }
+        let Some(entry) = self.entries.get_mut(child) else {
+            return false;
+        };
+        entry.path_parent = Some(parent.clone());
+        let object_type = entry.object.object_type();
+        entry.canonical_parent =
+            canonical_parent_with(child, object_type, &entry.edges, entry.path_parent.as_ref());
+        true
     }
 
     /// Records what deserves attention about an object (§26, §33.1's "landmark state").

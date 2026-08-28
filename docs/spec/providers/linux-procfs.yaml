@@ -41,9 +41,12 @@ providers:
       # A file is device + inode: the same object under any number of paths, and the same
       # object after a rename (§10.1 Tier A).
       identity_strategy: stable
+      # `path.parent` is not a relation: §3.4 and §15.1 make the Unix path tree hierarchy, so
+      # `up` from a file goes to the directory that contains it and `up` from the directory a
+      # mount provides crosses the mount boundary first (§15.3, ADR-0135).
       canonical_parent:
-        Directory: [mount.backs_directory, storage.directories]
-        File: [mount.backs_directory]
+        Directory: [mount.backs_directory, path.parent, storage.directories]
+        File: [path.parent]
       relationships:
         - mount.backs_directory
         - process.opened_file

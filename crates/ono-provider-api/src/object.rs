@@ -172,6 +172,25 @@ impl ObjectRef {
         })
     }
 
+    /// A reference to an object a provider *named* but does not serve as a record of its own.
+    ///
+    /// The far end of a connection, the control group a process reports, the namespace a pid was
+    /// read in: each is a real thing a provider told us about inside another object's record, and
+    /// spec v0.4 §42.3 requires an edge to reach "a known spatial object, an explicit unresolved
+    /// endpoint object, or a remote/opaque reference with correct type" rather than a dangling
+    /// id. This is how the second and third of those are built.
+    ///
+    /// `provenance` is the provenance of the record that named it, never a new attribution: the
+    /// observation belongs to whoever made it (spec §26).
+    #[must_use]
+    pub fn derived(id: ObjectId, label: impl Into<String>, provenance: Provenance) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            provenance,
+        }
+    }
+
     /// The object's identity.
     #[must_use]
     pub fn id(&self) -> &ObjectId {
