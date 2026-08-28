@@ -181,6 +181,108 @@ pub const CATALOGUE: &[SettingSpec] = &[
         description: "How many targets a mutation may touch before it asks first (spec §17.4, §30). Recorded; confirmation is not interactive yet.",
         default: DefaultValue::Int(100),
     },
+    // --- the spatial interface, spec v0.4 §47 ------------------------------------------------
+    // §47 calls these eleven required and spells out each default. "Disabling `spatial.enabled`
+    // MUST leave the typed shell and ordinary commands functional."
+    SettingSpec {
+        key: "spatial.enabled",
+        ty: SettingType::Bool,
+        description: "Whether the spatial interface is active (spec v0.4 §47). Disabling it leaves the typed shell and every ordinary command working.",
+        default: DefaultValue::Bool(true),
+    },
+    SettingSpec {
+        key: "spatial.startup_horizon",
+        ty: SettingType::Bool,
+        description: "Whether an interactive session opens with the compact spatial horizon (spec v0.4 §5, §53).",
+        default: DefaultValue::Bool(true),
+    },
+    SettingSpec {
+        key: "spatial.follow_cwd",
+        ty: SettingType::String,
+        description: "How `cd` and the current place stay related (spec v0.4 §30.3). `storage-only`: a directory change moves the storage place and nothing else.",
+        default: DefaultValue::Str("storage-only"),
+    },
+    SettingSpec {
+        key: "spatial.map.mode",
+        ty: SettingType::String,
+        description: "How `map` renders: `auto`, `text` or `fullscreen` (spec v0.4 §23, §47).",
+        default: DefaultValue::Str("auto"),
+    },
+    SettingSpec {
+        key: "spatial.map.live",
+        ty: SettingType::Bool,
+        description: "Whether a map subscribes to change by default (spec v0.4 §25.1). Motion always means real change, never decoration.",
+        default: DefaultValue::Bool(false),
+    },
+    SettingSpec {
+        key: "spatial.map.node_budget",
+        ty: SettingType::Int,
+        description: "How many nodes a map may draw before it clusters, and above which it refuses with `spatial.map_too_large` (spec v0.4 §8.2, §34.2).",
+        default: DefaultValue::Int(100),
+    },
+    SettingSpec {
+        key: "spatial.look.change_window",
+        ty: SettingType::String,
+        description: "How far back `look`'s change section and the change landmarks reach (spec v0.4 §24.3, §26).",
+        default: DefaultValue::Str("5m"),
+    },
+    SettingSpec {
+        key: "spatial.landmarks.enabled",
+        ty: SettingType::Bool,
+        description: "Whether the landmark engine runs at all (spec v0.4 §26).",
+        default: DefaultValue::Bool(true),
+    },
+    SettingSpec {
+        key: "spatial.reduced_motion",
+        ty: SettingType::Bool,
+        description: "Suppresses animation in live views (spec v0.4 §25.2, §39.4). What is shown is unchanged; only the movement between frames is.",
+        default: DefaultValue::Bool(false),
+    },
+    SettingSpec {
+        key: "spatial.remote_search",
+        ty: SettingType::String,
+        description: "Whether discovery reaches across links (spec v0.4 §9.3, §35.4). `explicit`: never until asked, and `jump` opens no connection because a name resembles a known place.",
+        default: DefaultValue::Str("explicit"),
+    },
+    SettingSpec {
+        key: "spatial.trail.persist",
+        ty: SettingType::Bool,
+        description: "Whether the navigation trail survives a restart (spec v0.4 §46.1). Off by default for privacy and stale identity; pins persist regardless.",
+        default: DefaultValue::Bool(false),
+    },
+    // §26.3: "Thresholds MUST be inspectable and configurable." `docs/spec/spatial/landmarks.yaml`
+    // names the setting behind each threshold; these are those settings, and `spec-check` holds
+    // the two defaults together (ADR-0128).
+    SettingSpec {
+        key: "spatial.landmarks.high_cpu",
+        ty: SettingType::Int,
+        description: "The CPU percentage at or above which an object is a `high_cpu` landmark (spec v0.4 §26.3).",
+        default: DefaultValue::Int(80),
+    },
+    SettingSpec {
+        key: "spatial.landmarks.high_memory",
+        ty: SettingType::Int,
+        description: "The share of the host or cgroup memory budget, in percent, that makes a `high_memory` landmark (spec v0.4 §26.3).",
+        default: DefaultValue::Int(25),
+    },
+    SettingSpec {
+        key: "spatial.landmarks.restart_loop",
+        ty: SettingType::Int,
+        description: "Restarts within the change window that make a `restarting` landmark rather than a `recently_changed` one (spec v0.4 §26.3).",
+        default: DefaultValue::Int(3),
+    },
+    SettingSpec {
+        key: "spatial.landmarks.connection_spike",
+        ty: SettingType::Int,
+        description: "New connections within the change window that make a `connection_spike` landmark (spec v0.4 §26.3).",
+        default: DefaultValue::Int(100),
+    },
+    SettingSpec {
+        key: "spatial.landmarks.storage_pressure",
+        ty: SettingType::Int,
+        description: "The used share of a filesystem, in percent, that makes a `storage_pressure` landmark (spec v0.4 §26.3).",
+        default: DefaultValue::Int(90),
+    },
 ];
 
 /// The declaration of `key`, if there is one.

@@ -1201,7 +1201,6 @@ fn should_keep_the_trail_session_local_while_a_pin_survives_the_session() {
 // --- §47 configuration ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §47); un-ignored by the increment that delivers it"]
 fn should_expose_every_spatial_setting_as_a_typed_setting_with_its_default() {
     // §47 calls eleven keys required and gives each one's default. "The exact configuration file
     // syntax follows Ono's base configuration system", which is the typed catalogue of ADR-0094:

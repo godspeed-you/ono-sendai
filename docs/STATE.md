@@ -121,8 +121,57 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 (event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
 (§45.6).
 
-- (empty — installable packages delivered, see *Done*; `scripts/release-check.sh` green on
-  2026-08-27 with the package check in the chain)
+- (empty — S1 complete, see below; no agent holds a claim)
+
+**S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
+on each:
+
+1. `feat(spatial)` the fourteen §40 errors as the `spatial` family `Ono-Sendai-E1001`–`E1014`
+   (ADR-0125, ADR-0127) in `docs/spec/errors.yaml` and `ono_core::ErrorCode`.
+2. `feat(spatial)` the §41 registry: `docs/spec/spatial/{spatial,spaces,relations,landmarks}.yaml`
+   (ADR-0126, ADR-0128), wired into `xtask spec-check`.
+3. `feat(spatial)` `crates/ono-spatial-core` — `SpatialId` and the §10 tiers (ADR-0129), the
+   `SpatialObject` projection, `SpatialScope` with boundary detection, `Place`, `HierarchicalEdge`
+   and `RelationshipEdge`, the canonical geography, the canonical-parent resolver (ADR-0130), the
+   navigation trail and tombstones.
+4. `feat(spatial)` `crates/ono-spatial-index` — registration and §42.1 reconciliation, the alias
+   and search index, freshness, canonical-parent lookup, bounded relation summaries and pins
+   (ADR-0131).
+5. `feat(config)` the eleven `spatial.*` settings of §47, plus the five landmark thresholds §26.3
+   requires to be configurable.
+
+Green from `crates/ono-cli/tests/spatial_contracts_missing.rs`:
+`should_register_the_whole_spatial_error_family_in_the_error_taxonomy`,
+`should_ship_the_machine_readable_spatial_registry`,
+`should_declare_every_canonical_space_with_the_fields_the_registry_requires`,
+`should_declare_every_relation_with_its_direction_labels_and_confidence`,
+`should_expose_every_spatial_setting_as_a_typed_setting_with_its_default`.
+
+Still ignored in that suite and correctly so: `should_serve_exactly_the_canonical_spaces_the_registry_declares`
+and `should_serve_every_relation_it_declares_and_declare_every_relation_it_serves` run `map` and
+`near`, which S3–S5 deliver. The registry-versus-implementation drift they describe is already
+enforced against `ono-spatial-core` by `cargo run -p xtask -- spec-check`
+(`xtask::contracts::check_spatial_implementation`); those two tests add the third party — what the
+*commands* serve — and go green with S5.
+
+**What S2 needs from S1** — the three things:
+
+- `ono_spatial_core::Projection::project_as(record, object_type)` is the provider seam. The type
+  is the caller's, because `ono.socket/1` is a `Listener` or a `Connection` and `ono.file/1` is a
+  `Directory` or a `File`; `spatial_types_of(schema)` lists the candidates. `project` (without the
+  type) works only where exactly one candidate exists.
+- Identity is scoped and opaque (ADR-0129). Everything but a process takes its schema's identity
+  fields plus the scope chain; a process takes boot identity, pid, start time and pid namespace
+  (§10.2), reading `pid`, `started` and, where a provider supplies it, `pid_namespace`. Registering
+  the same `(scope, ObjectRef)` under two ids is `spatial.identity_conflict`.
+- The §42 provider claims block (`spatial:` under each entry in `docs/spec/providers/*.yaml`) is
+  **not** written yet; `spatial_contracts_missing::should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_index`
+  is S2's. Its `identity_strategy` must be one of `stable`/`lifetime`/`observation`, matching
+  `ono_spatial_core::IdentityTier`, and its `cost_class` one of `ono_spatial_core::CostClass`.
+
+**Open, and deliberately not S1's:** `docs/ACCEPTANCE.md` has no v0.4 section yet, so
+`scripts/release-check.sh` cannot see this tranche. §4.7 needs writing from v0.4 §52 before S11,
+the way §4.6 was written from v0.3.
 
 ---
 
