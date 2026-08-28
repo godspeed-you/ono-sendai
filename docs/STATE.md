@@ -994,8 +994,8 @@ carries the mapping, and `docker/acceptance/fixtures/spatial/` the deterministic
 asks for (a listener holding a known file open and forking workers, its client, and a service
 manager stand-in in the shape the v0.3 systemd adapters decode).
 
-**The three questions the suites could not settle are decided** (2026-08-28), so the first
-increment starts from a fixed contract rather than from an assumption:
+**The three questions the suites could not settle are decided** (2026-08-28, confirmed by the
+user), so the first increment starts from a fixed contract rather than from an assumption:
 
 1. **ADR-0124** — spatial verbs resolve by v0.2 §6.5 and take the bare name, except where a
    widely used program already answers to it: `find` keeps its target word, so the spatial

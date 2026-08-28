@@ -4,7 +4,7 @@
 - Date: 2026-08-28
 - Spec refs: v0.4 §40 (error model), §41 (machine-readable spatial registry); v0.2 §16, §43
   (error taxonomy); ADR-0006, ADR-0053 (the adapter family E09xx)
-- Decided by: agent (autonomous)
+- Decided by: agent (autonomous); confirmed by the user 2026-08-28
 
 ## Context
 

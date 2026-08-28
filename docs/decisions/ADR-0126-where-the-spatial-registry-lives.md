@@ -4,7 +4,7 @@
 - Date: 2026-08-28
 - Spec refs: v0.4 §41 (machine-readable spatial registry), §41.1, §41.2, §42; v0.2 §27, §47;
   AGENTS.md §2; ADR-0012 (the registries), ADR-0026 (spec-check)
-- Decided by: agent (autonomous)
+- Decided by: agent (autonomous); confirmed by the user 2026-08-28
 
 ## Context
 

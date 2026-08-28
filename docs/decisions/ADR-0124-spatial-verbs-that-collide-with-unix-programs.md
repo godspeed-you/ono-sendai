@@ -4,7 +4,7 @@
 - Date: 2026-08-28
 - Spec refs: v0.4 §6 (spatial command language), §6.1, §6.8, §44.10; v0.2 §6.5 (resolution
   order), §8.4 (target design rule); v0.3 §1.71 (Unix muscle memory)
-- Decided by: agent (autonomous)
+- Decided by: agent (autonomous); confirmed by the user 2026-08-28
 
 ## Context
 
