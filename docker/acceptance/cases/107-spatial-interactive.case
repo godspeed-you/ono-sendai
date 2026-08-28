@@ -35,11 +35,15 @@ run: |
   # `script` gives ono a controlling terminal and forwards the fifo into it, which is the only
   # way a key reaches a full-screen view at all.
   drive() {
-    local keys="$1" out="$2" writer="$3"
+    local keys="$1" out="$2" writer="$3" typist
     rm -f "$keys" "$out"
     mkfifo "$keys"
     ( eval "$writer" ) > "$keys" &
-    script --quiet --return --command 'ono' "$out" < "$keys" > /dev/null 2>&1
+    typist=$!
+    # `script` answers with whatever the session did; the case asserts on the transcript, and a
+    # session that was killed on the way out is not a failure of anything asserted here.
+    script --quiet --return --command 'ono' "$out" < "$keys" > /dev/null 2>&1 || true
+    wait "$typist" 2>/dev/null || true
     rm -f "$keys"
   }
 
@@ -166,6 +170,10 @@ run: |
     "ono -c 'get config | where key == \"spatial.startup_horizon\" | to json' | grep -qF '\"value\":true'"
   prove s6ad "the map mode is a typed setting, \`auto\` by default (§23.3, §47)" \
     "ono -c 'get config | where key == \"spatial.map.mode\" | to json' | grep -qF '\"value\":\"auto\"'"
+
+  # Every assertion above reports itself; the case's own exit status says only that the script
+  # reached its end, and a background typist that outlived its fifo must not decide it.
+  exit 0
 exit: 0
 stdout-contains: PROVED s6-horizon-compute
 stdout-contains: PROVED s6-horizon-network
