@@ -1,0 +1,462 @@
+//! The spatial index (spec v0.4 §33, §45.2).
+//!
+//! §33.2 is the whole design in two sentences: "The index is a cache. Providers remain
+//! authoritative. Actions MUST resolve/revalidate live objects before mutation." Everything here
+//! is derived from what a provider said; nothing here is a fact of its own, and the one operation
+//! that could make it look like one — resolving a target for a mutation — refuses rather than
+//! answering from a stale entry.
+//!
+//! §33.1 lists what the index holds, and [`IndexEntry`] holds exactly that: the id, the canonical
+//! object reference, display names and aliases, scope, object type, canonical parent, the known
+//! relationship summary, freshness and landmark state.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use jiff::Timestamp;
+use ono_core::ErrorCode;
+use ono_provider_api::ObjectRef;
+use ono_spatial_core::{
+    CostClass, Freshness, HierarchicalEdge, Landmark, NeighborhoodGroup, PermissionState,
+    RelationshipEdge, SpatialId, SpatialObject, SpatialType, canonical_parent, relation,
+};
+use ono_value::ErrorValue;
+
+use crate::FreshnessPolicy;
+
+/// One object the index knows about (§33.1).
+#[derive(Debug, Clone)]
+pub struct IndexEntry {
+    object: SpatialObject,
+    aliases: BTreeSet<String>,
+    canonical_parent: Option<HierarchicalEdge>,
+    edges: Vec<RelationshipEdge>,
+    landmarks: Vec<Landmark>,
+    observed_at: Timestamp,
+    subscribed: bool,
+}
+
+impl IndexEntry {
+    /// The object as the provider described it.
+    #[must_use]
+    pub fn object(&self) -> &SpatialObject {
+        &self.object
+    }
+
+    /// The provider's own reference, which every action resolves through (§33.2).
+    #[must_use]
+    pub fn canonical_ref(&self) -> &ObjectRef {
+        self.object.canonical_ref()
+    }
+
+    /// Every name this object answers to, lowercased (§33.1).
+    #[must_use]
+    pub fn aliases(&self) -> &BTreeSet<String> {
+        &self.aliases
+    }
+
+    /// Where `up` goes from here (§11.3).
+    #[must_use]
+    pub fn canonical_parent(&self) -> Option<&HierarchicalEdge> {
+        self.canonical_parent.as_ref()
+    }
+
+    /// Every relationship edge known about the object.
+    #[must_use]
+    pub fn edges(&self) -> &[RelationshipEdge] {
+        &self.edges
+    }
+
+    /// What deserves attention about it (§26).
+    #[must_use]
+    pub fn landmarks(&self) -> &[Landmark] {
+        &self.landmarks
+    }
+
+    /// When the provider last saw it.
+    #[must_use]
+    pub fn observed_at(&self) -> Timestamp {
+        self.observed_at
+    }
+
+    /// Whether a subscription is delivering its changes (§33.3).
+    #[must_use]
+    pub fn is_subscribed(&self) -> bool {
+        self.subscribed
+    }
+}
+
+/// What registering an observation did (§42.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Registration {
+    /// The object was not in the index and now is.
+    Added,
+    /// The object was already in the index under the same identity, and the entry was refreshed.
+    /// This is §42.1's identity test holding: two observations of one live object are one place.
+    Reconciled,
+}
+
+/// The discovery index of one session (§33.1, §45.2).
+#[derive(Debug)]
+pub struct SpatialIndex {
+    entries: BTreeMap<SpatialId, IndexEntry>,
+    aliases: BTreeMap<String, BTreeSet<SpatialId>>,
+    /// The identity each provider reference resolved to, per scope. §42.1 requires repeated
+    /// observations of one object to resolve to one id; this is where that is enforced rather
+    /// than assumed.
+    identities: BTreeMap<(String, String), SpatialId>,
+    freshness: FreshnessPolicy,
+}
+
+impl SpatialIndex {
+    /// An empty index with `freshness` as its TTL policy.
+    #[must_use]
+    pub fn new(freshness: FreshnessPolicy) -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            aliases: BTreeMap::new(),
+            identities: BTreeMap::new(),
+            freshness,
+        }
+    }
+
+    /// The TTL policy (§33.3).
+    #[must_use]
+    pub fn freshness_policy(&self) -> &FreshnessPolicy {
+        &self.freshness
+    }
+
+    /// How many objects the index holds.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether it holds none.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Registers an observation (§45.2's "object registration/reconciliation").
+    ///
+    /// # Errors
+    ///
+    /// `spatial.identity_conflict` when a second observation of the same provider object in the
+    /// same scope carries a different [`SpatialId`]. §42.1 makes that a provider conformance
+    /// failure, and the index refuses it rather than quietly holding one object as two places —
+    /// which would make `back`, pins and every map edge point at a coin flip.
+    pub fn register(
+        &mut self,
+        object: SpatialObject,
+        observed_at: Timestamp,
+    ) -> Result<Registration, ErrorValue> {
+        let key = Self::provider_key(&object);
+        let id = object.spatial_id().clone();
+        if let Some(known) = self.identities.get(&key)
+            && known != &id
+        {
+            return Err(ErrorValue::new(
+                ErrorCode::SpatialIdentityConflict,
+                format!(
+                    "`{}` was observed as two different objects in the same scope: the index \
+                     holds `{known}` and this observation claims `{id}`. Two observations of one \
+                     live object must resolve to the same identity (spec v0.4 §42.1).",
+                    object.display_name()
+                ),
+            ));
+        }
+        self.identities.insert(key, id.clone());
+
+        let aliases = ono_spatial_core::aliases_of(&object);
+
+        match self.entries.get_mut(&id) {
+            Some(entry) => {
+                entry.object = object.seen_again(observed_at);
+                entry.observed_at = observed_at;
+                for alias in &aliases {
+                    entry.aliases.insert(alias.clone());
+                }
+                for alias in aliases {
+                    self.aliases.entry(alias).or_default().insert(id.clone());
+                }
+                Ok(Registration::Reconciled)
+            }
+            None => {
+                for alias in &aliases {
+                    self.aliases
+                        .entry(alias.clone())
+                        .or_default()
+                        .insert(id.clone());
+                }
+                let object_type = object.object_type();
+                self.entries.insert(
+                    id.clone(),
+                    IndexEntry {
+                        object,
+                        aliases,
+                        canonical_parent: canonical_parent(&id, object_type, &[]),
+                        edges: Vec::new(),
+                        landmarks: Vec::new(),
+                        observed_at,
+                        subscribed: false,
+                    },
+                );
+                Ok(Registration::Added)
+            }
+        }
+    }
+
+    /// Adds a name the object answers to besides its display name (§33.1's "display names and
+    /// aliases", §27.3's fuzzy matching).
+    pub fn add_alias(&mut self, id: &SpatialId, alias: &str) -> bool {
+        let alias = alias.to_ascii_lowercase();
+        match self.entries.get_mut(id) {
+            Some(entry) => {
+                entry.aliases.insert(alias.clone());
+                self.aliases.entry(alias).or_default().insert(id.clone());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Records a relationship edge and recomputes the canonical parent of both its ends.
+    ///
+    /// The recomputation is what keeps `up` honest as discovery proceeds: a process registered
+    /// before its service was known falls back to `compute.processes`, and arrives under the
+    /// service the moment the edge is known (§11.3).
+    pub fn record_edge(&mut self, edge: RelationshipEdge) {
+        for end in [edge.source().clone(), edge.target().clone()] {
+            let Some(entry) = self.entries.get_mut(&end) else {
+                continue;
+            };
+            if entry
+                .edges
+                .iter()
+                .any(|known| known.edge_id() == edge.edge_id())
+            {
+                continue;
+            }
+            entry.edges.push(edge.clone());
+            let object_type = entry.object.object_type();
+            entry.canonical_parent = canonical_parent(&end, object_type, &entry.edges);
+        }
+    }
+
+    /// Records what deserves attention about an object (§26, §33.1's "landmark state").
+    pub fn set_landmarks(&mut self, id: &SpatialId, landmarks: Vec<Landmark>) -> bool {
+        match self.entries.get_mut(id) {
+            Some(entry) => {
+                entry.landmarks = landmarks;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Records that a provider subscription is delivering the object's changes (§33.3).
+    pub fn set_subscribed(&mut self, id: &SpatialId, subscribed: bool) -> bool {
+        match self.entries.get_mut(id) {
+            Some(entry) => {
+                entry.subscribed = subscribed;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The entry for `id`.
+    #[must_use]
+    pub fn get(&self, id: &SpatialId) -> Option<&IndexEntry> {
+        self.entries.get(id)
+    }
+
+    /// Every entry, by identity.
+    pub fn entries(&self) -> impl Iterator<Item = &IndexEntry> {
+        self.entries.values()
+    }
+
+    /// Whether the index still holds `id`.
+    #[must_use]
+    pub fn contains(&self, id: &SpatialId) -> bool {
+        self.entries.contains_key(id)
+    }
+
+    /// Forgets an object that has gone away, and every alias that named only it.
+    pub fn remove(&mut self, id: &SpatialId) -> Option<IndexEntry> {
+        let entry = self.entries.remove(id)?;
+        for alias in &entry.aliases {
+            if let Some(ids) = self.aliases.get_mut(alias) {
+                ids.remove(id);
+                if ids.is_empty() {
+                    self.aliases.remove(alias);
+                }
+            }
+        }
+        self.identities.retain(|_, known| known != id);
+        Some(entry)
+    }
+
+    /// Every object that answers to `text` exactly, in identity order (§27.1).
+    ///
+    /// Matching is case-insensitive because names are typed by people; it is not fuzzy, because
+    /// deciding *how* fuzzy is the query layer's job (§27.3) and the index must not make one
+    /// candidate disappear before the ambiguity rules of §27.2 have seen it.
+    #[must_use]
+    pub fn by_alias(&self, text: &str) -> Vec<&IndexEntry> {
+        self.aliases
+            .get(&text.to_ascii_lowercase())
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.entries.get(id))
+            .collect()
+    }
+
+    /// Every object whose name contains `text`, in identity order (§9.4, §27.3).
+    ///
+    /// Ordering is by identity rather than by relevance for the same reason: ranking is the query
+    /// layer's, and a deterministic order here is what makes §29.3's "deterministic ambiguity"
+    /// possible at all.
+    #[must_use]
+    pub fn search(&self, text: &str) -> Vec<&IndexEntry> {
+        let needle = text.to_ascii_lowercase();
+        self.entries
+            .values()
+            .filter(|entry| entry.aliases.iter().any(|alias| alias.contains(&needle)))
+            .collect()
+    }
+
+    /// Every object of one type, in identity order.
+    #[must_use]
+    pub fn of_type(&self, object_type: SpatialType) -> Vec<&IndexEntry> {
+        self.entries
+            .values()
+            .filter(|entry| entry.object.object_type() == object_type)
+            .collect()
+    }
+
+    /// Where `up` goes from `id` (§45.2's "canonical parent lookup").
+    #[must_use]
+    pub fn canonical_parent(&self, id: &SpatialId) -> Option<&HierarchicalEdge> {
+        self.entries.get(id)?.canonical_parent()
+    }
+
+    /// How current the index's answer about `id` is, as of `now` (§33.4).
+    #[must_use]
+    pub fn freshness(&self, id: &SpatialId, now: Timestamp) -> Freshness {
+        let Some(entry) = self.entries.get(id) else {
+            return Freshness::Unknown;
+        };
+        self.freshness.freshness(
+            entry.object.object_type(),
+            Some(entry.observed_at),
+            entry.subscribed,
+            now,
+        )
+    }
+
+    /// The object to act on, or a refusal (§33.2's "Actions MUST resolve/revalidate live objects
+    /// before mutation").
+    ///
+    /// The index does not call providers — it is a cache, and §45.2 says it must treat them as
+    /// truth — so it does the one thing a cache honestly can: it refuses to hand a stale entry to
+    /// a mutation, and names what the caller must do about it.
+    ///
+    /// # Errors
+    ///
+    /// - `spatial.not_found` when the index does not hold the object.
+    /// - `spatial.stale` when it does, but the observation is older than its class's TTL.
+    pub fn resolve_for_action(
+        &self,
+        id: &SpatialId,
+        now: Timestamp,
+    ) -> Result<&IndexEntry, ErrorValue> {
+        let entry = self.entries.get(id).ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::SpatialNotFound,
+                format!("no object in the spatial index answers to `{id}`"),
+            )
+        })?;
+        if self.freshness(id, now).is_current() {
+            return Ok(entry);
+        }
+        Err(ErrorValue::new(
+            ErrorCode::SpatialStale,
+            format!(
+                "`{}` was last observed at {} and the index is a cache, not the truth; the \
+                 provider must be asked again before this object is acted on (spec v0.4 §33.2)",
+                entry.object.display_name(),
+                entry.observed_at
+            ),
+        ))
+    }
+
+    /// The exits of `id`, bounded (§45.2's "bounded relation summaries", §3.6, §32.2).
+    ///
+    /// Each declared exit of the object's type becomes a group, so an exit with no neighbour is
+    /// visible as empty rather than missing (§2.17). `budget` caps how many members a group lists;
+    /// the rest are counted, never dropped silently (§3.6's `hidden_count`). An
+    /// [`CostClass::Expensive`] relation is listed as a discoverable but unloaded exit unless its
+    /// edges are already known, which is §32.2 exactly.
+    #[must_use]
+    pub fn relation_summary(
+        &self,
+        id: &SpatialId,
+        budget: usize,
+        now: Timestamp,
+    ) -> Vec<NeighborhoodGroup> {
+        let Some(entry) = self.entries.get(id) else {
+            return Vec::new();
+        };
+        let object_type = entry.object.object_type();
+        let freshness = self.freshness(id, now);
+        let mut groups = Vec::new();
+
+        for (label, spec) in relation::exits_from(object_type) {
+            let members: Vec<SpatialId> = entry
+                .edges
+                .iter()
+                .filter(|edge| edge.relation().as_str() == spec.id)
+                .filter_map(|edge| edge.other_end(id).cloned())
+                .filter(|end| self.entries.contains_key(end))
+                .collect();
+
+            if members.is_empty() && spec.cost_class == CostClass::Expensive {
+                groups.push(
+                    NeighborhoodGroup::withheld(
+                        label,
+                        PermissionState::Unknown,
+                        "available on request",
+                    )
+                    .along(spec.relation_type()),
+                );
+                continue;
+            }
+
+            let total = members.len();
+            let listed: Vec<SpatialId> = members.into_iter().take(budget).collect();
+            groups.push(
+                NeighborhoodGroup::available(label, listed)
+                    .of_total(total)
+                    .along(spec.relation_type())
+                    .observed(freshness),
+            );
+        }
+        groups
+    }
+
+    /// What makes two observations the same provider object: the reference, inside the scope it
+    /// was observed in. The same uid in two containers is two objects (§16.2).
+    fn provider_key(object: &SpatialObject) -> (String, String) {
+        (
+            object
+                .scope()
+                .chain()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("/"),
+            object.canonical_ref().id().to_string(),
+        )
+    }
+}
