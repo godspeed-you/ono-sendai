@@ -193,14 +193,7 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 (event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
 (§45.6).
 
-- [S4de | 2026-08-28] **S4d + S4e — the storage remainder and the configuration behaviour.**
-  §15 (mount boundaries, the directory place and its view budget, the file place), §30, §7.4,
-  §44.3, §47 (the behaviour half), §34/§33.1 (a repeated view is read, not recomputed).
-  Files: `crates/ono-cli/src/spatial/{storage,view,commands,movement,session,mod}.rs`,
-  `crates/ono-spatial-{core,index,query,render}/src/`, `docs/spec/spatial/relations.yaml`,
-  `docs/spec/schemas/`, `docs/spec/commands/spatial.yaml`, `docs/decisions/ADR-018[5-9]-*.md`,
-  `docker/acceptance/cases/109-spatial-storage.case`, and the `#[ignore]` lines of the tests it
-  delivers in `crates/ono-cli/tests/spatial_{storage,contracts}_missing.rs`.
+- (empty — S4d and S4e complete, see below; no agent holds a claim)
 
 **S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
 on each:
@@ -1075,6 +1068,129 @@ Green now, all previously `#[ignore]`d — 5 tests:
   quiet one: each compares two `ono` runs over the whole process collection, so a process started
   between them is a node the earlier map does not have. Same family as the cluster-expansion test
   S5 left; they failed identically on this tree before S7 touched it.
+
+**S4d + S4e — the storage remainder and the configuration behaviour — are complete
+(2026-08-28, agent `S4de`).** ADR-0185 to ADR-0188; gate green; acceptance case
+`docker/acceptance/cases/109-spatial-storage.case` added (25 assertions) and
+**`scripts/acceptance.sh` stands at 74 passed, 0 failed**.
+
+Delivered:
+
+1. **§47 the switch.** `spatial.enabled = false` leaves the typed shell and ordinary commands
+   working and answers every `ono.place.*` verb with `spatial.unsupported` (Ono-Sendai-E1009) —
+   a named refusal a script can branch on, not a command that vanished, which matters because
+   `look` shadows util-linux `look` (ADR-0185). One guard at the point the shell binds a native
+   stage, foreground and background alike. The setting is read from the *live* session settings,
+   not the `spatial.*` snapshot, because it is the one key whose purpose is to be flipped. The
+   spatial side effects of ordinary commands stop with the verbs: `enter <target>` still pushes
+   its v0.2 context frame and no longer moves the place, `cd` no longer synchronises one, and
+   §9.4's completion offers no neighbourhood.
+2. **§33.1/§34 the warm view.** The session remembers what each provider *query* answered and
+   when; a command inside that target's §33.3 lifetime reads it back instead of asking again
+   (ADR-0186). The lifetime is the index's own TTL policy over the kinds of place the target
+   produced, shortest first. `look --json`'s `freshness` is now `cached` when every target was
+   recalled and nothing was asked — §25.3's own word — and stays `polled` where it did ask.
+   Marginal cost of a repeated root `look` in a **debug** build on a loaded machine: ~70 ms →
+   ~44 ms, with no provider asked at all in the repeat. S11 owns the number as a release gate.
+3. **§15.3 the mount boundary as a place.** `ono.place-view/1` carries a nullable `boundary` of
+   the new `ono.mount-boundary/1` — local path, filesystem, source, `remote`, plus `read_only`
+   and the mount's `spatial_id` — every field composed from what `get mount` answered (§2.16),
+   and `ono-spatial-render` prints the block §15.3 draws. `remote` is decided from the filesystem
+   type and the shape of the source, conservatively in both halves (ADR-0187).
+4. **§3.2/§2.18 the crossing.** `movement::crossing_between` asks the two places' own scopes
+   first — a host or a container must not be understated — and only then whether the two paths
+   sit on different mounts, recording a `filesystem` `ScopeBoundary` that does not claim to have
+   left the host. `enter`, `jump` and `up` all go through the one function.
+5. **§15.1 the path tree keeps its shape.** `parent_rules(Directory)` is now
+   `[path.parent, mount.backs_directory]`, with `docs/spec/providers/linux-procfs.yaml` saying
+   the same. §15.1 is unconditional, so the parent of `/mnt/backup` is `/mnt`; the mount is
+   where the path tree runs out (`/` has no directory above it), which is where §15.2's
+   MOUNTS -> DIRECTORY ROOTS meets the Unix tree. Recorded as a **spec deviation** in ADR-0187.
+6. **§15.4 the directory place.** Children are hierarchy, not a relation (§3.4):
+   `SpatialIndex::path_children` is the reverse of `set_path_parent` and the neighbourhood puts
+   them first. The **read is whole and the view is bounded** — a 400-entry directory counts four
+   hundred, shows eight and says "392 more not shown" (ADR-0188). `storage::observe_place_at` is
+   the one seam every path spelling reaches: the object, the mount table, and the enclosing
+   directory — which is what makes **`up` from a file** reach it, the gap S4c left open.
+
+Green now, all previously `#[ignore]`d — 14 tests:
+
+- `spatial_storage_missing` (3, the suite is now fully green):
+  `should_show_the_source_device_and_filesystem_when_the_place_is_a_mount_boundary`,
+  `should_record_the_boundary_crossing_when_traversing_from_the_root_into_a_mounted_directory`,
+  `should_summarize_a_large_directory_instead_of_enumerating_it` — the last of which passed
+  before because nothing was ever read, and passes now because a bound was applied.
+- `spatial_contracts_missing` (7): `should_keep_the_typed_shell_working_when_the_spatial_layer_is_disabled`,
+  `should_answer_repeated_looks_far_inside_the_look_budget`, and **five S4 tests that were
+  delivered by S4b/S4c and left `#[ignore]`d by mistake** — `should_refuse_to_go_back_or_up_from_the_root_with_a_named_spatial_error`,
+  `should_start_every_session_at_the_local_system_root`,
+  `should_keep_a_scripts_navigation_out_of_the_callers_place`,
+  `should_keep_the_trail_session_local_while_a_pin_survives_the_session`,
+  `should_resolve_repeated_observations_of_one_object_to_the_same_spatial_id`.
+- `spatial_navigation_missing` (2, the suite is now fully green):
+  `should_stream_neighbors_that_compose_with_the_pipeline_when_near_runs_in_a_script`,
+  `should_keep_running_external_commands_when_spatial_navigation_has_happened`.
+- `spatial_topology_missing` (1, the suite is now fully green):
+  `should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner` — its `#[ignore]`
+  said "un-ignored by the increment that delivers `trail`", and S4c delivered it.
+
+Each of the eight late un-ignores was run twice on its own before the ignore was removed.
+
+**Still ignored across the nine suites at the end of S4 — 26 tests, none of them S4's:**
+
+| Suite | Test | Owed by |
+|---|---|---|
+| contracts | `should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted` | S9 |
+| contracts | `should_carry_the_contributing_package_as_the_origin_of_every_plugin_edge` | S9 |
+| contracts | `should_reconcile_an_adapted_object_with_its_native_twin_into_one_place` | S10 |
+| contracts | `should_never_let_raw_command_output_become_a_place` | S10 |
+| identity | `should_resolve_the_adapter_view_and_the_native_view_of_one_process_to_one_spatial_id` | S10 |
+| identity | `should_report_a_tombstone_rather_than_a_live_place_when_the_visited_process_has_exited` | S7 |
+| identity | `should_distinguish_a_tombstone_from_a_place_that_never_existed` | S7 |
+| identity | `should_refuse_to_traverse_a_relationship_when_the_place_is_a_tombstone` | S7 |
+| identity | `should_never_resolve_a_tombstoned_place_to_a_live_object` | S7 |
+| identity | `should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_dead_place` | S7 |
+| relationships | `should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes` | S7 |
+| remote | all 13 | S8 (one, `should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link`, is attemptable now) |
+| map | `should_show_more_than_the_default_when_the_map_is_asked_for_all` | S5/S11 (ADR-0165) |
+| map | `should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded` | S5/S11 (fixture) |
+
+Two of the S7-owned identity tombstone tests (`…refuse_to_traverse…`, `…never_resolve…`) already
+*pass* when run with `--ignored`, and two of the S9/S10 ones do too. They were left alone on
+purpose: a test that passes because the condition it describes cannot arise yet is not delivered,
+and S7/S9/S10 should be the increments that decide it.
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- **`… | select <field> | to text` refuses with `Ono-Sendai-E0201` "a record does not fit on one
+  line"**, although `select` left exactly one field. `… | to text --field <name>` is the spelling
+  that works. This is why `docker/acceptance/cases/092-spatial-storage-discovery.case.v04`
+  cannot find its mount: its fixture writes `find place … | select name | to text` and gets an
+  empty file, so `44.3c`–`44.3j` fail on a fixture, not on the feature. **S11 owns 092's
+  rename**; either the case is written with `--field` or `to text` learns to render a one-field
+  record. Exit test: `get mount | select target | to text` prints one path per line.
+- `spatial_map_missing::should_only_remove_{edges,nodes}_…` failed about one gate run in three
+  here, as S6 already recorded; they are green with `--test-threads=1`. **A gate run on this
+  machine now needs `RUST_TEST_THREADS=1` to be reliable**, and that is a fixture problem in
+  those two tests, not a harness one.
+- **`ono-sendai:acceptance` is one image tag shared by every worktree.** A concurrent
+  `scripts/acceptance.sh` in another worktree overwrites it, and a later `--no-build` run then
+  tests the *other* agent's binary — which cost an hour here before it was spotted. Set
+  `ONO_ACCEPTANCE_IMAGE=ono-sendai:acceptance-<agent>` while several agents share a machine.
+- `options_and_selectors_missing::should_trace_nothing_else_when_no_connection_has_the_requested_remote`
+  fails whenever *something else on the machine* holds a socket to 192.0.2.1 — a sibling
+  worktree running `test port 192.0.2.1 443` does exactly that, and the connection stays
+  `syn-sent` for two minutes. The test's premise ("this machine holds no connection to it") is
+  the thing that broke, not the shell. It is green on an idle machine.
+- §15.4's other optional neighbours are not delivered and say so rather than showing zero:
+  `open-by processes` needs an `lsof`-shaped provider, `owned-by users` is an expensive relation
+  nobody has asked to load, `changed recently` is a snapshot difference (§25.4).
+- §8.2 clustering of directory entries — grouping them by kind or by name instead of counting
+  them — is the next increment on top of ADR-0188; the field it would fill already exists on
+  `ono.map-cluster/1`.
+- An object place (a process, a socket, a directory) still expands its relationship providers on
+  every `look` and honestly says `polled`. Caching relationship edges is a later increment with
+  its own test; §34.1's background discovery needs the update channel S7 builds.
 
 ## Next up (ordered)
 

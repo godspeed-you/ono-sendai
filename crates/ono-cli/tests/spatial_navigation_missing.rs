@@ -342,7 +342,6 @@ fn should_read_back_into_the_pipeline_when_look_json_is_parsed_by_from_json() {
 // --- near ------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.2, §29.4); un-ignored by the increment that delivers it"]
 fn should_stream_neighbors_that_compose_with_the_pipeline_when_near_runs_in_a_script() {
     // §29.4: `near` returns a normal structured stream that participates in object pipelines.
     // §6.2: each neighbor names the relation it was reached through. The fixture is a `sleep`
@@ -1054,7 +1053,6 @@ fn should_run_the_native_spatial_look_and_keep_the_external_look_reachable_when_
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §2 invariant 15, §44.10); un-ignored by the increment that delivers it"]
 fn should_keep_running_external_commands_when_spatial_navigation_has_happened() {
     // Invariant 15 and §44.10: spatial navigation MUST NOT prevent ordinary external command
     // execution. A script that has moved through the spatial hierarchy still runs programs, and
