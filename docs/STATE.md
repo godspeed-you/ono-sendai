@@ -144,12 +144,7 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 (event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
 (§45.6).
 
-- [S3 | 2026-08-28] **S3 — spatial index queries, selector resolution, `find place`, neighborhood,
-  pins (§50 Phase S3)** — files: `crates/ono-spatial-query/**` (new), `crates/ono-command/src/impls/`,
-  `crates/ono-parser/src/{ast,parser}.rs`, `docs/spec/{language,targets}.yaml`,
-  `docs/spec/commands/spatial.yaml`, `docs/spec/schemas/spatial-place.v1.yaml`,
-  `crates/ono-cli/tests/spatial_{navigation,topology}_missing.rs` (the ADR-0124 rewrite),
-  `docker/acceptance/cases/09*.case.v04`, ADR-0138–0141.
+- (empty — S1, S2 and S3 complete, see below; no agent holds a claim)
 
 **S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
 on each:
@@ -245,6 +240,68 @@ new outcome tests live in the crates: `crates/ono-spatial-index/tests/{bridge,re
   lists them. Three places are composed rather than served — `Endpoint`, `Cgroup`, `Namespace` —
   and are ordinary index entries with real identities (ADR-0135); `up` from a file follows the
   Unix path tree through `ono_spatial_core::PATH_PARENT`, not a relation.
+
+**S3 — index queries, selector resolution, `find place`, neighborhood, pins — is complete
+(2026-08-28, agent `S3`).** Five commits, gate green on each; `scripts/acceptance.sh` 68 passed,
+0 failed:
+
+1. `feat(parser)` a words-mode option whose value is a predicate expression (ADR-0138), declared
+   in `docs/spec/language.yaml` and held against the parser by `spec-check`.
+2. `feat(spatial)` `crates/ono-spatial-query` — §27.1 selector resolution, §27.2 ambiguity, §27.3
+   fuzzy that never acts, §3.6 neighborhood ranking, §6.8 search, §34 cost-aware planning
+   (ADR-0139).
+3. `feat(spatial)` `find place` — the contract (`place` target, `ono.spatial-place/1`,
+   `docs/spec/commands/spatial.yaml`) and the implementation in `ono-cli` (ADR-0140, ADR-0141),
+   **with the ADR-0124 rewrite of every Table 3 site in the same commit**.
+4. `feat(spatial)` pins that outlive the session — `$XDG_STATE_HOME/ono/pins.json` (§46.1).
+5. `test(acceptance)` `docker/acceptance/cases/101-spatial-find-place.case`, the S3 gate in the
+   container.
+
+Green from `crates/ono-cli/tests/spatial_navigation_missing.rs`:
+`should_stream_places_with_scope_and_provenance_when_find_searches_with_a_predicate`,
+`should_compose_with_the_v02_pipeline_when_a_find_result_is_filtered_and_counted`,
+`should_run_the_native_spatial_find_and_keep_the_external_find_reachable_when_both_exist`. The
+other 40 new outcome tests live in the crates:
+`crates/ono-spatial-query/tests/{resolution,neighborhood,search}.rs` (34),
+`crates/ono-cli/tests/spatial_pins.rs` (6) and `crates/ono-parser/tests/parse_commands.rs` (3).
+
+**What S4a needs from S3** — the four things:
+
+- **`near`'s ranking is `ono_spatial_query::neighborhood_of(index, center, request, pins, now)`.**
+  It returns S1's `Neighborhood` — `groups`, `landmarks`, `hidden_count`, `generated_at`,
+  `completeness` — already bounded and ranked. `NeighborhoodRequest` carries §6.2's five options
+  (`along`, `of_type`, `changed_within`, `limit`, `all`) plus `in_terminal_rows` for §3.6's
+  terminal-size input. S4a builds the *command* and the record shape; it must not re-rank, and it
+  must render a withheld group's §35.2 state rather than a count (`total() == None`).
+- **`look`'s view is that neighborhood plus a place.** The place record is
+  `ono.spatial-place/1` (ADR-0140) — `spatial_id`, `name`, `display_name`, `object_type` (the
+  v0.2 schema), `spatial_type`, `place_path`, `scope`, `parent`, `freshness`, `observed_at`,
+  `identity_tier`, `capabilities`, `pinned`, `provenance` — built by
+  `crate::spatial::find::place_record`, which S4a should lift out of `find.rs` when `look` needs
+  it too. A place carries no `pid`, `cpu` or `state`: those are the object's, one `inspect` away.
+- **A place a user typed is `ono_spatial_query::resolve(index, selector, context, now)`.**
+  `Resolution::require(selector)` turns it into the place or into §40's structured refusal —
+  `spatial.ambiguous_selector` with §27.2's three columns, or `spatial.not_found` whose help
+  lists the near misses. `SelectorContext::at(current_place)` is what makes steps 1 and 2 of
+  §27.1 (visible child, visible neighbour) mean anything, so S4a must pass the session's current
+  place, not `anywhere()`.
+- **The index is built per command and thrown away (ADR-0141).** `find place` asks only the
+  provider targets its query needs (`ono_spatial_query::discovery::targets_for`). S4a owns the
+  step that changes this: §46's `SpatialSessionState` holds the current place *and* the index, so
+  `look` twice reads the index rather than the providers, which is what §34's budget and S4e's
+  `should_answer_repeated_looks_far_inside_the_look_budget` need. `spatial::local_scope()` gives
+  the host and boot every observation belongs to (§10.2).
+
+**Not S3's, and still open:**
+
+- Canonical spaces are not answered by `find place`: it searches the index, and a space is
+  declared geography rather than an observed object. If a later phase wants `find place compute`
+  to answer the domain, that is a decision for it to record.
+- The `argument_mode`-versus-ADR-0009 check in `xtask::contracts::check_commands` is dead against
+  this repository's own `docs/spec/language.yaml`: `expression_heads()` reads `argument_modes` as
+  a mapping, and the real file writes it as a sequence of modes, so the set is empty and the check
+  short-circuits. Found while adding `option_values` beside it; not fixed there, because a fix is
+  a different kind of change (AGENTS.md §4).
 
 **Open, and deliberately not S1's:** `docs/ACCEPTANCE.md` has no v0.4 section yet, so
 `scripts/release-check.sh` cannot see this tranche. §4.7 needs writing from v0.4 §52 before S11,
