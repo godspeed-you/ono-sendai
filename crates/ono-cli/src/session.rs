@@ -50,6 +50,14 @@ pub enum Definition {
     Alias(std::sync::Arc<Alias>),
 }
 
+/// How long a link's agent is given to notice the hang-up before it is signalled, and again
+/// before it is killed (ADR-0161).
+///
+/// Closing the agent's input ends it in about a millisecond, so this bound is never reached in
+/// practice; it exists so that a far end which ignores end of input cannot make the shell wait
+/// for it forever.
+pub(crate) const AGENT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Everything a running shell knows.
 pub struct Session {
     cwd: PathBuf,
@@ -164,6 +172,11 @@ pub struct LinkConnection {
     pub link: ono_remote::RemoteLink,
     /// The mounted registry an active link frame answers from (spec §14.4).
     pub registry: std::sync::Arc<ProviderRegistry>,
+    /// The process serving this link, where the shell started one: `ono --agent` under the
+    /// `local` transport, `ssh` under `ssh`. A link's agent is a resource of the link
+    /// (spec §21.4), so the session that started it is the one that ends it — see
+    /// [`Session::hang_up`].
+    pub agent: Option<ono_remote::ChildProcess>,
 }
 
 impl LinkConnection {
@@ -416,9 +429,11 @@ impl Session {
         self.with_kuang(|host| host.plugin_ids().map(str::to_owned).collect())
     }
 
-    /// Adds a remote link to the session's table.
+    /// Adds a remote link to the session's table, ending whatever link held the name before it.
     pub fn add_link(&mut self, link: SessionLink) {
-        self.links.retain(|held| held.name != link.name);
+        while let Some(replaced) = self.remove_link(&link.name) {
+            self.hang_up(replaced);
+        }
         self.links.push(link);
     }
 
@@ -440,10 +455,41 @@ impl Session {
     }
 
     /// Forgets the named link and hands it back, so the caller decides when the connection
-    /// drops — and with it, hangs up (ADR-0036 §8).
+    /// drops — and with it, hangs up (ADR-0036 §8). A caller that is letting the link go for
+    /// good passes it to [`hang_up`](Self::hang_up), which also ends the process serving it.
     pub fn remove_link(&mut self, name: &str) -> Option<SessionLink> {
         let index = self.links.iter().position(|link| link.name == name)?;
         Some(self.links.remove(index))
+    }
+
+    /// Ends a link the session has let go of: it hangs up, and the process it started to serve
+    /// the link is waited for (spec §21.4, §18.1, ADR-0161).
+    ///
+    /// A shell owns the processes it starts. `ono --agent` under the `local` transport, and the
+    /// `ssh` that carries the agent under `ssh`, are started by `link host` and are therefore
+    /// the shell's to end: hanging up closes their input, which is the ordinary way an agent
+    /// loop finishes, and this waits for that to happen rather than leaving an orphan behind.
+    pub fn hang_up(&self, link: SessionLink) {
+        let Some(connection) = link.connection else {
+            return;
+        };
+        // The hang-up is said explicitly rather than left to the drop, because a provider of
+        // this link may still be mounted somewhere and would hold the connection open.
+        connection.link.hangup();
+        let agent = connection.agent.clone();
+        drop(connection);
+        let (Some(agent), Some(runtime)) = (agent, self.runtime.as_ref()) else {
+            return;
+        };
+        runtime.block_on(agent.end(AGENT_GRACE));
+    }
+
+    /// Ends every link the session still holds. Called when the session goes, so no agent it
+    /// started can outlive the shell and reparent to init.
+    fn hang_up_all(&mut self) {
+        for link in std::mem::take(&mut self.links) {
+            self.hang_up(link);
+        }
     }
 
     /// How many frames on the stack stand on the named link.
@@ -1024,6 +1070,14 @@ impl Session {
     /// (ADR-0010).
     pub fn stay(&mut self) {
         self.leaving = None;
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        // Fields are dropped after this runs, so the runtime is still here to wait on: a link
+        // torn down after the runtime has gone could only abandon its agent (ADR-0161).
+        self.hang_up_all();
     }
 }
 

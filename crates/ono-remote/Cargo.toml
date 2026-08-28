@@ -23,6 +23,8 @@ ono-protocol.workspace = true
 ono-provider-api.workspace = true
 ono-value.workspace = true
 async-trait.workspace = true
+# Signalling a child that will not take the hang-up. ADR-0005 chose `nix` for syscalls.
+nix = { workspace = true, features = ["signal"] }
 tokio = { workspace = true, features = ["io-std"] }
 
 [dev-dependencies]

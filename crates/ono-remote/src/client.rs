@@ -96,6 +96,16 @@ impl RemoteLink {
         &self.host
     }
 
+    /// Says goodbye to the far end now: queued frames are flushed and the transport is shut
+    /// down, so an agent reading a pipe sees end of input and ends its loop.
+    ///
+    /// Dropping the link does the same, but only once every mounted provider derived from it
+    /// has gone too; a caller that must know the peer is leaving — because it is about to wait
+    /// for the process serving it — says so explicitly.
+    pub fn hangup(&self) {
+        self.link.hangup();
+    }
+
     /// Everything the handshake settled (spec §21.2).
     #[must_use]
     pub fn negotiated(&self) -> &Negotiated {

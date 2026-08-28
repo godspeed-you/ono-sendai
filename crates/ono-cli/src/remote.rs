@@ -455,8 +455,8 @@ fn remove_link(session: &mut Session, name: &str) -> Eval<(bool, String)> {
         (true, _) => format!("{name} detached, torn down and forgotten"),
         (false, _) => format!("{name} forgotten; it was never established"),
     };
-    // Dropping the connection hangs up (ADR-0036 §8).
-    drop(link);
+    // The link hangs up, and the process serving it is waited for (ADR-0036 §8, ADR-0161).
+    session.hang_up(link);
     Ok((true, message))
 }
 
@@ -608,7 +608,9 @@ fn detach_link(session: &mut Session, name: &str) -> Eval<(bool, String)> {
     }
     // A one-shot connection (`connect host`) exists for its frame and goes with it (ADR-0104).
     if !persistent {
-        drop(session.remove_link(name));
+        if let Some(link) = session.remove_link(name) {
+            session.hang_up(link);
+        }
         return Ok((true, format!("{name} detached and hung up")));
     }
     Ok((true, format!("{name} detached; the link is kept")))

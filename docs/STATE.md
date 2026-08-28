@@ -469,26 +469,6 @@ Green now, all previously `#[ignore]`d — 32 tests:
   seam's wording "no filesystem answers to target …" (ProviderMutation resolving the `filesystem`
   target); the provider's own "nothing is mounted at …" only reaches piped input. Cosmetic;
   the code is right (ADR-0098 §1).
-- [ ] Acceptance case 049 (`a remote link answers from the other side, visibly`) still ends with
-  exit 129 (128+SIGHUP) under load, and it is **not** the orphaned-shell leak: measured
-  2026-08-28 *after* ADR-0160, 3 of 10 runs of `scripts/acceptance.sh --no-build 049-remote`
-  failed with 129 while a full acceptance suite ran beside them; three consecutive runs on an
-  idle machine, and one full 68-case suite, were green. What the measurements establish:
-  **`ono` is not the process that dies.** A probe that appended `echo "FINAL_ONO=$?"` to the case
-  body reproduced a 129 while printing `FINAL_ONO=0` — the shell had run the whole case, exited
-  cleanly, and the SIGHUP then killed the harness's own `bash` (the child `script --return`
-  reports) in the instant afterwards. Anything that delays that `bash` closes the window: a body
-  ending in `ono; ps …` was green 16/16 under the same load, as were 28 runs in which `script`
-  was a child of the container's PID 1 instead of `exec`ing into it. `docker run --init` was
-  green 30/30 against 2 failures in 30 plain runs — suggestive, not yet conclusive. The
-  hypothesis that fits every measurement: `ono` leaves the `ono --agent` subprocess behind at
-  exit on purpose (`SubprocessTransport::spawn`: "The child is not killed when the transport goes
-  away: closing its stdin is the hang-up signal"), the orphan reparents to the container's PID 1
-  — which *is* `script`, because `bash -lc 'script …'` execs a single command — and `script`'s
-  `SIGCHLD` reaping mistakes it for its own child, tears the pty down and hangs up the `bash`
-  still running under it. Fix direction: the shell waits for its agent subprocesses before
-  exiting, so nothing of `ono` outlives it. Exit test: 20 consecutive runs of the case green
-  under a concurrent full suite
 - [ ] `read file` streams a large file as several `bytes` values instead of one whole-file
   value (ADR-0083 §3 defers chunking) — exit test: a files case reading a file larger than the
   pipeline's chunk size through `| count`
@@ -760,13 +740,31 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 ## Done
 
+- [x] `fix(remote)` a shell ends the agent processes it started (ADR-0161): `link host` spawns
+  `ono --agent` (or `ssh … ono --agent`) as its own child, and nothing waited for it — the shell
+  exited first and the agent reparented to whatever init the machine runs. Measured from a
+  process with `PR_SET_CHILD_SUBREAPER`: the shell was reaped, and a second, still-running
+  process reparented onto the subreaper in the same millisecond, every run. In the container
+  that init is `script` (`bash -lc 'script …'` execs it), whose `SIGCHLD` reaping took the
+  orphan for its own child and hung up the `bash` under it — case 049's exit 129. Now
+  `Session::hang_up` says the goodbye explicitly (`Link::hangup`) and waits for the process
+  through a `ChildProcess` handle that outlives the transport, escalating `SIGTERM`/`SIGKILL`
+  only after a 2 s grace it never reaches; `impl Drop for Session` does it for every link still
+  held, before the runtime field is dropped. Every teardown path — `remove link`, `detach link`
+  of a one-shot, `leave` of a one-shot frame, `add link` replacing a name, a handshake that
+  failed after the child was spawned — goes through it. RED first in
+  `crates/ono-cli/tests/session_lifetime.rs::should_end_the_agent_it_started_before_it_exits`.
+  Proof: 20 consecutive `scripts/acceptance.sh --keep-image remote-link` runs green while a full
+  69-case suite ran beside them; the subreaper probe sees no orphan; a linked `ono -c` costs the
+  same as before (10 runs, 1.64 s, unchanged)
+
 - [x] `fix(process)` an interactive `ono` no longer outlives the terminal it was given
   (ADR-0160): `PtySession::start` marks the `openpty` master and slave `FD_CLOEXEC`, so a program
   the shell starts under a terminal no longer inherits that terminal's master and end of file on
   the shell's input becomes possible at all. RED first in
   `crates/ono-cli/tests/session_lifetime.rs`; `pgrep -c -x ono` after a full gate run went from
-  "one per PTY test, forever" to 0. Case 049's exit 129 is a different defect and stays open
-  under *Deferred*, with the evidence that `ono` exits 0 in the failing runs
+  "one per PTY test, forever" to 0. Case 049's exit 129 was a second, separate leak of the same
+  kind — the link's agent, not the shell — and is fixed by ADR-0161 below
 
 - [x] installable `.deb`/`.rpm` for x86_64 and aarch64 (docs/ACCEPTANCE.md §4.5, ADR-0121,
   ADR-0122, ADR-0123): package metadata and maintainer scripts in `crates/ono-cli/Cargo.toml`

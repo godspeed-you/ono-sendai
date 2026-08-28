@@ -121,3 +121,85 @@ fn should_not_hold_the_terminal_that_drives_it() {
          end (ADR-0160): {held:?}"
     );
 }
+
+/// The `ono --agent` children of `pid`, as `/proc` sees them right now.
+fn agent_children(pid: u32) -> Vec<u32> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let Ok(child) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{child}/stat")) else {
+            continue;
+        };
+        let Some((_, rest)) = stat.rsplit_once(") ") else {
+            continue;
+        };
+        let parent = rest.split_whitespace().nth(1).and_then(|f| f.parse().ok());
+        if parent != Some(pid) {
+            continue;
+        }
+        let Ok(cmdline) = std::fs::read(format!("/proc/{child}/cmdline")) else {
+            continue;
+        };
+        if String::from_utf8_lossy(&cmdline).contains("--agent") {
+            found.push(child);
+        }
+    }
+    found
+}
+
+/// Whether the process exists at all — an orphan that outlives the shell does, a child the
+/// shell waited for does not, because waiting removed its entry.
+fn exists(pid: u32) -> bool {
+    std::path::Path::new(&format!("/proc/{pid}")).exists()
+}
+
+#[test]
+fn should_end_the_agent_it_started_before_it_exits() {
+    // A link's agent is a resource of the link (spec §21.4): the shell starts `ono --agent` as
+    // its own child, and a child that outlives its shell is reparented to whatever init the
+    // machine runs — which is exactly what a shell must never leave behind (spec §18.1).
+    // The trailing `sleep` only holds the shell open long enough to read `/proc`.
+    let mut shell = std::process::Command::new(ono_testkit::ono_binary())
+        .arg("-c")
+        .arg("link host testbox --transport local; sleep 3")
+        .env("NO_COLOR", "1")
+        .env("HOME", std::env::temp_dir())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the shell starts");
+    let shell_pid = shell.id();
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut agents = Vec::new();
+    while Instant::now() < deadline && agents.is_empty() {
+        agents = agent_children(shell_pid);
+        if agents.is_empty() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    assert!(
+        !agents.is_empty(),
+        "`link host --transport local` starts an `ono --agent` child to talk to"
+    );
+
+    let status = shell.wait().expect("the shell exits");
+    // The instant the shell has been reaped, nothing it started may still exist.
+    let survivors: Vec<u32> = agents.iter().copied().filter(|pid| exists(*pid)).collect();
+    for pid in &survivors {
+        make_sure_it_is_gone(*pid);
+    }
+    assert!(status.success(), "the shell exits cleanly: {status:?}");
+    assert!(
+        survivors.is_empty(),
+        "the shell exited while the agents it started were still running: {survivors:?}. \
+         A link's agent is a resource of the link (spec §21.4) and the shell that started it \
+         must end it before it goes, or the orphan reparents to init (spec §18.1)"
+    );
+}

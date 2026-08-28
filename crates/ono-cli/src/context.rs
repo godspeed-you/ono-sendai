@@ -376,8 +376,11 @@ pub fn leave(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
         if matches!(popped.frame.kind(), ono_command::FrameKind::Link) {
             let name = popped.frame.identity().to_string();
             let one_shot = session.link(&name).is_some_and(|link| !link.persistent);
-            if one_shot && session.link_frames(&name) == 0 {
-                drop(session.remove_link(&name));
+            if one_shot
+                && session.link_frames(&name) == 0
+                && let Some(link) = session.remove_link(&name)
+            {
+                session.hang_up(link);
             }
         }
         if !all {
@@ -522,9 +525,13 @@ pub fn establish(
         .with_schemas(schemas)
         .with_trust_policy(ono_protocol::TrustPolicy::Unauthenticated)
         .with_identity(ono_protocol::Identity::new(whoami()));
+    let mut agent = None;
     let connected = runtime.block_on(async {
         let connect = async {
             let transport = ono_remote::SubprocessTransport::spawn(command)?;
+            // Kept before the transport is handed over: from here on the shell is responsible
+            // for ending the process it just started (spec §21.4, ADR-0161).
+            agent = Some(transport.child());
             ono_remote::RemoteLink::connect(transport, config).await
         };
         match timeout {
@@ -539,13 +546,23 @@ pub fn establish(
             None => connect.await,
         }
     });
-    let link = connected.map_err(Flow::Failed)?;
+    let link = match connected {
+        Ok(link) => link,
+        Err(refusal) => {
+            // The child was already started; a handshake that failed must not leave it behind.
+            if let Some(agent) = &agent {
+                runtime.block_on(agent.end(crate::session::AGENT_GRACE));
+            }
+            return Err(Flow::Failed(refusal));
+        }
+    };
 
     let mut registry = ono_provider_api::ProviderRegistry::new();
     link.register_into(&mut registry);
     Ok(crate::session::LinkConnection {
         link,
         registry: std::sync::Arc::new(registry),
+        agent,
     })
 }
 
