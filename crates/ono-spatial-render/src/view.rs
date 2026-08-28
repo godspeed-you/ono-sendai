@@ -609,6 +609,9 @@ impl MapView {
                     self.searching = None;
                     return Effect::Stay;
                 }
+                // §43.4 makes Ctrl-C the way out of a live view, and a half-typed search must
+                // not be the one place it stops working.
+                Key::Ctrl('c') => return Effect::Close,
                 _ => return Effect::Stay,
             }
         }

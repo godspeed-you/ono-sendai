@@ -117,7 +117,8 @@ impl CommandImpl for Map {
             // is the same projection with a viewport and a cursor around it, never a second
             // selection (§45.4) — and never where the values are about to be consumed by
             // another stage, redirected or read by a script (§29.1).
-            let live = arguments.flag("live") || crate::spatial::interactive::live_by_default();
+            let asked_live = arguments.flag("live");
+            let live = asked_live || crate::spatial::interactive::live_by_default();
             if !json && crate::spatial::interactive::may_open(ctx) {
                 crate::spatial::interactive::run_map_view(
                     ctx,
@@ -131,7 +132,10 @@ impl CommandImpl for Map {
                 .await?;
                 return Ok(Outcome::Values(ValueStream::from_values(Vec::new())));
             }
-            if live {
+            // Only the explicit flag is refused. `spatial.map.live = true` says how a *view*
+            // behaves; where there is no view it has nothing to say, and a setting that broke
+            // every script's `map` would be a trap rather than a preference (§47, §29.1).
+            if asked_live {
                 return Err(ErrorValue::new(
                     ErrorCode::SpatialUnsupported,
                     "`map --live` needs an interactive terminal to draw into",
