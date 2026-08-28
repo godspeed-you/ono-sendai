@@ -95,12 +95,13 @@ pub async fn observe_space(
     let observed = observe(providers, session, &targets, now).await;
     let cached = observed.cached;
 
+    let held = indexed_members(session.index());
     let mut exits = Vec::with_capacity(sourced.len());
     for space in children {
-        exits.push(exit_of(&observed, space, space.label, complete));
+        exits.push(exit_of(&held, &observed, space, space.label, complete));
     }
     let permission = if here.member_type.is_some() {
-        let own = exit_of(&observed, here, here.label, complete);
+        let own = exit_of(&held, &observed, here, here.label, complete);
         let state = own.state();
         exits.push(own);
         state
@@ -118,6 +119,7 @@ pub async fn observe_space(
 
 /// The exit that leads into `space`, labelled `label`.
 fn exit_of(
+    held: &BTreeMap<SpatialId, Vec<SpatialId>>,
     observed: &Observed,
     space: &'static CanonicalSpace,
     label: &str,
@@ -127,7 +129,11 @@ fn exit_of(
         // Geography: the places inside it are declared, not observed, so listing them cannot fail.
         return Exit::open(label, declared_children(space.id));
     };
+    let held = held.get(&space.spatial_id()).cloned().unwrap_or_default();
     if source.targets.is_empty() {
+        if !held.is_empty() {
+            return Exit::open(label, held);
+        }
         return Exit::withheld(
             label,
             PermissionState::Unsupported,
@@ -140,9 +146,41 @@ fn exit_of(
         return Exit::withheld(label, PermissionState::Unknown, "available on request");
     }
     match observed.state_of(source.targets) {
-        Some((state, detail)) => Exit::withheld(label, state, detail),
-        None => Exit::open(label, observed.of_types(source.accepts)),
+        Some((state, detail)) if held.is_empty() => Exit::withheld(label, state, detail),
+        // A provider that refused says nothing about the places something else observed, and a
+        // group that can name a member is not one nobody could answer for (§2.17, §35.2, §37.1).
+        Some(_) => Exit::open(label, held),
+        None => Exit::open(label, union(observed.of_types(source.accepts), held)),
     }
+}
+
+/// The places the index already holds for `space`, whatever put them there (§37.1, ADR-0193).
+///
+/// The spatial layer never runs a tool, so an adapted observation exists only where a user's own
+/// command line produced one — and where it did, the unit it reported is a place with this space
+/// as its canonical parent. §37.1's second sentence keeps it visible ("both objects may appear
+/// with provenance"), and §2.17 forbids the space it belongs to from reporting that nothing is
+/// known about it. A tombstone is not a member: §10.3 keeps the record without pretending the
+/// object is still there.
+fn indexed_members(index: &SpatialIndex) -> BTreeMap<SpatialId, Vec<SpatialId>> {
+    let mut by_parent: BTreeMap<SpatialId, Vec<SpatialId>> = BTreeMap::new();
+    for entry in index.entries() {
+        if entry.object().lifetime().end().is_some() {
+            continue;
+        }
+        let id = entry.object().spatial_id();
+        if let Some(parent) = ono_spatial_query::resolve::parent_of(index, id) {
+            by_parent.entry(parent).or_default().push(id.clone());
+        }
+    }
+    by_parent
+}
+
+/// `first`, then everything in `second` it does not already hold, in observation order.
+fn union(mut first: Vec<SpatialId>, second: Vec<SpatialId>) -> Vec<SpatialId> {
+    let known: BTreeSet<SpatialId> = first.iter().cloned().collect();
+    first.extend(second.into_iter().filter(|id| !known.contains(id)));
+    first
 }
 
 /// Whether a source of this cost is enumerated by an orientation command (§32.1, §33.3).

@@ -1086,6 +1086,53 @@ fn should_reconcile_an_adapted_object_with_its_native_twin_into_one_place() {
 }
 
 #[test]
+fn should_show_a_place_only_an_adapter_observed_when_standing_in_the_collection_that_holds_it() {
+    // §37.1's second sentence — "If identity cannot be safely reconciled, both objects may appear
+    // with provenance" — and ADR-0193's reading of it: "Where no provider answers, the adapted
+    // record is all there is and it appears with its own provenance." No canonical provider
+    // answers for `network.addresses`, so the addresses `ip addr` reported are all the shell has;
+    // standing in the space that holds them and being told nothing is known there is the claim
+    // §2.17 forbids.
+    let empty = ono("home; enter network; enter addresses; look --json");
+    empty.assert_success();
+    assert!(
+        rendered(&document(
+            &empty,
+            "§29.1: `look --json` answers off a terminal"
+        ))
+        .contains("unsupported"),
+        "the premise of this test: nothing has observed an address yet, so the space says so"
+    );
+
+    let run = ono("ip addr | count | to text; \
+         home; enter network; enter addresses; near --all | select display_name | to text");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("127.0.0.1"),
+        "§37.1: the loopback address the `ip` adapter observed is a place in ADDRESSES, so \
+         standing there shows it rather than a refusal; got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_not_call_a_collection_unsupported_while_it_holds_a_place_the_shell_observed() {
+    // §35.2 keeps `unsupported` distinct from `available`, and §2.17 forbids a claim the shell
+    // cannot support: a group that can name its members is not a group nobody could answer for.
+    let run = ono("ip addr | count | to text; home; enter network; enter addresses; look --json");
+    run.assert_success();
+    let view = rendered(&document(
+        &run,
+        "§29.1: `look --json` answers off a terminal",
+    ));
+    assert!(
+        !view.contains("unsupported"),
+        "§35.2/§2.17: a collection holding observed places is `available`, not `unsupported`; \
+         got {view}"
+    );
+}
+
+#[test]
 fn should_never_let_raw_command_output_become_a_place() {
     // §37.2: "Raw external command output MUST NOT become spatial nodes through generic table
     // heuristics. Only canonical typed adapter output or explicit plugin schemas may enter the
