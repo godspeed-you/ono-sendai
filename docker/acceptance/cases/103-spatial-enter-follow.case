@@ -58,6 +58,13 @@ run: |
     "ono -c 'enter ono-twin' 2>&1 | grep -qF 'local/compute/processes'"
   prove s4b-b4 "a script gets the error on stderr and nothing on stdout (§29.3)" \
     "test -z \"\$(ono -c 'enter ono-twin' 2>/dev/null)\""
+  # ADR-0211: the candidates a refusal lists are a list, and a list is lines. They used to arrive
+  # as one paragraph with a literal `\u{a}` between the entries, because the render boundary
+  # escaped the newlines the shell itself had written along with the bytes a name carries.
+  prove s4b-b5 "the candidates arrive as lines, not as one paragraph of escapes (§29.3)" \
+    'out=$(ono -c "enter ono-twin" 2>&1);
+     ! printf "%s" "$out" | grep -qF "u{a}" &&
+     test "$(printf "%s\n" "$out" | grep -c "local/compute/processes")" -ge 2'
   kill "$twin_a" "$twin_b" 2>/dev/null || true
 
   echo "== an exact spatial id resolves what a name cannot (§29.3, §3.1) =="
@@ -141,6 +148,7 @@ stdout-contains: PROVED s4b-b
 stdout-contains: PROVED s4b-b2
 stdout-contains: PROVED s4b-b3
 stdout-contains: PROVED s4b-b4
+stdout-contains: PROVED s4b-b5
 stdout-contains: PROVED s4b-c
 stdout-contains: PROVED s4b-d
 stdout-contains: PROVED s4b-e

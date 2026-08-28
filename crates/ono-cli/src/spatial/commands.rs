@@ -1157,7 +1157,10 @@ fn ambiguous_edge(
     relation: &str,
     candidates: &[ono_spatial_core::SpatialId],
 ) -> ErrorValue {
-    let rows: Vec<String> = candidates
+    // The candidates are a list, and a list is carried as one: the shell decided there are
+    // several, and the render boundary lays them out one per line while still escaping whatever
+    // a display name brought with it (ADR-0211).
+    let rows: Vec<Value> = candidates
         .iter()
         .take(10)
         .map(|id| {
@@ -1165,17 +1168,14 @@ fn ambiguous_edge(
                 || id.to_string(),
                 |entry| entry.object().display_name().to_owned(),
             );
-            format!("  {name}  {id}")
+            Value::string(&format!("{name}  {id}"))
         })
         .collect();
     ErrorValue::new(
         ErrorCode::SpatialAmbiguousSelector,
-        format!(
-            "`{relation}` reaches {} places:\n{}",
-            candidates.len(),
-            rows.join("\n")
-        ),
+        format!("`{relation}` reaches {} places:", candidates.len()),
     )
+    .with_metadata("details", Value::list(rows))
     .with_help(format!(
         "name which one — `follow {relation} <selector>` — or list them with `near {relation}` \
          (spec v0.4 §6.4, §29.3)"

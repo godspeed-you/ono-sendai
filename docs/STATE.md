@@ -102,6 +102,7 @@ an ADR in the range 0209–0213. Files: `crates/ono-provider-netlink/src/{owners
 
 - [x] finding 2 — a `null` a provider answered is rendered as `empty` (ADR-0209)
 - [x] finding 3 — `find place --where` swallows unknown fields and evaluation errors (ADR-0210)
+- [x] finding 4 — a multi-line diagnostic prints `\u{a}` instead of its line breaks (ADR-0211)
 
 **S6 + S7 + S8 + the map correction are integrated on one branch (2026-08-28, agent `integrate-1`).**
 Three merges, in that order, on top of `implementation` at `cbbcd2c`; gate green, acceptance 75/75.
@@ -1365,18 +1366,27 @@ sessions run beside it. The file is green four runs in a row on its own and gree
 following full gate. It belongs to the same family as the two host-premise flakes S11a recorded,
 and the fix is theirs: wait for the *place*, not for a byte count.
 
+**S11c measured that family and closed it.** The picker test joined it:
+`spatial_interactive_missing.rs::should_open_a_picker_and_make_the_choice_current_when_a_selector_is_ambiguous`
+failed roughly one run in four **with and without** that session's changes — four runs at
+`079aa98` gave one failure, three runs with the working tree on top gave one — so it was a
+premise about the host, not a claim about the shell, and two full gate runs in a row died on it
+and on the resize test. A referee that fails one run in two is not a referee (AGENTS.md §14), so
+the premise was fixed rather than the flake tolerated: `BUDGET` and `STARTUP` in that file are
+**liveness bounds, not performance assertions** — they exist so a screen change that never comes
+fails instead of hanging — and they are now 45 s and 60 s. No assertion changed, and the file
+still finishes in 14.7 s, because a bound that is never reached costs nothing. The §34 figures
+are asserted where they belong and are untouched:
+`::should_repaint_a_focus_move_far_inside_the_frame_budget_when_the_map_is_open` (16 ms per
+repaint) and `docker/acceptance/cases/100-spatial-performance-budgets.case`.
+
+What that leaves standing is the observation underneath, which is about the shell and stays on
+this board: **opening a full-screen map of COMPUTE on a 500-process host is unresponsive while
+one whole projection is in flight**, which §34.2's view budget will eventually have to answer for.
+
 
 ## Next up (ordered)
 
-- [ ] **A multi-line diagnostic is rendered with `\u{a}` where its line breaks belong.** Found by
-  dogfooting: `follow files` at a process with eleven open files prints the whole candidate list
-  on one line with literal `\u{a}` between entries. The render boundary escapes control characters
-  unconditionally (ADR-0015 T1), which is right for the file names embedded in that message and
-  wrong for the newlines the shell itself put there. Two honest routes: carry the candidates as
-  error metadata and let the renderer lay them out, sanitising each name on its own; or give the
-  diagnostic renderer a notion of a line the *shell* wrote. Exit test: the ambiguity refusal of
-  `follow <relation>` with several candidates renders one candidate per line and still escapes a
-  candidate whose name contains a control character.
 - [ ] **`look`'s hidden count does not describe the list above it (§24.1, §24.2).** At the root
   `look` prints six domains and then `199 more not shown`; the 199 are neighbours the
   neighbourhood bounded, not domains, so a reader concludes the root has 205 exits. Exit test:

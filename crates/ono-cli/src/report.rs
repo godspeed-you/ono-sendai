@@ -48,6 +48,22 @@ impl Reporter {
             ono_core::SHORT_NAME,
             ono_render::sanitise(error.message())
         );
+        // §29.3's refusals list what they could not choose between, and a list is lines. The
+        // *shell* decided there are several of them, so the structure is carried as data —
+        // `details` — instead of as newlines inside the message, where the render boundary
+        // could not tell them from the ones a filename brought with it (ADR-0211, ADR-0015 T1).
+        // Each entry is still sanitised on its own, so a name cannot forge a line of its own.
+        let listed = details(error);
+        for line in listed.iter().take(SHOWN_DETAILS) {
+            let _ = writeln!(out, "  {}", ono_render::sanitise(line));
+        }
+        if let Some(rest) = listed
+            .len()
+            .checked_sub(SHOWN_DETAILS)
+            .filter(|rest| *rest > 0)
+        {
+            let _ = writeln!(out, "  … {rest} more");
+        }
         if let Some(help) = error.help() {
             let hint = self.theme.paint(help, Token::ErrorHint, self.presentation);
             let _ = writeln!(out, "  {hint}");
@@ -89,6 +105,30 @@ impl Reporter {
             let hint = self.theme.paint(help, Token::ErrorHint, self.presentation);
             let _ = writeln!(out, "  {hint}");
         }
+    }
+}
+
+/// How many of a refusal's listed candidates reach the terminal.
+///
+/// The message already says how many there are, and a diagnostic that fills the screen with
+/// ninety of them is not a diagnostic. The whole list stays on the error value, so a script that
+/// catches it reads every candidate; this bounds only what is painted.
+const SHOWN_DETAILS: usize = 10;
+
+/// The lines a refusal listed under its message, where it listed any (ADR-0211).
+///
+/// The convention is one metadata entry, `details`, holding a list of strings. Anything else in
+/// the metadata is machine detail — an errno, a provider id — and is not shown here.
+fn details(error: &ErrorValue) -> Vec<String> {
+    match error.metadata().get("details") {
+        Some(ono_value::Value::List(items)) => items
+            .iter()
+            .filter_map(|item| match item {
+                ono_value::Value::String(text) => Some(text.to_string()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }
 

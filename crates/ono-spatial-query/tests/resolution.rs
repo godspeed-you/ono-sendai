@@ -16,6 +16,20 @@ use ono_spatial_index::SpatialIndex;
 use ono_spatial_query::{Resolution, ResolutionStep, SelectorContext, place_path, resolve};
 use ono_value::Value;
 
+/// The candidates a refusal listed, as the strings `details` carries (ADR-0211).
+fn detailed(error: &ono_value::ErrorValue) -> Vec<String> {
+    match error.metadata().get("details") {
+        Some(Value::List(items)) => items
+            .iter()
+            .filter_map(|item| match item {
+                Value::String(text) => Some(text.to_string()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// An index holding the given records, absorbed through the provider bridge.
 fn indexed(records: &[ono_value::RecordValue]) -> SpatialIndex {
     let mut index = index();
@@ -92,10 +106,17 @@ fn should_refuse_with_the_ambiguous_selector_error_when_a_script_resolves_a_shar
         .require("sleep")
         .expect_err("two matches cannot resolve to one");
     assert_eq!(error.code(), ErrorCode::SpatialAmbiguousSelector);
+    // ADR-0211: the candidates are carried as data rather than as newlines inside the message,
+    // so the refusal still names where each of them is — one entry per candidate, which is what
+    // lets a renderer put them on their own lines and a script read them without parsing prose.
     assert!(
-        error.message().contains("local/compute/processes"),
+        detailed(&error)
+            .iter()
+            .filter(|row| row.contains("local/compute/processes"))
+            .count()
+            >= 2,
         "the refusal names where each candidate is, got {:?}",
-        error.message()
+        detailed(&error)
     );
 }
 
@@ -116,10 +137,11 @@ fn should_offer_but_never_take_a_fuzzy_match_when_no_name_matches_exactly() {
         .expect_err("a fuzzy match never acts on its own");
     assert_eq!(error.code(), ErrorCode::SpatialNotFound);
     assert!(
-        error
-            .help()
-            .is_some_and(|help| help.contains("nginx-worker")),
-        "§40 wants actionable next steps, got {:?}",
+        detailed(&error)
+            .iter()
+            .any(|row| row.contains("nginx-worker")),
+        "§40 wants actionable next steps, got {:?} and help {:?}",
+        detailed(&error),
         error.help()
     );
 }

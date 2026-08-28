@@ -19,7 +19,7 @@ use jiff::Timestamp;
 use ono_core::ErrorCode;
 use ono_spatial_core::{Freshness, SpatialId, SpatialType, canonical_parent, space, spaces};
 use ono_spatial_index::SpatialIndex;
-use ono_value::{ErrorValue, Provenance};
+use ono_value::{ErrorValue, Provenance, Value};
 
 /// Which of §27.1's six steps found a candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -195,14 +195,15 @@ impl Resolution {
     pub fn require(self, selector: &str) -> Result<Candidate, ErrorValue> {
         match self {
             Resolution::Resolved(candidate) => Ok(*candidate),
+            // §27.2's three columns are a list, and it travels as one: `details` carries the
+            // candidates as values, so the render boundary can lay them out one per line while
+            // still escaping whatever a display name brought with it, and a script that catches
+            // the error reads them instead of parsing a paragraph (ADR-0211).
             Resolution::Ambiguous(candidates) => Err(ErrorValue::new(
                 ErrorCode::SpatialAmbiguousSelector,
-                format!(
-                    "`{selector}` names {} places:\n{}",
-                    candidates.len(),
-                    rows(&candidates)
-                ),
+                format!("`{selector}` names {} places:", candidates.len()),
             )
+            .with_metadata("details", rows(&candidates))
             .with_help(
                 "name the exact spatial id, or select one from a stream — `find place \
                  <selector> | take 1 | enter` (spec v0.4 §29.3)",
@@ -211,11 +212,11 @@ impl Resolution {
                 ErrorCode::SpatialNotFound,
                 format!("no place is called `{selector}`"),
             )
-            .with_help(format!(
-                "a fuzzy match is never followed on its own (spec v0.4 §27.3); did you mean \
-                 one of these?\n{}",
-                rows(&candidates)
-            ))),
+            .with_metadata("details", rows(&candidates))
+            .with_help(
+                "a fuzzy match is never followed on its own (spec v0.4 §27.3); did you mean one \
+                 of these?",
+            )),
             Resolution::NotFound => Err(ErrorValue::new(
                 ErrorCode::SpatialNotFound,
                 format!("no place is called `{selector}`"),
@@ -225,12 +226,13 @@ impl Resolution {
     }
 }
 
-fn rows(candidates: &[Candidate]) -> String {
-    candidates
-        .iter()
-        .map(|candidate| format!("  {}", candidate.row()))
-        .collect::<Vec<_>>()
-        .join("\n")
+fn rows(candidates: &[Candidate]) -> Value {
+    Value::list(
+        candidates
+            .iter()
+            .map(|candidate| Value::string(&candidate.row()))
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Where a selector is being resolved from, and what it is allowed to reach (§27.1).

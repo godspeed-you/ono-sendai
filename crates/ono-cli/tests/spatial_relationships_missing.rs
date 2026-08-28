@@ -239,6 +239,96 @@ impl Drop for FileHolder {
     }
 }
 
+/// A `sh` child holding two scratch files open, one of them named with an escape byte in it.
+///
+/// The pair makes `follow files` ambiguous, which is the refusal §29.3 requires and the one that
+/// carries a list; the escape byte is there so the test can tell the shell's own line breaks
+/// from the bytes a filename brought with it (ADR-0015 T1, ADR-0211).
+struct TwoFileHolder {
+    _directory: Scratch,
+    child: Child,
+}
+
+impl TwoFileHolder {
+    const HOSTILE: &'static str = "held-\u{1b}[2Jsecond.conf";
+
+    fn spawn() -> Self {
+        let directory = scratch();
+        let first = directory.write("held-first.conf", b"listen 8080;\n");
+        let second = directory.write(Self::HOSTILE, b"listen 8081;\n");
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "exec 3< '{}'; exec 4< '{}'; sleep 30",
+                first.display(),
+                second.display()
+            ))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("`sh` is available on every test host");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline
+            && std::fs::read_link(format!("/proc/{}/fd/4", child.id())).is_err()
+        {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        Self {
+            _directory: directory,
+            child,
+        }
+    }
+
+    fn pid(&self) -> u32 {
+        self.child.id()
+    }
+}
+
+impl Drop for TwoFileHolder {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[test]
+fn should_break_a_listing_refusal_into_lines_while_still_escaping_what_the_names_carry() {
+    // §29.3 and §40 with ADR-0015 T1. `follow files` at a process holding several files is an
+    // ambiguity the shell answers with the candidates, and the candidates are a list — one per
+    // line. The render boundary used to escape every control character in the message, including
+    // the newlines the shell itself had written, so the whole list arrived on one line with
+    // `\u{a}` between the entries: unreadable exactly where it matters most.
+    //
+    // The two halves are asserted together on purpose, because separating them is the defect:
+    // the structure the shell wrote survives, and the bytes a filename carries do not.
+    let holder = TwoFileHolder::spawn();
+    let run = ono(&format!("enter process {}; follow files", holder.pid()));
+    let stderr = run.stderr();
+    assert!(
+        stderr.contains("spatial.ambiguous_selector"),
+        "§29.3: several open files make `follow files` ambiguous, got {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("\\u{a}"),
+        "ADR-0211: the line breaks the shell wrote are line breaks, not escapes, got {stderr:?}"
+    );
+    let listed = stderr.lines().filter(|line| line.contains("held-")).count();
+    assert!(
+        listed >= 2,
+        "§29.3: each candidate is on its own line, got {listed} in {stderr:?}"
+    );
+    assert!(
+        !stderr.contains('\u{1b}'),
+        "ADR-0015 T1: a filename never reaches the terminal with its escape byte intact, got \
+         {stderr:?}"
+    );
+    assert!(
+        stderr.contains("\\u{1b}"),
+        "ADR-0015 T1: the escape byte is shown as data rather than dropped, got {stderr:?}"
+    );
+}
+
 /// A `sleep` child: a process with a parent, a cgroup and no socket of its own.
 struct SleepChild(Child);
 
