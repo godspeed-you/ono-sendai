@@ -143,6 +143,22 @@ relations:
       installed provider states it, so the exit answers `unsupported` rather than empty — which
       is the difference §35.2 exists to keep.
 
+  - id: service.listens_on
+    source: Service
+    target: Listener
+    direction: outbound
+    canonical_label: listener
+    inverse_label: service
+    canonical_group: listeners
+    inverse_group: service
+    confidence: exact_or_provider_declared
+    cost_class: normal
+    doc: >-
+      The sockets a service manager unit listens on (§13's `listeners`). The socket belongs to the
+      process, and no installed provider joins the unit to it, so the exit answers `unsupported`
+      rather than being left off the view — a place that omitted the group would be claiming the
+      service has no listeners (§2.17, §35.2).
+
   - id: service.depends_on
     source: Service
     target: Service

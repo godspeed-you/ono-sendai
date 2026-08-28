@@ -515,6 +515,22 @@ pub const RELATIONS: &[RelationSpec] = &[
         cost_class: CostClass::Normal,
     },
     RelationSpec {
+        // §13 lists a service's listeners among its minimum groups. The socket belongs to the
+        // process, and no installed provider joins the unit to it: the relation exists so the
+        // place can say `unsupported` instead of leaving the exit off the view altogether, which
+        // would be the place quietly claiming a service has no listeners (§2.17, §35.2).
+        id: "service.listens_on",
+        source: SpatialType::Service,
+        target: SpatialType::Listener,
+        direction: Direction::Outbound,
+        canonical_label: "listener",
+        inverse_label: "service",
+        canonical_group: "listeners",
+        inverse_group: "service",
+        confidence: ConfidenceClaim::ProviderDeclared,
+        cost_class: CostClass::Normal,
+    },
+    RelationSpec {
         id: "service.depends_on",
         source: SpatialType::Service,
         target: SpatialType::Service,

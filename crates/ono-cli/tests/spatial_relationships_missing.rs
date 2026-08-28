@@ -844,3 +844,49 @@ fn should_say_a_costly_relation_is_unknown_rather_than_unserved_when_a_look_did_
         asked.stdout()
     );
 }
+
+#[test]
+fn should_offer_the_listeners_of_a_service_as_an_exit_even_where_no_provider_joins_them() {
+    // §13's minimum groups for a service place list `listeners`. The socket belongs to the
+    // process and no installed provider joins the unit to it, so the exit is `unsupported` — but
+    // it has to be there: a place that leaves the group off the view is quietly claiming the
+    // service has no listeners, which is the count-from-nowhere §2.17 and §35.2 forbid. The
+    // `cgroup` exit of the same place has answered this way since S5.
+    let dir = scratch();
+    dir.write(
+        "systemctl",
+        "#!/bin/sh\n\
+         if [ \"$1\" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi\n\
+         if [ \"$1\" = list-units ]; then\n\
+           printf '%s\\n' '[{\"unit\":\"ono-listener-fixture.service\",\"load\":\"loaded\",\"active\":\"active\",\"sub\":\"running\",\"description\":\"Fixture\"}]'\n\
+           exit 0\n\
+         fi\n\
+         exit 2\n",
+    );
+    std::fs::set_permissions(
+        dir.path().join("systemctl"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .expect("the shim is executable");
+    let path = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let run = Shell::new()
+        .args([
+            "-c",
+            "systemctl list-units | count | to text; \
+             find place ono-listener-fixture | take 1 | enter; look --json",
+        ])
+        .env("PATH", path)
+        .timeout(Duration::from_secs(30))
+        .run();
+    run.assert_success();
+    let view = place_view(&run);
+    let shown = rendered(&view);
+    assert!(
+        shown.contains("listeners"),
+        "§13: a service place offers its listeners as an exit; got {shown}"
+    );
+}
