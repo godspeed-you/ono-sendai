@@ -31,6 +31,7 @@ pub struct IndexEntry {
     canonical_parent: Option<HierarchicalEdge>,
     path_parent: Option<SpatialId>,
     edges: Vec<RelationshipEdge>,
+    withheld: BTreeMap<String, (PermissionState, String)>,
     landmarks: Vec<Landmark>,
     observed_at: Timestamp,
     subscribed: bool,
@@ -198,6 +199,7 @@ impl SpatialIndex {
                         canonical_parent: canonical_parent_with(&id, object_type, &[], None),
                         path_parent: None,
                         edges: Vec::new(),
+                        withheld: BTreeMap::new(),
                         landmarks: Vec::new(),
                         observed_at,
                         subscribed: false,
@@ -266,6 +268,46 @@ impl SpatialIndex {
         entry.canonical_parent =
             canonical_parent_with(child, object_type, &entry.edges, entry.path_parent.as_ref());
         true
+    }
+
+    /// Records that one exit of `id` could not be read, and what the user must be told instead
+    /// (§35.2, §42.4).
+    ///
+    /// §42.4: "Denied information must produce `permission_denied` or `unknown`, never false
+    /// empty collections." This is where that survives: [`SpatialIndex::relation_summary`] shows
+    /// the state and the detail in place of a count, so "files — permission denied for 14 process
+    /// FDs" cannot become "files — 0" on the way to a place view.
+    pub fn record_withheld(
+        &mut self,
+        id: &SpatialId,
+        label: &str,
+        state: PermissionState,
+        detail: &str,
+    ) -> bool {
+        match self.entries.get_mut(id) {
+            Some(entry) => {
+                entry
+                    .withheld
+                    .insert(label.to_owned(), (state, detail.to_owned()));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// What the user was told about each exit that could not be read (§35.2).
+    #[must_use]
+    pub fn withheld(&self, id: &SpatialId) -> Vec<(&str, PermissionState, &str)> {
+        self.entries
+            .get(id)
+            .into_iter()
+            .flat_map(|entry| {
+                entry
+                    .withheld
+                    .iter()
+                    .map(|(label, (state, detail))| (label.as_str(), *state, detail.as_str()))
+            })
+            .collect()
     }
 
     /// Records what deserves attention about an object (§26, §33.1's "landmark state").
@@ -438,6 +480,14 @@ impl SpatialIndex {
         let mut groups = Vec::new();
 
         for (label, spec) in relation::exits_from(object_type) {
+            // §35.2, §42.4: a refusal outranks a count. An exit the provider could not read is
+            // shown as refused with its reason, never as an empty collection.
+            if let Some((state, detail)) = entry.withheld.get(label) {
+                groups.push(
+                    NeighborhoodGroup::withheld(label, *state, detail).along(spec.relation_type()),
+                );
+                continue;
+            }
             let members: Vec<SpatialId> = entry
                 .edges
                 .iter()

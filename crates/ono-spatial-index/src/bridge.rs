@@ -23,8 +23,8 @@ use std::collections::BTreeMap;
 use jiff::Timestamp;
 use ono_core::ErrorCode;
 use ono_spatial_core::{
-    Confidence, Projection, RelationSpec, RelationshipEdge, SpatialId, SpatialObject, SpatialType,
-    relation,
+    Confidence, PermissionState, Projection, RelationSpec, RelationshipEdge, SpatialId,
+    SpatialObject, SpatialType, relation,
 };
 use ono_value::{ErrorValue, Provenance, RecordValue, SchemaId, Value};
 
@@ -387,7 +387,16 @@ impl ProviderBridge {
             for key in reference_keys(object_type, record) {
                 self.keys.insert((object_type, key), id.clone());
             }
-            facts.extend(facts_of(&id, object_type, record));
+            let asserted = facts_of(&id, object_type, record);
+            facts.extend(asserted.facts);
+            for refusal in asserted.withheld {
+                index.record_withheld(
+                    &refusal.subject,
+                    refusal.label,
+                    refusal.state,
+                    &refusal.detail,
+                );
+            }
             if let Some(parent) = enclosing_directory(object_type, record) {
                 paths.push(PathParent {
                     child: id,
@@ -508,89 +517,162 @@ impl ProviderBridge {
     }
 }
 
-/// The relation `id` must be declared, and every fact below names one that is.
-///
-/// A `RelationSpec` exists only for a relation `docs/spec/spatial/relations.yaml` declares, so a
-/// fact that could not find one is a fact the bridge does not assert (§2.5: every edge is
-/// explainable, starting with being declared).
-fn declared(id: &'static str) -> Option<&'static RelationSpec> {
-    relation::spec(id)
+/// One exit a provider could not read, and what the user must be told instead (§35.2, §42.4).
+#[derive(Debug, Clone)]
+struct Withheld {
+    subject: SpatialId,
+    label: &'static str,
+    state: PermissionState,
+    detail: String,
 }
 
-/// Everything the record `record` says about how its object relates to other places.
+/// What one record said about its object's relations, and what it could not say.
+///
+/// The two halves are separate because they answer different questions: no fact means the object
+/// has no such neighbour, while a refusal means nobody knows whether it has any (§35.2).
+#[derive(Debug, Default)]
+struct Assertions {
+    facts: Vec<Fact>,
+    withheld: Vec<Withheld>,
+}
+
+/// Reads one record's relations, keeping refusals apart from absences.
+struct Reader<'a> {
+    subject: &'a SpatialId,
+    record: &'a RecordValue,
+    provenance: Provenance,
+    out: Assertions,
+}
+
+impl Reader<'_> {
+    /// Whether `field` holds a refusal rather than a value, recording it against `label` if so.
+    ///
+    /// §35.2's states are what a provider's own error becomes here: a field carrying an
+    /// `ono.error/1` is the provider saying "I could not read this", and turning that into an
+    /// absent neighbour is exactly the false empty collection §42.4 forbids.
+    fn refused(&mut self, field: &str, label: &'static str) -> bool {
+        let Some(Value::Error(error)) = self.record.get(field) else {
+            return false;
+        };
+        self.out.withheld.push(Withheld {
+            subject: self.subject.clone(),
+            label,
+            state: PermissionState::of_refusal(error),
+            detail: error.message().to_owned(),
+        });
+        true
+    }
+
+    /// Records a relation to a place some provider serves, named by `field`.
+    fn relate(
+        &mut self,
+        field: &str,
+        label: &'static str,
+        far_type: SpatialType,
+        relation: &'static str,
+        subject_is_source: bool,
+    ) {
+        if self.refused(field, label) {
+            return;
+        }
+        let Some(key) = self.record.get(field).and_then(|value| {
+            if field == "ppid" {
+                text(Some(value))
+            } else {
+                reference_key(value, far_type)
+            }
+        }) else {
+            return;
+        };
+        self.push(
+            relation,
+            subject_is_source,
+            FarEnd::Known {
+                object_type: far_type,
+                key,
+            },
+            Confidence::Exact,
+            Vec::new(),
+        );
+    }
+
+    /// Records a relation the bridge asserts, once its far end is named.
+    fn push(
+        &mut self,
+        relation: &'static str,
+        subject_is_source: bool,
+        far: FarEnd,
+        confidence: Confidence,
+        attributes: Vec<(&'static str, Value)>,
+    ) {
+        // A `RelationSpec` exists only for a relation `docs/spec/spatial/relations.yaml`
+        // declares, so a relation nobody wrote down cannot become an edge (§2.5).
+        if let Some(spec) = relation::spec(relation) {
+            self.out.facts.push(Fact {
+                subject: self.subject.clone(),
+                subject_is_source,
+                relation: spec,
+                far,
+                confidence,
+                provenance: self.provenance.clone(),
+                attributes,
+            });
+        }
+    }
+}
+
+/// Everything the record `record` says about how its object relates to other places, and every
+/// exit it could not read.
 ///
 /// Every entry is a fact the *provider* stated: a parent pid, a unit name, a uid, an open
 /// descriptor, a cgroup path, a peer endpoint. §2.16 allows the spatial layer to compose those
 /// into a graph and nothing else — so the confidence is `exact` wherever the record states the
 /// relation outright, and weaker only where the join is evidence rather than an observation.
-fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> Vec<Fact> {
-    let mut facts = Vec::new();
-    let provenance = record.provenance().clone();
-    let mut push = |relation: &'static str,
-                    subject_is_source: bool,
-                    far: FarEnd,
-                    confidence: Confidence,
-                    attributes: Vec<(&'static str, Value)>| {
-        if let Some(spec) = declared(relation) {
-            facts.push(Fact {
-                subject: id.clone(),
-                subject_is_source,
-                relation: spec,
-                far,
-                confidence,
-                provenance: provenance.clone(),
-                attributes,
-            });
-        }
+fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> Assertions {
+    let mut reader = Reader {
+        subject: id,
+        record,
+        provenance: record.provenance().clone(),
+        out: Assertions::default(),
     };
-    let known = |object_type: SpatialType, key: String| FarEnd::Known { object_type, key };
 
     match object_type {
         SpatialType::Process => {
-            if let Some(key) = record.get("ppid").and_then(|value| text(Some(value))) {
-                // The record's object is the *child*, and `process.parent_of` runs from parent
-                // to child, so the subject is the relation's target.
-                push(
-                    "process.parent_of",
-                    false,
-                    known(SpatialType::Process, key),
-                    Confidence::Exact,
-                    Vec::new(),
-                );
-            }
-            if let Some(key) = reference_of(record, "service", SpatialType::Service) {
-                push(
-                    "service.controls_process",
-                    false,
-                    known(SpatialType::Service, key),
-                    Confidence::Exact,
-                    Vec::new(),
-                );
-            }
-            if let Some(key) = reference_of(record, "user", SpatialType::User) {
-                push(
-                    "user.owns_process",
-                    false,
-                    known(SpatialType::User, key),
-                    Confidence::Exact,
-                    Vec::new(),
-                );
-            }
-            if let Some(key) = reference_of(record, "container", SpatialType::Container) {
-                // The provider stated it outright, so this half is an observation.
-                push(
-                    "container.contains_process",
-                    false,
-                    known(SpatialType::Container, key),
-                    Confidence::Exact,
-                    Vec::new(),
-                );
-            }
-            if let Some(key) = record
-                .get("pid_namespace")
-                .and_then(|value| text(Some(value)))
+            // The record's object is the *child*, and `process.parent_of` runs from parent to
+            // child, so the subject is the relation's target.
+            reader.relate(
+                "ppid",
+                "parent",
+                SpatialType::Process,
+                "process.parent_of",
+                false,
+            );
+            reader.relate(
+                "service",
+                "service",
+                SpatialType::Service,
+                "service.controls_process",
+                false,
+            );
+            reader.relate(
+                "user",
+                "user",
+                SpatialType::User,
+                "user.owns_process",
+                false,
+            );
+            // Where the provider states the container outright, this half is an observation.
+            reader.relate(
+                "container",
+                "container",
+                SpatialType::Container,
+                "container.contains_process",
+                false,
+            );
+            if !reader.refused("pid_namespace", "namespace")
+                && let Some(key) = text(record.get("pid_namespace"))
             {
-                push(
+                reader.push(
                     "process.in_namespace",
                     true,
                     FarEnd::Composed {
@@ -603,8 +685,10 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> V
                     Vec::new(),
                 );
             }
-            if let Some(path) = record.get("cgroup").and_then(|value| text(Some(value))) {
-                push(
+            if !reader.refused("cgroup", "cgroup")
+                && let Some(path) = text(record.get("cgroup"))
+            {
+                reader.push(
                     "process.member_of_cgroup",
                     true,
                     FarEnd::Composed {
@@ -620,37 +704,45 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> V
                     // §11.5: the kernel does not report container membership. The runtime id in
                     // the cgroup path leaves no serious alternative, which is `strong`, and the
                     // path travels with the edge as the evidence §11.4 requires.
-                    push(
+                    reader.push(
                         "container.contains_process",
                         false,
-                        known(SpatialType::Container, container),
+                        FarEnd::Known {
+                            object_type: SpatialType::Container,
+                            key: container,
+                        },
                         Confidence::Strong,
                         vec![("evidence", Value::string(&path))],
                     );
                 }
             }
-            for path in list_of(record, "open_files") {
-                push(
-                    "process.opened_file",
-                    true,
-                    known(SpatialType::File, path),
-                    Confidence::Exact,
-                    Vec::new(),
-                );
+            if !reader.refused("open_files", "file") {
+                for path in list_of(record, "open_files") {
+                    reader.push(
+                        "process.opened_file",
+                        true,
+                        FarEnd::Known {
+                            object_type: SpatialType::File,
+                            key: path,
+                        },
+                        Confidence::Exact,
+                        Vec::new(),
+                    );
+                }
             }
         }
         SpatialType::Socket | SpatialType::Listener | SpatialType::Connection => {
-            if let Some(key) = reference_of(record, "process", SpatialType::Process) {
-                push(
-                    "process.owns_socket",
-                    false,
-                    known(SpatialType::Process, key),
-                    Confidence::Exact,
-                    Vec::new(),
-                );
-            }
-            if let Some(peer) = endpoint_name(record, "remote") {
-                push(
+            reader.relate(
+                "process",
+                "owner",
+                SpatialType::Process,
+                "process.owns_socket",
+                false,
+            );
+            if !reader.refused("remote", "peer")
+                && let Some(peer) = endpoint_name(record, "remote")
+            {
+                reader.push(
                     "socket.connected_to",
                     true,
                     FarEnd::Composed {
@@ -665,90 +757,86 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> V
             }
         }
         SpatialType::File | SpatialType::Directory => {
-            if let Some(key) = reference_of(record, "owner", SpatialType::User) {
-                push(
-                    "user.owns_file",
-                    false,
-                    known(SpatialType::User, key),
-                    Confidence::Exact,
-                    Vec::new(),
-                );
-            }
+            reader.relate("owner", "owner", SpatialType::User, "user.owns_file", false);
         }
         SpatialType::Filesystem => {
-            if let Some(target) = record.get("target").and_then(|value| text(Some(value))) {
-                push(
+            if !reader.refused("target", "mount")
+                && let Some(target) = text(record.get("target"))
+            {
+                reader.push(
                     "filesystem.mounted_at",
                     true,
-                    known(SpatialType::Mount, target),
+                    FarEnd::Known {
+                        object_type: SpatialType::Mount,
+                        key: target,
+                    },
                     Confidence::Exact,
                     Vec::new(),
                 );
             }
-            if let Some(source) = record.get("source").and_then(|value| text(Some(value))) {
+            if !reader.refused("source", "device")
+                && let Some(source) = text(record.get("source"))
+            {
                 // The filesystem's source and the device node are the same string because the
                 // kernel spells them the same way; that is a join, not an observation (§11.5).
-                push(
+                reader.push(
                     "device.backs_filesystem",
                     false,
-                    known(SpatialType::BlockDevice, source.clone()),
+                    FarEnd::Known {
+                        object_type: SpatialType::BlockDevice,
+                        key: source.clone(),
+                    },
                     Confidence::Strong,
                     vec![("evidence", Value::string(&source))],
                 );
             }
         }
         SpatialType::Mount => {
-            if let Some(target) = record.get("target").and_then(|value| text(Some(value))) {
-                push(
+            if !reader.refused("target", "directory")
+                && let Some(target) = text(record.get("target"))
+            {
+                reader.push(
                     "mount.backs_directory",
                     true,
-                    known(SpatialType::Directory, target),
+                    FarEnd::Known {
+                        object_type: SpatialType::Directory,
+                        key: target,
+                    },
                     Confidence::Exact,
                     Vec::new(),
                 );
             }
         }
         SpatialType::Address => {
-            if let Some(key) = reference_of(record, "interface", SpatialType::Interface) {
-                push(
-                    "interface.has_address",
-                    false,
-                    known(SpatialType::Interface, key),
-                    Confidence::Exact,
-                    Vec::new(),
-                );
-            }
+            reader.relate(
+                "interface",
+                "interface",
+                SpatialType::Interface,
+                "interface.has_address",
+                false,
+            );
         }
         SpatialType::Route => {
-            if let Some(key) = reference_of(record, "interface", SpatialType::Interface) {
-                push(
-                    "route.via_interface",
-                    true,
-                    known(SpatialType::Interface, key),
-                    Confidence::Exact,
-                    Vec::new(),
-                );
-            }
+            reader.relate(
+                "interface",
+                "interface",
+                SpatialType::Interface,
+                "route.via_interface",
+                true,
+            );
         }
         SpatialType::User => {
-            if let Some(key) = reference_of(record, "primary_group", SpatialType::Group) {
-                push(
-                    "user.member_of_group",
-                    true,
-                    known(SpatialType::Group, key),
-                    Confidence::Exact,
-                    Vec::new(),
-                );
-            }
+            reader.relate(
+                "primary_group",
+                "group",
+                SpatialType::Group,
+                "user.member_of_group",
+                true,
+            );
         }
         _ => {}
     }
-    facts
-}
-
-/// The value of a reference field, as the key the far end answers to.
-fn reference_of(record: &RecordValue, field: &str, object_type: SpatialType) -> Option<String> {
-    reference_key(record.get(field)?, object_type)
+    reader.out
 }
 
 /// The elements of a list field, as text.

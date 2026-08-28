@@ -64,6 +64,25 @@ impl PermissionState {
             .find(|state| state.as_str() == name)
     }
 
+    /// The state a provider's refusal reaches a place view as (§35.2, §42.4).
+    ///
+    /// §42.4: "Denied information must produce `permission_denied` or `unknown`, never false
+    /// empty collections." The mapping is total, so there is no refusal that can arrive as
+    /// absence: anything the taxonomy calls a permission failure is `permission_denied`, a
+    /// provider that cannot answer here at all is `unsupported`, and everything else is
+    /// `unknown` — which is still visible, and still not empty (§2.17).
+    #[must_use]
+    pub fn of_refusal(error: &ono_value::ErrorValue) -> Self {
+        use ono_core::{ErrorCode, ErrorKind};
+        match error.code() {
+            ErrorCode::ProviderUnavailable | ErrorCode::ProviderUnsupported => {
+                PermissionState::Unsupported
+            }
+            code if code.kind() == ErrorKind::Permission => PermissionState::PermissionDenied,
+            _ => PermissionState::Unknown,
+        }
+    }
+
     /// Whether the group's contents are what the user sees.
     ///
     /// Every other state means something is missing, and §2.17 requires the missing thing to be
