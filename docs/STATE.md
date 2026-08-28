@@ -116,7 +116,7 @@ is split, because 102 of the 175 tests first become attemptable when the command
 | S4d storage and the cwd distinction | ~12 | §15 mount boundaries |
 | S4e the `spatial.enabled` refusal path and the §34 budgets | ~5 | §47 behaviour half |
 | S5 | 27 | §26 landmark engine, §39 ASCII fallback — **done**, 26 tests; 2 deferred (ADR-0165) |
-| S6 | 13 | §5 startup horizon, §21 prompt/HUD, §27.2 picker, §9.4 completion |
+| S6 | 13 | §5 startup horizon, §21 prompt/HUD, §27.2 picker, §9.4 completion — **done**, 14 tests |
 | S7 | 7 | — |
 | S8 | 12 | — |
 | S9 | 2 | — |
@@ -724,6 +724,110 @@ Green now, all previously `#[ignore]`d — 26 tests:
 - `map` honours `COLUMNS` even when stdout is redirected, which no other view does (ADR-0166).
   Whoever decides that the whole renderer should do the same has one function to change,
   `crate::sink::terminal_width`, and the table snapshots to re-check.
+
+**S6 — the interactive spatial surface — is complete (2026-08-28, agent `S6`).** ADR-0173 to
+ADR-0177; gate green; acceptance case `docker/acceptance/cases/107-spatial-interactive.case`
+added (39 assertions, driven through a real pseudo-terminal).
+
+Delivered — the phase, plus the four areas §50 assigns to nobody:
+
+1. **§5 the startup horizon.** An interactive session runs `look` once before the first prompt
+   and never in a pipe. It is `look`, not a second renderer of the root, so §49.5 cannot be
+   broken by the two drifting apart (ADR-0175). `spatial.startup_horizon` and `spatial.enabled`
+   each switch it off.
+2. **§21 the prompt and the HUD.** `ono_spatial_query::resolve::concise_path` is §21.2's rule as
+   a function — `local`, `local/compute`, `local/process/nginx` — and the prompt, the place
+   view's heading and the map's header all read it. The working directory stays in the prompt
+   beside the place, because §30 keeps them different state (ADR-0175).
+3. **§23.3 the full-screen map.** `ono_spatial_render::view` holds the whole view model with no
+   terminal in it: `MapView` (viewport, cursor, search, help, detail overlay), `Action` (§23.3's
+   twenty-one semantic actions), `Keymap` (§23.3's table, overridable through the new
+   `spatial.map.keys`), `Effect` (what is left for the shell to do). `crate::spatial::interactive`
+   is the terminal side: alternate screen and raw mode as guards, resize, and the same
+   `go_back`/`go_up`/`go_home` the commands call (ADR-0174).
+4. **§27.2 the ambiguity picker,** interactive only; a script still gets
+   `spatial.ambiguous_selector`. `Candidate` now carries the identity key, so §27.2's rows read
+   `nginx/1842` and disambiguate rather than repeating one name three times — which also improved
+   the non-interactive refusal (ADR-0177).
+5. **§9.4 completion as spatial discovery.** `enter`/`jump`/`map <TAB>` offer the neighbourhood
+   and `follow <TAB>` the relations this place actually has, with §9.4's compact count or §35.2's
+   state word. Shown on the first Tab through the new `Completion::listing`; ordinary word
+   completion is unchanged (ADR-0177).
+6. **§25.1 `map --live`** as the explicit polling source §25.1 permits, saying `live polled` in
+   §25.3's vocabulary, refused with `spatial.unsupported` where there is no terminal (ADR-0176).
+7. **The seam that made all of it safe:** `ono_command::Invocation::displays` — the evaluator
+   tells the last stage of a foreground statement that its values will be *seen*. `map | to json`,
+   `map > file`, `$(map)` and `ono -c 'map'` therefore never open a screen (ADR-0173).
+
+Green now, all previously `#[ignore]`d — 14 tests:
+
+- `spatial_interactive_missing` (all 12): the horizon at a TTY and never in a pipe, `look` at 80
+  and at 40 columns, the prompt following the place, the picker, the map opening and closing, focus
+  that does not move the place, `back` at the prompt and Backspace in the view, Ctrl-C leaving the
+  live map, resize preserving the place, `stty`/`pwd` in order afterwards, `enter <TAB>`.
+- `spatial_topology_missing` (2): `should_complete_the_places_of_the_current_neighborhood_when_tab_follows_enter`,
+  `should_complete_the_relations_available_from_the_current_place_when_tab_follows_follow`.
+- 10 new crate-level outcome tests: `crates/ono-spatial-render/tests/view.rs`.
+
+**Nothing was left ignored by this phase.**
+
+**What S7 needs from this view loop** — the four things:
+
+- **The loop is where a live update lands.** `crate::spatial::interactive::run_map_view` reads a
+  terminal event with a timeout and, when the timeout expires and the view is live, rebuilds the
+  projection and calls `MapView::redraw`. S7 replaces the *source* of that rebuild — an event
+  subscription instead of a one-second poll — and changes nothing else: `redraw` already keeps the
+  cursor on the node it was on, and `MapView::set_live(live, freshness)` already takes §25.3's
+  word, so flipping `polled` to `event_driven` is one argument.
+- **Nothing repaints unless the drawing changed.** The loop compares the new frame with the one on
+  the screen and writes nothing when they are equal. That is what makes §39.4's `reduced_motion`
+  true by construction today; when S7 adds a change highlight, `spatial.reduced_motion` is the
+  switch that turns *that* off, and it is already read into the session (`configured_flag`).
+- **`Effect` is the whole vocabulary between the view and the shell.** A new key means a new
+  `Action` variant, a default binding and an `Effect`; the config syntax, the `?` help table and
+  the key-name parser follow for free.
+- **The map projection is one function.** `crate::spatial::map::projection(ctx, session, center,
+  request, now)` builds every `ono.spatial-map/1` the shell emits — `map`, `map --json`, every
+  frame of the full-screen view. A live diff belongs in what feeds it, never beside it.
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- §5's "providers SHOULD populate expensive counts asynchronously and update the horizon when
+  available" is a SHOULD this build does not do: the horizon is one synchronous `look`. It costs
+  what `look` costs. Making it asynchronous needs the same update channel S7 builds for the live
+  map, and belongs there — not in a second mechanism.
+- `spatial.reduced_motion` is read and inspectable but has nothing to disable, because this
+  renderer draws no animation at all (§25.2 forbids decorative motion). ADR-0176 says so; S7 gives
+  it something to switch off.
+- The `/` search of §23.3 searches the *drawn* map. §23.3 says "search visible/global map"; the
+  global half is `find place`, which already exists as a command, and wiring it into the view's
+  search line is a real increment with its own test.
+- Completion asks no provider anything (§34's 50 ms budget), so `enter <TAB>` inside a collection
+  nobody has looked at offers the declared geography and no members. A background pre-observation
+  of the current neighbourhood would fix it and is exactly the "background discovery" of §34.1.
+- Two boxes in `docs/ACCEPTANCE.md` §4.7 — "full-screen map works on supported interactive
+  terminals" and "PTY interaction tests pass" — now have all their *unit* proofs green, but both
+  name case `099`, which is still `.case.v04`. They are S11's to tick with the rename.
+- **`spatial_map_missing::should_only_remove_{edges,nodes}_...` are flaky under a parallel run,
+  and were before this increment.** Both compare a map from one `ono` run against a map from a
+  second; every sibling test in the binary spawns shells between the two, and a process that
+  appeared in between is `recently_changed`, ranks into the second map and is absent from the
+  first. They pass with `--test-threads=1` and failed about one gate run in three here; seen
+  green in the gate before this increment and green again after it, and nothing in S6 touches
+  map ranking. Same family as the two ADR-0165 defers and as the two topology fixtures S4b left.
+  The fix is a fixture the two runs are guaranteed to agree on — not a change to either test.
+- **The twelve PTY tests are load-sensitive, and the gate runs them under load.** All twelve pass
+  in 47 s when `spatial_interactive_missing` runs on its own, and repeatedly; in a
+  `cargo test --workspace` on a machine also running two other worktrees (load average 16 on
+  8 CPUs) three of them exceeded their own 8 s screen budget waiting for `map` to open at
+  COMPUTE, because opening the view costs one full projection — the same providers `map` asks,
+  including systemd over D-Bus. Two things are true and both are worth writing down: the view is
+  unresponsive while a projection is in flight, which §34.2's view budget will eventually have to
+  answer for (S11 owns the budgets); and the picker's own fixture copies `/bin/sleep` and can hit
+  `ETXTBSY` when a sibling test forks across the copy, which
+  `spatial_contracts_missing::should_refuse_an_ambiguous_selector_in_a_script_rather_than_open_a_picker`
+  already documents and avoids by using a symlink instead. Run the file alone before believing a
+  failure in it.
 
 ---
 
