@@ -110,7 +110,7 @@ is split, because 102 of the 175 tests first become attemptable when the command
 | S1 | 5 | §47 configuration declarations |
 | S2 | 1 | §18 device spaces — §50's identity list omits Device although §7.7 makes DEVICES a domain |
 | S3 | 3 | — (`find place` + the ADR-0124 rewrite in one commit) |
-| S4a `look`/`near` + domains | ~30 | §31 `trace` interop (a trace never moves the place) |
+| S4a `look`/`near` + domains | ~30 | §31 `trace` interop (a trace never moves the place) — **done**, 32 tests |
 | S4b `enter`/`follow` | ~30 | §30 `cd`/place integration, §35 permission honesty |
 | S4c `back`/`up`/`home`/`trail`/`jump`/`pin` | ~25 | §46 session state, §29.2 script isolation |
 | S4d storage and the cwd distinction | ~12 | §15 mount boundaries |
@@ -308,6 +308,105 @@ other 40 new outcome tests live in the crates:
 **Open, and deliberately not S1's:** `docs/ACCEPTANCE.md` has no v0.4 section yet, so
 `scripts/release-check.sh` cannot see this tranche. §4.7 needs writing from v0.4 §52 before S11,
 the way §4.6 was written from v0.3.
+
+**S4a — `look`, `near`, and the six domains as real places — is complete (2026-08-28, agent
+`S4a`).** Four commits, gate green on the last; `scripts/acceptance.sh` 69 passed, 0 failed:
+
+1. `fix(command)` a bare flag followed by another option was dropped — `get dir --all
+   --recursive` set only `--recursive`. A pre-existing defect, found because `look --all --json`
+   hit it; fixed red-first in its own commit.
+2. `feat(command)` an option whose value is optional (ADR-0144), so `look --changes [duration]`
+   and `near --changed [duration]` are spelled as §6.1 and §6.2 write them.
+3. `feat(spatial)` the commands themselves: contracts in `docs/spec/verbs.yaml` and
+   `docs/spec/commands/spatial.yaml`, seven new schemas, `crates/ono-spatial-render`,
+   `SpatialSessionState` in `ono-cli`, and `look`/`near`/`enter`/`home` (ADR-0142, ADR-0143,
+   ADR-0145).
+4. `test(acceptance)` `docker/acceptance/cases/102-spatial-look-near.case`, the S4a gate in the
+   container: 48 assertions, none of which types a name the shell has not printed first.
+
+Green now, all previously `#[ignore]`d — 32 tests:
+
+- `spatial_topology_missing` (20): `should_report_the_system_root_as_the_current_place_when_home_runs`,
+  `should_list_exactly_the_six_canonical_domains_when_looking_at_the_system_root`,
+  `should_carry_a_permission_state_on_every_domain_so_an_unavailable_one_stays_visible`,
+  `should_bound_the_root_horizon_instead_of_listing_every_known_object`,
+  `should_describe_the_current_place_with_an_id_kind_name_scope_and_permission_when_looking`,
+  `should_keep_the_same_spatial_id_for_the_root_across_separate_sessions`,
+  `should_enter_every_canonical_domain_when_named_at_the_root`,
+  `should_offer_the_{compute,network,storage,identity}_groups_the_spec_names_when_entering_*`,
+  `should_keep_containers_and_devices_enterable_with_a_state_when_no_provider_contributes`,
+  `should_show_the_users_the_user_provider_answers_for_when_entering_identity_users`,
+  `should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_mounts`,
+  `should_show_a_block_device_the_device_provider_answers_for_when_entering_devices`,
+  `should_bound_the_neighborhood_and_count_what_it_hides_when_a_place_has_many_neighbors`,
+  `should_expose_a_reason_on_every_landmark_when_a_place_reports_landmarks`,
+  `should_stream_neighbors_as_pipeline_objects_when_near_runs_at_the_root`,
+  `should_distinguish_an_unavailable_group_from_an_empty_one_when_a_domain_has_no_provider`,
+  `should_resolve_find_as_a_spatial_verb_while_the_external_tool_stays_reachable_by_path`.
+- `spatial_navigation_missing` (5): the three `look` tests, `should_bound_the_neighborhood_to_the_requested_size_when_near_is_limited`,
+  `should_run_the_native_spatial_look_and_keep_the_external_look_reachable_when_both_exist`.
+- `spatial_map_missing` (3): the three §24 tests —
+  `should_describe_identity_state_exits_and_landmarks_when_look_json_reports_a_place`,
+  `should_mark_a_group_as_an_exit_only_when_it_can_be_entered_when_look_lists_groups`,
+  `should_not_invent_a_change_section_when_no_snapshot_or_event_source_exists`.
+- `spatial_relationships_missing` (1): `should_keep_the_current_place_when_trace_projects_the_relationship_graph`.
+- `ono-command::binding` (1, new): `should_bind_both_flags_when_one_bare_flag_follows_another`.
+
+**What S4b needs from S4a** — the four things:
+
+- **`enter` is already dispatched in two places, and both move the place.**
+  `crate::context::claims` sends `enter` to the v0.2 context stack only when its first word names
+  a target `docs/spec/commands/` declares for `enter` (`dir`, `process`, `service`, `user`, …);
+  anything else — a domain, a collection, a pid, a quoted spatial id, or no argument at all —
+  reaches `crate::spatial::commands::Enter`, the target-less `ono.place.enter`. §30.2 applies to
+  both spellings, so `context::enter_record` now also calls `crate::spatial::enter_observed`
+  (ADR-0142). S4b owns `enter @<result-ref>`, `enter .` and the piped form of §28.2.
+- **`enter <object>` needs the object in the index first.** `Enter` resolves against what is
+  known, and observes the current place's surroundings only when the declared answer misses. That
+  is why `enter <pid>` at the root still refuses: the root observes the container and device
+  targets and nothing else (ADR-0143's source table). The step S4b owns is planning the targets a
+  *selector* implies — `ono_spatial_query::discovery::targets_for` already does exactly that for
+  a predicate — so `enter 1842` from anywhere reaches the process.
+  `spatial_navigation_missing::should_stream_neighbors_that_compose_with_the_pipeline_when_near_runs_in_a_script`
+  is the near test that waits on it.
+- **The trail is recorded, and nothing reads it yet.** Every move — `enter`, `home`, and the v0.2
+  `enter <target>` — records a `NavigationStep` with its `Movement` in
+  `SpatialSessionState::trail_mut()`. `follow` records `Movement::Follow` with the relation;
+  `back`, `up` and `trail` (S4c) read what is already being written.
+- **A place view is one function.** `crate::spatial::view::place_record` builds every
+  `ono.spatial-place/1` the shell emits — `look`, `near` and `find place` — so a field `follow`
+  needs is added once. `view::neighborhood_here` decides which of the two projections applies: a
+  canonical space gets `ono_spatial_query::space_neighborhood` over observed exits, an object
+  gets `neighborhood_of` over its edges. `follow <relation>` reads the second.
+
+**Left ignored, and why** (S4a's assignment ends here):
+
+- `spatial_topology_missing`: `should_answer_look_near_and_map_without_an_object_name_when_at_the_root`
+  (all-or-nothing, and two of its six scripts are `map` — S5);
+  `should_reach_a_process_it_never_names_…`, `should_offer_the_process_exits_…`,
+  `should_follow_the_parent_relation_…`, `should_discover_a_listening_socket_…`,
+  `should_reach_a_running_service_…` (all need `enter @-1` or `follow` — S4b); the two completion
+  tests (§9.4, PTY — S6).
+- `spatial_navigation_missing`: everything that needs `enter <object>`, `follow`, `jump`, `back`,
+  `up`, `trail` or `map`.
+- `spatial_map_missing`: everything about `map` (S5).
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- `network/addresses`, `compute/cgroups` and `network/namespaces` report `unsupported`: no v0.2
+  provider target serves an address, a cgroup or a namespace as an object, although the bridge
+  composes cgroups and namespaces from process records (S2, ADR-0135). Composing the collections
+  from the same facts is a real increment, and §7.3 only requires the place to exist and to say
+  what it could not tell. `storage/directories` reports `unknown — available on request`, because
+  §33.3 makes the filesystem query-driven; S4d owns storage and the cwd distinction.
+- `ono.system/1` is declared from §7.1 field for field, and `look --all` at the root carries it
+  with `os`, `kernel` and `uptime` null: no provider answers for them, and §2.16 forbids the
+  spatial layer from reading them itself. A `get system` producer fills them.
+- `spatial_topology_missing::should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_mounts`
+  compares two separate `ono` runs against a live mount table. On a workstation where Docker is
+  creating and removing netns mounts it can lose the race and see a mount the first run did not.
+  Seen once, passing on re-run and green in the container; the test is right and the environment
+  is what moved.
 
 ---
 
