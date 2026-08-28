@@ -1387,6 +1387,14 @@ What that leaves standing is the observation underneath, which is about the shel
 this board: **opening a full-screen map of COMPUTE on a 500-process host is unresponsive while
 one whole projection is in flight**, which §34.2's view budget will eventually have to answer for.
 
+A fourth member of the family, same treatment:
+`spatial_remote_missing.rs::should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link` gave the
+run ten seconds to refuse `jump prod/web01.invalid`, and the refusal costs eight of CPU in a
+debug build on this host — measured at 10.02 s on `76adb95` and 8.6 s with S11c's changes, so it
+was the machine it raced, not a resolver. What proves nothing was dialled is the error name
+(`spatial.not_found`, never a resolve or connect failure); the budget is only the hang guard, and
+it is 60 s now.
+
 
 ## Next up (ordered)
 

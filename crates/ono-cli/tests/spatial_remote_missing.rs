@@ -653,14 +653,19 @@ fn should_carry_provenance_and_confidence_on_every_relation_that_comes_from_the_
 fn should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link() {
     // §35.4: "`jump` MUST NOT silently establish arbitrary new network connections merely
     // because a hostname resembles a known place." `.invalid` is reserved by RFC 2606 and never
-    // resolves, so a shell that tried anyway would stall in the resolver; the budget makes that
-    // a failure rather than a hang. §40 requires the refusal to be structured.
+    // resolves, so a shell that tried anyway would stall in the resolver.
+    //
+    // What proves nothing was dialled is the *error*, asserted below: a shell that had tried
+    // would answer with a resolve or connect failure, not with `spatial.not_found`. The budget
+    // is only the guard that turns a hang into a failure, so it is generous rather than tight —
+    // it was ten seconds, and this refusal costs eight of CPU in a debug build on a 500-process
+    // host, which made the guard a race with the machine rather than with a resolver (S11c).
     let run = Shell::new()
         .args([
             "-c",
             "try { jump prod/web01.invalid } catch e { $e | to json }",
         ])
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
         .try_run()
         .unwrap_or_else(|error| {
             panic!(
