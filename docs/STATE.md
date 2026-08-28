@@ -193,7 +193,7 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 (event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
 (§45.6).
 
-- (empty — S4d and S4e complete, see below; no agent holds a claim)
+- (empty — the v0.4 tranche is complete through S11b; no agent holds a claim)
 
 **S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
 on each:
@@ -1276,6 +1276,8 @@ searches the index too).
   `replacement_via` naming `service.controls_process`; `docker/acceptance/cases/096-…` `44.7e`
   then asserts it instead of what it asserts now.
 - **`enter process <pid>` answers `spatial.not_found` for a process started with `setsid`.**
+  **Corrected by S11b: this does not reproduce — the report's `$!` is `setsid`'s own pid, and
+  `setsid` exits at once. See the S11b section below.** As reported:
   Reproducible: `setsid sleep 60 & ono -c "enter process $!"`. The same pid entered without
   `setsid` resolves. A session leader in its own session is an ordinary process and §12 makes it
   a place; the selector or the provider query is filtering on something it should not. Exit test:
@@ -1294,33 +1296,142 @@ searches the index too).
   `follow socket` on a process holding both is `spatial.ambiguous_selector` — correct, and worth
   knowing before writing a case that assumed one socket.
 
+**S11b — the rest of v0.4 §52: budgets, evidence, the security review, dogfooding and the
+checklist — is complete (2026-08-28, agent `S11b`).** Eight commits, gate green on each; the
+container ran the new case on image `ono-sendai:acceptance-s11b`.
+
+| Commit | What it delivers |
+|---|---|
+| `test(spatial)` | the racy half of `should_complete_the_relations_available…` — it read until `parent` was on screen and then asserted `user` in the same breath, which is why the board carried it as "fails under parallel load" |
+| `fix(spatial)` | a map filter narrows the bounded map instead of re-selecting it (ADR-0202) |
+| `test(spatial)` | the §43.5 renderer snapshots at 40/80/120/200 columns, and §34's 16 ms frame budget at a real PTY |
+| `docs(decisions)` | ADR-0203, the spatial enumeration review: ADR-0015's table extended with seven rows, each naming a passing test |
+| `test(xtask)` | `xtask/tests/spatial_evidence.rs`, the guard that keeps §4.7 from rotting |
+| `test(acceptance)` | `docker/acceptance/cases/100-spatial-performance-budgets.case`, the §34 budgets at their real figures |
+| `feat(help)` | `help spatial` (§38.1, a MUST that was missing), found by dogfooding |
+| `docs` | `docs/dogfood/v0.4-2026-08-28.md`, and §4.7 ticked from the evidence |
+
+**The §34 budgets, measured in the container on the §43.3 fixtures.** None is violated, so no ADR
+documents a violation:
+
+| Budget (§34) | Measured |
+|---|---|
+| interactive startup to usable prompt < 150 ms | 0 ms over `bash` under the same `script(1)` harness (272 ms both) |
+| basic `look` local cached < 50 ms | 178 µs per repetition |
+| `near` cached < 50 ms | 343 µs |
+| map L0/L1 cached < 100 ms | 334 µs |
+| map L2 ordinary host < 250 ms | 472 µs |
+| search common indexed objects < 100 ms | 1 803 µs |
+| focus/navigation in a rendered map < 16 ms/frame | 88 µs median at a real PTY (slowest 386 µs) |
+| §34.1 discovery does not block the prompt | unchanged at 0 ms with 200 extra processes and a 20 000-entry directory |
+
+The startup figure is measured **against a baseline of the same harness running `bash`**, because
+`script(1)` costs about 270 ms of its own in that image — `bash` under it takes as long as `ono`
+does, to the millisecond — so an absolute figure would be a measurement of the harness. A whole
+non-interactive `ono -c true` run takes 18.5 ms there.
+
+**Found by dogfooding (`docs/dogfood/v0.4-2026-08-28.md`), one fixed, the rest under *Next up*.**
+The honest verdict on §52.3's statement is in that file: it holds for orientation and hierarchy
+and breaks at the first permission boundary, because a group the provider answered `null` for is
+rendered as `0` rather than as unknown.
+
+**Two entries on this board are closed by S11b's own evidence:**
+
+- **The bounded/filtered map defect is fixed** (ADR-0202). It now has a deterministic reproducer
+  rather than a host-dependent one: `ono-spatial-query::properties::should_keep_every_node_and_edge_a_filter_left_alone_and_invent_none`
+  is red at seed 1 on the old projection.
+- **"`enter process <pid>` cannot reach a process started with `setsid`" does not reproduce.** Its
+  reproducer — `setsid sleep 60 & ono -c "enter process $!"` — records `setsid`'s own pid, and
+  `setsid` forks and exits immediately, so the pid looked for belongs to a process that is gone.
+  Started properly (`setsid tail -f /dev/null &`, then the child's real pid) `find place --type
+  process --where pid == <pid>` finds it and `enter <pid>` enters it. No defect; the entry is
+  removed.
+
+**One thing S11b made slightly worse and did not hide.** The interactive suite gained a
+thirteenth PTY test (the frame budget), and one full-workspace gate run then failed
+`should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`, whose 8 s
+budget for closing a full-screen map of COMPUTE (500 processes) is tight when several PTY
+sessions run beside it. The file is green four runs in a row on its own and green on the
+following full gate. It belongs to the same family as the two host-premise flakes S11a recorded,
+and the fix is theirs: wait for the *place*, not for a byte count.
+
+
 ## Next up (ordered)
 
+- [ ] **A group the provider answered `null` for is reported `empty`, not `unknown` (§2.17,
+  §35.2).** Found by dogfooding, 2026-08-28, and the one release-relevant defect that session
+  produced. At a listener owned by another user, `look` says `process 0`: `get socket --listening`
+  honestly carries `"process": null` — an unprivileged process cannot read another user's socket
+  owner, and `ss -ltnp` shows the same blank — and the spatial layer turns that `null` into a
+  group with `count: 0, state: "available"`, which is §35.2's own counter-example. `null` is the
+  provider saying it does not know; only a field that carried an *error* reaches
+  `SpatialIndex::relation_summary`'s withheld path today. **The fix belongs to the provider, not
+  to the spatial layer**: `ProviderBridge`'s `Reader::refused` does exactly what §35.2 asks with
+  what it is given, and `null` is genuinely ambiguous at that seam — a TIME_WAIT socket has no
+  owning process, and an unreadable one has an owner nobody may see. `ono-provider-netlink` is
+  where the two are still distinguishable, so `ono.socket/1`'s `process` must carry an
+  `io.permission_denied` error where the join could not be made and `null` only where there is
+  no owner (§42.4, §2.17, AGENTS.md §6). Exit test: on a host with a socket owned by another
+  uid, `get socket --listening | where …` carries an error rather than `null` in `process`, and
+  `look` at that listener answers state `unknown` for its `process` group with no count;
+  `docs/decisions/ADR-0203`'s T17 row then names that test too. Reproduce today:
+  `ono -c "enter network; enter listeners; enter <a port owned by another uid>; look"`.
+- [ ] **`find place --where` swallows unknown fields and evaluation errors (§2.17, §29.3; v0.2
+  §11.3).** `find place --type process --where nosuchfield == 1 | count` answers `0` where
+  `get process | where nosuchfield == 1` refuses with `Ono-Sendai-E0202`; `--where memory > 1`
+  answers `0` where the pipeline reports `Ono-Sendai-E0203 cannot compare bytesize and int` per
+  row. A typo in a script cannot be told from an empty system. **This is a contract decision, not
+  a bug fix**: `docker/acceptance/cases/101-spatial-find-place.case` assertion `s3i` pins the
+  present behaviour and `TargetPlan::is_empty` defends it in prose, so reversing it needs an ADR
+  that supersedes that reading and rewrites `s3i` in the same commit. The narrow form that is
+  clearly right: refuse when *no* candidate target's schema declares the field, which is
+  `TargetPlan::skipped()` carrying nothing but `MissingField` and an empty `asked()`. Exit test:
+  that spelling refuses with E0202 naming the field, while `--type container` on a host with no
+  container runtime still answers an empty stream.
+- [ ] **A multi-line diagnostic is rendered with `\u{a}` where its line breaks belong.** Found by
+  dogfooting: `follow files` at a process with eleven open files prints the whole candidate list
+  on one line with literal `\u{a}` between entries. The render boundary escapes control characters
+  unconditionally (ADR-0015 T1), which is right for the file names embedded in that message and
+  wrong for the newlines the shell itself put there. Two honest routes: carry the candidates as
+  error metadata and let the renderer lay them out, sanitising each name on its own; or give the
+  diagnostic renderer a notion of a line the *shell* wrote. Exit test: the ambiguity refusal of
+  `follow <relation>` with several candidates renders one candidate per line and still escapes a
+  candidate whose name contains a control character.
+- [ ] **`look`'s hidden count does not describe the list above it (§24.1, §24.2).** At the root
+  `look` prints six domains and then `199 more not shown`; the 199 are neighbours the
+  neighbourhood bounded, not domains, so a reader concludes the root has 205 exits. Exit test:
+  the count `look` prints under a list is the count of the things in that list, or the line says
+  what it counts.
+- [ ] **Every read-only mount is a "storage pressure" landmark (§26.2, §2.11).** At STORAGE the
+  landmark list is twenty snaps at `100% used`; a squashfs image is full by definition. Exit
+  test: a read-only filesystem at 100 % is not a storage-pressure landmark, and a writable one
+  above the threshold still is.
+- [ ] **A map of an object is a flat list with duplicate labels (§23.5, §11.4).** `map` at a
+  desktop process draws `also here` with eight rows all called `/run/user/1000/wayland-0`, one
+  row called `4026531836` (an unlabelled pid-namespace inode) and no relation on any of them, so
+  the view cannot be used to choose a neighbour. The root map is unaffected and is excellent.
+  Exit test: every row of an object map names the relation it stands in, and two neighbours that
+  share a display name are distinguishable in it.
+- [ ] **`cpu` is `null` in every one-shot run (§26.2's high-CPU landmark, §34).** CPU is a rate
+  and `ono-provider-linux` has nothing to subtract from on a first observation, so all 493
+  processes answer `null` from `ono -c` and `find place --where cpu > 5` is silence; a second
+  `get process` in the same session does produce values. Honest, and it means "what is busy?"
+  cannot be asked non-interactively. Exit test: a single `ono -c "get process | where cpu > 0 |
+  count"` answers more than zero on a busy host, by whatever route — a second sample after a
+  short interval, or a separate lifetime-average field.
+- [ ] **`help here` (§38.2) does not exist.** A SHOULD: "at any place, `help here` shows the
+  spatial operations supported by that place". `help spatial` (§38.1, a MUST) was delivered by
+  S11b; this is its other half. Exit test: `help here` at a process place names the relations
+  that place actually offers.
+- [ ] **Two small ones from the same session.** `near --relation process` reports the four
+  options and never mentions that the relation is a positional selector (`near process`), which
+  is the spelling that works; and `near <relation>` with no neighbours prints nothing at all, so
+  "no such neighbour" and "the command did nothing" look the same.
 - [ ] **A tombstone never names its replacement candidate (§10.3, §40).** `tombstone.replacement`
   and `tombstone.replacement_via` are on the place record and always `null`, and
   `Tombstone::replaced_by` is called from nowhere. The detail, the two routes and the exit test
   are under *Found by S11a* above; `docs/ACCEPTANCE.md` §4.7.3's §44.7 box names the gap, and
   case `096`'s `44.7e` is the assertion that changes when it is delivered.
-- [ ] **`enter process <pid>` cannot reach a process started with `setsid`.** Detail and exit
-  test under *Found by S11a* above.
-- [ ] **A bounded map is not a superset of a bounded filtered map, and §43.2 says it must be.**
-  Found by S8 on 2026-08-28 while running the gate; **it is not an S8 regression** — it
-  reproduces identically on `ffbb221`, S5's own head, on the same machine. The two tests
-  `spatial_map_missing::should_only_remove_edges_when_a_relation_filter_narrows_the_map` and
-  `…should_only_remove_nodes_and_leave_no_dangling_edge_when_a_type_filter_narrows_the_map`
-  compare `map --all` with `map --all --type <t>` and require the second to be a subset of the
-  first. `ono_spatial_query::map::project` filters the *candidates* and then bounds what is left
-  to `spatial.map.node_budget`, so on a host with more objects than the budget the two runs pick
-  two different hundreds and the filtered map contains nodes the unfiltered one cut. Measured on
-  a 338-process host: both maps carry 99 nodes, and 3–5 of the filtered ones are absent from the
-  unfiltered one. The container has far fewer processes, which is why acceptance case 105 is
-  green and the unit tests are only red on a busy machine. §43.2 is unambiguous — "filtering
-  removes objects, it never creates them" — so the test is right and the projection is the
-  defect. The fix is S5's or S11's, it is a `fix` of its own, and it changes what `--type` and
-  `--relations` return: bound first and filter the bounded set, or carry the unfiltered ranking
-  into the filtered projection. Exit test: the two tests above, green on a host with more
-  processes than `spatial.map.node_budget`.
-
 - [ ] **Found by the dead-check sweep of `xtask/` (2026-08-28, `harness`, ADR-0159).** Same
   family as the repaired argument-mode check, but each is a different *kind* of change, so none
   was fixed there (AGENTS.md §4):
@@ -1648,6 +1759,23 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 ---
 
 ## Done
+
+**The orphaned-shell leak is fixed (2026-08-28, agent `leak`, ADR-0160).** The 160 shells were
+not spinning and not deadlocked on a lock: every one of them held the *master* side of its own
+controlling terminal. `nix::pty::openpty` is glibc's `openpty(3)`, which opens `/dev/ptmx` and
+the slave without `O_CLOEXEC`, and `PtySession::start` passed them straight to `spawn`, so every
+program the shell started under a terminal inherited that terminal's master —
+`/proc/<pid>/fdinfo/4` said `tty-index: 29` while `/proc/<pid>/fd/0` was `/dev/pts/29`. The last
+reference to the master was therefore held by the shell reading from it, closing it in the caller
+could never produce end of file, and the shell waited in `ep_poll` for a byte nobody could send.
+Marking both descriptors `FD_CLOEXEC` in `PtySession::start` is the whole fix; the child still
+gets the terminal as the three `dup2` duplicates `plan::prepare_pty` makes. `pgrep -c -x ono`
+after a full `scripts/gate.sh` run is now 0, where it used to grow by a shell per PTY test.
+Proven by `crates/ono-cli/tests/session_lifetime.rs`
+(`should_exit_when_the_terminal_it_was_given_goes_away`,
+`should_not_hold_the_terminal_that_drives_it`), both RED before the fix.
+
+
 
 - [x] `fix(remote)` a shell ends the agent processes it started (ADR-0161): `link host` spawns
   `ono --agent` (or `ssh … ono --agent`) as its own child, and nothing waited for it — the shell
@@ -2233,56 +2361,13 @@ and produce no edges. Not faked, not removed:
   the listener it came from, and matching by local port would be a guess §11.5 has no value for.
   Exit test: none until a kernel interface supplies the link.
 
-**The orphaned-shell leak is fixed (2026-08-28, agent `leak`, ADR-0160).** The 160 shells were
-not spinning and not deadlocked on a lock: every one of them held the *master* side of its own
-controlling terminal. `nix::pty::openpty` is glibc's `openpty(3)`, which opens `/dev/ptmx` and
-the slave without `O_CLOEXEC`, and `PtySession::start` passed them straight to `spawn`, so every
-program the shell started under a terminal inherited that terminal's master —
-`/proc/<pid>/fdinfo/4` said `tty-index: 29` while `/proc/<pid>/fd/0` was `/dev/pts/29`. The last
-reference to the master was therefore held by the shell reading from it, closing it in the caller
-could never produce end of file, and the shell waited in `ep_poll` for a byte nobody could send.
-Marking both descriptors `FD_CLOEXEC` in `PtySession::start` is the whole fix; the child still
-gets the terminal as the three `dup2` duplicates `plan::prepare_pty` makes. `pgrep -c -x ono`
-after a full `scripts/gate.sh` run is now 0, where it used to grow by a shell per PTY test.
-Proven by `crates/ono-cli/tests/session_lifetime.rs`
-(`should_exit_when_the_terminal_it_was_given_goes_away`,
-`should_not_hold_the_terminal_that_drives_it`), both RED before the fix.
-
-
-**The v0.4 RED suites** (written 2026-08-27, before any implementation). Every test in the files
-below is `#[ignore]`d with the specification section that governs it, so the gate stays green
-while the tests exist. **The increment that delivers a section removes the ignore lines of the
-tests naming it, in the same commit** — a file is done when it has no `#[ignore` left. Reason
-for deferral: the v0.4 Spatial Systems Interface is unimplemented; these are its executable
-requirements, not blocked work.
-
-- `crates/ono-cli/tests/spatial_navigation_missing.rs` — the spatial command language on its
-  non-interactive surface: `look`, `near`, `enter`, `follow`, `jump`, `back`, `up`, `home`,
-  `trail`, `find`, script ambiguity (v0.4 §6, §20, §27–§29, §40, §44.6)
-- `crates/ono-cli/tests/spatial_topology_missing.rs` — root `SYSTEM`, the six canonical
-  domains, discovery before naming (§2, §3, §4, §7, §9, §12, §13, §17, §18, §44.1, §44.2)
-- `crates/ono-cli/tests/spatial_identity_missing.rs` — identity tiers, process lifetime,
-  tombstones, permission honesty, hierarchy vs graph (§10, §11, §33, §35, §42, §44.7, §44.8)
-- `crates/ono-cli/tests/spatial_map_missing.rs` — the map data contract, semantic zoom,
-  clustering, landmarks, text rendering and ASCII fallback (§8, §22, §23, §24, §26, §39)
-- `crates/ono-cli/tests/spatial_relationships_missing.rs` — relationship traversal and live
-  spatial state (§11, §12–§16, §25, §31, §32, §44.4, §44.5, §44.9)
-- `crates/ono-cli/tests/spatial_storage_missing.rs` — storage spaces, mount boundaries and the
-  cwd/place distinction (§7.4, §15, §30, §44.3)
-- `crates/ono-cli/tests/spatial_remote_missing.rs` — remote systems as space (§19, §20, §43.7)
-- `crates/ono-cli/tests/spatial_contracts_missing.rs` — the machine-readable spatial registry,
-  the error model, provider conformance, KUANG/11 and v0.3 adapter integration, session state,
-  configuration and budgets (§34, §36, §37, §40, §41, §42, §46, §47)
-- `crates/ono-cli/tests/spatial_interactive_missing.rs` — the interactive surface through a PTY:
-  startup horizon, prompt/HUD, ambiguity picker, full-screen map, focus vs place, Ctrl-C, resize,
-  raw shell continuity (§5, §21, §23, §27, §39, §43.4, §44.10)
-
-The end-to-end half lives beside them as `docker/acceptance/cases/090…099-spatial-*.case.v04` —
-the ten §44 scenarios with 139 named assertions, held out of the runner's `*.case` glob until
-the increment that delivers a scenario renames its file. `docker/acceptance/cases/README-v0.4.md`
-carries the mapping, and `docker/acceptance/fixtures/spatial/` the deterministic fixture §43.3
-asks for (a listener holding a known file open and forking workers, its client, and a service
-manager stand-in in the shape the v0.3 systemd adapters decode).
+**The v0.4 RED suites are delivered (2026-08-28, S1–S11b).** The nine
+`crates/ono-cli/tests/spatial_*_missing.rs` files (175 tests) and the ten
+`docker/acceptance/cases/09x-spatial-*.case` scenarios (139 assertions) are un-ignored, renamed
+and green; `xtask/tests/spatial_evidence.rs` fails the gate if a `*.case.v04` file returns or if
+a test `docs/ACCEPTANCE.md` §4.7 names as a proof is missing or ignored. Nothing in this section
+is deferred any more; the files keep their `_missing` names because renaming them would rename
+113 proofs the checklist points at, which is a `refactor` of its own.
 
 **The three questions the suites could not settle are decided** (2026-08-28, confirmed by the
 user), so the first increment starts from a fixed contract rather than from an assumption:
