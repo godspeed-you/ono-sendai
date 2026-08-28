@@ -396,7 +396,6 @@ fn should_carry_a_lifetime_descriptor_rather_than_the_bare_pid_as_process_identi
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §37.1); un-ignored by the increment that delivers it"]
 fn should_resolve_the_adapter_view_and_the_native_view_of_one_process_to_one_spatial_id() {
     // §37.1: "Objects from adapters MUST be reconciled with canonical provider identities
     // before appearing as duplicate map nodes." v0.3 already turns `ps` into typed

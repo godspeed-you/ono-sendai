@@ -802,6 +802,7 @@ dependencies = [
  "ono-adapter",
  "ono-kuang-protocol",
  "ono-kuang-supervisor",
+ "ono-spatial-core",
  "ono-testkit",
  "serde_json",
 ]

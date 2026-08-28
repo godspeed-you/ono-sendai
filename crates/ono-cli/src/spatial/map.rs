@@ -319,7 +319,34 @@ async fn observe(
     } else {
         observe_object(providers, session, center, request, &mut horizon, now).await?;
     }
+    merge_contributions(providers, session, &mut horizon, now).await;
     Ok(horizon)
+}
+
+/// Merges what KUANG/11 packages contribute into the horizon the map is drawn from (§35.5, §36).
+///
+/// §35.5: "The spatial host MUST filter plugin nodes/edges according to capability scope before
+/// merging them into maps." The filter is `contributions::adopt`, which took nothing from a
+/// package that does not hold `relation.write` — so what arrives here is already only what the
+/// user granted. Both ends of every edge were resolved through the canonical provider, so the
+/// nodes added with it are places the providers answer for and not the package's inventions
+/// (§2.16, §36.2).
+async fn merge_contributions(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    horizon: &mut MapHorizon,
+    now: Timestamp,
+) {
+    for (edge, source, target) in
+        crate::spatial::contributions::merge(providers, session, now).await
+    {
+        for end in [&source, &target] {
+            horizon.place(place_at(session, end, 1, None));
+        }
+        let (index, _) = session.absorb_with();
+        index.record_edge(edge.clone());
+        horizon.edge(edge);
+    }
 }
 
 /// The horizon of a canonical space: its served children, and what lies inside each of them.

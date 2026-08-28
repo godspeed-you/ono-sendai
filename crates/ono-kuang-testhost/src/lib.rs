@@ -173,3 +173,96 @@ pub fn check_adapter_package(directory: &std::path::Path) -> AdapterPackageRepor
     }
     report
 }
+
+/// What the test host found in a package that contributes spatial relations (spec v0.4 §36.1,
+/// §35.5, §31.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpatialPackageReport {
+    /// Everything wrong, in order; empty when the package may be loaded.
+    pub problems: Vec<String>,
+    /// The relations the package would contribute, as the host registers them (ADR-0194).
+    pub relations: Vec<String>,
+    /// Whether the default-deny policy lets the contribution reach a map: never (§35.5).
+    pub enabled_by_default: bool,
+    /// Whether an explicit `relation.write` grant would.
+    pub enabled_when_granted: bool,
+}
+
+/// Validates a package's spatial contributions as the shell would before loading it: the manifest,
+/// the `<from>-><to>` shapes of v0.2 §31.7, and the capability that gates them.
+///
+/// v0.4 §35.5 puts the filter before the merge, so this answers the question a package author has
+/// *before* the package ever runs: which relations would this contribute, and under what grant.
+/// A shape naming something §3.3 does not place, or a contribution without `relation.write`, is a
+/// package that would load and contribute nothing — reported here rather than discovered as an
+/// empty map.
+#[must_use]
+pub fn check_spatial_package(directory: &std::path::Path) -> SpatialPackageReport {
+    let mut report = SpatialPackageReport {
+        problems: Vec::new(),
+        relations: Vec::new(),
+        enabled_by_default: Policy::deny_all().grants_capability(Capability::RelationWrite),
+        enabled_when_granted: false,
+    };
+    let manifest = match std::fs::read_to_string(directory.join("manifest.yaml"))
+        .map_err(|error| error.to_string())
+        .and_then(|text| Manifest::parse(&text).map_err(|error| error.to_string()))
+    {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            report.problems.push(format!("manifest.yaml: {error}"));
+            return report;
+        }
+    };
+    let shapes: Vec<String> = manifest
+        .contributions
+        .as_ref()
+        .and_then(|contributions| contributions.relations.clone())
+        .unwrap_or_default();
+    if shapes.is_empty() {
+        report
+            .problems
+            .push("the package declares no `contributions.relations`".to_owned());
+        return report;
+    }
+    let package = manifest.package.id.clone();
+    for shape in &shapes {
+        let Some((from, to)) = shape.split_once("->") else {
+            report.problems.push(format!(
+                "`{shape}` is not a `<from>-><to>` shape (spec §31.7)"
+            ));
+            continue;
+        };
+        match (spatial_kind(from), spatial_kind(to)) {
+            (Some(source), Some(target)) => report.relations.push(format!(
+                "{package}.{}_to_{}",
+                source.to_ascii_lowercase(),
+                target.to_ascii_lowercase()
+            )),
+            _ => report.problems.push(format!(
+                "`{shape}` names a kind of place v0.4 section 3.3 does not define"
+            )),
+        }
+    }
+    let requested = manifest
+        .required_capabilities
+        .iter()
+        .chain(&manifest.optional_capabilities)
+        .any(|request| request.capability == Capability::RelationWrite);
+    if !requested {
+        report.problems.push(
+            "the package requests no relation.write, so none of its edges could ever reach a map"
+                .to_owned(),
+        );
+    }
+    report.enabled_when_granted = requested && !report.relations.is_empty();
+    report
+}
+
+/// The §3.3 kind a shape names, however it spelled the case.
+fn spatial_kind(name: &str) -> Option<&'static str> {
+    ono_spatial_core::SpatialType::ALL
+        .iter()
+        .find(|kind| kind.as_str().eq_ignore_ascii_case(name.trim()))
+        .map(|kind| kind.as_str())
+}

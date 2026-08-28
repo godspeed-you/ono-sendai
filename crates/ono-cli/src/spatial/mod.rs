@@ -16,6 +16,7 @@
 
 pub mod commands;
 pub mod complete;
+pub mod contributions;
 pub mod find;
 pub mod interactive;
 pub mod links;
@@ -29,7 +30,7 @@ pub mod session;
 pub mod storage;
 pub mod view;
 
-pub use commands::{Enter, Follow, Home, Look, Near, enter_observed};
+pub use commands::{Enter, Follow, Home, Look, Near, enter_observed, observe_adapted};
 pub use find::{FindPlace, local_scope, spatial_type};
 pub use links::LinkFacts;
 pub use map::{Map, MapLinks};

@@ -20,7 +20,7 @@ pub mod freshness;
 pub mod index;
 pub mod pins;
 
-pub use bridge::{Absorbed, ProviderBridge, spatial_type_of};
+pub use bridge::{Absorbed, ProviderBridge, carries_full_identity, spatial_type_of};
 pub use freshness::FreshnessPolicy;
 pub use index::{IndexEntry, Registration, SpatialIndex};
 pub use pins::{Pin, PinRegistry, PinResolution};

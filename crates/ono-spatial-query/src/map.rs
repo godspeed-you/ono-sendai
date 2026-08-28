@@ -881,8 +881,20 @@ fn naming(index: &SpatialIndex, endpoint: &str, clusters: &BTreeMap<&str, &str>)
 }
 
 /// Whether an edge survives `--relations` (§6.9, §43.2: filtering removes, it never invents).
+///
+/// A word names a relation, or the KUANG/11 package that contributed one (§36.1): a package's
+/// relations are its own namespace (§31.5), and asking for what `dev.example.packet-eye` draws is
+/// the question a reader has — the relation ids inside that namespace are the host's spelling,
+/// not something anyone typed.
 fn keeps_relation(relation: &str, request: &MapRequest) -> bool {
-    request.relations.is_empty() || request.relations.iter().any(|wanted| wanted == relation)
+    if request.relations.is_empty() {
+        return true;
+    }
+    let origin = ono_spatial_core::relation::contributed(relation).map(|entry| entry.origin);
+    request
+        .relations
+        .iter()
+        .any(|wanted| wanted == relation || origin == Some(wanted.as_str()))
 }
 
 /// A stable identity for something the map draws that is not a spatial object: an edge between

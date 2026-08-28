@@ -844,6 +844,14 @@ fn run_from(
                     }
                     match decode_adapted(session, &plan, &argv, &bytes) {
                         Ok(values) => {
+                            // v0.4 §37: a typed object an adapter decoded may contribute to the
+                            // spatial model. The batch is in hand here and nowhere else, so this
+                            // is where it is offered (ADR-0193).
+                            if !crate::spatial::disabled(session)
+                                && let Some((runtime, _)) = session.pipeline_context()
+                            {
+                                runtime.block_on(crate::spatial::observe_adapted(&values));
+                            }
                             if last {
                                 write_result(session, stage, &values, false, source)?;
                             } else {

@@ -408,7 +408,52 @@ pub fn enter_piped(
             )),
         ));
     };
+    let record = canonical_twin(session, &target, &record).unwrap_or(record);
     enter_record(session, &target, &record)
+}
+
+/// The canonical provider's own record for the object an adapted record describes (§37.1).
+///
+/// v0.4 §37.1: "Objects from adapters MUST be reconciled with canonical provider identities
+/// before appearing as duplicate map nodes." An adapter reads a tool's output, so it supplies
+/// what the tool prints and no more — `ps` gives a start time rounded to the second and no pid
+/// namespace, where §10.2 composes a process's identity from the boot, the pid, the start time
+/// and the namespace. Minting a spatial identity from the weaker of the two would make
+/// `ps … | enter process` a second place for a process the shell already stands in.
+///
+/// So the adapted object does not name itself: the provider that owns the facts is asked for
+/// the same object, by the handle the `enter` contract names it with, and its answer is the
+/// place. `None` where the record is not adapted, where no provider serves the target, or where
+/// none of them answers for that object — then the adapted record is all there is, and §37.1's
+/// second sentence applies: it appears with its own provenance.
+fn canonical_twin(
+    session: &mut Session,
+    target: &str,
+    record: &ono_value::RecordValue,
+) -> Option<ono_value::RecordValue> {
+    if !record.provenance().provider().starts_with("adapter:") {
+        return None;
+    }
+    let registry = crate::native::registry().ok()?;
+    let field = registry
+        .find("enter", Some(target))?
+        .selectors()
+        .first()?
+        .name()
+        .to_owned();
+    let handle = record.get(&field).filter(|value| !value.is_null())?.clone();
+    let query = ono_provider_api::Query::target(target.to_owned()).with(
+        ono_provider_api::Selector::field(field.clone(), handle.clone()),
+    );
+    let (runtime, providers) = session.pipeline_context()?;
+    let collected =
+        runtime.block_on(async { Some(providers.snapshot(&query).ok()?.collect().await) })?;
+    collected.values().iter().find_map(|value| {
+        let candidate = value.as_record().ok()?;
+        (!candidate.provenance().provider().starts_with("adapter:")
+            && candidate.get(&field).is_some_and(|value| *value == handle))
+        .then(|| ono_value::RecordValue::clone(candidate))
+    })
 }
 
 /// Pushes the frame for an object that exists.

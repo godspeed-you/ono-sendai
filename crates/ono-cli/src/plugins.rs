@@ -236,6 +236,15 @@ pub fn load_plugin_with(
                 format!("`{id}` declares no runtime to load"),
             ))
         })?;
+    // v0.2 §31.7's `<from>-><to>` shapes, read before the manifest is handed to the loader:
+    // v0.4 §36.1 makes them the package's spatial contribution, and §35.5 makes holding the
+    // capability the condition for any of it reaching a map.
+    let shapes: Vec<String> = package
+        .manifest
+        .contributions
+        .as_ref()
+        .and_then(|contributions| contributions.relations.clone())
+        .unwrap_or_default();
     let mut config = LoadConfig::new(entry, package.manifest);
     config.policy = policy;
     let (runtime, _) = session.pipeline_context().ok_or_else(|| {
@@ -273,6 +282,12 @@ pub fn load_plugin_with(
                 .plugin
                 .shutdown(ono_kuang_protocol::ShutdownReason::Upgrade),
         );
+    }
+    // §35.5: the capability filter runs before the merge, and this is before. A package denied
+    // `relation.write` contributes no relation at all, so no map has one of its edges to drop.
+    crate::spatial::contributions::forget(id);
+    if let Some(plugin) = session.plugin(id) {
+        crate::spatial::contributions::adopt(id, &plugin, &shapes);
     }
     Ok(ExitStatus::SUCCESS)
 }

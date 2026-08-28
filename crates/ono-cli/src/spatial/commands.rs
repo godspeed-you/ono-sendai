@@ -437,6 +437,40 @@ pub async fn enter_observed(record: &ono_value::RecordValue) {
     }
 }
 
+/// Offers what a v0.3 adapter decoded to the spatial index (spec v0.4 §37, §37.1).
+///
+/// §37: "Adapted external tools may contribute typed objects to the spatial model when their
+/// output maps to canonical spatial schemas." An adapter is not a provider: the spatial layer
+/// asks its providers whenever it needs them, and never asks a tool. An adapted observation
+/// therefore exists only where the user's own command line produced it, and this is where the
+/// shell offers it — so that having looked at `lo` through `ip link` is something the place for
+/// `lo` records, beside what the netlink provider said about it.
+///
+/// Only records whose identity the adapter carried in full are offered
+/// ([`carries_full_identity`](ono_spatial_index::carries_full_identity)): those reduce to the
+/// identity the canonical provider's own record reduces to, so they reconcile into one place
+/// rather than becoming the duplicate node §37.1 forbids.
+///
+/// The shell does not buffer a stream in order to index it (§29.4, §34): a streaming decoder
+/// hands its records straight to the consumer, and one of those becomes a place when something
+/// places it — `… | enter process` resolves it through the canonical provider.
+pub async fn observe_adapted(values: &[ono_value::Value]) {
+    let records: Vec<ono_value::RecordValue> = values
+        .iter()
+        .filter_map(|value| value.as_record().ok().cloned())
+        .filter(|record| {
+            record.provenance().provider().starts_with("adapter:")
+                && ono_spatial_index::carries_full_identity(record)
+        })
+        .collect();
+    if records.is_empty() {
+        return;
+    }
+    let now = Timestamp::now();
+    let mut session = spatial_session().await;
+    session.absorb(&records, now);
+}
+
 /// `near` (spec v0.4 §6.2, §29.4).
 #[derive(Debug)]
 pub struct Near {
@@ -565,8 +599,12 @@ impl CommandImpl for Enter {
             // §28.2: "A structured pipeline result containing spatially identifiable objects MUST
             // be enterable." The object arrives either through the pipe (`… | enter`) or as a
             // value the argument expanded to (`enter @-1`); both are the same movement.
-            let arrived = match piped {
-                Some(stream) => first_record(stream.collect().await.into_values()),
+            let delivered = match piped {
+                Some(stream) => Some(stream.collect().await.into_values()),
+                None => None,
+            };
+            let arrived = match &delivered {
+                Some(values) => first_record(values.clone()),
                 None => selected.as_ref().and_then(|value| {
                     first_record(match value {
                         Value::List(items) => items.to_vec(),
@@ -576,6 +614,12 @@ impl CommandImpl for Enter {
             };
             let there = if let Some(record) = arrived {
                 enter_projected(&mut session, &record, now)?
+            } else if let Some(values) = delivered.as_ref().filter(|values| !values.is_empty()) {
+                // §37.2: "Raw external command output MUST NOT become spatial nodes through
+                // generic table heuristics." Something arrived and none of it was an object, so
+                // there is nothing here with a spatial identity — and reading a place out of the
+                // bytes is exactly the inference that section forbids.
+                return Err(not_enterable(values));
             } else {
                 let selector = selected.as_ref().and_then(text_of).ok_or_else(|| {
                     ErrorValue::new(
@@ -601,6 +645,27 @@ impl CommandImpl for Enter {
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })
     }
+}
+
+/// The §40 refusal for what arrived through the pipe and is not an object (§37.2).
+///
+/// §37.2 admits "only canonical typed adapter output or explicit plugin schemas" into the
+/// spatial index, so a byte stream, a line of text or a number is not a place, and the honest
+/// answer names that rather than reporting the place it could not find.
+fn not_enterable(values: &[Value]) -> ErrorValue {
+    let kind = values.first().map_or("nothing", |value| value.type_name());
+    ErrorValue::new(
+        ErrorCode::SpatialNotEnterable,
+        format!(
+            "`{kind}` is not a place: raw command output has no spatial identity (spec v0.4 \
+             §37.2)"
+        ),
+    )
+    .with_help(
+        "an adapted command answers with typed objects one of which can be entered — `ip link | \
+         where name == \"lo\" | enter` — where `raw` deliberately keeps the bytes (spec v0.3 \
+         §1.17)",
+    )
 }
 
 /// The first record among some values.

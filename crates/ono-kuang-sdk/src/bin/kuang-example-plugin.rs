@@ -99,6 +99,24 @@ fn item_record(seq: i64, label: &str) -> Value {
     Value::Record(std::sync::Arc::new(record))
 }
 
+/// One `ono.spatial-relation/1` edge: the package's own process, and the shell that started it.
+fn relation_record(source: &str, target: &str) -> Value {
+    let schema = ono_value::builtin_schemas()
+        .get(&ono_value::SchemaId::new("ono.spatial-relation", 1))
+        .expect("the spatial relation schema is built in");
+    let schema_id = schema.id().clone();
+    let record = RecordValue::builder(schema, Provenance::local("plugin-self", schema_id))
+        .set("relation", Value::String("runs-under".into()))
+        .and_then(|builder| builder.set("source_type", Value::String("process".into())))
+        .and_then(|builder| builder.set("source_key", Value::String(source.into())))
+        .and_then(|builder| builder.set("target_type", Value::String("process".into())))
+        .and_then(|builder| builder.set("target_key", Value::String(target.into())))
+        .and_then(|builder| builder.set("confidence", Value::String("strong".into())))
+        .expect("the fixture fields exist")
+        .build();
+    Value::Record(std::sync::Arc::new(record))
+}
+
 fn int_argument(ctx: &Ctx<'_>, name: &str, default: i64) -> i64 {
     ctx.arguments()
         .get(name)
@@ -163,7 +181,34 @@ fn honest() -> Plugin {
             "stream<string>",
             &[],
         ))
+        .contribute_command(CommandContribution {
+            id: format!("{PACKAGE}.command.relations"),
+            verb: "get".to_owned(),
+            // v0.4 §36.1: a package contributes a relationship provider by answering for the
+            // core target `spatial-relation`; the host resolves both ends and draws the edge.
+            target: "spatial-relation".to_owned(),
+            summary: "Assert the relation this package contributes.".to_owned(),
+            input: None,
+            output: "stream<ono.spatial-relation/1>".to_owned(),
+            capabilities: vec!["relation.write".to_owned()],
+            argument_mode: "expression".to_owned(),
+            risk: None,
+            examples: vec!["map --relations dev.example.echo".to_owned()],
+        })
         .optional_feature("tell-time", "clock.read")
+        .command(&format!("{PACKAGE}.command.relations"), |ctx| {
+            // The fixture asserts the one relation its manifest declares — `process->process` —
+            // between the two processes it can honestly name: itself and the shell that started
+            // it. Both are real, so the host can resolve both through the process provider; a
+            // package that made them up would contribute nothing, which is the point of §36.2.
+            let me = std::process::id();
+            let parent = std::os::unix::process::parent_id();
+            match ctx.emit(&relation_record(&me.to_string(), &parent.to_string())) {
+                Ok(()) => Outcome::Completed,
+                Err(ono_kuang_sdk::EmitError::Refused(error)) => Outcome::Failed(error),
+                Err(_) => Outcome::Cancelled,
+            }
+        })
         .command(&format!("{PACKAGE}.command.emit"), |ctx| {
             let count = int_argument(ctx, "count", 3);
             for n in 1..=count {

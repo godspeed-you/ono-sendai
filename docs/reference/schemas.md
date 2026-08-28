@@ -1630,6 +1630,7 @@ Default view: `relation`, `display_name`, `spatial_type`, `state`
 | `place_path` | `string` | — | required | Where it sits in the canonical hierarchy, from the host down (§27.2's third column). |
 | `scope` | `string` | — | required | The §3.2 boundary it belongs to, rendered as `<kind>:<id>`. |
 | `freshness` | `enum` | — | required | How current the answer about it is (§27.4, §33.4). |
+| `sources` | `list<string>` | — | required | Every provider that has observed this place, canonical and adapted alike. v0.4 §37.1 reconciles an adapted object with its canonical twin into one place and keeps both on the record, so a reader can see that `ip link` and `linux.netlink` agreed about the same interface; the adapter's name is the `adapter:<id>` provenance v0.3 §1.47 gives it. |
 | `pinned` | `bool` | — | required | Whether the user pinned it (§20.4, §26.4). |
 
 ## SpatialPlace — `ono.spatial-place/1`
@@ -1662,8 +1663,26 @@ Default view: `name`, `spatial_type`, `place_path`, `freshness`
 | `capabilities` | `list<string>` | — | required | What the navigation layer may offer for the place — `enter`, `follow`, `watch`, `act`. |
 | `identity` | `record` | — | nullable | The named components §3.1 composes the opaque `spatial_id` from — a process's boot, pid and start time, a user's uid, a unit's name. Not the object's properties, which §24.1 keeps out of a place and `inspect` shows in full: these are what make this place *this* place, and what a reader needs to recognise it. Null for a canonical space, whose identity is its id. |
 | `permission` | `enum` | — | required | What this user could be told about the place (§35.2). An observed object answered, so it is `available`; a canonical space reports the state of what it holds, which is how an unavailable domain stays visible instead of vanishing (§4, §2.17, ADR-0142). |
+| `sources` | `list<string>` | — | required | Every provider that has observed this place, canonical and adapted alike. v0.4 §37.1 reconciles an adapted object with its canonical twin into one place and keeps both on the record, so a reader can see that `ip link` and `linux.netlink` agreed about the same interface; the adapter's name is the `adapter:<id>` provenance v0.3 §1.47 gives it. |
 | `pinned` | `bool` | — | required | Whether the user pinned the place (§20.4, §26.4). |
 | `provenance` | `record` | — | required | Where the fact came from — the provider, when it was observed, the source and the link (§27.4). A search result that may come from a cache says so. |
+
+## SpatialRelation — `ono.spatial-relation/1`
+
+One relationship edge a contributor asserts between two places.
+
+Identity: `source_type`, `source_key`, `target_type`, `target_key`
+
+Default view: `relation`, `source_key`, `target_key`, `confidence`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `relation` | `string` | — | nullable | The contributor's own word for the relation, as `inspect relation` prints it beside the declared relation (§11.4). Null where the contributor has only one. |
+| `source_type` | `string` | — | required | The §3.3 kind of place the edge starts at — `process`, `service`, `interface`. |
+| `source_key` | `string` | — | required | The key the canonical provider names that object by — a process's pid, a service's name, a mount's target. The host resolves it against the provider; a key nothing answers to contributes no edge. |
+| `target_type` | `string` | — | required | The §3.3 kind of place the edge leads to. |
+| `target_key` | `string` | — | required | The key the canonical provider names the far object by. |
+| `confidence` | `enum` | — | nullable | How certain the contributor is (§11.5). Null is read as `unknown`, and a contributor never raises an edge above what the relation admits — §36.2 forbids a contributed relationship that "appears exact without provenance". |
 
 ## SystemPlace — `ono.system/1`
 

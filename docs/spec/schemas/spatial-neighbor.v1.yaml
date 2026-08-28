@@ -118,6 +118,14 @@ fields:
     required: true
     values: [live, fresh, stale, unknown]
     doc: How current the answer about it is (§27.4, §33.4).
+  sources:
+    type: list<string>
+    required: true
+    doc: >-
+      Every provider that has observed this place, canonical and adapted alike. v0.4 §37.1
+      reconciles an adapted object with its canonical twin into one place and keeps both on the
+      record, so a reader can see that `ip link` and `linux.netlink` agreed about the same
+      interface; the adapter's name is the `adapter:<id>` provenance v0.3 §1.47 gives it.
   pinned:
     type: bool
     required: true

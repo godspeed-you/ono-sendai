@@ -1,0 +1,52 @@
+# Canonical SpatialRelation schema. Source: v0.4 §36.1 ("plugins MAY contribute … relationship
+# providers"), §35.5 ("the spatial host MUST filter plugin nodes/edges according to capability
+# scope before merging them into maps"), §11.4 (a displayed relationship is inspectable) and
+# §11.5 (the confidence vocabulary).
+#
+# It is the record a contributor answers with when it asserts an edge between two places: the two
+# ends by the key their own provider names them by, the confidence it claims, and the word it uses
+# for the relation. The host resolves both ends through the canonical provider before the edge
+# exists, so a contributor can assert an edge and can never invent a place (§2.16, §36.2).
+#
+# `ono.spatial-relation/1` is also the provenance schema of every edge the shell composes itself,
+# which is what makes a contributed edge and a native one the same kind of statement.
+id: ono.spatial-relation/1
+name: SpatialRelation
+summary: One relationship edge a contributor asserts between two places.
+identity: [source_type, source_key, target_type, target_key]
+fields:
+  relation:
+    type: string
+    nullable: true
+    doc: >-
+      The contributor's own word for the relation, as `inspect relation` prints it beside the
+      declared relation (§11.4). Null where the contributor has only one.
+  source_type:
+    type: string
+    required: true
+    doc: The §3.3 kind of place the edge starts at — `process`, `service`, `interface`.
+  source_key:
+    type: string
+    required: true
+    doc: >-
+      The key the canonical provider names that object by — a process's pid, a service's name, a
+      mount's target. The host resolves it against the provider; a key nothing answers to
+      contributes no edge.
+  target_type:
+    type: string
+    required: true
+    doc: The §3.3 kind of place the edge leads to.
+  target_key:
+    type: string
+    required: true
+    doc: The key the canonical provider names the far object by.
+  confidence:
+    type: enum
+    nullable: true
+    values: [exact, strong, inferred, user_declared, unknown]
+    doc: >-
+      How certain the contributor is (§11.5). Null is read as `unknown`, and a contributor never
+      raises an edge above what the relation admits — §36.2 forbids a contributed relationship
+      that "appears exact without provenance".
+default_view:
+  columns: [relation, source_key, target_key, confidence]

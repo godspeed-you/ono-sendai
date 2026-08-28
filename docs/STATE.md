@@ -440,6 +440,57 @@ Green now, all previously `#[ignore]`d — 32 tests:
   `up`, `trail` or `map`.
 - `spatial_map_missing`: everything about `map` (S5).
 
+### S9 + S10 + ADR-0191, the last six tests of the tranche (2026-08-28, agent `S9S10`)
+
+**Nothing in the nine spatial suites carries `#[ignore]` any more.** The six tests the table above
+listed are delivered and green; `grep -rn '#\[ignore' crates/*/tests/*.rs` finds nothing.
+
+- **S9 — KUANG/11 spatial extensions (§36, ADR-0194).** A package's `contributions.relations`
+  shapes now register real relations in its own namespace, gated by `relation.write`: without the
+  grant nothing is contributed, so §35.5's "filter before merging" holds by construction. A
+  package asserts its edges as data — the new canonical schema `ono.spatial-relation/1`, answered
+  by a contributed command whose target is `spatial-relation` — and the host resolves both ends
+  through the canonical provider, so a package can say two objects are related and can never say
+  an object exists. Every contributed edge carries the package as its provider and its `origin`
+  and a §11.5 confidence the host never raises to `exact`.
+  Files: `crates/ono-spatial-core/src/relation.rs` (the contributed registry),
+  `crates/ono-cli/src/spatial/contributions.rs` (new), `crates/ono-cli/src/spatial/map.rs`
+  (the merge into the horizon), `crates/ono-cli/src/plugins.rs` (adopt at load),
+  `crates/ono-spatial-query/src/map.rs` (`--relations` accepts a contributing package),
+  `crates/ono-kuang-sdk/src/bin/kuang-example-plugin.rs`,
+  `crates/ono-kuang-testhost/{src/lib.rs,tests/spatial_package.rs}`.
+- **S10 — v0.3 adapter reconciliation (§37, ADR-0193).** An adapted record never mints an identity
+  the canonical provider would not: `enter` resolves it through the provider first, so
+  `ps … | enter process` stands where `enter process <pid>` stands. A place keeps every source
+  that observed it, exposed as `sources` on `ono.spatial-place/1` and `ono.spatial-neighbor/1`, so
+  `inspect` on `lo` names `linux.netlink` **and** `adapter:org.ono.compat.iproute2.ip-link`. A
+  whole-document adapter's batch is offered to the index; a stream is not buffered to index it.
+  `… | enter` on bytes is `spatial.not_enterable`.
+- **ADR-0191 — one `enter`, one refusal.** A failed `enter` is `spatial.not_found`
+  (`Ono-Sendai-E1001`) in both grammars; `resolve.target_not_found` keeps every other job. Four
+  assertions were adjusted to the new spelling and named in the commit body:
+  `identity_missing::should_refuse_to_enter_a_user_that_does_not_exist`,
+  `network_missing::should_refuse_to_enter_an_interface_that_does_not_exist`,
+  `processes_missing::should_refuse_to_enter_a_process_that_does_not_exist`, and
+  `docker/acceptance/cases/044-remote-links-as-objects.case` (`enter link` after `remove link`).
+- **The TIME_WAIT flake above is fixed (ADR-0192)**, and it was a product defect rather than a
+  fixture one: a socket in `time-wait` or `close` has no inode — `ono.socket/1`'s identity — so
+  the index registered the kernel's 2MSL remnant as a *second* connection beside the one that had
+  just ended, and `map` carried two nodes for one connection (the duplicate §37.1 and §42.1
+  forbid). A released socket now has no place at all; `get socket` still lists it with its state.
+  `spatial_relationships_missing::should_show_the_connection_edge_appear_and_vanish…` failed two
+  runs in three before, and is green in four consecutive runs of its file after, unchanged.
+- **Acceptance:** `docker/acceptance/cases/110-spatial-contributions.case`, 13 assertions
+  (`s9-a`–`s9-g`, `s10-a`–`s10-f`). The two §4.7.1 boxes for §36 and §37 are ticked.
+
+**Next up from this increment:**
+
+- A contributed relation is an edge on the map and in the index, and is not yet a navigable exit:
+  `look` does not print it and `follow`/completion do not offer it (ADR-0194 §Consequences). Exit
+  test: `follow <contributed relation>` from a place the package's edge starts at moves there.
+- `spatial_topology_missing::should_complete_the_relations_available…` still fails under parallel
+  load and passes alone; the PTY budget in it is the fixture problem S6 recorded, not this.
+
 **Found, not fixed, and deliberately outside this increment:**
 
 - `network/addresses`, `compute/cgroups` and `network/namespaces` report `unsupported`: no v0.2

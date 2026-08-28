@@ -109,6 +109,7 @@ const CONTRACTS: &[&str] = &[
     include_str!("../../../docs/spec/schemas/spatial-change.v1.yaml"),
     include_str!("../../../docs/spec/schemas/spatial-map.v1.yaml"),
     include_str!("../../../docs/spec/schemas/spatial-place.v1.yaml"),
+    include_str!("../../../docs/spec/schemas/spatial-relation.v1.yaml"),
     include_str!("../../../docs/spec/schemas/system.v1.yaml"),
     include_str!("../../../docs/spec/schemas/user-event.v1.yaml"),
     include_str!("../../../docs/spec/schemas/user.v1.yaml"),

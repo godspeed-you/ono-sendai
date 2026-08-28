@@ -33,6 +33,10 @@ pub struct IndexEntry {
     edges: Vec<RelationshipEdge>,
     withheld: BTreeMap<String, (PermissionState, String)>,
     landmarks: Vec<Landmark>,
+    sources: BTreeSet<String>,
+    /// The provider whose record `object` currently holds, so an adapted observation can be
+    /// told from a canonical one without re-reading the provenance (§37.1).
+    sources_of_record: String,
     observed_at: Timestamp,
     subscribed: bool,
 }
@@ -74,6 +78,17 @@ impl IndexEntry {
         &self.landmarks
     }
 
+    /// Every provider that has observed this object, canonical and adapted alike (§37.1).
+    ///
+    /// §37.1 reconciles an adapted object with its canonical twin into one place and keeps
+    /// "both objects … with provenance": the place is one, and what saw it is a set. A reader
+    /// who wants to know that `ip link` and the netlink provider agreed about `lo` finds both
+    /// names here.
+    #[must_use]
+    pub fn sources(&self) -> &BTreeSet<String> {
+        &self.sources
+    }
+
     /// When the provider last saw it.
     #[must_use]
     pub fn observed_at(&self) -> Timestamp {
@@ -85,6 +100,15 @@ impl IndexEntry {
     pub fn is_subscribed(&self) -> bool {
         self.subscribed
     }
+}
+
+/// Whether a provider name is a v0.3 external command adapter rather than a canonical provider.
+///
+/// v0.3 §1.47 spells an adapted object's provenance `adapter:<adapter id>`, and that prefix is
+/// the whole test: everything else is a provider that owns its facts (§2.16).
+#[must_use]
+fn is_adapted(provider: &str) -> bool {
+    provider.starts_with("adapter:")
 }
 
 /// What registering an observation did (§42.1).
@@ -171,9 +195,20 @@ impl SpatialIndex {
 
         let aliases = ono_spatial_core::aliases_of(&object);
 
+        let source = object.provenance().provider().to_owned();
         match self.entries.get_mut(&id) {
             Some(entry) => {
-                entry.object = object.seen_again(observed_at);
+                // §2.16 and §37.1: an adapter observes an object, it does not own it. Where a
+                // canonical provider has already described this place, the adapted observation
+                // refreshes it and adds itself to the sources; it does not replace the record a
+                // provider gave with one decoded from a command's output.
+                entry.object = if is_adapted(&source) && !is_adapted(&entry.sources_of_record) {
+                    entry.object.clone().seen_again(observed_at)
+                } else {
+                    entry.sources_of_record = source.clone();
+                    object.seen_again(observed_at)
+                };
+                entry.sources.insert(source);
                 entry.observed_at = observed_at;
                 for alias in &aliases {
                     entry.aliases.insert(alias.clone());
@@ -201,6 +236,8 @@ impl SpatialIndex {
                         edges: Vec::new(),
                         withheld: BTreeMap::new(),
                         landmarks: Vec::new(),
+                        sources: [source.clone()].into_iter().collect(),
+                        sources_of_record: source,
                         observed_at,
                         subscribed: false,
                     },

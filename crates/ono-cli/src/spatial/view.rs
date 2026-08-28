@@ -523,6 +523,7 @@ pub fn place_record_of(
         .set("capabilities", Value::list(capability_values))?
         .set("identity", identity)?
         .set("permission", Value::string(permission.as_str()))?
+        .set("sources", sources_value(entry, &provenance))?
         .set("pinned", Value::Bool(pinned))?
         .set("provenance", ono_command::provenance_value(&provenance))?;
     // The fields the provider identifies the object by travel at the top level as well, because
@@ -583,6 +584,24 @@ pub fn link_records() -> Result<Vec<Value>, ErrorValue> {
         )));
     }
     Ok(rows)
+}
+
+/// Every provider that has observed the place (§37.1, §33.4).
+///
+/// §37.1 keeps both sources on the record when an adapted object and its canonical twin
+/// reconcile into one place, so this is a list and not the one provenance that happened to be
+/// written last. A canonical space nothing observed answers with the one that composed it.
+fn sources_value(entry: Option<&ono_spatial_index::IndexEntry>, provenance: &Provenance) -> Value {
+    match entry {
+        Some(entry) => Value::list(
+            entry
+                .sources()
+                .iter()
+                .map(|source| Value::string(source))
+                .collect::<Vec<_>>(),
+        ),
+        None => Value::list(vec![Value::string(provenance.provider())]),
+    }
 }
 
 /// The provenance of declared geography: the spatial layer composed it, and it says which host's
@@ -948,6 +967,7 @@ pub fn neighbor_record(
     .set("relation", Value::string(label))?
     .set("group", Value::string(relation))?
     .set("type", field("type"))?
+    .set("sources", field("sources"))?
     .set("canonical_ref", field("canonical_ref"))?
     .set("identity", field("identity"))?
     .set("source", source)?

@@ -689,20 +689,21 @@ The v0.4 tranche is finished when this subsection has no unticked box and
       `spatial_topology_missing.rs::should_distinguish_an_unavailable_group_from_an_empty_one_when_a_domain_has_no_provider`,
       `spatial_relationships_missing.rs::should_report_the_unreadable_namespace_group_as_unknown_rather_than_absent`,
       case `097`.
-- [ ] **v0.3 adapted canonical objects participate where available** (§37). An adapted
+- [x] **v0.3 adapted canonical objects participate where available** (§37). An adapted
       observation and its native twin reconcile to one place with both sources retained, and raw
       command output never becomes a place —
       `spatial_contracts_missing.rs::should_reconcile_an_adapted_object_with_its_native_twin_into_one_place`,
       `::should_never_let_raw_command_output_become_a_place`,
       `spatial_identity_missing.rs::should_resolve_the_adapter_view_and_the_native_view_of_one_process_to_one_spatial_id`,
-      case `091` (the §37.1 identity-merge assertions).
-- [ ] **KUANG/11 can extend spatial relationships under capabilities** (§36). A package's edges
+      case `110` (the §37.1 identity-merge assertions `s10-a`–`s10-f`). ADR-0193.
+- [x] **KUANG/11 can extend spatial relationships under capabilities** (§36). A package's edges
       stay out of the map until its capability is granted and carry the contributing package as
       their origin when they appear —
       `spatial_contracts_missing.rs::should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted`,
-      `::should_carry_the_contributing_package_as_the_origin_of_every_plugin_edge`, with the
-      spatial contribution APIs validated before load by `ono_kuang_testhost` in the same shape
-      as `ono-kuang-testhost/tests/adapter_package.rs` (§4.6.2).
+      `::should_carry_the_contributing_package_as_the_origin_of_every_plugin_edge`, case `110`
+      (`s9-a`–`s9-g`), with the spatial contribution APIs validated before load by
+      `ono_kuang_testhost` in the same shape as `ono-kuang-testhost/tests/adapter_package.rs`
+      (§4.6.2) — `ono-kuang-testhost/tests/spatial_package.rs`. ADR-0194.
 
 #### 4.7.2 Quality and product experience (v0.4 §52.2, §52.3)
 

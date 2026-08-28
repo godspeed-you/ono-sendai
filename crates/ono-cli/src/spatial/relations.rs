@@ -204,7 +204,7 @@ pub(crate) fn adjacent_targets(object_type: SpatialType) -> &'static [&'static s
 
 /// The provider target that serves objects of `object_type`, and the field another record names
 /// one by — what it takes to ask the provider about this one object again (§33.2).
-pub(crate) fn target_of(object_type: SpatialType) -> Option<(&'static str, &'static str)> {
+pub fn target_of(object_type: SpatialType) -> Option<(&'static str, &'static str)> {
     use SpatialType as T;
     Some(match object_type {
         T::Process => ("process", "pid"),

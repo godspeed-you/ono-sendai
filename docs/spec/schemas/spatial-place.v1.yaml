@@ -138,6 +138,14 @@ fields:
       What this user could be told about the place (§35.2). An observed object answered, so it is
       `available`; a canonical space reports the state of what it holds, which is how an
       unavailable domain stays visible instead of vanishing (§4, §2.17, ADR-0142).
+  sources:
+    type: list<string>
+    required: true
+    doc: >-
+      Every provider that has observed this place, canonical and adapted alike. v0.4 §37.1
+      reconciles an adapted object with its canonical twin into one place and keeps both on the
+      record, so a reader can see that `ip link` and `linux.netlink` agreed about the same
+      interface; the adapter's name is the `adapter:<id>` provenance v0.3 §1.47 gives it.
   pinned:
     type: bool
     required: true

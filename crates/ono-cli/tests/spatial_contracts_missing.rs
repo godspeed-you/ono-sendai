@@ -969,7 +969,6 @@ fn ono_with_plugins(home: &Scratch, script: &str) -> ono_testkit::Run {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §36); un-ignored by the increment that delivers it"]
 fn should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted() {
     // §35.5: "KUANG/11 plugins cannot use the map as a side channel to expose information
     // outside granted capabilities. The spatial host MUST filter plugin nodes/edges according to
@@ -1005,7 +1004,6 @@ fn should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §36.1); un-ignored by the increment that delivers it"]
 fn should_carry_the_contributing_package_as_the_origin_of_every_plugin_edge() {
     // §36: "Ono core retains control of identity, security and rendering contracts", and §36.2
     // forbids "uninspectable phantom edges" and edges that "appear exact without provenance".
@@ -1051,7 +1049,6 @@ fn should_carry_the_contributing_package_as_the_origin_of_every_plugin_edge() {
 // --- §37 integration with the v0.3 external command adapters ------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §37.1); un-ignored by the increment that delivers it"]
 fn should_reconcile_an_adapted_object_with_its_native_twin_into_one_place() {
     // §37.1: "Objects from adapters MUST be reconciled with canonical provider identities before
     // appearing as duplicate map nodes." §53 says the same as a settled decision. `lo` is served
@@ -1089,7 +1086,6 @@ fn should_reconcile_an_adapted_object_with_its_native_twin_into_one_place() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §37.2); un-ignored by the increment that delivers it"]
 fn should_never_let_raw_command_output_become_a_place() {
     // §37.2: "Raw external command output MUST NOT become spatial nodes through generic table
     // heuristics. Only canonical typed adapter output or explicit plugin schemas may enter the

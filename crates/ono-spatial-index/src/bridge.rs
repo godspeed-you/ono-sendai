@@ -94,6 +94,35 @@ pub fn spatial_type_of(record: &RecordValue) -> Option<SpatialType> {
     })
 }
 
+/// Whether an adapted record carries the identity the canonical provider composes (§37.1, §10.2).
+///
+/// An adapter reads a tool's output, so it carries what the tool prints. Where that is the whole
+/// identity — `ip link` prints an interface's index, `findmnt` a mount's target — the adapted
+/// observation reduces to exactly the [`SpatialId`] the canonical provider's record reduces to,
+/// and the two are one place with two sources. Where it is not, the adapted object would be a
+/// second place for one object, which is the duplicate §37.1 forbids, and it stays a typed value
+/// in the pipeline until something asks the canonical provider for it.
+///
+/// A process is the case that makes the rule: §10.2 composes its identity from the boot, the
+/// pid, the start time *and* the pid namespace, and `ps` prints neither the namespace nor a
+/// start time at the precision `/proc` reports.
+#[must_use]
+pub fn carries_full_identity(record: &RecordValue) -> bool {
+    let complete = |fields: &[&str]| {
+        fields
+            .iter()
+            .all(|field| record.get(field).is_some_and(|value| !value.is_null()))
+    };
+    match record.schema().id().to_string().as_str() {
+        "ono.process/1" | "ono.process-detail/1" => complete(&["pid", "started", "pid_namespace"]),
+        _ => record
+            .schema()
+            .identity()
+            .iter()
+            .all(|field| record.get(field).is_some_and(|value| !value.is_null())),
+    }
+}
+
 /// Whether the kernel has already released the socket, so no connection stands there any more
 /// (§14.4, §10.3, ADR-0192).
 ///

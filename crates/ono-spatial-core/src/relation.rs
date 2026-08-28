@@ -687,10 +687,80 @@ pub fn relations() -> &'static [RelationSpec] {
     RELATIONS
 }
 
-/// The relation with this id, or `None`.
+/// The relation with this id, declared or contributed, or `None`.
 #[must_use]
 pub fn spec(id: &str) -> Option<&'static RelationSpec> {
-    RELATIONS.iter().find(|relation| relation.id == id)
+    RELATIONS
+        .iter()
+        .find(|relation| relation.id == id)
+        .or_else(|| contributed(id).map(|entry| entry.spec))
+}
+
+/// One relation a KUANG/11 package contributed, and who contributed it (§36.1, §31.64).
+#[derive(Debug, Clone, Copy)]
+pub struct Contributed {
+    /// The relation itself, as if it had been declared.
+    pub spec: &'static RelationSpec,
+    /// The package that contributed it — spec §31.64: every registry entry records its origin.
+    pub origin: &'static str,
+}
+
+/// The relations packages have contributed this session.
+fn contributions() -> &'static std::sync::RwLock<Vec<Contributed>> {
+    static CONTRIBUTED: std::sync::OnceLock<std::sync::RwLock<Vec<Contributed>>> =
+        std::sync::OnceLock::new();
+    CONTRIBUTED.get_or_init(|| std::sync::RwLock::new(Vec::new()))
+}
+
+/// Records a relation a package contributes, and answers the declaration the rest of the layer
+/// uses (spec v0.4 §36.1, §31.64).
+///
+/// §36 lets KUANG/11 "extend the spatial world" while "Ono core retains control of identity,
+/// security and rendering contracts": a contributed relation is a name and a shape, and every
+/// edge drawn along it is still built, filtered and rendered by the host. The origin travels with
+/// it because §36.2 forbids "uninspectable phantom edges" and §53 settles that a plugin "cannot
+/// create untraceable truth" — an edge whose relation nobody can attribute would be exactly that.
+///
+/// Contributing the same id twice keeps the first: a package is loaded once per session, and a
+/// second claim on a name is a conflict rather than a replacement (§31.5).
+///
+/// The declared vocabulary of `docs/spec/spatial/relations.yaml` is deliberately unchanged by
+/// this — [`relations`] still answers the relations this build ships, which is what `spec-check`
+/// compares the registry against. A contributed relation is found by [`spec`] and listed by
+/// [`contributed_relations`].
+pub fn contribute(spec: RelationSpec, origin: &str) -> &'static RelationSpec {
+    if let Some(known) = self::spec(spec.id) {
+        return known;
+    }
+    let leaked: &'static RelationSpec = Box::leak(Box::new(spec));
+    let origin: &'static str = Box::leak(origin.to_owned().into_boxed_str());
+    if let Ok(mut registry) = contributions().write() {
+        registry.push(Contributed {
+            spec: leaked,
+            origin,
+        });
+    }
+    leaked
+}
+
+/// The contributed relation with this id, or `None`.
+#[must_use]
+pub fn contributed(id: &str) -> Option<Contributed> {
+    contributions()
+        .read()
+        .ok()?
+        .iter()
+        .find(|entry| entry.spec.id == id)
+        .copied()
+}
+
+/// Every relation a package has contributed this session, with its origin (§31.64).
+#[must_use]
+pub fn contributed_relations() -> Vec<Contributed> {
+    contributions()
+        .read()
+        .map(|registry| registry.clone())
+        .unwrap_or_default()
 }
 
 /// Every exit a user standing on an object of `from` has, as the label they type and the
