@@ -1,0 +1,87 @@
+# v0.4 §50 Phase S3's gate — "objects can be discovered without prior exact names" — with §6.8
+# (`find`), §9.3 (active global discovery), §27.4 (freshness and provenance on a cached answer),
+# §29.4 (streaming) and §34 (the search budget). ADR-0124 fixes the spelling `find place`.
+#
+# The scenario is a user who knows nothing about this host. The case never types the name of an
+# object before the shell has answered with it: every search starts from a property — a state, a
+# pid, a type — and the names come out of the shell.
+#
+# The container runs no systemd, no journald and no container runtime, and every process in it
+# belongs to one unprivileged user. So the case asserts the *shape* of discovery and the fields
+# §6.8 and §27.4 require, never a count or a name that only holds on the machine that wrote it.
+#
+# The ten §44 scenarios of `README-v0.4.md` stay `.case.v04` until the navigation verbs they walk
+# through exist; this case is the part of them S3 delivers on its own.
+case: an unknown object is discovered from a property alone, and the answer says where it came from
+timeout: 60
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  # A process this case owns, so nothing here depends on what else the image happens to run.
+  sleep 45 &
+  MINE=$!
+  sleep 1
+
+  echo "== the spatial search is a native command, and bare find is still findutils (ADR-0124) =="
+  prove s3a "explain names the native spatial command for the spelling with a target word" \
+    'ono -c "explain find place nginx" | grep -qF "ono.place.find"'
+  prove s3b "bare find is the program every script already has (v0.3 §1.71, case 087)" \
+    'mkdir -p /tmp/find-place && ono -c "find /tmp/find-place -maxdepth 0" | grep -qx "/tmp/find-place"'
+  prove s3c "exec: reaches the program explicitly whatever the registry holds (v0.2 §6.5)" \
+    'ono -c "exec:find /tmp/find-place -maxdepth 0" | grep -qx "/tmp/find-place"'
+
+  echo "== an object is reached from a property, with no name typed (§6.8, §9.3) =="
+  prove s3d "a predicate over visible metadata finds the process this case started" \
+    'ono -c "find place --type process --where pid == '"$MINE"' | select name | to json" \
+       | grep -qE "^\[\{\"name\":\"[^\"]+\"\}\]$"'
+  prove s3e "the search is an ordinary stream the v0.2 pipeline composes with (§29.4)" \
+    'ono -c "find place --type process | count | to json" | grep -qE "^\[[1-9][0-9]*\]$"'
+  prove s3f "--limit bounds the answer, so a search is never unbounded (§34)" \
+    'test "$(ono -c "find place --type process --limit 2 | count | to text")" -le 2'
+
+  echo "== every result says where it is and where it came from (§6.8, §27.4) =="
+  ono -c "find place --type process --limit 1 | to json" > /tmp/found.json
+  for field in spatial_id name place_path scope freshness provenance object_type spatial_type; do
+    prove "s3-$field" "a found place carries \`$field\`" \
+      "grep -qF '\"$field\"' /tmp/found.json"
+  done
+  prove s3g "the place path names the canonical hierarchy the object sits in (§27.2)" \
+    'grep -qF "compute/processes" /tmp/found.json'
+  prove s3h "the provenance names the provider the fact came from (§27.4)" \
+    'grep -qF "linux.procfs" /tmp/found.json'
+
+  echo "== a search that cannot match anything says so instead of guessing (§2.17) =="
+  prove s3i "a predicate over a field no schema declares answers an empty stream, not an error" \
+    'test "$(ono -c "find place --where telepathy == 1 | count | to text")" = "0"'
+
+  kill "$MINE" 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: done=ok
+stdout-contains: PROVED s3a
+stdout-contains: PROVED s3b
+stdout-contains: PROVED s3c
+stdout-contains: PROVED s3d
+stdout-contains: PROVED s3e
+stdout-contains: PROVED s3f
+stdout-contains: PROVED s3-spatial_id
+stdout-contains: PROVED s3-name
+stdout-contains: PROVED s3-place_path
+stdout-contains: PROVED s3-scope
+stdout-contains: PROVED s3-freshness
+stdout-contains: PROVED s3-provenance
+stdout-contains: PROVED s3-object_type
+stdout-contains: PROVED s3-spatial_type
+stdout-contains: PROVED s3g
+stdout-contains: PROVED s3h
+stdout-contains: PROVED s3i
+stdout-not-contains: FAILED

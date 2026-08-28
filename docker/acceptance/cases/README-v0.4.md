@@ -24,6 +24,13 @@ acceptance case is not delivered").
 | `098-spatial-live-map` | §44.9 live map | §25 live state and animation policy, §29.4 streaming, §43.4 Ctrl-C, §43.6 real change only |
 | `099-spatial-raw-shell-continuity` | §44.10 raw shell continuity | §23.3 full-screen controls, §23.4 focus ≠ place, §43.4 PTY checks, §49.8 |
 
+## Cases already in the suite
+
+`101-spatial-find-place.case` is not one of the §44 scenarios. It is the part of them the
+`find place` increment delivers on its own — §50 Phase S3's gate, "objects can be discovered
+without prior exact names" — and it runs with the rest of the suite. The ten scenarios above stay
+`.case.v04` because each walks through navigation verbs that do not exist yet.
+
 ## What the container can and cannot provide
 
 Each case says so in its own header. In short: the image runs no systemd, no journald and no
