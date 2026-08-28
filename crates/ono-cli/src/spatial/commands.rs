@@ -123,6 +123,7 @@ fn place_view(
         permission,
         pinned,
         session.record_of(&here).map(std::convert::AsRef::as_ref),
+        session.tombstone_of(&here, now),
         now,
     )?;
 
@@ -624,6 +625,47 @@ impl CommandImpl for Home {
     }
 }
 
+/// The refusal §10.3 requires of an action that needs a live object, where the place is gone.
+///
+/// The message is §40's own example, which is what an actionable next step looks like here: the
+/// place, when it ended, and — where one can be identified — what took its place.
+pub(crate) fn gone_here(
+    session: &SpatialSessionState,
+    here: &ono_spatial_core::SpatialId,
+    now: Timestamp,
+) -> Option<ErrorValue> {
+    let liveness = session.liveness(here, now);
+    if liveness.accepts_actions() {
+        return None;
+    }
+    let (what, when) = liveness.tombstone().map_or_else(
+        || ("this place".to_owned(), String::new()),
+        |tombstone| {
+            let age = ono_value::Duration::from_nanoseconds(
+                tombstone
+                    .age(now)
+                    .total(jiff::Unit::Nanosecond)
+                    .unwrap_or(0.0)
+                    .max(0.0) as i128,
+            );
+            (
+                format!("`{}`", tombstone.display_name()),
+                format!(" {age} ago"),
+            )
+        },
+    );
+    Some(
+        ErrorValue::new(
+            ErrorCode::SpatialDestinationGone,
+            format!("destination no longer exists: {what} ended{when}"),
+        )
+        .with_help(
+            "a tombstone keeps the place and its trail record; it does not accept actions that \
+             need the object to be there (spec v0.4 §10.3, §40)",
+        ),
+    )
+}
+
 pub(crate) fn text_of(value: &Value) -> Option<String> {
     match value {
         Value::Null => None,
@@ -768,6 +810,14 @@ impl CommandImpl for Follow {
                 now,
             )
             .await?;
+
+            // §10.3: a tombstone "MUST NOT accept actions that require a live object", and
+            // traversing a relationship is one — the edges of a place that is gone are the ones
+            // it had, not the ones it has. The check comes after the observation because that
+            // observation is what discovers the absence (§33.2).
+            if let Some(refusal) = gone_here(&session, &here, now) {
+                return Err(refusal);
+            }
 
             // The word decides the direction: `parent` and `children` are the two exits of one
             // relation, and following the wrong one would walk the edge backwards (§12).

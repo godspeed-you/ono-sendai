@@ -227,6 +227,18 @@ pub const CATALOGUE: &[SettingSpec] = &[
         default: DefaultValue::Str("5m"),
     },
     SettingSpec {
+        key: "spatial.tombstone.lifetime",
+        ty: SettingType::String,
+        description: "How long a place that went away stays reachable as a tombstone (spec v0.4 §10.3). \"Short-lived\" is the contract: long enough that `back` onto a process that has just exited arrives, short enough that no place returns from the dead mid-investigation.",
+        default: DefaultValue::Str("1m"),
+    },
+    SettingSpec {
+        key: "spatial.live.interval",
+        ty: SettingType::String,
+        description: "How often a live view re-reads a source that does not announce its own changes (spec v0.4 §25.1, §25.3). Polling is explicit, never invisible.",
+        default: DefaultValue::Str("500ms"),
+    },
+    SettingSpec {
         key: "spatial.landmarks.enabled",
         ty: SettingType::Bool,
         description: "Whether the landmark engine runs at all (spec v0.4 §26).",

@@ -230,3 +230,48 @@ fn should_forget_a_tombstone_once_it_is_no_longer_short_lived() {
     registry.prune(at(31));
     assert_eq!(registry.entries(at(31)).count(), 0);
 }
+
+#[test]
+fn should_remember_that_a_place_went_away_even_after_its_tombstone_has_expired() {
+    // §10.3 keeps tombstones short-lived, and §33.2 makes the providers authoritative. Between
+    // those two rules sits the case a caller has to be able to ask about: the object went away,
+    // the tombstone is past its lifetime, and nothing has answered for the place since. That is
+    // `Gone` — not a live place, and not one that was never seen.
+    let mut registry = TombstoneRegistry::new(Span::new().seconds(30));
+    let id = object(SpatialType::Process, "1842");
+    registry.record(Tombstone::new(
+        id.clone(),
+        SpatialType::Process,
+        "nginx",
+        at(0),
+    ));
+
+    assert!(registry.recorded(&id));
+    assert_eq!(
+        registry.resolve(&id, !registry.recorded(&id), at(120)),
+        Liveness::Gone,
+        "§10.3: a place whose tombstone has expired is gone, not alive"
+    );
+}
+
+#[test]
+fn should_stop_calling_a_place_gone_once_a_provider_answers_for_it_again() {
+    // §33.2: "The index is a cache. Providers remain authoritative." A place the registry
+    // recorded as gone and a provider then answered for is a live place, and the record of its
+    // absence has to go with it — otherwise the next question about it is answered from memory.
+    let mut registry = TombstoneRegistry::new(Span::new().minutes(1));
+    let id = object(SpatialType::Process, "1842");
+    registry.record(Tombstone::new(
+        id.clone(),
+        SpatialType::Process,
+        "nginx",
+        at(0),
+    ));
+
+    assert!(registry.forget(&id));
+    assert!(!registry.recorded(&id));
+    assert_eq!(
+        registry.resolve(&id, !registry.recorded(&id), at(10)),
+        Liveness::Live
+    );
+}

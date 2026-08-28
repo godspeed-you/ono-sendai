@@ -300,7 +300,7 @@ pub fn place_record(
     pinned: bool,
     now: Timestamp,
 ) -> Result<RecordValue, ErrorValue> {
-    place_record_of(index, id, scope, permission, pinned, None, now)
+    place_record_of(index, id, scope, permission, pinned, None, None, now)
 }
 
 /// The same record, with what the provider last said about the object beside it.
@@ -316,6 +316,7 @@ pub fn place_record_of(
     permission: PermissionState,
     pinned: bool,
     observed: Option<&RecordValue>,
+    tombstone: Option<&ono_spatial_core::Tombstone>,
     now: Timestamp,
 ) -> Result<RecordValue, ErrorValue> {
     let schema = schema("ono.spatial-place", 1)?;
@@ -373,11 +374,16 @@ pub fn place_record_of(
     let canonical_ref = entry.map_or(Value::Null, |entry| reference_record(entry.canonical_ref()));
     let canonical_parent = ono_spatial_query::resolve::parent_of(index, id)
         .map_or(Value::Null, |parent| Value::string(&parent.to_string()));
-    let state = observed
-        .and_then(|record| record.get("state"))
-        .filter(|value| !value.is_null())
-        .cloned()
-        .unwrap_or(Value::Null);
+    // §33.2: a place the providers no longer answer for is not still in the state they last
+    // reported. §10.3 gives it the state it is actually in, and the record beside it says when.
+    let state = match tombstone {
+        Some(tombstone) => Value::string(ended_state(tombstone.object_type())),
+        None => observed
+            .and_then(|record| record.get("state"))
+            .filter(|value| !value.is_null())
+            .cloned()
+            .unwrap_or(Value::Null),
+    };
     let summary = observed.map_or(Value::Null, summary_record);
 
     let record = RecordValue::builder(schema, Provenance::clone(&provenance))
@@ -386,6 +392,10 @@ pub fn place_record_of(
         .set("canonical_ref", canonical_ref)?
         .set("canonical_parent", canonical_parent)?
         .set("state", state)?
+        .set(
+            "tombstone",
+            tombstone.map_or(Value::Null, |stone| tombstone_record(stone, now)),
+        )?
         .set("summary", summary)?
         .set("name", Value::string(&name))?
         .set("display_name", Value::string(&name))?
@@ -515,6 +525,61 @@ fn lifetime_record(entry: Option<&ono_spatial_index::IndexEntry>) -> Value {
     {
         map.insert("start_time".into(), Value::string(&started));
     }
+    Value::Map(std::sync::Arc::new(map))
+}
+
+/// The state an object of this kind is in once it is gone (§10.3).
+///
+/// §10.3's own example writes `state: exited 12s ago` for a process, which is the word the
+/// provider would have used had it still been able to. A socket does not exit and a mount does
+/// not, so each family gets the word that is true of it — never one borrowed from a process.
+fn ended_state(object_type: SpatialType) -> &'static str {
+    use SpatialType as T;
+    match object_type {
+        T::Process | T::Job => "exited",
+        T::Service | T::Container => "stopped",
+        T::Socket | T::Listener | T::Connection => "closed",
+        T::Mount | T::Filesystem => "unmounted",
+        _ => "removed",
+    }
+}
+
+/// The `tombstone` of a place that is gone (§10.3).
+///
+/// §10.3's example is three lines — the object, `state: exited 12s ago`, and a replacement — and
+/// this is those three, structured. The age is computed against the caller's `now` rather than
+/// stored, so a view rendered a minute later says a minute.
+fn tombstone_record(tombstone: &ono_spatial_core::Tombstone, now: Timestamp) -> Value {
+    let mut map = ono_value::MapValue::new();
+    let age = tombstone.age(now);
+    let ago = ono_value::Duration::from_nanoseconds(
+        age.total(jiff::Unit::Nanosecond).unwrap_or(0.0).max(0.0) as i128,
+    );
+    map.insert(
+        "state".into(),
+        Value::string(&format!(
+            "{} {} ago",
+            ended_state(tombstone.object_type()),
+            ago
+        )),
+    );
+    map.insert(
+        "removed_at".into(),
+        Value::Timestamp(tombstone.removed_at()),
+    );
+    map.insert("age".into(), Value::Duration(ago));
+    map.insert(
+        "replacement".into(),
+        tombstone
+            .replacement()
+            .map_or(Value::Null, |id| Value::string(&id.to_string())),
+    );
+    map.insert(
+        "replacement_via".into(),
+        tombstone
+            .replacement_via()
+            .map_or(Value::Null, |via| Value::string(&via.to_string())),
+    );
     Value::Map(std::sync::Arc::new(map))
 }
 

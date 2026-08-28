@@ -502,3 +502,62 @@ fn should_answer_nothing_for_a_pin_that_was_never_placed() {
     assert_eq!(pins.resolve("edge-proxy", |_| true, |_, _| None), None);
     assert!(pins.is_empty());
 }
+
+#[test]
+fn should_keep_the_place_and_close_its_lifetime_when_the_object_it_stands_for_has_gone() {
+    // §10.3: a removed object may remain as a tombstone, and §20.3 makes `back` arrive at one.
+    // Both need the entry itself to survive — "the identity is retained" is exactly what tells a
+    // tombstone from a place that never existed (§40) — while the lifetime says it ended.
+    let mut index = index();
+    let gone = process(1842, "nginx");
+    let id = gone.spatial_id().clone();
+    index.register(gone, at(0)).expect("registers");
+
+    assert!(index.mark_ended(&id, at(30)));
+
+    let entry = index.get(&id).expect("§10.3: the place is still there");
+    assert_eq!(entry.object().lifetime().end(), Some(at(30)));
+    assert!(
+        !entry.object().lifetime().is_live(),
+        "§33.2: a place the providers no longer answer for is not still live"
+    );
+}
+
+#[test]
+fn should_report_nothing_when_a_place_that_was_never_registered_is_marked_as_gone() {
+    // The index is a cache (§33.1): a place it never held cannot have ended, and saying so is
+    // how a caller tells "this went away" from "this was never here" (§40).
+    let mut index = index();
+    assert!(!index.mark_ended(process(1842, "nginx").spatial_id(), at(30)));
+}
+
+#[test]
+fn should_drop_a_relationship_from_both_of_its_ends_when_it_is_no_longer_asserted() {
+    // §33.2: "The index is a cache. Providers remain authoritative." An edge nobody asserts any
+    // more is not one that merely went unmentioned, and a live view can only say so if the
+    // earlier answer is dropped before the current one is read (§25.1).
+    let mut index = index();
+    let unit = service("nginx.service");
+    let worker = process(1842, "nginx");
+    let (unit_id, worker_id) = (unit.spatial_id().clone(), worker.spatial_id().clone());
+    let edge = edge(&unit, &worker, "service.controls_process");
+    index.register(unit, at(0)).expect("registers");
+    index.register(worker, at(0)).expect("registers");
+    index.record_edge(edge);
+    assert_eq!(index.get(&unit_id).expect("the service").edges().len(), 1);
+    assert_eq!(index.get(&worker_id).expect("the process").edges().len(), 1);
+
+    assert_eq!(index.forget_edges(&worker_id), 2);
+
+    assert!(
+        index.get(&unit_id).expect("the service").edges().is_empty(),
+        "§33.2: the assertion is gone from the end that was not asked about too"
+    );
+    assert!(
+        index
+            .get(&worker_id)
+            .expect("the process")
+            .edges()
+            .is_empty()
+    );
+}
