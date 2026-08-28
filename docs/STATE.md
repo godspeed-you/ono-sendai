@@ -726,8 +726,9 @@ Green now, all previously `#[ignore]`d — 26 tests:
   `crate::sink::terminal_width`, and the table snapshots to re-check.
 
 **S6 — the interactive spatial surface — is complete (2026-08-28, agent `S6`).** ADR-0173 to
-ADR-0177; gate green; acceptance case `docker/acceptance/cases/107-spatial-interactive.case`
-added (39 assertions, driven through a real pseudo-terminal).
+ADR-0177; acceptance case `docker/acceptance/cases/107-spatial-interactive.case` added — 39
+assertions driven through a real pseudo-terminal — and **the containerised suite stands at 73
+cases green, 0 failed** (`scripts/acceptance.sh`, 2026-08-28).
 
 Delivered — the phase, plus the four areas §50 assigns to nobody:
 
