@@ -399,7 +399,7 @@ pub trait CommandImpl: Send + Sync {
 
 /// The error a command raises when it was run through the synchronous entry point but has to
 /// reach a provider to answer.
-pub(crate) fn must_be_awaited(spelling: &str) -> ErrorValue {
+pub fn must_be_awaited(spelling: &str) -> ErrorValue {
     ErrorValue::new(
         ErrorCode::ProviderUnsupported,
         format!("`{spelling}` reaches a provider, and reaching one is asynchronous"),

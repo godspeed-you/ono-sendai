@@ -47,7 +47,12 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     if let Some(table) = TABLE.get() {
         return Ok(table);
     }
-    let built = ono_command::builtin_commands_for(registry()?, session.providers());
+    let mut built = ono_command::builtin_commands_for(registry()?, session.providers());
+    // The spatial commands of v0.4 §6 are the shell's to dispatch (§45.6): they need the host and
+    // boot the session belongs to, which no library crate can know. Selection, ranking and
+    // identity stay in `ono-spatial-query` and `ono-spatial-index`, where §45.2 and §45.3 put
+    // them (ADR-0141).
+    built.register(std::sync::Arc::new(crate::spatial::FindPlace::new()));
     Ok(TABLE.get_or_init(|| built))
 }
 

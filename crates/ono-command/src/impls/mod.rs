@@ -26,7 +26,7 @@
 pub(crate) mod content;
 pub(crate) mod convert;
 mod inspect;
-pub(crate) mod meta;
+pub mod meta;
 pub(crate) mod mutate;
 pub(crate) mod producer;
 mod trace;
@@ -41,12 +41,13 @@ use crate::contract::{CommandContract, Phase, VerbSpec};
 use crate::invoke::CommandTable;
 use crate::registry::CommandRegistry;
 
-/// The spec §37 phases this build delivers.
+/// The spec §37 phases this build delivers, plus `S` — the v0.4 spatial tranche, whose phases
+/// §50 numbers S1–S11 rather than lettering them.
 ///
 /// A command scheduled for a later phase is not registered, so the honesty of
 /// [`unbound_stable_commands`](crate::unbound_stable_commands) survives contact with a half-built
 /// shell.
-const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+const DELIVERED: &[char] = &['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'S'];
 
 /// The command table this build has: every implementation, registered against its contract id.
 ///

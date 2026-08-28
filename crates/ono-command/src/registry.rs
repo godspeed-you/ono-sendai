@@ -31,6 +31,7 @@ const COMMAND_FILES: &[&str] = &[
     include_str!("../../../docs/spec/commands/process.yaml"),
     include_str!("../../../docs/spec/commands/remote.yaml"),
     include_str!("../../../docs/spec/commands/service.yaml"),
+    include_str!("../../../docs/spec/commands/spatial.yaml"),
     include_str!("../../../docs/spec/commands/storage.yaml"),
 ];
 

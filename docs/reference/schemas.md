@@ -1325,6 +1325,31 @@ Default view: `protocol`, `local`, `remote`, `state`, `process`
 | `user` | `ref<ono.user/1>` | — | nullable | The owning user. |
 | `inode` | `int` | — | nullable | The socket inode; the identity field, null when the provider cannot supply it. |
 
+## SpatialPlace — `ono.spatial-place/1`
+
+A place in the spatial interface, with the path, scope and freshness that disambiguate it.
+
+Identity: `spatial_id`
+
+Default view: `name`, `spatial_type`, `place_path`, `freshness`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `spatial_id` | `string` | — | required | The opaque, stable identity of §3.1. A user copies, pins or compares one but never composes one; `enter "<spatial_id>"` is the exact-id escape from ambiguity of §29.3. |
+| `name` | `string` | — | required | What a person calls the place. Not identity (§3.1). |
+| `display_name` | `string` | — | required | §3.1's `display_name` — the same text as `name`, under the name §3.1 gives the field. |
+| `object_type` | `string` | — | required | The v0.2 schema of the object behind the place, such as `ono.process/1`. This is what makes a place recognisable to the pipeline it flows into and what §37.1's identity merge compares. A canonical space has none of its own and reports `ono.spatial-place/1`. |
+| `spatial_type` | `string` | — | required | The §3.3 type — `process`, `service`, `listener`, `directory`, `compute` — lower-cased. |
+| `place_path` | `string` | — | required | Where the place sits in the canonical hierarchy, from the host down: `local/compute/processes`. §27.2's third column, and §6.8's path information. |
+| `scope` | `string` | — | required | The §3.2 boundary the place belongs to, rendered as `<kind>:<id>` — `host:web01`. |
+| `parent` | `string` | — | nullable | The `spatial_id` of the canonical parent `up` reaches (§11.3); null for the root and for the off-map places of §42.3. |
+| `freshness` | `enum` | — | required | How current the answer is (§27.4, §33.4). `unknown` is not `fresh`: a place that was never observed says so (§2.17). |
+| `observed_at` | `timestamp` | — | nullable | When a provider last saw the object; null for a canonical space, which nobody observes. |
+| `identity_tier` | `enum` | — | required | How far the identity can be trusted (§10.1). A renderer may not imply persistence for an observation identity. |
+| `capabilities` | `list<string>` | — | required | What the navigation layer may offer for the place — `enter`, `follow`, `watch`, `act`. |
+| `pinned` | `bool` | — | required | Whether the user pinned the place (§20.4, §26.4). |
+| `provenance` | `record` | — | required | Where the fact came from — the provider, when it was observed, the source and the link (§27.4). A search result that may come from a cache says so. |
+
 ## UserEvent — `ono.user-event/1`
 
 One change to one user account, as a live stream emits it.

@@ -11,7 +11,7 @@
 //! forms of the same scenarios.
 //!
 //! Everything is asserted through the non-interactive surface §29.1 fixes — `look --json`,
-//! `map --json`, `near`, `find`, `trail --json` MUST answer without a TTY — except the two
+//! `map --json`, `near`, `find place`, `trail --json` MUST answer without a TTY — except the two
 //! completion tests, where the behaviour is interactive by nature (§43.4) and a pseudo-terminal
 //! is the only honest observation point.
 //!
@@ -215,7 +215,7 @@ fn rows(run: &ono_testkit::Run) -> Vec<Value> {
         .as_sequence()
         .unwrap_or_else(|| {
             panic!(
-                "spec §29.4: `near` and `find` are ordinary object streams, so `| to json` is an \
+                "spec §29.4: `near` and `find place` are ordinary object streams, so `| to json` is \
                  array, got {document:?}"
             )
         })
@@ -784,7 +784,7 @@ fn should_expose_a_reason_on_every_landmark_when_a_place_reports_landmarks() {
 #[test]
 #[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §29.4); un-ignored by the increment that delivers it"]
 fn should_stream_neighbors_as_pipeline_objects_when_near_runs_at_the_root() {
-    // §29.4: `near` and `find` return normal structured streams that participate in object
+    // §29.4: `near` and `find place` return normal structured streams that participate in object
     // pipelines. §6.2 shows the shape: a relation, the object, its state. §2.20: spatial state is
     // inspectable and scriptable, which means the v0.2 stages compose with it unchanged.
     let run = ono("home; near | to json");
@@ -854,7 +854,7 @@ fn should_reach_a_process_it_never_names_when_only_a_predicate_over_visible_meta
     let parent = std::process::id();
 
     let script = format!(
-        "home; enter compute; enter processes; find process --where ppid == {parent}; \
+        "home; enter compute; enter processes; find place --type process --where ppid == {parent}; \
          enter @-1; look --json"
     );
     let run = ono(&script);
@@ -885,7 +885,7 @@ fn should_offer_the_process_exits_the_spec_names_when_a_discovered_process_becom
     let parent = std::process::id();
 
     let script = format!(
-        "home; enter compute; enter processes; find process --where ppid == {parent}; \
+        "home; enter compute; enter processes; find place --type process --where ppid == {parent}; \
          enter @-1; look --json"
     );
     let run = ono(&script);
@@ -936,7 +936,7 @@ fn should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner() 
     let parent = std::process::id();
 
     let script = format!(
-        "home; enter compute; enter processes; find process --where ppid == {parent}; \
+        "home; enter compute; enter processes; find place --type process --where ppid == {parent}; \
          enter @-1; follow parent; look --json"
     );
     let run = ono(&script);
@@ -972,7 +972,7 @@ fn should_discover_a_listening_socket_by_its_port_and_follow_it_to_its_owning_pr
     let owner = std::process::id();
 
     let script = format!(
-        "home; enter network; enter listeners; find --where local.port == {port}; \
+        "home; enter network; enter listeners; find place --where local.port == {port}; \
          enter @-1; look --json"
     );
     let run = ono(&script);
@@ -986,7 +986,7 @@ fn should_discover_a_listening_socket_by_its_port_and_follow_it_to_its_owning_pr
     );
 
     let run = ono(&format!(
-        "home; enter network; enter listeners; find --where local.port == {port}; \
+        "home; enter network; enter listeners; find place --where local.port == {port}; \
          enter @-1; follow process; look --json"
     ));
     run.assert_success();
@@ -1025,17 +1025,18 @@ fn should_reach_a_running_service_by_its_visible_state_when_a_service_manager_an
     }
 
     let found =
-        ono("home; enter compute; enter services; find --where state == \"running\" | count");
+        ono("home; enter compute; enter services; find place --where state == \"running\" | count");
     found.assert_success();
     assert!(
-        count("home; enter compute; enter services; find --where state == \"running\" | count")
-            >= 1,
+        count(
+            "home; enter compute; enter services; find place --where state == \"running\" | count"
+        ) >= 1,
         "§44.2/§9.3: a running service is discoverable by its visible state alone, got {:?}",
         found.output()
     );
 
     let run = ono(
-        "home; enter compute; enter services; find --where state == \"running\"; enter @-1; \
+        "home; enter compute; enter services; find place --where state == \"running\"; enter @-1; \
          look --json",
     );
     run.assert_success();
@@ -1054,7 +1055,7 @@ fn should_reach_a_running_service_by_its_visible_state_when_a_service_manager_an
     }
 
     let followed = ono(
-        "home; enter compute; enter services; find --where state == \"running\"; enter @-1; \
+        "home; enter compute; enter services; find place --where state == \"running\"; enter @-1; \
          follow processes; look --json",
     );
     followed.assert_success();
@@ -1106,16 +1107,19 @@ fn should_distinguish_an_unavailable_group_from_an_empty_one_when_a_domain_has_n
 #[test]
 #[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §9.3); un-ignored by the increment that delivers it"]
 fn should_resolve_find_as_a_spatial_verb_while_the_external_tool_stays_reachable_by_path() {
-    // §6 fixes `find` and `look` as normative spatial verbs, and §9.3 makes `find` the global
-    // discovery path. Both names collide with a Unix tool that exists on every host, and §2.15
-    // ("Unix remains underneath") plus §44.10 (raw shell continuity) forbid breaking it: the
-    // spatial verb wins the bare name, and `/usr/bin/find` still runs the external tool.
-    let run = ono("home; find process --where pid == 1 | count");
+    // §6 fixes `find` and `look` as normative spatial verbs, and §9.3 makes the spatial search
+    // the global discovery path. Both names collide with a Unix tool that exists on every host,
+    // and §2.15 ("Unix remains underneath") plus §44.10 (raw shell continuity) forbid breaking
+    // it. ADR-0124 resolves the collision the way the v0.2 registry already resolves it, by verb
+    // plus target: `find place …` is the spatial search, bare `find` keeps reaching findutils,
+    // and `/usr/bin/find` still runs the external tool by path.
+    let run = ono("home; find place --type process --where pid == 1 | count");
     run.assert_success();
     assert_eq!(
-        count("home; find process --where pid == 1 | count"),
+        count("home; find place --type process --where pid == 1 | count"),
         1,
-        "§9.3: bare `find` is the spatial verb and returns a structured stream, got {:?}",
+        "§9.3 with ADR-0124: `find place` is the spatial search and returns a structured \
+         stream, got {:?}",
         run.output()
     );
 
@@ -1177,7 +1181,7 @@ fn should_complete_the_relations_available_from_the_current_place_when_tab_follo
     );
 
     let walk = format!(
-        "home; enter compute; enter processes; find process --where ppid == {parent}; enter @-1\n"
+        "home; enter compute; enter processes; find place --type process --where ppid == {parent}; enter @-1\n"
     );
     shell
         .write_all(walk.as_bytes())

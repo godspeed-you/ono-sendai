@@ -278,6 +278,17 @@ targets:
     summary: A persistent Ono remote execution link. # spec §9.1 Remote, §21
     schema: null
     phase: H
+  # --- the spatial interface, v0.4 §3.3 -----------------------------------------------------
+  # A `Place` is "the current spatial interpretation of a SpatialObject or a canonical aggregate
+  # space" (v0.4 §3.3). It is the target word of the one spatial command that keeps one, because
+  # bare `find` belongs to findutils (ADR-0124); every other spatial verb takes the bare name.
+  - id: ono.target.place
+    name: place
+    category: system
+    summary: A place in the spatial interface — an object or a canonical space (v0.4 §3.3).
+    schema: ono.spatial-place/1
+    phase: S
+
   - id: ono.target.context
     name: context
     category: system

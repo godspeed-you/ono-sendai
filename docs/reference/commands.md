@@ -4854,6 +4854,46 @@ tail journal --lines 50
 tail journal | where priority <= 3 | take 1
 ```
 
+## spatial
+
+### `find place`
+
+Search the spatial index for places, by name, type, predicate or anchor.
+
+| | |
+|---|---|
+| id | `ono.place.find` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `stream<ono.spatial-place/1>` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `name` | `string` | The name or alias to look for. Without one, every place the search reaches answers (v0.4 §6.8). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--type` | `string` | Restrict to one spatial type — `process`, `service`, `listener`, `directory` (v0.4 §3.3; ADR-0124 makes the type an option rather than a second target word). |
+| `--where` | `value` | A predicate over the objects being searched for, evaluated against each object as its provider described it: `--where state == "running"`, `--where local.port == 8080` (v0.4 §6.8; ADR-0138 makes its value an expression, ADR-0140 fixes what it reads). |
+| `--near` | `string` | A place selector the search is anchored to; only places under that anchor answer (v0.4 §6.8). |
+| `--limit` | `int` | How many places to answer with. The search is bounded by default, because §34 budgets it. |
+| `--all` | `bool` | Answer every match, however many. May be expensive (v0.4 §6.2). |
+
+**Examples**
+
+```text
+find place nginx
+find place --type service --where state == "active"
+find place --where local.port == 8080 | take 1
+```
+
 ## storage
 
 ### `get mount`

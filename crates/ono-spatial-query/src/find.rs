@@ -32,6 +32,7 @@ pub struct FindRequest {
     near: Option<SpatialId>,
     limit: Option<usize>,
     all: bool,
+    subjects: Option<std::collections::BTreeSet<SpatialId>>,
 }
 
 impl FindRequest {
@@ -73,6 +74,19 @@ impl FindRequest {
     #[must_use]
     pub fn all(mut self, all: bool) -> Self {
         self.all = all;
+        self
+    }
+
+    /// Restricts the answer to the places these ids name.
+    ///
+    /// This is what a `--where` predicate needs. A predicate is evaluated against the objects a
+    /// provider produced, and absorbing those objects also places the ones they *mention* — the
+    /// pid namespace a process reports, the cgroup it belongs to, the far end of a connection
+    /// (§42.3). Those places were never tested against the predicate, so they are not an answer
+    /// to it: a search that returned them would be reporting objects nobody filtered.
+    #[must_use]
+    pub fn among(mut self, subjects: impl IntoIterator<Item = SpatialId>) -> Self {
+        self.subjects = Some(subjects.into_iter().collect());
         self
     }
 
@@ -141,6 +155,10 @@ impl FoundPlace {
 
     /// The v0.2 schema of the object behind the place — `ono.process/1` — which is what makes a
     /// found place recognisable to the object pipeline it flows into (§28, §37.1).
+    ///
+    /// It is the schema of the *object*, not of whatever record named it: a pid namespace
+    /// composed from a process's `/proc/<pid>/ns/pid` is an `ono.namespace/1`, because that is
+    /// what it is (§42.3).
     #[must_use]
     pub fn schema(&self) -> &str {
         &self.schema
@@ -211,6 +229,11 @@ pub fn find_places(
     for entry in index.entries() {
         let object = entry.object();
         let id = object.spatial_id();
+        if let Some(subjects) = &request.subjects
+            && !subjects.contains(id)
+        {
+            continue;
+        }
         if let Some(wanted) = request.object_type
             && !object.object_type().is_a(wanted)
         {
@@ -234,7 +257,7 @@ pub fn find_places(
             spatial_id: id.clone(),
             name: object.display_name().to_owned(),
             object_type: object.object_type(),
-            schema: object.provenance().schema().to_string(),
+            schema: object.canonical_ref().id().schema().to_string(),
             place_path,
             scope: object.scope().clone(),
             freshness: index.freshness(id, now),

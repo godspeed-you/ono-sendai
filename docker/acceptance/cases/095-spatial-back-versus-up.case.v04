@@ -40,7 +40,7 @@ run: |
   echo "fixture: server=$FIXTURE_WEB_MAIN listener=:$FIXTURE_WEB_PORT"
 
   # SYSTEM -> COMPUTE -> SERVICES -> service --follow--> process --follow--> socket (§44.6)
-  PATH_TO_SOCKET="home; enter compute; enter services; find --where state == \"active\" | take 1 | enter; follow process $FIXTURE_WEB_MAIN; follow socket"
+  PATH_TO_SOCKET="home; enter compute; enter services; find place --where state == \"active\" | take 1 | enter; follow process $FIXTURE_WEB_MAIN; follow socket"
 
   echo "== the path of §44.6 is walked to its end =="
   prove 44.6a "the walk ends on the listening socket of the service (§44.6)" \

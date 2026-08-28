@@ -472,6 +472,17 @@ fn inspected_fields(record: &RecordValue) -> Value {
     }))
 }
 
+/// A provenance as the value a record carries: the provider, when it was observed, what it was
+/// read from, whether it crossed a link, the schema and the confidence — and, for an adapted
+/// value, the ten questions of spec v0.3 §1.8 under the same keys the rendered block uses.
+///
+/// One rendering, so a script and a person read the same names wherever provenance appears —
+/// `inspect`, and every place the v0.4 spatial layer answers with (§27.4).
+#[must_use]
+pub fn provenance_value(provenance: &Provenance) -> Value {
+    provenance_map(provenance)
+}
+
 fn provenance_map(provenance: &Provenance) -> Value {
     let mut described = MapValue::new();
     described.insert("provider".into(), Value::string(provenance.provider()));

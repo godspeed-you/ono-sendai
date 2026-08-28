@@ -35,7 +35,7 @@ run: |
      test "$(ono -c "home; enter storage; enter filesystems; near | count | to text")" -ge 2'
 
   echo "== a secondary mount is identified without its name being typed (§44.3) =="
-  ono -c 'home; enter storage; enter mounts; find --where filesystem == "tmpfs" | select target | to text' \
+  ono -c 'home; enter storage; enter mounts; find place --where filesystem == "tmpfs" | select name | to text' \
     > /tmp/tmpfs-targets.txt 2>/dev/null
   TARGET=""
   while read -r candidate; do

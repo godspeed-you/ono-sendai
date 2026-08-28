@@ -51,7 +51,7 @@ run: |
   . /tmp/fixture-spatial.state
   echo "fixture: main=$FIXTURE_WEB_MAIN workers=$FIXTURE_WEB_WORKERS port=$FIXTURE_WEB_PORT"
   JOURNEY='home; enter compute; enter services'
-  SELECT='find --where state == "active" | take 1 | enter'
+  SELECT='find place --where state == "active" | take 1 | enter'
 
   echo "== the hierarchy alone reaches the services of this host (§7.2, §44.2) =="
   prove 44.2a "compute and services are entered as canonical children, not as names (§7.2)" \
@@ -62,8 +62,8 @@ run: |
     'place "$JOURNEY" "map" | grep -qF "fixture-web.service"'
 
   echo "== the running web service is selected by visible metadata (§6.8, §28.2) =="
-  prove 44.2d "find --where state selects exactly the running unit, with no name typed (§6.8)" \
-    'test "$(place "$JOURNEY" "find --where state == \"active\" | select name | to json" | tail -1)" \
+  prove 44.2d "find place --where state selects exactly the running unit, with no name typed (§6.8)" \
+    'test "$(place "$JOURNEY" "find place --where state == \"active\" | select name | to json" | tail -1)" \
        = "[{\"name\":\"fixture-web.service\"}]"'
   prove 44.2e "a pipeline result is enterable and the place becomes the service (§28.2, §28.3)" \
     'place "$JOURNEY; $SELECT" "look --json" | grep -qF "fixture-web.service"'

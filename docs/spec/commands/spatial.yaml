@@ -1,0 +1,42 @@
+# Command family: Spatial. Sources: the v0.4 Spatial Systems Interface — §6 (the spatial command
+# language), §6.8 (`find`), §9.3 (active global discovery), §27 (selector resolution), §29.4
+# (streaming), §41.3 (this registry generates help, completion and tests) — and ADR-0124, which
+# fixes the spellings.
+#
+# ADR-0124: every spatial verb takes the bare name except the one that collides with a program
+# everybody uses. `find` keeps its target word, so the spatial search is `find place`, beside the
+# existing `find file`, `find command`, `find plugin` and `find package`; bare `find` still
+# reaches findutils through the v0.3 adapter. The spatial type is an option (`--type`), not a
+# second target word.
+#
+# `phase: S` is the v0.4 tranche of §50, whose phases are S1–S11 rather than the letters of v0.2
+# §37. Conventions as documented at the head of process.yaml.
+
+version: 1
+family: spatial
+
+commands:
+  - id: ono.place.find
+    verb: find
+    target: place
+    summary: Search the spatial index for places, by name, type, predicate or anchor.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.spatial-place/1>
+    provider_capability: null
+    selectors:
+      - {name: name, type: string, doc: "The name or alias to look for. Without one, every place the search reaches answers (v0.4 §6.8)."}
+    options:
+      - {name: type, type: string, doc: "Restrict to one spatial type — `process`, `service`, `listener`, `directory` (v0.4 §3.3; ADR-0124 makes the type an option rather than a second target word)."}
+      - {name: where, type: value, doc: "A predicate over the objects being searched for, evaluated against each object as its provider described it: `--where state == \"running\"`, `--where local.port == 8080` (v0.4 §6.8; ADR-0138 makes its value an expression, ADR-0140 fixes what it reads)."}
+      - {name: near, type: string, doc: "A place selector the search is anchored to; only places under that anchor answer (v0.4 §6.8)."}
+      - {name: limit, type: int, doc: "How many places to answer with. The search is bounded by default, because §34 budgets it."}
+      - {name: all, type: bool, doc: "Answer every match, however many. May be expensive (v0.4 §6.2)."}
+    privilege: conditional
+    streaming: true
+    phase: S
+    examples:
+      - find place nginx
+      - find place --type service --where state == "active"
+      - find place --where local.port == 8080 | take 1

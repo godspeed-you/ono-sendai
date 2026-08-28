@@ -32,7 +32,7 @@ verbs:
   - id: ono.verb.find
     verb: find
     semantics: Discover by search criteria or location.
-    typical_targets: [file, host, command, package]
+    typical_targets: [file, host, command, package, place]
     pipeline_role: producer
     mutating: false
     stability: stable

@@ -3,7 +3,7 @@
 # map without a TUI) and §34 (the budgets).
 #
 # The scenario is a user who knows no service, process, mount or interface name on this host.
-# Everything asserted here is therefore reachable from `look`, `map`, `near` and `find` alone —
+# Everything asserted here is therefore reachable from `look`, `map`, `near` and `find place` alone —
 # no case line types the name of an object before the shell has shown it.
 #
 # The container has no systemd, no journald and no network beyond loopback, so the counts the
@@ -44,8 +44,8 @@ run: |
     'ono -c "near | count | to json" | grep -qE "^\[[1-9][0-9]*\]$"'
   prove 44.1e "near composes with the v0.2 pipeline (§29.4, §28.1)" \
     'ono -c "near | select relation object | to json" | grep -q "relation"'
-  prove 44.1f "find discovers a real object from a property, with no name typed (§6.8)" \
-    'ono -c "find process --where pid > 1 | take 1 | select pid | to json" | grep -qE "^\[\{\"pid\":[0-9]+\}\]$"'
+  prove 44.1f "find place discovers a real object from a property, with no name typed (§6.8)" \
+    'ono -c "find place --type process --where pid > 1 | take 1 | select name | to json" | grep -qE "^\[\{\"name\":\"[^\"]+\"\}\]$"'
   prove 44.1g "entering a domain the horizon showed changes the place (§6.3, §7.2)" \
     'ono -c "enter compute; look --json" | tr "A-Z" "a-z" | grep -qE "process|service"'
   prove 44.1h "home returns to the root system place from anywhere (§6.6)" \

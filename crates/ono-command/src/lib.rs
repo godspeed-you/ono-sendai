@@ -77,9 +77,10 @@ pub use expr::{
     Scope, check_fields, evaluate, evaluate_to_value, is_now_call, is_true, nested_pipelines,
 };
 pub use help::{CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help};
+pub use impls::meta::provenance_value;
 pub use impls::{builtin_commands, builtin_commands_for};
 pub use invoke::{
     CommandImpl, CommandTable, ContextFrame, FrameKind, Invocation, Outcome, OutcomeFuture,
-    Resolver, unbound_stable_commands,
+    Resolver, must_be_awaited, unbound_stable_commands,
 };
 pub use registry::{CommandRegistry, Resolved};

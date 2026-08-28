@@ -1,0 +1,92 @@
+# Canonical SpatialPlace schema. Source: v0.4 §3.1 (`SpatialObject`), §3.2 (`SpatialScope`), §3.3
+# (`Place`), §6.8 ("Results MUST include enough path/scope information to disambiguate identical
+# names"), §27.2 (the three disambiguating columns) and §27.4 (freshness and provenance on
+# anything that may come from a cache). ADR-0140 decides the field set.
+#
+# Identity is the `spatial_id` alone: it is already the composite identity of §3.1, derived from
+# the facts that make the object that object (ADR-0129), so a second identity field would be a
+# second answer to a question that has one.
+#
+# `name` and `display_name` carry the same text on purpose. §3.1 requires `display_name`, and the
+# object pipeline of v0.2 names every object's name `name` — `find place x | select name` must
+# read like `get service | select name`, or the spatial stream is a parallel silo (§28, §29.4).
+id: ono.spatial-place/1
+name: SpatialPlace
+summary: A place in the spatial interface, with the path, scope and freshness that disambiguate it.
+identity: [spatial_id]
+fields:
+  spatial_id:
+    type: string
+    required: true
+    doc: >-
+      The opaque, stable identity of §3.1. A user copies, pins or compares one but never composes
+      one; `enter "<spatial_id>"` is the exact-id escape from ambiguity of §29.3.
+  name:
+    type: string
+    required: true
+    doc: What a person calls the place. Not identity (§3.1).
+  display_name:
+    type: string
+    required: true
+    doc: §3.1's `display_name` — the same text as `name`, under the name §3.1 gives the field.
+  object_type:
+    type: string
+    required: true
+    doc: >-
+      The v0.2 schema of the object behind the place, such as `ono.process/1`. This is what makes
+      a place recognisable to the pipeline it flows into and what §37.1's identity merge compares.
+      A canonical space has none of its own and reports `ono.spatial-place/1`.
+  spatial_type:
+    type: string
+    required: true
+    doc: The §3.3 type — `process`, `service`, `listener`, `directory`, `compute` — lower-cased.
+  place_path:
+    type: string
+    required: true
+    doc: >-
+      Where the place sits in the canonical hierarchy, from the host down:
+      `local/compute/processes`. §27.2's third column, and §6.8's path information.
+  scope:
+    type: string
+    required: true
+    doc: The §3.2 boundary the place belongs to, rendered as `<kind>:<id>` — `host:web01`.
+  parent:
+    type: string
+    nullable: true
+    doc: >-
+      The `spatial_id` of the canonical parent `up` reaches (§11.3); null for the root and for the
+      off-map places of §42.3.
+  freshness:
+    type: enum
+    required: true
+    values: [live, fresh, stale, unknown]
+    doc: >-
+      How current the answer is (§27.4, §33.4). `unknown` is not `fresh`: a place that was never
+      observed says so (§2.17).
+  observed_at:
+    type: timestamp
+    nullable: true
+    doc: When a provider last saw the object; null for a canonical space, which nobody observes.
+  identity_tier:
+    type: enum
+    required: true
+    values: [stable, lifetime, observation]
+    doc: >-
+      How far the identity can be trusted (§10.1). A renderer may not imply persistence for an
+      observation identity.
+  capabilities:
+    type: list<string>
+    required: true
+    doc: What the navigation layer may offer for the place — `enter`, `follow`, `watch`, `act`.
+  pinned:
+    type: bool
+    required: true
+    doc: Whether the user pinned the place (§20.4, §26.4).
+  provenance:
+    type: record
+    required: true
+    doc: >-
+      Where the fact came from — the provider, when it was observed, the source and the link
+      (§27.4). A search result that may come from a cache says so.
+default_view:
+  columns: [name, spatial_type, place_path, freshness]

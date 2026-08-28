@@ -7,7 +7,7 @@ The controlled vocabulary of spec §7. The registry is deliberately small: a mod
 | verb | meaning | typical targets | pipeline role | mutates |
 |---|---|---|---|---|
 | `get` | Obtain current objects or state. | process, file, service, socket, user | producer | no |
-| `find` | Discover by search criteria or location. | file, host, command, package | producer | no |
+| `find` | Discover by search criteria or location. | file, host, command, package, place | producer | no |
 | `inspect` | Expose a detailed representation and its provenance. | any object | transform/terminal | no |
 | `watch` | Observe repeatedly or live. | query, process, file, service | stream producer | no |
 | `trace` | Derive relationships, path or provenance. | process, service, host, packet | producer/view | no |

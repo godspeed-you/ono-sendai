@@ -56,7 +56,7 @@ run: |
      done'
 
   echo "== service -> process -> socket -> connection (§44.5) =="
-  SERVICE="home; enter compute; enter services; find --where state == \"active\" | take 1 | enter"
+  SERVICE="home; enter compute; enter services; find place --where state == \"active\" | take 1 | enter"
   prove 44.5b "the service is followed to its main process (§13, §6.4)" \
     'place "$SERVICE; follow process $FIXTURE_WEB_MAIN" "look --json" | grep -qF "$FIXTURE_WEB_MAIN"'
   prove 44.5c "the process is followed to the socket it owns (§12, §14.3)" \

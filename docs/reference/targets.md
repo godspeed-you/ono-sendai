@@ -46,6 +46,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `finding` | system | `—` | I | A finding emitted by an analysis or an assistant, with its evidence (spec §31.24). |
 | `audit` | system | `—` | I | A capability-sensitive KUANG/11 action recorded in the audit trail (spec §31.37). |
 | `link` | system | `—` | H | A persistent Ono remote execution link. |
+| `place` | system | `ono.spatial-place/1` | S | A place in the spatial interface — an object or a canonical space (v0.4 §3.3). |
 | `context` | system | `—` | E | An entry on the context stack. |
 | `config` | system | `ono.config-setting/1` | A | A resolved configuration setting with its provenance. |
 | `repo` | development | `—` | planned | A source repository. |

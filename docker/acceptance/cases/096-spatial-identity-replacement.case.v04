@@ -61,7 +61,7 @@ run: |
   chmod +x /tmp/spatial/restart.sh
   export OLD_MAIN OLD_WORKERS
 
-  SERVICE='home; enter compute; enter services; find --where state == "active" | take 1 | enter'
+  SERVICE='home; enter compute; enter services; find place --where state == "active" | take 1 | enter'
 
   echo "== before the restart: the service place carries the process that serves it (§13) =="
   prove 44.7a "the service place names its main process (§13, §10.2)" \

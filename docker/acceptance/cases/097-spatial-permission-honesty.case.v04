@@ -84,8 +84,8 @@ run: |
      printf "%s\n" "$out" | grep -qF "Ono-Sendai-E0302" && test "$status" -ne 0'
 
   echo "== discovery does not become enumeration (§35.1, §27.4) =="
-  prove 44.8k "find does not silently return an empty, complete-looking answer for a denied scope (§35.1, §27.4)" \
-    'out=$(ono -c "find --near /root secret" 2>&1); status=$?;
+  prove 44.8k "find place does not silently return an empty, complete-looking answer for a denied scope (§35.1, §27.4)" \
+    'out=$(ono -c "find place --near /root secret" 2>&1); status=$?;
      if test "$status" -eq 0; then
        printf "%s\n" "$out" | tr "A-Z" "a-z" | grep -qE "permission_denied|partial|unknown|denied"
      else

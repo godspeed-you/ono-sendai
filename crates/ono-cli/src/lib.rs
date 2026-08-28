@@ -30,6 +30,7 @@ pub mod session;
 pub mod session_provider;
 pub mod settings;
 pub mod sink;
+pub mod spatial;
 pub mod view;
 
 /// The usage text, shown by `--help` and by the `help` builtin.

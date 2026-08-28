@@ -1,19 +1,19 @@
 //! Outcome tests for the spatial command language of the v0.4 Spatial Systems Interface as a
 //! script sees it: `look`, `near`, `enter`, `follow`, `jump`, `back`, `up`, `home`, `trail`,
-//! `find` and the bounded answer of `map --json`.
+//! `find place` and the bounded answer of `map --json`.
 //!
 //! Narrative: `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — §5 (the spatial
 //! horizon), §6 (the spatial command language: §6.1 `look`, §6.2 `near`, §6.3 `enter`, §6.4
-//! `follow`, §6.5 `jump`, §6.6 `back`/`up`/`home`, §6.7 `trail`, §6.8 `find`, §6.9 `map`), §7
-//! (the canonical domains and their required children), §20 (the navigation trail), §27
+//! `follow`, §6.5 `jump`, §6.6 `back`/`up`/`home`, §6.7 `trail`, §6.8 `find place`, §6.9 `map`),
+//! §7 (the canonical domains and their required children), §20 (the navigation trail), §27
 //! (selector resolution and ambiguity), §28 (typed pipelines become places), §29 (non-interactive
 //! semantics — the surface every test here uses), §40 (the structured spatial errors), §44.6
 //! (`back` versus `up`), §46.1 (session defaults) and §53 (the resolved decisions this file may
 //! not reopen). The v0.2 base contributes the pipeline these streams compose with (v0.2 §33.5)
 //! and the native-before-external resolution order (v0.2 §6.5).
 //!
-//! Nothing here is delivered yet. Every test carries `#[ignore]` with the section that governs
-//! it, so the tree stays green until the increment that implements the section removes it.
+//! A test still carries `#[ignore]` with the section that governs it until the increment that
+//! implements that section removes the line; the tree stays green in the meantime.
 //!
 //! Everything runs offline and unprivileged, on fixtures the test itself creates: `sleep`
 //! children it spawns and kills, a TCP listener it binds on `127.0.0.1:0`, and scratch
@@ -31,7 +31,9 @@
 //!   §20.1 spells out field by field;
 //! - `object_type` is the v0.2 schema id of the object at the place (`ono.process/1`), which is
 //!   what §37.1 identity merge requires of the spatial projection of an adapter/provider object;
-//! - the predicate of `find --where` is an ordinary v0.2 predicate expression (§28 demands
+//! - the spatial search is spelled `find place` and its type filter is `--type` (ADR-0124):
+//!   bare `find` stays findutils, which v0.3 §1.71 and acceptance case 087 both require;
+//! - the predicate of `find place --where` is an ordinary v0.2 predicate expression (§28 demands
 //!   pipeline interop), so its string literals are quoted; the spec's unquoted
 //!   `find --where state == running` in §6.8/§43.3 is prose;
 //! - `up` from a socket lands somewhere under `NETWORK` (§6.6 says "normally `NETWORK/SOCKETS`",
@@ -113,7 +115,7 @@ fn rows(run: &ono_testkit::Run) -> Vec<Value> {
         .as_sequence()
         .unwrap_or_else(|| {
             panic!(
-                "§29.4: `near`, `find` and `trail --json` are streams, and a stream serializes \
+                "§29.4: `near`, `find place` and `trail --json` are streams, and a stream serializes \
                  as a JSON array (v0.2 §33.5), got {:?}; stderr: {:?}",
                 run.stdout(),
                 run.stderr()
@@ -683,15 +685,14 @@ fn should_record_every_movement_with_its_kind_and_relation_when_the_trail_is_rea
 // --- find ------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.8, §27.4, §29.4); un-ignored by the increment that delivers it"]
 fn should_stream_places_with_scope_and_provenance_when_find_searches_with_a_predicate() {
-    // §29.4: `find` is a normal structured stream. §6.8: results MUST carry enough path/scope
-    // information to disambiguate identical names, and MUST come from the spatial index and the
+    // §29.4: `find place` is a normal structured stream. §6.8: results MUST carry enough
+    // path/scope information to disambiguate identical names, and MUST come from the index and the
     // provider registries rather than from grepping rendered text. §27.4: a result that may come
     // from a cache carries its freshness/provenance. The predicate is spelled as an ordinary
     // v0.2 expression — the reading recorded at the top of this file.
     let _child = SleepChild::spawn();
-    let run = ono("find --where state == \"running\" | take 5 | to json");
+    let run = ono("find place --where state == \"running\" | take 5 | to json");
     run.assert_success();
     let rows = rows(&run);
     assert!(
@@ -719,13 +720,29 @@ fn should_stream_places_with_scope_and_provenance_when_find_searches_with_a_pred
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.8, §29.4); un-ignored by the increment that delivers it"]
 fn should_compose_with_the_v02_pipeline_when_a_find_result_is_filtered_and_counted() {
-    // §29.4 with §28: `find` participates in object pipelines rather than forming a parallel
-    // silo. Two `sleep` children the test owns give a lower bound nothing on the host can lower.
+    // §29.4 with §28: `find place` participates in object pipelines rather than forming a
+    // parallel silo. Two `sleep` children the test owns give a lower bound nothing can lower.
+    //
+    // Both halves read *one* search. The machine's own `sleep` processes come and go — this
+    // suite's other tests spawn some of them — so two separate searches would be comparing two
+    // moments of the machine rather than two ends of one stream, which AGENTS.md §11 forbids a
+    // test from depending on. The search is bound once and read twice, and the count is
+    // redirected so that the one document on stdout is still the stream.
     let one = SleepChild::spawn();
     let two = SleepChild::spawn();
-    let run = ono("find sleep | to json");
+    let dir = scratch();
+    let tally = dir.path().join("count.json");
+    let run = isolated(&dir)
+        .args([
+            "-c",
+            &format!(
+                "let found = find place sleep; $found | count | to json > {tally}; \
+                 $found | to json",
+                tally = tally.display()
+            ),
+        ])
+        .run();
     run.assert_success();
     let found = rows(&run);
     let processes = found
@@ -734,24 +751,18 @@ fn should_compose_with_the_v02_pipeline_when_a_find_result_is_filtered_and_count
         .count();
     assert!(
         processes >= 2,
-        "§6.8/§29.4: `find` answers spatial objects the pipeline reads, and the two `sleep` \
-         children ({}, {}) are among them — File records from the v0.3 `find` adapter mean the \
-         spatial verb is missing, got {found:?}",
+        "§6.8/§29.4: `find place` answers spatial objects the pipeline reads, and the two \
+         `sleep` children ({}, {}) are among them — File records from the v0.3 findutils adapter \
+         mean the spatial command is missing, got {found:?}",
         one.pid(),
         two.pid()
     );
 
-    let counted = ono("find sleep | count | to json");
-    counted.assert_success();
-    let count = rows(&counted)
-        .first()
-        .and_then(Value::as_u64)
-        .unwrap_or_else(|| {
-            panic!(
-                "§29.4: `find | count` answers a number, got {:?}",
-                counted.stdout()
-            )
-        });
+    let written = std::fs::read_to_string(&tally).expect("`count` wrote its answer");
+    let count = serde_yaml_ng::from_str::<Value>(written.trim())
+        .ok()
+        .and_then(|document| document.as_sequence()?.first()?.as_u64())
+        .unwrap_or_else(|| panic!("§29.4: `find place | count` answers a number, got {written:?}"));
     assert_eq!(
         usize::try_from(count).unwrap_or(usize::MAX),
         found.len(),
@@ -794,7 +805,7 @@ fn should_resolve_the_ambiguity_when_the_script_explicitly_selects_the_first_mat
     // uses to turn a result into a place: `… | take 1 | enter`.
     let one = SleepChild::spawn();
     let two = SleepChild::spawn();
-    let place = place_after("find sleep | take 1 | enter");
+    let place = place_after("find place sleep | take 1 | enter");
     let pid = place["canonical_ref"]["pid"]
         .as_u64()
         .unwrap_or_else(|| panic!("§28.2: the entered place keeps its canonical ref, {place:?}"));
@@ -975,26 +986,47 @@ fn should_start_at_the_system_root_with_an_empty_trail_when_a_new_session_begins
 // --- name collisions with Unix programs ----------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.8, §2 invariant 15); un-ignored by the increment that delivers it"]
 fn should_run_the_native_spatial_find_and_keep_the_external_find_reachable_when_both_exist() {
-    // v0.2 §6.5 orders resolution native-command-before-`PATH`-executable, and §6 makes `find` a
-    // normative v0.4 spatial verb — so the spatial spelling MUST reach the spatial command even
-    // on a host where `/usr/bin/find` exists. Invariant 15 keeps the other side true: Unix
-    // remains underneath, so the forced `exec:` namespace of v0.2 §6.5 still runs the program.
-    let run = ono("find --where state == \"running\" | count | to json");
+    // ADR-0124 §Decision 1: the spatial search keeps its target word, so `find place …` is the
+    // spatial command and the bare word `find` still reaches findutils. v0.2 §6.5 resolves
+    // native-command-before-`PATH`-executable by verb *and target*, exactly as it already does
+    // for `find file`, and `explain` shows which step matched. Invariant 15 keeps the other side
+    // true: Unix remains underneath, so the forced `exec:` namespace still runs the program.
+    let run = ono("find place --where state == \"running\" | count | to json");
     run.assert_success();
     let rows = rows(&run);
     assert!(
         rows.first().and_then(Value::as_u64).is_some(),
-        "§6.8 with v0.2 §6.5: the spatial `find` answers a stream the pipeline counts — an \
-         external `find` complaining about `--where` means the native command is missing, got \
-         {:?}; stderr: {:?}",
+        "§6.8 with v0.2 §6.5: `find place` answers a stream the pipeline counts — an external \
+         `find` complaining about `--where` means the native command is missing, got {:?}; \
+         stderr: {:?}",
         run.stdout(),
         run.stderr()
     );
 
+    let explained = ono("explain find place nginx");
+    explained.assert_success();
+    assert!(
+        explained.stdout().contains("ono.place.find"),
+        "ADR-0124: which §6.5 step matched is inspectable rather than folklore, got {:?}",
+        explained.stdout()
+    );
+
     if on_path("find") {
         let dir = scratch();
+        let bare = ono(&format!(
+            "find {root} -maxdepth 0",
+            root = dir.path().display()
+        ));
+        bare.assert_success();
+        assert_eq!(
+            bare.stdout().trim(),
+            dir.path().display().to_string(),
+            "ADR-0124 §Decision 1 with v0.3 §1.71: the bare word `find` is still findutils, so \
+             every script and every finger that already knows it keeps working, got {:?}",
+            bare.stdout()
+        );
+
         let external = ono(&format!(
             "exec:find {root} -maxdepth 0",
             root = dir.path().display()
@@ -1003,8 +1035,8 @@ fn should_run_the_native_spatial_find_and_keep_the_external_find_reachable_when_
         assert_eq!(
             external.stdout().trim(),
             dir.path().display().to_string(),
-            "v0.2 §6.5 with invariant 15: `exec:` still reaches the external program the \
-             spatial verb shadows, got {:?}",
+            "v0.2 §6.5 with invariant 15: `exec:` reaches the external program explicitly \
+             whatever the registry holds, got {:?}",
             external.stdout()
         );
     }
