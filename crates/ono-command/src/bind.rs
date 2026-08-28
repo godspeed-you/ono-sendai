@@ -253,6 +253,12 @@ impl CommandContract {
                 if let Some(spec) = pending.take() {
                     return Err(self.missing_option_value(spec));
                 }
+                // A flag waits only for a word that could be `true` or `false` (ADR-0009). The
+                // next option is not one, so the flag it was waiting on is already decided:
+                // `get dir --all --recursive` sets both.
+                if let Some(spec) = pending_flag.take() {
+                    push(&mut options, spec.name(), Binding::Value(Value::Bool(true)));
+                }
                 let spec = self
                     .option(&written.name)
                     .ok_or_else(|| self.unknown_option(&written.name))?;
