@@ -46,6 +46,16 @@ run: |
   OBSERVE='systemctl list-units | count | to text; systemctl show | count | to text'
   PATH_TO_SOCKET="$OBSERVE; home; enter compute; enter services; find place --where state == \"active\" | take 1 | enter; follow process $FIXTURE_WEB_MAIN; follow socket"
 
+  # A pid in this container is one or two digits and matches a timestamp, an inode or a byte
+  # count somewhere in any JSON document, so "this place is not that one" is asked of the two
+  # identities (§3.1) rather than of the digits.
+  place_id() {
+    place "$1" "look --json | from json | select place.spatial_id | to text" | tail -1
+  }
+  PROCESS_ID=$(place_id "$OBSERVE; enter process $FIXTURE_WEB_MAIN")
+  SOCKET_ID=$(place_id "$PATH_TO_SOCKET")
+  echo "identities: process=$PROCESS_ID socket=$SOCKET_ID"
+
   echo "== the path of §44.6 is walked to its end =="
   prove 44.6a "the walk ends on the listening socket of the service (§44.6)" \
     'place "$PATH_TO_SOCKET" "look --json" | grep -qF "$FIXTURE_WEB_PORT"'
@@ -55,7 +65,8 @@ run: |
     'place "$PATH_TO_SOCKET; back" "look --json" > /tmp/back.json;
      grep -qF "$FIXTURE_WEB_MAIN" /tmp/back.json'
   prove 44.6c "and back has really left the socket behind (§6.6)" \
-    'grep -qF "$FIXTURE_WEB_MAIN" /tmp/back.json && ! grep -qF "$FIXTURE_WEB_PORT" /tmp/back.json'
+    'here=$(place_id "$PATH_TO_SOCKET; back");
+     test -n "$here" && test "$here" = "$PROCESS_ID" && test "$here" != "$SOCKET_ID"'
   prove 44.6d "a second back returns to the service, in reverse order of travel (§20.1)" \
     'place "$PATH_TO_SOCKET; back; back" "look --json" | grep -qF "fixture-web.service"'
   prove 44.6e "back after up returns to the socket: up is itself a step in the history (§20.1)" \
@@ -66,7 +77,9 @@ run: |
     'place "$PATH_TO_SOCKET; up" "look --json" | tr "A-Z" "a-z" > /tmp/up.json;
      grep -qE "network|socket|listener" /tmp/up.json'
   prove 44.6g "up does not return to the process the socket was followed from (§44.6, §43.2)" \
-    'grep -qE "network|socket|listener" /tmp/up.json && ! grep -qF "$FIXTURE_WEB_MAIN" /tmp/up.json'
+    'above=$(place_id "$PATH_TO_SOCKET; up");
+     test -n "$above" && test "$above" != "$PROCESS_ID" && test "$above" != "$SOCKET_ID" &&
+     grep -qE "network|socket|listener" /tmp/up.json'
   # Two projections of one unchanged place differ in `generated_at` and in nothing else, so the
   # thing to compare is the place: §11.3's determinism is about which parent `up` reaches, and a
   # place is its `spatial_id` (§3.1).

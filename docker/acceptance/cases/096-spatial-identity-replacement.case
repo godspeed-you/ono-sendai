@@ -125,8 +125,11 @@ run: |
      test -n "$old" && test -n "$new" && test -s /tmp/service-procs.txt &&
      grep -qF "$new" /tmp/service-procs.txt && ! grep -qF "$old" /tmp/service-procs.txt'
   prove 44.7j "following the service reaches the new process, never the old identity (§44.7)" \
-    'place "$SERVICE; follow process $NEW_MAIN" "look --json" > /tmp/newproc.json;
-     grep -qF "$NEW_MAIN" /tmp/newproc.json && ! grep -qF "\"$OLD_MAIN\"" /tmp/newproc.json'
+    'old=$(tr "," "\n" < /tmp/after-restart.json | sed -n "s/.*\"spatial_id\":\"\([^\"]*\)\".*/\1/p" | head -1);
+     new=$(place "enter process $NEW_MAIN" "look --json | from json | select place.spatial_id | to text" | tail -1);
+     here=$(place "$SERVICE; follow process $NEW_MAIN" "look --json | from json | select place.spatial_id | to text" | tail -1);
+     test -n "$old" && test -n "$new" && test -n "$here" &&
+     test "$here" = "$new" && test "$here" != "$old"'
 
   echo "== a tombstone is a record, not a usable destination (§10.3, §20.3, §40) =="
   prove 44.7k "the dead process place still resolves, and says it is dead (§10.3, §20.3)" \
