@@ -71,7 +71,7 @@ impl CommandImpl for Look {
 
             let mut session = spatial_session().await;
             let changes = window_of(arguments.option("changes"), session.preferences());
-            load_pins(&mut session, self.pins.as_ref(), now).await?;
+            with_pins(&mut session, self.pins.as_ref(), now).await?;
             // §6.1: `look` describes the place and its immediate horizon. `--all` widens the
             // exits — every group lists the places behind it — rather than dumping the object's
             // properties, which §24.1 reserves for `inspect`.
@@ -349,7 +349,7 @@ impl CommandImpl for Near {
             if let Some(window) = window_of(arguments.option("changed"), session.preferences()) {
                 request = request.changed_within(span_of(window));
             }
-            load_pins(&mut session, self.pins.as_ref(), now).await?;
+            with_pins(&mut session, self.pins.as_ref(), now).await?;
             let (neighborhood, _) =
                 view::neighborhood_here(ctx, &mut session, &request, now).await?;
 
@@ -425,7 +425,7 @@ impl CommandImpl for Enter {
             let piped = ctx.take_input();
 
             let mut session = spatial_session().await;
-            load_pins(&mut session, self.pins.as_ref(), now).await?;
+            with_pins(&mut session, self.pins.as_ref(), now).await?;
             let here = session.current_place().clone();
 
             // §28.2: "A structured pipeline result containing spatially identifiable objects MUST
@@ -683,7 +683,7 @@ impl CommandImpl for Follow {
             let now = Timestamp::now();
 
             let mut session = spatial_session().await;
-            load_pins(&mut session, self.pins.as_ref(), now).await?;
+            with_pins(&mut session, self.pins.as_ref(), now).await?;
             let here = session.current_place().clone();
 
             // §11.1: hierarchy is not the graph. A canonical space is reached with `enter`, and
