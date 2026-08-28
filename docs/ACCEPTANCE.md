@@ -822,42 +822,46 @@ One box per scenario. Each is ticked when its file has been **renamed from `*.ca
 `scripts/acceptance.sh` — the rename is the delivery, because a `.case.v04` file is invisible to
 the referee.
 
-- [ ] **§44.1 cold-start discovery** — `docker/acceptance/cases/090-spatial-cold-start-discovery.case`
+- [x] **§44.1 cold-start discovery** — `docker/acceptance/cases/090-spatial-cold-start-discovery.case`
       (18 assertions, `44.1a`–`44.1r`): the canonical domains and a meaningful object reached
       from `look`, `map`, `near`, completion and `find place` alone, the text map inside the
       §22 contract and the ~30-node budget, the startup horizon at a terminal, and the two §34
       budget assertions `44.1q`/`44.1r`.
-- [ ] **§44.2 unknown web service** — `091-spatial-unknown-web-service.case` (17 assertions):
+- [x] **§44.2 unknown web service** — `091-spatial-unknown-web-service.case` (17 assertions):
       the fixture web service selected by visible metadata without its name, entered, its
       process and its listening socket followed, the trail naming the relation, an unavailable
       provider reported honestly, and the §37.1 adapter identity merge.
-- [ ] **§44.3 storage discovery** — `092-spatial-storage-discovery.case` (15 assertions): the
+- [x] **§44.3 storage discovery** — `092-spatial-storage-discovery.case` (15 assertions): the
       storage domain walked without mount names, the secondary mount entered, its source and
       boundary shown, the mounted directory traversed, `cd` versus `enter` per §30, and a large
       directory summarised with its hidden count.
-- [ ] **§44.4 process → file → process** — `093-spatial-process-file-process.case` (14
-      assertions): the open-file relation traversed in both directions, `inspect relation`
-      explaining it with provider and confidence, and empty distinguished from denied.
-- [ ] **§44.5 network path** — `094-spatial-network-path.case` (15 assertions): service →
+- [x] **§44.4 process → file → process** — `093-spatial-process-file-process.case` (14
+      assertions): the open-file relation traversed in both directions, the edge record
+      explaining it with provider, confidence and the descriptor it was read through
+      (ADR-0164 makes the edge the "equivalent structured selection" of §11.4's
+      `inspect relation`), and empty distinguished from denied.
+- [x] **§44.5 network path** — `094-spatial-network-path.case` (15 assertions): service →
       process → socket → connection navigated by relationship discovery, plus the §19 half —
       the link map, `jump` across it, no auto-expansion of a remote graph, and no local/remote
       identity merge.
-- [ ] **§44.6 back versus up** — `095-spatial-back-versus-up.case` (15 assertions): after the
+- [x] **§44.6 back versus up** — `095-spatial-back-versus-up.case` (15 assertions): after the
       §44.6 walk, `back` returns to the process and `up` to the socket's canonical network
       parent, with `trail --compact`, `history_empty` and `no_parent` asserted.
-- [ ] **§44.7 identity replacement** — `096-spatial-identity-replacement.case` (13 assertions):
-      the entered service process is restarted, the old place becomes a tombstone, the service
-      place stays stable and shows the replacement, the trail record survives, and a movement
-      onto the tombstone is refused.
-- [ ] **§44.8 permission honesty** — `097-spatial-permission-honesty.case` (12 assertions): a
+- [x] **§44.7 identity replacement** — `096-spatial-identity-replacement.case` (13 assertions):
+      the entered service process is restarted, the old place becomes a tombstone that says what
+      state it is in and how long ago, the service place stays stable and shows the replacement
+      process, the trail record survives, and a movement onto the tombstone is refused. The
+      tombstone's own `replacement:` candidate of §10.3's example is not computed and answers
+      `null`; `docs/STATE.md` → *Next up* carries it with its exit test.
+- [x] **§44.8 permission honesty** — `097-spatial-permission-honesty.case` (12 assertions): a
       non-root user investigating a restricted process sees `permission_denied` and `unknown` as
       distinct from empty, no escalation is attempted, and a map of a denied place shows the
       boundary.
-- [ ] **§44.9 live map** — `098-spatial-live-map.case` (10 assertions): with `map --live`
+- [x] **§44.9 live map** — `098-spatial-live-map.case` (10 assertions): with `map --live`
       watching, an opened connection makes a real edge appear and a closed one makes it
       disappear or tombstone, nothing is emitted while nothing changes, freshness is shown, and
       Ctrl-C ends the view without killing the shell.
-- [ ] **§44.10 raw shell continuity** — `099-spatial-raw-shell-continuity.case` (10
+- [x] **§44.10 raw shell continuity** — `099-spatial-raw-shell-continuity.case` (10
       assertions): after extensive navigation and full-screen map use, interactive process
       control, terminal state, terminal size and mode, jobs and cwd are all still correct, and
       the shell exits cleanly.

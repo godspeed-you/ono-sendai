@@ -170,7 +170,7 @@ is split, because 102 of the 175 tests first become attemptable when the command
 | S8 | 12 | — |
 | S9 | 2 | — |
 | S10 | 3 | — |
-| S11 | 0 | the ten `.case.v04` scenarios renamed and green, the §34 budgets as gates, **`docs/ACCEPTANCE.md` §4.7 written from v0.4 §52** — without it `release-check.sh` cannot see this tranche |
+| S11 | 0 | the ten `.case.v04` scenarios renamed and green, the §34 budgets as gates, **`docs/ACCEPTANCE.md` §4.7 written from v0.4 §52** — without it `release-check.sh` cannot see this tranche — **the ten scenarios done**, 87/87 cases green |
 
 | Phase | Delivers (§50) | Suites it turns green |
 |---|---|---|
@@ -1210,13 +1210,11 @@ should be the increments that decide it.
 
 **Found, not fixed, and deliberately outside this increment:**
 
-- **`… | select <field> | to text` refuses with `Ono-Sendai-E0201` "a record does not fit on one
-  line"**, although `select` left exactly one field. `… | to text --field <name>` is the spelling
-  that works. This is why `docker/acceptance/cases/092-spatial-storage-discovery.case.v04`
-  cannot find its mount: its fixture writes `find place … | select name | to text` and gets an
-  empty file, so `44.3c`–`44.3j` fail on a fixture, not on the feature. **S11 owns 092's
-  rename**; either the case is written with `--field` or `to text` learns to render a one-field
-  record. Exit test: `get mount | select target | to text` prints one path per line.
+- ~~`… | select <field> | to text` refuses with `Ono-Sendai-E0201`~~ — **fixed by S11a**
+  (`fix(data)`): a record `select` has narrowed to one field is that field's line, and
+  `get mount | select target | to text` prints one path per line. `--field` still projects a
+  dotted path or one field out of a full record, and a record of several fields is refused
+  exactly as before.
 - `spatial_map_missing::should_only_remove_{edges,nodes}_…` failed about one gate run in three
   here, as S6 already recorded; they are green with `--test-threads=1`. **A gate run on this
   machine now needs `RUST_TEST_THREADS=1` to be reliable**, and that is a fixture problem in
@@ -1240,8 +1238,71 @@ should be the increments that decide it.
   every `look` and honestly says `polled`. Caching relationship edges is a later increment with
   its own test; §34.1's background discovery needs the update channel S7 builds.
 
+**S11 — release hardening: the ten §44 acceptance scenarios — is complete (2026-08-28, agent
+`S11a`).** The ten `docker/acceptance/cases/09x-spatial-*.case.v04` files are renamed to `.case`
+and the referee runs all 87 cases green, twice in a row. Ten commits, gate green:
+
+| Commit | What it fixes | Proof |
+|---|---|---|
+| `fix(data)` | `… \| select f \| to text` refused a record `select` had narrowed to one field | `to_text` renders a one-field record; exit test `get mount \| select target \| to text` |
+| `fix(spatial)` collections | a collection said `unsupported` while the index held its members (ADR-0197) | `spatial_contracts_missing::should_show_a_place_only_an_adapter_observed…` |
+| `fix(spatial)` permission | a denied path was reported as missing, and an unreadable directory became the cwd (ADR-0198) | `spatial_identity_missing::should_refuse_a_path_this_user_may_not_read…` +2 |
+| `fix(spatial)` paths | `enter /srv/app/..` made a cycle in the path tree and the next `look` overflowed the stack (ADR-0199) | `spatial_storage_missing::should_stand_in_the_directory_a_path_names…`, `ono-spatial-query::resolution::should_answer_a_place_path_rather_than_looping…` |
+| `fix(spatial)` evidence | an edge said who observed it and never what they saw (ADR-0200) | `spatial_relationships_missing::should_carry_the_raw_evidence_of_an_edge…` |
+| `fix(spatial)` find | `find place --where` read the providers and not the index (ADR-0201) | `spatial_contracts_missing::should_find_a_place_by_its_properties…` |
+| `fix(spatial)` find record | a search result left `state` and the §24.1 summary null where `look` filled them | `::should_describe_a_search_result_and_a_place_view_with_the_same_record` |
+| `fix(spatial)` relations | a relation §32.1 declined for cost was reported as one nobody serves | `spatial_relationships_missing::should_say_a_costly_relation_is_unknown…` |
+| `fix(shell)` cwd | `cd` did not move the process, so `find file .` walked the launch directory | `builtins::should_change_the_directory_a_native_command_sees_when_cd_has_run` |
+| `fix(spatial)` denial | a map of a denied place called itself `complete`; `find --near <path>` never reached the filesystem | `spatial_identity_missing::should_not_call_a_map_complete…`, `::should_refuse_a_search_anchored_on_a_path…` |
+| `feat(spatial)` listeners | §13's `listeners` group was missing from a service place | `spatial_relationships_missing::should_offer_the_listeners_of_a_service…` |
+
+ADRs: 0197 (a collection shows the places it holds), 0198 (denied is not missing), 0199 (one
+directory however the path spells it), 0200 (an edge carries what the provider saw), 0201 (`find`
+searches the index too).
+
+**Found by S11a, not fixed, and recorded rather than faked:**
+
+- **A tombstone's `replacement:` candidate (§10.3's example, §40's "actionable next steps") is
+  never computed and answers `null`.** The field is on `ono.spatial-place/1`'s `tombstone` record
+  and `Tombstone::replaced_by` exists; nothing calls it. It cannot be answered at the moment the
+  old place ends: the source of the relation that reached it — the unit that controlled the
+  process — has not been observed again, so the index holds no candidate to name. Two honest
+  routes: re-observe that one source when a tombstone is rendered (a targeted query, not an
+  enumeration), or fill the tombstone lazily when a later observation records an edge from the
+  same source by the same relation to a live object of the same kind. Offer a candidate only when
+  that source reaches **exactly one** such object — a choice among several is a guess, not a
+  candidate (§2.17, §53). Exit test: after the §44.7 restart, `look --json` at the tombstone
+  carries `tombstone.replacement` equal to the new process's `spatial_id` and
+  `replacement_via` naming `service.controls_process`; `docker/acceptance/cases/096-…` `44.7e`
+  then asserts it instead of what it asserts now.
+- **`enter process <pid>` answers `spatial.not_found` for a process started with `setsid`.**
+  Reproducible: `setsid sleep 60 & ono -c "enter process $!"`. The same pid entered without
+  `setsid` resolves. A session leader in its own session is an ordinary process and §12 makes it
+  a place; the selector or the provider query is filtering on something it should not. Exit test:
+  a `setsid`-started process is enterable by pid.
+- **Two gate runs in a row went red on tests whose premise the machine broke, and green on the
+  next.** `spatial_topology_missing::should_complete_the_relations_available_from_the_current_place_when_tab_follows_follow`
+  waits 8 s for the completion after a walk it recognises by its own *echo*, so a busy host makes
+  it wait for a walk that has not run yet — S6's note about it is exact and still true.
+  `::should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_mounts` compares
+  the mount table two `ono` processes saw, and the acceptance containers running beside it were
+  mounting and unmounting overlayfs between the two. Both are green on an idle machine and both
+  are premises about the host rather than claims about the shell. Neither is worth weakening; the
+  first would be sound if it waited for the *place* rather than for the echo.
+- **`ono.socket/1` gives a listener and its accepted connection the same `follow socket` word.**
+  §12's "`follow socket :443` MUST traverse to the matching socket" is served, and bare
+  `follow socket` on a process holding both is `spatial.ambiguous_selector` — correct, and worth
+  knowing before writing a case that assumed one socket.
+
 ## Next up (ordered)
 
+- [ ] **A tombstone never names its replacement candidate (§10.3, §40).** `tombstone.replacement`
+  and `tombstone.replacement_via` are on the place record and always `null`, and
+  `Tombstone::replaced_by` is called from nowhere. The detail, the two routes and the exit test
+  are under *Found by S11a* above; `docs/ACCEPTANCE.md` §4.7.3's §44.7 box names the gap, and
+  case `096`'s `44.7e` is the assertion that changes when it is delivered.
+- [ ] **`enter process <pid>` cannot reach a process started with `setsid`.** Detail and exit
+  test under *Found by S11a* above.
 - [ ] **A bounded map is not a superset of a bounded filtered map, and §43.2 says it must be.**
   Found by S8 on 2026-08-28 while running the gate; **it is not an S8 regression** — it
   reproduces identically on `ffbb221`, S5's own head, on the same machine. The two tests
