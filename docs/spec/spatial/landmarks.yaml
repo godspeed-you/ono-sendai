@@ -1,0 +1,181 @@
+# The landmark vocabulary and its thresholds (spec v0.4 §3.7, §26).
+#
+# A landmark is an object or condition promoted because it helps orientation or deserves
+# attention, and it MUST always expose its reason (§3.7). §3.7 fixes the fourteen built-in
+# reasons; §26.2 gives the rules behind them and §26.3 requires their thresholds to be
+# inspectable and configurable — which is what this file and the `spatial.landmarks.*` settings
+# it names are for.
+#
+# Landmarks are not an alerting subsystem. Ono must not pretend a local heuristic is an incident
+# (§26.3), so the defaults are deliberately conservative.
+#
+# `reason`     the name a Landmark carries; the whole set is closed for built-ins, and a
+#              KUANG/11 package contributes further reasons under capability control, always
+#              identifying its source (§26.5).
+# `domain`     compute | network | storage | security | user — §26.2's grouping.
+# `evidence`   what the rule reads. A landmark whose evidence is unavailable is not a landmark;
+#              it is an unknown, and unknown is visible rather than absent (§2.17).
+# `threshold`  the metric, the comparison and the default, with the setting that changes it
+#              (§26.3), or null where the reason is a state rather than a measurement.
+# `severity`   notice | attention — how much of the information budget it may claim (§24.1).
+
+version: 1
+
+landmarks:
+  # --- compute (§26.2) -------------------------------------------------------------------------
+  - reason: high_cpu
+    domain: compute
+    evidence: The object's CPU share, as the provider reports it.
+    threshold:
+      metric: cpu_percent
+      comparison: at_or_above
+      default: 80
+      unit: percent
+      setting: spatial.landmarks.high_cpu
+    severity: notice
+    doc: §26.2 "high CPU relative to configurable threshold".
+
+  - reason: high_memory
+    domain: compute
+    evidence: The object's resident memory as a share of the host or cgroup budget.
+    threshold:
+      metric: memory_share
+      comparison: at_or_above
+      default: 25
+      unit: percent
+      setting: spatial.landmarks.high_memory
+    severity: notice
+    doc: §26.2 "high memory relative to host/cgroup budget".
+
+  - reason: failed
+    domain: compute
+    evidence: The service manager's own state for the unit.
+    threshold: null
+    severity: attention
+    doc: §26.2 "failed service". A state, not a measurement — no threshold applies.
+
+  - reason: restarting
+    domain: compute
+    evidence: The unit's restart count within the change window.
+    threshold:
+      metric: restarts_in_window
+      comparison: at_or_above
+      default: 3
+      unit: count
+      setting: spatial.landmarks.restart_loop
+    severity: attention
+    doc: §26.2 "restart loop". Below the threshold a restart is `recently_changed`, not a loop.
+
+  - reason: recently_changed
+    domain: compute
+    evidence: The object's last observed state change.
+    threshold:
+      metric: age
+      comparison: at_or_below
+      default: 5m
+      unit: duration
+      setting: spatial.look.change_window
+    severity: notice
+    doc: >-
+      §24.3's change section and §26.2's "unexpected exit/recent start". The window is the same
+      one `look` uses, so what the change section shows and what is a landmark cannot disagree.
+
+  - reason: privileged
+    domain: security
+    evidence: The object's effective user or capability set.
+    threshold: null
+    severity: notice
+    doc: §26.2 "privileged process when context makes it relevant"; §26.2 "root context".
+
+  # --- network (§26.2) -------------------------------------------------------------------------
+  - reason: public_listener
+    domain: network
+    evidence: >-
+      The listening socket's local address: a listener bound beyond the loopback interface is
+      reachable from outside the host.
+    threshold: null
+    severity: attention
+    doc: §26.2 "public listener" — the reason §12's own example promotes `socket :443` for.
+
+  - reason: connection_spike
+    domain: network
+    evidence: New connections observed on the object within the change window.
+    threshold:
+      metric: new_connections_in_window
+      comparison: at_or_above
+      default: 100
+      unit: count
+      setting: spatial.landmarks.connection_spike
+    severity: notice
+    doc: §26.2 "connection spike".
+
+  # --- storage (§26.2) -------------------------------------------------------------------------
+  - reason: storage_pressure
+    domain: storage
+    evidence: The filesystem's used share, from the provider's own statistics.
+    threshold:
+      metric: used_share
+      comparison: at_or_above
+      default: 90
+      unit: percent
+      setting: spatial.landmarks.storage_pressure
+    severity: attention
+    doc: >-
+      §26.2 "filesystem pressure". §26.2 also names read-only transitions, mount failures and
+      new or remounted filesystems; those are changes of state and surface as
+      `recently_changed`, `new_object` or `removed_object` rather than as separate reasons —
+      §3.7's list of reasons is what a Landmark may carry.
+
+  # --- change (§3.7, §25.4) --------------------------------------------------------------------
+  - reason: new_object
+    domain: compute
+    evidence: A snapshot comparison or a provider event that added the object.
+    threshold:
+      metric: age
+      comparison: at_or_below
+      default: 5m
+      unit: duration
+      setting: spatial.look.change_window
+    severity: notice
+    doc: §3.7; §25.4 makes the comparison a real diff, not a redraw.
+
+  - reason: removed_object
+    domain: compute
+    evidence: A snapshot comparison or a provider event that removed the object.
+    threshold:
+      metric: age
+      comparison: at_or_below
+      default: 5m
+      unit: duration
+      setting: spatial.look.change_window
+    severity: notice
+    doc: >-
+      §3.7. A removed object is shown as a tombstone: visually distinct, and refusing every
+      action that needs a live object (§10.3).
+
+  # --- boundaries (§26.2 security/scope) -------------------------------------------------------
+  - reason: security_boundary
+    domain: security
+    evidence: A scope boundary between the current place and the object — container, namespace or mount.
+    threshold: null
+    severity: notice
+    doc: >-
+      §26.2 "namespace boundary", "permission-limited visibility"; §2.18 requires the crossing
+      to be apparent rather than silently traversed.
+
+  - reason: remote_boundary
+    domain: security
+    evidence: The object belongs to another host's scope, reached through a link.
+    threshold: null
+    severity: notice
+    doc: §26.2 "cross-host boundary"; §19, §35.4.
+
+  # --- the user's own (§26.4) ------------------------------------------------------------------
+  - reason: user_pinned
+    domain: user
+    evidence: A pin the user placed, stored as a resilient selector and identity metadata (§20.4).
+    threshold: null
+    severity: attention
+    doc: >-
+      §26.4: a pinned object is always a landmark in the maps it belongs to unless the user
+      filters it out explicitly. It is the one reason no heuristic can produce or suppress.

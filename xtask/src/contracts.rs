@@ -80,6 +80,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     );
     problems.extend(check_error_registry(root));
     problems.extend(check_adapter_packs(root));
+    problems.extend(check_spatial_registry(root, &schemas));
 
     problems.sort_by(|a, b| (&a.location, &a.detail).cmp(&(&b.location, &b.detail)));
     problems
@@ -686,6 +687,412 @@ pub fn check_examples(root: &Path) -> Vec<Problem> {
                     location: location.clone(),
                     detail: format!("`{id}` documents an example that does not parse — `{example}` — {complaint}"),
                 });
+            }
+        }
+    }
+    problems
+}
+
+/// Checks the spatial registry of spec v0.4 §41 — `docs/spec/spatial/`.
+///
+/// §41.3 makes these four documents the source of `help spatial`, completion, map legends, SDK
+/// enums and conformance tests, and §41's Intent says why: without machine contracts, the
+/// renderer, the providers, the parser and the documentation drift into different definitions of
+/// the world. This is the check that they agree with each other — every space's parent resolves,
+/// every type comes from the one vocabulary, every schema exists, every landmark threshold names
+/// a setting the subsystem declares. ADR-0126 puts the files here; ADR-0128 fixes their shape.
+///
+/// A missing directory is not a failure: registries arrive with the phase that needs them
+/// (AGENTS.md §14).
+#[must_use]
+pub fn check_spatial_registry(root: &Path, schemas: &BTreeSet<String>) -> Vec<Problem> {
+    let directory = root.join("docs").join("spec").join("spatial");
+    if !directory.is_dir() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    let mut read = |name: &str| -> Option<(String, Yaml)> {
+        let path = directory.join(name);
+        let location = relative(root, &path);
+        match std::fs::read_to_string(&path) {
+            Ok(text) => match serde_yaml_ng::from_str::<Yaml>(&text) {
+                Ok(document) => Some((location, document)),
+                // A parse failure is already reported by the generic sweep in `check_contracts`.
+                Err(_) => None,
+            },
+            Err(error) => {
+                problems.push(Problem {
+                    location,
+                    detail: format!(
+                        "spec v0.4 §41 requires this registry and it cannot be read: {error}"
+                    ),
+                });
+                None
+            }
+        }
+    };
+
+    let subsystem = read("spatial.yaml");
+    let spaces = read("spaces.yaml");
+    let relations = read("relations.yaml");
+    let landmarks = read("landmarks.yaml");
+
+    let (
+        Some((_, subsystem)),
+        Some((spaces_at, spaces)),
+        Some((relations_at, relations)),
+        Some((landmarks_at, landmarks)),
+    ) = (subsystem, spaces, relations, landmarks)
+    else {
+        return problems;
+    };
+
+    let types: BTreeSet<String> = subsystem
+        .get("object_types")
+        .map(|value| {
+            string_sequence(value, "aggregates")
+                .into_iter()
+                .chain(string_sequence(value, "objects"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let confidence: BTreeSet<String> = string_sequence(&subsystem, "confidence")
+        .into_iter()
+        // §41.2's own example spells this one, and it means "exact where the provider observed
+        // the edge, the provider's own claim otherwise".
+        .chain(std::iter::once("exact_or_provider_declared".to_owned()))
+        .collect();
+    let directions: BTreeSet<String> = string_sequence(&subsystem, "directions")
+        .into_iter()
+        .collect();
+    let cost_classes: BTreeSet<String> = sequence(&subsystem, "cost_classes")
+        .into_iter()
+        .filter_map(|entry| string_at(entry, "name"))
+        .collect();
+    let settings: BTreeMap<String, Yaml> = sequence(&subsystem, "settings")
+        .into_iter()
+        .filter_map(|entry| Some((string_at(entry, "key")?, entry.clone())))
+        .collect();
+
+    problems.extend(check_spaces(&spaces_at, &spaces, &types, schemas));
+    problems.extend(check_relations(
+        &relations_at,
+        &relations,
+        &types,
+        &confidence,
+        &directions,
+        &cost_classes,
+    ));
+    problems.extend(check_landmarks(&landmarks_at, &landmarks, &settings));
+    problems
+}
+
+/// The fourteen landmark reasons spec v0.4 §3.7 requires, in the order it lists them.
+///
+/// "Built-in landmark reasons MUST include" — the set is closed for built-ins, because a reason
+/// the renderer cannot name is a highlight with no explanation, and §3.7 requires a landmark to
+/// always expose its reason.
+const LANDMARK_REASONS: [&str; 14] = [
+    "high_cpu",
+    "high_memory",
+    "failed",
+    "restarting",
+    "recently_changed",
+    "public_listener",
+    "privileged",
+    "storage_pressure",
+    "connection_spike",
+    "new_object",
+    "removed_object",
+    "security_boundary",
+    "remote_boundary",
+    "user_pinned",
+];
+
+fn check_spaces(
+    location: &str,
+    document: &Yaml,
+    types: &BTreeSet<String>,
+    schemas: &BTreeSet<String>,
+) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let spaces = sequence(document, "spaces");
+    let ids: BTreeSet<String> = spaces
+        .iter()
+        .filter_map(|space| string_at(space, "id"))
+        .collect();
+    let mut seen = BTreeSet::new();
+    let mut roots = Vec::new();
+
+    for space in spaces {
+        let Some(id) = string_at(space, "id") else {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: "a space has no `id` (spec v0.4 §41.1)".to_owned(),
+            });
+            continue;
+        };
+        if !seen.insert(id.clone()) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!("`{id}` is declared twice; space ids identify a place"),
+            });
+        }
+        for required in ["label", "object_type", "commands", "summary_fields"] {
+            if space.get(required).is_none_or(Yaml::is_null) {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!("`{id}` declares no `{required}` (spec v0.4 §41.1)"),
+                });
+            }
+        }
+        if space.get("enterable").and_then(Yaml::as_bool).is_none() {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` must declare `enterable` as a boolean; it is what tells `enter` and \
+                     completion whether the place is a destination (spec v0.4 §41.1)"
+                ),
+            });
+        }
+        if !string_sequence(space, "commands")
+            .iter()
+            .any(|c| c == "look")
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` must list `look` among its commands; `look` describes the place a \
+                     user stands in, so every place supports it (spec v0.4 §6.1)"
+                ),
+            });
+        }
+        match space.get("parent") {
+            None => problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` declares no `parent`; the root's is null, but the field is not \
+                     optional (spec v0.4 §41.1)"
+                ),
+            }),
+            Some(parent) if parent.is_null() => roots.push(id.clone()),
+            Some(parent) => {
+                let parent = parent.as_str().unwrap_or_default();
+                if !ids.contains(parent) {
+                    problems.push(Problem {
+                        location: location.to_owned(),
+                        detail: format!(
+                            "`{id}` names `{parent}` as its canonical parent and no space with \
+                             that id is declared; a dangling parent makes `up` \
+                             non-deterministic (spec v0.4 §11.3)"
+                        ),
+                    });
+                }
+            }
+        }
+        for field in ["object_type", "member_type"] {
+            if let Some(name) = space.get(field).and_then(Yaml::as_str)
+                && !types.contains(name)
+            {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!(
+                        "`{id}` declares `{field}: {name}`, which is not in the `object_types` \
+                         vocabulary of spatial.yaml"
+                    ),
+                });
+            }
+        }
+        if let Some(schema) = space.get("schema").and_then(Yaml::as_str)
+            && !schemas.contains(schema)
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` is built from `{schema}` and no schema with that id is declared \
+                     under docs/spec/schemas/"
+                ),
+            });
+        }
+    }
+
+    if roots.len() != 1 {
+        problems.push(Problem {
+            location: location.to_owned(),
+            detail: format!(
+                "exactly one space has no parent — the root every session starts at (spec v0.4 \
+                 §7.1, §46.1); found {roots:?}"
+            ),
+        });
+    }
+    problems
+}
+
+fn check_relations(
+    location: &str,
+    document: &Yaml,
+    types: &BTreeSet<String>,
+    confidence: &BTreeSet<String>,
+    directions: &BTreeSet<String>,
+    cost_classes: &BTreeSet<String>,
+) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for relation in sequence(document, "relations") {
+        let Some(id) = string_at(relation, "id") else {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: "a relation has no `id` (spec v0.4 §41.2)".to_owned(),
+            });
+            continue;
+        };
+        if !seen.insert(id.clone()) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!("`{id}` is declared twice; relation ids are unique"),
+            });
+        }
+        for required in [
+            "source",
+            "target",
+            "direction",
+            "canonical_label",
+            "inverse_label",
+            "confidence",
+        ] {
+            if relation.get(required).is_none_or(Yaml::is_null) {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!("`{id}` declares no `{required}` (spec v0.4 §41.2)"),
+                });
+            }
+        }
+        for field in ["source", "target"] {
+            if let Some(name) = relation.get(field).and_then(Yaml::as_str)
+                && !types.contains(name)
+            {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!(
+                        "`{id}` connects `{field}: {name}`, which is not in the `object_types` \
+                         vocabulary of spatial.yaml; §42.3 forbids an edge end that resolves to \
+                         nothing"
+                    ),
+                });
+            }
+        }
+        if let Some(direction) = relation.get("direction").and_then(Yaml::as_str)
+            && !directions.contains(direction)
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` declares `direction: {direction}`, which is not one of the \
+                     directions spatial.yaml fixes (spec v0.4 §41.2, §22)"
+                ),
+            });
+        }
+        if let Some(value) = relation.get("confidence").and_then(Yaml::as_str)
+            && !confidence.contains(value)
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` declares `confidence: {value}`, which is not one of the values spec \
+                     v0.4 §11.5 fixes"
+                ),
+            });
+        }
+        if let Some(class) = relation.get("cost_class").and_then(Yaml::as_str)
+            && !cost_classes.contains(class)
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` declares `cost_class: {class}`, which is not one of the classes spec \
+                     v0.4 §32.1 fixes"
+                ),
+            });
+        }
+    }
+    problems
+}
+
+fn check_landmarks(
+    location: &str,
+    document: &Yaml,
+    settings: &BTreeMap<String, Yaml>,
+) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let declared: BTreeSet<String> = sequence(document, "landmarks")
+        .into_iter()
+        .filter_map(|entry| string_at(entry, "reason"))
+        .collect();
+
+    for required in LANDMARK_REASONS {
+        if !declared.contains(required) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{required}` is one of the built-in landmark reasons spec v0.4 §3.7 \
+                     requires and the registry does not declare it"
+                ),
+            });
+        }
+    }
+    for reason in &declared {
+        if !LANDMARK_REASONS.contains(&reason.as_str()) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{reason}` is not one of the fourteen built-in reasons of spec v0.4 §3.7; a \
+                     further reason comes from a KUANG/11 package and identifies its source \
+                     (§26.5) rather than joining the built-ins"
+                ),
+            });
+        }
+    }
+
+    for entry in sequence(document, "landmarks") {
+        let reason = string_at(entry, "reason").unwrap_or_default();
+        let Some(threshold) = entry.get("threshold").filter(|value| !value.is_null()) else {
+            continue;
+        };
+        for required in ["metric", "comparison", "default", "setting"] {
+            if threshold.get(required).is_none_or(Yaml::is_null) {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!(
+                        "the threshold of `{reason}` declares no `{required}`; spec v0.4 §26.3 \
+                         requires thresholds to be inspectable and configurable"
+                    ),
+                });
+            }
+        }
+        let Some(key) = threshold.get("setting").and_then(Yaml::as_str) else {
+            continue;
+        };
+        match settings.get(key) {
+            None => problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "the threshold of `{reason}` is configured by `{key}`, which spatial.yaml \
+                     does not declare as a setting (spec v0.4 §26.3, §47)"
+                ),
+            }),
+            Some(setting) => {
+                let declared = setting.get("default");
+                let used = threshold.get("default");
+                if declared != used {
+                    problems.push(Problem {
+                        location: location.to_owned(),
+                        detail: format!(
+                            "the threshold of `{reason}` defaults to {used:?} and `{key}` \
+                             defaults to {declared:?}; one threshold cannot have two defaults"
+                        ),
+                    });
+                }
             }
         }
     }

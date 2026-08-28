@@ -1,0 +1,257 @@
+# The spatial subsystem's own registry (spec v0.4 §41).
+#
+# §41 requires "machine-readable contracts sufficient to generate help, completion, tests and
+# SDK bindings". `spaces.yaml`, `relations.yaml` and `landmarks.yaml` describe the world; this
+# file describes the subsystem that projects it — the closed vocabularies every one of those
+# files, the renderer, the providers and the KUANG/11 SDK must agree on, and the budgets and
+# settings that bound them.
+#
+# Nothing here is decorative: `cargo run -p xtask -- spec-check` holds every vocabulary against
+# the type in `ono-spatial-core` that implements it, and the settings block against the typed
+# catalogue of `ono-cli` (ADR-0094, ADR-0128). A vocabulary that exists in one place and not the
+# other is exactly the drift §41's Intent exists to prevent.
+
+version: 1
+
+subsystem:
+  id: ono.spatial
+  label: Spatial Systems Interface
+  specification: docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
+  registries:
+    - spaces.yaml
+    - relations.yaml
+    - landmarks.yaml
+  errors:
+    family: spatial
+    block: E1001-E1014
+    registry: ../errors.yaml
+    doc: >-
+      §41 recommends a separate `spatial-errors.yaml`. The taxonomy is one closed registry, and
+      a second file would let two documents disagree about the same codes, so the fourteen
+      conditions of §40 live in `docs/spec/errors.yaml` (ADR-0125).
+
+# §10.1. The tier is a claim about how long an identity can be trusted, and the renderer may
+# never imply stable persistence for an observation identity.
+identity_tiers:
+  - name: stable
+    doc: >-
+      Tier A, stable conceptual identity: a service unit name, a filesystem UUID, an interface's
+      kernel identity, a container's runtime id, a host, a uid.
+  - name: lifetime
+    doc: >-
+      Tier B, lifetime identity: a process as boot identity plus pid plus start time plus pid
+      namespace (§10.2), a socket as inode plus namespace plus lifetime, a connection as tuple
+      plus observation epoch. A reused pid is a different object, never the same place.
+  - name: observation
+    doc: >-
+      Tier C, observation identity, used only where a provider can guarantee nothing stronger.
+      Such an object may not be rendered as if it persisted.
+
+# §3.3, §41.1. The closed vocabulary of spatial types: the seven canonical aggregate places
+# and every object type a space declares or a relation connects. `spaces.yaml`'s `object_type`
+# and `member_type` and `relations.yaml`'s `source` and `target` may name nothing else, which is
+# what lets §41.3 generate one SDK enum for all four documents.
+object_types:
+  aggregates: [System, Compute, Network, Storage, Containers, Identity, Devices]
+  objects:
+    - Process
+    - Service
+    - Job
+    - Workload
+    - Cgroup
+    - Container
+    - Interface
+    - Address
+    - Route
+    - Neighbor
+    - Socket
+    - Listener
+    - Connection
+    - Namespace
+    - Endpoint
+    - Filesystem
+    - Mount
+    - BlockDevice
+    - Directory
+    - File
+    - Device
+    - User
+    - Group
+    - Session
+    - Host
+
+# §3.2. A scope is the execution and discovery boundary an object belongs to. Scopes nest, and
+# crossing a boundary is observable in the trail and the prompt (§2.18).
+scope_kinds: [host, remote_host, container, namespace, filesystem, user, plugin]
+
+# §20.1. The movement recorded in each NavigationStep.
+movements: [enter, follow, jump, back, up, home]
+
+# §11.5. Maps distinguish inferred edges from exact ones visually; nothing is ever promoted.
+confidence: [exact, strong, inferred, user_declared, unknown]
+
+# §41.2. How an edge is drawn (§22).
+directions: [outbound, inbound, bidirectional]
+
+# §35.2. These states MUST remain distinct: "files  permission denied for 14 process FDs" is
+# not "files  0".
+permission_states: [available, empty, unknown, permission_denied, unsupported, stale]
+
+# §33.4 requires `inspect` to reveal source freshness; it fixes no vocabulary, so ADR-0129 does.
+freshness_states:
+  - name: live
+    doc: A provider subscription is delivering changes; the value is current by construction.
+  - name: fresh
+    doc: Observed within the object class's TTL (§33.3).
+  - name: stale
+    doc: Observed, but older than the TTL. Shown with its age; a mutation revalidates first.
+  - name: unknown
+    doc: Never observed, or the provider stated no observation time. Not the same as fresh.
+
+# §3.6. How complete a bounded neighborhood projection is.
+completeness:
+  - name: complete
+    doc: Everything adjacent to the centre is present.
+  - name: bounded
+    doc: The view budget hid some neighbours; `hidden_count` says how many (§3.6, §8.2).
+  - name: partial
+    doc: A source could not be read — denied, unsupported or stale. Unknown is visible (§2.17).
+  - name: unknown
+    doc: Completeness could not be established.
+
+# §8.1. Normative for renderer behaviour and tests.
+zoom_levels:
+  - id: L0
+    name: system
+    doc: Canonical domains and global landmarks.
+  - id: L1
+    name: domain
+    doc: compute, network, storage, containers, identity, devices.
+  - id: L2
+    name: collection
+    doc: services, processes, filesystems, interfaces, containers, users.
+  - id: L3
+    name: entity
+    doc: nginx.service, process/1842, eth0, /data, container/payments.
+  - id: L4
+    name: detail
+    doc: socket :443, one connection, an open file, a namespace, a cgroup edge.
+
+# §32.1. Default `look` and `map` avoid `expensive` relations unless already cached.
+cost_classes:
+  - name: cheap
+    doc: Already available, or an O(1)/small local lookup.
+  - name: normal
+    doc: A bounded system query.
+  - name: expensive
+    doc: A broad scan or a cross-provider correlation.
+  - name: privileged
+    doc: Requires elevated permission, which navigation itself never requests (§35.3).
+  - name: remote
+    doc: Requires a remote operation across a link (§19, §35.4).
+
+# §47's required configuration keys, with the defaults the specification spells out. The typed
+# catalogue in `ono-cli` is the implementation; `spec-check` holds the two together.
+settings:
+  - key: spatial.enabled
+    type: bool
+    default: true
+    doc: >-
+      Whether the spatial layer is active. Disabling it MUST leave the typed shell and ordinary
+      commands functional (§47).
+  - key: spatial.startup_horizon
+    type: bool
+    default: true
+    doc: Whether an interactive session opens with the compact spatial horizon (§5, §53).
+  - key: spatial.follow_cwd
+    type: string
+    default: storage-only
+    doc: >-
+      How `cd` and the current place stay related. `storage-only` is the default of §30.3: a
+      directory change moves the storage place and nothing else.
+  - key: spatial.map.mode
+    type: string
+    default: auto
+    doc: auto | text | fullscreen (§23, §47).
+  - key: spatial.map.live
+    type: bool
+    default: false
+    doc: Whether a map subscribes to change by default (§25.1).
+  - key: spatial.map.node_budget
+    type: int
+    default: 100
+    doc: >-
+      How many nodes a map may draw before clustering, and above which it refuses with
+      `spatial.map_too_large` (§8.2, §34.2, §40).
+  - key: spatial.look.change_window
+    type: string
+    default: 5m
+    doc: How far back `look`'s change section and the change landmarks reach (§24.3, §26).
+  - key: spatial.landmarks.enabled
+    type: bool
+    default: true
+    doc: Whether the landmark engine runs at all (§26).
+  - key: spatial.reduced_motion
+    type: bool
+    default: false
+    doc: Suppresses animation in live views; motion must mean real change either way (§25.2, §39.4).
+  - key: spatial.remote_search
+    type: string
+    default: explicit
+    doc: >-
+      Whether discovery reaches across links. `explicit` means it does not until asked: `jump`
+      never opens a connection because a name resembles a known place (§9.3, §35.4).
+  - key: spatial.trail.persist
+    type: bool
+    default: false
+    doc: >-
+      Trail persistence across sessions, off by default for privacy and stale identity (§46.1).
+      Pins persist regardless.
+
+  # §26.3: "Thresholds MUST be inspectable and configurable." `landmarks.yaml` names the setting
+  # behind each threshold; these are those settings.
+  - key: spatial.landmarks.high_cpu
+    type: int
+    default: 80
+    doc: The CPU percentage at or above which an object is a `high_cpu` landmark (§26.3).
+  - key: spatial.landmarks.high_memory
+    type: int
+    default: 25
+    doc: The share of the host or cgroup memory budget that makes a `high_memory` landmark (§26.3).
+  - key: spatial.landmarks.restart_loop
+    type: int
+    default: 3
+    doc: Restarts within the change window that make a `restarting` landmark (§26.3).
+  - key: spatial.landmarks.connection_spike
+    type: int
+    default: 100
+    doc: New connections within the change window that make a `connection_spike` landmark (§26.3).
+  - key: spatial.landmarks.storage_pressure
+    type: int
+    default: 90
+    doc: The used share of a filesystem that makes a `storage_pressure` landmark (§26.3).
+
+# §34. Normative goals for a typical modern Linux workstation with a warm cache. Cold provider
+# discovery may exceed them, but the shell stays interactive and updates progressively.
+budgets:
+  - id: startup
+    target_ms: 150
+    doc: Interactive start to a usable prompt.
+  - id: look
+    target_ms: 50
+    doc: A basic `look` from cache.
+  - id: near
+    target_ms: 50
+    doc: "`near` from cache."
+  - id: map.l0_l1
+    target_ms: 100
+    doc: A cached L0/L1 map.
+  - id: map.l2
+    target_ms: 250
+    doc: An L2 map of an ordinary host.
+  - id: map.frame
+    target_ms: 16
+    doc: Focus movement and navigation inside an already rendered map.
+  - id: find
+    target_ms: 100
+    doc: Searching common indexed objects.

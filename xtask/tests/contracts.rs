@@ -303,3 +303,148 @@ fn should_reject_an_adapter_pack_the_binary_does_not_bundle_or_that_names_an_unk
         "a missing fixture directory is reported, got {found:?}"
     );
 }
+
+/// The four registry documents of spec v0.4 §41, internally consistent.
+fn spatial(repo: &Scratch) {
+    repo.write(
+        "docs/spec/spatial/spatial.yaml",
+        "version: 1\nobject_types:\n  aggregates: [System, Compute]\n  objects: [Process, Socket]\n\
+         \nconfidence: [exact, inferred]\ndirections: [outbound, bidirectional]\n\
+         cost_classes:\n  - name: cheap\n    doc: Local.\nsettings:\n  - key: spatial.landmarks.high_cpu\n    type: int\n    default: 80\n    doc: The threshold.\n",
+    );
+    repo.write(
+        "docs/spec/spatial/spaces.yaml",
+        "version: 1\nspaces:\n  - id: system\n    label: SYSTEM\n    parent: null\n    object_type: System\n    schema: ono.process/1\n    enterable: true\n    commands: [look]\n    summary_fields: [hostname]\n\
+         \n  - id: compute\n    label: COMPUTE\n    parent: system\n    object_type: Compute\n    enterable: true\n    commands: [look]\n    summary_fields: [process_count]\n",
+    );
+    repo.write(
+        "docs/spec/spatial/relations.yaml",
+        "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Socket\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    confidence: exact\n    cost_class: cheap\n",
+    );
+    let reasons = [
+        "high_cpu",
+        "high_memory",
+        "failed",
+        "restarting",
+        "recently_changed",
+        "public_listener",
+        "privileged",
+        "storage_pressure",
+        "connection_spike",
+        "new_object",
+        "removed_object",
+        "security_boundary",
+        "remote_boundary",
+        "user_pinned",
+    ];
+    let mut document = String::from("version: 1\nlandmarks:\n");
+    for reason in reasons {
+        document.push_str(&format!(
+            "  - reason: {reason}\n    domain: compute\n    evidence: Observed.\n    threshold: null\n    severity: notice\n"
+        ));
+    }
+    repo.write("docs/spec/spatial/landmarks.yaml", &document);
+}
+
+#[test]
+fn should_accept_a_spatial_registry_whose_four_documents_agree() {
+    let repo = consistent();
+    spatial(&repo);
+    assert_eq!(problems(&repo), Vec::<String>::new());
+}
+
+#[test]
+fn should_reject_a_space_whose_canonical_parent_is_not_a_declared_space() {
+    // Spec v0.4 §11.3: the canonical parent must be deterministic, which starts with it
+    // existing. A dangling parent makes `up` arrive nowhere.
+    let repo = consistent();
+    spatial(&repo);
+    repo.write(
+        "docs/spec/spatial/spaces.yaml",
+        "version: 1\nspaces:\n  - id: system\n    label: SYSTEM\n    parent: null\n    object_type: System\n    enterable: true\n    commands: [look]\n    summary_fields: [hostname]\n\
+         \n  - id: compute\n    label: COMPUTE\n    parent: nowhere\n    object_type: Compute\n    enterable: true\n    commands: [look]\n    summary_fields: [process_count]\n",
+    );
+    assert!(
+        problems(&repo)
+            .iter()
+            .any(|problem| problem.contains("nowhere")),
+        "a dangling canonical parent must be reported, got {:?}",
+        problems(&repo)
+    );
+}
+
+#[test]
+fn should_reject_a_space_or_relation_naming_a_type_the_vocabulary_does_not_hold() {
+    // §41.3 generates one SDK enum from these documents; a type only one of them knows is the
+    // drift §41's Intent exists to prevent.
+    let repo = consistent();
+    spatial(&repo);
+    repo.write(
+        "docs/spec/spatial/relations.yaml",
+        "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Unicorn\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    confidence: exact\n    cost_class: cheap\n",
+    );
+    assert!(
+        problems(&repo)
+            .iter()
+            .any(|problem| problem.contains("Unicorn")),
+        "an edge end outside the object-type vocabulary must be reported, got {:?}",
+        problems(&repo)
+    );
+}
+
+#[test]
+fn should_reject_a_relation_whose_confidence_is_outside_the_specified_vocabulary() {
+    // Spec v0.4 §11.5 fixes the vocabulary; a relation that invents a sixth value would let a
+    // map claim a certainty the model cannot express.
+    let repo = consistent();
+    spatial(&repo);
+    repo.write(
+        "docs/spec/spatial/relations.yaml",
+        "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Socket\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    confidence: probably\n    cost_class: cheap\n",
+    );
+    assert!(
+        problems(&repo)
+            .iter()
+            .any(|problem| problem.contains("probably")),
+        "a confidence outside §11.5 must be reported, got {:?}",
+        problems(&repo)
+    );
+}
+
+#[test]
+fn should_reject_a_landmark_registry_missing_one_of_the_fourteen_required_reasons() {
+    // Spec v0.4 §3.7: "Built-in landmark reasons MUST include" — a reason the engine cannot name
+    // is a highlight with no explanation.
+    let repo = consistent();
+    spatial(&repo);
+    repo.write(
+        "docs/spec/spatial/landmarks.yaml",
+        "version: 1\nlandmarks:\n  - reason: high_cpu\n    domain: compute\n    evidence: Observed.\n    threshold: null\n    severity: notice\n",
+    );
+    assert!(
+        problems(&repo)
+            .iter()
+            .any(|problem| problem.contains("user_pinned")),
+        "a missing built-in reason must be reported, got {:?}",
+        problems(&repo)
+    );
+}
+
+#[test]
+fn should_reject_a_landmark_threshold_that_disagrees_with_the_setting_that_configures_it() {
+    // Spec v0.4 §26.3: thresholds are inspectable and configurable. Two defaults for one
+    // threshold means the registry and the shell disagree about when a landmark fires.
+    let repo = consistent();
+    spatial(&repo);
+    repo.write(
+        "docs/spec/spatial/landmarks.yaml",
+        "version: 1\nlandmarks:\n  - reason: high_cpu\n    domain: compute\n    evidence: The CPU share.\n    threshold:\n      metric: cpu_percent\n      comparison: at_or_above\n      default: 55\n      setting: spatial.landmarks.high_cpu\n    severity: notice\n",
+    );
+    assert!(
+        problems(&repo)
+            .iter()
+            .any(|problem| problem.contains("two defaults")),
+        "a threshold default that disagrees with its setting must be reported, got {:?}",
+        problems(&repo)
+    );
+}

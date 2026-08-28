@@ -477,7 +477,6 @@ fn should_refuse_to_go_back_or_up_from_the_root_with_a_named_spatial_error() {
 // --- §41 the machine-readable spatial registry -------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §41); un-ignored by the increment that delivers it"]
 fn should_ship_the_machine_readable_spatial_registry() {
     // §41: "v0.4 requires machine-readable contracts sufficient to generate help, completion,
     // tests and SDK bindings", and names five documents. Reading chosen: `spatial-errors.yaml`
@@ -501,7 +500,6 @@ fn should_ship_the_machine_readable_spatial_registry() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §41.1); un-ignored by the increment that delivers it"]
 fn should_declare_every_canonical_space_with_the_fields_the_registry_requires() {
     // §41.1 gives the required shape verbatim: id, label, parent, object_type, enterable,
     // commands, summary_fields. §53 fixes the root geography at six canonical domains.
@@ -577,7 +575,6 @@ fn should_declare_every_canonical_space_with_the_fields_the_registry_requires() 
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §41.2); un-ignored by the increment that delivers it"]
 fn should_declare_every_relation_with_its_direction_labels_and_confidence() {
     // §41.2 gives the required shape verbatim: id, source, target, direction, canonical_label,
     // inverse_label, confidence. The inverse label is what makes `follow owner` the readable

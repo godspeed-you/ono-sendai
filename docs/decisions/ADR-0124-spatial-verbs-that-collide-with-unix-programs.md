@@ -61,10 +61,22 @@ user function or alias, native command, `PATH` executable — with one rule for 
   the price of not breaking `find`, and it is the spelling v0.2 users already know from
   `find file`.
 - The RED suites assumed the bare spelling. The increment that delivers §6.8 rewrites those
-  assertions to `find place` in the same commit as the contract (AGENTS.md §7) — the affected
-  tests are in `crates/ono-cli/tests/spatial_navigation_missing.rs` (two `find` tests and the
-  collision test), `spatial_topology_missing.rs` (the discovery walk) and the acceptance
-  scenarios `090`, `091`, `097`.
+  assertions to `find place` in the same commit as the contract (AGENTS.md §7). The complete
+  site list, from the test-to-phase analysis of 2026-08-28, is `spatial_navigation_missing.rs`,
+  `spatial_topology_missing.rs` (six sites spelling `find process --where …`),
+  `spatial_relationships_missing.rs`, `spatial_storage_missing.rs`, and the acceptance
+  scenarios **090, 091, 092, 094, 095, 096 and 097** — the first list named only three of the
+  seven cases and is corrected here. Two tests
+  (`spatial_navigation_missing.rs::should_run_the_native_spatial_find_and_keep_the_external_find_reachable_when_both_exist`
+  and its topology counterpart) assert the *opposite* rule in their comments and messages:
+  they must be restated to this ADR's rule, not merely re-spelled, and that restatement is the
+  test edit AGENTS.md §7 permits when the contract decides against the assumption a RED test
+  made.
+- **The spatial type is an option, not a second target word.** §9.3's `find service` and the
+  suites' `find process --where …` become `find place --type service` / `--type process`,
+  matching `near --type <type>` in §6.2. One verb, one target, the type as an option: adding
+  `find <type>` as a second spelling would put the target slot back in play for every schema
+  name and re-open exactly the collision this ADR closes.
 - `look` becomes unavailable as a bare word for its util-linux meaning. Anyone who wants the
   dictionary tool writes `exec:look` — the same escape hatch every shadowed name has.
 - `explain look` and `explain find place` must both show which step of §6.5 matched, so the
