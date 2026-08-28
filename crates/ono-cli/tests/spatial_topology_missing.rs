@@ -1197,9 +1197,13 @@ fn should_complete_the_relations_available_from_the_current_place_when_tab_follo
 
     seen.clear();
     shell.write_all(b"follow \t\t").expect("two tabs");
-    let listed = wait_for(&mut shell, &mut seen, "parent", Duration::from_secs(8));
+    // Both relations are waited for, because the completion table arrives in as many writes as
+    // the terminal happens to give it: reading until `parent` is on screen and then asserting on
+    // `user` in the same breath fails whenever the rest of the table is still in flight.
+    let listed = wait_for(&mut shell, &mut seen, "parent", Duration::from_secs(8))
+        && wait_for(&mut shell, &mut seen, "user", Duration::from_secs(8));
     assert!(
-        listed && seen.contains("user"),
+        listed,
         "§9.4: `follow <TAB>` lists the relations this place actually has; saw:\n{seen}"
     );
 
