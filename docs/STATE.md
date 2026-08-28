@@ -93,19 +93,44 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-**S11c — the four defects the v0.4 dogfooding session left open (2026-08-28, agent `S11c`).**
-`docs/dogfood/v0.4-2026-08-28.md` findings 1–4, each RED-first, each its own commit, each with
-an ADR in the range 0209–0213. Files: `crates/ono-provider-netlink/src/{owners,socket,schema}.rs`,
-`crates/ono-cli/src/spatial/{relations,find,commands}.rs`, `crates/ono-cli/src/report.rs`,
-`crates/ono-spatial-query/src/{discovery,resolve}.rs`, `crates/ono-spatial-render/src/lib.rs`,
-`docker/acceptance/cases/{097,101,109}`.
+**S11c — the four defects the v0.4 dogfooding session left open — is complete (2026-08-29,
+agent `S11c`).** Seven commits, gate green on each; the container ran on image
+`ono-sendai:acceptance-s11c`. Final verdicts: `gate: green`, `acceptance: 88 passed, 0 failed`,
+`release-check: the shell is release-ready`.
+
+| Commit | What it delivers |
+|---|---|
+| `fix(spatial)` | a null a provider left is not an empty exit (ADR-0209), and `ono.socket/1`'s `process` carries a refusal where the owner scan was refused |
+| `fix(spatial)` | `find place` refuses a question it cannot ask (ADR-0210): E0202 for a field nothing declares, and evaluation errors surface |
+| `test(spatial)` | the PTY budgets are liveness bounds, not a race with the machine |
+| `fix(spatial)` | a refusal lists its candidates as values, not as newlines in its message (ADR-0211) |
+| `fix(spatial)` | the hidden count says what it counts (ADR-0212) |
+| `fix(spatial)` | two corrections the container found in the first two of those — an exit is "stated" by its group, and a record rather than a target decides whether a predicate can be asked |
+| `test(spatial)` | the jump-refusal budget is a hang guard, not a race with the machine |
+
+**Two things the container caught that the workspace suite did not**, both in this session's own
+first drafts, both now covered by a workspace test as well: an exit is keyed by its *group*
+(`process`) and not by its `follow` label (`owner`), and a provider *target* may serve several
+schemas, so the *record* decides whether a predicate can be asked of it. Cases `091`/`094`
+(`44.2m`, `44.5g`) and `092` (`44.3c`) are the assertions that found them.
+
+**One flake seen twice and not fixed**, because it is a premise about the host rather than a
+claim about the shell and its fix is not this session's work:
+`spatial_topology_missing.rs::should_bound_the_root_horizon_instead_of_listing_every_known_object`
+runs `get process | count`, and on a busy machine a process listed by the enumerator exits before
+its `/proc/<pid>/stat` can be read, so v0.2 §9's partial-failure semantics give the run exit 1 —
+correct behaviour, and a test premise that only holds on a quiet host. Seen in one gate run and
+one `release-check` run; green on the next of each. Filed under *Next up*.
+
+The four findings, and the one that was offered as a bonus:
 
 - [x] finding 2 — a `null` a provider answered is rendered as `empty` (ADR-0209)
 - [x] finding 3 — `find place --where` swallows unknown fields and evaluation errors (ADR-0210)
 - [x] finding 4 — a multi-line diagnostic prints `\u{a}` instead of its line breaks (ADR-0211)
 - [x] finding 1 — `look`'s hidden count does not describe the list above it (ADR-0212)
-- [ ] `help here` (§38.2, a SHOULD) stays filed: it is a new user-visible capability, and none of
-  the four fixes above went near the help code, so it is not the cheap addition the brief allowed
+- [ ] `help here` (§38.2, a SHOULD) stays filed under *Next up*: it is a new user-visible
+  capability needing help metadata, completion and an acceptance case, and none of the four fixes
+  above went near the help code, so it was not the cheap addition it would have been for S11b.
 
 **S6 + S7 + S8 + the map correction are integrated on one branch (2026-08-28, agent `integrate-1`).**
 Three merges, in that order, on top of `implementation` at `cbbcd2c`; gate green, acceptance 75/75.
@@ -1398,6 +1423,16 @@ it is 60 s now.
 
 ## Next up (ordered)
 
+- [ ] **`get process | count` exits 1 on a busy host, and a test premise depends on it not to.**
+  A process the enumerator listed exits before its `/proc/<pid>/stat` can be read, so v0.2 §9's
+  partial-failure semantics report `Ono-Sendai-E0401 provider.unavailable /proc/<pid>/stat: No
+  such process` and the run exits 1. The *shell* is right; what is wrong is
+  `spatial_topology_missing.rs::should_bound_the_root_horizon_instead_of_listing_every_known_object`
+  (and `remote_missing.rs::should_answer_again_from_a_detached_link_when_it_is_entered_again`),
+  which assert a successful run of a command that enumerates every process. Seen once in a gate
+  run and once in a `release-check` run by S11c, green on the next of each. Exit test: those two
+  tests are green on a host that is churning processes — by asking a bounded question, or by
+  asserting the answer rather than the exit status.
 - [ ] **Every read-only mount is a "storage pressure" landmark (§26.2, §2.11).** At STORAGE the
   landmark list is twenty snaps at `100% used`; a squashfs image is full by definition. Exit
   test: a read-only filesystem at 100 % is not a storage-pressure landmark, and a writable one
