@@ -93,6 +93,34 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+**The v0.4 tranche is running (started 2026-08-28).** The specification is
+`docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md`; its executable requirements are
+the nine `crates/ono-cli/tests/spatial_*_missing.rs` suites (175 tests) and the ten
+`docker/acceptance/cases/09x-spatial-*.case.v04` scenarios (139 assertions). The build order is
+§50's own dependency-driven sequence, and a phase is done when its suites are un-ignored and
+green — never by judgement:
+
+| Phase | Delivers (§50) | Suites it turns green |
+|---|---|---|
+| S1 | spatial core contracts: `SpatialId`, projection, canonical places, relation registry, hierarchy, trail, structured errors, machine-readable registries | `spatial_contracts_missing` (registry, errors) |
+| S2 | provider identity and relation bridge, canonical parents, permission-state propagation, conformance | `spatial_identity_missing`, `spatial_contracts_missing` (conformance) |
+| S3 | index, aliases, selector resolution, `find`, neighborhood, pins, freshness | `spatial_topology_missing` (discovery) |
+| S4 | the navigation commands | `spatial_navigation_missing`, `spatial_topology_missing`, `spatial_storage_missing` |
+| S5 | `SpatialMap`, ranking, clustering, zoom, text renderer, relation inspection | `spatial_map_missing` |
+| S6 | the interactive full-screen map | `spatial_interactive_missing` |
+| S7 | live topology, tombstones, landmark updates, freshness | `spatial_relationships_missing` (live), `spatial_identity_missing` (tombstones) |
+| S8 | remote federation | `spatial_remote_missing` |
+| S9 | KUANG/11 spatial SDK | `spatial_contracts_missing` (§36) |
+| S10 | v0.3 adapter reconciliation | `spatial_contracts_missing` (§37) |
+| S11 | release hardening: the ten §44 scenarios renamed to `.case` and green | the acceptance suite |
+
+Architecture is normative in responsibility, not in name (§45): `ono-spatial-core` (identity,
+places, relations, trail, tombstones — no rendering), `ono-spatial-index` (registration,
+reconciliation, aliases, freshness, canonical parent, pins), `ono-spatial-query` (look/near/find
+plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), `ono-spatial-events`
+(event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
+(§45.6).
+
 - (empty — installable packages delivered, see *Done*; `scripts/release-check.sh` green on
   2026-08-27 with the package check in the chain)
 
