@@ -88,7 +88,27 @@ impl CommandImpl for FindPlace {
                 );
                 session.absorb(&records, now);
             }
-            if predicate.is_some() {
+            if let Some(predicate) = predicate.as_ref() {
+                // §6.8: the search reads "the spatial index **and** provider registries". A place
+                // this session already holds that no canonical provider serves — an adapted
+                // observation of a host whose provider is not there (§37.1, ADR-0193) — is in the
+                // index, so the predicate is put to what was last said about it too. It is the
+                // same record the object was projected from, not a second reading of the system
+                // (§2.16).
+                let held: Vec<ono_spatial_core::SpatialId> = session
+                    .index()
+                    .entries()
+                    .map(|entry| entry.object().spatial_id().clone())
+                    .filter(|id| !subjects.contains(id))
+                    .filter(|id| {
+                        session.record_of(id).is_some_and(|record| {
+                            let subject = Value::Record(Arc::clone(record));
+                            ono_command::evaluate(predicate, &subject, &scope)
+                                .is_ok_and(|answer| ono_command::is_true(&answer))
+                        })
+                    })
+                    .collect();
+                subjects.extend(held);
                 request = request.among(subjects);
             }
 

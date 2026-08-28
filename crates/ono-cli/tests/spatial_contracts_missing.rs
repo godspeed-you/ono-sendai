@@ -1116,6 +1116,34 @@ fn should_show_a_place_only_an_adapter_observed_when_standing_in_the_collection_
 }
 
 #[test]
+fn should_find_a_place_by_its_properties_when_the_index_holds_it_and_no_provider_serves_it() {
+    // §6.8: `find` "MUST search the spatial index **and** provider registries". The predicate was
+    // evaluated against what the providers answered and against nothing else, so a place the
+    // session is holding that no canonical provider serves — an adapted observation, §37.1 and
+    // ADR-0193 — was findable by name and invisible to a property. `find place --type address`
+    // answers twenty-three, `--where family == "inet"` answered none of them.
+    let run = ono("ip addr | count | to text; \
+         find place --type address | count | to text; \
+         find place --type address --where family == \"inet\" | count | to text");
+    run.assert_success();
+    let counts: Vec<&str> = run
+        .stdout()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let by_property = counts
+        .last()
+        .and_then(|count| count.parse::<u32>().ok())
+        .unwrap_or_default();
+    assert!(
+        by_property > 0,
+        "§6.8: the addresses the `ip` adapter observed are in the index, so a predicate over \
+         their own fields finds them; the three counts were {counts:?}"
+    );
+}
+
+#[test]
 fn should_not_call_a_collection_unsupported_while_it_holds_a_place_the_shell_observed() {
     // §35.2 keeps `unsupported` distinct from `available`, and §2.17 forbids a claim the shell
     // cannot support: a group that can name its members is not a group nobody could answer for.
