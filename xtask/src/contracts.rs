@@ -63,7 +63,17 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
         "provider_capabilities",
         "id",
     );
-    let expression_heads = expression_heads(&documents, &spec.join("language.yaml"));
+    let language = spec.join("language.yaml");
+    let expression_heads = expression_heads(&documents, &language);
+    if expression_heads.as_ref().is_some_and(BTreeSet::is_empty) {
+        problems.push(Problem {
+            location: relative(root, &language),
+            detail: "declares no expression-mode heads, so the argument mode of every command \
+                     would be cross-checked against an empty set and nothing could disagree \
+                     (ADR-0009)"
+                .to_owned(),
+        });
+    }
 
     let schemas = collect_schemas(root, &spec, &documents, &mut problems);
     let deferred = collect_deferred(root, &spec, &schemas, &mut problems);
@@ -75,7 +85,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
         &capabilities,
         &schemas,
         &deferred,
-        &expression_heads,
+        expression_heads.as_ref(),
         &mut problems,
     );
     problems.extend(check_expression_options(root, &documents, &spec));
@@ -110,15 +120,7 @@ fn check_expression_options(
     let mut problems = Vec::new();
     let mut declared: BTreeSet<(String, String)> = BTreeSet::new();
 
-    // `argument_modes` is a sequence of modes in this repository's registry and a single mapping
-    // in the fixtures; the declaration is read from either, because what is being checked is the
-    // pair, not the file's shape.
-    let modes: Vec<&Yaml> = document
-        .get("argument_modes")
-        .into_iter()
-        .chain(sequence(document, "argument_modes"))
-        .collect();
-    for mode in modes {
+    for mode in sequence(document, "argument_modes") {
         for entry in sequence(mode, "option_values") {
             let (Some(head), Some(option)) = (string_at(entry, "head"), string_at(entry, "option"))
             else {
@@ -465,7 +467,7 @@ fn check_commands(
     capabilities: &BTreeSet<String>,
     schemas: &BTreeSet<String>,
     deferred: &BTreeMap<String, String>,
-    expression_heads: &BTreeSet<String>,
+    expression_heads: Option<&BTreeSet<String>>,
     problems: &mut Vec<Problem>,
 ) {
     let mut seen: BTreeMap<String, String> = BTreeMap::new();
@@ -556,9 +558,9 @@ fn check_commands(
             }
 
             let mode = string_at(command, "argument_mode").unwrap_or_default();
-            let should_be_expression = expression_heads.contains(&verb);
+            let should_be_expression = expression_heads.is_some_and(|heads| heads.contains(&verb));
             if !mode.is_empty()
-                && !expression_heads.is_empty()
+                && expression_heads.is_some()
                 && (mode == "expression") != should_be_expression
             {
                 problems.push(Problem {
@@ -608,16 +610,21 @@ fn names_in(
         .unwrap_or_default()
 }
 
-fn expression_heads(documents: &BTreeMap<PathBuf, Yaml>, path: &Path) -> BTreeSet<String> {
-    documents
-        .get(path)
-        .and_then(|document| document.get("argument_modes"))
-        .map(|modes| {
-            string_sequence(modes, "expression_heads")
-                .into_iter()
-                .collect()
-        })
-        .unwrap_or_default()
+/// The heads `language.yaml` parses in expression mode, or `None` when there is no
+/// `language.yaml` to read.
+///
+/// `argument_modes` is a sequence of modes, each naming itself and the heads it claims
+/// (ADR-0009); the expression mode's `heads` is the list ADR-0009 fixes. Reading it as anything
+/// else yields an empty set, and every check fed from here then passes whatever it is given.
+fn expression_heads(documents: &BTreeMap<PathBuf, Yaml>, path: &Path) -> Option<BTreeSet<String>> {
+    let document = documents.get(path)?;
+    Some(
+        sequence(document, "argument_modes")
+            .into_iter()
+            .filter(|mode| string_at(mode, "name").as_deref() == Some("expression"))
+            .flat_map(|mode| string_sequence(mode, "heads"))
+            .collect(),
+    )
 }
 
 /// The schema ids mentioned in a type expression such as `stream<ono.process/1>`.

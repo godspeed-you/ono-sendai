@@ -297,11 +297,13 @@ other 40 new outcome tests live in the crates:
 - Canonical spaces are not answered by `find place`: it searches the index, and a space is
   declared geography rather than an observed object. If a later phase wants `find place compute`
   to answer the domain, that is a decision for it to record.
-- The `argument_mode`-versus-ADR-0009 check in `xtask::contracts::check_commands` is dead against
-  this repository's own `docs/spec/language.yaml`: `expression_heads()` reads `argument_modes` as
-  a mapping, and the real file writes it as a sequence of modes, so the set is empty and the check
-  short-circuits. Found while adding `option_values` beside it; not fixed there, because a fix is
-  a different kind of change (AGENTS.md §4).
+- ~~The `argument_mode`-versus-ADR-0009 check in `xtask::contracts::check_commands` is dead
+  against this repository's own `docs/spec/language.yaml`.~~ **Repaired** by `harness` on
+  2026-08-28 (ADR-0159): `expression_heads()` reads the sequence of named modes the registry
+  actually writes, an empty declaration is now reported instead of short-circuiting the check,
+  and the fixture is written in the registry's shape so it can no longer certify a blind reader.
+  Exit test:
+  `xtask/tests/contracts.rs::should_reject_an_argument_mode_that_disagrees_with_the_grammar_this_repository_declares`.
 
 **Open, and deliberately not S1's:** `docs/ACCEPTANCE.md` has no v0.4 section yet, so
 `scripts/release-check.sh` cannot see this tranche. §4.7 needs writing from v0.4 §52 before S11,
@@ -311,6 +313,26 @@ the way §4.6 was written from v0.3.
 
 ## Next up (ordered)
 
+- [ ] **Found by the dead-check sweep of `xtask/` (2026-08-28, `harness`, ADR-0159).** Same
+  family as the repaired argument-mode check, but each is a different *kind* of change, so none
+  was fixed there (AGENTS.md §4):
+  - `xtask::contracts::check_commands` skips the verb, target and capability cross-checks for any
+    command that omits the field (`!verb.is_empty() && …`). No command omits one today, so
+    nothing is dead yet — but a command written without a `verb` would be checked against
+    nothing and pass. Making the field required is a new contract rule (`feat`), and it must be
+    decided together with the bare-name spatial commands of ADR-0124 — exit test: a fixture
+    command with no `verb` is reported.
+  - `docs/spec/kuang/*.v1.yaml` (seven contracts) reach `spec-check` only through the generic
+    sweep, which proves they are non-empty valid YAML and nothing else. No check holds them
+    against `crates/ono-kuang-*`, the way `check_provider_claims` holds the providers. Phase I
+    work — exit test: a KUANG manifest field the SDK does not implement is reported.
+  - `xtask::scan::rust_sources` walks `tests/`, `fuzz/` and `examples/` at the top level;
+    `tests/` and `fuzz/` do not exist, so those walks find nothing. Harmless today (the suites
+    live under `crates/*/tests/`), and it becomes real the moment AGENTS.md §2's `tests/` or the
+    §35.6 `fuzz/` targets are created.
+  - `xtask::scan::is_scanner_source` excludes all of `xtask/tests/` from the unfinished-work
+    scan, not only the file that necessarily names the markers, so a `todo!()` in an xtask test
+    is invisible to the gate. Narrowing it to `xtask/tests/scan.rs` is a `fix` of its own.
 - [ ] **The v0.4 enhancement specification is unimplemented.**
   `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` (3835 lines, "Spatial Systems
   Interface") arrived on `main` on 2026-08-27, after the v0.3 tranche was complete. It is

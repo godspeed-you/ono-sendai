@@ -37,7 +37,7 @@ fn consistent() -> Scratch {
     );
     repo.write(
         "docs/spec/language.yaml",
-        "version: 1\nargument_modes:\n  expression_heads: [where, select]\n  option_values:\n    - head: find\n      option: where\n  default: words\n",
+        "version: 1\nargument_modes:\n  - name: words\n    default: true\n  - name: expression\n    heads: [where, select]\n    option_values:\n      - head: find\n        option: where\n",
     );
     repo
 }
@@ -133,6 +133,33 @@ fn should_reject_an_argument_mode_that_disagrees_with_the_grammar() {
             .iter()
             .any(|p| p.contains("argument_mode") && p.contains("where")),
         "got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_an_argument_mode_that_disagrees_with_the_grammar_this_repository_declares() {
+    // A check whose input is empty cannot fail. `docs/spec/language.yaml` writes `argument_modes`
+    // as a sequence of modes, each naming its own `heads`; a reader that expects one mapping with
+    // an `expression_heads` key finds nothing there and waves every command through. So the
+    // fixture carries this repository's own `language.yaml` verbatim, and the disagreement it
+    // must catch is the same one the fixture-shaped test above catches.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let language = std::fs::read_to_string(root.join("docs").join("spec").join("language.yaml"))
+        .expect("this repository declares its argument modes");
+    let repo = consistent();
+    repo.write("docs/spec/language.yaml", &language);
+    repo.write(
+        "docs/spec/commands/data.yaml",
+        "version: 1\nfamily: data\ncommands:\n  - id: ono.data.where\n    verb: where\n    target: value\n    summary: Filter.\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: B\n    examples: [\"where cpu > 20\"]\n",
+    );
+    let found = problems(&repo);
+    assert!(
+        found
+            .iter()
+            .any(|p| p.contains("argument_mode") && p.contains("where")),
+        "the argument-mode check is blind to the registry's own shape, got {found:?}"
     );
 }
 
