@@ -27,7 +27,9 @@ cursor on the node it was on. `w` turns the subscription on and off inside the v
 
 Where there is no terminal to draw into, `map --live` is refused with `spatial.unsupported` and a
 help line pointing at `map --json`. §29.1's list does not contain `map --live`, and a live view
-written to a pipe would be neither live nor a view.
+written to a pipe would be neither live nor a view. Only the *flag* is refused: `spatial.map.live
+= true` says how a view behaves, so where there is no view it has nothing to say and is ignored.
+A setting that broke every script's `map` would be a trap rather than a preference.
 
 **A frame identical to the one on the screen is not written at all.** That is how §39.4's
 `reduced_motion` requirement is met: this renderer draws no transition animation of any kind

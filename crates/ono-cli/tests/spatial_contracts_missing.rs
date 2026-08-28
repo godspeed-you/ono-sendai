@@ -1285,7 +1285,6 @@ fn should_expose_every_spatial_setting_as_a_typed_setting_with_its_default() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §47); un-ignored by the increment that delivers it"]
 fn should_keep_the_typed_shell_working_when_the_spatial_layer_is_disabled() {
     // §47: "Disabling `spatial.enabled` MUST leave the typed shell and ordinary commands
     // functional." The pipeline still answers; the spatial verb refuses in a way a script can
@@ -1345,7 +1344,6 @@ fn should_bound_the_default_map_to_its_node_budget() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §34); un-ignored by the increment that delivers it"]
 fn should_answer_repeated_looks_far_inside_the_look_budget() {
     // §34 budgets a cached `look` at under 50 ms and interactive startup at under 150 ms.
     // A wall-clock assertion that tight is flaky on shared hardware, so the *marginal* cost is

@@ -132,6 +132,9 @@ pub fn enter_path(session: &mut Session, path: &Path) -> Result<(SpatialId, bool
 /// A failure to observe the new directory is not a failure of `cd`: the working directory did
 /// change, and saying otherwise would be worse than a place that stayed put.
 pub fn follow_cwd(session: &mut Session, destination: &Path) {
+    if crate::spatial::disabled(session) {
+        return;
+    }
     let mode = session
         .settings()
         .effective("spatial.follow_cwd")

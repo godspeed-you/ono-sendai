@@ -68,6 +68,8 @@ pub struct SpatialSessionState {
     /// stood for, so it projects this observation again rather than asking the system a second
     /// time and answering about a different moment (ADR-0183).
     last_map: Option<(SpatialId, ono_spatial_query::MapHorizon)>,
+    /// What each provider target answered, and when (§33.1, §33.3, §34).
+    targets: BTreeMap<&'static str, TargetObservation>,
 }
 
 /// A linked host the session can stand on (§19.1, §19.2).
@@ -98,6 +100,24 @@ impl RemoteHost {
             ),
         }
     }
+}
+
+/// What one provider target answered the last time it was asked (§33.1, §33.3).
+///
+/// §34 budgets a warm `look` at under 50 ms, and §33.1 says how: the view is *read* from the
+/// index. Reading it is only cheap if the observation that filled the index is not repeated on
+/// every command, so this is the record of what was asked, what came back, and when — the three
+/// things a second `look` needs in order not to ask again.
+#[derive(Debug, Clone)]
+pub struct TargetObservation {
+    /// When the provider answered.
+    pub at: Timestamp,
+    /// The places it answered with, by the kind of place each one is.
+    pub places: BTreeMap<ono_spatial_core::SpatialType, Vec<SpatialId>>,
+    /// Why it could not answer, in §35.2's vocabulary, where it could not.
+    pub refusal: Option<(ono_spatial_core::PermissionState, String)>,
+    /// Whether the target answered at all, which is what tells `empty` from `unsupported`.
+    pub served: bool,
 }
 
 /// The view settings a session carries between commands (§46's `view_preferences`).
@@ -181,6 +201,15 @@ pub fn configured_flag(key: &str) -> bool {
     )
 }
 
+/// The same, for a setting whose §47 default is `true` — `spatial.enabled` is the one.
+#[must_use]
+pub fn configured_flag_or(key: &str, fallback: bool) -> bool {
+    match SETTINGS.get().and_then(|values| values.get(key)) {
+        Some(ono_value::Value::Bool(state)) => *state,
+        _ => fallback,
+    }
+}
+
 impl SpatialSessionState {
     /// A fresh session: standing at the local SYSTEM root, with an empty trail (§46.1).
     #[must_use]
@@ -208,6 +237,7 @@ impl SpatialSessionState {
             baselines: BTreeMap::new(),
             records: BTreeMap::new(),
             last_map: None,
+            targets: BTreeMap::new(),
         }
     }
 
@@ -456,6 +486,34 @@ impl SpatialSessionState {
         key: &str,
     ) -> Option<SpatialId> {
         self.bridge().resolve(object_type, key).cloned()
+    }
+
+    /// What a provider target answered, while that answer is still fresh (§33.3, §34).
+    ///
+    /// The lifetime is the index's own TTL policy — §33.3's table, in one place — taken over the
+    /// kinds of place the target answered with, shortest first: a target that yields processes
+    /// goes stale in five seconds even when it also yields something slower. A target that
+    /// answered with no places at all takes the policy's default.
+    #[must_use]
+    pub fn recall(&self, target: &str, now: Timestamp) -> Option<&TargetObservation> {
+        let seen = self.targets.get(target)?;
+        let policy = self.index.freshness_policy();
+        let fresh = seen.places.keys().all(|object_type| {
+            policy.freshness(*object_type, Some(seen.at), false, now)
+                != ono_spatial_core::Freshness::Stale
+        }) && (!seen.places.is_empty()
+            || policy.freshness(
+                ono_spatial_core::SpatialType::System,
+                Some(seen.at),
+                false,
+                now,
+            ) != ono_spatial_core::Freshness::Stale);
+        fresh.then_some(seen)
+    }
+
+    /// Records what a provider target answered, so the next command can read it (§33.1).
+    pub fn remember(&mut self, target: &'static str, observation: TargetObservation) {
+        self.targets.insert(target, observation);
     }
 
     /// What the provider last said about the object at `id`, where this session has seen it.

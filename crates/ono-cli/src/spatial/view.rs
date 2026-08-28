@@ -38,6 +38,9 @@ pub struct Surroundings {
     /// What the place itself could be told about its own contents (§35.2) — `available` where it
     /// only holds other places, because declared geography is always there (§4).
     permission: PermissionState,
+    /// Whether every provider this view needed was read from the session's index rather than
+    /// asked again (§33.1, §25.3's `cached`).
+    cached: bool,
 }
 
 impl Surroundings {
@@ -51,6 +54,12 @@ impl Surroundings {
     #[must_use]
     pub fn permission(&self) -> PermissionState {
         self.permission
+    }
+
+    /// Whether this view was read rather than observed (§25.3, §33.1).
+    #[must_use]
+    pub fn is_cached(&self) -> bool {
+        self.cached
     }
 }
 
@@ -84,6 +93,7 @@ pub async fn observe_space(
         .flat_map(|source| source.targets.iter().copied())
         .collect();
     let observed = observe(providers, session, &targets, now).await;
+    let cached = observed.cached;
 
     let mut exits = Vec::with_capacity(sourced.len());
     for space in children {
@@ -99,7 +109,11 @@ pub async fn observe_space(
         // whatever a provider says, which is exactly what §4 requires of an unavailable domain.
         PermissionState::Available
     };
-    Ok(Surroundings { exits, permission })
+    Ok(Surroundings {
+        exits,
+        permission,
+        cached,
+    })
 }
 
 /// The exit that leads into `space`, labelled `label`.
@@ -142,6 +156,9 @@ struct Observed {
     by_type: BTreeMap<SpatialType, Vec<SpatialId>>,
     refused: BTreeMap<&'static str, (PermissionState, String)>,
     served: BTreeSet<&'static str>,
+    /// Whether every target this observation needed was still fresh in the session's index, so
+    /// no provider was asked at all (§33.1, §25.3).
+    cached: bool,
 }
 
 impl Observed {
@@ -224,7 +241,13 @@ pub async fn observe_targets(
     let _ = observe(providers, session, targets, now).await;
 }
 
-/// Asks every target once and registers what came back (§33.1, §42.1).
+/// Asks every target once and registers what came back (§33.1, §42.1, §34).
+///
+/// "Once" is per *observation lifetime*, not per command: a target the session asked inside its
+/// §33.3 TTL is read back from what it answered then, which is what makes a second `look` a read
+/// of the index rather than a second sweep of the providers (§33.1, ADR-0186). The index stays a
+/// cache and the providers stay authoritative (§33.2) — a stale target is asked again, and an
+/// action revalidates its subject before it acts, which is a different code path entirely.
 async fn observe(
     providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
@@ -232,58 +255,94 @@ async fn observe(
     now: Timestamp,
 ) -> Observed {
     let mut observed = Observed::default();
+    let mut asked = false;
+    let mut answerable = false;
     for target in targets {
         if providers.for_target(target).is_empty() {
             continue;
         }
-        let stream = match providers.snapshot(&Query::target(*target)) {
-            Ok(stream) => stream,
-            Err(error) => {
-                observed.refused.insert(
-                    target,
-                    (
-                        PermissionState::of_refusal(&error),
-                        error.message().to_owned(),
-                    ),
-                );
-                continue;
-            }
-        };
-        let collected = stream.collect().await;
-        if let Some(error) = collected.errors().first() {
-            observed.refused.insert(
-                target,
-                (
-                    PermissionState::of_refusal(error),
-                    error.message().to_owned(),
-                ),
-            );
-        }
-        let records: Vec<RecordValue> = collected
-            .into_values()
-            .into_iter()
-            .filter_map(|value| match value {
-                Value::Record(record) => Some(RecordValue::clone(&record)),
-                _ => None,
-            })
-            .collect();
-        if records.is_empty() && observed.refused.contains_key(target) {
+        answerable = true;
+        // Still inside its §33.3 lifetime: the answer is read, not asked for again (§33.1).
+        if let Some(seen) = session.recall(target, now) {
+            let seen = seen.clone();
+            fold(&mut observed, target, &seen);
             continue;
         }
-        observed.served.insert(target);
-
-        for record in &records {
-            if let Ok(object) = session.projection_of_object(record) {
-                observed
-                    .by_type
-                    .entry(object.object_type())
-                    .or_default()
-                    .push(object.spatial_id().clone());
+        asked = true;
+        let mut fresh = crate::spatial::session::TargetObservation {
+            at: now,
+            places: BTreeMap::new(),
+            refusal: None,
+            served: false,
+        };
+        match providers.snapshot(&Query::target(*target)) {
+            Err(error) => {
+                fresh.refusal = Some((
+                    PermissionState::of_refusal(&error),
+                    error.message().to_owned(),
+                ));
+            }
+            Ok(stream) => {
+                let collected = stream.collect().await;
+                if let Some(error) = collected.errors().first() {
+                    fresh.refusal = Some((
+                        PermissionState::of_refusal(error),
+                        error.message().to_owned(),
+                    ));
+                }
+                let records: Vec<RecordValue> = collected
+                    .into_values()
+                    .into_iter()
+                    .filter_map(|value| match value {
+                        Value::Record(record) => Some(RecordValue::clone(&record)),
+                        _ => None,
+                    })
+                    .collect();
+                // A target that answered nothing *and* refused is a refusal, not an empty
+                // collection (§35.2, §42.4).
+                if !records.is_empty() || fresh.refusal.is_none() {
+                    fresh.served = true;
+                    for record in &records {
+                        if let Ok(object) = session.projection_of_object(record) {
+                            fresh
+                                .places
+                                .entry(object.object_type())
+                                .or_default()
+                                .push(object.spatial_id().clone());
+                        }
+                    }
+                    session.absorb(&records, now);
+                }
             }
         }
-        session.absorb(&records, now);
+        fold(&mut observed, target, &fresh);
+        session.remember(target, fresh);
     }
+    // "Cached" is a claim about this view, so it is only made when there was something to ask
+    // and nothing was asked (§25.3, §2.17).
+    observed.cached = answerable && !asked;
     observed
+}
+
+/// Folds one target's answer into the observation the exits are built from.
+fn fold(
+    observed: &mut Observed,
+    target: &'static str,
+    seen: &crate::spatial::session::TargetObservation,
+) {
+    if let Some((state, detail)) = &seen.refusal {
+        observed.refused.insert(target, (*state, detail.clone()));
+    }
+    if seen.served {
+        observed.served.insert(target);
+    }
+    for (object_type, ids) in &seen.places {
+        observed
+            .by_type
+            .entry(*object_type)
+            .or_default()
+            .extend(ids.iter().cloned());
+    }
 }
 
 // --- the records the commands emit -----------------------------------------------------------
@@ -912,10 +971,10 @@ pub async fn neighborhood_here(
     session: &mut SpatialSessionState,
     request: &NeighborhoodRequest,
     now: Timestamp,
-) -> Result<(Neighborhood, PermissionState), ErrorValue> {
-    let (neighborhood, permission, _) =
+) -> Result<(Neighborhood, PermissionState, bool), ErrorValue> {
+    let (neighborhood, permission, cached, _) =
         neighborhood_and_whole(providers, session, request, false, now).await?;
-    Ok((neighborhood, permission))
+    Ok((neighborhood, permission, cached))
 }
 
 /// The same projection, with the unbounded one beside it where a caller needs both (§25.4).
@@ -931,7 +990,7 @@ pub async fn neighborhood_and_whole(
     request: &NeighborhoodRequest,
     whole: bool,
     now: Timestamp,
-) -> Result<(Neighborhood, PermissionState, Option<Neighborhood>), ErrorValue> {
+) -> Result<(Neighborhood, PermissionState, bool, Option<Neighborhood>), ErrorValue> {
     let here = session.current_place().clone();
     // §35.2/§43.7: standing on a host whose link is gone, what is behind the exits is `stale` —
     // not `empty`, and above all not the local objects the same providers would answer with if
@@ -960,12 +1019,15 @@ pub async fn neighborhood_and_whole(
                 now,
             )
         });
-        return Ok((neighborhood, PermissionState::Stale, complete));
+        // Nothing was read at all, so nothing here was read from the index either: the word for
+        // this view is `stale`, which `source_freshness` reaches before it reaches `cached`.
+        return Ok((neighborhood, PermissionState::Stale, false, complete));
     }
     if let Some(space) = ono_spatial_query::resolve::space_of(&here) {
         let surroundings =
             observe_space(providers, session, space, request.is_complete(), now).await?;
         let permission = surroundings.permission();
+        let cached = surroundings.is_cached();
         let pins = session.pins().clone();
         let exits = surroundings.exits();
         let neighborhood = ono_spatial_query::space_neighborhood(
@@ -986,7 +1048,7 @@ pub async fn neighborhood_and_whole(
                 now,
             )
         });
-        return Ok((neighborhood, permission, complete));
+        return Ok((neighborhood, permission, cached, complete));
     }
     // An object's exits are its relationship edges, and those are the v0.2 relationship graph's
     // (§2.16, §31.3). They are read here, once, before anything is ranked.
@@ -1007,7 +1069,9 @@ pub async fn neighborhood_and_whole(
             now,
         )
     });
-    Ok((neighborhood, PermissionState::Available, complete))
+    // An object place asks its relationship providers on every look — the edges of a process are
+    // not cached anywhere yet — so the honest word for it stays `polled` (§25.3, §2.17).
+    Ok((neighborhood, PermissionState::Available, false, complete))
 }
 
 /// Why the host the session is standing on cannot be reached, where it cannot be (§35.4, §19.1).

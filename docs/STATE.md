@@ -175,7 +175,14 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 (event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
 (§45.6).
 
-- (empty — S1–S5 and S8 complete, see below; no agent holds a claim)
+- [S4de | 2026-08-28] **S4d + S4e — the storage remainder and the configuration behaviour.**
+  §15 (mount boundaries, the directory place and its view budget, the file place), §30, §7.4,
+  §44.3, §47 (the behaviour half), §34/§33.1 (a repeated view is read, not recomputed).
+  Files: `crates/ono-cli/src/spatial/{storage,view,commands,movement,session,mod}.rs`,
+  `crates/ono-spatial-{core,index,query,render}/src/`, `docs/spec/spatial/relations.yaml`,
+  `docs/spec/schemas/`, `docs/spec/commands/spatial.yaml`, `docs/decisions/ADR-018[5-9]-*.md`,
+  `docker/acceptance/cases/109-spatial-storage.case`, and the `#[ignore]` lines of the tests it
+  delivers in `crates/ono-cli/tests/spatial_{storage,contracts}_missing.rs`.
 
 **S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
 on each:
@@ -757,8 +764,9 @@ Green now, all previously `#[ignore]`d — 26 tests:
   `crate::sink::terminal_width`, and the table snapshots to re-check.
 
 **S6 — the interactive spatial surface — is complete (2026-08-28, agent `S6`).** ADR-0173 to
-ADR-0177; gate green; acceptance case `docker/acceptance/cases/107-spatial-interactive.case`
-added (39 assertions, driven through a real pseudo-terminal).
+ADR-0177; acceptance case `docker/acceptance/cases/107-spatial-interactive.case` added — 39
+assertions driven through a real pseudo-terminal — and **the containerised suite stands at 73
+cases green, 0 failed** (`scripts/acceptance.sh`, 2026-08-28).
 
 Delivered — the phase, plus the four areas §50 assigns to nobody:
 
@@ -830,6 +838,16 @@ Green now, all previously `#[ignore]`d — 14 tests:
 - `spatial.reduced_motion` is read and inspectable but has nothing to disable, because this
   renderer draws no animation at all (§25.2 forbids decorative motion). ADR-0176 says so; S7 gives
   it something to switch off.
+- **§21.3's third marker has nothing to mark yet.** The section requires privilege, remote *and
+  namespace* changes to be recognisable in a colourless terminal. Privilege is the ` root`
+  segment and the `#` marker (v0.2 §17.2); remote is the link segment, which takes the host's
+  name instead of `local` (§14.4). A container or namespace boundary cannot be shown because
+  nothing produces a place in one: `ProviderBridge` projects every observation into the session's
+  own host scope, so `ScopeKind::Container` and `ScopeKind::Namespace` exist in the model
+  (`ono_spatial_core::scope`) and no place ever carries them. A marker written now could never
+  fire. The prompt is one line away from it — compare the current place's scope with the
+  session's and print `container:<id>` or `ns:<kind>/<id>` when they differ — and the increment
+  that makes a container's processes carry the container scope is the one that should write it.
 - The `/` search of §23.3 searches the *drawn* map. §23.3 says "search visible/global map"; the
   global half is `find place`, which already exists as a command, and wiring it into the view's
   search line is a real increment with its own test.

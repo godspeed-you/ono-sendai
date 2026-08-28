@@ -108,3 +108,29 @@ pub fn configure_from(settings: &crate::settings::Settings) {
             .collect(),
     );
 }
+
+/// Whether the spatial layer is switched off for this session (spec v0.4 §47).
+///
+/// §47: "Disabling `spatial.enabled` MUST leave the typed shell and ordinary commands
+/// functional." Off means the spatial *verbs* refuse — with `spatial.unsupported`, a named
+/// refusal a script can branch on (§40) rather than a command that vanished — and the spatial
+/// side effects of the ordinary ones stop happening: `enter <target>` still narrows the context
+/// frame of v0.2 §14.3, and no longer moves a place nobody can look at.
+///
+/// The setting is read from the session every time rather than from the snapshot the view
+/// preferences are taken from, because it is the one `spatial.*` key whose whole purpose is to
+/// be flipped: a `set config spatial.enabled = false` must take effect on the next statement.
+#[must_use]
+pub fn disabled(session: &crate::session::Session) -> bool {
+    session.settings().flag("spatial.enabled") == Some(false)
+}
+
+/// The refusal a spatial verb answers with while the layer is off (§40, §47).
+#[must_use]
+pub fn switched_off(command: &str) -> ono_value::ErrorValue {
+    ono_value::ErrorValue::new(
+        ono_core::ErrorCode::SpatialUnsupported,
+        format!("`{command}` is a spatial command and `spatial.enabled` is false"),
+    )
+    .with_help("set `spatial.enabled = true` to navigate again (spec v0.4 §47)")
+}
