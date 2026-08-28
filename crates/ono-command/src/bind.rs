@@ -241,17 +241,26 @@ impl CommandContract {
         let mut used = vec![false; self.selectors().len()];
         let mut pending: Option<&ParameterSpec> = None;
         let mut pending_flag: Option<&ParameterSpec> = None;
+        // An option spec v0.4 §6.1 writes as `--changes [duration]`: it takes the next word when
+        // that word is one, and means "the configured default" when it is not there (ADR-0144).
+        let mut pending_optional: Option<&ParameterSpec> = None;
 
         for argument in arguments {
             // Spec §41 writes assignment as `set config key = value`: the bare `=` is the
             // separator of that spelling, never a value, and the words either side of it bind
             // exactly as if it were absent.
-            if pending.is_none() && matches!(argument, Argument::Word(word) if word.text == "=") {
+            if pending.is_none()
+                && pending_optional.is_none()
+                && matches!(argument, Argument::Word(word) if word.text == "=")
+            {
                 continue;
             }
             if let Argument::Option(written) = argument {
                 if let Some(spec) = pending.take() {
                     return Err(self.missing_option_value(spec));
+                }
+                if let Some(spec) = pending_optional.take() {
+                    push(&mut options, spec.name(), Binding::Value(Value::Bool(true)));
                 }
                 // A flag waits only for a word that could be `true` or `false` (ADR-0009). The
                 // next option is not one, so the flag it was waiting on is already decided:
@@ -267,6 +276,7 @@ impl CommandContract {
                         let binding = self.bind_expression(spec, expression)?;
                         push(&mut options, spec.name(), binding);
                     }
+                    None if spec.has_optional_value() => pending_optional = Some(spec),
                     None if spec.declared_type().is_flag() => {
                         // `true` and `false` are literals of the language, so a flag followed
                         // by one takes it as its value — spec §31.3 writes `--enabled false`.
@@ -283,6 +293,18 @@ impl CommandContract {
                 let binding = self.bind_argument(spec, argument)?;
                 push(&mut options, spec.name(), binding);
                 continue;
+            }
+
+            if let Some(spec) = pending_optional.take() {
+                // The word is the option's value only if it *is* one. `near --changed 10s` reads
+                // the window; `near --changed socket` reads the relation and leaves the window
+                // to the configuration, which is what makes the value genuinely optional rather
+                // than merely last (spec v0.4 §6.2).
+                if let Ok(binding) = self.bind_argument(spec, argument) {
+                    push(&mut options, spec.name(), binding);
+                    continue;
+                }
+                push(&mut options, spec.name(), Binding::Value(Value::Bool(true)));
             }
 
             if let Some(spec) = pending_flag.take() {
@@ -306,6 +328,9 @@ impl CommandContract {
 
         if let Some(spec) = pending {
             return Err(self.missing_option_value(spec));
+        }
+        if let Some(spec) = pending_optional {
+            push(&mut options, spec.name(), Binding::Value(Value::Bool(true)));
         }
         if let Some(spec) = pending_flag {
             push(&mut options, spec.name(), Binding::Value(Value::Bool(true)));

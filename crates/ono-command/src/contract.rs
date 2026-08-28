@@ -493,6 +493,7 @@ pub struct ParameterSpec {
     declared_type: DeclaredType,
     doc: String,
     repeatable: bool,
+    optional_value: bool,
     default_text: Option<String>,
     default_value: Option<Value>,
 }
@@ -520,6 +521,17 @@ impl ParameterSpec {
     #[must_use]
     pub fn is_repeatable(&self) -> bool {
         self.repeatable || matches!(self.declared_type, DeclaredType::List(_))
+    }
+
+    /// Whether the option may be written without its value.
+    ///
+    /// Spec v0.4 §6.1 writes `look --changes [duration]` and §6.2 writes `near --changed
+    /// [duration]`: the option carries a value where the caller gives one, and means the
+    /// configured default where the caller does not. Every other option keeps the rule that a
+    /// declared type is a promise of a value, so a missing one is a usage error (ADR-0144).
+    #[must_use]
+    pub fn has_optional_value(&self) -> bool {
+        self.optional_value
     }
 
     /// The default exactly as the registry writes it, for help and completion.
@@ -799,6 +811,8 @@ struct RawParameter {
     #[serde(default)]
     repeatable: bool,
     #[serde(default)]
+    optional_value: bool,
+    #[serde(default)]
     default: Option<RawScalar>,
 }
 
@@ -933,6 +947,7 @@ fn parameters(id: &str, raw: Vec<RawParameter>) -> Result<Vec<ParameterSpec>, Er
                 declared_type,
                 doc: parameter.doc,
                 repeatable: parameter.repeatable,
+                optional_value: parameter.optional_value,
                 default_text,
                 default_value,
             })
