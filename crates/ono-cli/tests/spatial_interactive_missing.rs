@@ -60,6 +60,7 @@ const ALTERNATE_SCREEN_OFF: &str = "\u{1b}[?1049l";
 
 /// The keys §23.3 names for the semantic actions this file exercises.
 const DOWN: &[u8] = b"\x1b[B";
+const UP: &[u8] = b"\x1b[A";
 const TAB: &[u8] = b"\t";
 const ENTER: &[u8] = b"\r";
 const BACKSPACE: &[u8] = b"\x7f";
@@ -136,6 +137,29 @@ impl Session {
         self.pty
             .write_all(bytes)
             .expect("the terminal must accept input");
+    }
+
+    /// Sends `bytes` and returns how long the terminal took to paint anything in answer.
+    ///
+    /// `None` means nothing was painted inside `patience` — a key the view had no answer for,
+    /// which is not a frame and is not counted.
+    fn repaint_after(&mut self, bytes: &[u8], patience: Duration) -> Option<Duration> {
+        self.keys(bytes);
+        let started = Instant::now();
+        let deadline = started + patience;
+        while Instant::now() < deadline {
+            if let Ok(Some(count)) = self
+                .pty
+                .read_timeout(&mut self.buffer, Duration::from_millis(1))
+                && count > 0
+            {
+                let elapsed = started.elapsed();
+                let chunk = String::from_utf8_lossy(&self.buffer[..count]).into_owned();
+                self.seen.push_str(&chunk);
+                return Some(elapsed);
+            }
+        }
+        None
     }
 
     /// Types a line and presses Return.
@@ -911,4 +935,63 @@ fn should_offer_the_neighbouring_places_when_completion_runs_at_the_prompt() {
 
     session.keys(INTERRUPT);
     session.line("exit");
+}
+
+#[test]
+fn should_repaint_a_focus_move_far_inside_the_frame_budget_when_the_map_is_open() {
+    // §34: "focus/navigation inside rendered map < 16 ms frame target". `docs/ACCEPTANCE.md`
+    // §4.7.5 asks for that budget at a real pseudo-terminal, in the shape of
+    // `crates/ono-editor/tests/latency.rs` (§4.3): the whole keystroke-to-paint path is timed,
+    // not the renderer alone, and the figure asserted is the spec's own — the measurement sits
+    // two orders below it, so machine noise cannot decide the release while a quadratic redraw
+    // still fails the gate.
+    //
+    // The median is taken, because one scheduling hiccup on a shared machine is not a frame
+    // cost. A key the view had nothing to answer is not counted as a frame at all.
+    let (home, work) = workspace();
+    let mut session = Session::start(WindowSize::new(30, 100), home.path(), &work);
+    assert!(
+        session.wait_for("> ", STARTUP),
+        "the shell must reach a prompt; saw:\n{}",
+        plain(session.seen())
+    );
+    session.prompt("FB0");
+    session.line("map");
+    assert!(
+        session.wait_for_after("\r\nFB0\r\n", ALTERNATE_SCREEN_ON, BUDGET),
+        "§52.1: `map` opens a full-screen view; saw:\n{}",
+        plain(&after(session.seen(), "\r\nFB0\r\n"))
+    );
+    // Everything the opening paint produced has to be off the wire before a frame can be timed.
+    session.settle(Duration::from_millis(600));
+
+    let mut frames: Vec<Duration> = Vec::new();
+    for step in 0..40 {
+        let key = if step % 2 == 0 { DOWN } else { UP };
+        if let Some(elapsed) = session.repaint_after(key, Duration::from_secs(2)) {
+            frames.push(elapsed);
+        }
+    }
+    session.keys(ESCAPE);
+    assert!(
+        session.wait_for_after(ALTERNATE_SCREEN_ON, ALTERNATE_SCREEN_OFF, BUDGET),
+        "the view closes again; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+    session.line("exit");
+
+    assert!(
+        frames.len() >= 30,
+        "§23.4: every focus move repaints the view; only {} of 40 did",
+        frames.len()
+    );
+    frames.sort_unstable();
+    let median = frames[frames.len() / 2];
+    assert!(
+        median <= Duration::from_millis(16),
+        "§34: a focus move inside the rendered map is budgeted at 16 ms per frame; the median of \
+         {} frames was {median:?} (slowest {:?})",
+        frames.len(),
+        frames.last().copied().unwrap_or_default()
+    );
 }
