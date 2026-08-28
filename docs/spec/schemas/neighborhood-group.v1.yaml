@@ -33,10 +33,11 @@ fields:
     doc: The relation the members are reached by (§3.5); null for a collection reached by containment.
   count:
     type: int
-    required: true
+    nullable: true
     doc: >-
-      How many places lie behind the exit. Trustworthy as a statement about the system only when
-      `state` is `available` or `empty` (§35.2, §2.17).
+      How many places lie behind the exit, and null where nobody could count them. §2.17 and
+      §42.4: a group the provider refused carries its `state` and no number, because
+      `files  permission denied for 14 process FDs` and `files  0` are different facts.
   state:
     type: enum
     required: true

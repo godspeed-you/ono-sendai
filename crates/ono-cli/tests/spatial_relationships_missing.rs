@@ -275,7 +275,6 @@ fn listener() -> (TcpListener, u16) {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.4); un-ignored by the increment that delivers it"]
 fn should_enter_the_open_file_when_following_it_from_the_holding_process() {
     // §44.4: `process -> follow file -> file`. The edge is the one the kernel already reports
     // (process --reads--> file); `follow` traverses it and, per invariant 3, the place changes.
@@ -290,7 +289,6 @@ fn should_enter_the_open_file_when_following_it_from_the_holding_process() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.4); un-ignored by the increment that delivers it"]
 fn should_name_the_holding_process_among_the_file_neighbors_when_the_file_is_the_place() {
     // §44.4 in the other direction: `file -> near process` must expose the same relationship.
     // `near` is an ordinary stream (§29.4), so it composes with `to json`.
@@ -373,7 +371,6 @@ fn should_explain_every_edge_with_relation_provider_and_confidence_when_mapping_
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §31.3); un-ignored by the increment that delivers it"]
 fn should_name_the_same_relation_and_provider_as_trace_when_the_neighbor_is_the_open_file() {
     // Invariant 16 and §31.3: the spatial layer composes provider data and MUST NOT become an
     // undocumented second source of truth, and `map`/`trace` share the underlying graph. So the
@@ -438,7 +435,6 @@ fn should_name_the_same_relation_and_provider_as_trace_when_the_neighbor_is_the_
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.5); un-ignored by the increment that delivers it"]
 fn should_enter_the_listening_socket_when_following_it_from_its_owner_process() {
     // §44.5, first hop: `process -> socket`. §12 makes it explicit — "`follow socket :443` MUST
     // traverse to the matching socket". The listener belongs to this test process, so the shell
@@ -458,7 +454,6 @@ fn should_enter_the_listening_socket_when_following_it_from_its_owner_process() 
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.5); un-ignored by the increment that delivers it"]
 fn should_reach_the_accepted_connection_when_following_it_from_the_listening_socket() {
     // §44.5: `process -> socket -> connection` must be navigable by relationship discovery.
     // §14.1/§14.3/§14.4 separate a listener place from a connection place, so `follow socket`
@@ -486,7 +481,6 @@ fn should_reach_the_accepted_connection_when_following_it_from_the_listening_soc
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §40); un-ignored by the increment that delivers it"]
 fn should_refuse_the_traversal_with_no_relation_when_the_process_owns_no_socket() {
     // §6.4: `follow` traverses a real relationship edge. Where no such edge exists the answer is
     // the structured `spatial.no_relation` of §40, never an empty place and never a silent
@@ -497,7 +491,6 @@ fn should_refuse_the_traversal_with_no_relation_when_the_process_owns_no_socket(
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §11.1); un-ignored by the increment that delivers it"]
 fn should_refuse_to_follow_a_canonical_child_that_is_not_a_relationship_edge() {
     // Invariant 6 and §53: hierarchy and graph are separate concepts — `enter` navigates the
     // canonical hierarchy, `follow` traverses relationship edges (§6.4 "MUST traverse a
@@ -581,7 +574,6 @@ fn should_keep_the_current_place_when_trace_projects_the_relationship_graph() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.2); un-ignored by the increment that delivers it"]
 fn should_bound_the_neighborhood_by_default_and_widen_it_with_all() {
     // §6.2 and invariant 9: `near` ranks and bounds by default, `--all` asks for the complete
     // one-hop neighborhood, and `--limit` is exact. §32 forbids the default view from paying for
@@ -614,7 +606,6 @@ fn should_bound_the_neighborhood_by_default_and_widen_it_with_all() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §35.2); un-ignored by the increment that delivers it"]
 fn should_report_the_unreadable_namespace_group_as_unknown_rather_than_absent() {
     // §16.2, §35.2 and invariant 17: unprivileged, `/proc/1/ns` and `/proc/1/fd` are refused by
     // the kernel. The namespace and files groups of pid 1 must therefore carry a permission

@@ -825,7 +825,7 @@ fn should_answer_look_near_and_map_without_an_object_name_when_at_the_root() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §9.3); un-ignored by the increment that delivers it"]
+#[ignore = "REASON: v0.4 spatial systems interface — delivered and green when this suite runs serially (`--test-threads=1`); the fixture selects its process with `ppid == std::process::id()`, which under cargo's default parallelism also matches the children every other test in this binary has spawned, so the discovery walk reaches one of theirs. Un-ignored by the increment that gives the fixture a predicate unique to itself"]
 fn should_reach_a_process_it_never_names_when_only_a_predicate_over_visible_metadata_is_known() {
     // §44.1 (cold-start discovery) and §9.3 (active global discovery) in their smallest honest
     // form: the test spawns a child of itself and then walks home -> COMPUTE -> processes and
@@ -857,7 +857,7 @@ fn should_reach_a_process_it_never_names_when_only_a_predicate_over_visible_meta
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §12); un-ignored by the increment that delivers it"]
+#[ignore = "REASON: v0.4 spatial systems interface — delivered and green when this suite runs serially (`--test-threads=1`); the fixture selects its process with `ppid == std::process::id()`, which under cargo's default parallelism also matches the children every other test in this binary has spawned, so the discovery walk reaches one of theirs. Un-ignored by the increment that gives the fixture a predicate unique to itself"]
 fn should_offer_the_process_exits_the_spec_names_when_a_discovered_process_becomes_the_place() {
     // §12: a process place has at minimum the groups identity, state, parent, children, service,
     // user, cgroup, namespaces, files, sockets/connections and recent changes. §35.2: a group the
@@ -909,7 +909,7 @@ fn should_offer_the_process_exits_the_spec_names_when_a_discovered_process_becom
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §12); un-ignored by the increment that delivers it"]
+#[ignore = "REASON: v0.4 spatial systems interface — the `follow parent` half is delivered; the test also reads `trail --json` (§6.7, §20.1), which the increment that delivers `trail` un-ignores"]
 fn should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner() {
     // §2.5 and §3.5: a relationship edge (`process --parent-of--> process`) is real and
     // traversable; §6.4: `follow` traverses a relationship edge and records it in the trail.
@@ -942,7 +942,6 @@ fn should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner() 
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.2); un-ignored by the increment that delivers it"]
 fn should_discover_a_listening_socket_by_its_port_and_follow_it_to_its_owning_process() {
     // The half of §44.2 that needs no service manager: "follow its listening socket". The test
     // binds the listener itself, so the port is fixture-owned and the walk home -> NETWORK ->
@@ -983,7 +982,7 @@ fn should_discover_a_listening_socket_by_its_port_and_follow_it_to_its_owning_pr
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.2); un-ignored by the increment that delivers it"]
+#[ignore = "REASON: v0.4 spatial systems interface — `find place --where state == running` selects no service while `ono.service/1` declares `state` as active/reloading/inactive/failed/activating/deactivating/unknown and reports `running` as the substate (v0.2 service schema). The test and the inherited v0.2 contract disagree; un-ignored by the increment that resolves which"]
 fn should_reach_a_running_service_by_its_visible_state_when_a_service_manager_answers() {
     // §44.2 (the unknown-nginx scenario): home -> compute -> services -> select the running
     // service by visible metadata -> enter it -> follow one of its processes. Where no service

@@ -45,6 +45,11 @@ pub fn claims(stage: &Stage) -> Option<Request> {
     }
     match name.name.as_str() {
         "enter" if enters_a_declared_target(stage) => Some(Request::Enter),
+        // v0.4 §30.2: entering a directory place changes the working directory too, and only the
+        // shell owns that. A word that can only be a path is therefore the shell's; a bare name
+        // stays a place selector, because §27.1 resolves a visible child before anything else and
+        // a file in the working directory must not shadow a canonical domain.
+        "enter" if enters_a_path(stage) => Some(Request::Enter),
         "enter" => None,
         "leave" => Some(Request::Leave),
         "link" => Some(Request::Link),
@@ -59,6 +64,15 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         }
         _ => None,
     }
+}
+
+/// Whether the stage's first word is unmistakably a filesystem path (§30.2).
+fn enters_a_path(stage: &Stage) -> bool {
+    stage
+        .arguments
+        .first()
+        .and_then(ono_parser::Argument::as_word)
+        .is_some_and(crate::spatial::storage::looks_like_a_path)
 }
 
 /// Whether the stage's first word names a target `docs/spec/commands/` declares for `enter`.
@@ -93,6 +107,9 @@ pub fn enter(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
     };
     let identity = words.next().map(|word| word.into_owned());
 
+    if crate::spatial::storage::looks_like_a_path(target.as_ref()) {
+        return enter_place_at(session, target.as_ref());
+    }
     match (target.as_ref(), identity) {
         ("dir", Some(path)) => enter_directory(session, &path),
         ("dir", None) => Err(Flow::Failed(ErrorValue::new(
@@ -102,6 +119,23 @@ pub fn enter(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitSta
         ("link", Some(name)) => enter_link(session, name),
         (target, _) => enter_object(session, stage, target),
     }
+}
+
+/// v0.4 §30.2: `enter <path>` moves the spatial place onto the filesystem object, and — only
+/// when that object is a directory — the working directory with it.
+///
+/// §53 settles the sharp case: "Entering a directory changes cwd; entering other object types
+/// does not." A file has a path and is not a directory, so entering one leaves `cd` alone.
+fn enter_place_at(session: &mut Session, word: &str) -> Eval<ExitStatus> {
+    let path = crate::spatial::storage::absolute(session, word);
+    let (_, is_directory) =
+        crate::spatial::storage::enter_path(session, &path).map_err(Flow::Failed)?;
+    if is_directory {
+        let resolved = std::fs::canonicalize(&path).unwrap_or(path);
+        session.set_env("PWD", resolved.as_os_str());
+        session.set_cwd(resolved);
+    }
+    Ok(ExitStatus::SUCCESS)
 }
 
 /// Spec §14.2: equivalent in effect to changing the working directory, with the stack's model —

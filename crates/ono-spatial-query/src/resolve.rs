@@ -437,6 +437,32 @@ fn canonical_identifier(index: &SpatialIndex, selector: &str, now: Timestamp) ->
     if let Some(space) = space::space(&selector.to_ascii_lowercase()) {
         return vec![space_candidate(space, ResolutionStep::CanonicalIdentifier)];
     }
+    // `<type>/<key>` — `process/1842`, `service/nginx.service`. §11.2 and §27.2 write a place
+    // this way whenever the bare key would be ambiguous, and the trail and the map print it.
+    if let Some((kind, key)) = selector.split_once('/')
+        && !key.is_empty()
+        && let Some(wanted) = SpatialType::ALL
+            .iter()
+            .copied()
+            .find(|known| known.as_str().eq_ignore_ascii_case(kind))
+    {
+        let found: Vec<Candidate> = index
+            .by_alias(key)
+            .into_iter()
+            .filter(|entry| entry.object().object_type().is_a(wanted))
+            .filter_map(|entry| {
+                candidate(
+                    index,
+                    entry.object().spatial_id(),
+                    ResolutionStep::CanonicalIdentifier,
+                    now,
+                )
+            })
+            .collect();
+        if !found.is_empty() {
+            return found;
+        }
+    }
     // `<domain>:<key>` — `storage:/data`, `compute:1842`. The domain narrows the search to the
     // types that domain holds, which is what makes the same key unambiguous in two domains.
     if let Some((domain, key)) = selector.split_once(':')

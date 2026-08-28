@@ -13,8 +13,7 @@ use ono_core::ErrorCode;
 use ono_parser::Expr;
 use ono_pipeline::ValueStream;
 use ono_provider_api::{ProviderRegistry, Query};
-use ono_spatial_core::{BootIdentity, Projection, SpatialScope, SpatialType};
-use ono_spatial_index::{FreshnessPolicy, ProviderBridge, SpatialIndex};
+use ono_spatial_core::{BootIdentity, SpatialScope, SpatialType};
 use ono_spatial_query::discovery::{TargetPlan, root_fields, targets_for};
 use ono_spatial_query::{FindRequest, SelectorContext, resolve};
 use ono_value::{ErrorValue, RecordValue, Value};
@@ -70,8 +69,10 @@ impl CommandImpl for FindPlace {
             let pin_store = self.pins.clone();
 
             let now = Timestamp::now();
-            let mut index = SpatialIndex::new(FreshnessPolicy::recommended());
-            let mut bridge = ProviderBridge::new(Projection::new(local_scope(), now));
+            // §33.1: one index per session. A search that built its own would answer about places
+            // the session cannot then enter, and `find place … | take 1 | enter` is exactly the
+            // composition §28.2 requires (ADR-0141, superseded here).
+            let mut session = crate::spatial::spatial_session().await;
 
             let plan = plan_for(ctx.providers(), object_type, predicate.as_ref());
             let mut subjects: Vec<ono_spatial_core::SpatialId> = Vec::new();
@@ -83,18 +84,19 @@ impl CommandImpl for FindPlace {
                 subjects.extend(
                     records
                         .iter()
-                        .filter_map(|record| bridge.project(record).ok())
-                        .map(|object| object.spatial_id().clone()),
+                        .filter_map(|record| session.projection_of(record).ok()),
                 );
-                bridge.absorb(&mut index, &records, now);
+                session.absorb(&records, now);
             }
             if predicate.is_some() {
                 request = request.among(subjects);
             }
 
+            request = request.from_place(session.current_place().clone());
+            let index = session.index();
             if let Some(anchor) = anchor {
                 let found =
-                    resolve(&index, &anchor, &SelectorContext::anywhere(), now).require(&anchor)?;
+                    resolve(index, &anchor, &SelectorContext::anywhere(), now).require(&anchor)?;
                 request = request.near(found.spatial_id().clone());
             }
 
@@ -110,10 +112,11 @@ impl CommandImpl for FindPlace {
             // for this answer — that is what the resilient selector of §20.4 is for. The store
             // is not rewritten: the pin follows its selector when it is read, never behind the
             // user's back.
-            for (name, id) in crate::spatial::pins::resolved_pins(&pins, &index, now) {
+            let index = session.index();
+            for (name, id) in crate::spatial::pins::resolved_pins(&pins, index, now) {
                 pins.rebind(&name, id);
             }
-            let places = ono_spatial_query::find_places(&index, &request, &pins, now);
+            let places = ono_spatial_query::find_places(index, &request, &pins, now);
             // The place record is the same one `look` and `near` emit (ADR-0140): one contract,
             // one builder, so a search result and a neighbour never read differently.
             let scope = local_scope();
@@ -121,7 +124,7 @@ impl CommandImpl for FindPlace {
                 .iter()
                 .map(|place| {
                     crate::spatial::view::place_record(
-                        &index,
+                        index,
                         place.spatial_id(),
                         &scope,
                         ono_spatial_core::PermissionState::Available,

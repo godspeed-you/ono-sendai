@@ -42,6 +42,21 @@ fields:
     type: list<ono.neighborhood-group/1>
     required: true
     doc: The exits, ranked (§24.2). The same list as `neighborhood.groups`.
+  freshness:
+    type: enum
+    required: true
+    values: [event_driven, polled, cached, stale, partial]
+    doc: >-
+      How the data behind the place is kept current, in §25.3's vocabulary (§33.4). `polled` while
+      nothing subscribes; `stale` past the index TTL; `partial` where an exit could not be read.
+  exits:
+    type: record
+    required: true
+    doc: >-
+      The same exits, keyed by the word `look` prints and `enter`/`follow` take — §24.2's "groups
+      as exits", and §12's `parent`, `children`, `sockets`, `files`, `namespaces`, `cgroup`. A
+      reader that wants one exit by name reads this; one that wants them in rank order reads
+      `groups`.
   domains:
     type: list<ono.neighborhood-group/1>
     nullable: true

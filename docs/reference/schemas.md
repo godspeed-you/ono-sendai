@@ -928,7 +928,7 @@ Default view: `label`, `count`, `state`
 | `name` | `string` | — | required | The same text under the name the object pipeline gives every object's name (v0.2 §33.5). |
 | `display_name` | `string` | — | required | The same text under the name §3.1 gives the field. |
 | `relation` | `string` | — | nullable | The relation the members are reached by (§3.5); null for a collection reached by containment. |
-| `count` | `int` | — | required | How many places lie behind the exit. Trustworthy as a statement about the system only when `state` is `available` or `empty` (§35.2, §2.17). |
+| `count` | `int` | — | nullable | How many places lie behind the exit, and null where nobody could count them. §2.17 and §42.4: a group the provider refused carries its `state` and no number, because `files  permission denied for 14 process FDs` and `files  0` are different facts. |
 | `state` | `enum` | — | required | What the user was told about the objects behind the exit (§35.2). These stay distinct. |
 | `detail` | `string` | — | nullable | What the provider said in place of a count, for a group that could not be read (§35.2). |
 | `navigable` | `bool` | — | required | Whether `enter <label>` really is a move from here (§24.2). |
@@ -1002,6 +1002,8 @@ Default view: `label`, `type`, `hostname`, `generated_at`
 | `hostname` | `string` | — | required | The host the place belongs to (§3.2, §7.1). The prompt's first segment (§21.1). |
 | `place` | `ono.spatial-place/1` | — | required | The place itself, in the same shape `find place` streams (§3.1, ADR-0140). |
 | `groups` | `list<ono.neighborhood-group/1>` | — | required | The exits, ranked (§24.2). The same list as `neighborhood.groups`. |
+| `freshness` | `enum` | — | required | How the data behind the place is kept current, in §25.3's vocabulary (§33.4). `polled` while nothing subscribes; `stale` past the index TTL; `partial` where an exit could not be read. |
+| `exits` | `record` | — | required | The same exits, keyed by the word `look` prints and `enter`/`follow` take — §24.2's "groups as exits", and §12's `parent`, `children`, `sockets`, `files`, `namespaces`, `cgroup`. A reader that wants one exit by name reads this; one that wants them in rank order reads `groups`. |
 | `domains` | `list<ono.neighborhood-group/1>` | — | nullable | The six canonical domains with their states (§7.1's `domains`, §4). Present at the root, where they are the exits; null anywhere else, because a domain is not a neighbour of a process. |
 | `landmarks` | `list<ono.landmark/1>` | — | required | What deserves attention here (§3.7, §26). Empty is an answer; null would not be. |
 | `neighborhood` | `ono.neighborhood/1` | — | required | The bounded, ranked projection around the place, with what it left out (§3.6). |
@@ -1427,11 +1429,23 @@ Default view: `relation`, `display_name`, `spatial_type`, `state`
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
-| `relation` | `string` | — | required | The exit it was reached through — a relation of §3.5, or a collection's label (§24.2). |
+| `relation` | `string` | — | required | The word `follow` takes to traverse the edge from here — `parent`, `socket`, `user` — or a collection's label where the neighbour is reached by hierarchy (§3.5, §6.4, §24.2). |
+| `group` | `string` | — | required | The exit it appeared under, as `look` prints it — §12's `children`, `files`, `sockets`. |
+| `source` | `string` | — | nullable | The `spatial_id` the edge starts at (§11.4). Null where the neighbour is reached by hierarchy rather than by a relationship edge: §2.6 keeps the two apart, and a containment dressed up as an explainable relation would be the confusion it forbids. |
+| `target` | `string` | — | nullable | The `spatial_id` the edge leads to (§11.4); null for a hierarchical member. |
+| `direction` | `enum` | — | nullable | Which way the edge runs (§11.4, §22); null for a hierarchical member. |
+| `confidence` | `enum` | — | nullable | How certain the edge is (§11.5). An inferred edge is never labelled exact, whatever the relation registry would admit; null for a hierarchical member. |
+| `provider` | `string` | — | nullable | Who asserted the edge — `linux.open-files`, `linux.process-tree`. The v0.2 relationship provider's own id, because §2.16 forbids the spatial layer from becoming a second source. Null for a hierarchical member. |
+| `provider_relation` | `string` | — | nullable | The word that provider uses for the relation — `reads`, `runs-as`. The same word `trace` prints for the same edge (§31.3); null where the neighbour is reached by hierarchy. |
+| `provenance` | `record` | — | required | Where the edge was observed, when, and by whom (§11.4, §27.4). |
+| `observed_at` | `timestamp` | — | nullable | When the edge was last seen (§11.4); null for a hierarchical member. |
 | `spatial_id` | `string` | — | required | The opaque, stable identity of the neighbour (§3.1). |
 | `name` | `string` | — | required | What a person calls it. Not identity (§3.1). |
 | `display_name` | `string` | — | required | The same text under the name §3.1 gives the field. |
 | `object_type` | `string` | — | required | The v0.2 schema of the object behind the place, such as `ono.process/1`. |
+| `type` | `string` | — | required | What kind of place it is, in §3.3's vocabulary and the families it belongs to. |
+| `canonical_ref` | `record` | — | nullable | The provider's own reference to the neighbour — its schema and that schema's identity fields. §28.1 makes a selected object a typed value, and a neighbour nobody can name again is not one. Null where the neighbour is a canonical space. |
+| `identity` | `record` | — | nullable | The named components §3.1 composes its `spatial_id` from (§27.2's disambiguation). |
 | `spatial_type` | `string` | — | required | The §3.3 type — `process`, `service`, `listener` — lower-cased. |
 | `state` | `enum` | — | required | What the user was told about the group this neighbour came from (§35.2). |
 | `place_path` | `string` | — | required | Where it sits in the canonical hierarchy, from the host down (§27.2's third column). |
@@ -1452,11 +1466,16 @@ Default view: `name`, `spatial_type`, `place_path`, `freshness`
 | `spatial_id` | `string` | — | required | The opaque, stable identity of §3.1. A user copies, pins or compares one but never composes one; `enter "<spatial_id>"` is the exact-id escape from ambiguity of §29.3. |
 | `name` | `string` | — | required | What a person calls the place. Not identity (§3.1). |
 | `display_name` | `string` | — | required | §3.1's `display_name` — the same text as `name`, under the name §3.1 gives the field. |
+| `type` | `string` | — | required | What kind of place this is, in §3.3's vocabulary, with the families it belongs to after it: `process`, `connection socket`, `directory`. §14.3 and §14.4 split §3.3's `Socket` into a listener and a connection, and both readings are true of one place, so the chain is written out rather than one of them chosen (ADR-0148). |
 | `object_type` | `string` | — | required | The v0.2 schema of the object behind the place, such as `ono.process/1`. This is what makes a place recognisable to the pipeline it flows into and what §37.1's identity merge compares. A canonical space has none of its own and reports `ono.spatial-place/1`. |
 | `spatial_type` | `string` | — | required | The §3.3 type — `process`, `service`, `listener`, `directory`, `compute` — lower-cased. |
 | `place_path` | `string` | — | required | Where the place sits in the canonical hierarchy, from the host down: `local/compute/processes`. §27.2's third column, and §6.8's path information. |
 | `scope` | `string` | — | required | The §3.2 boundary the place belongs to, rendered as `<kind>:<id>` — `host:web01`. |
-| `parent` | `string` | — | nullable | The `spatial_id` of the canonical parent `up` reaches (§11.3); null for the root and for the off-map places of §42.3. |
+| `canonical_ref` | `record` | — | nullable | §3.1's `canonical_ref`: the provider's own reference to the object — the schema it serves it under and the values of that schema's identity fields. This is the handle an action revalidates through (§33.2) and what §37.1's identity merge compares. Null for a canonical space, which no provider serves. |
+| `canonical_parent` | `string` | — | nullable | The `spatial_id` `up` reaches (§11.3), spelled under the name §33.1 gives the field. It is the same answer as `parent`, and it is deterministic for a given view profile. |
+| `state` | `any` | — | nullable | The object's own state, as the provider reports it — `running`, `listen`, `active`. §24.1 puts it at the top of a place view; null where the object has none. |
+| `summary` | `record` | — | nullable | What the provider's default view says about the object — a process's user and memory, a mount's filesystem and source, a socket's endpoints (§12, §13, §14.3, §15.3). §24.1 budgets this: the exhaustive property list is `inspect`'s, not a place view's. |
+| `lifetime` | `record` | — | nullable | §3.1's `lifetime`: the identity tier, when the object was first and last observed, when it started where the provider states that, and when it ended where it has (§10.1, §10.2, §10.3). Null for a canonical space, which is declared rather than born. |
 | `freshness` | `enum` | — | required | How current the answer is (§27.4, §33.4). `unknown` is not `fresh`: a place that was never observed says so (§2.17). |
 | `observed_at` | `timestamp` | — | nullable | When a provider last saw the object; null for a canonical space, which nobody observes. |
 | `identity_tier` | `enum` | — | required | How far the identity can be trusted (§10.1). A renderer may not imply persistence for an observation identity. |

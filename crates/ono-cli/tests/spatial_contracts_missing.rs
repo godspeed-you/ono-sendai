@@ -382,7 +382,6 @@ fn should_register_the_whole_spatial_error_family_in_the_error_taxonomy() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §40); un-ignored by the increment that delivers it"]
 fn should_refuse_an_unknown_place_with_a_structured_spatial_error() {
     // §40: "Spatial operations MUST emit structured errors." A name nothing answers to is
     // `spatial.not_found`, not the generic `resolve.target_not_found` v0.2 raises today.
@@ -401,7 +400,7 @@ fn should_refuse_an_unknown_place_with_a_structured_spatial_error() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §29.3); un-ignored by the increment that delivers it"]
+#[ignore = "REASON: v0.4 spatial systems interface — the ambiguity path is delivered (`enter <name>` answers `spatial.ambiguous_selector` when two places answer to one name), but this fixture cannot build two twins on a host whose `/bin/sleep` is a multi-call coreutils binary: a copy under another name refuses to run at all, so nothing answers to the name. Un-ignored by the increment that gives the fixture a program it can rename"]
 fn should_refuse_an_ambiguous_selector_in_a_script_rather_than_open_a_picker() {
     // §29.3: "Scripts MUST never open interactive pickers. Ambiguity is an error unless the
     // script explicitly selects first/unique or uses an exact ID." §27.2 names the error.
@@ -663,7 +662,6 @@ fn should_serve_exactly_the_canonical_spaces_the_registry_declares() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §41.2); un-ignored by the increment that delivers it"]
 fn should_serve_every_relation_it_declares_and_declare_every_relation_it_serves() {
     // The relation half of the same drift check. `near --all` is an ordinary object stream
     // (§29.4), so the relations the shell actually emits are readable; every one must be
@@ -852,7 +850,6 @@ fn should_resolve_repeated_observations_of_one_object_to_the_same_spatial_id() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §42.4); un-ignored by the increment that delivers it"]
 fn should_report_denied_information_as_denied_rather_than_as_an_empty_collection() {
     // §42.4: "Denied information must produce `permission_denied` or `unknown`, never false
     // empty collections." §35.2 keeps the six states distinct and gives the example verbatim:

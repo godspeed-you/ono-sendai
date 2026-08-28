@@ -20,11 +20,13 @@
 //! for the duration of its run rather than rebuilt by it (ADR-0141, superseded here for the
 //! session's own commands).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use jiff::Timestamp;
 use ono_spatial_core::{NavigationTrail, Projection, SpatialId, SpatialScope, space};
-use ono_spatial_index::{FreshnessPolicy, PinRegistry, ProviderBridge, SpatialIndex};
+use ono_spatial_index::{Absorbed, FreshnessPolicy, PinRegistry, ProviderBridge, SpatialIndex};
+use ono_value::RecordValue;
 use tokio::sync::{Mutex, MutexGuard};
 
 /// What a session remembers about where it is (§46).
@@ -36,6 +38,11 @@ pub struct SpatialSessionState {
     bridge: ProviderBridge,
     pins: PinRegistry,
     preferences: ViewPreferences,
+    /// The last record each place was observed as. The index holds what a place *is* (§33.1);
+    /// this holds what the provider last said about it, which is what the v0.2 relationship
+    /// graph expands and what §24.1's summary is read from — neither may be re-read behind the
+    /// provider's back (§2.16).
+    records: BTreeMap<SpatialId, Arc<RecordValue>>,
 }
 
 /// The view settings a session carries between commands (§46's `view_preferences`).
@@ -68,6 +75,7 @@ impl SpatialSessionState {
             scope,
             pins: PinRegistry::new(),
             preferences: ViewPreferences::default(),
+            records: BTreeMap::new(),
         }
     }
 
@@ -103,6 +111,47 @@ impl SpatialSessionState {
     /// The index and the bridge together, which is how anything is added to it.
     pub fn absorb_with(&mut self) -> (&mut SpatialIndex, &mut ProviderBridge) {
         (&mut self.index, &mut self.bridge)
+    }
+
+    /// Registers what a provider answered: the places the records are, and the records
+    /// themselves (§33.1, §33.2).
+    pub fn absorb(&mut self, records: &[RecordValue], at: Timestamp) -> Absorbed {
+        for record in records {
+            if let Ok(object) = self.bridge.project(record) {
+                self.records
+                    .insert(object.spatial_id().clone(), Arc::new(record.clone()));
+            }
+        }
+        self.bridge.absorb(&mut self.index, records, at)
+    }
+
+    /// Which place a record is, without registering it (§45.2).
+    ///
+    /// # Errors
+    ///
+    /// `spatial.identity_conflict` when the record declares no identity §3.1 can be derived from.
+    pub fn projection_of(&self, record: &RecordValue) -> Result<SpatialId, ono_value::ErrorValue> {
+        self.bridge
+            .project(record)
+            .map(|object| object.spatial_id().clone())
+    }
+
+    /// The place a record is, as the bridge projects it (§45.2).
+    ///
+    /// # Errors
+    ///
+    /// `spatial.identity_conflict` when the record declares no identity §3.1 can be derived from.
+    pub fn projection_of_object(
+        &self,
+        record: &RecordValue,
+    ) -> Result<ono_spatial_core::SpatialObject, ono_value::ErrorValue> {
+        self.bridge.project(record)
+    }
+
+    /// What the provider last said about the object at `id`, where this session has seen it.
+    #[must_use]
+    pub fn record_of(&self, id: &SpatialId) -> Option<&Arc<RecordValue>> {
+        self.records.get(id)
     }
 
     /// The pins this session knows about (§20.4, §26.4).

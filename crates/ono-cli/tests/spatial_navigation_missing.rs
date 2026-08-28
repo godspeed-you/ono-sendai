@@ -385,7 +385,6 @@ fn should_bound_the_neighborhood_to_the_requested_size_when_near_is_limited() {
 // --- enter -----------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.3, §7.2); un-ignored by the increment that delivers it"]
 fn should_move_into_the_hierarchical_child_when_entering_a_canonical_domain_and_its_group() {
     // §6.3: `enter` resolves one place and pushes the previous one onto the trail. Invariant 3:
     // it produces a new spatial context rather than printing an object. §7.2 makes `processes` a
@@ -412,7 +411,6 @@ fn should_move_into_the_hierarchical_child_when_entering_a_canonical_domain_and_
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.3, §28.2); un-ignored by the increment that delivers it"]
 fn should_move_into_the_selected_object_when_a_pipeline_result_is_entered() {
     // §28.2: a structured pipeline result containing spatially identifiable objects MUST be
     // enterable; with one result there is nothing to pick. §6.3 accepts the selected object as
@@ -436,7 +434,6 @@ fn should_move_into_the_selected_object_when_a_pipeline_result_is_entered() {
 // --- follow ----------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.4, §3.5); un-ignored by the increment that delivers it"]
 fn should_traverse_the_relationship_edge_when_following_the_parent_relation() {
     // §6.4: `follow` MUST traverse a relationship edge, not a canonical hierarchy edge, and
     // `follow parent` is one of its own examples. §3.5 lists `process --parent-of--> process` as
@@ -453,7 +450,6 @@ fn should_traverse_the_relationship_edge_when_following_the_parent_relation() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.4, §40); un-ignored by the increment that delivers it"]
 fn should_answer_no_relation_when_following_an_edge_the_current_place_does_not_have() {
     // §40 requires `spatial.no_relation`. A `sleep` child owns no socket, and the test owns the
     // process, so this is a true absence rather than a permission boundary — invariant 17 keeps
@@ -770,7 +766,6 @@ fn should_compose_with_the_v02_pipeline_when_a_find_result_is_filtered_and_count
 // --- ambiguity in scripts ----------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §27.2, §29.3, §40); un-ignored by the increment that delivers it"]
 fn should_answer_ambiguous_selector_when_a_script_selector_matches_several_places() {
     // §29.3: scripts MUST never open interactive pickers; ambiguity is an error. §27.2 names it
     // `spatial.ambiguous_selector`, and §40 requires it to be structured. Two `sleep` children
@@ -794,7 +789,6 @@ fn should_answer_ambiguous_selector_when_a_script_selector_matches_several_place
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §29.3, §28.2); un-ignored by the increment that delivers it"]
 fn should_resolve_the_ambiguity_when_the_script_explicitly_selects_the_first_match() {
     // §29.3: ambiguity is an error "unless the script explicitly selects first/unique or uses an
     // exact ID". The explicit first selection is spelled with the v0.2 pipeline §28.3 already
@@ -818,7 +812,6 @@ fn should_resolve_the_ambiguity_when_the_script_explicitly_selects_the_first_mat
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §29.3, §27.1, §3.1); un-ignored by the increment that delivers it"]
 fn should_resolve_the_ambiguity_when_the_script_names_the_exact_spatial_id() {
     // §29.3: an exact ID resolves what a name cannot. §3.1: the SpatialId is opaque to users but
     // stable while the object is the same object — so an id read in one run still names the same
@@ -916,7 +909,6 @@ fn should_answer_a_bounded_graph_when_map_json_runs_without_a_tty() {
 // --- scripts do not leak their place -----------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §29.2); un-ignored by the increment that delivers it"]
 fn should_leave_the_callers_place_untouched_when_a_called_script_navigates() {
     // §29.2: a script MAY navigate, but its current place is script-local — it MUST NOT silently
     // change the caller's spatial context. The caller stands in COMPUTE, the called script walks

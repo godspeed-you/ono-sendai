@@ -116,6 +116,33 @@ commands:
       - enter processes
       - enter network
 
+  - id: ono.place.follow
+    verb: follow
+    target: null
+    summary: Traverse a relationship edge of the current place — never a hierarchy edge.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: "null"
+    provider_capability: null
+    selectors:
+      - {name: relation, type: string, doc: "The relation to traverse: the word `look` prints for the exit, or the relation label the registry declares — `parent`, `socket`, `children` (v0.4 §6.4, §24.2)."}
+      - {name: selector, type: string, doc: "Which neighbour, where the relation reaches more than one: `follow socket :443`, `follow file /etc/nginx/nginx.conf` (v0.4 §6.4)."}
+    options: []
+    privilege: conditional
+    streaming: false
+    phase: S
+    note: >-
+      §6.4: "`follow` MUST traverse a relationship edge, not a canonical hierarchy edge." A word
+      that names a canonical space is refused with `spatial.no_relation` and reached with `enter`
+      instead; a relation this place has but no edge along is the same refusal; a relation the
+      registry declares for another kind of place is `spatial.not_found`, because the name was
+      understood (v0.4 §11.1, §40).
+    examples:
+      - follow parent
+      - follow socket :443
+      - follow service
+
   - id: ono.place.home
     verb: home
     target: null

@@ -263,7 +263,6 @@ fn canonical(path: &Path) -> PathBuf {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §30.2); un-ignored by the increment that delivers it"]
 fn should_change_the_working_directory_and_the_place_together_when_entering_a_directory() {
     // §30.2 and §53: "Entering a directory place changes both spatial place and cwd to that
     // directory." Both halves are asserted from the same run, because the place is session state
@@ -302,7 +301,6 @@ fn should_change_the_working_directory_and_the_place_together_when_entering_a_di
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §30.2); un-ignored by the increment that delivers it"]
 fn should_leave_the_working_directory_untouched_when_entering_a_process() {
     // §30.2: "Entering non-filesystem places MUST NOT change cwd", settled again in §53. The
     // place moves to the process; `pwd` before and after is the same directory.
@@ -337,7 +335,6 @@ fn should_leave_the_working_directory_untouched_when_entering_a_process() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §30.2); un-ignored by the increment that delivers it"]
 fn should_leave_the_working_directory_untouched_when_entering_a_file_or_a_socket() {
     // §53: "Entering a directory changes cwd; entering other object types does not." A file is
     // the sharp case — it is a filesystem object with a path, and entering it still must not
@@ -386,7 +383,6 @@ fn should_leave_the_working_directory_untouched_when_entering_a_file_or_a_socket
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §30.3); un-ignored by the increment that delivers it"]
 fn should_move_the_place_with_cd_when_the_current_place_is_a_directory() {
     // §30.3 with the default `spatial.follow_cwd = storage-only`: while the current place is
     // inside the filesystem/storage family, `cd` updates the spatial place to the corresponding
@@ -425,7 +421,6 @@ fn should_move_the_place_with_cd_when_the_current_place_is_a_directory() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §30.3); un-ignored by the increment that delivers it"]
 fn should_keep_the_place_when_cd_moves_while_the_place_is_a_process() {
     // §30.3, the other half of the same default: `spatial.follow_cwd = storage-only` exists so a
     // `cd` cannot throw the user out of a process investigation. The working directory moves, the
@@ -465,7 +460,6 @@ fn should_keep_the_place_when_cd_moves_while_the_place_is_a_process() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §30.4); un-ignored by the increment that delivers it"]
 fn should_keep_the_spatial_place_out_of_pwd_when_the_place_is_not_a_directory() {
     // §30.4: "Spatial place MUST NOT be encoded into `PWD`. `PWD` remains the filesystem working
     // directory." External commands read `PWD`, so a place leaking into it would break every one
@@ -491,7 +485,6 @@ fn should_keep_the_spatial_place_out_of_pwd_when_the_place_is_not_a_directory() 
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.3); un-ignored by the increment that delivers it"]
 fn should_list_the_mounts_the_providers_report_when_walking_into_the_storage_domain() {
     // §44.3 and §7.4: without prior mount names, `home -> storage -> mounts` must reach the
     // mounts of this host. The expectation is read from the v0.2 provider at runtime, never from
@@ -534,7 +527,6 @@ fn should_list_the_mounts_the_providers_report_when_walking_into_the_storage_dom
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.3); un-ignored by the increment that delivers it"]
 fn should_list_the_filesystems_the_providers_report_when_walking_into_the_storage_domain() {
     // §7.4: `STORAGE` MUST provide access to filesystems as well as mounts, and they are
     // different places built from the different v0.2 objects (`get filesystem`, `get mount`).
@@ -650,7 +642,6 @@ fn should_record_the_boundary_crossing_when_traversing_from_the_root_into_a_moun
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §40); un-ignored by the increment that delivers it"]
 fn should_refuse_a_path_that_does_not_exist_with_a_structured_error() {
     // §40: a spatial operation that cannot resolve its target emits `spatial.not_found`. An
     // empty place would be the wrong answer twice over — it would claim a location that does not

@@ -177,6 +177,19 @@ impl Observed {
     }
 }
 
+/// Asks a set of provider targets once and registers everything they answered (§33.1, §34).
+///
+/// The plan of which targets to ask belongs to `ono-spatial-query` (§45.3); asking is the
+/// shell's, because nothing but the shell may reach a provider (§2.16).
+pub async fn observe_targets(
+    ctx: &Invocation<'_>,
+    session: &mut SpatialSessionState,
+    targets: &BTreeSet<&'static str>,
+    now: Timestamp,
+) {
+    let _ = observe(ctx.providers(), session, targets, now).await;
+}
+
 /// Asks every target once and registers what came back (§33.1, §42.1).
 async fn observe(
     providers: &ProviderRegistry,
@@ -225,9 +238,8 @@ async fn observe(
         }
         observed.served.insert(target);
 
-        let (index, bridge) = session.absorb_with();
         for record in &records {
-            if let Ok(object) = bridge.project(record) {
+            if let Ok(object) = session.projection_of_object(record) {
                 observed
                     .by_type
                     .entry(object.object_type())
@@ -235,7 +247,7 @@ async fn observe(
                     .push(object.spatial_id().clone());
             }
         }
-        bridge.absorb(index, &records, now);
+        session.absorb(&records, now);
     }
     observed
 }
@@ -254,9 +266,25 @@ pub fn place_record(
     pinned: bool,
     now: Timestamp,
 ) -> Result<RecordValue, ErrorValue> {
+    place_record_of(index, id, scope, permission, pinned, None, now)
+}
+
+/// The same record, with what the provider last said about the object beside it.
+///
+/// §24.1 budgets a place view: the *summary* the provider's own default view names — a process's
+/// state, a mount's filesystem and source, a socket's endpoints — is what §12 and §13 print, and
+/// the exhaustive property list stays `inspect`'s. Nothing here is read from the system; it is
+/// the record a provider already answered with (§2.16).
+pub fn place_record_of(
+    index: &SpatialIndex,
+    id: &SpatialId,
+    scope: &ono_spatial_core::SpatialScope,
+    permission: PermissionState,
+    pinned: bool,
+    observed: Option<&RecordValue>,
+    now: Timestamp,
+) -> Result<RecordValue, ErrorValue> {
     let schema = schema("ono.spatial-place", 1)?;
-    let parent = ono_spatial_query::resolve::parent_of(index, id)
-        .map_or(Value::Null, |parent| Value::string(&parent.to_string()));
     let place_path = ono_spatial_query::place_path(index, id);
 
     let entry = index.get(id);
@@ -308,15 +336,30 @@ pub fn place_record(
         .tier()
         .map_or(Value::Null, |tier| Value::string(tier.as_str()));
 
-    Ok(RecordValue::builder(schema, Provenance::clone(&provenance))
+    let canonical_ref = entry.map_or(Value::Null, |entry| reference_record(entry.canonical_ref()));
+    let canonical_parent = ono_spatial_query::resolve::parent_of(index, id)
+        .map_or(Value::Null, |parent| Value::string(&parent.to_string()));
+    let state = observed
+        .and_then(|record| record.get("state"))
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let summary = observed.map_or(Value::Null, summary_record);
+
+    let record = RecordValue::builder(schema, Provenance::clone(&provenance))
         .set("spatial_id", Value::string(&id.to_string()))?
+        .set("type", Value::string(&kind_chain(spatial_type)))?
+        .set("canonical_ref", canonical_ref)?
+        .set("canonical_parent", canonical_parent)?
+        .set("state", state)?
+        .set("summary", summary)?
         .set("name", Value::string(&name))?
         .set("display_name", Value::string(&name))?
         .set("object_type", Value::string(&object_type))?
         .set("spatial_type", Value::string(spatial_type.as_str()))?
         .set("place_path", Value::string(&place_path))?
         .set("scope", Value::string(&own_scope.to_string()))?
-        .set("parent", parent)?
+        .set("lifetime", lifetime_record(entry))?
         .set("freshness", Value::string(freshness.as_str()))?
         .set("observed_at", observed_at)?
         .set("identity_tier", tier)?
@@ -324,8 +367,118 @@ pub fn place_record(
         .set("identity", identity)?
         .set("permission", Value::string(permission.as_str()))?
         .set("pinned", Value::Bool(pinned))?
-        .set("provenance", ono_command::provenance_value(&provenance))?
-        .build())
+        .set("provenance", ono_command::provenance_value(&provenance))?;
+    // The fields the provider identifies the object by travel at the top level as well, because
+    // that is where a reader looks for them: `look --json | from json | where pid == 1842` is an
+    // ordinary v0.2 pipeline, and a place that hid its pid inside a nested reference would need a
+    // second vocabulary to be filtered by (§28, §29.4).
+    let mut record = record;
+    if let Some(entry) = entry {
+        let reference = entry.canonical_ref().id();
+        if let Some(object_schema) = builtin_schemas().get(reference.schema()) {
+            for (field, value) in object_schema.identity().iter().zip(reference.values()) {
+                // A name the place contract already declares keeps its own meaning: `name` is
+                // what a person calls the place, whatever the object's schema calls its identity.
+                if schema_declares(field) {
+                    continue;
+                }
+                record = record.set_extra(field, value.clone());
+            }
+        }
+    }
+    Ok(record.build())
+}
+
+/// Whether `ono.spatial-place/1` already declares a field of this name.
+fn schema_declares(field: &str) -> bool {
+    builtin_schemas()
+        .get(&SchemaId::new("ono.spatial-place", 1))
+        .is_some_and(|schema| schema.position_of(field).is_some())
+}
+
+/// What kind of place this is, in §3.3's vocabulary and the families it belongs to.
+///
+/// §3.3 lists `Socket` among the place kinds, and §14.3 and §14.4 then split it into a listener
+/// and a connection. Both readings are true of the same place, and a reader that asks "is this a
+/// socket?" and one that asks "is this a connection?" must both get an answer — so the chain is
+/// written out, most specific first: `connection socket`.
+fn kind_chain(object_type: SpatialType) -> String {
+    let mut chain = vec![object_type.as_str().to_ascii_lowercase()];
+    let mut current = object_type;
+    while let Some(general) = current.generalises_to() {
+        chain.push(general.as_str().to_ascii_lowercase());
+        current = general;
+    }
+    chain.join(" ")
+}
+
+/// The provider's own reference to the object — the schema it serves it under, and the values
+/// of the fields that schema calls its identity (§3.1's `canonical_ref`, §37.1).
+fn reference_record(reference: &ono_provider_api::ObjectRef) -> Value {
+    let id = reference.id();
+    let Some(schema) = builtin_schemas().get(id.schema()) else {
+        return Value::Null;
+    };
+    let mut map = ono_value::MapValue::new();
+    map.insert("schema".into(), Value::string(&id.schema().to_string()));
+    for (field, value) in schema.identity().iter().zip(id.values()) {
+        map.insert(field.as_ref().into(), value.clone());
+    }
+    Value::Map(std::sync::Arc::new(map))
+}
+
+/// The provider's own summary of the object: the columns its schema puts in a default view.
+///
+/// §12's `state running / user www-data / uptime 17d` and §13's `since` are exactly these, and
+/// they are the provider's words, not the spatial layer's (§2.16, §24.1).
+fn summary_record(record: &RecordValue) -> Value {
+    let mut map = ono_value::MapValue::new();
+    for column in record.schema().default_view() {
+        if let Some(value) = record.get(column) {
+            map.insert(column.as_ref().into(), value.clone());
+        }
+    }
+    if map.is_empty() {
+        return Value::Null;
+    }
+    Value::Map(std::sync::Arc::new(map))
+}
+
+/// What is known about the object's lifetime (§3.1's `lifetime`, §10.1, §10.2).
+///
+/// §10.2 makes a pid without its start time not an identity at all, so the descriptor names when
+/// the object began and when it was last seen, beside the tier that says how far either can be
+/// trusted. A canonical space has no lifetime: it is declared, not born.
+fn lifetime_record(entry: Option<&ono_spatial_index::IndexEntry>) -> Value {
+    let Some(entry) = entry else {
+        return Value::Null;
+    };
+    let lifetime = entry.object().lifetime();
+    let mut map = ono_value::MapValue::new();
+    map.insert("tier".into(), Value::string(lifetime.tier().as_str()));
+    map.insert(
+        "first_observed".into(),
+        Value::Timestamp(lifetime.first_observed()),
+    );
+    map.insert(
+        "last_observed".into(),
+        Value::Timestamp(lifetime.last_observed()),
+    );
+    map.insert(
+        "ended".into(),
+        lifetime.end().map_or(Value::Null, Value::Timestamp),
+    );
+    if let Some(started) = entry
+        .object()
+        .identity()
+        .components()
+        .iter()
+        .find(|(name, _)| name == "start_time")
+        .map(|(_, value)| value.clone())
+    {
+        map.insert("start_time".into(), Value::string(&started));
+    }
+    Value::Map(std::sync::Arc::new(map))
 }
 
 /// The identity components of §3.1, as an open record a reader can recognise the place by.
@@ -373,7 +526,11 @@ pub fn group_record(
     } else {
         Value::Null
     };
-    let count = i128::try_from(group.total().unwrap_or_default()).unwrap_or(i128::MAX);
+    // §2.17 and §42.4: a count nobody could take is not zero. A withheld group carries its state
+    // and no number, so `files  permission denied` can never be read as `files  0`.
+    let count = group.total().map_or(Value::Null, |total| {
+        Value::Int(i128::try_from(total).unwrap_or(i128::MAX))
+    });
     Ok(RecordValue::builder(
         schema,
         Provenance::local(COMPOSER, SchemaId::new("ono.neighborhood-group", 1)),
@@ -387,7 +544,7 @@ pub fn group_record(
             .relation()
             .map_or(Value::Null, |relation| Value::string(relation.as_str())),
     )?
-    .set("count", Value::Int(count))?
+    .set("count", count)?
     .set("state", Value::string(group.state().as_str()))?
     .set("detail", group.detail().map_or(Value::Null, Value::string))?
     .set("navigable", Value::Bool(navigable(here, group.label())))?
@@ -459,6 +616,7 @@ pub fn neighborhood_record(
 /// One neighbour as `ono.spatial-neighbor/1` (§6.2).
 pub fn neighbor_record(
     index: &SpatialIndex,
+    here: &SpatialId,
     relation: &str,
     state: PermissionState,
     member: &SpatialId,
@@ -476,11 +634,71 @@ pub fn neighbor_record(
         now,
     )?;
     let field = |name: &str| place.get(name).cloned().unwrap_or(Value::Null);
+    // §11.4: a displayed relationship is inspectable — the relation, both ends, the direction,
+    // the provider, the provenance, the confidence and when it was observed. A neighbour *is* a
+    // displayed relationship, so it carries them rather than pointing at somewhere they live.
+    let edge = index.get(here).and_then(|entry| {
+        entry
+            .edges()
+            .iter()
+            .find(|edge| edge.other_end(here) == Some(member))
+            .cloned()
+    });
+    let label = edge
+        .as_ref()
+        .and_then(|edge| edge.label_from(here))
+        .unwrap_or(relation);
+    let (source, target, direction, confidence, observed_at, provenance) = match &edge {
+        Some(edge) => (
+            Value::string(&edge.source().to_string()),
+            Value::string(&edge.target().to_string()),
+            Value::string(edge.direction().as_str()),
+            Value::string(edge.confidence().as_str()),
+            Value::Timestamp(edge.observed_at()),
+            edge.provenance().clone(),
+        ),
+        // A canonical collection reaches its members by hierarchy, not by an edge (§3.4, §2.6):
+        // there is no relationship to explain, and inventing `source`/`target`/`confidence` for
+        // one would be exactly the confusion §2.6 forbids. The neighbour is still a place, and
+        // the group it appeared under still says how it was reached.
+        None => (
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            index.get(member).map_or_else(
+                || Provenance::local(COMPOSER, SchemaId::new("ono.spatial-neighbor", 1)),
+                |entry| entry.object().provenance().clone(),
+            ),
+        ),
+    };
     Ok(RecordValue::builder(
         schema,
         Provenance::local(COMPOSER, SchemaId::new("ono.spatial-neighbor", 1)),
     )
-    .set("relation", Value::string(relation))?
+    .set("relation", Value::string(label))?
+    .set("group", Value::string(relation))?
+    .set("type", field("type"))?
+    .set("canonical_ref", field("canonical_ref"))?
+    .set("identity", field("identity"))?
+    .set("source", source)?
+    .set("target", target)?
+    .set("direction", direction)?
+    .set("confidence", confidence)?
+    .set("observed_at", observed_at)?
+    .set(
+        "provider",
+        edge.as_ref()
+            .map_or(Value::Null, |_| Value::string(provenance.provider())),
+    )?
+    .set("provenance", ono_command::provenance_value(&provenance))?
+    .set(
+        "provider_relation",
+        edge.as_ref()
+            .and_then(|edge| edge.attributes().get("provider_relation").cloned())
+            .unwrap_or(Value::Null),
+    )?
     .set("spatial_id", field("spatial_id"))?
     .set("name", field("name"))?
     .set("display_name", field("display_name"))?
@@ -549,6 +767,13 @@ pub async fn neighborhood_here(
         );
         return Ok((neighborhood, permission));
     }
+    // An object's exits are its relationship edges, and those are the v0.2 relationship graph's
+    // (§2.16, §31.3). They are read here, once, before anything is ranked.
+    let interest = crate::spatial::relations::Interest::here()
+        .complete(request.is_complete())
+        .along(request.named_relation().map(str::to_owned))
+        .of_type(request.named_type());
+    crate::spatial::relations::observe(ctx, session, &here, &interest, now).await?;
     let pins = session.pins().clone();
     let neighborhood =
         ono_spatial_query::neighborhood_of(session.index(), &here, request, &pins, now);

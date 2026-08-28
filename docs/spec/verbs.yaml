@@ -110,6 +110,13 @@ verbs:
     pipeline_role: producer
     mutating: false
     stability: stable
+  - id: ono.verb.follow
+    verb: follow
+    semantics: Traverse one relationship edge of the current place.
+    typical_targets: [place]
+    pipeline_role: context
+    mutating: false
+    stability: stable
   - id: ono.verb.home
     verb: home
     semantics: Return to the root system place of the active host or link.

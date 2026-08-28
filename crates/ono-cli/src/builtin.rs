@@ -67,7 +67,11 @@ fn cd(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     }
 
     session.set_env("PWD", resolved.as_os_str());
-    session.set_cwd(resolved);
+    session.set_cwd(resolved.clone());
+    // v0.4 §30.3: `cd` updates the spatial place only where §47's `spatial.follow_cwd` says it
+    // should — by default inside the storage family, so a `cd` cannot end a process
+    // investigation. §30.4 keeps `PWD` the working directory and nothing else.
+    crate::spatial::storage::follow_cwd(session, &resolved);
     Ok(ExitStatus::SUCCESS)
 }
 

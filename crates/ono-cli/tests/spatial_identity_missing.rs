@@ -283,7 +283,6 @@ impl Drop for Orphan {
 // --- identity is stable, and two objects never share one -------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §10.1); un-ignored by the increment that delivers it"]
 fn should_return_the_same_spatial_id_when_the_same_place_is_observed_twice() {
     // §42.1 identity test: "Repeated observations of the same live object MUST resolve to the
     // same SpatialId within the provider's advertised identity tier." §43.2 states it as a
@@ -309,7 +308,6 @@ fn should_return_the_same_spatial_id_when_the_same_place_is_observed_twice() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §10.1); un-ignored by the increment that delivers it"]
 fn should_return_the_same_spatial_id_when_the_same_place_is_observed_by_two_shell_invocations() {
     // §3.1: the SpatialId is "stable for as long as the implementation can truthfully identify
     // the same conceptual object" — which outlives one shell process. A per-session counter
@@ -330,7 +328,6 @@ fn should_return_the_same_spatial_id_when_the_same_place_is_observed_by_two_shel
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §3.1); un-ignored by the increment that delivers it"]
 fn should_give_different_spatial_ids_to_two_processes_that_share_a_display_name() {
     // §3.1: "The display name is not identity." Both fixtures are `sleep 300`, so a display
     // name, a command line or an executable path used as identity would collide here.
@@ -358,7 +355,6 @@ fn should_give_different_spatial_ids_to_two_processes_that_share_a_display_name(
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §10.2); un-ignored by the increment that delivers it"]
 fn should_carry_a_lifetime_descriptor_rather_than_the_bare_pid_as_process_identity() {
     // §10.2: "PID alone MUST NOT be treated as a persistent spatial identity"; the identity
     // SHOULD include boot identity, pid, start time and pid namespace identity. §3.1 gives the
@@ -687,7 +683,6 @@ fn should_not_confuse_the_old_and_the_new_process_when_a_place_is_replaced() {
 // --- permission honesty ----------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §44.8); un-ignored by the increment that delivers it"]
 fn should_report_permission_denied_rather_than_zero_files_for_another_users_process() {
     // §44.8 and §35.2: a non-root user investigating a process with restricted file descriptors
     // must see unknown/permission_denied, never `files 0`. pid 1 is root-owned on every Linux
@@ -728,7 +723,6 @@ fn should_report_permission_denied_rather_than_zero_files_for_another_users_proc
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §35.2); un-ignored by the increment that delivers it"]
 fn should_report_a_real_file_list_for_a_process_this_user_owns() {
     // The other half of §44.8: honesty is only worth something if the readable case really is
     // readable. The fixture is this user's own process with stdin, stdout and stderr open, so
@@ -764,7 +758,6 @@ fn should_report_a_real_file_list_for_a_process_this_user_owns() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §35.2); un-ignored by the increment that delivers it"]
 fn should_name_one_of_the_defined_permission_states_for_every_neighborhood_group() {
     // §35.2: the six states "MUST remain distinct", which means every group carries one of them
     // rather than collapsing absence, denial and emptiness into a missing key or a zero.
@@ -798,7 +791,6 @@ fn should_name_one_of_the_defined_permission_states_for_every_neighborhood_group
 // --- hierarchy versus graph -------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §11.3); un-ignored by the increment that delivers it"]
 fn should_keep_every_relationship_parent_while_naming_one_canonical_parent() {
     // §11.3: "A spatial object MAY have one canonical parent for `up` while participating in
     // many relationships. … The canonical parent does not claim that other relationships are
@@ -892,7 +884,6 @@ fn should_move_to_the_declared_canonical_parent_deterministically_when_going_up(
 // --- relationship explainability and confidence -----------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §11.4); un-ignored by the increment that delivers it"]
 fn should_carry_source_provenance_and_confidence_on_every_relationship_edge() {
     // §11.4: "Every displayed relationship MUST support inspection … The result MUST include
     // relation, source, target, direction, provider, provenance, confidence, observed_at."
@@ -936,7 +927,6 @@ fn should_carry_source_provenance_and_confidence_on_every_relationship_edge() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §11.5); un-ignored by the increment that delivers it"]
 fn should_use_the_defined_confidence_vocabulary_and_never_call_an_inferred_edge_exact() {
     // §11.5 fixes the vocabulary and §53 settles the rule behind it: a relationship that was
     // derived rather than observed is "never silently exact". The parent edge is read straight
@@ -1032,7 +1022,6 @@ fn should_resolve_every_edge_endpoint_to_a_node_or_an_explicit_off_map_endpoint(
 // --- cache honesty ----------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §33.4); un-ignored by the increment that delivers it"]
 fn should_expose_how_fresh_the_data_behind_a_place_is() {
     // §33.2: "The index is a cache. Providers remain authoritative." §33.4: "`inspect` MUST
     // reveal source freshness when relevant." §25.3 fixes the vocabulary — event-driven,

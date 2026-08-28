@@ -32,7 +32,11 @@ pub struct FindRequest {
     near: Option<SpatialId>,
     limit: Option<usize>,
     all: bool,
-    subjects: Option<std::collections::BTreeSet<SpatialId>>,
+    /// The places a predicate was evaluated against, each with the position the provider
+    /// answered it in. §29.3 wants a deterministic answer, and the order the providers gave is
+    /// the one a user already sees from `get process | where …` (§28, §29.4).
+    subjects: Option<std::collections::BTreeMap<SpatialId, usize>>,
+    here: Option<SpatialId>,
 }
 
 impl FindRequest {
@@ -86,7 +90,23 @@ impl FindRequest {
     /// to it: a search that returned them would be reporting objects nobody filtered.
     #[must_use]
     pub fn among(mut self, subjects: impl IntoIterator<Item = SpatialId>) -> Self {
-        self.subjects = Some(subjects.into_iter().collect());
+        self.subjects = Some(
+            subjects
+                .into_iter()
+                .enumerate()
+                .map(|(position, id)| (id, position))
+                .collect(),
+        );
+        self
+    }
+
+    /// Where the search is being made from, for the ranking of §27.1 and §3.6.
+    ///
+    /// It narrows nothing: §9.3 keeps `find` global. It decides which of two equally good
+    /// answers is offered first.
+    #[must_use]
+    pub fn from_place(mut self, here: SpatialId) -> Self {
+        self.here = Some(here);
         self
     }
 
@@ -225,12 +245,20 @@ pub fn find_places(
         .as_ref()
         .map(|anchor| crate::resolve::place_path(index, anchor));
 
+    // §27.1 "prioritizes local orientation over surprising global jumps", and §3.6 counts the
+    // current view purpose among what a ranking must consider. A global search stays global —
+    // §9.3 — and the places under where the user is standing simply answer first.
+    let here = request
+        .here
+        .as_ref()
+        .map(|here| crate::resolve::place_path(index, here));
+
     let mut found: Vec<(Rank, FoundPlace)> = Vec::new();
     for entry in index.entries() {
         let object = entry.object();
         let id = object.spatial_id();
         if let Some(subjects) = &request.subjects
-            && !subjects.contains(id)
+            && !subjects.contains_key(id)
         {
             continue;
         }
@@ -267,8 +295,18 @@ pub fn find_places(
         };
         let rank = Rank {
             unpinned: u8::from(!place.pinned),
+            distant: u8::from(
+                !here
+                    .as_ref()
+                    .is_none_or(|here| place.place_path.starts_with(here.as_str())),
+            ),
             match_quality: matched,
             plain: u8::from(entry.landmarks().is_empty()),
+            order: request
+                .subjects
+                .as_ref()
+                .and_then(|subjects| subjects.get(id).copied())
+                .unwrap_or(usize::MAX),
             name: place.name.to_ascii_lowercase(),
             id: id.to_string(),
         };
@@ -314,8 +352,10 @@ fn name_match(aliases: &std::collections::BTreeSet<String>, needle: &str) -> Opt
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Rank {
     unpinned: u8,
+    distant: u8,
     match_quality: Match,
     plain: u8,
+    order: usize,
     name: String,
     id: String,
 }

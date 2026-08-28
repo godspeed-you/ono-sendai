@@ -29,6 +29,14 @@ fields:
     type: string
     required: true
     doc: §3.1's `display_name` — the same text as `name`, under the name §3.1 gives the field.
+  type:
+    type: string
+    required: true
+    doc: >-
+      What kind of place this is, in §3.3's vocabulary, with the families it belongs to after it:
+      `process`, `connection socket`, `directory`. §14.3 and §14.4 split §3.3's `Socket` into a
+      listener and a connection, and both readings are true of one place, so the chain is written
+      out rather than one of them chosen (ADR-0148).
   object_type:
     type: string
     required: true
@@ -50,12 +58,40 @@ fields:
     type: string
     required: true
     doc: The §3.2 boundary the place belongs to, rendered as `<kind>:<id>` — `host:web01`.
-  parent:
+  canonical_ref:
+    type: record
+    nullable: true
+    doc: >-
+      §3.1's `canonical_ref`: the provider's own reference to the object — the schema it serves it
+      under and the values of that schema's identity fields. This is the handle an action
+      revalidates through (§33.2) and what §37.1's identity merge compares. Null for a canonical
+      space, which no provider serves.
+  canonical_parent:
     type: string
     nullable: true
     doc: >-
-      The `spatial_id` of the canonical parent `up` reaches (§11.3); null for the root and for the
-      off-map places of §42.3.
+      The `spatial_id` `up` reaches (§11.3), spelled under the name §33.1 gives the field. It is
+      the same answer as `parent`, and it is deterministic for a given view profile.
+  state:
+    type: any
+    nullable: true
+    doc: >-
+      The object's own state, as the provider reports it — `running`, `listen`, `active`. §24.1
+      puts it at the top of a place view; null where the object has none.
+  summary:
+    type: record
+    nullable: true
+    doc: >-
+      What the provider's default view says about the object — a process's user and memory, a
+      mount's filesystem and source, a socket's endpoints (§12, §13, §14.3, §15.3). §24.1 budgets
+      this: the exhaustive property list is `inspect`'s, not a place view's.
+  lifetime:
+    type: record
+    nullable: true
+    doc: >-
+      §3.1's `lifetime`: the identity tier, when the object was first and last observed, when it
+      started where the provider states that, and when it ended where it has (§10.1, §10.2,
+      §10.3). Null for a canonical space, which is declared rather than born.
   freshness:
     type: enum
     required: true

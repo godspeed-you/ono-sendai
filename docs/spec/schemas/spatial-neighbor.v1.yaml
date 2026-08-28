@@ -14,7 +14,57 @@ fields:
   relation:
     type: string
     required: true
-    doc: The exit it was reached through — a relation of §3.5, or a collection's label (§24.2).
+    doc: >-
+      The word `follow` takes to traverse the edge from here — `parent`, `socket`, `user` — or a
+      collection's label where the neighbour is reached by hierarchy (§3.5, §6.4, §24.2).
+  group:
+    type: string
+    required: true
+    doc: The exit it appeared under, as `look` prints it — §12's `children`, `files`, `sockets`.
+  source:
+    type: string
+    nullable: true
+    doc: >-
+      The `spatial_id` the edge starts at (§11.4). Null where the neighbour is reached by
+      hierarchy rather than by a relationship edge: §2.6 keeps the two apart, and a containment
+      dressed up as an explainable relation would be the confusion it forbids.
+  target:
+    type: string
+    nullable: true
+    doc: The `spatial_id` the edge leads to (§11.4); null for a hierarchical member.
+  direction:
+    type: enum
+    nullable: true
+    values: [outbound, inbound, bidirectional]
+    doc: Which way the edge runs (§11.4, §22); null for a hierarchical member.
+  confidence:
+    type: enum
+    nullable: true
+    values: [exact, strong, inferred, user_declared, unknown]
+    doc: >-
+      How certain the edge is (§11.5). An inferred edge is never labelled exact, whatever the
+      relation registry would admit; null for a hierarchical member.
+  provider:
+    type: string
+    nullable: true
+    doc: >-
+      Who asserted the edge — `linux.open-files`, `linux.process-tree`. The v0.2 relationship
+      provider's own id, because §2.16 forbids the spatial layer from becoming a second source.
+      Null for a hierarchical member.
+  provider_relation:
+    type: string
+    nullable: true
+    doc: >-
+      The word that provider uses for the relation — `reads`, `runs-as`. The same word `trace`
+      prints for the same edge (§31.3); null where the neighbour is reached by hierarchy.
+  provenance:
+    type: record
+    required: true
+    doc: Where the edge was observed, when, and by whom (§11.4, §27.4).
+  observed_at:
+    type: timestamp
+    nullable: true
+    doc: When the edge was last seen (§11.4); null for a hierarchical member.
   spatial_id:
     type: string
     required: true
@@ -31,6 +81,21 @@ fields:
     type: string
     required: true
     doc: The v0.2 schema of the object behind the place, such as `ono.process/1`.
+  type:
+    type: string
+    required: true
+    doc: What kind of place it is, in §3.3's vocabulary and the families it belongs to.
+  canonical_ref:
+    type: record
+    nullable: true
+    doc: >-
+      The provider's own reference to the neighbour — its schema and that schema's identity
+      fields. §28.1 makes a selected object a typed value, and a neighbour nobody can name again
+      is not one. Null where the neighbour is a canonical space.
+  identity:
+    type: record
+    nullable: true
+    doc: The named components §3.1 composes its `spatial_id` from (§27.2's disambiguation).
   spatial_type:
     type: string
     required: true

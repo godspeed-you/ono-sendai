@@ -18,6 +18,7 @@ The controlled vocabulary of spec §7. The registry is deliberately small: a mod
 | `open` | Open a resource in its associated handler or context. | file, URL, device | consumer | yes |
 | `look` | Describe the current place and its immediate horizon. | place | producer | no |
 | `near` | Stream the ranked, bounded neighbourhood of the current place. | place | producer | no |
+| `follow` | Traverse one relationship edge of the current place. | place | context | no |
 | `home` | Return to the root system place of the active host or link. | place | context | no |
 | `enter` | Make a resource the active interaction context. | dir, container, service | context | no |
 | `leave` | Pop the active context. | context | context | no |

@@ -114,6 +114,18 @@ impl NeighborhoodRequest {
         self.relation.as_ref().is_none_or(|wanted| wanted == label)
     }
 
+    /// The relation the caller named, where they named one (§6.2's `near <relation>`).
+    #[must_use]
+    pub fn named_relation(&self) -> Option<&str> {
+        self.relation.as_deref()
+    }
+
+    /// The type the caller asked for, where they asked for one (§6.2's `--type`).
+    #[must_use]
+    pub fn named_type(&self) -> Option<SpatialType> {
+        self.object_type
+    }
+
     /// Whether the caller asked for the complete neighbourhood (`--all`, §6.2).
     #[must_use]
     pub fn is_complete(&self) -> bool {

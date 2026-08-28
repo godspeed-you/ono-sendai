@@ -279,7 +279,7 @@ impl Projection {
         })?;
 
         let identity = self.identity_of(object_type, record, &canonical_ref);
-        let display_name = display_name(record, &canonical_ref);
+        let display_name = display_name(object_type, record, &canonical_ref);
         let mut capabilities = BTreeSet::new();
         capabilities.insert(SpatialCapability::Enter);
         capabilities.insert(SpatialCapability::Act);
@@ -464,16 +464,59 @@ impl Projection {
 /// §13 print in their own examples (`PROCESS / nginx / 1842`, `SERVICE / nginx.service`). Where a
 /// schema has none of those, the provider reference's label is what is left, and it is honest:
 /// spec v0.2 fixes it as the first default-view column outside the identity.
-fn display_name(record: &RecordValue, canonical_ref: &ObjectRef) -> String {
-    for field in ["name", "path", "target", "address", "destination", "id"] {
+fn display_name(
+    object_type: SpatialType,
+    record: &RecordValue,
+    canonical_ref: &ObjectRef,
+) -> String {
+    // §15.4 and §15.5 make a filesystem place its path, and §27.2's own picker prints
+    // `/etc/nginx`: a base name cannot tell two files of the same name apart. Everywhere else the
+    // schema's own name field is what a person says — a device is `sda`, not `/dev/sda`.
+    let fields: &[&str] = match object_type {
+        SpatialType::File | SpatialType::Directory => {
+            &["path", "name", "target", "address", "destination", "id"]
+        }
+        _ => &["name", "path", "target", "address", "destination", "id"],
+    };
+    for field in fields {
         if let Some(value) = record.get(field)
+            && !value.is_null()
             && let Ok(text) = ono_value::canonical_text(value)
             && !text.is_empty()
         {
             return text;
         }
     }
+    // §14.3 and §14.4: a socket is called by its endpoint. Its schema has none of the fields
+    // above, and the provider reference's label would be the protocol — `tcp` names every socket
+    // on the host and none of them in particular.
+    if let Some(endpoint) = endpoint_name(record, "local") {
+        return match endpoint_name(record, "remote") {
+            Some(peer) => format!("{endpoint} -> {peer}"),
+            None => endpoint,
+        };
+    }
     canonical_ref.label().to_owned()
+}
+
+/// How an endpoint sub-record reads as a name: `127.0.0.1:443`, or the socket path.
+fn endpoint_name(record: &RecordValue, field: &str) -> Option<String> {
+    let endpoint = record.get(field)?.as_record().ok()?.clone();
+    let text = |field: &str| {
+        endpoint
+            .get(field)
+            .filter(|value| !value.is_null())
+            .and_then(|value| ono_value::canonical_text(value).ok())
+            .filter(|text| !text.is_empty())
+    };
+    if let Some(path) = text("path") {
+        return Some(path);
+    }
+    let address = text("address")?;
+    match text("port") {
+        Some(port) => Some(format!("{address}:{port}")),
+        None => Some(address),
+    }
 }
 
 /// Every name the object answers to, lowercased: what a person would call it, and every value the

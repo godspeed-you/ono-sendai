@@ -4989,6 +4989,35 @@ enter processes
 enter network
 ```
 
+### `follow`
+
+Traverse a relationship edge of the current place — never a hierarchy edge.
+
+| | |
+|---|---|
+| id | `ono.place.follow` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `relation` | `string` | The relation to traverse: the word `look` prints for the exit, or the relation label the registry declares — `parent`, `socket`, `children` (v0.4 §6.4, §24.2). |
+| `selector` | `string` | Which neighbour, where the relation reaches more than one: `follow socket :443`, `follow file /etc/nginx/nginx.conf` (v0.4 §6.4). |
+
+**Examples**
+
+```text
+follow parent
+follow socket :443
+follow service
+```
+
 ### `home`
 
 Return to the root system place of the active host.

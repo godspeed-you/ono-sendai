@@ -17,10 +17,12 @@
 pub mod commands;
 pub mod find;
 pub mod pins;
+pub mod relations;
 pub mod session;
+pub mod storage;
 pub mod view;
 
-pub use commands::{Enter, Home, Look, Near, enter_observed};
+pub use commands::{Enter, Follow, Home, Look, Near, enter_observed};
 pub use find::{FindPlace, local_scope, spatial_type};
 pub use pins::{PinStore, pin_path};
 pub use session::{SpatialSessionState, spatial_session};

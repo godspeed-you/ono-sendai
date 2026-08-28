@@ -33,9 +33,15 @@ impl Reporter {
     /// would otherwise retitle the window (ADR-0015 T1).
     pub fn error(&self, error: &ErrorValue) {
         let mut out = std::io::stderr().lock();
-        let code = self
-            .theme
-            .paint(error.code().code(), Token::ErrorCode, self.presentation);
+        // Both halves of the identity spec §43 gives an error are shown: the stable code a
+        // report quotes, and the dotted name a script catches by (`catch e { $e.name }`). v0.4
+        // §40 names its fourteen conditions in that vocabulary — `spatial.no_relation` — and a
+        // condition a user can act on must be readable where the refusal appears (ADR-0148).
+        let code = self.theme.paint(
+            &format!("{} {}", error.code().code(), error.code().name()),
+            Token::ErrorCode,
+            self.presentation,
+        );
         let _ = writeln!(
             out,
             "{}: {code} {}",
