@@ -5018,6 +5018,48 @@ follow socket :443
 follow service
 ```
 
+### `map`
+
+Project the bounded, ranked graph around a place — as text, or as a `SpatialMap`.
+
+| | |
+|---|---|
+| id | `ono.place.map` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `ono.spatial-map/1 | string` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `selector` | `string` | The place to map. Without one, the current place; naming one maps it without moving there (v0.4 §6.9, §23.4). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--json` | `bool` | Write the `SpatialMap` as one JSON document rather than rendering it. It is a bounded graph value and depends on no terminal (v0.4 §22, §29.4). |
+| `--depth` | `int` | How many hierarchy hops to draw. Two by default: the place, its canonical children and what lies behind them (v0.4 §6.9). |
+| `--zoom` | `int` | One of the five canonical levels of §8.1 — 0 SYSTEM, 1 DOMAIN, 2 COLLECTION, 3 ENTITY, 4 DETAIL. A place finer than the level is drawn as its canonical ancestor at it. |
+| `--expand` | `string` | Draw the members of a cluster instead of the cluster. A view action: it never changes the current place (v0.4 §8.3). |
+| `--focus` | `string` | Centre the view on one node. Focus is not navigation and never moves the shell (v0.4 §23.4, §53). |
+| `--relations` | `string` | Keep only these relations' edges, comma-separated. Filtering removes edges; it never creates one (v0.4 §6.9, §43.2). |
+| `--type` | `string` | Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener` (v0.4 §6.9, §3.3). |
+| `--all` | `bool` | The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2, §47). |
+
+**Examples**
+
+```text
+map
+map --json
+map --zoom 1
+map --all --type process
+```
+
 ### `home`
 
 Return to the root system place of the active host.

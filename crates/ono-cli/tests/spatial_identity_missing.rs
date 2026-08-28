@@ -968,7 +968,6 @@ fn should_use_the_defined_confidence_vocabulary_and_never_call_an_inferred_edge_
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §42.3); un-ignored by the increment that delivers it"]
 fn should_resolve_every_edge_endpoint_to_a_node_or_an_explicit_off_map_endpoint() {
     // §42.3 relation integrity: every edge target resolves to a known spatial object, an
     // explicit unresolved endpoint object, or a remote/opaque reference of the correct type —

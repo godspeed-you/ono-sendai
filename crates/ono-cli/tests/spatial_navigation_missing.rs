@@ -873,7 +873,6 @@ fn should_answer_not_found_when_a_navigation_argument_names_nothing() {
 // --- map, bounded ------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.9, §29.4, §47); un-ignored by the increment that delivers it"]
 fn should_answer_a_bounded_graph_when_map_json_runs_without_a_tty() {
     // §29.4: `map --json` returns a bounded graph value; §6.9 forbids it depending on terminal
     // rendering; §47 sets the default bound at `spatial.map.node_budget = 100`; invariant 9

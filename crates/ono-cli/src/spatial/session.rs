@@ -38,6 +38,8 @@ pub struct SpatialSessionState {
     bridge: ProviderBridge,
     pins: PinRegistry,
     preferences: ViewPreferences,
+    /// The thresholds the built-in landmark rules of §26.2 measure against (§26.3).
+    thresholds: ono_spatial_query::LandmarkThresholds,
     /// The last record each place was observed as. The index holds what a place *is* (§33.1);
     /// this holds what the provider last said about it, which is what the v0.2 relationship
     /// graph expands and what §24.1's summary is read from — neither may be re-read behind the
@@ -46,35 +48,56 @@ pub struct SpatialSessionState {
 }
 
 /// The view settings a session carries between commands (§46's `view_preferences`).
-///
-/// §47's `spatial.look.change_window` is the only one a command of this phase reads; the map
-/// preferences of §23 arrive with the renderer that has them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewPreferences {
     /// How far back `look --changes` and `near --changed` look when the caller names no window.
     pub change_window: ono_value::Duration,
+    /// How many nodes a map may draw (§34.2, §47's `spatial.map.node_budget`).
+    pub map_node_budget: usize,
 }
 
 impl Default for ViewPreferences {
     fn default() -> Self {
-        // §47: `spatial.look.change_window = "5m"`.
+        // §47: `spatial.look.change_window = "5m"`, `spatial.map.node_budget = 100`.
         Self {
             change_window: ono_value::Duration::from_nanoseconds(5 * 60 * 1_000_000_000),
+            map_node_budget: ono_spatial_query::MAP_NODE_BUDGET,
         }
     }
+}
+
+/// What the user's configuration says, seeded once before the first spatial command runs (§47).
+///
+/// The command table is built from the shell's session, which is the only place the resolved
+/// settings live; the spatial state is a `static` that outlives any one command (§29.2). This is
+/// how the one reaches the other, and it is set once, so a later `set config` in the same session
+/// does not silently redefine what an already-drawn view meant.
+static CONFIGURED: std::sync::OnceLock<(ViewPreferences, ono_spatial_query::LandmarkThresholds)> =
+    std::sync::OnceLock::new();
+
+/// Records the settings the spatial layer reads (§26.3, §34.2, §47).
+pub fn configure(preferences: ViewPreferences, thresholds: ono_spatial_query::LandmarkThresholds) {
+    let _ = CONFIGURED.set((preferences, thresholds));
 }
 
 impl SpatialSessionState {
     /// A fresh session: standing at the local SYSTEM root, with an empty trail (§46.1).
     #[must_use]
     pub fn new(scope: SpatialScope, now: Timestamp) -> Self {
+        let (preferences, thresholds) = CONFIGURED.get().cloned().unwrap_or_else(|| {
+            (
+                ViewPreferences::default(),
+                ono_spatial_query::LandmarkThresholds::default(),
+            )
+        });
         Self {
             trail: NavigationTrail::new(space::root().spatial_id()),
             index: SpatialIndex::new(FreshnessPolicy::recommended()),
             bridge: ProviderBridge::new(Projection::new(scope.clone(), now)),
             scope,
             pins: PinRegistry::new(),
-            preferences: ViewPreferences::default(),
+            preferences,
+            thresholds,
             records: BTreeMap::new(),
         }
     }
@@ -113,8 +136,13 @@ impl SpatialSessionState {
         (&mut self.index, &mut self.bridge)
     }
 
-    /// Registers what a provider answered: the places the records are, and the records
-    /// themselves (§33.1, §33.2).
+    /// Registers what a provider answered: the places the records are, the records themselves,
+    /// and the landmarks the built-in rules of §26.2 find on them (§33.1, §33.2).
+    ///
+    /// The landmark engine runs here rather than in a view, because a landmark is a fact about
+    /// the object and not about the projection that happens to show it: `look`, `near` and `map`
+    /// must all agree about what deserves attention, and ranking needs it before any of them
+    /// chooses what to show (§26.1, §3.6).
     pub fn absorb(&mut self, records: &[RecordValue], at: Timestamp) -> Absorbed {
         for record in records {
             if let Ok(object) = self.bridge.project(record) {
@@ -122,7 +150,36 @@ impl SpatialSessionState {
                     .insert(object.spatial_id().clone(), Arc::new(record.clone()));
             }
         }
-        self.bridge.absorb(&mut self.index, records, at)
+        let absorbed = self.bridge.absorb(&mut self.index, records, at);
+        self.promote(records, at);
+        absorbed
+    }
+
+    /// Runs the built-in landmark rules over what was just observed (§26.2).
+    fn promote(&mut self, records: &[RecordValue], at: Timestamp) {
+        if !self.thresholds.enabled {
+            return;
+        }
+        for record in records {
+            let Ok(object) = self.bridge.project(record) else {
+                continue;
+            };
+            let landmarks = ono_spatial_query::landmarks_of_object(
+                &object,
+                Some(record),
+                &self.thresholds,
+                &self.scope,
+                at,
+            );
+            if !landmarks.is_empty() {
+                self.index.set_landmarks(object.spatial_id(), landmarks);
+            }
+        }
+    }
+
+    /// Replaces the landmark thresholds with the ones the user configured (§26.3).
+    pub fn set_thresholds(&mut self, thresholds: ono_spatial_query::LandmarkThresholds) {
+        self.thresholds = thresholds;
     }
 
     /// Which place a record is, without registering it (§45.2).
@@ -169,6 +226,11 @@ impl SpatialSessionState {
     #[must_use]
     pub fn preferences(&self) -> &ViewPreferences {
         &self.preferences
+    }
+
+    /// Replaces the view settings with the ones the user configured (§47).
+    pub fn set_preferences(&mut self, preferences: ViewPreferences) {
+        self.preferences = preferences;
     }
 }
 

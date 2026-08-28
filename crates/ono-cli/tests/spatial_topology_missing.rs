@@ -826,7 +826,6 @@ fn should_stream_neighbors_as_pipeline_objects_when_near_runs_at_the_root() {
 // --- discovery without prior names (§9, §44.1, §44.2) -----------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §9.2); un-ignored by the increment that delivers it"]
 fn should_answer_look_near_and_map_without_an_object_name_when_at_the_root() {
     // §9.2: `look`, `near` and `map` "MUST work without an object name". §29.1: all of them must
     // work non-interactively, which is how this test observes them. §2.1: discovery before naming
@@ -933,6 +932,7 @@ fn should_offer_the_process_exits_the_spec_names_when_a_discovered_process_becom
 }
 
 #[test]
+#[ignore = "REASON: v0.4 spatial systems interface — the `follow parent` half is delivered; the test also reads `trail --json` (§6.7, §20.1), which the increment that delivers `trail` un-ignores"]
 fn should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner() {
     // §2.5 and §3.5: a relationship edge (`process --parent-of--> process`) is real and
     // traversable; §6.4: `follow` traverses a relationship edge and records it in the trail.

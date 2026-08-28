@@ -19,6 +19,7 @@ The controlled vocabulary of spec §7. The registry is deliberately small: a mod
 | `look` | Describe the current place and its immediate horizon. | place | producer | no |
 | `near` | Stream the ranked, bounded neighbourhood of the current place. | place | producer | no |
 | `follow` | Traverse one relationship edge of the current place. | place | context | no |
+| `map` | Project the bounded, ranked graph around a place, as a map. | place | producer | no |
 | `home` | Return to the root system place of the active host or link. | place | context | no |
 | `jump` | Move directly to a resolved place outside the immediate neighborhood. | place | context | no |
 | `back` | Return to the previous place in actual navigation history. | place | context | no |

@@ -579,6 +579,20 @@ Default view: `gid`, `name`, `members`
 | `name` | `string` | — | nullable | The group name; null when the identity provider cannot resolve the gid. |
 | `members` | `list<string>` | — | nullable | Login names listed as supplementary members. Names rather than user references, because the account database stores names and they need not resolve to an account. Users whose primary group this is are not listed here; null when the provider cannot enumerate them. |
 
+## HiddenSummary — `ono.hidden-summary/1`
+
+What a bounded map left out, and in which way.
+
+Identity: `count`
+
+Default view: `count`, `clustered`, `aggregated`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `count` | `int` | — | required | How many known places the map does not draw as their own node. |
+| `clustered` | `int` | — | required | How many of those a cluster stands for (§8.2). |
+| `aggregated` | `int` | — | required | How many were folded into a coarser node by the zoom level (§8.1). |
+
 ## HostEvent — `ono.host-event/1`
 
 One change to one known host, as a live stream emits it.
@@ -817,6 +831,66 @@ Default view: `timestamp`, `level`, `unit`, `message`
 | `boot_id` | `string` | — | required | The boot the record belongs to. |
 | `host` | `string` | — | required | The hostname the record was recorded on. |
 | `cursor` | `string` | — | required | The journal cursor, a stable continuation and provenance token. |
+
+## MapCluster — `ono.map-cluster/1`
+
+A group of objects one map node stands for because the view budget could not draw them.
+
+Identity: `id`
+
+Default view: `label`, `members`, `grouping`, `expandable`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The cluster's stable identity, which `map --expand <id>` takes (§8.3). |
+| `label` | `string` | — | required | What the group is called — the canonical collection its members are filed under. |
+| `members` | `int` | — | required | How many objects it stands for (§8.2). |
+| `grouping` | `string` | — | required | The dimension it was grouped along, from §8.2's list of allowed dimensions. |
+| `expandable` | `bool` | — | required | Whether `map --expand` can draw its members instead (§8.3). |
+
+## MapEdge — `ono.map-edge/1`
+
+One relationship or containment a map draws between two of its nodes.
+
+Identity: `id`
+
+Default view: `relation`, `source_label`, `target_label`, `confidence`, `provider`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The edge's stable identity, so the same edge is the same edge in a later map (§11.4). |
+| `source` | `string` | — | required | Where the edge starts — a node's `spatial_id`, or the id of the cluster standing for it (§8.2, §43.2). |
+| `target` | `string` | — | required | Where the edge leads, read the same way. |
+| `source_label` | `string` | — | required | What a person calls the source. §11.4 makes every displayed relationship inspectable, and a relationship whose two ends are opaque ids is not inspectable by a person; the ids stay beside it for anything that resolves them. |
+| `target_label` | `string` | — | required | What a person calls the target, for the same reason. |
+| `relation` | `string` | — | required | The declared relation of `docs/spec/spatial/relations.yaml`, or the §3.4 grouping for a hierarchy edge. |
+| `kind` | `enum` | — | required | Whether the edge is canonical containment (§3.4) or a real connection (§3.5). §2.6 forbids confusing the two. |
+| `confidence` | `enum` | — | required | How confident the assertion is (§11.5). A map must show an inferred edge differently from an exact one. |
+| `direction` | `enum` | — | required | Which way the edge runs (§3.5). |
+| `provider` | `string` | — | required | Who observed it (§11.4). The canonical geography is asserted by the spatial layer itself. |
+| `provenance` | `map` | — | required | The full v0.2 provenance of the assertion (§11.4). |
+| `observed_at` | `timestamp` | — | nullable | When it was observed; null when nothing recorded an observation time (§2.17). |
+| `changed` | `string` | — | nullable | How the edge changed inside the change window — §22's optional `changed` field; null without an event source or a comparison snapshot (§24.3). |
+
+## MapNode — `ono.map-node/1`
+
+One object a map draws.
+
+Identity: `id`
+
+Default view: `label`, `type`, `state`, `landmark_reasons`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The place's `spatial_id` (§3.1). Opaque, stable and unique within one map. |
+| `object_ref` | `map` | — | required | The provider's own reference to the object — the schema it is served under and the values of that schema's identity fields — or, for a canonical space, the space the geography declares (§3.1, §41.1). Every visible node corresponds to inspectable data (§23.1). |
+| `space` | `string` | — | nullable | The registry id of the canonical space this node is (`compute`, `compute.processes`), or null for an observed object (§41.1). |
+| `label` | `string` | — | required | The name a user reads. |
+| `type` | `string` | — | required | What kind of place it is, in §3.3's vocabulary. |
+| `state` | `string` | — | nullable | The provider's own state word, where it reported one; null is "not known", never "fine" (§2.17). |
+| `canonical_parent` | `string` | — | nullable | The `spatial_id` `up` arrives at (§11.3); null at the root. |
+| `landmark_reasons` | `list<string>` | — | required | Why this node deserves attention, from §3.7's closed vocabulary. Empty when it is no landmark. |
+| `depth` | `int` | — | required | How many hierarchy hops from the map's centre the node was reached (§6.9). |
 
 ## ModelProvider — `ono.model-provider/1`
 
@@ -1441,6 +1515,30 @@ Default view: `protocol`, `local`, `remote`, `state`, `process`
 | `process` | `ref<ono.process/1>` | — | nullable | The owning process; null when no process owns the socket, or when this user may not see the owner. Spec §10.5 forbids collapsing those two into an empty string. |
 | `user` | `ref<ono.user/1>` | — | nullable | The owning user. |
 | `inode` | `int` | — | nullable | The socket inode; the identity field, null when the provider cannot supply it. |
+
+## SpatialMap — `ono.spatial-map/1`
+
+The bounded, ranked, renderer-independent projection of the graph around a place.
+
+Identity: `map_id`
+
+Default view: `center`, `zoom_level`, `completeness`, `generated_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `map_id` | `uuid` | — | required | This projection's identity (§22). |
+| `center` | `string` | — | required | The `spatial_id` of the current place the map is drawn around (§22). |
+| `focus` | `string` | — | nullable | The node the view is centred on, where the caller named one. It is never thereby the current place (§23.4). |
+| `scope` | `string` | — | required | The scope the projection belongs to (§3.2). |
+| `zoom_level` | `int` | — | required | Which of §8.1's five canonical levels this projection is at (L0 SYSTEM to L4 DETAIL). |
+| `nodes` | `list<ono.map-node/1>` | — | required | The objects drawn (§22). |
+| `edges` | `list<ono.map-edge/1>` | — | required | The relationships and containments drawn between them (§22). Every endpoint resolves (§43.2). |
+| `clusters` | `list<ono.map-cluster/1>` | — | required | The groups standing in for what the view budget could not draw (§8.2). |
+| `landmarks` | `list<ono.landmark/1>` | — | required | What deserves attention here (§3.7, §26). |
+| `hidden` | `ono.hidden-summary/1` | — | required | What the bound left out, disclosed rather than dropped (§23.6, §54). |
+| `generated_at` | `timestamp` | — | required | When the projection was made. |
+| `completeness` | `enum` | — | required | Whether everything known is drawn, the budget hid some, a source could not be read, or neither could be established (§3.6, §35.2). |
+| `live_capable` | `bool` | — | required | Whether this map can subscribe to change events and update in place (§22, §25.1). |
 
 ## SpatialNeighbor — `ono.spatial-neighbor/1`
 

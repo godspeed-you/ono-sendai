@@ -315,7 +315,6 @@ fn should_name_the_holding_process_among_the_file_neighbors_when_the_file_is_the
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §11.4); un-ignored by the increment that delivers it"]
 fn should_explain_every_edge_with_relation_provider_and_confidence_when_mapping_a_process() {
     // §11.4: every displayed relationship MUST support inspection — relation, source, target,
     // direction, provider/provenance, confidence, observed_at. §22 fixes the same fields on a

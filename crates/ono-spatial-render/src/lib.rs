@@ -25,6 +25,10 @@
 
 use ono_value::{RecordValue, Value};
 
+pub mod map;
+
+pub use map::{Charset, spatial_map};
+
 /// How wide a label column is before the counts start.
 const LABEL_WIDTH: usize = 14;
 
@@ -138,7 +142,7 @@ fn change_lines(changed: &RecordValue) -> Vec<String> {
         .collect()
 }
 
-fn fit(line: &str, width: usize) -> String {
+pub(crate) fn fit(line: &str, width: usize) -> String {
     if line.chars().count() <= width {
         return line.trim_end().to_owned();
     }
@@ -149,28 +153,28 @@ fn fit(line: &str, width: usize) -> String {
         .to_owned()
 }
 
-fn text(record: &RecordValue, field: &str) -> Option<String> {
+pub(crate) fn text(record: &RecordValue, field: &str) -> Option<String> {
     match record.get(field) {
         Some(Value::String(text)) => Some(text.to_string()),
         _ => None,
     }
 }
 
-fn integer(record: &RecordValue, field: &str) -> Option<i128> {
+pub(crate) fn integer(record: &RecordValue, field: &str) -> Option<i128> {
     match record.get(field) {
         Some(Value::Int(number)) => Some(*number),
         _ => None,
     }
 }
 
-fn record(view: &RecordValue, field: &str) -> Option<RecordValue> {
+pub(crate) fn record(view: &RecordValue, field: &str) -> Option<RecordValue> {
     match view.get(field) {
         Some(Value::Record(record)) => Some(RecordValue::clone(record)),
         _ => None,
     }
 }
 
-fn list(view: &RecordValue, field: &str) -> Vec<RecordValue> {
+pub(crate) fn list(view: &RecordValue, field: &str) -> Vec<RecordValue> {
     match view.get(field) {
         Some(Value::List(items)) => items
             .iter()

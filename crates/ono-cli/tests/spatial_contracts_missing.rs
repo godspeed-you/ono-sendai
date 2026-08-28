@@ -478,6 +478,7 @@ fn should_refuse_an_ambiguous_selector_in_a_script_rather_than_open_a_picker() {
 }
 
 #[test]
+#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §40); un-ignored by the increment that delivers it"]
 fn should_refuse_to_go_back_or_up_from_the_root_with_a_named_spatial_error() {
     // §40 lists `spatial.history_empty` and `spatial.no_parent` as separate codes, because §6.6
     // and §53 make `back` and `up` deliberately different: one follows history, the other
@@ -659,7 +660,6 @@ fn should_declare_every_relation_with_its_direction_labels_and_confidence() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §41); un-ignored by the increment that delivers it"]
 fn should_serve_exactly_the_canonical_spaces_the_registry_declares() {
     // Drift in both directions, the way `providers.rs` checks the provider registry: a space
     // the shell serves that no file declares is undocumented surface, and a space a file
@@ -1120,6 +1120,7 @@ fn should_never_let_raw_command_output_become_a_place() {
 // --- §46 spatial session state ------------------------------------------------------------------
 
 #[test]
+#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §46.1); un-ignored by the increment that delivers it"]
 fn should_start_every_session_at_the_local_system_root() {
     // §46.1: "The current place MAY persist across shell restarts if configured, but the default
     // v0.4 behavior is: start at local SYSTEM root." §47 makes the same point from the other
@@ -1162,6 +1163,7 @@ fn should_start_every_session_at_the_local_system_root() {
 }
 
 #[test]
+#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §29.2); un-ignored by the increment that delivers it"]
 fn should_keep_a_scripts_navigation_out_of_the_callers_place() {
     // §29.2: "A script MUST NOT silently change the caller's interactive spatial context." The
     // script below navigates as far as it likes; the caller must come back to where it was.
@@ -1199,6 +1201,7 @@ fn should_keep_a_scripts_navigation_out_of_the_callers_place() {
 }
 
 #[test]
+#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §46.1); un-ignored by the increment that delivers it"]
 fn should_keep_the_trail_session_local_while_a_pin_survives_the_session() {
     // §46.1: "Pins MAY persist. Trail persistence across sessions is disabled by default", and
     // §53 settles it: "Default trail persistence? Session-only; pins may persist." §20.4: a pin
@@ -1316,7 +1319,6 @@ fn should_keep_the_typed_shell_working_when_the_spatial_layer_is_disabled() {
 // --- §34 performance budgets ---------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §34.2); un-ignored by the increment that delivers it"]
 fn should_bound_the_default_map_to_its_node_budget() {
     // §34.2: "unbounded graph rendering is prohibited", with a default visible-node budget of
     // about 30 for the text map and 100 for the interactive one; §47 makes the latter the

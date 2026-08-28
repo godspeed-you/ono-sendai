@@ -47,6 +47,10 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     if let Some(table) = TABLE.get() {
         return Ok(table);
     }
+    // §26.3 and §34.2 make the landmark thresholds and the map's node budget configurable, and
+    // §47 names the settings. They are read here, once, because this is the only point where the
+    // shell's resolved configuration and the process-wide spatial state (§29.2) meet.
+    crate::spatial::configure_from(session.settings());
     let mut built = ono_command::builtin_commands_for(registry()?, session.providers());
     // The spatial commands of v0.4 §6 are the shell's to dispatch (§45.6): they need the host and
     // boot the session belongs to, which no library crate can know. Selection, ranking and
@@ -65,6 +69,9 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
         crate::spatial::PinStore::of(session),
     )));
     built.register(std::sync::Arc::new(crate::spatial::Follow::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Map::new(
         crate::spatial::PinStore::of(session),
     )));
     built.register(std::sync::Arc::new(crate::spatial::Home));

@@ -1,0 +1,53 @@
+# Canonical MapNode schema. Source: v0.4 §22's `MapNode`, field for field, plus the two facts a
+# node needs to be checkable from outside: which canonical space it *is* (§41.1, so the registry
+# and the map cannot disagree about the geography) and how many hops from the centre it was
+# reached (§6.9's `--depth`).
+#
+# §22: "Screen coordinates MUST NOT appear in the semantic `SpatialMap` contract." Nothing here
+# is layout: a node says what it is, not where it is drawn.
+id: ono.map-node/1
+name: MapNode
+summary: One object a map draws.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The place's `spatial_id` (§3.1). Opaque, stable and unique within one map.
+  object_ref:
+    type: map
+    required: true
+    doc: >-
+      The provider's own reference to the object — the schema it is served under and the values
+      of that schema's identity fields — or, for a canonical space, the space the geography
+      declares (§3.1, §41.1). Every visible node corresponds to inspectable data (§23.1).
+  space:
+    type: string
+    nullable: true
+    doc: The registry id of the canonical space this node is (`compute`, `compute.processes`), or null for an observed object (§41.1).
+  label:
+    type: string
+    required: true
+    doc: The name a user reads.
+  type:
+    type: string
+    required: true
+    doc: What kind of place it is, in §3.3's vocabulary.
+  state:
+    type: string
+    nullable: true
+    doc: The provider's own state word, where it reported one; null is "not known", never "fine" (§2.17).
+  canonical_parent:
+    type: string
+    nullable: true
+    doc: The `spatial_id` `up` arrives at (§11.3); null at the root.
+  landmark_reasons:
+    type: list<string>
+    required: true
+    doc: Why this node deserves attention, from §3.7's closed vocabulary. Empty when it is no landmark.
+  depth:
+    type: int
+    required: true
+    doc: How many hierarchy hops from the map's centre the node was reached (§6.9).
+default_view:
+  columns: [label, type, state, landmark_reasons]

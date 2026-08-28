@@ -117,6 +117,13 @@ verbs:
     pipeline_role: context
     mutating: false
     stability: stable
+  - id: ono.verb.map
+    verb: map
+    semantics: Project the bounded, ranked graph around a place, as a map.
+    typical_targets: [place]
+    pipeline_role: producer
+    mutating: false
+    stability: stable
   - id: ono.verb.home
     verb: home
     semantics: Return to the root system place of the active host or link.

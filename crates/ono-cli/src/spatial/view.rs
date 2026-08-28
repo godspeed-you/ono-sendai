@@ -448,7 +448,10 @@ fn kind_chain(object_type: SpatialType) -> String {
 
 /// The provider's own reference to the object — the schema it serves it under, and the values
 /// of the fields that schema calls its identity (§3.1's `canonical_ref`, §37.1).
-fn reference_record(reference: &ono_provider_api::ObjectRef) -> Value {
+///
+/// It is what makes "every visible node corresponds to inspectable data" checkable (§23.1), so
+/// the map builds its `object_ref` from the very same function a place view does.
+pub fn reference_record(reference: &ono_provider_api::ObjectRef) -> Value {
     let id = reference.id();
     let Some(schema) = builtin_schemas().get(id.schema()) else {
         return Value::Null;

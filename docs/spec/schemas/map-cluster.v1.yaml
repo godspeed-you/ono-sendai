@@ -1,0 +1,33 @@
+# Canonical MapCluster schema. Source: v0.4 §22's `MapCluster` and §8.2: "When the visible object
+# count exceeds the view budget, Ono MUST cluster rather than truncate arbitrarily" and "A
+# cluster MUST report the number of hidden objects."
+#
+# The id is stable across projections of the same horizon, because §8.3's expansion is spelled in
+# a later command than the map that showed the cluster.
+id: ono.map-cluster/1
+name: MapCluster
+summary: A group of objects one map node stands for because the view budget could not draw them.
+identity: [id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The cluster's stable identity, which `map --expand <id>` takes (§8.3).
+  label:
+    type: string
+    required: true
+    doc: What the group is called — the canonical collection its members are filed under.
+  members:
+    type: int
+    required: true
+    doc: How many objects it stands for (§8.2).
+  grouping:
+    type: string
+    required: true
+    doc: The dimension it was grouped along, from §8.2's list of allowed dimensions.
+  expandable:
+    type: bool
+    required: true
+    doc: Whether `map --expand` can draw its members instead (§8.3).
+default_view:
+  columns: [label, members, grouping, expandable]

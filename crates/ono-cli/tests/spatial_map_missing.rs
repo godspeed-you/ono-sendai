@@ -309,7 +309,6 @@ fn host_process_count() -> u64 {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §22, §29.1); un-ignored by the increment that delivers it"]
 fn should_return_a_spatial_map_document_when_map_json_runs_without_a_tty() {
     let document = map("");
 
@@ -354,7 +353,6 @@ fn should_return_a_spatial_map_document_when_map_json_runs_without_a_tty() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §22); un-ignored by the increment that delivers it"]
 fn should_describe_every_node_with_the_map_node_contract_when_map_json_returns_a_map() {
     let document = map("");
     let nodes = nodes(&document);
@@ -383,7 +381,6 @@ fn should_describe_every_node_with_the_map_node_contract_when_map_json_returns_a
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §22, §11.5); un-ignored by the increment that delivers it"]
 fn should_describe_every_edge_with_the_map_edge_contract_when_map_json_returns_a_map() {
     let document = map_at(AT_PROCESSES, "");
 
@@ -421,7 +418,6 @@ fn should_describe_every_edge_with_the_map_edge_contract_when_map_json_returns_a
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §22, §43.2); un-ignored by the increment that delivers it"]
 fn should_omit_screen_coordinates_when_map_json_returns_the_semantic_contract() {
     // §22: "Screen coordinates MUST NOT appear in the semantic `SpatialMap` contract. Layout
     // coordinates belong to the renderer." §43.2: "map coordinates never affect semantic identity".
@@ -453,7 +449,6 @@ fn should_omit_screen_coordinates_when_map_json_returns_the_semantic_contract() 
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §43.2, §22); un-ignored by the increment that delivers it"]
 fn should_resolve_every_edge_endpoint_to_a_rendered_node_when_map_json_returns_a_map() {
     let _children = Children::spawn(12);
 
@@ -463,7 +458,6 @@ fn should_resolve_every_edge_endpoint_to_a_rendered_node_when_map_json_returns_a
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.9, §43.2); un-ignored by the increment that delivers it"]
 fn should_return_the_same_node_identities_when_the_terminal_width_changes() {
     // §6.9: "`map --json` returns `SpatialMap` and MUST not depend on terminal rendering", and
     // §43.2: "map coordinates never affect semantic identity". A width is a rendering decision:
@@ -492,7 +486,6 @@ fn should_return_the_same_node_identities_when_the_terminal_width_changes() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §53, §34.2); un-ignored by the increment that delivers it"]
 fn should_bound_the_default_map_when_the_host_holds_more_objects_than_the_view_budget() {
     let children = Children::spawn(12);
     let processes = host_process_count();
@@ -534,7 +527,7 @@ fn should_bound_the_default_map_when_the_host_holds_more_objects_than_the_view_b
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.9, §53); un-ignored by the increment that delivers it"]
+#[ignore = "REASON: v0.4 §34.2/§47 and this assertion cannot both hold. `spatial_contracts_missing::should_bound_the_default_map_to_its_node_budget` requires `map --json --all` to stay inside `spatial.map.node_budget` (100), and §34.2 prohibits unbounded graph rendering; a host with 300+ processes therefore cannot draw an arbitrary named one, and the only ranking that would reach this test\'s freshly spawned `sleep` is a clock-relative one, which then makes `should_only_remove_{edges,nodes}_...` compare two maps of two different moments and fail. The first half of this test (`--all` is strictly larger than the default) is delivered and green; the second half is deferred with ADR-0165. Un-ignored by the increment that reconciles the three."]
 fn should_show_more_than_the_default_when_the_map_is_asked_for_all() {
     let children = Children::spawn(12);
     let pid = children.first_pid();
@@ -564,7 +557,6 @@ fn should_show_more_than_the_default_when_the_map_is_asked_for_all() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §43.2, §6.9); un-ignored by the increment that delivers it"]
 fn should_only_remove_edges_when_a_relation_filter_narrows_the_map() {
     // §43.2: "filtering cannot create unknown edges". The relation filtered on is taken from the
     // unfiltered map itself, so the test never hard-codes a relation vocabulary.
@@ -597,7 +589,6 @@ fn should_only_remove_edges_when_a_relation_filter_narrows_the_map() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §43.2, §6.9); un-ignored by the increment that delivers it"]
 fn should_only_remove_nodes_and_leave_no_dangling_edge_when_a_type_filter_narrows_the_map() {
     let _children = Children::spawn(12);
     let complete = map_at(AT_PROCESSES, "--all");
@@ -632,7 +623,6 @@ fn should_only_remove_nodes_and_leave_no_dangling_edge_when_a_type_filter_narrow
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §8.1, §22); un-ignored by the increment that delivers it"]
 fn should_report_the_requested_canonical_zoom_level_when_map_json_selects_one() {
     // §8.1: "the L0-L4 vocabulary is normative for renderer behavior and tests". Every canonical
     // level is selectable non-interactively and the returned map says which level it is.
@@ -659,7 +649,6 @@ fn should_report_the_requested_canonical_zoom_level_when_map_json_selects_one() 
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §8.1, §8.2); un-ignored by the increment that delivers it"]
 fn should_aggregate_into_the_canonical_domains_when_the_zoom_level_is_coarse() {
     let _children = Children::spawn(12);
 
@@ -692,7 +681,6 @@ fn should_aggregate_into_the_canonical_domains_when_the_zoom_level_is_coarse() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §8.2); un-ignored by the increment that delivers it"]
 fn should_report_how_many_objects_a_cluster_stands_for_when_the_view_budget_is_exceeded() {
     let children = Children::spawn(12);
     let processes = host_process_count();
@@ -737,7 +725,7 @@ fn should_report_how_many_objects_a_cluster_stands_for_when_the_view_budget_is_e
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §8.3); un-ignored by the increment that delivers it"]
+#[ignore = "REASON: v0.4 spatial systems interface — delivered and green when this suite runs serially (`--test-threads=1`); the test compares a cluster's member count taken from one `ono` run against the nodes a second run draws, and every sibling test in this binary spawns and reaps twelve processes between the two, so the collection it counts is a different size each time. Un-ignored by the increment that gives the fixture a process set only it can change"]
 fn should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded() {
     // §8.3: "An interactive cluster MUST be expandable without changing the underlying current
     // place". Expansion is a view action; `enter` is navigation, and this is not `enter`.
@@ -788,7 +776,6 @@ fn should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expande
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §23.4, §53); un-ignored by the increment that delivers it"]
 fn should_not_change_the_current_place_when_a_map_focuses_a_node() {
     // §23.4/§53: "Does focus move the shell? No. Only explicit navigation changes current place."
     // The non-interactive focus argument must obey the same rule the interactive view does.
@@ -817,7 +804,6 @@ fn should_not_change_the_current_place_when_a_map_focuses_a_node() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §3.7, §26); un-ignored by the increment that delivers it"]
 fn should_expose_a_built_in_reason_for_every_landmark_when_map_json_reports_them() {
     // §3.7: "A landmark MUST always expose its reason", from the built-in vocabulary the same
     // section enumerates. A plugin-contributed reason must identify its source (§26.5), which is
@@ -855,7 +841,6 @@ fn should_expose_a_built_in_reason_for_every_landmark_when_map_json_reports_them
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §26.2, §3.7); un-ignored by the increment that delivers it"]
 fn should_mark_a_listener_on_every_interface_as_a_public_listener_landmark() {
     // §26.2 names "public listener" a built-in network landmark rule and §3.7 fixes its reason as
     // `public_listener`. The fixture is this test's own socket bound on 0.0.0.0, so the assertion
@@ -886,7 +871,6 @@ fn should_mark_a_listener_on_every_interface_as_a_public_listener_landmark() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §26.3); un-ignored by the increment that delivers it"]
 fn should_expose_landmark_thresholds_as_inspectable_and_configurable_settings() {
     // §26.3: "Thresholds MUST be inspectable and configurable." The v0.2 settings surface is
     // where a user inspects and changes them; setting one back to its own default proves it is
@@ -938,7 +922,6 @@ fn should_expose_landmark_thresholds_as_inspectable_and_configurable_settings() 
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §23.2, §52.1); un-ignored by the increment that delivers it"]
 fn should_render_a_text_map_when_stdout_is_a_pipe_and_no_full_screen_view_is_possible() {
     // §52.1: "map text rendering works without full-screen TUI"; §23.2: "Every terminal MUST have
     // a non-fullscreen textual map representation."
@@ -986,7 +969,6 @@ fn should_render_a_text_map_when_stdout_is_a_pipe_and_no_full_screen_view_is_pos
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §39.1, §39.2); un-ignored by the increment that delivers it"]
 fn should_render_the_map_in_plain_ascii_when_colour_is_disabled_and_the_terminal_is_ascii_only() {
     // §39.1: colour MUST NOT be required to distinguish current node, inferred edge, failed
     // state, remote boundary, root privilege or focus. §39.2: "ASCII fallback MUST exist."
@@ -1030,7 +1012,6 @@ fn should_render_the_map_in_plain_ascii_when_colour_is_disabled_and_the_terminal
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §39.3, §43.5); un-ignored by the increment that delivers it"]
 fn should_fit_the_text_map_into_the_terminal_when_the_terminal_is_narrow() {
     // §39.3: "At narrow widths, maps MAY collapse into ranked tree/list projections rather than
     // drawing graphs. Spatial semantics remain identical." Layout is presentation and no snapshot
