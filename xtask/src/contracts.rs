@@ -78,6 +78,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
         &expression_heads,
         &mut problems,
     );
+    problems.extend(check_expression_options(root, &documents, &spec));
     problems.extend(check_error_registry(root));
     problems.extend(check_adapter_packs(root));
     problems.extend(check_spatial_registry(root));
@@ -85,6 +86,73 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     problems.extend(check_provider_claims(root));
 
     problems.sort_by(|a, b| (&a.location, &a.detail).cmp(&(&b.location, &b.detail)));
+    problems
+}
+
+/// Checks that the predicate options of `language.yaml` are exactly the ones the parser reads
+/// as expressions (ADR-0138).
+///
+/// A words-mode head may declare one option whose value is an expression rather than the next
+/// word — `find place --where pid > 1`. The parser holds that table statically so the editor can
+/// classify a line without a registry (ADR-0009), which means two places can disagree about what
+/// `--where` means. They may not: help and completion would describe a language the parser does
+/// not implement.
+fn check_expression_options(
+    root: &Path,
+    documents: &BTreeMap<PathBuf, Yaml>,
+    spec: &Path,
+) -> Vec<Problem> {
+    let path = spec.join("language.yaml");
+    let Some(document) = documents.get(&path) else {
+        return Vec::new();
+    };
+    let location = relative(root, &path);
+    let mut problems = Vec::new();
+    let mut declared: BTreeSet<(String, String)> = BTreeSet::new();
+
+    // `argument_modes` is a sequence of modes in this repository's registry and a single mapping
+    // in the fixtures; the declaration is read from either, because what is being checked is the
+    // pair, not the file's shape.
+    let modes: Vec<&Yaml> = document
+        .get("argument_modes")
+        .into_iter()
+        .chain(sequence(document, "argument_modes"))
+        .collect();
+    for mode in modes {
+        for entry in sequence(mode, "option_values") {
+            let (Some(head), Some(option)) = (string_at(entry, "head"), string_at(entry, "option"))
+            else {
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: "an `option_values` entry needs both a `head` and an `option`"
+                        .to_owned(),
+                });
+                continue;
+            };
+            if !ono_parser::ArgMode::option_takes_expression(&head, &option) {
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "`{head} --{option}` is declared to take an expression, and the parser \
+                         reads its value as a word (ADR-0138)"
+                    ),
+                });
+            }
+            declared.insert((head, option));
+        }
+    }
+
+    for (head, option) in ono_parser::ArgMode::expression_options() {
+        if !declared.contains(&((*head).to_owned(), (*option).to_owned())) {
+            problems.push(Problem {
+                location: location.clone(),
+                detail: format!(
+                    "the parser reads `{head} --{option}` as an expression, and `language.yaml` \
+                     declares no `option_values` entry for it (ADR-0138)"
+                ),
+            });
+        }
+    }
     problems
 }
 

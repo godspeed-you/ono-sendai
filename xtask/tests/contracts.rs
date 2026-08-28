@@ -37,7 +37,7 @@ fn consistent() -> Scratch {
     );
     repo.write(
         "docs/spec/language.yaml",
-        "version: 1\nargument_modes:\n  expression_heads: [where, select]\n  default: words\n",
+        "version: 1\nargument_modes:\n  expression_heads: [where, select]\n  option_values:\n    - head: find\n      option: where\n  default: words\n",
     );
     repo
 }

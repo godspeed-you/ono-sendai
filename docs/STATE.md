@@ -144,7 +144,12 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 (event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
 (§45.6).
 
-- (empty — S1 and S2 complete, see below; no agent holds a claim)
+- [S3 | 2026-08-28] **S3 — spatial index queries, selector resolution, `find place`, neighborhood,
+  pins (§50 Phase S3)** — files: `crates/ono-spatial-query/**` (new), `crates/ono-command/src/impls/`,
+  `crates/ono-parser/src/{ast,parser}.rs`, `docs/spec/{language,targets}.yaml`,
+  `docs/spec/commands/spatial.yaml`, `docs/spec/schemas/spatial-place.v1.yaml`,
+  `crates/ono-cli/tests/spatial_{navigation,topology}_missing.rs` (the ADR-0124 rewrite),
+  `docker/acceptance/cases/09*.case.v04`, ADR-0138–0141.
 
 **S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
 on each:

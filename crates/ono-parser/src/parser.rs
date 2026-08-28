@@ -1043,6 +1043,9 @@ impl Parser<'_> {
             }
         };
         let mode = head.name().map_or(ArgMode::Words, ArgMode::for_head);
+        // Owned, because the argument loop borrows `self` mutably and the head is what decides
+        // whether a bare `--where` takes an expression rather than the next word (ADR-0138).
+        let head_name = head.name().map(str::to_owned);
         let lex_mode = match mode {
             ArgMode::Words => LexMode::Words,
             ArgMode::Expression => LexMode::ExprOperand,
@@ -1084,7 +1087,7 @@ impl Parser<'_> {
                     self.bump(lex_mode);
                 }
                 (ArgMode::Words, _) => {
-                    let argument = self.parse_words_argument(token);
+                    let argument = self.parse_words_argument(token, head_name.as_deref());
                     end = argument.span();
                     arguments.push(argument);
                 }
@@ -1237,9 +1240,9 @@ impl Parser<'_> {
 
     // --- words-mode arguments ------------------------------------------------------------
 
-    fn parse_words_argument(&mut self, token: Token) -> Argument {
+    fn parse_words_argument(&mut self, token: Token, head: Option<&str>) -> Argument {
         match token.kind {
-            TokenKind::Word => self.parse_word_argument(token),
+            TokenKind::Word => self.parse_word_argument(token, head),
             TokenKind::Str
             | TokenKind::RawStr
             | TokenKind::UnterminatedStr
@@ -1267,7 +1270,7 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_word_argument(&mut self, token: Token) -> Argument {
+    fn parse_word_argument(&mut self, token: Token, head: Option<&str>) -> Argument {
         self.bump(LexMode::Words);
         let text = token.text(self.source);
         if let Some(rest) = text.strip_prefix("--")
@@ -1282,8 +1285,22 @@ impl Parser<'_> {
                 && name.bytes().all(is_ident_continue);
             if named {
                 let value_start = token.span.start() + 2 + name.len() as u32 + 1;
-                let value = value_text
-                    .map(|text| self.option_value(text, Span::new(value_start, token.span.end())));
+                let value = match value_text {
+                    Some(text) => {
+                        Some(self.option_value(text, Span::new(value_start, token.span.end())))
+                    }
+                    // `--where <predicate>`: the value is the expression that follows, read in
+                    // expression mode so that `>` compares and a bare identifier is a field
+                    // path (ADR-0138). Nothing follows an option at the end of a stage, and the
+                    // command reports the missing value with the type it wanted.
+                    None if head
+                        .is_some_and(|head| ArgMode::option_takes_expression(head, name))
+                        && !ends_stage(self.peek(LexMode::ExprOperand).kind) =>
+                    {
+                        Some(self.parse_expression())
+                    }
+                    None => None,
+                };
                 let span = value
                     .as_ref()
                     .map_or(token.span, |value| token.span.join(value.span()));

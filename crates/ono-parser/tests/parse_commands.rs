@@ -192,3 +192,55 @@ fn should_use_a_variable_as_a_stage_head_when_the_line_starts_with_one() {
     };
     assert_eq!(variable.name, "hot");
 }
+
+#[test]
+fn should_read_the_predicate_as_an_expression_when_a_words_mode_find_is_given_where() {
+    // ADR-0138 with v0.4 §6.8: `find place --where <predicate>` is written on a words-mode line,
+    // and the predicate is an expression there — otherwise `state` would be a word and `"running"`
+    // a second one, and the shell would have no predicate to evaluate.
+    let stages = stages(r#"find place --where state == "running" | take 5"#);
+    assert_eq!(stages[0].head.name(), Some("find"));
+    assert_eq!(words(&stages[0]), vec!["place"]);
+    let Some(Argument::Option(option)) = stages[0].arguments.last() else {
+        panic!("expected `--where`, got {:?}", stages[0].arguments);
+    };
+    assert_eq!(option.name, "where");
+    assert!(
+        matches!(option.value, Some(Expr::Binary(_))),
+        "the predicate is one expression, got {:?}",
+        option.value
+    );
+    assert_eq!(stages.len(), 2, "the pipe still ends the stage");
+}
+
+#[test]
+fn should_compare_rather_than_redirect_when_a_predicate_option_contains_a_greater_than() {
+    // The reason ADR-0138 exists: in words mode `>` opens a redirection, so `--where pid > 1`
+    // would write the stream to a file called `1` instead of comparing.
+    let stages = stages("find place --where pid > 1");
+    assert!(
+        stages[0].redirections.is_empty(),
+        "`>` inside a predicate compares, got {:?}",
+        stages[0].redirections
+    );
+    let Some(Argument::Option(option)) = stages[0].arguments.last() else {
+        panic!("expected `--where`, got {:?}", stages[0].arguments);
+    };
+    assert!(
+        matches!(option.value, Some(Expr::Binary(_))),
+        "`pid > 1` is one comparison, got {:?}",
+        option.value
+    );
+}
+
+#[test]
+fn should_leave_an_unrelated_option_a_bare_flag_when_its_head_declares_no_predicate() {
+    // The table is per head and per option (ADR-0138): nothing else changes meaning, and an
+    // external program still receives the word that follows its own `--where`.
+    let stages = stages("grep --where state");
+    let Some(Argument::Option(option)) = stages[0].arguments.first() else {
+        panic!("expected `--where`, got {:?}", stages[0].arguments);
+    };
+    assert!(option.value.is_none());
+    assert_eq!(words(&stages[0]), vec!["state"]);
+}

@@ -22,7 +22,41 @@ const EXPRESSION_HEADS: &[&str] = &[
     "return", "select", "skip", "sort", "take", "until", "where", "while",
 ];
 
+/// The `(head, option)` pairs whose option value is a predicate expression rather than a word.
+///
+/// ADR-0138. `find place --where state == "running"` and `find place --where pid > 1` are
+/// written in words mode, where `>` is a redirection and a bare identifier is a word — so the
+/// value of `--where` would be unreadable as the predicate v0.4 §6.8 says it is. The table is
+/// static and registry-free for the same reason [`EXPRESSION_HEADS`] is (ADR-0009): the editor
+/// classifies a line at keystroke time.
+const EXPRESSION_OPTIONS: &[(&str, &str)] = &[("find", "where")];
+
 impl ArgMode {
+    /// Whether the bare option `--<option>` of the stage head `<head>` takes an expression as its
+    /// value, rather than the next word (ADR-0138).
+    ///
+    /// ```
+    /// use ono_parser::ArgMode;
+    /// assert!(ArgMode::option_takes_expression("find", "where"));
+    /// assert!(!ArgMode::option_takes_expression("find", "name"));
+    /// assert!(!ArgMode::option_takes_expression("grep", "where"));
+    /// ```
+    #[must_use]
+    pub fn option_takes_expression(head: &str, option: &str) -> bool {
+        EXPRESSION_OPTIONS
+            .iter()
+            .any(|(known_head, known_option)| *known_head == head && *known_option == option)
+    }
+
+    /// Every `(head, option)` pair whose option value is read as an expression (ADR-0138).
+    ///
+    /// `cargo run -p xtask -- spec-check` holds this against `docs/spec/language.yaml`, so the
+    /// table and the documented language cannot drift apart.
+    #[must_use]
+    pub fn expression_options() -> &'static [(&'static str, &'static str)] {
+        EXPRESSION_OPTIONS
+    }
+
     /// The argument mode a head word selects.
     ///
     /// The table is static and needs no command registry, so the editor can classify a line at
