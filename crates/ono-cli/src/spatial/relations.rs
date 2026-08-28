@@ -393,6 +393,8 @@ pub async fn observe(
     }
 
     let mut answered: BTreeSet<&'static str> = BTreeSet::new();
+    // The relations a provider serves that §32.1 kept this view from spending its budget on.
+    let mut declined: BTreeSet<&'static str> = BTreeSet::new();
     let providers = Arc::new(providers.clone());
     // §12 lists `user` among the exits of a process place, so the people behind the processes
     // are part of the neighborhood rather than an option of `trace` (v0.2 §22.3).
@@ -403,10 +405,13 @@ pub async fn observe(
         if !expands(provider.subjects()) {
             continue;
         }
-        // §32.2: an exit nobody asked about stays a discoverable but unloaded one.
+        // §32.2: an exit nobody asked about stays a discoverable but unloaded one. §35.2 has a
+        // word for that, and it is not `unsupported`: the provider is there and was not asked
+        // because §32.1 forbids a default `look` from spending a whole-target enumeration.
         if let Some(reaches) = broad(provider.id())
             && !interest.wants(labels_of(provider.id()), reaches)
         {
+            declined.extend(labels_of(provider.id()).iter().copied());
             continue;
         }
         if !matches!(
@@ -503,12 +508,21 @@ pub async fn observe(
         .collect();
     let (index, _) = session.absorb_with();
     for label in unanswered {
-        index.record_withheld(
-            id,
-            label,
-            PermissionState::Unsupported,
-            &format!("no provider answers for the `{label}` of a {object_type}"),
-        );
+        // A relation a provider serves and this view did not spend the budget on is `unknown`,
+        // and says how to have it: `near --type <kind>` or `near --all` asks for it by name
+        // (§32.1, §32.2, §35.2). Only a relation nothing in this build fills is `unsupported`.
+        if declined.contains(label) && relation::resolve_label(object_type, label).is_empty() {
+            continue;
+        }
+        let (state, detail) = if declined.contains(label) {
+            (PermissionState::Unknown, "available on request".to_owned())
+        } else {
+            (
+                PermissionState::Unsupported,
+                format!("no provider answers for the `{label}` of a {object_type}"),
+            )
+        };
+        index.record_withheld(id, label, state, &detail);
     }
     Ok(())
 }

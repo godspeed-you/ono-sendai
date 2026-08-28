@@ -812,3 +812,35 @@ fn should_carry_the_raw_evidence_of_an_edge_when_a_neighbour_or_a_map_edge_is_re
          got {file_edge:?}"
     );
 }
+
+#[test]
+fn should_say_a_costly_relation_is_unknown_rather_than_unserved_when_a_look_did_not_ask_for_it() {
+    // §35.2 keeps `unknown` and `unsupported` apart, and §32.1 is why a default `look` leaves the
+    // openers of a file alone: finding every process that holds one file reads every process on
+    // the host. "Not asked because it is expensive" is `unknown` — the group the `owner` of a
+    // file already answers with, "available on request". `unsupported` says no provider answers,
+    // and one does: `near --type process` reaches the same relation and names the holder.
+    let holder = FileHolder::spawn();
+
+    let looked = ono(&format!("enter {}; look --json", holder.path()));
+    looked.assert_success();
+    let view = place_view(&looked);
+    let openers = rendered(&view);
+    assert!(
+        !openers.contains("no provider answers for the `openers`"),
+        "§35.2/§2.17: a relation this build serves is not reported as one nobody answers for, \
+         got {openers}"
+    );
+
+    let asked = ono(&format!(
+        "enter {}; near --type process | select display_name | to json",
+        holder.path()
+    ));
+    asked.assert_success();
+    assert!(
+        asked.stdout().contains("sleep"),
+        "§6.2: asked for explicitly, the same relation names the process holding the file, got \
+         {:?}",
+        asked.stdout()
+    );
+}
