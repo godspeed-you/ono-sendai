@@ -64,6 +64,9 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     built.register(std::sync::Arc::new(crate::spatial::Enter::new(
         crate::spatial::PinStore::of(session),
     )));
+    built.register(std::sync::Arc::new(crate::spatial::Follow::new(
+        crate::spatial::PinStore::of(session),
+    )));
     built.register(std::sync::Arc::new(crate::spatial::Home));
     Ok(TABLE.get_or_init(|| built))
 }
@@ -1637,6 +1640,17 @@ fn stage_scope(
     source: &str,
 ) -> Eval<Scope> {
     let mut scope = Scope::new();
+    // v0.2 §20.2: `@-1` and `@N` name the results this session retained. A command argument that
+    // writes one — v0.4 §28.2's `enter @-1` — reads the same values the pipeline head does, or
+    // the reference would mean two different things in two positions of one language.
+    let mut previous: Vec<Value> = Vec::new();
+    for back in 1..=16u32 {
+        match session.previous_result(back) {
+            Some(values) => previous.push(Value::list(values.to_vec())),
+            None => break,
+        }
+    }
+    scope = scope.with_previous(previous);
     for (name, value) in session.bindings() {
         scope = scope.with_variable(&name, value);
     }
