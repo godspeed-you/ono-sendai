@@ -637,7 +637,6 @@ fn should_report_the_unreadable_namespace_group_as_unknown_rather_than_absent() 
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.9); un-ignored by the increment that delivers it"]
 fn should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes() {
     // §44.9, §25.1 and §43.6: a real edge appears while a live map watches, and disappears or
     // tombstones when the connection closes. Nothing here can pass on animation — the edge is

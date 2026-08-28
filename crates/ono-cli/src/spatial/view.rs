@@ -854,21 +854,51 @@ pub async fn neighborhood_here(
     request: &NeighborhoodRequest,
     now: Timestamp,
 ) -> Result<(Neighborhood, PermissionState), ErrorValue> {
+    let (neighborhood, permission, _) =
+        neighborhood_and_whole(providers, session, request, false, now).await?;
+    Ok((neighborhood, permission))
+}
+
+/// The same projection, with the unbounded one beside it where a caller needs both (§25.4).
+///
+/// `look --changes` is that caller. What it compares must not be the *ranked* neighborhood: the
+/// ranking is a view decision, and two rankings of one unchanged system differ whenever the
+/// budget cuts a tie differently — which would report change where nothing moved, the decorative
+/// motion §25.2 and §2.12 forbid. The complete set is computed from the same observation, so
+/// nothing is asked of a provider twice.
+pub async fn neighborhood_and_whole(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    request: &NeighborhoodRequest,
+    whole: bool,
+    now: Timestamp,
+) -> Result<(Neighborhood, PermissionState, Option<Neighborhood>), ErrorValue> {
     let here = session.current_place().clone();
     if let Some(space) = ono_spatial_query::resolve::space_of(&here) {
         let surroundings =
             observe_space(providers, session, space, request.is_complete(), now).await?;
         let permission = surroundings.permission();
         let pins = session.pins().clone();
+        let exits = surroundings.exits();
         let neighborhood = ono_spatial_query::space_neighborhood(
             session.index(),
             &here,
-            surroundings.exits(),
+            exits.clone(),
             request,
             &pins,
             now,
         );
-        return Ok((neighborhood, permission));
+        let complete = whole.then(|| {
+            ono_spatial_query::space_neighborhood(
+                session.index(),
+                &here,
+                exits,
+                &NeighborhoodRequest::new().all(true),
+                &pins,
+                now,
+            )
+        });
+        return Ok((neighborhood, permission, complete));
     }
     // An object's exits are its relationship edges, and those are the v0.2 relationship graph's
     // (§2.16, §31.3). They are read here, once, before anything is ranked.
@@ -880,7 +910,16 @@ pub async fn neighborhood_here(
     let pins = session.pins().clone();
     let neighborhood =
         ono_spatial_query::neighborhood_of(session.index(), &here, request, &pins, now);
-    Ok((neighborhood, PermissionState::Available))
+    let complete = whole.then(|| {
+        ono_spatial_query::neighborhood_of(
+            session.index(),
+            &here,
+            &NeighborhoodRequest::new().all(true),
+            &pins,
+            now,
+        )
+    });
+    Ok((neighborhood, PermissionState::Available, complete))
 }
 
 /// A stream of already-collected values.

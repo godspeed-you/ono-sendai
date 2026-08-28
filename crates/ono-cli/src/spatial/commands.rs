@@ -77,9 +77,35 @@ impl CommandImpl for Look {
             // exits — every group lists the places behind it — rather than dumping the object's
             // properties, which §24.1 reserves for `inspect`.
             let request = NeighborhoodRequest::new().all(all);
-            let (neighborhood, permission) =
-                view::neighborhood_here(ctx.providers(), &mut session, &request, now).await?;
-            let view = place_view(&session, &neighborhood, permission, all, changes, now)?;
+            let (neighborhood, permission, whole) = view::neighborhood_and_whole(
+                ctx.providers(),
+                &mut session,
+                &request,
+                changes.is_some(),
+                now,
+            )
+            .await?;
+            // §25.4: where no event stream answers, a change is the difference between two
+            // observations — and there is one only from the second `look --changes` of a session
+            // onwards. The baseline is taken whether or not the caller asked, so the *next* ask
+            // has something to compare to.
+            let compared = changes.map(|window| {
+                let observed = whole.as_ref().unwrap_or(&neighborhood);
+                let snapshot = ono_spatial_events::PlaceSnapshot::of(session.index(), observed);
+                let here = session.current_place().clone();
+                let before = session.rebase(&here, snapshot.clone());
+                (
+                    window,
+                    before.map(|before| {
+                        ono_spatial_events::compare_places(
+                            &before,
+                            &snapshot,
+                            ono_spatial_events::Freshness::Polled,
+                        )
+                    }),
+                )
+            });
+            let view = place_view(&session, &neighborhood, permission, all, compared, now)?;
 
             if json {
                 let document = ono_value::to_json_data(&Value::Record(Arc::new(view)));
@@ -109,7 +135,7 @@ fn place_view(
     neighborhood: &ono_spatial_core::Neighborhood,
     permission: PermissionState,
     all: bool,
-    changes: Option<ono_value::Duration>,
+    changes: Option<(ono_value::Duration, Option<ono_spatial_events::ChangeSet>)>,
     now: Timestamp,
 ) -> Result<RecordValue, ErrorValue> {
     let here = session.current_place().clone();
@@ -204,7 +230,7 @@ fn place_view(
     .set("landmarks", Value::list(landmarks))?
     .set("neighborhood", Value::Record(Arc::new(neighborhood_record)))?
     .set("system", system)?
-    .set("changed", change_summary(changes)?)?
+    .set("changed", change_summary(changes, now)?)?
     .set("generated_at", Value::Timestamp(now))?
     .build())
 }
@@ -234,11 +260,19 @@ fn source_freshness(
 /// The change section of §24.3, which never invents a change.
 ///
 /// §24.3: "No fake change summary may be generated when no event source or comparison snapshot
-/// exists." This build has neither — the event merge and the snapshot diff of §25 are a later
-/// phase — so a caller who asks gets the §35.2 state that says so, with no entries. That is a
-/// different answer from "nothing changed", and §2.17 requires the difference to be visible.
-fn change_summary(window: Option<ono_value::Duration>) -> Result<Value, ErrorValue> {
-    let Some(window) = window else {
+/// exists." §25.4 names the one source this build has for a still view — the comparison of two
+/// successive observations — and its provenance says so. Three answers are therefore possible and
+/// §2.17 requires all three to stay apart:
+///
+/// - **`unknown`** — this session has not looked at this place before, so there is nothing to
+///   compare to. Not "nothing changed".
+/// - **`empty`** — there was a snapshot and nothing differs from it.
+/// - **`available`** — there was a snapshot and these are the differences.
+fn change_summary(
+    changes: Option<(ono_value::Duration, Option<ono_spatial_events::ChangeSet>)>,
+    now: Timestamp,
+) -> Result<Value, ErrorValue> {
+    let Some((window, compared)) = changes else {
         return Ok(Value::Null);
     };
     let schema = builtin_schemas()
@@ -249,16 +283,71 @@ fn change_summary(window: Option<ono_value::Duration>) -> Result<Value, ErrorVal
                 "the `ono.change-summary/1` contract is not in this build",
             )
         })?;
+    let (state, source, entries) = match &compared {
+        None => ("unknown", Value::Null, Vec::new()),
+        Some(changes) if changes.is_empty() => (
+            "empty",
+            Value::string(changes.source().as_str()),
+            Vec::new(),
+        ),
+        Some(changes) => {
+            let mut rows = Vec::new();
+            for change in changes.changes() {
+                rows.push(Value::Record(Arc::new(change_record(
+                    change, changes, now,
+                )?)));
+            }
+            ("available", Value::string(changes.source().as_str()), rows)
+        }
+    };
     let record = RecordValue::builder(
         schema,
         Provenance::local(COMPOSER, SchemaId::new("ono.change-summary", 1)),
     )
     .set("window", Value::Duration(window))?
-    .set("state", Value::string("unsupported"))?
-    .set("source", Value::Null)?
-    .set("entries", Value::list(Vec::new()))?
+    .set("state", Value::string(state))?
+    .set("source", source)?
+    .set("entries", Value::list(entries))?
     .build();
     Ok(Value::Record(Arc::new(record)))
+}
+
+/// One `ono.spatial-change/1` of a change section (§24.3, §25.1).
+fn change_record(
+    change: &ono_spatial_events::SpatialChange,
+    changes: &ono_spatial_events::ChangeSet,
+    now: Timestamp,
+) -> Result<RecordValue, ErrorValue> {
+    let schema = builtin_schemas()
+        .get(&SchemaId::new("ono.spatial-change", 1))
+        .ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::ProviderSchemaViolation,
+                "the `ono.spatial-change/1` contract is not in this build",
+            )
+        })?;
+    let places: Vec<Value> = change
+        .places()
+        .map(|place| Value::string(&place.to_string()))
+        .collect();
+    Ok(RecordValue::builder(
+        schema,
+        Provenance::local(COMPOSER, SchemaId::new("ono.spatial-change", 1)),
+    )
+    .set("kind", Value::string(change.kind().as_str()))?
+    .set("id", Value::string(change.subject()))?
+    .set("observed_at", Value::Timestamp(now))?
+    .set("label", Value::string(change.label()))?
+    .set(
+        "reason",
+        change
+            .kind()
+            .reason()
+            .map_or(Value::Null, |reason| Value::string(reason.as_str())),
+    )?
+    .set("places", Value::list(places))?
+    .set("source", Value::string(changes.source().as_str()))?
+    .build())
 }
 
 /// The window `--changes`/`--changed` names, or the configured default where it names none.

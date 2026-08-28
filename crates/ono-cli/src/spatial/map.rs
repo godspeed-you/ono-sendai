@@ -114,18 +114,25 @@ impl CommandImpl for Map {
                 None => session.current_place().clone(),
             };
 
-            let horizon = observe(ctx.providers(), &mut session, &center, &request, now).await?;
-            let pins = session.pins().clone();
-            let map = ono_spatial_query::project_map(
-                session.index(),
-                &center,
-                &horizon,
-                &request,
-                &pins,
-                session.preferences().map_node_budget,
-                now,
-            );
-            let record = map_record(&session, &map)?;
+            if arguments.flag("live") {
+                // §25.1: the live map subscribes; §29.4 makes it an ordinary stream, so
+                // `map --live --json | take 3` is three values and then nothing.
+                let targets = crate::spatial::live::targets_of(&session, &center);
+                let interval = interval_of(session.preferences().live_interval);
+                drop(session);
+                let providers = ctx.providers().clone();
+                return Ok(Outcome::Values(crate::spatial::live::stream(
+                    providers,
+                    center,
+                    request,
+                    targets,
+                    interval,
+                    move |update| live_value(update, json),
+                )));
+            }
+
+            let map = project_at(ctx.providers(), &mut session, &center, &request, now).await?;
+            let record = record_of(ctx.providers(), &session, &map, None)?;
 
             if json {
                 let document = ono_value::to_json_data(&Value::Record(Arc::new(record)));
@@ -144,6 +151,60 @@ impl CommandImpl for Map {
             ])))
         })
     }
+}
+
+/// How often a live view re-reads a source that announces nothing of its own (§25.1, §47).
+fn interval_of(configured: ono_value::Duration) -> std::time::Duration {
+    let nanos = u64::try_from(configured.nanoseconds().max(1)).unwrap_or(500_000_000);
+    std::time::Duration::from_nanos(nanos.max(1_000_000))
+}
+
+/// One value of a live stream: the projection, and what moved to produce it (§25.1, §45.5).
+fn live_value(update: &crate::spatial::live::LiveUpdate, json: bool) -> Result<Value, ErrorValue> {
+    let record = update.map.clone();
+    if json {
+        let document = ono_value::to_json_data(&Value::Record(Arc::new(record)));
+        let text = serde_json::to_string(&document).map_err(|error| {
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("the map could not be written as JSON: {error}"),
+            )
+        })?;
+        return Ok(Value::string(&text));
+    }
+    Ok(Value::Record(Arc::new(record)))
+}
+
+/// Observes the horizon around `center` and projects it — the one path both `map` and the live
+/// view take, so the two cannot disagree about what the system looks like (§45.4, §49.5).
+pub async fn project_at(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    center: &SpatialId,
+    request: &MapRequest,
+    now: Timestamp,
+) -> Result<SpatialMap, ErrorValue> {
+    let horizon = observe(providers, session, center, request, now).await?;
+    let pins = session.pins().clone();
+    Ok(ono_spatial_query::project_map(
+        session.index(),
+        center,
+        &horizon,
+        request,
+        &pins,
+        session.preferences().map_node_budget,
+        now,
+    ))
+}
+
+/// The `ono.spatial-map/1` record of a projection, with the changes that produced it (§22, §25).
+pub fn record_of(
+    providers: &ProviderRegistry,
+    session: &SpatialSessionState,
+    map: &SpatialMap,
+    changes: Option<&ono_spatial_events::ChangeSet>,
+) -> Result<RecordValue, ErrorValue> {
+    map_record(providers, session, map, changes)
 }
 
 /// The places and edges around `center`, as the providers answer for them (§2.16, §45.6).
@@ -274,8 +335,18 @@ fn place_at(
     HorizonPlace::new(id.clone(), depth, parent).in_state(state)
 }
 
-/// The `ono.spatial-map/1` record of §22.
-fn map_record(session: &SpatialSessionState, map: &SpatialMap) -> Result<RecordValue, ErrorValue> {
+/// The `ono.spatial-map/1` record of §22, with §25's live fields beside it.
+///
+/// `changes` is `None` for a map asked once and `Some` for a value of a live stream — §24.3
+/// forbids inventing a change section where no event source or comparison snapshot exists, and
+/// the difference between "nothing changed" and "nothing was watching" is exactly what §2.17
+/// requires to stay visible.
+fn map_record(
+    providers: &ProviderRegistry,
+    session: &SpatialSessionState,
+    map: &SpatialMap,
+    changes: Option<&ono_spatial_events::ChangeSet>,
+) -> Result<RecordValue, ErrorValue> {
     let index = session.index();
     let mut nodes = Vec::with_capacity(map.nodes.len());
     for node in &map.nodes {
@@ -317,10 +388,70 @@ fn map_record(session: &SpatialSessionState, map: &SpatialMap) -> Result<RecordV
     .set("hidden", Value::Record(Arc::new(hidden_record(map)?)))?
     .set("generated_at", Value::Timestamp(map.generated_at))?
     .set("completeness", Value::string(map.completeness.as_str()))?
-    // §25.1's live map subscribes to provider change events. This build polls, and saying
-    // otherwise would promise a liveness nothing delivers (§2.17).
-    .set("live_capable", Value::Bool(false))?
+    // §22: whether this place can be watched at all. It is answered rather than assumed — the
+    // targets its horizon reads either have an event contract and a provider, or they do not.
+    .set(
+        "live_capable",
+        Value::Bool(crate::spatial::live::capable(
+            providers,
+            session,
+            &map.center,
+        )),
+    )?
+    .set("live", Value::Bool(changes.is_some()))?
+    .set(
+        "freshness",
+        Value::string(match changes {
+            Some(changes) => changes.freshness().as_str(),
+            // §25.3: a projection made once is what was read when it was asked for. Calling it
+            // `event_driven` would promise a liveness nothing delivers (§2.12).
+            None => "polled",
+        }),
+    )?
+    .set(
+        "change_source",
+        changes.map_or(Value::Null, |changes| {
+            Value::string(changes.source().as_str())
+        }),
+    )?
+    .set("changes", change_records(changes)?)?
     .build())
+}
+
+/// The `ono.spatial-change/1` values a live projection carries (§25.1, §45.5).
+fn change_records(changes: Option<&ono_spatial_events::ChangeSet>) -> Result<Value, ErrorValue> {
+    let Some(changes) = changes else {
+        return Ok(Value::list(Vec::new()));
+    };
+    let observed_at = Timestamp::now();
+    let mut rows = Vec::new();
+    for change in changes.changes() {
+        let places: Vec<Value> = change
+            .places()
+            .map(|place| Value::string(&place.to_string()))
+            .collect();
+        rows.push(Value::Record(Arc::new(
+            RecordValue::builder(
+                schema("ono.spatial-change", 1)?,
+                Provenance::local(COMPOSER, SchemaId::new("ono.spatial-change", 1)),
+            )
+            .set("kind", Value::string(change.kind().as_str()))?
+            .set("id", Value::string(change.subject()))?
+            .set("observed_at", Value::Timestamp(observed_at))?
+            .set("label", Value::string(change.label()))?
+            .set(
+                "reason",
+                change
+                    .kind()
+                    .reason()
+                    .map_or(Value::Null, |reason| Value::string(reason.as_str())),
+            )?
+            .set("places", Value::list(places))?
+            .set("source", Value::string(changes.source().as_str()))?
+            .build(),
+        )));
+    }
+    Ok(Value::list(rows))
 }
 
 /// One `ono.map-node/1` (§22's `MapNode`).

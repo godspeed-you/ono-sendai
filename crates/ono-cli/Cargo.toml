@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait.workspace = true
+futures.workspace = true
 jiff.workspace = true
 ono-adapter.workspace = true
 ono-command.workspace = true
@@ -36,6 +37,7 @@ ono-provider-netlink.workspace = true
 ono-provider-systemd.workspace = true
 ono-provider-container.workspace = true
 ono-spatial-core.workspace = true
+ono-spatial-events.workspace = true
 ono-spatial-index.workspace = true
 ono-spatial-query.workspace = true
 ono-spatial-render.workspace = true

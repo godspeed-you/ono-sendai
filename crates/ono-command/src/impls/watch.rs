@@ -143,6 +143,52 @@ fn event_schema_for(contract: &crate::CommandContract) -> Result<Arc<Schema>, Er
         })
 }
 
+/// The watch runtime of v0.2 §18.2, as a stream any caller can subscribe to (ADR-0024).
+///
+/// `watch <target>` is one caller; v0.4 §25.1's live map is another, and it must be the same
+/// runtime rather than a second one beside it — v0.4 §2.16 forbids the spatial layer from
+/// becoming an undocumented second source of system truth, and two loops asking the same
+/// providers would disagree about when something happened.
+///
+/// The events carry the envelope of §31.14: `kind` in snapshot|added|changed|removed, `at`, the
+/// object under the target's own field name, and `source` in subscription|poll. The stream is
+/// unbounded and ends when the consumer stops listening.
+///
+/// # Errors
+///
+/// `resolve.target_not_found` where the build carries no `ono.<target>-event/1` contract, which
+/// is how a caller learns that a target cannot be watched at all.
+pub fn watch_events(
+    providers: &ProviderRegistry,
+    target: &str,
+    query: Query,
+    interval: Duration,
+) -> Result<ValueStream, ErrorValue> {
+    let id = SchemaId::new(&format!("ono.{target}-event"), 1);
+    let schema = ono_value::builtin_schemas().get(&id).ok_or_else(|| {
+        ErrorValue::new(
+            ErrorCode::ResolveTargetNotFound,
+            format!("`{target}` has no event contract in this build, so it cannot be watched"),
+        )
+        .with_help("`ono.<target>-event/1` is what a watchable target declares (spec §18.2)")
+    })?;
+    Ok(poll(
+        providers.clone(),
+        query,
+        schema,
+        target.to_owned(),
+        interval,
+    ))
+}
+
+/// Whether this build can watch `target` at all (spec §18.2).
+#[must_use]
+pub fn is_watchable(target: &str) -> bool {
+    ono_value::builtin_schemas()
+        .get(&SchemaId::new(&format!("ono.{target}-event"), 1))
+        .is_some()
+}
+
 /// The poll loop: snapshot, diff by identity, emit, sleep, repeat — until nobody listens.
 fn poll(
     providers: ProviderRegistry,

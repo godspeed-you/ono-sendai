@@ -16,6 +16,7 @@
 
 pub mod commands;
 pub mod find;
+pub mod live;
 pub mod map;
 pub mod movement;
 pub mod pins;

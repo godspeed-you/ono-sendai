@@ -163,19 +163,23 @@ commands:
       - {name: relations, type: string, doc: "Keep only these relations' edges, comma-separated. Filtering removes edges; it never creates one (v0.4 §6.9, §43.2)."}
       - {name: type, type: string, doc: "Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener` (v0.4 §6.9, §3.3)."}
       - {name: all, type: bool, doc: "The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2, §47)."}
+      - {name: live, type: bool, doc: "Subscribe to the change events of everything this place is drawn from and re-project on each real change. The first value is the current state; every value after it is something that moved (v0.4 §25.1, §25.2)."}
     privilege: conditional
-    streaming: false
+    streaming: true
     phase: S
     note: >-
       §22 fixes the answer of `map --json` field for field and forbids screen coordinates in it:
       layout belongs to the renderer. What does not fit the view budget is clustered and counted
-      in `hidden` rather than dropped (§8.2, §23.6). `--live` and `--changes` of §6.9 need the
-      event source of §25 and arrive with it.
+      in `hidden` rather than dropped (§8.2, §23.6). `--live` subscribes through the v0.2 watch
+      runtime rather than a second one (§2.16, ADR-0024): nothing is emitted while nothing
+      changes, which is §25.2, and every value says how fresh it is and what it was observed
+      through (§25.3, §25.4).
     examples:
       - map
       - map --json
       - map --zoom 1
       - map --all --type process
+      - map --live --json
 
   - id: ono.place.home
     verb: home

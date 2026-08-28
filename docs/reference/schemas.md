@@ -1516,6 +1516,22 @@ Default view: `protocol`, `local`, `remote`, `state`, `process`
 | `user` | `ref<ono.user/1>` | — | nullable | The owning user. |
 | `inode` | `int` | — | nullable | The socket inode; the identity field, null when the provider cannot supply it. |
 
+## SpatialChange — `ono.spatial-change/1`
+
+One difference between two observations of a space, and what it was observed through.
+
+Identity: `kind`, `id`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What kind of difference this is (§25.1). |
+| `id` | `string` | — | required | The node identity or edge identity it happened to — the same id the map draws. |
+| `observed_at` | `timestamp` | — | required | When the difference was seen. §24.3 forbids a fabricated change summary, and a change with no time behind it is exactly that. |
+| `label` | `string` | — | required | What a person calls it, so the change reads without resolving the id (§11.4). |
+| `reason` | `string` | — | nullable | The §3.7 landmark reason this change amounts to — `new_object`, `removed_object` or `recently_changed` — or null where §3.7's closed vocabulary has no word for it. A core rule may not invent one. |
+| `places` | `list<string>` | — | required | The places the change touches, whose landmarks §26 has to re-judge: one for a node, both ends for an edge. |
+| `source` | `enum` | — | required | How it was observed (§25.4). `snapshot_comparison` is the provenance §25.4 requires of a change inferred by comparing successive projections rather than announced by a provider. |
+
 ## SpatialMap — `ono.spatial-map/1`
 
 The bounded, ranked, renderer-independent projection of the graph around a place.
@@ -1539,6 +1555,10 @@ Default view: `center`, `zoom_level`, `completeness`, `generated_at`
 | `generated_at` | `timestamp` | — | required | When the projection was made. |
 | `completeness` | `enum` | — | required | Whether everything known is drawn, the budget hid some, a source could not be read, or neither could be established (§3.6, §35.2). |
 | `live_capable` | `bool` | — | required | Whether this map can subscribe to change events and update in place (§22, §25.1). |
+| `live` | `bool` | — | required | Whether this projection came out of a live view (§25.1). False for a `map` asked once, which is a picture of one moment and says so. |
+| `freshness` | `enum` | — | required | §25.3's five words: how the data behind this projection is kept current. A live view MUST expose it, and a still one answers for the observation it was built from. |
+| `change_source` | `enum` | — | nullable | What the changes below were observed through (§25.4), or null where nothing was watching. |
+| `changes` | `list<ono.spatial-change/1>` | — | required | What moved since the previous value of a live stream (§25.1). Empty for the opening snapshot and for a `map` asked once — §24.3 forbids inventing a change where no event source or comparison snapshot exists, and §25.2 forbids reporting one where nothing moved. |
 
 ## SpatialNeighbor — `ono.spatial-neighbor/1`
 

@@ -43,6 +43,10 @@ pub struct SpatialSessionState {
     preferences: ViewPreferences,
     /// The thresholds the built-in landmark rules of §26.2 measure against (§26.3).
     thresholds: ono_spatial_query::LandmarkThresholds,
+    /// What each place's neighborhood looked like when it was last asked about with
+    /// `--changes` — the comparison snapshot of §25.4, and the only thing that lets §24.3's
+    /// change section say anything without an event stream.
+    baselines: BTreeMap<SpatialId, ono_spatial_events::PlaceSnapshot>,
     /// The places that went away while this session was watching, for as long as §10.3 keeps
     /// them (§20.3, §46). The index keeps their identity; this keeps the fact that they ended.
     tombstones: TombstoneRegistry,
@@ -124,6 +128,7 @@ impl SpatialSessionState {
             preferences,
             thresholds,
             tombstones,
+            baselines: BTreeMap::new(),
             records: BTreeMap::new(),
         }
     }
@@ -204,6 +209,20 @@ impl SpatialSessionState {
                 self.index.set_landmarks(object.spatial_id(), landmarks);
             }
         }
+    }
+
+    /// Replaces what this session last saw around `id`, and answers with what it saw before
+    /// (§25.4).
+    ///
+    /// Returns `None` the first time a place is asked about: §24.3 forbids inventing a change
+    /// summary where no comparison snapshot exists, and "there was nothing to compare to" is a
+    /// different answer from "nothing changed" (§2.17).
+    pub fn rebase(
+        &mut self,
+        id: &SpatialId,
+        snapshot: ono_spatial_events::PlaceSnapshot,
+    ) -> Option<ono_spatial_events::PlaceSnapshot> {
+        self.baselines.insert(id.clone(), snapshot)
     }
 
     /// Records that the providers no longer answer for the place at `id` (§10.3, §33.2).

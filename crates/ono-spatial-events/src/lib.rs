@@ -25,4 +25,4 @@ mod snapshot;
 
 pub use change::{ChangeKind, ChangeSet, ChangeSource, Freshness, SpatialChange};
 pub use merge::{EventKind, EventMerge, EventSource, ObservedEvent};
-pub use snapshot::{MapSnapshot, compare};
+pub use snapshot::{MapSnapshot, PlaceSnapshot, compare, compare_places};

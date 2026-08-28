@@ -12,7 +12,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ono_spatial_core::{LandmarkReason, SpatialId};
+use ono_spatial_core::{LandmarkReason, Neighborhood, SpatialId};
+use ono_spatial_index::SpatialIndex;
 use ono_spatial_query::SpatialMap;
 
 use crate::change::{ChangeKind, ChangeSet, ChangeSource, Freshness, SpatialChange};
@@ -151,6 +152,105 @@ pub fn compare(before: &MapSnapshot, after: &MapSnapshot, freshness: Freshness) 
                 id,
                 &shape.label,
                 shape.ends.clone(),
+            ));
+        }
+    }
+    changes
+}
+
+/// One place's neighborhood, reduced to what a change can be about (§24.3, §25.4).
+///
+/// The map snapshot above compares a *projection*; this compares a *place*. `look --changes` has
+/// no map: its horizon is the groups §12–§18 give the place, and what can differ in them is which
+/// neighbours are behind each exit, what those neighbours are called and what state their
+/// provider reports — plus the state of the exit itself, because §35.2 makes `files —
+/// permission denied` a different fact from `files — 3`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlaceSnapshot {
+    members: BTreeMap<SpatialId, NodeShape>,
+    groups: BTreeMap<String, String>,
+}
+
+impl PlaceSnapshot {
+    /// The comparable shape of a neighborhood, named through the index that holds it.
+    #[must_use]
+    pub fn of(index: &SpatialIndex, neighborhood: &Neighborhood) -> Self {
+        let mut members = BTreeMap::new();
+        let mut groups = BTreeMap::new();
+        for group in neighborhood.groups() {
+            groups.insert(group.label().to_owned(), group.state().as_str().to_owned());
+            for member in group.members() {
+                let Some(entry) = index.get(member) else {
+                    continue;
+                };
+                members.insert(
+                    member.clone(),
+                    NodeShape {
+                        label: entry.object().display_name().to_owned(),
+                        state: None,
+                        reasons: entry
+                            .landmarks()
+                            .iter()
+                            .map(ono_spatial_core::Landmark::reason)
+                            .collect(),
+                    },
+                );
+            }
+        }
+        Self { members, groups }
+    }
+
+    /// Whether the place had no neighbours at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.members.is_empty() && self.groups.is_empty()
+    }
+}
+
+/// What differs between two observations of one place (§24.3, §25.4).
+#[must_use]
+pub fn compare_places(
+    before: &PlaceSnapshot,
+    after: &PlaceSnapshot,
+    freshness: Freshness,
+) -> ChangeSet {
+    let mut changes = ChangeSet::new(ChangeSource::SnapshotComparison, freshness);
+    for (id, shape) in &after.members {
+        match before.members.get(id) {
+            None => changes.push(SpatialChange::to_node(
+                ChangeKind::NodeAppeared,
+                id.clone(),
+                &shape.label,
+            )),
+            Some(previous) if previous.label != shape.label => changes.push(
+                SpatialChange::to_node(ChangeKind::NodeChanged, id.clone(), &shape.label),
+            ),
+            Some(previous) => {
+                let now: BTreeSet<&LandmarkReason> = shape.reasons.iter().collect();
+                let then: BTreeSet<&LandmarkReason> = previous.reasons.iter().collect();
+                if now.difference(&then).next().is_some() {
+                    changes.push(SpatialChange::to_node(
+                        ChangeKind::LandmarkAppeared,
+                        id.clone(),
+                        &shape.label,
+                    ));
+                }
+                if then.difference(&now).next().is_some() {
+                    changes.push(SpatialChange::to_node(
+                        ChangeKind::LandmarkRemoved,
+                        id.clone(),
+                        &shape.label,
+                    ));
+                }
+            }
+        }
+    }
+    for (id, shape) in &before.members {
+        if !after.members.contains_key(id) {
+            changes.push(SpatialChange::to_node(
+                ChangeKind::NodeRemoved,
+                id.clone(),
+                &shape.label,
             ));
         }
     }

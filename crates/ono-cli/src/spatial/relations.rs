@@ -186,7 +186,7 @@ fn composed_labels(object_type: SpatialType) -> &'static [&'static str] {
 /// A listener's connections are other socket records; a mount's filesystem is a filesystem
 /// record. Neither is a relation the v0.2 relationship graph serves, and both are facts the
 /// providers already state — they only have to be asked for.
-fn adjacent_targets(object_type: SpatialType) -> &'static [&'static str] {
+pub(crate) fn adjacent_targets(object_type: SpatialType) -> &'static [&'static str] {
     use SpatialType as T;
     match object_type {
         T::Socket | T::Listener | T::Connection => &["socket"],

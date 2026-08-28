@@ -10,12 +10,12 @@ authors.workspace = true
 
 [dependencies]
 ono-spatial-core.workspace = true
+ono-spatial-index.workspace = true
 ono-spatial-query.workspace = true
 ono-value.workspace = true
 jiff.workspace = true
 
 [dev-dependencies]
-ono-spatial-index.workspace = true
 ono-testkit.workspace = true
 
 [lints]
