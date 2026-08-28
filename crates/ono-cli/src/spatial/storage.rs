@@ -87,6 +87,23 @@ pub fn enter_path(session: &mut Session, path: &Path) -> Result<(SpatialId, bool
             .index()
             .get(&there)
             .is_some_and(|entry| entry.object().object_type() == SpatialType::Directory);
+        // §30.2 and §53: "Entering a directory changes cwd." A directory this user may not read
+        // is neither a listing §15.4 could show nor a working directory the shell could run a
+        // program from, so the move is refused by name instead of leaving the session standing
+        // somewhere it cannot work (§35.1, §40).
+        if is_directory
+            && let Err(error) = std::fs::read_dir(&path)
+            && error.kind() == std::io::ErrorKind::PermissionDenied
+        {
+            return Err(ErrorValue::new(
+                ErrorCode::SpatialPermissionDenied,
+                format!("`{}` cannot be read by this user", path.display()),
+            )
+            .with_help(
+                "denied is not empty: the directory is there and its contents are not this \
+                 user's to see (spec v0.4 §35.1, §35.2). Navigation never escalates on its own",
+            ));
+        }
         let here = state.current_place().clone();
         if here != there {
             let mut step = NavigationStep::new(now, here.clone(), there.clone(), Movement::Enter);
@@ -123,12 +140,28 @@ pub(crate) async fn observe_place_at(
     path: &Path,
     now: Timestamp,
 ) -> Result<SpatialId, ErrorValue> {
-    let Some(record) = read_path(providers, path).await else {
-        return Err(ErrorValue::new(
-            ErrorCode::SpatialNotFound,
-            format!("no place answers to `{}`", path.display()),
-        )
-        .with_help("the path does not exist, or no provider can read it (spec v0.4 §40)"));
+    let record = match read_path(providers, path).await {
+        PathAnswer::Found(record) => record,
+        // §35.2 and §53 keep denied and missing apart. Reporting "the path does not exist" for a
+        // path this user may not look at states something untrue about the machine, so the
+        // provider's refusal keeps its meaning and §40 names it.
+        PathAnswer::Denied(reason) => {
+            return Err(ErrorValue::new(
+                ErrorCode::SpatialPermissionDenied,
+                format!("`{}` cannot be read by this user: {reason}", path.display()),
+            )
+            .with_help(
+                "denied is not missing: the path may well be there (spec v0.4 §35.2, §40). \
+                 Navigation never escalates on its own — run it as a user who may read it",
+            ));
+        }
+        PathAnswer::Absent => {
+            return Err(ErrorValue::new(
+                ErrorCode::SpatialNotFound,
+                format!("no place answers to `{}`", path.display()),
+            )
+            .with_help("the path does not exist, or no provider can read it (spec v0.4 §40)"));
+        }
     };
     let there = state.projection_of(&record)?;
     state.absorb(std::slice::from_ref(&record), now);
@@ -141,7 +174,7 @@ pub(crate) async fn observe_place_at(
     // to its mount first (§15.3).
     if let Some(parent) = path.parent()
         && parent != path
-        && let Some(record) = read_path(providers, parent).await
+        && let PathAnswer::Found(record) = read_path(providers, parent).await
     {
         let above = state.projection_of(&record)?;
         state.absorb(std::slice::from_ref(&record), now);

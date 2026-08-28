@@ -67,7 +67,7 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use ono_testkit::Shell;
+use ono_testkit::{Shell, scratch};
 use serde_yaml_ng::Value;
 
 /// The six neighborhood-group states of spec §35.2. They "MUST remain distinct".
@@ -1045,4 +1045,89 @@ fn should_expose_how_fresh_the_data_behind_a_place_is() {
         named,
         "spec §25.3: freshness is one of {FRESHNESS:?}, got {freshness:?}"
     );
+}
+
+#[test]
+fn should_refuse_a_path_this_user_may_not_read_as_denied_rather_than_as_missing() {
+    // §35.2 and §53 keep denied and missing apart: "the path does not exist" and "you may not
+    // look" are different answers, and a navigation that reports the first for the second tells
+    // the user something untrue about the machine. §40 names the answer `spatial.permission_denied`.
+    if uid() == 0 {
+        // The acceptance container runs as an unprivileged user (docs/ACCEPTANCE.md §2); as
+        // root nothing is denied, so the boundary cannot be provoked.
+        return;
+    }
+    let run = ono("enter /root/.bashrc");
+    assert!(
+        run.stderr().contains("spatial.permission_denied"),
+        "§35.2/§40: the file provider answered `io.permission_denied`, so the navigation is \
+         denied and not missing, got {:?} / {:?}",
+        run.stdout(),
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_refuse_to_stand_in_a_directory_this_user_may_not_read() {
+    // §30.2 and §53: "Entering a directory changes cwd". A directory whose contents this user
+    // may not read is not a place to stand in — §35.1 forbids revealing what the provider could
+    // not answer, and a working directory the shell cannot run a program from is worse than a
+    // refusal. §40 names the refusal.
+    if uid() == 0 {
+        return;
+    }
+    let dir = scratch();
+    let denied = dir.path().join("denied");
+    std::fs::create_dir(&denied).expect("the test makes its own directory");
+    std::fs::write(denied.join("secret.txt"), "secret").expect("and puts something in it");
+    std::fs::set_permissions(&denied, std::os::unix::fs::PermissionsExt::from_mode(0o000))
+        .expect("and takes every permission from it");
+
+    let run = ono(&format!("enter {}", denied.display()));
+    let denied_again =
+        std::fs::set_permissions(&denied, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+
+    assert!(
+        run.stderr().contains("spatial.permission_denied"),
+        "§35.1/§40: entering a directory this user may not read is refused by name, got {:?} / \
+         {:?}",
+        run.stdout(),
+        run.stderr()
+    );
+    assert!(
+        !run.stderr().to_lowercase().contains("sudo")
+            && !run.stderr().to_lowercase().contains("password"),
+        "§35.3: navigation does not offer to escalate its way past the boundary, got {:?}",
+        run.stderr()
+    );
+    denied_again.expect("the directory is readable again so the scratch can be cleaned up");
+}
+
+#[test]
+fn should_keep_the_working_directory_usable_when_a_denied_directory_is_named() {
+    // The consequence the refusal buys: a shell whose cwd is a directory it cannot execute from
+    // cannot run anything at all. §49.8 keeps this a Unix shell after every spatial move.
+    if uid() == 0 {
+        return;
+    }
+    let dir = scratch();
+    let denied = dir.path().join("denied");
+    std::fs::create_dir(&denied).expect("the test makes its own directory");
+    std::fs::set_permissions(&denied, std::os::unix::fs::PermissionsExt::from_mode(0o000))
+        .expect("and takes every permission from it");
+
+    let run = ono(&format!(
+        "try {{ enter {} }} catch e {{ }}\necho still-a-shell",
+        denied.display()
+    ));
+    let denied_again =
+        std::fs::set_permissions(&denied, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+
+    assert!(
+        run.stdout().contains("still-a-shell"),
+        "§49.8: an external program still runs after the refused move, got {:?} / {:?}",
+        run.stdout(),
+        run.stderr()
+    );
+    denied_again.expect("the directory is readable again so the scratch can be cleaned up");
 }
