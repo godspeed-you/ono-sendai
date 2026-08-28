@@ -389,7 +389,6 @@ pub fn project(
         .places()
         .iter()
         .filter(|place| place.depth <= depth)
-        .filter(|place| keeps_type(index, &place.id, request))
         .cloned()
         .collect();
     let known = candidates.len();
@@ -432,6 +431,13 @@ pub fn project(
             drawn.push(place.clone());
         }
     }
+    // 4a. `--type` narrows what the bounded map *draws* (§6.9), and it is applied here rather
+    //     than to the candidates so that a filtered map is always a subset of the map it
+    //     narrows: §43.2 makes filtering a removal, never something that puts a node or an edge
+    //     on the map that the unfiltered projection of the same horizon did not hold (ADR-0202).
+    //     What the filter took away is counted into `hidden`, like everything else not drawn.
+    drawn.retain(|place| keeps_type(index, &place.id, request));
+
     let clustered: usize = clusters.iter().map(MapCluster::members).sum();
     let hidden = HiddenSummary {
         count: known.saturating_sub(drawn.len()),

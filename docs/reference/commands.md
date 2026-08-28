@@ -5049,7 +5049,7 @@ Project the bounded, ranked graph around a place — as text, or as a `SpatialMa
 | `--expand` | `string` | Draw the members of a cluster instead of the cluster. A view action: it never changes the current place (v0.4 §8.3). |
 | `--focus` | `string` | Centre the view on one node. Focus is not navigation and never moves the shell (v0.4 §23.4, §53). |
 | `--relations` | `string` | Keep only these relations' edges, comma-separated. Filtering removes edges; it never creates one (v0.4 §6.9, §43.2). |
-| `--type` | `string` | Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener` (v0.4 §6.9, §3.3). |
+| `--type` | `string` | Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener`. It narrows the bounded map rather than re-selecting what fills it, so the answer is always a subset of the same map without it, and what it removed is counted in `hidden` (v0.4 §6.9, §3.3, §43.2). |
 | `--all` | `bool` | The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2, §47). |
 | `--live` | `bool` | Keep the map current. At an interactive terminal it is the full-screen view of §23.3, redrawn from a polling source and saying so in §25.3's vocabulary; where the values are consumed instead, it is a stream that subscribes to the change events of everything this place is drawn from — the first value is the current state, every value after it is something that moved (v0.4 §25.1, §25.2, §25.3, §29.1). |
 
