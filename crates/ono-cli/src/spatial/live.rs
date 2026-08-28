@@ -304,6 +304,10 @@ async fn reproject(
     now: Timestamp,
 ) -> Result<ono_spatial_query::SpatialMap, ErrorValue> {
     let mut session = crate::spatial::spatial_session().await;
+    // An event is the statement that the assumption ADR-0186 caches under no longer holds, so
+    // the targets are asked again rather than recalled: a live map that read the answer from
+    // before the change would draw the system as it was and call it live (§33.2, §2.12, §25.2).
+    session.forget_targets();
     // §10.3 and §33.2: an object a provider announced as removed is gone, and the relationships
     // it was an end of are not asserted any more. Both before the horizon is read again, so the
     // projection is of what is there rather than of what was.

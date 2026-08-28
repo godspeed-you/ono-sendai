@@ -516,6 +516,16 @@ impl SpatialSessionState {
         self.targets.insert(target, observation);
     }
 
+    /// Drops what the targets last answered, so the next observation asks them again (§33.2).
+    ///
+    /// ADR-0186's lifetime is an assumption that nothing moved in the meantime. A live view is
+    /// re-projected precisely when something did, and §2.12 requires the picture to correspond
+    /// to the change: reading the answer from before it would draw the system as it was and call
+    /// it live (§25.2, ADR-0190).
+    pub fn forget_targets(&mut self) {
+        self.targets.clear();
+    }
+
     /// What the provider last said about the object at `id`, where this session has seen it.
     #[must_use]
     pub fn record_of(&self, id: &SpatialId) -> Option<&Arc<RecordValue>> {

@@ -117,12 +117,27 @@ The resolutions worth knowing later:
   pseudo-terminal open. Reproducible with `( sleep 5 ) & exit 0` and nothing else. Case 107 now
   reaps its typist inside `drive`; any future PTY case must do the same.
 
-Two suites carry load-sensitive tests that pass alone and fail under a loaded machine, both
-recorded by S7 as found-not-fixed: `spatial_relationships_missing::should_show_the_connection_edge_appear_and_vanish…`
-(the TIME_WAIT socket identity defect — `ono.socket/1` is keyed on `[inode]` and a TIME_WAIT
-socket has none) and `spatial_topology_missing::should_complete_the_relations_available…` (a PTY
-completion test with an 8 s budget). Neither is a merge regression; both were green in the gate run
-that passed.
+- **An event invalidates the target cache (ADR-0190).** ADR-0186's "a second look reads the index"
+  and ADR-0180's "the live map re-projects through the still map's path" compose into a live map
+  that reads the answer from *before* the change. `live::reproject` now calls
+  `SpatialSessionState::forget_targets` first: an event is precisely the statement that §33.3's
+  lifetime assumption no longer holds (§33.2).
+
+Two tests are environment-dependent on a developer machine and green in the container. Neither is
+a merge regression:
+
+- `spatial_relationships_missing::should_show_the_connection_edge_appear_and_vanish…` — **the
+  TIME_WAIT identity collapse S7 recorded**, now diagnosed exactly. `ono.socket/1` declares
+  `identity: [inode]` and a socket in TIME_WAIT has no inode, so *every* TIME_WAIT socket on the
+  host projects to the same `SpatialId`. The test's own closing connection is then merged with
+  whatever else on the machine happens to be in TIME_WAIT, and the third live value describes a
+  foreign peer instead of the closure. The acceptance container has no other TIME_WAIT sockets,
+  which is why case 108 is green and this is not. **Exit test:** two TIME_WAIT sockets are two
+  places. The fix belongs to the v0.2 identity contract — a record whose identity components are
+  all null has no identity and must not merge (§2.17, §35.3) — and is its own increment, not an
+  integration's.
+- `spatial_topology_missing::should_complete_the_relations_available…` — a PTY completion test
+  with an 8 s budget; it fails under parallel load and passes with `--test-threads=1`.
 
 **The v0.4 tranche is running (started 2026-08-28).** The specification is
 `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md`; its executable requirements are
