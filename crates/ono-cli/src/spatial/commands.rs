@@ -12,6 +12,7 @@ use jiff::Timestamp;
 use ono_command::{CommandImpl, Invocation, Outcome, OutcomeFuture};
 use ono_core::ErrorCode;
 use ono_pipeline::ValueStream;
+use ono_provider_api::ProviderRegistry;
 use ono_spatial_core::{Movement, NavigationStep, PermissionState, SpatialType};
 use ono_spatial_query::{NeighborhoodRequest, SelectorContext};
 use ono_value::{ErrorValue, Provenance, RecordValue, SchemaId, Value, builtin_schemas};
@@ -77,7 +78,7 @@ impl CommandImpl for Look {
             // properties, which §24.1 reserves for `inspect`.
             let request = NeighborhoodRequest::new().all(all);
             let (neighborhood, permission) =
-                view::neighborhood_here(ctx, &mut session, &request, now).await?;
+                view::neighborhood_here(ctx.providers(), &mut session, &request, now).await?;
             let view = place_view(&session, &neighborhood, permission, all, changes, now)?;
 
             if json {
@@ -351,7 +352,7 @@ impl CommandImpl for Near {
             }
             with_pins(&mut session, self.pins.as_ref(), now).await?;
             let (neighborhood, _) =
-                view::neighborhood_here(ctx, &mut session, &request, now).await?;
+                view::neighborhood_here(ctx.providers(), &mut session, &request, now).await?;
 
             let here = session.current_place().clone();
             let index = session.index();
@@ -450,7 +451,7 @@ impl CommandImpl for Enter {
                     )
                     .with_help("`look` lists the exits of the current place (spec v0.4 §24.2)")
                 })?;
-                resolved_place(ctx, &mut session, &here, &selector, now).await?
+                resolved_place(ctx.providers(), &mut session, &here, &selector, now).await?
             };
 
             if here != there {
@@ -529,7 +530,7 @@ fn enter_projected(
 /// `enter 1842` is a question about processes and about everything else that answers to `1842`,
 /// and it is asked once.
 pub async fn resolved_place(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     here: &ono_spatial_core::SpatialId,
     selector: &str,
@@ -540,7 +541,7 @@ pub async fn resolved_place(
     if matches!(resolution, ono_spatial_query::Resolution::NotFound)
         && let Some(space) = ono_spatial_query::resolve::space_of(here)
     {
-        view::observe_space(ctx, session, space, false, now).await?;
+        view::observe_space(providers, session, space, false, now).await?;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
     if matches!(resolution, ono_spatial_query::Resolution::NotFound)
@@ -548,19 +549,19 @@ pub async fn resolved_place(
     {
         // §33.3: the path tree is query-driven, so a path is a place only once somebody names
         // one. `jump storage:/data` and `enter /etc/nginx` name one (§6.5, §15.1).
-        view::observe_path(ctx, session, &path, now).await;
+        view::observe_path(providers, session, &path, now).await;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
     if matches!(resolution, ono_spatial_query::Resolution::NotFound) {
         let plan = ono_spatial_query::targets_for(
             type_hint(selector),
             &std::collections::BTreeSet::new(),
-            &|target| !ctx.providers().for_target(target).is_empty(),
+            &|target| !providers.for_target(target).is_empty(),
             &|_, _| true,
         );
         let targets: std::collections::BTreeSet<&'static str> =
             plan.asked().iter().copied().collect();
-        view::observe_targets(ctx, session, &targets, now).await;
+        view::observe_targets(providers, session, &targets, now).await;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
     let found = resolution.require(selector)?;
@@ -759,7 +760,14 @@ impl CommandImpl for Follow {
             // yet is not a relation that is not there.
             let interest =
                 crate::spatial::relations::Interest::here().along(Some(relation.clone()));
-            crate::spatial::relations::observe(ctx, &mut session, &here, &interest, now).await?;
+            crate::spatial::relations::observe(
+                ctx.providers(),
+                &mut session,
+                &here,
+                &interest,
+                now,
+            )
+            .await?;
 
             // The word decides the direction: `parent` and `children` are the two exits of one
             // relation, and following the wrong one would walk the edge backwards (§12).

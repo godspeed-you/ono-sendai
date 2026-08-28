@@ -21,6 +21,7 @@ use jiff::Timestamp;
 use ono_command::{CommandImpl, Invocation, Outcome, OutcomeFuture};
 use ono_core::ErrorCode;
 use ono_pipeline::ValueStream;
+use ono_provider_api::ProviderRegistry;
 use ono_spatial_core::{CanonicalSpace, HierarchyKind, SpatialId, space};
 use ono_spatial_index::SpatialIndex;
 use ono_spatial_query::{
@@ -102,7 +103,7 @@ impl CommandImpl for Map {
                 Some(selector) => {
                     let here = session.current_place().clone();
                     crate::spatial::commands::resolved_place(
-                        ctx,
+                        ctx.providers(),
                         &mut session,
                         &here,
                         &selector,
@@ -113,7 +114,7 @@ impl CommandImpl for Map {
                 None => session.current_place().clone(),
             };
 
-            let horizon = observe(ctx, &mut session, &center, &request, now).await?;
+            let horizon = observe(ctx.providers(), &mut session, &center, &request, now).await?;
             let pins = session.pins().clone();
             let map = ono_spatial_query::project_map(
                 session.index(),
@@ -151,7 +152,7 @@ impl CommandImpl for Map {
 /// node of the relationship graph the v0.2 providers already assert (§31.3). Both give the same
 /// shape: places at a hierarchy depth, and the edges between them.
 async fn observe(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     center: &SpatialId,
     request: &MapRequest,
@@ -161,16 +162,25 @@ async fn observe(
     horizon.place(place_at(session, center, 0, None));
 
     if let Some(space) = ono_spatial_query::resolve::space_of(center) {
-        observe_space(ctx, session, space, center, request, &mut horizon, now).await?;
+        observe_space(
+            providers,
+            session,
+            space,
+            center,
+            request,
+            &mut horizon,
+            now,
+        )
+        .await?;
     } else {
-        observe_object(ctx, session, center, request, &mut horizon, now).await?;
+        observe_object(providers, session, center, request, &mut horizon, now).await?;
     }
     Ok(horizon)
 }
 
 /// The horizon of a canonical space: its served children, and what lies inside each of them.
 async fn observe_space(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     here: &'static CanonicalSpace,
     center: &SpatialId,
@@ -179,7 +189,7 @@ async fn observe_space(
     now: Timestamp,
 ) -> Result<(), ErrorValue> {
     let surroundings =
-        view::observe_space(ctx, session, here, request.horizon_depth() > 1, now).await?;
+        view::observe_space(providers, session, here, request.horizon_depth() > 1, now).await?;
     for exit in surroundings.exits() {
         // §24.2 makes a group label the word `enter` takes, so an exit named after a child space
         // *is* that child: the child is one hop away and its contents are two. An exit that is
@@ -214,7 +224,7 @@ async fn observe_space(
 /// The horizon of an observed object: the place it is filed under, and the relationships the
 /// providers assert about it (§3.5, §31.3).
 async fn observe_object(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     center: &SpatialId,
     request: &MapRequest,
@@ -223,7 +233,7 @@ async fn observe_object(
 ) -> Result<(), ErrorValue> {
     let interest =
         crate::spatial::relations::Interest::here().complete(request.horizon_depth() > 1);
-    crate::spatial::relations::observe(ctx, session, center, &interest, now).await?;
+    crate::spatial::relations::observe(providers, session, center, &interest, now).await?;
 
     if let Some(parent) = ono_spatial_query::resolve::parent_of(session.index(), center) {
         horizon.place(place_at(session, &parent, 1, None));

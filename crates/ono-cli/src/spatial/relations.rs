@@ -19,9 +19,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use ono_command::Invocation;
 use ono_graph::{Node, ProcessUsers, RelationshipProvider, kernel_relationships};
-use ono_provider_api::{Query, Selector};
+use ono_provider_api::{ProviderRegistry, Query, Selector};
 use ono_spatial_core::{
     Confidence, PermissionState, RelationSpec, RelationshipEdge, SpatialId, SpatialType, relation,
 };
@@ -230,7 +229,7 @@ fn target_of(object_type: SpatialType) -> Option<(&'static str, &'static str)> {
 /// and its sockets among the exits of a process place, and `ono.process-detail/1` is where the
 /// v0.2 provider states them. Anything else is asked for plainly.
 async fn refresh(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     id: &SpatialId,
     now: Timestamp,
@@ -239,7 +238,7 @@ async fn refresh(
     let (target, field) = target_of(object_type)?;
     let key = reference_value(session, id, field)?;
 
-    if ctx.providers().for_target(target).is_empty() {
+    if providers.for_target(target).is_empty() {
         return session.record_of(id).cloned();
     }
     let plain = Query::target(target).with(Selector::field(field, key.clone()));
@@ -251,10 +250,10 @@ async fn refresh(
         let detail = Query::target(target)
             .with(Selector::field(field, key))
             .option("detail", Value::Bool(true));
-        let records = answered(ctx, &detail).await;
+        let records = answered(providers, &detail).await;
         session.absorb(&records, now);
     }
-    let records = answered(ctx, &plain).await;
+    let records = answered(providers, &plain).await;
     if records.is_empty() {
         return session.record_of(id).cloned();
     }
@@ -263,8 +262,8 @@ async fn refresh(
 }
 
 /// The records a query answered with, or none where the provider refused.
-async fn answered(ctx: &Invocation<'_>, query: &Query) -> Vec<RecordValue> {
-    let Ok(stream) = ctx.providers().snapshot(query) else {
+async fn answered(providers: &ProviderRegistry, query: &Query) -> Vec<RecordValue> {
+    let Ok(stream) = providers.snapshot(query) else {
         return Vec::new();
     };
     stream
@@ -305,13 +304,13 @@ fn reference_value(session: &SpatialSessionState, id: &SpatialId, field: &str) -
 /// Idempotent by construction: every edge carries a stable identity, so asking twice in one
 /// session adds nothing the first answer did not (§33.1, §42.1).
 pub async fn observe(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     id: &SpatialId,
     interest: &Interest,
     now: Timestamp,
 ) -> Result<(), ErrorValue> {
-    let Some(record) = refresh(ctx, session, id, now).await else {
+    let Some(record) = refresh(providers, session, id, now).await else {
         return Ok(());
     };
     let Some(node) = Node::of(&record) else {
@@ -334,11 +333,11 @@ pub async fn observe(
 
     let adjacent: BTreeSet<&'static str> = adjacent_targets(object_type).iter().copied().collect();
     if !adjacent.is_empty() {
-        crate::spatial::view::observe_targets(ctx, session, &adjacent, now).await;
+        crate::spatial::view::observe_targets(providers, session, &adjacent, now).await;
     }
 
     let mut answered: BTreeSet<&'static str> = BTreeSet::new();
-    let providers = Arc::new(ctx.providers().clone());
+    let providers = Arc::new(providers.clone());
     // §12 lists `user` among the exits of a process place, so the people behind the processes
     // are part of the neighborhood rather than an option of `trace` (v0.2 §22.3).
     let mut sources: Vec<Arc<dyn RelationshipProvider>> =

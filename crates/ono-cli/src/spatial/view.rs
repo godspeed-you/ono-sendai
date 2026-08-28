@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::Timestamp;
-use ono_command::Invocation;
+
 use ono_core::ErrorCode;
 use ono_pipeline::ValueStream;
 use ono_provider_api::{ProviderRegistry, Query};
@@ -61,7 +61,7 @@ impl Surroundings {
 /// objects rather than other places — one exit of its own contents. §24.2 is why: a group label
 /// is the word `enter` takes, so it names the place it leads into (ADR-0143).
 pub async fn observe_space(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     here: &'static CanonicalSpace,
     complete: bool,
@@ -83,7 +83,7 @@ pub async fn observe_space(
         .filter(|source| affordable(source.cost, complete))
         .flat_map(|source| source.targets.iter().copied())
         .collect();
-    let observed = observe(ctx.providers(), session, &targets, now).await;
+    let observed = observe(providers, session, &targets, now).await;
 
     let mut exits = Vec::with_capacity(sourced.len());
     for space in children {
@@ -183,19 +183,19 @@ impl Observed {
 /// when somebody names one. That is what a selector spelled as a path does — `storage:/data`,
 /// `/etc/nginx` — and asking for exactly that path is the whole query (§34).
 pub async fn observe_path(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     path: &std::path::Path,
     now: Timestamp,
 ) {
-    if ctx.providers().for_target("file").is_empty() {
+    if providers.for_target("file").is_empty() {
         return;
     }
     let query = Query::target("file").with(ono_provider_api::Selector::field(
         "path",
         Value::Path(std::sync::Arc::from(path)),
     ));
-    let Ok(stream) = ctx.providers().snapshot(&query) else {
+    let Ok(stream) = providers.snapshot(&query) else {
         return;
     };
     let records: Vec<RecordValue> = stream
@@ -216,12 +216,12 @@ pub async fn observe_path(
 /// The plan of which targets to ask belongs to `ono-spatial-query` (§45.3); asking is the
 /// shell's, because nothing but the shell may reach a provider (§2.16).
 pub async fn observe_targets(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     targets: &BTreeSet<&'static str>,
     now: Timestamp,
 ) {
-    let _ = observe(ctx.providers(), session, targets, now).await;
+    let _ = observe(providers, session, targets, now).await;
 }
 
 /// Asks every target once and registers what came back (§33.1, §42.1).
@@ -784,14 +784,15 @@ pub fn system_record(
 /// from the exits the shell observed; an object the index holds has edges, and the ranking of
 /// §45.3 answers for it. Neither path ranks anything here (ADR-0143).
 pub async fn neighborhood_here(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     request: &NeighborhoodRequest,
     now: Timestamp,
 ) -> Result<(Neighborhood, PermissionState), ErrorValue> {
     let here = session.current_place().clone();
     if let Some(space) = ono_spatial_query::resolve::space_of(&here) {
-        let surroundings = observe_space(ctx, session, space, request.is_complete(), now).await?;
+        let surroundings =
+            observe_space(providers, session, space, request.is_complete(), now).await?;
         let permission = surroundings.permission();
         let pins = session.pins().clone();
         let neighborhood = ono_spatial_query::space_neighborhood(
@@ -810,7 +811,7 @@ pub async fn neighborhood_here(
         .complete(request.is_complete())
         .along(request.named_relation().map(str::to_owned))
         .of_type(request.named_type());
-    crate::spatial::relations::observe(ctx, session, &here, &interest, now).await?;
+    crate::spatial::relations::observe(providers, session, &here, &interest, now).await?;
     let pins = session.pins().clone();
     let neighborhood =
         ono_spatial_query::neighborhood_of(session.index(), &here, request, &pins, now);

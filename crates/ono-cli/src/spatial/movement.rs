@@ -216,7 +216,7 @@ impl CommandImpl for Jump {
             let there = if let Some(name) = selector.strip_prefix('@') {
                 pinned_place(&session, name)?
             } else {
-                resolved_place(ctx, &mut session, &here, &selector, now).await?
+                resolved_place(ctx.providers(), &mut session, &here, &selector, now).await?
             };
 
             if here == there {
