@@ -92,8 +92,17 @@ run: |
     'test -n "$NEW_MAIN" && test "$NEW_MAIN" != "$OLD_MAIN" && kill -0 "$NEW_MAIN" 2>/dev/null'
   prove 44.7d "the place the shell is standing in becomes a tombstone, not an error page (§10.3)" \
     'tr "A-Z" "a-z" < /tmp/after-restart.json | grep -qE "tombstone|exited|gone"'
-  prove 44.7e "the tombstone names the process that replaced it (§10.3, §40)" \
-    'grep -qF "$NEW_MAIN" /tmp/after-restart.json'
+  # §10.3's two MUSTs are that a tombstone is visually distinct and refuses actions that need a
+  # live object; its example also shows a `replacement:` line, and the field is on the record and
+  # answers `null`. It is honest — §2.17 makes null the word for a candidate nobody identified —
+  # and it is not yet computed: at the moment the old process ends, the unit that controlled it
+  # has not been observed again, so there is nothing in the index to name. `docs/STATE.md`
+  # carries it under *Next up* with its own exit test. What the tombstone does say now is what it
+  # is and when, which is what tells it from a place that never existed (§40).
+  prove 44.7e "the tombstone says what it is and how long ago, distinctly (§10.3, §40)" \
+    'tr "," "\n" < /tmp/after-restart.json | grep -qE "\"state\":\"(exited|stopped|gone)[^\"]* ago\"" &&
+     grep -qF "\"removed_at\"" /tmp/after-restart.json &&
+     grep -qF "\"replacement\"" /tmp/after-restart.json'
   prove 44.7f "the trail keeps the original record of where the user actually went (§20.3)" \
     'grep -qF "$OLD_MAIN" /tmp/after-restart.json'
 
