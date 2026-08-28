@@ -38,10 +38,27 @@ use ono_process::{Command, Executor, PtySession, Signal, WindowSize};
 use ono_testkit::{Scratch, scratch};
 
 /// How long any single screen change may take before the test calls it missing.
-const BUDGET: Duration = Duration::from_secs(8);
+///
+/// This is a **liveness bound, not a performance assertion**: it exists so that a screen change
+/// that never comes fails the run instead of hanging it. Nothing here measures how fast the
+/// shell is — v0.4 §34's budgets are asserted by
+/// `should_repaint_a_focus_move_far_inside_the_frame_budget_when_the_map_is_open`, which times
+/// one repaint against 16 ms, and by `docker/acceptance/cases/100-spatial-performance-budgets.case`,
+/// which measures every §34 figure in the container.
+///
+/// It was eight seconds, and eight seconds is a race the machine wins: `cargo test --workspace`
+/// runs a dozen process-spawning suites beside this file, and opening a full-screen map of
+/// COMPUTE on a 500-process host costs one whole projection. Two tests here — the picker and the
+/// resize — then failed roughly one full gate run in two while passing on their own, which makes
+/// the referee unusable and every claim it green-lights worth less (AGENTS.md §14). The
+/// assertions are untouched; only the premise that the machine answers within a fixed wall clock
+/// is (S11c).
+const BUDGET: Duration = Duration::from_secs(45);
 
 /// How long the very first prompt may take (the process still has to start).
-const STARTUP: Duration = Duration::from_secs(12);
+///
+/// A liveness bound for the same reason and in the same sense as [`BUDGET`].
+const STARTUP: Duration = Duration::from_secs(60);
 
 /// The six canonical domains of the root place (spec §7.1, §53 "Root geography").
 const DOMAINS: [&str; 6] = [
