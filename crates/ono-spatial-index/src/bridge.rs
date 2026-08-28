@@ -54,6 +54,9 @@ pub fn spatial_type_of(record: &RecordValue) -> Option<SpatialType> {
         "ono.job/1" => T::Job,
         "ono.container/1" => T::Container,
         "ono.socket/1" => {
+            if is_released(record) {
+                return None;
+            }
             if is_connected(record) {
                 T::Connection
             } else {
@@ -89,6 +92,22 @@ pub fn spatial_type_of(record: &RecordValue) -> Option<SpatialType> {
         "ono.cgroup/1" => T::Cgroup,
         _ => return None,
     })
+}
+
+/// Whether the kernel has already released the socket, so no connection stands there any more
+/// (§14.4, §10.3, ADR-0192).
+///
+/// `time-wait` and `close` are the two states in which no application holds the connection: the
+/// kernel keeps the 2MSL remnant so a late duplicate segment cannot be mistaken for new data,
+/// and `ono-provider-netlink` already refuses to act on one because "a socket in time-wait has
+/// already been released". Such a remnant has no owner, no inode and nothing a user can do at
+/// it, so §7 gives it no place — it is the kernel's own tombstone of a connection that ended,
+/// not a place the connection still occupies.
+fn is_released(record: &RecordValue) -> bool {
+    matches!(
+        text(record.get("state")).as_deref(),
+        Some("time-wait" | "close")
+    )
 }
 
 /// Whether a socket record describes a connection rather than a listener (§14.3, §14.4).
