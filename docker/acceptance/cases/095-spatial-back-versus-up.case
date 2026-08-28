@@ -40,7 +40,11 @@ run: |
   echo "fixture: server=$FIXTURE_WEB_MAIN listener=:$FIXTURE_WEB_PORT"
 
   # SYSTEM -> COMPUTE -> SERVICES -> service --follow--> process --follow--> socket (§44.6)
-  PATH_TO_SOCKET="home; enter compute; enter services; find place --where state == \"active\" | take 1 | enter; follow process $FIXTURE_WEB_MAIN; follow socket"
+  # ADR-0193: the spatial layer never runs a tool, so an adapted observation of the service
+  # manager exists only where the operator's own command line produced one. On a host with no
+  # systemd that command is the `systemctl` they already know, and it names no unit.
+  OBSERVE='systemctl list-units | count | to text; systemctl show | count | to text'
+  PATH_TO_SOCKET="$OBSERVE; home; enter compute; enter services; find place --where state == \"active\" | take 1 | enter; follow process $FIXTURE_WEB_MAIN; follow socket"
 
   echo "== the path of §44.6 is walked to its end =="
   prove 44.6a "the walk ends on the listening socket of the service (§44.6)" \
@@ -63,10 +67,13 @@ run: |
      grep -qE "network|socket|listener" /tmp/up.json'
   prove 44.6g "up does not return to the process the socket was followed from (§44.6, §43.2)" \
     'grep -qE "network|socket|listener" /tmp/up.json && ! grep -qF "$FIXTURE_WEB_MAIN" /tmp/up.json'
+  # Two projections of one unchanged place differ in `generated_at` and in nothing else, so the
+  # thing to compare is the place: §11.3's determinism is about which parent `up` reaches, and a
+  # place is its `spatial_id` (§3.1).
   prove 44.6h "up is deterministic: the same walk reaches the same parent twice (§11.3)" \
-    'place "$PATH_TO_SOCKET; up" "look --json" > /tmp/up1.json;
-     place "$PATH_TO_SOCKET; up" "look --json" > /tmp/up2.json;
-     grep -qiE "network|socket|listener" /tmp/up1.json && cmp -s /tmp/up1.json /tmp/up2.json'
+    'first=$(place "$PATH_TO_SOCKET; up" "look --json | from json | select place.spatial_id | to text" | tail -1);
+     again=$(place "$PATH_TO_SOCKET; up" "look --json | from json | select place.spatial_id | to text" | tail -1);
+     test -n "$first" && test "$first" = "$again"'
   prove 44.6i "home returns to the root system place from the end of the walk (§6.6)" \
     'place "$PATH_TO_SOCKET; home" "look --json" | tr "A-Z" "a-z" | grep -qF "devices"'
 
@@ -82,9 +89,13 @@ run: |
     'for key in timestamp from to movement; do
        grep -qF "$key" /tmp/trail.json || { echo "trail step is missing: $key"; exit 1; }
      done'
+  # ADR-0150 fixes which breadcrumb §20.2 asks `trail` for: the canonical hierarchy path of where
+  # the session is standing — `local > network > listeners > 127.0.0.1:18080` — not a replay of
+  # the walk, which is what bare `trail` streams.
   prove 44.6m "trail --compact stays a breadcrumb rather than the whole history (§6.7, §20.2)" \
     'place "$PATH_TO_SOCKET" "trail --compact" > /tmp/compact.txt;
-     grep -qF "fixture-web.service" /tmp/compact.txt && test "$(wc -l < /tmp/compact.txt)" -le 5'
+     grep -qF "$FIXTURE_WEB_PORT" /tmp/compact.txt && grep -qF ">" /tmp/compact.txt &&
+     test "$(wc -l < /tmp/compact.txt)" -le 5'
 
   echo "== the ends of both walks are structured errors, not silence (§40) =="
   prove 44.6n "back with nothing to return to is spatial.history_empty (§40)" \

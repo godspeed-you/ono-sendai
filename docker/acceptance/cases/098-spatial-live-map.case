@@ -43,25 +43,33 @@ run: |
   echo "== a still system produces no live events (§25.2, §43.6) =="
   timeout 6 ono -c 'home; enter network; map --live | take 5 | to json' > /tmp/quiet.out 2>&1
   QUIET_STATUS=$?
+  # `to json` writes one document when the stream ends (v0.2 §12.2), so a run that never collects
+  # its five values writes nothing at all — which is exactly what the timeout above proves. What
+  # a still system does have to show is the opening value of the subscription, and the contract
+  # for `--live` says so in as many words: "the first value is the current state, every value
+  # after it is something that moved".
+  timeout 20 ono -c 'home; enter network; map --live | take 1 | to json' > /tmp/opening.json 2>&1
   prove 44.9b "five events cannot be collected from an unchanging topology (§25.2, §43.6)" \
-    'test "$QUIET_STATUS" -eq 124'
+    'test "$QUIET_STATUS" -eq 124 && test ! -s /tmp/quiet.out'
   prove 44.9c "and what it did emit is a real projection, not a spinner (§25.1, §22)" \
-    'test -s /tmp/quiet.out && tr "A-Z" "a-z" < /tmp/quiet.out | grep -qE "node|edge|snapshot"'
+    'test -s /tmp/opening.json && tr "A-Z" "a-z" < /tmp/opening.json | grep -qE "node|edge|snapshot"'
   prove 44.9d "the live view states its freshness model (§25.3)" \
-    'tr "A-Z" "a-z" < /tmp/quiet.out | grep -qE "event|poll|cached|stale|partial"'
+    'tr "A-Z" "a-z" < /tmp/opening.json | grep -qE "event|poll|cached|stale|partial"'
 
   echo "== a real connection appears while the map watches, and disappears again (§44.9, §25.1) =="
-  timeout 40 ono -c 'home; enter network; map --live | take 6 | to json' > /tmp/live.out 2>&1 &
+  # Three values: the opening state, the connection appearing, and it going away again. Asking
+  # for more than the machine is going to do would leave `to json` waiting for a document it can
+  # never finish, which is the same trap 44.9b turns into a proof.
+  timeout 60 ono -c 'home; enter network; map --live | take 3 | to json' > /tmp/live.out 2>&1 &
   LIVE=$!
-  sleep 3
-  /opt/ono-fixtures/spatial/client.pl 127.0.0.1 "$FIXTURE_WEB_PORT" 60 > /tmp/spatial/client.log 2>&1 &
+  sleep 4
+  /opt/ono-fixtures/spatial/client.pl 127.0.0.1 "$FIXTURE_WEB_PORT" 8 > /tmp/spatial/client.log 2>&1 &
   CLIENT=$!
   for _ in $(seq 20); do [ -s /tmp/spatial/client.log ] && break; sleep 0.5; done
   CLIENT_PORT=$(sed -n 's/^LOCAL=[^:]*:\([0-9]*\).*/\1/p' /tmp/spatial/client.log)
   echo "fixture: client=$CLIENT from port $CLIENT_PORT"
-  sleep 4
-  kill "$CLIENT" 2>/dev/null
-  sleep 4
+  wait "$CLIENT" 2>/dev/null
+  sleep 12
   kill "$LIVE" 2>/dev/null
   wait "$LIVE" 2>/dev/null
   prove 44.9e "the new connection appears in the live stream as a real edge (§44.9, §25.1)" \

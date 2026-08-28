@@ -50,14 +50,27 @@ run: |
   for _ in $(seq 40); do [ -s /tmp/fixture-spatial.state ] && break; sleep 0.5; done
   . /tmp/fixture-spatial.state
   echo "fixture: main=$FIXTURE_WEB_MAIN workers=$FIXTURE_WEB_WORKERS port=$FIXTURE_WEB_PORT"
-  JOURNEY='home; enter compute; enter services'
+  # ADR-0193: the spatial layer never runs a tool. On a host with no systemd the service manager
+  # is only reachable through the v0.3 adapter, and an adapted observation exists only where the
+  # operator's own command line produced one — so the journey begins with the command an operator
+  # of such a host already types. It names no unit: what §44.2 forbids is typing the *name* of the
+  # object to be discovered, and `systemctl list-units` types none.
+  OBSERVE='systemctl list-units | count | to text; systemctl show | count | to text'
+  # The shell by absolute path, so the block below can take the service manager off PATH without
+  # taking the shell off it too.
+  ONO=$(command -v ono)
+  BARE='home; enter compute; enter services'
+  JOURNEY="$OBSERVE; $BARE"
   SELECT='find place --where state == "active" | take 1 | enter'
 
   echo "== the hierarchy alone reaches the services of this host (§7.2, §44.2) =="
+  # §24.2 and ADR-0143 fix what a group is: `look` prints a label and a count — "children 14" —
+  # and the label is the word `enter` takes. The members of a collection are `near`'s answer, and
+  # a unit's own state is on the place record `find place` streams (ADR-0140).
   prove 44.2a "compute and services are entered as canonical children, not as names (§7.2)" \
-    'place "$JOURNEY" "look --json" | grep -qF "fixture-web.service"'
+    'place "$JOURNEY" "near | select display_name | to text" | grep -qF "fixture-web.service"'
   prove 44.2b "the services place shows state, so the failed unit is visible too (§13, §7.2)" \
-    'place "$JOURNEY" "look --json" | grep -qF "failed"'
+    'place "$JOURNEY" "find place --type service | select name state | to json" | grep -qF "failed"'
   prove 44.2c "the map of the services place renders as text and names the units (§23.2)" \
     'place "$JOURNEY" "map" | grep -qF "fixture-web.service"'
 
@@ -67,16 +80,23 @@ run: |
        = "[{\"name\":\"fixture-web.service\"}]"'
   prove 44.2e "a pipeline result is enterable and the place becomes the service (§28.2, §28.3)" \
     'place "$JOURNEY; $SELECT" "look --json" | grep -qF "fixture-web.service"'
+  # §24.2: an exit is a label and a count, and a group nobody serves keeps its label and says
+  # `unsupported` instead (§35.2). The listeners of a unit are one of those here: the socket
+  # belongs to the process and no provider joins it to the unit on a host with no systemd.
   prove 44.2f "the service place shows its processes and its listeners as exits (§13, §24.2)" \
-    'place "$JOURNEY; $SELECT" "near | to json" > /tmp/service-near.json;
-     grep -qF "process" /tmp/service-near.json && grep -qF "socket" /tmp/service-near.json'
+    'place "$JOURNEY; $SELECT" "look --json" > /tmp/service-near.json;
+     grep -qF "processes" /tmp/service-near.json && grep -qF "listeners" /tmp/service-near.json'
 
   echo "== following the relationships, not the hierarchy (§6.4, §12, §14.3) =="
-  prove 44.2g "a script never gets a picker: four processes make follow ambiguous (§6.4, §29.3)" \
-    'out=$(ono -c "$JOURNEY; $SELECT; follow process" 2>&1); status=$?;
+  # The unit reports one MainPID, so `follow process` from the service is unambiguous; the three
+  # workers the service really has are the children of that process, and following *them* is the
+  # ambiguity §29.3 says a script must be refused rather than shown a picker for.
+  prove 44.2g "a script never gets a picker: three workers make follow ambiguous (§6.4, §29.3)" \
+    'out=$(ono -c "$JOURNEY; $SELECT; follow process $FIXTURE_WEB_MAIN; follow child" 2>&1); status=$?;
      printf "%s\n" "$out" | grep -qF "spatial.ambiguous_selector" && test "$status" -ne 0'
   prove 44.2h "the ambiguity error names the candidates it could not choose between (§40)" \
-    'place "$JOURNEY; $SELECT" "follow process" | grep -qF "$FIXTURE_WEB_MAIN"'
+    'ono -c "$JOURNEY; $SELECT; follow process $FIXTURE_WEB_MAIN; follow child" 2>&1 \
+       | grep -qF "fixture-web-wor"'
   prove 44.2i "follow process <pid> reaches the service main process (§6.4, §12)" \
     'place "$JOURNEY; $SELECT; follow process $FIXTURE_WEB_MAIN" "look --json" \
        | grep -qF "$FIXTURE_WEB_MAIN"'
@@ -101,7 +121,7 @@ run: |
 
   echo "== with no service manager at all, SERVICES is unknown — never zero (§35.2) =="
   prove 44.2p "an unavailable service provider is a state, not an empty list (§35.2, §53)" \
-    'env PATH=/usr/bin:/bin ono -c "$JOURNEY; echo ---PLACE---; look --json" 2>&1 \
+    'env PATH=/usr/bin:/bin "$ONO" -c "$BARE; echo ---PLACE---; look --json" 2>&1 \
        | sed -n "/---PLACE---/,\$p" | tr "A-Z" "a-z" > /tmp/no-manager.json;
      grep -qE "unknown|unavailable|unsupported|permission_denied" /tmp/no-manager.json'
   prove 44.2q "an unavailable service provider never reports a count of zero (§35.2)" \

@@ -42,8 +42,10 @@ run: |
   echo "== discovery without prior names (§9, §44.1) =="
   prove 44.1d "near returns a bounded ranked neighbourhood as an ordinary stream (§6.2, §29.4)" \
     'ono -c "near | count | to json" | grep -qE "^\[[1-9][0-9]*\]$"'
+  # ADR-0140 fixes the field names a neighbour and a search result share: the object of the
+  # relation is `display_name`, the word §6.2's example prints as the OBJECT column.
   prove 44.1e "near composes with the v0.2 pipeline (§29.4, §28.1)" \
-    'ono -c "near | select relation object | to json" | grep -q "relation"'
+    'ono -c "near | select relation display_name | to json" | grep -q "relation"'
   prove 44.1f "find place discovers a real object from a property, with no name typed (§6.8)" \
     'ono -c "find place --type process --where pid > 1 | take 1 | select name | to json" | grep -qE "^\[\{\"name\":\"[^\"]+\"\}\]$"'
   prove 44.1g "entering a domain the horizon showed changes the place (§6.3, §7.2)" \

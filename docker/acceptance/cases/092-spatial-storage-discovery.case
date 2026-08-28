@@ -31,7 +31,7 @@ run: |
     'ono -c "home; enter storage; look --json" | tr "A-Z" "a-z" > /tmp/storage.json;
      grep -qF "filesystem" /tmp/storage.json && grep -qF "mount" /tmp/storage.json'
   prove 44.3b "the filesystems collection shows more than one filesystem, with its type (§15.2)" \
-    'ono -c "home; enter storage; enter filesystems; near | select object | to json" > /tmp/fs.json;
+    'ono -c "home; enter storage; enter filesystems; near | select display_name | to json" > /tmp/fs.json;
      test "$(ono -c "home; enter storage; enter filesystems; near | count | to text")" -ge 2'
 
   echo "== a secondary mount is identified without its name being typed (§44.3) =="
@@ -62,8 +62,11 @@ run: |
   echo "== the mounted directory is an ordinary Unix place (§15.1, §30.2, §53) =="
   prove 44.3g "entering a directory place changes the working directory too (§30.2, §53)" \
     'test -n "$TARGET" && test "$(ono -c "enter $TARGET; pwd")" = "$TARGET"'
+  # §24.2 and ADR-0143: `look` prints a group as a label and a count — "children 14" — and the
+  # label is the word `enter` takes. What is inside the group is `near`'s answer.
   prove 44.3h "the directory place lists what is really in it (§15.4)" \
-    'test -n "$TARGET" && ono -c "enter $TARGET; look" | grep -qF "spatial-marker.txt"'
+    'test -n "$TARGET" && ono -c "enter $TARGET; near | select display_name | to text" \
+       | grep -qF "spatial-marker.txt"'
   prove 44.3i "entering a non-filesystem place leaves the working directory alone (§30.2, §53)" \
     'out=$(ono -c "cd /etc; enter compute; pwd; look --json") &&
      printf "%s\n" "$out" | grep -qx "/etc" &&

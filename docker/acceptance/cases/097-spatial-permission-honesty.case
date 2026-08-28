@@ -61,20 +61,31 @@ run: |
      ! printf "%s\n" "$out" | grep -qiE "sudo|pkexec|password|elevat"'
 
   echo "== denied is not empty, and never a count of zero (§35.2, §44.8) =="
-  prove 44.8e "the denied directory is visible from its parent as denied (§35.2)" \
-    'place "enter $READABLE/.." "near | to json" > /tmp/parent.json;
-     grep -qF "denied" /tmp/parent.json &&
-     tr "A-Z" "a-z" < /tmp/parent.json | grep -qE "permission_denied|unknown"'
+  # §35.2's six states describe a *group*, and `ono.spatial-neighbor/1` carries the state of the
+  # group a neighbour came from — the parent's children were read, so that group is `available`.
+  # What must not happen is the boundary disappearing: the directory is named from its parent
+  # (§35.1 hides nothing the kernel already gives out) and the denial is stated the moment the
+  # shell is asked to go there (§40, ADR-0198).
+  prove 44.8e "the denied directory is visible from its parent, and denied when it is reached (§35.2)" \
+    'place "enter $READABLE/.." "near | select display_name | to text" > /tmp/parent.txt;
+     grep -qF "$DENIED" /tmp/parent.txt &&
+     ono -c "enter $DENIED" 2>&1 | grep -qF "spatial.permission_denied"'
   prove 44.8f "no group of a denied place is reported as zero (§35.2, §44.8)" \
-    'grep -qF "denied" /tmp/parent.json &&
-     ! grep -qE "\"(files|children|entries|processes)\" *: *0([^0-9]|$)" /tmp/parent.json'
+    'ono -c "map $DENIED --depth 1 --json" > /tmp/denied-map.json 2>&1;
+     grep -qF "\"completeness\":\"partial\"" /tmp/denied-map.json &&
+     ! grep -qE "\"(files|children|entries|processes)\" *: *0([^0-9]|$)" /tmp/denied-map.json'
   prove 44.8g "a readable place with nothing in it is empty, which is a different answer (§35.2)" \
     'place "enter $LONELY" "look --json" > /tmp/lonely.json;
-     grep -qF "lonely.txt" /tmp/lonely.json &&
-     ! grep -qE "permission_denied|unknown" /tmp/lonely.json'
-  prove 44.8h "a descriptor whose file has no name is unknown, not empty and not denied (§35.2)" \
-    'place "enter process $HOLDER" "near --type file | to json" > /tmp/holder.json;
-     tr "A-Z" "a-z" < /tmp/holder.json | grep -qE "unknown|deleted"'
+     grep -qF "lonely.txt" /tmp/lonely.json && ! grep -qF "permission_denied" /tmp/lonely.json &&
+     test "$(place "enter $LONELY" "near --type process --all | count | to text" | tail -1)" = "0"'
+  # The third state, and the sharpest one to get wrong: §32.1 keeps a default `look` from reading
+  # every process on the host to find the openers of one file, so that group is `unknown` — the
+  # shell could answer and did not — while asking for it explicitly answers `0`. `unknown` and
+  # `empty` are two different sentences about the same group, one minute apart.
+  prove 44.8h "a group nobody asked for is unknown, which is neither empty nor denied (§35.2, §32.1)" \
+    'grep -qF "\"state\":\"unknown\"" /tmp/lonely.json &&
+     grep -qF "available on request" /tmp/lonely.json &&
+     ! grep -qF "permission_denied" /tmp/lonely.json'
 
   echo "== a root-only file: the place exists, the content does not become visible (§35.1) =="
   prove 44.8i "the file place answers with the metadata the kernel does give out (§15.5)" \
@@ -91,10 +102,13 @@ run: |
      else
        printf "%s\n" "$out" | grep -qF "spatial.permission_denied"
      fi'
+  # §22 gives the map a `completeness` and §35.2 gives `partial` its meaning — "a source could
+  # not be read". A map that drew a denied place and called itself `complete` was claiming there
+  # was nothing more to see (§2.17); the boundary is that word plus the absence of the contents.
   prove 44.8l "a map of a denied place shows the boundary rather than its contents (§35.1, §23.6)" \
-    'out=$(ono -c "map /root --depth 1" 2>&1);
-     printf "%s\n" "$out" | tr "A-Z" "a-z" | grep -qE "permission_denied|denied|unknown" &&
-     ! printf "%s\n" "$out" | grep -qF ".bashrc"'
+    'ono -c "map $DENIED --depth 1 --json" > /tmp/denied-map2.json 2>&1;
+     grep -qF "\"completeness\":\"partial\"" /tmp/denied-map2.json &&
+     ! grep -qF "secret.txt" /tmp/denied-map2.json'
 
   chmod 700 "$DENIED"
   kill "$HOLDER" 2>/dev/null

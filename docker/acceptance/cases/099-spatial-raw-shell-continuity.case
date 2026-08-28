@@ -67,16 +67,25 @@ run: |
   prove 44.10b "moving focus with Tab does not move the shell (§23.4)" \
     'test -s /tmp/before-map.txt && test -s /tmp/after-map.txt &&
      grep -qiF "compute" /tmp/before-map.txt && grep -qiF "compute" /tmp/after-map.txt'
+  # ADR-0175 fixes the prompt: the place is added to the link segment rather than replacing the
+  # path, so a session standing in COMPUTE prompts `local/compute://~ >`. `local:` is the root's
+  # spelling, which is not where this session is.
   prove 44.10c "Esc closes the map and leaves the terminal to the shell (§23.3, §49.8)" \
-    'grep -qiE "processes|services" /tmp/after-map.txt && tail -3 /tmp/map-focus.txt | grep -qF "local:"'
+    'grep -qiE "processes|services" /tmp/after-map.txt &&
+     tail -3 /tmp/map-focus.txt | grep -qF "local/compute://"'
 
   echo "== Enter inside the map does move the shell (§23.3, §23.4) =="
+  # §23.3 gives each key one job: `Enter` enters the focused node and the map stays open, redrawn
+  # around the place the session moved to; `Esc` is what closes it, "preserving current place".
+  # So the map is closed deliberately before the shell is asked anything else — a session that
+  # typed `exit` into an open map would be typing it at the map.
   {
     printf 'home\n';          sleep 1
     printf 'enter compute\n'; sleep 1
     printf 'map\n';           sleep 3
     printf '\t';              sleep 1
     printf '\r';              sleep 2
+    printf '\033';            sleep 2
     printf 'echo AFTER-ENTER\n'; sleep 1
     printf 'look\n';          sleep 2
     printf 'exit\n';          sleep 1

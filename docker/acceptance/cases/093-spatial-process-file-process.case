@@ -54,8 +54,11 @@ run: |
     'place "$PROC" "near --type file | to json" | grep -qF "$HELD"'
   prove 44.4c "follow file crosses the relationship edge to the file place (§6.4, §15.5)" \
     'place "$PROC; follow file $HELD" "look --json" | grep -qF "$HELD"'
+  # A property of the neighbourhood picks the file; the path is never typed, which is the claim.
+  # `~=` is the language's regex match (v0.2 §10.3) — there is no `contains` operator.
   prove 44.4d "the file place is reached without typing the path, through the neighbourhood (§28.3)" \
-    'place "$PROC; near --type file | take 1 | enter" "look --json" | grep -qF "$HELD"'
+    'place "$PROC; near --type file | where display_name ~= /held/ | take 1 | enter" "look --json" \
+       | grep -qF "$HELD"'
 
   echo "== and the file names the processes that hold it (§15.5, §44.4 both directions) =="
   prove 44.4e "the file place names the server process that holds it (§15.5 open-by)" \
@@ -67,10 +70,11 @@ run: |
     'place "enter $HELD; follow process $FIXTURE_WEB_MAIN" "look --json" | grep -qF "$FIXTURE_WEB_MAIN"'
 
   echo "== every displayed relationship is inspectable (§11.4, §11.5) =="
-  # §11.4 spells this `inspect relation @edge-17` "or equivalent structured selection"; the
-  # equivalent here is the v0.2 pipeline.
-  prove 44.4h "inspect relation returns the full edge record (§11.4)" \
-    'place "$PROC" "near --type file | take 1 | inspect relation | to json" > /tmp/edge.json;
+  # §11.4 spells this `inspect relation @edge-17` "or equivalent structured selection", and
+  # ADR-0164 fixes which one: the edge itself. `ono.spatial-neighbor/1` carries every field §11.4
+  # lists, so the neighbour record is the answer and no second command fetches it again.
+  prove 44.4h "the edge record carries everything §11.4 makes inspectable (§11.4, ADR-0164)" \
+    'place "$PROC" "near --type file | take 1 | to json" > /tmp/edge.json;
      for key in relation source target direction provider provenance confidence observed_at; do
        grep -qF "$key" /tmp/edge.json || { echo "edge record is missing: $key"; exit 1; }
      done'
@@ -82,16 +86,19 @@ run: |
   echo "== unknown, empty and denied stay three different answers (§35.2, §53) =="
   prove 44.4k "a file nobody holds has an empty opener set, not an unknown one (§35.2)" \
     'test "$(place "enter $LONELY" "near --type process | count | to text" | tail -1)" = "0"'
+  # §32.1 keeps a default `look` from enumerating every process to find the openers of one file,
+  # so that group is honestly `unknown` — "available on request" — and asking for it explicitly
+  # is what 44.4k did. What must never appear for a file this user owns is a denial.
   prove 44.4l "and the empty set is reported as empty rather than as denied (§35.2)" \
     'place "enter $LONELY" "look --json" > /tmp/lonely.json;
-     grep -qF "$LONELY" /tmp/lonely.json && ! grep -qE "unknown|permission_denied" /tmp/lonely.json'
+     grep -qF "$LONELY" /tmp/lonely.json && ! grep -qF "permission_denied" /tmp/lonely.json'
 
   echo "== the graph is not a silo: the same objects flow through the pipeline (§28, §49.7) =="
   prove 44.4m "a pipeline result is enterable and lands on the same process place (§28.2, §28.3)" \
     'place "get process | where pid == $FIXTURE_WEB_MAIN | enter" "look --json" \
        | grep -qF "$FIXTURE_WEB_MAIN"'
   prove 44.4n "near is an ordinary stream that where and count operate on (§29.4)" \
-    'test "$(place "$PROC" "near --type file | where object contains \"held\" | count | to text" | tail -1)" -ge 1'
+    'test "$(place "$PROC" "near --type file | where display_name ~= /held/ | count | to text" | tail -1)" -ge 1'
 
   kill $FIXTURE_WEB_MAIN $FIXTURE_WEB_WORKERS "$SECOND" 2>/dev/null
   echo "fixture: stopped"

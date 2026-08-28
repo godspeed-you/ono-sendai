@@ -1,15 +1,15 @@
-# v0.4 acceptance scenarios (not yet run by the referee)
+# v0.4 acceptance scenarios (in the suite since S11)
 
-The files named `*.case.v04` in this directory are the ten acceptance scenarios of
+The files named `09x-spatial-*.case` in this directory are the ten acceptance scenarios of
 `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` §44, written as containerised
-end-to-end cases. **They are RED**: v0.4 is not implemented, so every one of them fails today.
+end-to-end cases. **They are green and the referee runs them**: every one was renamed from
+`*.case.v04` to `*.case` when the behaviour it proves was delivered, which is what
+`docs/ACCEPTANCE.md` §2 asks for ("a capability without a passing acceptance case is not
+delivered").
 
-`scripts/acceptance.sh` collects `*.case` (`find … -name '*.case'`), so the `.v04` suffix keeps
-them out of the suite and the referee stays green while the scenarios sit in the repository
-waiting for the code. **The increment that delivers a scenario renames its file to `.case`** —
-that rename is the acceptance step of the increment, and it must happen in the same commit as
-the behaviour, exactly as `docs/ACCEPTANCE.md` §2 requires ("a capability without a passing
-acceptance case is not delivered").
+While a scenario was still red, `scripts/acceptance.sh` — which collects `*.case`
+(`find … -name '*.case'`) — could not see it, and the referee stayed green with the scenario
+sitting in the repository waiting for the code.
 
 | File | Scenario | Also proves |
 |---|---|---|
@@ -28,8 +28,8 @@ acceptance case is not delivered").
 
 `101-spatial-find-place.case` is not one of the §44 scenarios. It is the part of them the
 `find place` increment delivers on its own — §50 Phase S3's gate, "objects can be discovered
-without prior exact names" — and it runs with the rest of the suite. The ten scenarios above stay
-`.case.v04` because each walks through navigation verbs that do not exist yet.
+without prior exact names" — and it ran with the rest of the suite while the ten scenarios were
+still held out of it.
 
 ## What the container can and cannot provide
 
@@ -56,3 +56,21 @@ rather than skipping.
   generates the bytes.
 * No case types the name of the object it is supposed to discover. Names appear in assertions,
   never as input, because §44 is about finding things without knowing their names.
+
+## Where a scenario reads differently from the file that was written
+
+Each scenario was dry-run against the binary of the day it was written, and the shell then made
+decisions that changed the spelling of what it answers. Where an assertion assumed a spelling an
+ADR later settled otherwise, the assertion was rewritten to the settled one and the ADR is named
+beside it in the case; none of them proves less than it did. The four that matter:
+
+* **The object of a relation is `display_name`** (ADR-0140), not a field called `object`.
+* **An edge explains itself** (ADR-0164): there is no `inspect relation` command, because
+  `ono.spatial-neighbor/1` and `ono.map-edge/1` already carry every field §11.4 lists.
+* **A group is a label and a count** (§24.2, ADR-0143): the members of a collection are `near`'s
+  answer, not `look`'s.
+* **The spatial layer never runs a tool** (ADR-0193): on a host with no systemd, the units the
+  §44.2/§44.5/§44.6/§44.7 walks start from exist only after the operator's own `systemctl` has
+  been run in the session. The cases run it; it names no unit, which is what those scenarios
+  are about.
+

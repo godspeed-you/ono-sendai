@@ -17,6 +17,7 @@
 
 use strict;
 use warnings;
+use IO::Select;
 use IO::Socket::INET;
 
 my $port     = shift // 18080;
@@ -64,6 +65,7 @@ if ($statefile ne '') {
 # pid a case shims as the service main pid. `alarm` interrupts the blocking accept once a
 # second, which is how the deadline is honoured without a select loop.
 my @accepted;
+my $watch = IO::Select->new();
 $SIG{ALRM} = sub { };
 $SIG{TERM} = sub { exit 0 };
 my $deadline = time + $seconds;
@@ -71,7 +73,22 @@ while (time < $deadline) {
     alarm 1;
     my $connection = $listener->accept();
     alarm 0;
-    push @accepted, $connection if $connection;
+    if ($connection) {
+        push @accepted, $connection;
+        $watch->add($connection);
+    }
+    # A peer that has gone leaves this half readable at end of file, and a server that never
+    # noticed would hold the connection in CLOSE_WAIT for as long as it ran. §43.6 asks for the
+    # close to be real kernel state rather than a decision a test makes about it, so the
+    # connection is closed here exactly when the other end closed it.
+    for my $ready ($watch->can_read(0)) {
+        my $buffer;
+        my $bytes = sysread($ready, $buffer, 4096);
+        next if defined $bytes && $bytes > 0;
+        $watch->remove($ready);
+        @accepted = grep { $_ != $ready } @accepted;
+        close $ready;
+    }
 }
 kill 'TERM', @children;
 exit 0;

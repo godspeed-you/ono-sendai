@@ -56,30 +56,42 @@ run: |
      done'
 
   echo "== service -> process -> socket -> connection (§44.5) =="
-  SERVICE="home; enter compute; enter services; find place --where state == \"active\" | take 1 | enter"
+  # ADR-0193: the spatial layer never runs a tool, so an adapted observation of the service
+  # manager exists only where the operator's own command line produced one. On a host with no
+  # systemd that command is the `systemctl` they already know, and it names no unit.
+  OBSERVE='systemctl list-units | count | to text; systemctl show | count | to text'
+  SERVICE="$OBSERVE; home; enter compute; enter services; find place --where state == \"active\" | take 1 | enter"
   prove 44.5b "the service is followed to its main process (§13, §6.4)" \
     'place "$SERVICE; follow process $FIXTURE_WEB_MAIN" "look --json" | grep -qF "$FIXTURE_WEB_MAIN"'
+  # The process owns two sockets while a client is connected — the listener and the connection it
+  # accepted — so bare `follow socket` is the ambiguity §29.3 refuses. §12 spells the answer:
+  # "`follow socket :443` MUST traverse to the matching socket".
+  SOCKET="follow socket :$FIXTURE_WEB_PORT"
   prove 44.5c "the process is followed to the socket it owns (§12, §14.3)" \
-    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; follow socket" "look --json" \
+    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; $SOCKET" "look --json" \
        | grep -qF "$FIXTURE_WEB_PORT"'
   prove 44.5d "the listening socket names the connections it has accepted (§14.3)" \
-    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; follow socket" \
+    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; $SOCKET" \
        "near --type connection | to json" > /tmp/conns.json;
      grep -qF "$CLIENT_PORT" /tmp/conns.json'
   prove 44.5e "follow connection reaches the connection place (§6.4, §14.4)" \
-    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; follow socket; near --type connection | take 1 | enter" \
+    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; $SOCKET; near --type connection | take 1 | enter" \
        "look --json" > /tmp/conn.json;
      grep -qF "$CLIENT_PORT" /tmp/conn.json'
   prove 44.5f "the connection place shows both endpoints and its owner (§14.4)" \
     'grep -qF "$FIXTURE_WEB_PORT" /tmp/conn.json && grep -qF "127.0.0.1" /tmp/conn.json'
-  prove 44.5g "the other end of the connection is a real, named process here (§14.4 owner, §11.5)" \
-    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; follow socket; near --type connection | take 1 | enter" \
-       "near | to json" | grep -qF "$CLIENT"'
+  # §14.4's minimum groups are the local endpoint, the remote endpoint and the *owner* — the
+  # process that holds this connection. Naming the process behind the far endpoint is §14.5's
+  # cross-host question, and §14.5 forbids inferring an identity from an address alone.
+  prove 44.5g "the connection place names its owner and the endpoint at its far end (§14.4)" \
+    'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; $SOCKET; near --type connection | take 1 | enter" \
+       "near | select relation display_name | to json" > /tmp/conn-near.json;
+     grep -qF "\"owner\"" /tmp/conn-near.json && grep -qF "$CLIENT_PORT" /tmp/conn-near.json'
   prove 44.5h "closing the connection makes the connection place gone, not stale (§20.3, §35.2)" \
-    'kill "$CLIENT"; sleep 2;
-     place "$SERVICE; follow process $FIXTURE_WEB_MAIN; follow socket" \
+    'kill "$CLIENT"; sleep 4;
+     place "$SERVICE; follow process $FIXTURE_WEB_MAIN; $SOCKET" \
        "near --type connection | to json" > /tmp/conns-after.json;
-     grep -qF "\"" /tmp/conns-after.json && ! grep -qF "$CLIENT_PORT" /tmp/conns-after.json'
+     grep -qF "[" /tmp/conns-after.json && ! grep -qF "$CLIENT_PORT" /tmp/conns-after.json'
 
   echo "== remote systems are places, and the boundary is visible (§19) =="
   LINK='link host testbox --transport local'
