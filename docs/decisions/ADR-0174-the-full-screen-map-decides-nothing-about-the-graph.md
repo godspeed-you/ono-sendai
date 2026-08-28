@@ -38,6 +38,13 @@ and leaves the action's other keys alone, so a partial configuration can never m
 unreachable. The `?` overlay is generated from the bindings in force, so the help is true after a
 rebinding.
 
+§23.3's own table binds `h` twice — once inside "Arrow keys / hjkl move focus" and once as
+"h or Home command → home (key binding may differ from vi-h)" — and flags the collision in the
+same line. The table is followed literally: `h` is `home`, and focus moves with the arrow keys,
+`j`, `k`, `l`, Tab and Shift-Tab. Horizontal movement has no meaning in a ranked tree anyway, so
+`h` as vi-left would have been the binding that did nothing. `spatial.map.keys` is how a user who
+disagrees writes `home=g, focus-previous=h`, which is the escape hatch the same section provides.
+
 **Nothing depends on colour.** §39.1 lists six distinctions colour may not be needed for; the
 focused item is one. The cursor is a `>` in the left margin of the focused line, and the view is
 drawn two columns narrower to make room for it.

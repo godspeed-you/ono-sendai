@@ -799,6 +799,16 @@ Green now, all previously `#[ignore]`d — 14 tests:
 - `spatial.reduced_motion` is read and inspectable but has nothing to disable, because this
   renderer draws no animation at all (§25.2 forbids decorative motion). ADR-0176 says so; S7 gives
   it something to switch off.
+- **§21.3's third marker has nothing to mark yet.** The section requires privilege, remote *and
+  namespace* changes to be recognisable in a colourless terminal. Privilege is the ` root`
+  segment and the `#` marker (v0.2 §17.2); remote is the link segment, which takes the host's
+  name instead of `local` (§14.4). A container or namespace boundary cannot be shown because
+  nothing produces a place in one: `ProviderBridge` projects every observation into the session's
+  own host scope, so `ScopeKind::Container` and `ScopeKind::Namespace` exist in the model
+  (`ono_spatial_core::scope`) and no place ever carries them. A marker written now could never
+  fire. The prompt is one line away from it — compare the current place's scope with the
+  session's and print `container:<id>` or `ns:<kind>/<id>` when they differ — and the increment
+  that makes a container's processes carry the container scope is the one that should write it.
 - The `/` search of §23.3 searches the *drawn* map. §23.3 says "search visible/global map"; the
   global half is `find place`, which already exists as a command, and wiring it into the view's
   search line is a real increment with its own test.
