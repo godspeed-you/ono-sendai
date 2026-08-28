@@ -411,6 +411,7 @@ impl Reader {
         let executable = link(&dir.join("exe"), &mut sources);
         let cwd = link(&dir.join("cwd"), &mut sources);
         let service = self.service(&dir, &mut sources);
+        let pid_namespace = namespace_inode(&dir, "pid", &mut sources);
         let memory = u128::try_from(stat.rss_pages).map_or(Value::Null, |pages| {
             Value::ByteSize(ByteSize::from_bytes(pages.saturating_mul(self.page_size)))
         });
@@ -442,6 +443,7 @@ impl Reader {
         .set("service", service)?
         // No container provider claims this process; unknown is null, never a guess (spec §35.3).
         .set("container", Value::Null)?
+        .set("pid_namespace", pid_namespace)?
         .build();
         Ok(record)
     }
@@ -717,6 +719,40 @@ fn link(path: &Path, sources: &mut Vec<String>) -> Value {
         // than unreadable.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
         Err(error) => io_error(&error, path).into_value(),
+    }
+}
+
+/// The inode of one of `/proc/<pid>/ns/<kind>`, which the kernel spells `pid:[4026531836]`.
+///
+/// v0.4 §10.2 makes the pid namespace part of a process's spatial identity: the same pid number
+/// means different processes in different namespaces, so a container's pid 1 and the host's pid 1
+/// must not reduce to one identity. A link nobody can read is null — never the root namespace,
+/// which would be a guess (spec §35.3).
+fn namespace_inode(dir: &Path, kind: &str, sources: &mut Vec<String>) -> Value {
+    let path = dir.join("ns").join(kind);
+    match fs::read_link(&path) {
+        Ok(target) => {
+            let text = target.to_string_lossy();
+            let inode = text
+                .strip_prefix(&format!("{kind}:["))
+                .and_then(|rest| rest.strip_suffix(']'))
+                .and_then(|digits| digits.parse::<u64>().ok());
+            match inode {
+                Some(inode) => {
+                    sources.push(path.display().to_string());
+                    Value::Int(i128::from(inode))
+                }
+                // A link in a shape this shell does not model is not an inode it may invent.
+                None => Value::Null,
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            io_error(&error, &path).into_value()
+        }
+        // `readlink` on a namespace link fails with EACCES for another user's process on some
+        // kernels and with ENOENT on a kernel built without namespaces; neither is an inode.
+        Err(_) => Value::Null,
     }
 }
 

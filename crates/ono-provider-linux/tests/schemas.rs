@@ -89,6 +89,7 @@ fn should_declare_the_process_contract_exactly_as_the_registry_fixes_it() {
             ("cwd", "path", false, true),
             ("service", "ref<ono.service/1>", false, true),
             ("container", "ref<ono.container/1>", false, true),
+            ("pid_namespace", "int", false, true),
         ],
     );
 }

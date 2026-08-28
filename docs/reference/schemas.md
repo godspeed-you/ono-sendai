@@ -1095,6 +1095,7 @@ Default view: `pid`, `name`, `parent`, `user`, `cpu`, `memory`, `started`, `serv
 | `cwd` | `path` | — | nullable | Current working directory; null when not readable by this user. |
 | `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
+| `pid_namespace` | `int` | — | nullable | The inode of the pid namespace the `pid` was read in, from `/proc/<pid>/ns/pid`. Two processes in different namespaces can carry the same pid number, so the spatial layer needs this to tell a container's pid 1 from the host's (spec v0.4 §10.2). Null when the link is not readable — never the root namespace, which would be a guess. |
 | `cgroup` | `path` | — | nullable | The control group path, as `/proc/<pid>/cgroup` reports it for the unified hierarchy; null on a kernel without cgroups. |
 | `open_files` | `list<path>` | — | nullable | The paths the process holds open, from `/proc/<pid>/fd`; descriptors on pipes, sockets and anonymous inodes are not files and are not listed. An error value when this user may not read the descriptor table. |
 | `sockets` | `list<int>` | — | nullable | The inodes of the sockets the process holds open — the `inode` an `ono.socket/1` carries, so the two join. An error value when this user may not read the descriptor table. |
@@ -1141,6 +1142,7 @@ Default view: `pid`, `name`, `cpu`, `memory`, `user`
 | `cwd` | `path` | — | nullable | Current working directory; null when not readable by this user. |
 | `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
+| `pid_namespace` | `int` | — | nullable | The inode of the pid namespace the `pid` was read in, from `/proc/<pid>/ns/pid`. Two processes in different namespaces can carry the same pid number, so the spatial layer needs this to tell a container's pid 1 from the host's (spec v0.4 §10.2). Null when the link is not readable — never the root namespace, which would be a guess. |
 
 ## Provider — `ono.provider/1`
 

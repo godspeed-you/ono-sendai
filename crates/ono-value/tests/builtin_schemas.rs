@@ -82,6 +82,9 @@ fn should_define_the_process_schema_exactly_as_the_spec_does() {
             ("cwd", true),
             ("service", true),
             ("container", true),
+            // v0.4 §10.2 makes the pid namespace part of a process's spatial identity: without
+            // it a container's pid 1 and the host's pid 1 reduce to one identity (ADR-0134).
+            ("pid_namespace", true),
         ]
     );
     assert_eq!(names(process.identity()), ["pid", "started"]);

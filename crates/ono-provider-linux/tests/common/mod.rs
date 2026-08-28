@@ -194,6 +194,15 @@ impl ProcessFixture {
         self
     }
 
+    /// Makes `/proc/<pid>/ns/<kind>` the symlink the kernel puts there, `pid:[4026531836]`.
+    pub fn namespace(self, kind: &str, inode: u64) -> Self {
+        let dir = self.dir.join("ns");
+        fs::create_dir_all(&dir).expect("the ns directory");
+        std::os::unix::fs::symlink(format!("{kind}:[{inode}]"), dir.join(kind))
+            .expect("the namespace link");
+        self
+    }
+
     /// Makes `/proc/<pid>/exe` a symlink, the way the kernel does.
     pub fn exe(self, target: &str) -> Self {
         std::os::unix::fs::symlink(target, self.dir.join("exe")).expect("the exe link");

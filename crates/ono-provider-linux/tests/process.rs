@@ -677,3 +677,92 @@ async fn should_filter_by_any_field_the_schema_declares_rather_than_ignoring_the
          ignored"
     );
 }
+
+#[tokio::test]
+async fn should_report_the_pid_namespace_the_pid_was_read_in() {
+    // v0.4 §10.2: a local process identity is boot identity, pid, start time *and* pid namespace
+    // identity. Without the last one a container's pid 1 and the host's pid 1 are the same
+    // four-part identity, and entering one would arrive at the other (ADR-0134).
+    let fixture = ProcFixture::new();
+    fixture
+        .process(1)
+        .stat("systemd", StatFields::default())
+        .status(0, 0)
+        .namespace("pid", 4_026_531_836);
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process"))
+            .expect("the fixture proc tree can be enumerated"),
+    )
+    .await;
+    let records = records(&collected);
+    let process = records.first().expect("the fixture holds one process");
+
+    assert_eq!(
+        process.get("pid_namespace"),
+        Some(&Value::Int(4_026_531_836)),
+        "the namespace inode is what distinguishes two processes that share a pid number"
+    );
+    let source = process
+        .provenance()
+        .source()
+        .expect("every record says what it was read from");
+    assert!(
+        source.contains("/1/ns/pid"),
+        "provenance names the link the namespace was read from: {source}"
+    );
+}
+
+#[tokio::test]
+async fn should_report_a_null_pid_namespace_when_the_kernel_shows_no_namespace_link() {
+    // §2.17 and spec §35.3: unknown is null, never the root namespace. Guessing `4026531836`
+    // here would make every unreadable process look like a host process.
+    let fixture = ProcFixture::new();
+    fixture
+        .process(4419)
+        .stat("nginx", StatFields::default())
+        .status(1000, 100);
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process"))
+            .expect("the fixture proc tree can be enumerated"),
+    )
+    .await;
+    let records = records(&collected);
+    let process = records.first().expect("the fixture holds one process");
+
+    assert_eq!(
+        process.access("pid_namespace"),
+        FieldAccess::Unknown,
+        "a namespace nobody could read is unknown, not the root namespace"
+    );
+}
+
+#[tokio::test]
+async fn should_carry_the_pid_namespace_into_the_detail_record_as_well() {
+    // The two records name one object (§42.1), so they must agree on every part of its
+    // identity — otherwise `get process` and `inspect process` would be two different places.
+    let fixture = ProcFixture::new();
+    fixture
+        .process(4419)
+        .stat("nginx", StatFields::default())
+        .status(1000, 100)
+        .namespace("pid", 4_026_533_331);
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process").option("detail", Value::Bool(true)))
+            .expect("the fixture proc tree can be enumerated"),
+    )
+    .await;
+    let records = records(&collected);
+    let detail = records.first().expect("the fixture holds one process");
+
+    assert_eq!(detail.schema().id().to_string(), "ono.process-detail/1");
+    assert_eq!(
+        detail.get("pid_namespace"),
+        Some(&Value::Int(4_026_533_331))
+    );
+}
