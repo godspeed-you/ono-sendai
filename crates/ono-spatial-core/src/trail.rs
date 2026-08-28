@@ -66,6 +66,14 @@ impl Movement {
     ///
     /// `back` itself does not: going back and then back again reaches the place before, not the
     /// one just left, which is what makes `back` an undo rather than a toggle (§2.4).
+    ///
+    /// Every other movement does, `home` included. §20.1 lists `home` in the `movement` enum, so
+    /// a step is written for it; §2.4 is a numbered invariant — "Every movement is reversible.
+    /// `back` MUST return through the actual navigation trail where the previous location still
+    /// exists" — and a `home` that could not be undone would make the movement that jumps
+    /// furthest the only irreversible one. §6.6 groups `back`, `up` and `home` as returns because
+    /// of what they mean to a reader, not because of what the trail records (ADR-0184, which
+    /// supersedes ADR-0170 on this point).
     #[must_use]
     pub fn extends_history(self) -> bool {
         !matches!(self, Movement::Back)

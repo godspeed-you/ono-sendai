@@ -470,8 +470,11 @@ fn should_return_home_to_the_local_root_from_a_remote_place() {
     // after a `jump` into a link the current host *is* the remote one, so `home` lands on the
     // remote root — and the step that returns across the boundary is the one that must carry a
     // `scope_crossing` (§3.2). `back` is what walks the history back over the link (§6.6).
+    //
+    // Three `back`s, because the walk is three movements deep: `home` is itself a movement §20.1
+    // records and §2.4 makes reversible, so the history is jump, enter, home (ADR-0184).
     let run = ono(&format!(
-        "{LINK}; jump testbox; enter compute; home; look --json; back; back; look --json"
+        "{LINK}; jump testbox; enter compute; home; look --json; back; back; back; look --json"
     ));
     let after_home = nth_document(&run, 0, "§6.6: the view after `home`");
     let after_back = nth_document(&run, 1, "§6.6: the view after walking the trail back");
