@@ -64,11 +64,17 @@ impl Movement {
 
     /// Whether the movement pushes a place a later `back` can return to.
     ///
-    /// `back` itself does not: going back and then back again reaches the place before, not the
-    /// one just left, which is what makes `back` an undo rather than a toggle (§2.4).
+    /// `back` does not: going back and then back again reaches the place before, not the one
+    /// just left, which is what makes `back` an undo rather than a toggle (§2.4).
+    ///
+    /// `home` does not either, for the same reason. §6.6 groups the two as returns rather than
+    /// as departures: `home` ends an excursion by going to the root the excursion started from,
+    /// so the place a later `back` returns to is the one *before* that excursion. Pushing the
+    /// place `home` left would make `back` bounce between the root and it — exactly the toggle
+    /// `back` is defined not to be (ADR-0170).
     #[must_use]
     pub fn extends_history(self) -> bool {
-        !matches!(self, Movement::Back)
+        !matches!(self, Movement::Back | Movement::Home)
     }
 }
 

@@ -325,17 +325,23 @@ pub fn place_record_of(
     let space = ono_spatial_query::resolve::space_of(id);
     let (name, object_type, spatial_type, freshness, observed_at, provenance, own_scope) =
         match (space, entry) {
-            (Some(space), _) => (
-                space.label.to_owned(),
-                space.place_schema().to_owned(),
-                space.object_type,
-                // Declared geography is as current as the build: nothing observed it, and
-                // nothing can make it stale (§4.1).
-                Freshness::Live,
-                Value::Null,
-                Provenance::local(COMPOSER, SchemaId::new("ono.spatial-place", 1)),
-                scope.clone(),
-            ),
+            (Some(space), _) => {
+                // §3.2: the geography is per host, so a canonical space belongs to the scope of
+                // the host whose geography it is — never to whichever host the session happens
+                // to be standing on (§19.2, §43.7).
+                let host = ono_spatial_query::resolve::scope_of_space(id);
+                (
+                    space.label_in(host.as_ref()),
+                    space.place_schema().to_owned(),
+                    space.object_type,
+                    // Declared geography is as current as the build: nothing observed it, and
+                    // nothing can make it stale (§4.1).
+                    Freshness::Live,
+                    Value::Null,
+                    declared_provenance(host.as_ref()),
+                    host.unwrap_or_else(|| scope.clone()),
+                )
+            }
             (None, Some(entry)) => (
                 entry.object().display_name().to_owned(),
                 entry.canonical_ref().id().schema().to_string(),
@@ -421,6 +427,59 @@ pub fn place_record_of(
         }
     }
     Ok(record.build())
+}
+
+/// The §19.1 link map: every link this session holds, with the state of each.
+///
+/// It is built from the session's own link table rather than from an enumeration of the network:
+/// a link is a connection this shell holds, and §35.4 forbids treating a name that resembles one
+/// as a place. A link that is not connected stays in the list with the state that says so (§35.2,
+/// §53), because a link map that hides what it cannot reach is the `empty` answer for a host that
+/// is merely unreachable.
+pub fn link_records() -> Result<Vec<Value>, ErrorValue> {
+    let schema = schema("ono.link-place", 1)?;
+    let mut rows = Vec::new();
+    for link in crate::spatial::links::all() {
+        let scope = ono_spatial_core::SpatialScope::remote_host(
+            &link.name,
+            ono_spatial_core::BootIdentity::unknown_boot(&link.name),
+        );
+        // §4 gives every host the canonical geography, and §19.1 already lists the link as
+        // somewhere to go, so the far root is a place as soon as the link is one. Learning it
+        // names it; it does not stand on it (§35.4).
+        ono_spatial_core::space::learn(&scope);
+        let root = Value::string(&space::root().spatial_id_in(Some(&scope)).to_string());
+        rows.push(Value::Record(std::sync::Arc::new(
+            RecordValue::builder(
+                std::sync::Arc::clone(&schema),
+                Provenance::local(COMPOSER, SchemaId::new("ono.link-place", 1)),
+            )
+            .set("name", Value::string(&link.name))?
+            .set("display_name", Value::string(&link.name))?
+            .set("host", Value::string(&link.host))?
+            .set("transport", Value::string(&link.transport))?
+            .set("state", Value::string(link.state()))?
+            .set("reachable", Value::Bool(link.reachable()))?
+            .set("scope", Value::string(&scope.to_string()))?
+            .set("spatial_id", root)?
+            .build(),
+        )));
+    }
+    Ok(rows)
+}
+
+/// The provenance of declared geography: the spatial layer composed it, and it says which host's
+/// geography it is (§4.1, §19.4, §25.2).
+///
+/// §19.4 requires an observation from the far side to say so, and the geography of a linked host
+/// is a statement about that host. A reader who cannot tell a remote place from a local one
+/// cannot check anything the far side said.
+fn declared_provenance(host: Option<&ono_spatial_core::SpatialScope>) -> Provenance {
+    let schema = SchemaId::new("ono.spatial-place", 1);
+    match host {
+        Some(scope) => Provenance::remote(COMPOSER, scope.host_scope().id(), schema),
+        None => Provenance::local(COMPOSER, schema),
+    }
 }
 
 /// Whether `ono.spatial-place/1` already declares a field of this name.
@@ -790,6 +849,22 @@ pub async fn neighborhood_here(
     now: Timestamp,
 ) -> Result<(Neighborhood, PermissionState), ErrorValue> {
     let here = session.current_place().clone();
+    // §35.2/§43.7: standing on a host whose link is gone, what is behind the exits is `stale` —
+    // not `empty`, and above all not the local objects the same providers would answer with if
+    // they were asked here instead (§35.4). Nothing is asked at all.
+    if let Some(detail) = unreachable_host(session) {
+        let pins = session.pins().clone();
+        let exits = stale_exits(&here, &detail);
+        let neighborhood = ono_spatial_query::space_neighborhood(
+            session.index(),
+            &here,
+            exits,
+            request,
+            &pins,
+            now,
+        );
+        return Ok((neighborhood, PermissionState::Stale));
+    }
     if let Some(space) = ono_spatial_query::resolve::space_of(&here) {
         let surroundings = observe_space(ctx, session, space, request.is_complete(), now).await?;
         let permission = surroundings.permission();
@@ -815,6 +890,47 @@ pub async fn neighborhood_here(
     let neighborhood =
         ono_spatial_query::neighborhood_of(session.index(), &here, request, &pins, now);
     Ok((neighborhood, PermissionState::Available))
+}
+
+/// Why the host the session is standing on cannot be reached, where it cannot be (§35.4, §19.1).
+///
+/// A link that was detached, torn down or never negotiated is the same answer here: this session
+/// is not following the far side, so what it knows about it is what it knew when it stopped.
+fn unreachable_host(session: &SpatialSessionState) -> Option<String> {
+    let host = session.host()?;
+    if crate::spatial::links::reachable(&host.link) {
+        return None;
+    }
+    Some(match crate::spatial::links::facts(&host.link) {
+        Some(facts) => format!(
+            "the link `{}` is {}; what is behind it was last read before that",
+            host.link,
+            facts.state()
+        ),
+        None => format!(
+            "this session no longer holds a link called `{}`; what is behind it was last read \
+             while it did",
+            host.link
+        ),
+    })
+}
+
+/// The exits of a place whose host cannot be reached: every one of them known by name, none of
+/// them counted (§35.2, §2.17).
+fn stale_exits(here: &SpatialId, detail: &str) -> Vec<Exit> {
+    let Some(space) = ono_spatial_query::resolve::space_of(here) else {
+        // An observed object's exits are its relationship edges, and none of them can be read
+        // from here. The place keeps its name and says so; it does not grow an invented exit.
+        return Vec::new();
+    };
+    let mut exits: Vec<Exit> = space::children(space.id)
+        .filter(|child| child.is_served())
+        .map(|child| Exit::withheld(child.label, PermissionState::Stale, detail))
+        .collect();
+    if space.member_type.is_some() {
+        exits.push(Exit::withheld(space.label, PermissionState::Stale, detail));
+    }
+    exits
 }
 
 /// A stream of already-collected values.

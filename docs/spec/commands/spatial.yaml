@@ -177,6 +177,33 @@ commands:
       - map --zoom 1
       - map --all --type process
 
+  - id: ono.place.map-links
+    verb: map
+    target: links
+    summary: Draw the federated map — this host beside the hosts this session holds links to.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: "ono.spatial-map/1 | string"
+    provider_capability: null
+    selectors: []
+    options:
+      - {name: json, type: bool, doc: "Write the `SpatialMap` as one JSON document rather than rendering it (v0.4 §22, §29.4)."}
+      - {name: all, type: bool, doc: "The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2)."}
+    privilege: none
+    streaming: false
+    phase: S
+    note: >-
+      §19.3: "A map MAY show multiple linked hosts when explicitly requested" — `map links` is
+      that request, and its counterpart is the rule beside it: "The default root map SHOULD NOT
+      automatically expand all remote graphs." So this map draws host roots and the links between
+      them and stops there; walking a linked host is what `jump` is for (§35.4). The edges carry
+      the §11.5 confidence of the evidence they rest on: a link this session negotiated is
+      `exact`, a definition nobody has connected is `user_declared` (§19.4).
+    examples:
+      - map links
+      - map links --json
+
   - id: ono.place.home
     verb: home
     target: null

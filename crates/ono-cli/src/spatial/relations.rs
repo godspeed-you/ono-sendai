@@ -388,9 +388,17 @@ pub async fn observe(
                 (other, id.clone())
             };
             let confidence = admissible(spec, relationship.edge().confidence());
-            let provenance =
-                Provenance::local(provider.id(), SchemaId::new("ono.spatial-relation", 1))
-                    .observed_at(now);
+            // §19.4: an edge the far side observed says so. Which side observed it is not a
+            // detail of the rendering — a one-sided remote observation and a local one are
+            // different evidence, and §11.4 makes `inspect relation` answer with the difference.
+            let schema = SchemaId::new("ono.spatial-relation", 1);
+            let host = session.current_scope();
+            let provenance = if host.is_remote() {
+                Provenance::remote(provider.id(), host.host_scope().id(), schema)
+            } else {
+                Provenance::local(provider.id(), schema)
+            }
+            .observed_at(now);
             let mut edge = RelationshipEdge::new(
                 source,
                 target_id,

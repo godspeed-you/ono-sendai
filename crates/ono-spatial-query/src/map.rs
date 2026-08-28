@@ -715,15 +715,12 @@ fn expand(clusters: Vec<MapCluster>, wanted: &[String]) -> (Vec<MapCluster>, Vec
 
 /// The label a place is drawn under.
 fn label_of(index: &SpatialIndex, id: &SpatialId) -> String {
-    crate::resolve::space_of(id).map_or_else(
-        || {
-            index.get(id).map_or_else(
-                || id.to_string(),
-                |entry| entry.object().display_name().to_owned(),
-            )
-        },
-        |space| space.label.to_owned(),
-    )
+    crate::resolve::space_label(id).unwrap_or_else(|| {
+        index.get(id).map_or_else(
+            || id.to_string(),
+            |entry| entry.object().display_name().to_owned(),
+        )
+    })
 }
 
 /// One drawn node (§22's `MapNode`).

@@ -64,6 +64,15 @@ fields:
       The six canonical domains with their states (§7.1's `domains`, §4). Present at the root,
       where they are the exits; null anywhere else, because a domain is not a neighbour of a
       process.
+  links:
+    type: list<ono.link-place/1>
+    nullable: true
+    doc: >-
+      The links this session holds, with the state of each (§19.1's link map). Present at the
+      root of a host, where a linked host is one of the places reachable from here; null anywhere
+      else, because a link is not a neighbour of a process. A link that is not connected stays in
+      the list with the state that says so — dropping it would be the `empty` answer §35.2
+      forbids.
   landmarks:
     type: list<ono.landmark/1>
     required: true

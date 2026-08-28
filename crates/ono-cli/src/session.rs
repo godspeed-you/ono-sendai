@@ -546,7 +546,11 @@ impl Session {
 
     /// Publishes the link table as it is now, for `get link` and `get host` (ADR-0103).
     pub fn publish_links(&mut self) {
-        let rows = self.links.iter().map(SessionLink::row).collect();
+        let rows: Vec<crate::session_provider::LinkRow> =
+            self.links.iter().map(SessionLink::row).collect();
+        // §19.1: the same table is what the local root's link map is built from, and it must
+        // never quietly drop a link that is no longer connected (§35.2).
+        crate::spatial::links::publish(&rows);
         self.tables
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -743,10 +747,23 @@ impl Session {
         self.publish_env();
         // Spec §14.4: the active link frame decides where provider calls run. The innermost
         // link frame wins; without one, the local registry answers.
-        let remote = self.frames.iter().rev().find_map(|frame| {
-            matches!(frame.frame.kind(), ono_command::FrameKind::Link)
-                .then(|| frame.frame.identity().to_string())
-        });
+        let remote = self
+            .frames
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                matches!(frame.frame.kind(), ono_command::FrameKind::Link)
+                    .then(|| frame.frame.identity().to_string())
+            })
+            // v0.4 §19.2: standing on a linked host is the same statement about where provider
+            // calls run, made by `jump` instead of by `enter link`. A link the session has
+            // detached from is not reached: what is behind it is reported `stale` rather than
+            // answered with local objects wearing a remote name (§35.2, §35.4).
+            .or_else(|| {
+                ono_spatial_core::space::standing_in()
+                    .map(|scope| scope.host_scope().id().to_owned())
+                    .filter(|name| crate::spatial::links::reachable(name))
+            });
         if let Some(host) = remote
             && let Some(index) = self
                 .links

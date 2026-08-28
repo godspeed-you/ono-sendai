@@ -165,6 +165,14 @@ fn place_view(
     } else {
         Value::Null
     };
+    // §19.1: "At local `SYSTEM`, `look` SHOULD expose available links". At the root of a host,
+    // the other hosts this session can stand on are among the places reachable from here; deeper
+    // in, a link is not a neighbour of a process, so the field is null rather than repeated.
+    let links = if at_root {
+        Value::list(view::link_records()?)
+    } else {
+        Value::Null
+    };
     let spatial_type = ono_spatial_query::resolve::space_of(&here).map_or_else(
         || {
             index
@@ -190,15 +198,25 @@ fn place_view(
     .set("id", Value::string(&here.to_string()))?
     .set("type", Value::string(spatial_type.as_str()))?
     .set("label", label)?
-    .set("hostname", Value::string(session.scope().host_scope().id()))?
+    .set(
+        "hostname",
+        Value::string(session.current_scope().host_scope().id()),
+    )?
     .set("place", Value::Record(Arc::new(place)))?
     .set(
         "freshness",
-        Value::string(source_freshness(neighborhood, index, &here, now)),
+        Value::string(source_freshness(
+            neighborhood,
+            index,
+            &here,
+            permission,
+            now,
+        )),
     )?
     .set("groups", Value::list(groups))?
     .set("exits", Value::Map(Arc::new(exits)))?
     .set("domains", domains)?
+    .set("links", links)?
     .set("landmarks", Value::list(landmarks))?
     .set("neighborhood", Value::Record(Arc::new(neighborhood_record)))?
     .set("system", system)?
@@ -218,8 +236,14 @@ fn source_freshness(
     neighborhood: &ono_spatial_core::Neighborhood,
     index: &ono_spatial_index::SpatialIndex,
     here: &ono_spatial_core::SpatialId,
+    permission: PermissionState,
     now: Timestamp,
 ) -> &'static str {
+    // §35.2: a place whose host cannot be reached any more is stale whatever the index says
+    // about when it was last read — nothing is refreshing it (§19.1, §25.3).
+    if permission == PermissionState::Stale {
+        return "stale";
+    }
     if index.freshness(here, now) == ono_spatial_core::Freshness::Stale {
         return "stale";
     }
@@ -297,9 +321,13 @@ pub async fn enter_observed(record: &ono_value::RecordValue) {
     session.absorb(std::slice::from_ref(record), now);
     let here = session.current_place().clone();
     if here != there {
-        session
-            .trail_mut()
-            .record(NavigationStep::new(now, here, there, Movement::Enter));
+        session.trail_mut().record(NavigationStep::new(
+            now,
+            here,
+            there.clone(),
+            Movement::Enter,
+        ));
+        session.arrive_at(&there, now);
     }
 }
 
@@ -454,9 +482,13 @@ impl CommandImpl for Enter {
             };
 
             if here != there {
-                session
-                    .trail_mut()
-                    .record(NavigationStep::new(now, here, there, Movement::Enter));
+                session.trail_mut().record(NavigationStep::new(
+                    now,
+                    here,
+                    there.clone(),
+                    Movement::Enter,
+                ));
+                session.arrive_at(&there, now);
             }
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })
@@ -535,7 +567,11 @@ pub async fn resolved_place(
     selector: &str,
     now: Timestamp,
 ) -> Result<ono_spatial_core::SpatialId, ErrorValue> {
-    let context = SelectorContext::at(here.clone());
+    // §27.1 step 4 is the *current host's* index: standing on a linked host, `enter process/1`
+    // is a question about that host, and answering it with the local pid 1 the index still holds
+    // is the accidental local/remote merge §43.7 forbids.
+    let context = SelectorContext::at(here.clone())
+        .on_host(ono_spatial_query::resolve::locality(Some(session.current_scope())).to_owned());
     let mut resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     if matches!(resolution, ono_spatial_query::Resolution::NotFound)
         && let Some(space) = ono_spatial_query::resolve::space_of(here)
@@ -835,12 +871,15 @@ impl CommandImpl for Follow {
                 }
             };
 
-            let step = NavigationStep::new(now, here, there, Movement::Follow)
+            let step = NavigationStep::new(now, here, there.clone(), Movement::Follow)
                 .along(specs[0].relation_type())
                 // §6.4: the relation traversed is recorded — and a relation has two ends and
                 // therefore two words, so the word this traversal took travels with the id.
                 .spelled(relation.as_str());
             session.trail_mut().record(step);
+            // §14.5: following an edge whose far end is on another host crosses the boundary,
+            // and the session's host follows the place it is standing on (§19.2, §3.2).
+            session.arrive_at(&there, now);
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })
     }

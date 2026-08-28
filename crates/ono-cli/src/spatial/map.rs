@@ -480,3 +480,128 @@ fn text_of(value: &Value) -> Option<String> {
             .filter(|text| !text.is_empty()),
     }
 }
+
+/// `map links` — the federated map of §19.3.
+///
+/// §19.3 asks for two things at once, and they are the same rule seen from both sides: a map
+/// "MAY show multiple linked hosts when explicitly requested", and "the default root map SHOULD
+/// NOT automatically expand all remote graphs". So the federated map is its own request, it draws
+/// host roots and the links between them, and it stops there. Walking a linked host is `jump`'s
+/// job, and §35.4 keeps that explicit.
+#[derive(Debug)]
+pub struct MapLinks {
+    pins: Option<crate::spatial::PinStore>,
+}
+
+impl MapLinks {
+    /// The implementation registered against `ono.place.map-links`.
+    #[must_use]
+    pub fn new(pins: Option<crate::spatial::PinStore>) -> Self {
+        Self { pins }
+    }
+}
+
+impl CommandImpl for MapLinks {
+    fn id(&self) -> &str {
+        "ono.place.map-links"
+    }
+
+    fn invoke(&self, _ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
+        Err(ono_command::must_be_awaited("map links"))
+    }
+
+    fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
+        Box::pin(async move {
+            let arguments = ctx.arguments();
+            let json = arguments.flag("json");
+            let request = MapRequest::new().all(arguments.flag("all")).depth(1);
+            let now = Timestamp::now();
+
+            let mut session = spatial_session().await;
+            crate::spatial::commands::with_pins(&mut session, self.pins.as_ref(), now).await?;
+
+            // §19.3 draws the local host beside the linked ones, so the map is centred on this
+            // host's root whatever place the session is standing in — including a place on the
+            // far side of one of these very links.
+            let center = space::root().spatial_id_in(None);
+            let mut horizon = MapHorizon::new();
+            horizon.place(HorizonPlace::new(center.clone(), 0, None));
+            for link in crate::spatial::links::all() {
+                let scope = ono_spatial_core::SpatialScope::remote_host(
+                    &link.name,
+                    ono_spatial_core::BootIdentity::unknown_boot(&link.name),
+                );
+                ono_spatial_core::space::learn(&scope);
+                let root = space::root().spatial_id_in(Some(&scope));
+                horizon.place(
+                    HorizonPlace::new(root.clone(), 1, None)
+                        .in_state(Some(link.state().to_owned())),
+                );
+                horizon.edge(link_edge(&center, &root, &link, now));
+            }
+
+            let pins = session.pins().clone();
+            let map = ono_spatial_query::project_map(
+                session.index(),
+                &center,
+                &horizon,
+                &request,
+                &pins,
+                session.preferences().map_node_budget,
+                now,
+            );
+            let record = map_record(&session, &map)?;
+
+            if json {
+                let document = ono_value::to_json_data(&Value::Record(Arc::new(record)));
+                let text = serde_json::to_string(&document).map_err(|error| {
+                    ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!("the map could not be written as JSON: {error}"),
+                    )
+                })?;
+                return Ok(Outcome::Values(ValueStream::from_values(vec![
+                    Value::string(&text),
+                ])));
+            }
+            Ok(Outcome::Values(ValueStream::from_values(vec![
+                Value::Record(Arc::new(record)),
+            ])))
+        })
+    }
+}
+
+/// The edge one link draws on the federated map (§19.3, §19.4, §11.5).
+///
+/// The confidence is the evidence's, and there are exactly two kinds of it here. A link this
+/// session negotiated is direct evidence that the two hosts are joined — `exact`. A definition
+/// nobody has connected is the user's own assertion and nothing else, which §11.5 spells
+/// `user_declared`; §19.4 is explicit that a one-sided claim "MAY be displayed but MUST carry the
+/// correct confidence", so it is never quietly promoted.
+fn link_edge(
+    local: &SpatialId,
+    remote: &SpatialId,
+    link: &crate::spatial::LinkFacts,
+    now: Timestamp,
+) -> ono_spatial_core::RelationshipEdge {
+    // §41.2: `host.linked_to` is the declared relation for exactly this edge, and the registry
+    // is where its name comes from. Every relation this crate draws is one the registry knows.
+    let relation = ono_spatial_core::relation::spec("host.linked_to")
+        .map(ono_spatial_core::RelationSpec::relation_type)
+        .unwrap_or_else(|| unreachable!("`host.linked_to` is declared in relations.yaml"));
+    let confidence = if link.connected {
+        ono_spatial_core::Confidence::Exact
+    } else {
+        ono_spatial_core::Confidence::UserDeclared
+    };
+    ono_spatial_core::RelationshipEdge::new(
+        local.clone(),
+        remote.clone(),
+        relation,
+        confidence,
+        Provenance::local(COMPOSER, SchemaId::new("ono.spatial-relation", 1)).observed_at(now),
+        now,
+    )
+    .with_attribute("transport", Value::string(&link.transport))
+    .with_attribute("state", Value::string(link.state()))
+}

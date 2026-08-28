@@ -791,6 +791,25 @@ Default view: `kind`, `at`, `link`, `changed`
 | `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
 | `source` | `enum` | — | required | How the change was observed. `poll` means the runtime compared the link table at the configured interval — explicit, as spec §18.2 requires. |
 
+## LinkPlace — `ono.link-place/1`
+
+One linked host as a place the session can jump to, with the state of the link that reaches it.
+
+Identity: `name`
+
+Default view: `name`, `host`, `transport`, `state`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `name` | `string` | — | required | The link's name — the word `jump` takes, and the scope a place behind it belongs to (§3.2). |
+| `display_name` | `string` | — | required | The same text under the name §3.1 gives the field. |
+| `host` | `string` | — | required | The host the link points at, which a definition may spell differently from the link's name. |
+| `transport` | `enum` | — | required | How the bytes travel (`ono.link/1`'s `transport`). |
+| `state` | `enum` | — | required | The §19.1 link-map state, in §35.2's vocabulary. `connected` when the link is established and this session still follows it; `stale` when it is established but the session has detached, so nothing keeps the places behind it current; `disconnected` when it is a definition nothing negotiated, or one that was torn down. A link is never dropped from the map to say it is not connected — that would be the `empty` answer §35.2 and §53 forbid. |
+| `reachable` | `bool` | — | required | Whether a spatial command may cross the link right now (§35.4). False is not an error: the link stays a place, and `jump` refuses it with `spatial.remote_unavailable` rather than dialling anything. |
+| `scope` | `string` | — | required | The §3.2 scope the host's places belong to, rendered as `<kind>:<id>` — `remote_host:web01`. |
+| `spatial_id` | `string` | — | required | The root `SystemPlace` of the linked host — the place `jump <name>` arrives at (§19.2). It exists as soon as the link does: §4 gives every host the canonical root space, and the id is derived from the link's scope rather than from anything the far side was asked (§35.4). |
+
 ## Link — `ono.link/1`
 
 One remote Ono link this session holds.
@@ -1102,6 +1121,7 @@ Default view: `label`, `type`, `hostname`, `generated_at`
 | `freshness` | `enum` | — | required | How the data behind the place is kept current, in §25.3's vocabulary (§33.4). `polled` while nothing subscribes; `stale` past the index TTL; `partial` where an exit could not be read. |
 | `exits` | `record` | — | required | The same exits, keyed by the word `look` prints and `enter`/`follow` take — §24.2's "groups as exits", and §12's `parent`, `children`, `sockets`, `files`, `namespaces`, `cgroup`. A reader that wants one exit by name reads this; one that wants them in rank order reads `groups`. |
 | `domains` | `list<ono.neighborhood-group/1>` | — | nullable | The six canonical domains with their states (§7.1's `domains`, §4). Present at the root, where they are the exits; null anywhere else, because a domain is not a neighbour of a process. |
+| `links` | `list<ono.link-place/1>` | — | nullable | The links this session holds, with the state of each (§19.1's link map). Present at the root of a host, where a linked host is one of the places reachable from here; null anywhere else, because a link is not a neighbour of a process. A link that is not connected stays in the list with the state that says so — dropping it would be the `empty` answer §35.2 forbids. |
 | `landmarks` | `list<ono.landmark/1>` | — | required | What deserves attention here (§3.7, §26). Empty is an answer; null would not be. |
 | `neighborhood` | `ono.neighborhood/1` | — | required | The bounded, ranked projection around the place, with what it left out (§3.6). |
 | `system` | `ono.system/1` | — | nullable | The `SystemPlace` of §7.1 in full, carried by `look --all` at the root. §24.1 keeps the exhaustive view of the object behind a place out of the default `look`, so the default names the system and `--all` describes it. |

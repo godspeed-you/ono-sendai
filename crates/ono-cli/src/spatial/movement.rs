@@ -71,8 +71,13 @@ impl CommandImpl for Back {
                 .cloned()
                 .collect();
             match session.trail_mut().back(now, |id| alive.contains(id)) {
-                BackOutcome::Returned { .. } => {}
-                BackOutcome::Skipped { skipped, .. } => {
+                BackOutcome::Returned { to, .. } => {
+                    // §6.6: `back` walks the trail, and the trail crosses links. Arriving on the
+                    // other side of one leaves the remote scope with the place (§3.2, §19.2).
+                    session.arrive_at(&to.clone(), now);
+                }
+                BackOutcome::Skipped { to, skipped, .. } => {
+                    session.arrive_at(&to.clone(), now);
                     // §20.3 step 2: skip to the nearest valid previous place "only after
                     // informing the user". The movement succeeded, so this is a notice on stderr
                     // rather than a failure — a script that navigates must not die because a
@@ -156,11 +161,12 @@ impl CommandImpl for Up {
                 ));
             };
             let crossing = crossing_between(&session, &here, &there);
-            let mut step = NavigationStep::new(now, here, there, Movement::Up);
+            let mut step = NavigationStep::new(now, here, there.clone(), Movement::Up);
             if let Some(crossing) = crossing {
                 step = step.crossing(crossing);
             }
             session.trail_mut().record(step);
+            session.arrive_at(&there, now);
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })
     }
@@ -215,6 +221,15 @@ impl CommandImpl for Jump {
             // bookmark names a place rather than a spelling to guess at again.
             let there = if let Some(name) = selector.strip_prefix('@') {
                 pinned_place(&session, name)?
+            } else if let Some(host) = crossed_link(&selector)? {
+                // §19.2: a link is a place, and jumping to it produces a *new* SystemPlace for
+                // the remote host rather than resolving a name in this one's geography. The
+                // geography is entered before the destination is named, because until then this
+                // process has no ids for that host's canonical spaces at all.
+                crate::spatial::links::attach(&host.link);
+                announce(&host.link);
+                session.stand_in(Some(host), now);
+                ono_spatial_core::space::root().spatial_id()
             } else {
                 resolved_place(ctx, &mut session, &here, &selector, now).await?
             };
@@ -225,14 +240,55 @@ impl CommandImpl for Jump {
             // §6.5: "MUST visibly record the source and destination in the trail" — and §3.2 adds
             // the boundary, where the teleport crossed one.
             let crossing = crossing_between(&session, &here, &there);
-            let mut step = NavigationStep::new(now, here, there, Movement::Jump);
+            let mut step = NavigationStep::new(now, here, there.clone(), Movement::Jump);
             if let Some(crossing) = crossing {
                 step = step.crossing(crossing);
             }
             session.trail_mut().record(step);
+            session.arrive_at(&there, now);
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })
     }
+}
+
+/// The linked host `selector` names, where it names one this session may cross into (§19.2).
+///
+/// # Errors
+///
+/// `spatial.remote_unavailable` for a link this session holds but cannot reach. §35.4 is why
+/// there is no third case: `jump` "MUST NOT silently establish arbitrary new network connections
+/// merely because a hostname resembles a known place", so a name that is not already a link of
+/// this session is not a host at all here — it goes on to ordinary place resolution, which
+/// refuses it as `spatial.not_found`.
+fn crossed_link(selector: &str) -> Result<Option<crate::spatial::RemoteHost>, ErrorValue> {
+    let Some(facts) = crate::spatial::links::facts(selector) else {
+        return Ok(None);
+    };
+    if !facts.connected {
+        return Err(ErrorValue::new(
+            ErrorCode::SpatialRemoteUnavailable,
+            format!("the link `{selector}` is not connected, so its places cannot be reached"),
+        )
+        .with_help(
+            "`link host <name>` establishes it; `jump` never opens a connection by itself \
+             (spec v0.4 §19.2, §35.4)",
+        ));
+    }
+    Ok(Some(crate::spatial::RemoteHost::of_link(&facts.name)))
+}
+
+/// States the crossing of a host boundary (§53, §21.3, §3.2).
+///
+/// §53: "Remote roots are explicit spaces; boundary crossing always visible", and §21.3 requires
+/// the marker to survive a colourless terminal, so it is words. It goes to the diagnostic
+/// stream, because `jump` answers with no value and a script that pipes it must keep reading
+/// objects rather than prose (§29.1, §29.4) — the same channel `back` announces a skipped place
+/// on (§20.3).
+fn announce(link: &str) {
+    eprintln!(
+        "{}: crossed the link `{link}`; this place is remote, on host {link}",
+        ono_core::SHORT_NAME
+    );
 }
 
 /// The place a `@<bookmark>` names (§20.4).
@@ -284,11 +340,17 @@ fn crossing_between(
     here.boundary_to(&there)
 }
 
-/// The scope a place belongs to: its own where it was observed, the session's where it is
-/// declared geography (§3.2, §4.1).
+/// The scope a place belongs to: its own where it was observed, its host's where it is declared
+/// geography (§3.2, §4.1, §19.2).
 fn scope_of(session: &SpatialSessionState, id: &SpatialId) -> SpatialScope {
+    if let Some(host) = ono_spatial_query::resolve::scope_of_space(id) {
+        return host;
+    }
+    if ono_spatial_query::resolve::space_of(id).is_some() {
+        return session.scope().clone();
+    }
     session.index().get(id).map_or_else(
-        || session.scope().clone(),
+        || session.current_scope().clone(),
         |entry| entry.object().scope().clone(),
     )
 }
@@ -395,7 +457,17 @@ fn step_record(
         "scope_crossing",
         step.scope_crossing().map_or(Value::Null, crossing_record),
     )?
-    .set("host", Value::string(session.scope().host_scope().id()))?
+    // §20.1/§19: the host the movement happened on, in the spelling place paths use — `local`
+    // for this machine, the link's name for a host reached through one (§27.2). It is the
+    // *destination's* host, because that is where the session ended up standing; the boundary
+    // itself is in `scope_crossing`.
+    .set(
+        "host",
+        Value::string(ono_spatial_query::resolve::locality(Some(&scope_of(
+            session,
+            step.to(),
+        )))),
+    )?
     .build())
 }
 
@@ -424,8 +496,8 @@ fn canonical_ref(session: &SpatialSessionState, id: &SpatialId) -> Option<String
 
 /// What a person calls the place, where this session still knows it.
 fn display_name(session: &SpatialSessionState, id: &SpatialId) -> Option<String> {
-    if let Some(space) = ono_spatial_query::resolve::space_of(id) {
-        return Some(space.label.to_owned());
+    if let Some(label) = ono_spatial_query::resolve::space_label(id) {
+        return Some(label);
     }
     session
         .index()

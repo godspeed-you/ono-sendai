@@ -1,0 +1,63 @@
+# Canonical LinkPlace schema. Source: v0.4 §19.1 (the link map the local root exposes: "prod/web01
+# connected 12ms", "home/nas01 disconnected last seen 3h ago"), §19.2 (`jump <link>` produces a
+# new SystemPlace for the linked host), §35.2 (the six permission states stay distinct) and §35.4
+# (`jump` never opens a connection because a name resembles a place).
+#
+# A link is not an object a provider found — it is the session's own bookkeeping, which is why
+# `ono.link/1` is served by the session provider. This record is what the *spatial* layer says
+# about it: which host the link reaches, whether the session can stand on it now, and how current
+# what lies behind it is. `state` is therefore not `ono.link/1`'s: that one answers "was the
+# handshake made", this one answers "is this a place I can be in, and is what I know of it still
+# being kept current" (ADR-0171).
+id: ono.link-place/1
+name: LinkPlace
+summary: One linked host as a place the session can jump to, with the state of the link that reaches it.
+identity: [name]
+fields:
+  name:
+    type: string
+    required: true
+    doc: The link's name — the word `jump` takes, and the scope a place behind it belongs to (§3.2).
+  display_name:
+    type: string
+    required: true
+    doc: The same text under the name §3.1 gives the field.
+  host:
+    type: string
+    required: true
+    doc: The host the link points at, which a definition may spell differently from the link's name.
+  transport:
+    type: enum
+    required: true
+    values: [ssh, local]
+    doc: How the bytes travel (`ono.link/1`'s `transport`).
+  state:
+    type: enum
+    required: true
+    values: [connected, disconnected, stale]
+    doc: >-
+      The §19.1 link-map state, in §35.2's vocabulary. `connected` when the link is established
+      and this session still follows it; `stale` when it is established but the session has
+      detached, so nothing keeps the places behind it current; `disconnected` when it is a
+      definition nothing negotiated, or one that was torn down. A link is never dropped from the
+      map to say it is not connected — that would be the `empty` answer §35.2 and §53 forbid.
+  reachable:
+    type: bool
+    required: true
+    doc: >-
+      Whether a spatial command may cross the link right now (§35.4). False is not an error: the
+      link stays a place, and `jump` refuses it with `spatial.remote_unavailable` rather than
+      dialling anything.
+  scope:
+    type: string
+    required: true
+    doc: The §3.2 scope the host's places belong to, rendered as `<kind>:<id>` — `remote_host:web01`.
+  spatial_id:
+    type: string
+    required: true
+    doc: >-
+      The root `SystemPlace` of the linked host — the place `jump <name>` arrives at (§19.2). It
+      exists as soon as the link does: §4 gives every host the canonical root space, and the id
+      is derived from the link's scope rather than from anything the far side was asked (§35.4).
+default_view:
+  columns: [name, host, transport, state]

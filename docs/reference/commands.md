@@ -5060,6 +5060,34 @@ map --zoom 1
 map --all --type process
 ```
 
+### `map links`
+
+Draw the federated map — this host beside the hosts this session holds links to.
+
+| | |
+|---|---|
+| id | `ono.place.map-links` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `ono.spatial-map/1 | string` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--json` | `bool` | Write the `SpatialMap` as one JSON document rather than rendering it (v0.4 §22, §29.4). |
+| `--all` | `bool` | The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2). |
+
+**Examples**
+
+```text
+map links
+map links --json
+```
+
 ### `home`
 
 Return to the root system place of the active host.

@@ -469,6 +469,9 @@ fn print_identity_line(session: &Session, theme: &Theme, presentation: Presentat
 fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
     // Spec §14.4: the active link frame determines where provider calls and processes run, and
     // the prompt MUST make that unambiguous — the host takes `local`'s place entirely.
+    // v0.4 §19.2/§21.1: standing on a linked host is the same fact about where the next command
+    // operates, whether `enter link` or `jump` put the session there, and §21.3 requires it to be
+    // recognisable without colour — so the host takes `local`'s place in the text itself.
     let location = session
         .frames()
         .iter()
@@ -476,6 +479,9 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
         .find_map(|frame| {
             matches!(frame.frame.kind(), ono_command::FrameKind::Link)
                 .then(|| frame.frame.identity().to_string())
+        })
+        .or_else(|| {
+            ono_spatial_core::space::standing_in().map(|scope| scope.host_scope().id().to_owned())
         })
         .unwrap_or_else(|| "local".to_owned());
     let mut prompt = ono_editor::Prompt::plain("").segment(location, Token::PromptLink);

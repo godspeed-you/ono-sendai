@@ -232,7 +232,6 @@ fn list_at(document: &Value, path: &str, what: &str) -> Vec<Value> {
 // --- §19.1 the link map -----------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §19.1); un-ignored by the increment that delivers it"]
 fn should_list_a_linked_host_among_the_places_when_looking_at_the_local_root() {
     // §19.1: at local `SYSTEM`, `look` exposes the available links with their state. §29.1: the
     // structured form works without a TTY.
@@ -270,7 +269,6 @@ fn should_list_a_linked_host_among_the_places_when_looking_at_the_local_root() {
 // --- §19.2 `jump` across links ----------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §19.2); un-ignored by the increment that delivers it"]
 fn should_give_a_linked_host_a_root_place_distinct_from_the_local_root() {
     // §19.2: `jump prod/web01` "MUST produce a new `SystemPlace` for the remote host". §3.1: the
     // `SpatialId` is what identifies a place; two roots on two hosts are two conceptual objects,
@@ -308,7 +306,6 @@ fn should_give_a_linked_host_a_root_place_distinct_from_the_local_root() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §19.2); un-ignored by the increment that delivers it"]
 fn should_announce_the_boundary_in_plain_text_when_jumping_to_a_linked_host() {
     // §53: "Remote roots are explicit spaces; boundary crossing always visible." §21.3: the
     // marker must survive a colourless terminal, so it is text and not an escape sequence.
@@ -327,7 +324,6 @@ fn should_announce_the_boundary_in_plain_text_when_jumping_to_a_linked_host() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §21.3); un-ignored by the increment that delivers it"]
 fn should_mark_the_remote_host_in_the_prompt_after_a_jump() {
     // §21.1: the prompt's semantic components include `link/host`. §21.3: "Privilege, remote and
     // namespace changes MUST be visually recognizable even in minimal colorless terminals."
@@ -388,7 +384,6 @@ fn should_mark_the_remote_host_in_the_prompt_after_a_jump() {
 // --- §20.1 the cross-host trail ---------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §20.1); un-ignored by the increment that delivers it"]
 fn should_record_the_host_and_the_scope_crossing_of_every_step_in_the_trail() {
     // §6.5: `jump` "MUST visibly record the source and destination in the trail". §20.1 gives
     // the `NavigationStep` schema, including `scope_crossing`. §3.2: "Crossing a scope boundary
@@ -464,7 +459,6 @@ fn should_record_the_host_and_the_scope_crossing_of_every_step_in_the_trail() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.6); un-ignored by the increment that delivers it"]
 fn should_return_home_to_the_local_root_from_a_remote_place() {
     // §6.6: "`home` returns to the root `SYSTEM` place for the current host." Reading chosen:
     // after a `jump` into a link the current host *is* the remote one, so `home` lands on the
@@ -491,7 +485,6 @@ fn should_return_home_to_the_local_root_from_a_remote_place() {
 // --- §43.7 no accidental local/remote identity merge ------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §43.7); un-ignored by the increment that delivers it"]
 fn should_keep_a_remote_process_place_distinct_from_the_local_one_with_the_same_pid() {
     // §43.7 asks explicitly for "no accidental local/remote identity merge". pid 1 exists on
     // both sides of this fixture — the `local` transport's agent runs on this same machine, so
@@ -532,7 +525,6 @@ fn should_keep_a_remote_process_place_distinct_from_the_local_one_with_the_same_
 // --- §43.7/§35.2 stale and disconnected link state --------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §43.7); un-ignored by the increment that delivers it"]
 fn should_report_a_place_behind_a_detached_link_as_stale_rather_than_empty() {
     // §35.2: `available`, `empty`, `unknown`, `permission_denied`, `unsupported` and `stale`
     // "MUST remain distinct". §53: "Unknown/denied data? Distinct from empty." §20.3: a dead
@@ -564,7 +556,6 @@ fn should_report_a_place_behind_a_detached_link_as_stale_rather_than_empty() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §19.1); un-ignored by the increment that delivers it"]
 fn should_keep_a_detached_link_visible_with_its_state_in_the_link_map() {
     // §19.1's own example keeps a link that is not connected in the map: `home/nas01
     // disconnected  last seen 3h ago`. A link the user made and then detached therefore stays
@@ -599,7 +590,6 @@ fn should_keep_a_detached_link_visible_with_its_state_in_the_link_map() {
 // --- §19.4 cross-host relationship confidence -------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §19.4); un-ignored by the increment that delivers it"]
 fn should_carry_provenance_and_confidence_on_every_relation_that_comes_from_the_far_side() {
     // §19.4: cross-host edges rest on explicit remote evidence or strong multi-sided
     // correlation, and "One-sided observations MAY be displayed but MUST carry the correct
@@ -657,7 +647,6 @@ fn should_carry_provenance_and_confidence_on_every_relation_that_comes_from_the_
 // --- §35.4 remote boundaries ------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §35.4); un-ignored by the increment that delivers it"]
 fn should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link() {
     // §35.4: "`jump` MUST NOT silently establish arbitrary new network connections merely
     // because a hostname resembles a known place." `.invalid` is reserved by RFC 2606 and never
@@ -700,7 +689,6 @@ fn should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link() {
 // --- §19.3 the federated map ------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §19.3); un-ignored by the increment that delivers it"]
 fn should_not_expand_a_remote_graph_into_the_default_root_map() {
     // §19.3: "The default root map SHOULD NOT automatically expand all remote graphs." A link
     // that is held is not an invitation to walk the other machine.
@@ -723,7 +711,6 @@ fn should_not_expand_a_remote_graph_into_the_default_root_map() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §19.3); un-ignored by the increment that delivers it"]
 fn should_show_the_linked_hosts_when_the_federated_map_is_asked_for() {
     // §19.3: `map links` is the explicit request, and it shows the local host beside the linked
     // ones. §22: the answer is a SpatialMap, so it is renderer-independent.

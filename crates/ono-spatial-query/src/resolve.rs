@@ -220,6 +220,10 @@ pub struct SelectorContext {
     from: Option<SpatialId>,
     object_type: Option<SpatialType>,
     remote: bool,
+    /// The host the resolution happens on, in the spelling place paths use — `local`, or a
+    /// link's name (§27.2). §27.1 step 4 is "the current host index", and a session standing on
+    /// a linked host must not be answered with the local `process/1` (§19.2, §43.7).
+    host: Option<String>,
 }
 
 impl SelectorContext {
@@ -230,6 +234,7 @@ impl SelectorContext {
             from: Some(from),
             object_type: None,
             remote: false,
+            host: None,
         }
     }
 
@@ -243,6 +248,17 @@ impl SelectorContext {
     #[must_use]
     pub fn of_type(mut self, object_type: SpatialType) -> Self {
         self.object_type = Some(object_type);
+        self
+    }
+
+    /// Restricts the answer to the places of one host (§27.1 step 4, §19.2).
+    ///
+    /// `locality` is the first segment of a place path: `local` for this machine, the link's
+    /// name for a host reached through one. Without it every host this session has observed
+    /// answers, which is what `find place --all` wants and what `enter` must never do.
+    #[must_use]
+    pub fn on_host(mut self, locality: impl Into<String>) -> Self {
+        self.host = Some(locality.into());
         self
     }
 
@@ -395,17 +411,28 @@ fn fuzzy_matches(
             && space.label.to_ascii_lowercase().contains(&needle)
             && seen.insert(space.spatial_id())
         {
-            found.push(space_candidate(space, ResolutionStep::FuzzyVisible));
+            let candidate = space_candidate(space, ResolutionStep::FuzzyVisible);
+            if context.accepts(&candidate) {
+                found.push(candidate);
+            }
         }
     }
     found
 }
 
 impl SelectorContext {
-    /// Whether a candidate passes the `--type` filter the caller set.
+    /// Whether a candidate passes the filters the caller set: the `--type` one, and the host
+    /// the resolution is happening on.
     fn accepts(&self, candidate: &Candidate) -> bool {
         self.object_type
             .is_none_or(|wanted| candidate.object_type.is_a(wanted))
+            && self.host.as_ref().is_none_or(|host| {
+                candidate.place_path == *host
+                    || candidate
+                        .place_path
+                        .strip_prefix(host.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
     }
 }
 
@@ -577,11 +604,12 @@ fn space_candidate(
     space: &'static ono_spatial_core::CanonicalSpace,
     step: ResolutionStep,
 ) -> Candidate {
+    let scope = space::standing_in();
     Candidate {
-        spatial_id: space.spatial_id(),
-        name: space.label.to_owned(),
+        spatial_id: space.spatial_id_in(scope.as_ref()),
+        name: space.label_in(scope.as_ref()),
         object_type: space.object_type,
-        place_path: space_path(space.id),
+        place_path: space_path_in(space.id, scope.as_ref()),
         step,
         // The geography is not observed; it is declared, and it is as current as the build.
         freshness: Freshness::Live,
@@ -590,9 +618,26 @@ fn space_candidate(
 }
 
 /// The canonical space an id names, where it names one.
+///
+/// The geography is per host (§19.2), so an id names a space *of some host*: this answers which
+/// space, and [`scope_of_space`] answers whose. A host this session has never entered has no
+/// geography here, and an id of one is honestly not a place this session can describe.
 #[must_use]
 pub fn space_of(id: &SpatialId) -> Option<&'static ono_spatial_core::CanonicalSpace> {
-    spaces().iter().find(|space| &space.spatial_id() == id)
+    space::space_of_id(id).map(|(space, _)| space)
+}
+
+/// The remote host whose geography `id` belongs to, or `None` for the local host or a place that
+/// is no canonical space at all (§19.2, §3.2).
+#[must_use]
+pub fn scope_of_space(id: &SpatialId) -> Option<ono_spatial_core::SpatialScope> {
+    space::space_of_id(id).and_then(|(_, scope)| scope)
+}
+
+/// The label a place view and a map show for the canonical space `id` names (§19.3, §21.1).
+#[must_use]
+pub fn space_label(id: &SpatialId) -> Option<String> {
+    space::space_of_id(id).map(|(space, scope)| space.label_in(scope.as_ref()))
 }
 
 /// The canonical hierarchy path a place sits at — §27.2's third column and §6.8's `path/scope`
@@ -603,8 +648,8 @@ pub fn space_of(id: &SpatialId) -> Option<&'static ono_spatial_core::CanonicalSp
 /// `nginx/1842` by the paths they sit at).
 #[must_use]
 pub fn place_path(index: &SpatialIndex, id: &SpatialId) -> String {
-    if let Some(space) = space_of(id) {
-        return space_path(space.id);
+    if let Some((space, scope)) = space::space_of_id(id) {
+        return space_path_in(space.id, scope.as_ref());
     }
     let Some(entry) = index.get(id) else {
         return locality(None).to_owned();
@@ -614,7 +659,7 @@ pub fn place_path(index: &SpatialIndex, id: &SpatialId) -> String {
     let mut path = String::from(locality(Some(scope)));
     if let Some(parent) = parent {
         let rest = match space_of(&parent) {
-            Some(space) => space_path(space.id)
+            Some(space) => space_path_in(space.id, scope_of_space(&parent).as_ref())
                 .split_once('/')
                 .map(|(_, rest)| rest.to_owned())
                 .unwrap_or_default(),
@@ -637,8 +682,8 @@ pub fn place_path(index: &SpatialIndex, id: &SpatialId) -> String {
 }
 
 /// The path of a canonical space, from the host down: `local/compute/processes`.
-fn space_path(space_id: &str) -> String {
-    let mut parts = vec!["local".to_owned()];
+fn space_path_in(space_id: &str, scope: Option<&ono_spatial_core::SpatialScope>) -> String {
+    let mut parts = vec![locality(scope).to_owned()];
     parts.extend(
         ono_spatial_core::path_to_space(space_id)
             .into_iter()
@@ -650,7 +695,8 @@ fn space_path(space_id: &str) -> String {
 
 /// What §27.2 writes as the first segment of a place path: `local` for this host, the host's own
 /// name for anywhere else (§19).
-fn locality(scope: Option<&ono_spatial_core::SpatialScope>) -> &str {
+#[must_use]
+pub fn locality(scope: Option<&ono_spatial_core::SpatialScope>) -> &str {
     match scope {
         Some(scope) if scope.is_remote() => scope.host_scope().id(),
         _ => "local",
