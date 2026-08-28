@@ -34,6 +34,27 @@ fn should_change_the_directory_an_external_command_sees_when_cd_has_run() {
 }
 
 #[test]
+fn should_change_the_directory_a_native_command_sees_when_cd_has_run() {
+    // `cd` moved the shell's own idea of where it stands and the directory an external command
+    // inherits, and left every native command resolving `.` against wherever the process
+    // happened to start. `find file .` after a `cd` therefore walked the shell's launch
+    // directory, which is a different machine from the one the user is looking at.
+    let dir = scratch();
+    dir.write("inside/one.txt", "1\n");
+    dir.write("inside/two.txt", "2\n");
+    let run = ono(&format!(
+        "cd {}/inside\nfind file . | select name | to text",
+        dir.path().display()
+    ));
+    run.assert_success();
+    assert!(
+        run.stdout().contains("one.txt") && run.stdout().contains("two.txt"),
+        "a relative path names the directory the shell is standing in, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
 fn should_report_a_directory_it_cannot_enter_and_leave_the_shell_where_it_was() {
     let dir = scratch();
     let run = Shell::new()

@@ -912,7 +912,17 @@ impl Session {
     }
 
     /// Moves the session to `directory`, which must exist and be a directory.
+    ///
+    /// The process moves with it. A shell's working directory is the process's working directory:
+    /// `find file .` and every other native command that takes a relative path resolves it
+    /// through the kernel, so a session cwd the process did not follow would leave those commands
+    /// answering about wherever the shell happened to start. A kernel that refuses the move —
+    /// the directory went away between the caller's check and here — leaves the session where it
+    /// was rather than splitting the two.
     pub fn set_cwd(&mut self, directory: PathBuf) {
+        if std::env::set_current_dir(&directory).is_err() {
+            return;
+        }
         self.cwd = directory;
     }
 
