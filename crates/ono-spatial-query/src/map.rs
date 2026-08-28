@@ -444,7 +444,19 @@ pub fn project(
     let representative = representatives(&nodes, &clusters, &folded);
     let edges = edges_of(index, horizon, &representative, &clusters, request);
     let landmarks = landmarks_of(index, &nodes, &pinned);
-    let completeness = if hidden.count == 0 {
+    // §35.2's `Partial` is "a source could not be read", and §2.17 forbids calling a projection
+    // complete when one of the places it drew is holding a refusal. The budget's own answer is
+    // `Bounded`; a denial outranks it, because a reader who is told `bounded` knows how many are
+    // hidden and a reader who is told `complete` is told there is nothing more to see.
+    let denied = drawn.iter().any(|place| {
+        index
+            .withheld(&place.id)
+            .iter()
+            .any(|(_, state, _)| *state == ono_spatial_core::PermissionState::PermissionDenied)
+    });
+    let completeness = if denied {
+        Completeness::Partial
+    } else if hidden.count == 0 {
         Completeness::Complete
     } else {
         Completeness::Bounded

@@ -1131,3 +1131,56 @@ fn should_keep_the_working_directory_usable_when_a_denied_directory_is_named() {
     );
     denied_again.expect("the directory is readable again so the scratch can be cleaned up");
 }
+
+#[test]
+fn should_refuse_a_search_anchored_on_a_path_this_user_may_not_read() {
+    // §27.1 gives the spatial commands one selector grammar, and a path is one of its spellings:
+    // `enter /root` reaches the filesystem, so `find place --near /root` must reach it too. It
+    // did not — the anchor was resolved against the index alone, so a denied scope answered
+    // `spatial.not_found`, which says the place is not there rather than that it is not this
+    // user's to see (§35.1, §35.2, §40).
+    if uid() == 0 {
+        return;
+    }
+    let run = ono("find place --near /root secret");
+    assert!(
+        run.stderr().contains("spatial.permission_denied"),
+        "§35.1/§40: a search anchored on a denied path is refused by name, got {:?} / {:?}",
+        run.stdout(),
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_not_call_a_map_complete_when_a_place_it_drew_could_not_be_read() {
+    // §22's `completeness` has a word for this and the map never used it: `partial` is "a source
+    // could not be read" (§35.2). A map centred on a directory whose contents are denied drew the
+    // place, drew none of its contents, and called itself `complete` — which under §2.17 is the
+    // shell claiming there is nothing more to see.
+    if uid() == 0 {
+        return;
+    }
+    let dir = scratch();
+    let denied = dir.path().join("denied");
+    std::fs::create_dir(&denied).expect("the test makes its own directory");
+    std::fs::write(denied.join("secret.txt"), "secret").expect("and puts something in it");
+    std::fs::set_permissions(&denied, std::os::unix::fs::PermissionsExt::from_mode(0o000))
+        .expect("and takes every permission from it");
+
+    let run = ono(&format!("map {} --depth 1 --json", denied.display()));
+    let readable =
+        std::fs::set_permissions(&denied, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+
+    run.assert_success();
+    assert!(
+        run.stdout().contains("\"completeness\":\"partial\""),
+        "§22/§35.2: the map of a place it could not read is `partial`, got {:?}",
+        run.stdout()
+    );
+    assert!(
+        !run.stdout().contains("secret.txt"),
+        "§35.1: and it shows none of the contents, got {:?}",
+        run.stdout()
+    );
+    readable.expect("the directory is readable again so the scratch can be cleaned up");
+}

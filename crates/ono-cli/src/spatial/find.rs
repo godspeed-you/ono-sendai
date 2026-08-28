@@ -13,7 +13,7 @@ use ono_core::ErrorCode;
 use ono_parser::Expr;
 use ono_pipeline::ValueStream;
 use ono_provider_api::{ProviderRegistry, Query};
-use ono_spatial_core::{BootIdentity, SpatialScope, SpatialType};
+use ono_spatial_core::{BootIdentity, PermissionState, SpatialScope, SpatialType};
 use ono_spatial_query::discovery::{TargetPlan, root_fields, targets_for};
 use ono_spatial_query::{FindRequest, SelectorContext, resolve};
 use ono_value::{ErrorValue, RecordValue, Value};
@@ -113,10 +113,41 @@ impl CommandImpl for FindPlace {
             }
 
             request = request.from_place(session.current_place().clone());
-            let index = session.index();
             if let Some(anchor) = anchor {
+                // §27.1 gives every spatial command one selector grammar, and a path is one of
+                // its spellings: `enter /srv` reaches the filesystem (§15.1, §33.3), so an anchor
+                // spelled as a path reaches it here too. Without this the anchor was resolved
+                // against the index alone, and a path nobody had looked at yet — or one this user
+                // may not read — answered `spatial.not_found` (§35.2, ADR-0198).
+                if crate::spatial::storage::looks_like_a_path(&anchor) {
+                    crate::spatial::storage::observe_place_at(
+                        ctx.providers(),
+                        &mut session,
+                        std::path::Path::new(&anchor),
+                        now,
+                    )
+                    .await?;
+                }
+                let index = session.index();
                 let found =
                     resolve(index, &anchor, &SelectorContext::anywhere(), now).require(&anchor)?;
+                // §35.1: a search inside a scope this user may not read cannot come back empty and
+                // complete-looking. The place is legible — that is how it was resolved — and what
+                // is inside it is not, so the search says so rather than answering about nothing.
+                if let Some((_, _, detail)) = index
+                    .withheld(found.spatial_id())
+                    .into_iter()
+                    .find(|(_, state, _)| *state == PermissionState::PermissionDenied)
+                {
+                    return Err(ErrorValue::new(
+                        ErrorCode::SpatialPermissionDenied,
+                        format!("`{anchor}` cannot be searched by this user: {detail}"),
+                    )
+                    .with_help(
+                        "denied is not empty: an answer from here would look complete and be \
+                         nothing of the sort (spec v0.4 §35.1, §35.2, §40)",
+                    ));
+                }
                 request = request.near(found.spatial_id().clone());
             }
 

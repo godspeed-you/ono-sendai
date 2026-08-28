@@ -175,6 +175,22 @@ pub(crate) async fn observe_place_at(
     crate::spatial::view::observe_targets_with(providers, state, &["mount"], now).await;
     link_mount(state, &there, path, now);
 
+    // §35.2 and §2.17: a directory this user may not read has contents, and the shell does not
+    // know what they are. Recording the refusal is what keeps every later view — the place view,
+    // `near`, and the map's `completeness` — from reporting a place it could not read as one it
+    // read and found nothing in.
+    if let Err(error) = std::fs::read_dir(path)
+        && error.kind() == std::io::ErrorKind::PermissionDenied
+    {
+        let (index, _) = state.absorb_with();
+        index.record_withheld(
+            &there,
+            "children",
+            ono_spatial_core::PermissionState::PermissionDenied,
+            &format!("`{}` cannot be read by this user", path.display()),
+        );
+    }
+
     // §15.1: the enclosing directory is the parent of the Unix path tree. `up` consults it at
     // exactly the position `path.parent` holds in the rule chain, so a mount point still goes up
     // to its mount first (§15.3).
