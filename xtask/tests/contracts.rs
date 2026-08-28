@@ -346,11 +346,43 @@ fn spatial(repo: &Scratch) {
     repo.write("docs/spec/spatial/landmarks.yaml", &document);
 }
 
+/// The registry-internal problems of a fixture repository.
+///
+/// The fixture declares a small world of its own, so only the checks that hold the four
+/// documents against *each other* apply to it; the drift check against `ono-spatial-core` is
+/// exercised against this repository's own registry below, exactly as the error registry is.
+fn spatial_problems(repo: &Scratch) -> Vec<String> {
+    xtask::contracts::check_spatial_registry(repo.path())
+        .into_iter()
+        .map(|problem| format!("{} — {}", problem.location, problem.detail))
+        .collect()
+}
+
 #[test]
 fn should_accept_a_spatial_registry_whose_four_documents_agree() {
     let repo = consistent();
     spatial(&repo);
-    assert_eq!(problems(&repo), Vec::<String>::new());
+    assert_eq!(spatial_problems(&repo), Vec::<String>::new());
+}
+
+#[test]
+fn should_match_the_spatial_registry_against_the_implementation_that_serves_it() {
+    // Spec v0.4 §41's Intent: without machine contracts the renderer, the providers, the parser
+    // and the documentation drift into different definitions of the world. This is the half of
+    // the check that holds `docs/spec/spatial/` against `ono-spatial-core` in both directions.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let found = xtask::contracts::check_spatial_implementation(root);
+    assert!(
+        found.is_empty(),
+        "the spatial contract and the implementation disagree:\n{}",
+        found
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }
 
 #[test]
@@ -365,11 +397,11 @@ fn should_reject_a_space_whose_canonical_parent_is_not_a_declared_space() {
          \n  - id: compute\n    label: COMPUTE\n    parent: nowhere\n    object_type: Compute\n    enterable: true\n    commands: [look]\n    summary_fields: [process_count]\n",
     );
     assert!(
-        problems(&repo)
+        spatial_problems(&repo)
             .iter()
             .any(|problem| problem.contains("nowhere")),
         "a dangling canonical parent must be reported, got {:?}",
-        problems(&repo)
+        spatial_problems(&repo)
     );
 }
 
@@ -384,11 +416,11 @@ fn should_reject_a_space_or_relation_naming_a_type_the_vocabulary_does_not_hold(
         "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Unicorn\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    confidence: exact\n    cost_class: cheap\n",
     );
     assert!(
-        problems(&repo)
+        spatial_problems(&repo)
             .iter()
             .any(|problem| problem.contains("Unicorn")),
         "an edge end outside the object-type vocabulary must be reported, got {:?}",
-        problems(&repo)
+        spatial_problems(&repo)
     );
 }
 
@@ -403,11 +435,11 @@ fn should_reject_a_relation_whose_confidence_is_outside_the_specified_vocabulary
         "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Socket\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    confidence: probably\n    cost_class: cheap\n",
     );
     assert!(
-        problems(&repo)
+        spatial_problems(&repo)
             .iter()
             .any(|problem| problem.contains("probably")),
         "a confidence outside §11.5 must be reported, got {:?}",
-        problems(&repo)
+        spatial_problems(&repo)
     );
 }
 
@@ -422,11 +454,11 @@ fn should_reject_a_landmark_registry_missing_one_of_the_fourteen_required_reason
         "version: 1\nlandmarks:\n  - reason: high_cpu\n    domain: compute\n    evidence: Observed.\n    threshold: null\n    severity: notice\n",
     );
     assert!(
-        problems(&repo)
+        spatial_problems(&repo)
             .iter()
             .any(|problem| problem.contains("user_pinned")),
         "a missing built-in reason must be reported, got {:?}",
-        problems(&repo)
+        spatial_problems(&repo)
     );
 }
 
@@ -441,10 +473,10 @@ fn should_reject_a_landmark_threshold_that_disagrees_with_the_setting_that_confi
         "version: 1\nlandmarks:\n  - reason: high_cpu\n    domain: compute\n    evidence: The CPU share.\n    threshold:\n      metric: cpu_percent\n      comparison: at_or_above\n      default: 55\n      setting: spatial.landmarks.high_cpu\n    severity: notice\n",
     );
     assert!(
-        problems(&repo)
+        spatial_problems(&repo)
             .iter()
             .any(|problem| problem.contains("two defaults")),
         "a threshold default that disagrees with its setting must be reported, got {:?}",
-        problems(&repo)
+        spatial_problems(&repo)
     );
 }

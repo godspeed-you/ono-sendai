@@ -907,6 +907,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ono-spatial-core"
+version = "0.3.0"
+dependencies = [
+ "jiff",
+ "ono-core",
+ "ono-graph",
+ "ono-provider-api",
+ "ono-render",
+ "ono-testkit",
+ "ono-value",
+ "serde_yaml_ng",
+ "sha2",
+]
+
+[[package]]
 name = "ono-testkit"
 version = "0.3.0"
 dependencies = [
@@ -1535,6 +1550,7 @@ dependencies = [
  "ono-adapter",
  "ono-core",
  "ono-parser",
+ "ono-spatial-core",
  "ono-testkit",
  "ono-value",
  "serde",

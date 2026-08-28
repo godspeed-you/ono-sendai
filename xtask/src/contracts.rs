@@ -80,7 +80,8 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     );
     problems.extend(check_error_registry(root));
     problems.extend(check_adapter_packs(root));
-    problems.extend(check_spatial_registry(root, &schemas));
+    problems.extend(check_spatial_registry(root));
+    problems.extend(check_spatial_implementation(root));
 
     problems.sort_by(|a, b| (&a.location, &a.detail).cmp(&(&b.location, &b.detail)));
     problems
@@ -705,7 +706,7 @@ pub fn check_examples(root: &Path) -> Vec<Problem> {
 /// A missing directory is not a failure: registries arrive with the phase that needs them
 /// (AGENTS.md §14).
 #[must_use]
-pub fn check_spatial_registry(root: &Path, schemas: &BTreeSet<String>) -> Vec<Problem> {
+pub fn check_spatial_registry(root: &Path) -> Vec<Problem> {
     let directory = root.join("docs").join("spec").join("spatial");
     if !directory.is_dir() {
         return Vec::new();
@@ -732,6 +733,7 @@ pub fn check_spatial_registry(root: &Path, schemas: &BTreeSet<String>) -> Vec<Pr
         }
     };
 
+    let schemas = schema_ids(root);
     let subsystem = read("spatial.yaml");
     let spaces = read("spaces.yaml");
     let relations = read("relations.yaml");
@@ -774,7 +776,7 @@ pub fn check_spatial_registry(root: &Path, schemas: &BTreeSet<String>) -> Vec<Pr
         .filter_map(|entry| Some((string_at(entry, "key")?, entry.clone())))
         .collect();
 
-    problems.extend(check_spaces(&spaces_at, &spaces, &types, schemas));
+    problems.extend(check_spaces(&spaces_at, &spaces, &types, &schemas));
     problems.extend(check_relations(
         &relations_at,
         &relations,
@@ -784,6 +786,252 @@ pub fn check_spatial_registry(root: &Path, schemas: &BTreeSet<String>) -> Vec<Pr
         &cost_classes,
     ));
     problems.extend(check_landmarks(&landmarks_at, &landmarks, &settings));
+    problems
+}
+
+/// Checks the spatial registry against the implementation that serves it.
+///
+/// The registry-internal checks of [`check_spatial_registry`] say the four documents agree with
+/// each other; this one says they agree with `ono-spatial-core`, which is the half that keeps a
+/// contract from becoming a description of what someone once intended. It is the same rule
+/// `crates/ono-cli/tests/providers.rs` applies to `docs/spec/providers/`: drift in either
+/// direction is a failure (ADR-0126, ADR-0128).
+#[must_use]
+pub fn check_spatial_implementation(root: &Path) -> Vec<Problem> {
+    let directory = root.join("docs").join("spec").join("spatial");
+    if !directory.is_dir() {
+        return Vec::new();
+    }
+    let read = |name: &str| -> Option<(String, Yaml)> {
+        let path = directory.join(name);
+        let text = std::fs::read_to_string(&path).ok()?;
+        let document = serde_yaml_ng::from_str::<Yaml>(&text).ok()?;
+        Some((relative(root, &path), document))
+    };
+    let (
+        Some((subsystem_at, subsystem)),
+        Some((spaces_at, spaces)),
+        Some((relations_at, relations)),
+    ) = (
+        read("spatial.yaml"),
+        read("spaces.yaml"),
+        read("relations.yaml"),
+    )
+    else {
+        return Vec::new();
+    };
+
+    let mut problems = check_vocabularies(&subsystem_at, &subsystem);
+    problems.extend(check_geography(&spaces_at, &spaces));
+    problems.extend(check_relation_table(&relations_at, &relations));
+    problems
+}
+
+/// Every schema id declared under `docs/spec/schemas/`.
+fn schema_ids(root: &Path) -> BTreeSet<String> {
+    yaml_files(&root.join("docs").join("spec").join("schemas"))
+        .into_iter()
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(path).ok()?;
+            let document = serde_yaml_ng::from_str::<Yaml>(&text).ok()?;
+            string_at(&document, "id")
+        })
+        .collect()
+}
+
+/// Holds `spaces.yaml` and the table in `ono_spatial_core::space` to each other, field for field.
+///
+/// The canonical geography exists twice — once as the contract §41.1 requires, once as the table
+/// the shell navigates — and the whole point of §41 is that those two are one thing. Comparing
+/// only the ids would let a space become non-enterable in the code while the registry still
+/// promised `enter`, which is exactly the kind of drift that reaches a user as a lie.
+fn check_geography(location: &str, document: &Yaml) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let declared: BTreeMap<String, &Yaml> = sequence(document, "spaces")
+        .into_iter()
+        .filter_map(|space| Some((string_at(space, "id")?, space)))
+        .collect();
+    let implemented: BTreeMap<&str, &ono_spatial_core::CanonicalSpace> = ono_spatial_core::spaces()
+        .iter()
+        .map(|space| (space.id, space))
+        .collect();
+
+    problems.extend(drift(
+        location,
+        "spaces.yaml",
+        &declared.keys().cloned().collect(),
+        &implemented.keys().map(|id| (*id).to_owned()).collect(),
+    ));
+
+    for (id, space) in &declared {
+        let Some(implemented) = implemented.get(id.as_str()) else {
+            continue;
+        };
+        let fields: [(&str, String, String); 6] = [
+            (
+                "label",
+                string_at(space, "label").unwrap_or_default(),
+                implemented.label.to_owned(),
+            ),
+            (
+                "parent",
+                string_at(space, "parent").unwrap_or_default(),
+                implemented.parent.unwrap_or("null").to_owned(),
+            ),
+            (
+                "object_type",
+                string_at(space, "object_type").unwrap_or_default(),
+                implemented.object_type.as_str().to_owned(),
+            ),
+            (
+                "member_type",
+                string_at(space, "member_type").unwrap_or_default(),
+                implemented
+                    .member_type
+                    .map_or_else(|| "null".to_owned(), |kind| kind.as_str().to_owned()),
+            ),
+            (
+                "schema",
+                string_at(space, "schema").unwrap_or_default(),
+                implemented.schema.unwrap_or("null").to_owned(),
+            ),
+            (
+                "status",
+                string_at(space, "status").unwrap_or_else(|| "stable".to_owned()),
+                implemented.status.as_str().to_owned(),
+            ),
+        ];
+        for (field, declared, served) in fields {
+            if declared != served {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!(
+                        "`{id}` declares `{field}: {declared}` and `ono-spatial-core` serves \
+                         `{served}`"
+                    ),
+                });
+            }
+        }
+        if space.get("enterable").and_then(Yaml::as_bool) != Some(implemented.enterable) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` and `ono-spatial-core` disagree about whether the place is a \
+                     destination; `enterable` is what `enter` and completion read (§41.1)"
+                ),
+            });
+        }
+        for (field, declared, served) in [
+            (
+                "commands",
+                string_sequence(space, "commands"),
+                implemented
+                    .commands
+                    .iter()
+                    .map(|command| (*command).to_owned())
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                "summary_fields",
+                string_sequence(space, "summary_fields"),
+                implemented
+                    .summary_fields
+                    .iter()
+                    .map(|field| (*field).to_owned())
+                    .collect::<Vec<_>>(),
+            ),
+        ] {
+            if declared != served {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!(
+                        "`{id}` declares `{field}: {declared:?}` and `ono-spatial-core` serves \
+                         `{served:?}`"
+                    ),
+                });
+            }
+        }
+    }
+    problems
+}
+
+/// Holds `relations.yaml` and `ono_spatial_core::relations()` to each other, field for field.
+///
+/// A relation is a name a user types (§6.4) and a legend a map draws (§22); both are generated
+/// from the registry (§41.3), so a label that differs between the file and the table would put a
+/// word in the help that `follow` does not accept.
+fn check_relation_table(location: &str, document: &Yaml) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let declared: BTreeMap<String, &Yaml> = sequence(document, "relations")
+        .into_iter()
+        .filter_map(|relation| Some((string_at(relation, "id")?, relation)))
+        .collect();
+    let implemented: BTreeMap<&str, &ono_spatial_core::RelationSpec> =
+        ono_spatial_core::relations()
+            .iter()
+            .map(|relation| (relation.id, relation))
+            .collect();
+
+    problems.extend(drift(
+        location,
+        "relations.yaml",
+        &declared.keys().cloned().collect(),
+        &implemented.keys().map(|id| (*id).to_owned()).collect(),
+    ));
+
+    for (id, relation) in &declared {
+        let Some(implemented) = implemented.get(id.as_str()) else {
+            continue;
+        };
+        let fields: [(&str, String, String); 7] = [
+            (
+                "source",
+                string_at(relation, "source").unwrap_or_default(),
+                implemented.source.as_str().to_owned(),
+            ),
+            (
+                "target",
+                string_at(relation, "target").unwrap_or_default(),
+                implemented.target.as_str().to_owned(),
+            ),
+            (
+                "direction",
+                string_at(relation, "direction").unwrap_or_default(),
+                implemented.direction.as_str().to_owned(),
+            ),
+            (
+                "canonical_label",
+                string_at(relation, "canonical_label").unwrap_or_default(),
+                implemented.canonical_label.to_owned(),
+            ),
+            (
+                "inverse_label",
+                string_at(relation, "inverse_label").unwrap_or_default(),
+                implemented.inverse_label.to_owned(),
+            ),
+            (
+                "confidence",
+                string_at(relation, "confidence").unwrap_or_default(),
+                implemented.confidence.as_str().to_owned(),
+            ),
+            (
+                "cost_class",
+                string_at(relation, "cost_class").unwrap_or_default(),
+                implemented.cost_class.as_str().to_owned(),
+            ),
+        ];
+        for (field, declared, served) in fields {
+            if declared != served {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!(
+                        "`{id}` declares `{field}: {declared}` and `ono-spatial-core` serves \
+                         `{served}`"
+                    ),
+                });
+            }
+        }
+    }
     problems
 }
 
@@ -1097,4 +1345,150 @@ fn check_landmarks(
         }
     }
     problems
+}
+
+/// Checks the closed vocabularies of `spatial.yaml` against the types that implement them.
+///
+/// This is the drift check that `docs/spec/providers/` gets from
+/// `crates/ono-cli/tests/providers.rs`, in the direction the spatial registry needs it: a name
+/// the registry knows and the implementation does not is a space, relation or landmark nothing
+/// can serve, and a name the implementation knows and the registry does not is undocumented
+/// surface. §41.3 generates help, completion, map legends and SDK enums from these lists, so the
+/// two cannot be allowed to disagree (ADR-0126, ADR-0128).
+fn check_vocabularies(location: &str, subsystem: &Yaml) -> Vec<Problem> {
+    use ono_spatial_core::neighborhood::{Completeness, Freshness, PermissionState};
+    use ono_spatial_core::{
+        Confidence, CostClass, Direction, IdentityTier, LandmarkReason, Movement, ScopeKind,
+        SpatialType,
+    };
+
+    let mut problems = Vec::new();
+    let object_types: BTreeSet<String> = subsystem
+        .get("object_types")
+        .map(|value| {
+            string_sequence(value, "aggregates")
+                .into_iter()
+                .chain(string_sequence(value, "objects"))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let vocabularies: [(&str, BTreeSet<String>, Vec<&'static str>); 10] = [
+        (
+            "object_types",
+            object_types,
+            SpatialType::ALL.iter().map(|v| v.as_str()).collect(),
+        ),
+        (
+            "identity_tiers",
+            vocabulary(subsystem, "identity_tiers"),
+            IdentityTier::ALL.iter().map(|v| v.as_str()).collect(),
+        ),
+        (
+            "scope_kinds",
+            vocabulary(subsystem, "scope_kinds"),
+            ScopeKind::ALL.iter().map(|v| v.as_str()).collect(),
+        ),
+        (
+            "movements",
+            vocabulary(subsystem, "movements"),
+            Movement::ALL.iter().map(|v| v.as_str()).collect(),
+        ),
+        (
+            "confidence",
+            vocabulary(subsystem, "confidence"),
+            Confidence::ALL.iter().map(|v| v.as_str()).collect(),
+        ),
+        (
+            "directions",
+            vocabulary(subsystem, "directions"),
+            Direction::ALL.iter().map(|v| v.as_str()).collect(),
+        ),
+        (
+            "permission_states",
+            vocabulary(subsystem, "permission_states"),
+            PermissionState::ALL.iter().map(|v| v.as_str()).collect(),
+        ),
+        (
+            "freshness_states",
+            vocabulary(subsystem, "freshness_states"),
+            Freshness::ALL.iter().map(|v| v.as_str()).collect(),
+        ),
+        (
+            "completeness",
+            vocabulary(subsystem, "completeness"),
+            Completeness::ALL.iter().map(|v| v.as_str()).collect(),
+        ),
+        (
+            "cost_classes",
+            vocabulary(subsystem, "cost_classes"),
+            CostClass::ALL.iter().map(|v| v.as_str()).collect(),
+        ),
+    ];
+
+    for (what, declared, implemented) in vocabularies {
+        let implemented: BTreeSet<String> =
+            implemented.into_iter().map(ToOwned::to_owned).collect();
+        problems.extend(drift(location, what, &declared, &implemented));
+    }
+
+    // The geography and the relation vocabulary themselves, not only the names they are built
+    // from: this is what makes `docs/spec/spatial/spaces.yaml` and the table in
+    // `ono_spatial_core::space` one thing rather than two that happen to agree today.
+    problems.extend(drift(
+        location,
+        "landmarks.yaml reasons",
+        &LANDMARK_REASONS
+            .iter()
+            .map(|reason| (*reason).to_owned())
+            .collect(),
+        &LandmarkReason::ALL
+            .iter()
+            .map(|reason| reason.as_str().to_owned())
+            .collect(),
+    ));
+
+    problems
+}
+
+/// Both directions of drift between a declaration and an implementation.
+fn drift(
+    location: &str,
+    what: &str,
+    declared: &BTreeSet<String>,
+    implemented: &BTreeSet<String>,
+) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    for name in declared.difference(implemented) {
+        problems.push(Problem {
+            location: location.to_owned(),
+            detail: format!(
+                "`{what}` declares `{name}` and `ono-spatial-core` does not implement it; a \
+                 declared name nothing serves is a promise nobody keeps"
+            ),
+        });
+    }
+    for name in implemented.difference(declared) {
+        problems.push(Problem {
+            location: location.to_owned(),
+            detail: format!(
+                "`ono-spatial-core` implements `{name}` and `{what}` does not declare it; a \
+                 served name no file declares is undocumented surface"
+            ),
+        });
+    }
+    problems
+}
+
+/// The names one vocabulary declares in `spatial.yaml`, whether it spells them as a plain list or
+/// as a list of documented entries.
+fn vocabulary(document: &Yaml, key: &str) -> BTreeSet<String> {
+    let flat: BTreeSet<String> = string_sequence(document, key).into_iter().collect();
+    if !flat.is_empty() {
+        return flat;
+    }
+    sequence(document, key)
+        .into_iter()
+        .filter_map(|entry| string_at(entry, "name").or_else(|| string_at(entry, "id")))
+        .collect()
 }

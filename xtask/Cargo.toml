@@ -22,6 +22,7 @@ ono-adapter.workspace = true
 ono-core.workspace = true
 ono-value.workspace = true
 ono-parser.workspace = true
+ono-spatial-core.workspace = true
 serde = { workspace = true }
 serde_yaml_ng.workspace = true
 
