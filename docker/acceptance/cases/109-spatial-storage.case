@@ -95,8 +95,11 @@ run: |
     'grep -qF "\"count\":400" /tmp/s4d-many.json'
   prove s4d-q "and does not list them: the view stays inside its budget (§15.4, §34.2)" \
     'test "$(grep -o "entry-[0-9]*" /tmp/s4d-many.json | sort -u | wc -l)" -lt 400'
-  prove s4d-r "what it left out is disclosed rather than dropped (§15.4, §3.6)" \
-    'ono -c "enter /tmp/s4d/many; look" | grep -q "more not shown"'
+  # ADR-0212: the disclosure says what it counts. It used to read "N more not shown" directly
+  # under the exits, where a reader takes it for more exits; the count belongs to §3.6's
+  # neighbourhood — the places behind the exits the view budget left out.
+  prove s4d-r "what it left out is disclosed, and the line says what it counts (§15.4, §3.6)" \
+    'ono -c "enter /tmp/s4d/many; look" | grep -q "neighbours not shown"'
   prove s4d-s "the entries stay reachable as data — the pipeline is not replaced (§49.7)" \
     'test "$(ono -c "get dir /tmp/s4d/many | count | to text")" = "400"'
 

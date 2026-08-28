@@ -103,6 +103,9 @@ an ADR in the range 0209–0213. Files: `crates/ono-provider-netlink/src/{owners
 - [x] finding 2 — a `null` a provider answered is rendered as `empty` (ADR-0209)
 - [x] finding 3 — `find place --where` swallows unknown fields and evaluation errors (ADR-0210)
 - [x] finding 4 — a multi-line diagnostic prints `\u{a}` instead of its line breaks (ADR-0211)
+- [x] finding 1 — `look`'s hidden count does not describe the list above it (ADR-0212)
+- [ ] `help here` (§38.2, a SHOULD) stays filed: it is a new user-visible capability, and none of
+  the four fixes above went near the help code, so it is not the cheap addition the brief allowed
 
 **S6 + S7 + S8 + the map correction are integrated on one branch (2026-08-28, agent `integrate-1`).**
 Three merges, in that order, on top of `implementation` at `cbbcd2c`; gate green, acceptance 75/75.
@@ -1387,11 +1390,6 @@ one whole projection is in flight**, which §34.2's view budget will eventually 
 
 ## Next up (ordered)
 
-- [ ] **`look`'s hidden count does not describe the list above it (§24.1, §24.2).** At the root
-  `look` prints six domains and then `199 more not shown`; the 199 are neighbours the
-  neighbourhood bounded, not domains, so a reader concludes the root has 205 exits. Exit test:
-  the count `look` prints under a list is the count of the things in that list, or the line says
-  what it counts.
 - [ ] **Every read-only mount is a "storage pressure" landmark (§26.2, §2.11).** At STORAGE the
   landmark list is twenty snaps at `100% used`; a squashfs image is full by definition. Exit
   test: a read-only filesystem at 100 % is not a storage-pressure landmark, and a writable one

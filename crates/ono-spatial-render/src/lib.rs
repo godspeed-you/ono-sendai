@@ -86,12 +86,23 @@ pub fn place_view(view: &RecordValue, width: usize) -> Vec<String> {
         }
     }
 
+    // §3.6's `hidden_count` counts the *neighbourhood* — the places behind the exits that the
+    // view budget left out — and the line stands under the exits, where a reader takes it for
+    // more of them. At the root that read as "this machine has 205 exits", which §24.2 forbids
+    // the renderer from implying, so the line says what it counts (ADR-0212). Where the words
+    // that say how to see them do not fit, the count still does (§39.3).
     let hidden = record(view, "neighborhood")
         .and_then(|neighborhood| integer(&neighborhood, "hidden_count"))
         .unwrap_or_default();
     if hidden > 0 {
         lines.push(String::new());
-        lines.push(fit(&format!(" {hidden} more not shown"), width));
+        let disclosure = format!(" {hidden} more neighbours not shown — `near` lists them");
+        let line = if disclosure.chars().count() <= width {
+            disclosure
+        } else {
+            format!(" {hidden} more neighbours not shown")
+        };
+        lines.push(fit(&line, width));
     }
     lines
 }
