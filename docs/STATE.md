@@ -117,11 +117,14 @@ The resolutions worth knowing later:
   pseudo-terminal open. Reproducible with `( sleep 5 ) & exit 0` and nothing else. Case 107 now
   reaps its typist inside `drive`; any future PTY case must do the same.
 
-- **An event invalidates the target cache (ADR-0190).** ADR-0186's "a second look reads the index"
-  and ADR-0180's "the live map re-projects through the still map's path" compose into a live map
-  that reads the answer from *before* the change. `live::reproject` now calls
-  `SpatialSessionState::forget_targets` first: an event is precisely the statement that §33.3's
-  lifetime assumption no longer holds (§33.2).
+- **What a target answered belongs to a moment and to a host (ADR-0190).** ADR-0186's target
+  cache collided with two other decisions when the branches met. With ADR-0180, a live map
+  re-projected by reading the answer from *before* the change, so `live::reproject` now calls
+  `SpatialSessionState::forget_targets` first — an event is precisely the statement that §33.3's
+  lifetime assumption no longer holds (§33.2). With ADR-0169's remote scopes, the cache key was
+  the target name alone, so a session that jumped into a link recalled the *local* answer for the
+  remote host; the key now carries the scope (§43.7). Case 106's s8l catches the second, and
+  case 108 the first.
 
 Two tests are environment-dependent on a developer machine and green in the container. Neither is
 a merge regression:

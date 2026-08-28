@@ -1,4 +1,4 @@
-# ADR-0190: An event invalidates what a target last answered
+# ADR-0190: What a target answered belongs to a moment and to a host
 
 - Status: accepted
 - Date: 2026-08-28
@@ -10,6 +10,8 @@
 Two accepted decisions met for the first time when their branches were merged, and they
 contradict each other on one path:
 
+- **ADR-0180 and ADR-0169/ADR-0168** — a session stands on a *host*, and everything it observes
+  belongs to that host's scope; §43.7 forbids the accidental merge of two hosts' objects.
 - **ADR-0186** — a repeated view is *read* rather than asked for again. A provider target that
   answered inside its §33.3 lifetime is recalled from `SpatialSessionState::recall`, which is how
   §34's warm-`look` budget is met and what the §25.3 word `cached` reports.
@@ -24,9 +26,15 @@ correspond to actual topology or metric changes" — is then violated in the oth
 screen fails to move when the machine did, and the value that is emitted describes a moment that
 has passed.
 
+ADR-0186's cache was keyed by target name alone, which is the same collision one boundary over:
+a session that asked `process` on this machine and then jumped into a link recalled the *local*
+answer for the remote host, because the key did not carry the host the question was asked on.
+`docker/acceptance/cases/106-spatial-remote.case` s8l — "pid 1 here and pid 1 on testbox are two
+places" — is the assertion that catches it.
+
 ## Decision
 
-**An event is the statement that the assumption behind the cache no longer holds.** Before a live
+**1. An event is the statement that the assumption behind the cache no longer holds.** Before a live
 re-projection, `crate::spatial::live::reproject` calls
 `SpatialSessionState::forget_targets`, which drops what every target last answered, so the
 horizon is observed from the providers again.
@@ -36,10 +44,17 @@ and for them §33.3's lifetime is exactly the right assumption. §33.2 decides t
 "the providers are authoritative" and the index is a cache — and ADR-0186 itself says a stale
 target is asked again. This makes "an event arrived" one of the things that makes a target stale.
 
+**2. What a target answered is keyed by the scope it was asked in.** `recall` and `remember` take
+the session's current scope as part of the key, so an answer observed on this machine is never
+read back for a linked host. The host is part of the question, not a detail of the answer
+(§43.7, §3.2, §19.2).
+
 ## Consequences
 
 - `spatial_relationships_missing::should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes`
   and `docker/acceptance/cases/108-spatial-live.case` observe the change they were opened for.
+- Standing on a link asks that host its own questions, and crossing back reads what this machine
+  answered — both within their own §33.3 lifetimes.
 - A live map costs one observation per *change*, not per tick, which is what ADR-0180 already
   budgeted for; a quiet system still costs nothing.
 - The invalidation is whole-session rather than per-target. The events a live map subscribes to

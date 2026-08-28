@@ -68,8 +68,13 @@ pub struct SpatialSessionState {
     /// stood for, so it projects this observation again rather than asking the system a second
     /// time and answering about a different moment (ADR-0183).
     last_map: Option<(SpatialId, ono_spatial_query::MapHorizon)>,
-    /// What each provider target answered, and when (§33.1, §33.3, §34).
-    targets: BTreeMap<&'static str, TargetObservation>,
+    /// What each provider target answered, and when, **per scope** (§33.1, §33.3, §34, §43.7).
+    ///
+    /// The scope is part of the key because a target is a question and the host it was asked on
+    /// is part of the question: `process` answered on `local` says nothing about `process` on a
+    /// link, and recalling one for the other would be the accidental merge across a host
+    /// boundary §43.7 forbids (ADR-0190).
+    targets: BTreeMap<(String, &'static str), TargetObservation>,
 }
 
 /// A linked host the session can stand on (§19.1, §19.2).
@@ -495,8 +500,10 @@ impl SpatialSessionState {
     /// goes stale in five seconds even when it also yields something slower. A target that
     /// answered with no places at all takes the policy's default.
     #[must_use]
-    pub fn recall(&self, target: &str, now: Timestamp) -> Option<&TargetObservation> {
-        let seen = self.targets.get(target)?;
+    pub fn recall(&self, target: &'static str, now: Timestamp) -> Option<&TargetObservation> {
+        let seen = self
+            .targets
+            .get(&(self.current_scope().to_string(), target))?;
         let policy = self.index.freshness_policy();
         let fresh = seen.places.keys().all(|object_type| {
             policy.freshness(*object_type, Some(seen.at), false, now)
@@ -513,7 +520,8 @@ impl SpatialSessionState {
 
     /// Records what a provider target answered, so the next command can read it (§33.1).
     pub fn remember(&mut self, target: &'static str, observation: TargetObservation) {
-        self.targets.insert(target, observation);
+        let scope = self.current_scope().to_string();
+        self.targets.insert((scope, target), observation);
     }
 
     /// Drops what the targets last answered, so the next observation asks them again (§33.2).
