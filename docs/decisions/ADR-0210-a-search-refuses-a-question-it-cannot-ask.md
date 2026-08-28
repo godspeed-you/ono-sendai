@@ -47,11 +47,17 @@ about the part of the system it managed to ask.
    answer about. `crates/ono-cli/tests/spatial_contracts_missing.rs::should_find_a_place_by_its_properties_when_the_index_holds_it_and_no_provider_serves_it`
    is the test that caught the first draft doing exactly that.
 2. **A field some candidate kinds declare filters normally.** A cross-type search is what
-   `find place` is for, and a mount having no `cpu` is not an error: a target whose schema does
-   not declare the field is skipped as `Skipped::MissingField`, exactly as before.
-3. **An evaluation error on a record surfaces.** Every record reaching the predicate comes from
-   a target whose schema declares every field it reads, so a failure to evaluate is a failure of
-   the question rather than a row that did not match: `memory > 1` is
+   `find place` is for, and a mount having no `cpu` is not an error: a target whose schemas do
+   not declare the field is skipped as `Skipped::MissingField`, exactly as before — and, because
+   a target's providers may serve **several** schemas, the same rule applies again per record.
+   `filesystem` is one target serving `ono.filesystem/1` and `ono.mount/1`, and only the second
+   declares a `filesystem` field, so `find place --where filesystem == "tmpfs"` asks the mounts
+   and skips the filesystems instead of failing on them. The record is the honest granularity;
+   the first draft used the target, and the container caught it —
+   `docker/acceptance/cases/092-spatial-storage-discovery.case` `44.3c` is that exact search.
+3. **An evaluation error on a record surfaces.** Every record that reaches the predicate declares
+   every field it reads, so a failure to evaluate is a failure of the question rather than a row
+   that did not match: `memory > 1` is
    `Ono-Sendai-E0203 cannot compare bytesize and int`, and the search reports it.
 
 `find place` refuses on the first such error rather than emitting one error per row the way the

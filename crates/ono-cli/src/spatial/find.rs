@@ -91,8 +91,15 @@ impl CommandImpl for FindPlace {
             }
             let mut subjects: Vec<ono_spatial_core::SpatialId> = Vec::new();
             for target in plan.asked() {
-                let records =
-                    observe(ctx.providers(), target, predicate.as_ref(), &scope, now).await?;
+                let records = observe(
+                    ctx.providers(),
+                    target,
+                    predicate.as_ref(),
+                    &fields,
+                    &scope,
+                    now,
+                )
+                .await?;
                 // Which places these records *are*, before absorbing places they merely mention.
                 // A predicate was evaluated against these and against nothing else (§42.3).
                 subjects.extend(
@@ -380,13 +387,14 @@ fn walk(expression: &Expr, found: &mut Vec<String>) {
 /// A provider that cannot answer here — no systemd, no container runtime — is not a failure of
 /// the search: it is a part of the system that is not present, and the search says nothing about
 /// it rather than refusing (§4, §35.2). A predicate the record cannot be evaluated against is
-/// **not** the same: every record reaching here comes from a target whose schema declares every
-/// field the predicate reads, so a failure to evaluate is a failure of the question, and §2.17
-/// forbids reporting it as a row that did not match (ADR-0210).
+/// **not** the same: only records whose own schema declares every field the predicate reads are
+/// asked at all, so a failure to evaluate is a failure of the question, and §2.17 forbids
+/// reporting it as a row that did not match (ADR-0210).
 async fn observe(
     providers: &ProviderRegistry,
     target: &str,
     predicate: Option<&Expr>,
+    fields: &BTreeSet<String>,
     scope: &Arc<Scope>,
     now: Timestamp,
 ) -> Result<Vec<RecordValue>, ErrorValue> {
@@ -401,10 +409,23 @@ async fn observe(
             continue;
         };
         if let Some(predicate) = predicate {
+            // The plan decides which *targets* can match, and a target's providers may serve more
+            // than one schema — `filesystem` is a target whose records are `ono.filesystem/1`
+            // *and* `ono.mount/1`, and only the second declares `filesystem`. The record is the
+            // honest granularity: one whose schema does not declare a field the predicate reads
+            // is not a candidate for it, so it is skipped rather than asked and failed
+            // (ADR-0210's rule 2).
+            if !fields
+                .iter()
+                .all(|field| record.schema().field(field).is_some())
+            {
+                continue;
+            }
             let subject = Value::Record(Arc::clone(&record));
-            // §2.17 and §29.3: a predicate the record cannot be evaluated against is a refusal,
-            // not a non-match — `memory > 1` compares a bytesize with an int, and the v0.2
-            // pipeline says so rather than filtering the row away (ADR-0210).
+            // §2.17 and §29.3: a predicate a record that *does* declare the field cannot be
+            // evaluated against is a refusal, not a non-match — `memory > 1` compares a bytesize
+            // with an int, and the v0.2 pipeline says so rather than filtering the row away
+            // (ADR-0210).
             if !ono_command::is_true(&ono_command::evaluate(predicate, &subject, scope)?) {
                 continue;
             }

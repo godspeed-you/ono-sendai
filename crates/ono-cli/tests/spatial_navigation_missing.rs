@@ -763,6 +763,28 @@ fn should_still_search_across_kinds_when_only_some_of_them_declare_the_field() {
          {counted}; stderr {:?}",
         run.stderr()
     );
+
+    // The same rule one level down, and the case the container caught: a provider *target* may
+    // serve more than one schema. `filesystem` serves `ono.filesystem/1` and `ono.mount/1`, and
+    // only the second declares a `filesystem` field, so the record — not the target — is the
+    // granularity at which "this one cannot be asked" is decided. Every Linux has a tmpfs.
+    let mounts = ono("find place --where filesystem == \"tmpfs\" | count | to json");
+    mounts.assert_success();
+    let counted = rows(&mounts)
+        .first()
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| {
+            panic!(
+                "§29.4: `find place | count` answers a number, got {:?}",
+                mounts.stdout()
+            )
+        });
+    assert!(
+        counted >= 1,
+        "§6.8: a target whose providers serve several schemas still answers from the one that \
+         declares the field, got {counted}; stderr {:?}",
+        mounts.stderr()
+    );
 }
 
 #[test]
