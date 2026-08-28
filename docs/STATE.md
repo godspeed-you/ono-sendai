@@ -93,6 +93,37 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+**S6 + S7 + S8 + the map correction are integrated on one branch (2026-08-28, agent `integrate-1`).**
+Three merges, in that order, on top of `implementation` at `cbbcd2c`; gate green, acceptance 75/75.
+The resolutions worth knowing later:
+
+- **`home` extends the navigation history (ADR-0184).** S8's ADR-0170 had excluded it; §20.1 lists
+  `home` in the `movement` enum and §2.4 makes every movement reversible, so `back` returns
+  through it. ADR-0170 is superseded on that one point, and
+  `docker/acceptance/cases/106-spatial-remote.case` s8u spends three `back`s where it spent two —
+  its assertion is unchanged.
+- **`map --live` has two surfaces, and `Invocation::displays()` (ADR-0173) decides which.** Where
+  the values are *shown* — an interactive terminal — it is S6's full-screen polled view
+  (ADR-0176); where they are *consumed* it is S7's event-driven stream (ADR-0180), which is what
+  `map --live --json | take 3 | to json` reads. Shown with no terminal to draw into it is still
+  refused with `spatial.unsupported`, which §25.2 requires rather than a faked view. ADR-0180
+  itself assigns the alternate screen to S6 and the stream to S7; this is that split.
+- **The expansion memory of ADR-0183 lives in `crate::spatial::map::project_at`**, the one
+  re-projection path the still map, the full-screen view and the live stream all take (§45.4).
+- **`look --changes` answers `unknown`, not `unsupported`** (ADR-0181), so case 102's s4q reads
+  the new word. It is delivered now; `unsupported` was the honest answer while it was not.
+- **A case body that ends with a background job still running makes the acceptance runner report
+  exit 129**, however green its assertions are: the orphan holds the outer `script`'s
+  pseudo-terminal open. Reproducible with `( sleep 5 ) & exit 0` and nothing else. Case 107 now
+  reaps its typist inside `drive`; any future PTY case must do the same.
+
+Two suites carry load-sensitive tests that pass alone and fail under a loaded machine, both
+recorded by S7 as found-not-fixed: `spatial_relationships_missing::should_show_the_connection_edge_appear_and_vanish…`
+(the TIME_WAIT socket identity defect — `ono.socket/1` is keyed on `[inode]` and a TIME_WAIT
+socket has none) and `spatial_topology_missing::should_complete_the_relations_available…` (a PTY
+completion test with an 8 s budget). Neither is a merge regression; both were green in the gate run
+that passed.
+
 **The v0.4 tranche is running (started 2026-08-28).** The specification is
 `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md`; its executable requirements are
 the nine `crates/ono-cli/tests/spatial_*_missing.rs` suites (175 tests) and the ten

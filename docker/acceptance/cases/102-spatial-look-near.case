@@ -104,7 +104,7 @@ run: |
 
   echo "== no change section is invented where nothing was watching (§24.3) =="
   prove s4q "\`look --changes\` is accepted and states why it can say nothing" \
-    'ono -c "look --json --changes 10s" | grep -qF "\"changed\":{\"entries\":[],\"source\":null,\"state\":\"unsupported\""'
+    'ono -c "look --json --changes 10s" | grep -qF "\"changed\":{\"entries\":[],\"source\":null,\"state\":\"unknown\""'
   prove s4r "the default look carries no change section at all" \
     'ono -c "look --json" | grep -qF "\"changed\":null"'
 

@@ -91,7 +91,7 @@ run: |
   prove s8t "home from a remote place lands on the remote root (§6.6)" \
     'ono -c "$LINK; jump testbox; enter compute; home; look --json" 2>/dev/null | grep -qF "\"scope\":\"remote_host:testbox\""'
   prove s8u "and back walks the history back over the link, leaving the remote scope (§6.6, §2.4)" \
-    'ono -c "$LINK; jump testbox; enter compute; home; back; back; look --json | from json | select place | to json" 2>/dev/null | tail -1 | grep -qF "\"place_path\":\"local\""'
+    'ono -c "$LINK; jump testbox; enter compute; home; back; back; back; look --json | from json | select place | to json" 2>/dev/null | tail -1 | grep -qF "\"place_path\":\"local\""'
 
   echo '== every relation that came from the far side carries its provenance (§19.4, §11.4, §11.5) =='
   ono -c "$LINK; jump testbox; enter process/1; near --all | to json" > /tmp/near.json 2>/dev/null

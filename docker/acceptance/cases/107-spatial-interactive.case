@@ -35,11 +35,18 @@ run: |
   # `script` gives ono a controlling terminal and forwards the fifo into it, which is the only
   # way a key reaches a full-screen view at all.
   drive() {
-    local keys="$1" out="$2" writer="$3"
+    local keys="$1" out="$2" writer="$3" typist
     rm -f "$keys" "$out"
     mkfifo "$keys"
     ( eval "$writer" ) > "$keys" &
+    typist=$!
     script --quiet --return --command 'ono' "$out" < "$keys" > /dev/null 2>&1
+    # The typist outlives the session it typed into: `exit` is the second-to-last thing it
+    # writes, so it is still sleeping when `ono` is already gone. It has to be reaped here.
+    # A case body that ends with a background job still running leaves the outer `script`'s
+    # pseudo-terminal open, and `script --return` then reports 129 however green every
+    # assertion was — reproducible with `( sleep 5 ) & exit 0` and nothing else.
+    wait "$typist" 2>/dev/null || true
     rm -f "$keys"
   }
 
