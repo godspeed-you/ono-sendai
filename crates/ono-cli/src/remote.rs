@@ -599,6 +599,11 @@ fn detach_link(session: &mut Session, name: &str) -> Eval<(bool, String)> {
         return Err(unknown_link(name));
     };
     let persistent = link.persistent;
+    // v0.4 §19.1/§35.2: detaching leaves the attachment. The link is not torn down — `changed`
+    // below reports only whether a frame was popped, exactly as v0.2 §9.1 defines it — but this
+    // session has stopped following the host's space, so the places behind it are `stale` rather
+    // than answered as if they were still being kept current (ADR-0171).
+    crate::spatial::links::detach(name);
     let frames = session.pop_link_frames(name);
     if frames == 0 {
         return Ok((

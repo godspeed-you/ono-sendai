@@ -177,6 +177,8 @@ fn enter_link(session: &mut Session, name: String) -> Eval<ExitStatus> {
             .with_help(format!("`link host {name}` creates one (spec §21.1)")),
         ));
     }
+    // v0.4 §19.1: entering a link is following it again, so its places stop being `stale`.
+    crate::spatial::links::attach(&name);
     session.push_frame(ShellFrame {
         frame: ContextFrame::link(Value::string(&name)),
         restore_cwd: None,
@@ -482,6 +484,9 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
             targets.join(" ")
         }
     );
+    // v0.4 §19.1: a link just negotiated is one this session follows, whatever a `detach link`
+    // of an earlier link by the same name left behind.
+    crate::spatial::links::attach(&host);
     session.add_link(crate::session::SessionLink {
         name: host.clone(),
         host,

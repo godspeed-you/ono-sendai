@@ -1,0 +1,209 @@
+# v0.4 §50 Phase S8 — remote systems as space: the link map of §19.1, the remote root place and
+# the visible boundary crossing of §19.2, the federated map of §19.3, cross-host relationship
+# provenance and confidence (§19.4, §11.5), the host and the scope crossing on every trail step
+# (§20.1, §3.2), `home` for the current host (§6.6), the refusal to dial (§35.4) and the honest
+# `stale` of a link that is gone (§35.2, §43.7).
+#
+# The scenario is a user reaching a second machine from inside one systems interface rather than
+# from inside a second shell: they hold a link, see it among the places at the root, cross it,
+# find that the far side's pid 1 is not this side's, read the trail back and know which host each
+# step happened on, come home to the host they are standing on, walk back over the link, ask for
+# the federated map, and finally detach — after which the far side is honestly stale rather than
+# pretending to be empty.
+#
+# The link is `--transport local` (ADR-0037): the container spawns this same binary as
+# `ono --agent` over a pipe pair, so the whole case is offline, unprivileged and deterministic —
+# which is also what makes §43.7's "no accidental local/remote identity merge" the hard case here,
+# because the far side really is this same kernel.
+case: a linked host is a place, the crossing is visible, and a link that is gone says so
+timeout: 90
+env: NO_COLOR=1
+run: |
+  ESC=$(printf '\033')
+  LINK='link host testbox --transport local'
+
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== the link map: a linked host is one of the places at the root (§19.1) =='
+  ono -c "$LINK; look --json" > /tmp/root.json
+  prove s8a "the local root names the links this session holds (§19.1)" \
+    'grep -qF "\"links\":[" /tmp/root.json && grep -qF "\"name\":\"testbox\"" /tmp/root.json'
+  prove s8b "a link that just negotiated reads connected (§19.1, §35.2)" \
+    'grep -qF "\"state\":\"connected\"" /tmp/root.json'
+  prove s8c "the link map says where the link goes and how (§19.1)" \
+    'grep -qF "\"transport\":\"local\"" /tmp/root.json'
+  prove s8d "and it names the root place a jump would arrive at (§19.2)" \
+    'ono -c "$LINK; look --json | from json | select links | to json" | grep -qE "\"spatial_id\":\"ono:stable:[0-9a-f]{32}\""'
+  prove s8e "deeper in, a link is not a neighbour of a process (§19.1, §24.2)" \
+    'ono -c "$LINK; enter compute; look --json" | grep -qF "\"links\":null"'
+
+  echo '== crossing the link is a movement to a new SystemPlace, and it is visible (§19.2, §53) =='
+  prove s8f "the crossing is stated in words, on a colourless terminal (§21.3, §53)" \
+    'out=$(TERM=dumb ono -c "$LINK; jump testbox" 2>&1); printf "%s" "$out" | grep -q "testbox" && printf "%s" "$out" | grep -qE "remote|link"'
+  prove s8g "and it is text, not an escape sequence (§21.3, §39.1)" \
+    '! TERM=dumb ono -c "$LINK; jump testbox" 2>&1 | grep -q "$ESC"'
+  ono -c "look --json; $LINK; jump testbox; look --json" > /tmp/cross.json 2>/dev/null
+  prove s8h "the remote root is a different place from the local root (§19.2, §3.1)" \
+    'test "$(grep -o "\"spatial_id\":\"ono:stable:[0-9a-f]*\"" /tmp/cross.json | sort -u | wc -l)" -ge 2'
+  prove s8i "the remote root belongs to a RemoteHostScope naming the host (§3.2)" \
+    'grep -qF "\"scope\":\"remote_host:testbox\"" /tmp/cross.json'
+  prove s8j "and the local root does not (§3.2)" \
+    'grep -qF "\"scope\":\"host:" /tmp/cross.json'
+  prove s8k "the place path of a remote place starts at the host, not at local (§27.2, §19)" \
+    'ono -c "$LINK; jump testbox; enter compute; look --json" | grep -qF "\"place_path\":\"testbox/compute\""'
+
+  echo '== identity does not merge across the boundary (§43.7, §10.1, §3.2) =='
+  ono -c "enter process/1; look --json; home; $LINK; jump testbox; enter process/1; look --json" \
+    > /tmp/pid1.json 2>/dev/null
+  prove s8l "pid 1 here and pid 1 on testbox are two places (§43.7)" \
+    'test "$(grep -o "\"spatial_id\":\"ono:lifetime:[0-9a-f]*\"" /tmp/pid1.json | sort -u | wc -l)" -ge 2'
+  prove s8m "the remote process belongs to the remote scope (§3.2, §10.1)" \
+    'grep -qF "\"scope\":\"remote_host:testbox\"" /tmp/pid1.json'
+  prove s8n "a remote observation says so in its provenance (§25.2, §19.4)" \
+    'grep -qF "\"link\":\"testbox\"" /tmp/pid1.json'
+  prove s8o "a selector on the far side is answered by the far side (§27.1, §43.7)" \
+    'test "$(ono -c "enter process/1; look --json" | grep -o "\"spatial_id\":\"ono:lifetime:[0-9a-f]*\"" | head -1)" != "$(ono -c "$LINK; jump testbox; enter process/1; look --json" 2>/dev/null | grep -o "\"spatial_id\":\"ono:lifetime:[0-9a-f]*\"" | head -1)"'
+
+  echo '== the trail records the host and the scope crossing of every step (§20.1, §6.5, §3.2) =='
+  ono -c "$LINK; enter compute; jump testbox; enter compute; trail --json" > /tmp/trail.json 2>/dev/null
+  for field in from to movement timestamp host scope_crossing; do
+    prove "s8-step-$field" "every NavigationStep carries \`$field\` (§20.1)" \
+      "grep -qF '\"$field\":' /tmp/trail.json"
+  done
+  prove s8p "a step that happened here says local, one that happened there names the host (§20.1)" \
+    'grep -qF "\"host\":\"local\"" /tmp/trail.json && grep -qF "\"host\":\"testbox\"" /tmp/trail.json'
+  prove s8q "the jump carries the boundary it crossed, and names the scope entered (§3.2, §6.5)" \
+    'grep -qF "\"kind\":\"remote_host\"" /tmp/trail.json && grep -qF "\"to\":\"remote_host:testbox\"" /tmp/trail.json'
+  prove s8r "the crossing says it left the host, not merely that something changed (§2.18)" \
+    'grep -qF "\"remote\":true" /tmp/trail.json'
+  prove s8s "local COMPUTE and testbox COMPUTE are two destinations (§19, §43.7)" \
+    'test "$(grep -o "\"to_ref\":\"compute\"" /tmp/trail.json | wc -l)" -eq 2 && test "$(grep -o "\"to\":\"ono:stable:[0-9a-f]*\"" /tmp/trail.json | sort -u | wc -l)" -ge 2'
+
+  echo '== home is the root of the host you are on; back walks the trail across the link (§6.6) =='
+  prove s8t "home from a remote place lands on the remote root (§6.6)" \
+    'ono -c "$LINK; jump testbox; enter compute; home; look --json" 2>/dev/null | grep -qF "\"scope\":\"remote_host:testbox\""'
+  prove s8u "and back walks the history back over the link, leaving the remote scope (§6.6, §2.4)" \
+    'ono -c "$LINK; jump testbox; enter compute; home; back; back; look --json | from json | select place | to json" 2>/dev/null | tail -1 | grep -qF "\"place_path\":\"local\""'
+
+  echo '== every relation that came from the far side carries its provenance (§19.4, §11.4, §11.5) =='
+  ono -c "$LINK; jump testbox; enter process/1; near --all | to json" > /tmp/near.json 2>/dev/null
+  prove s8v "pid 1 has exits on the far side too (§12)" \
+    'test "$(grep -o "\"relation\":" /tmp/near.json | wc -l)" -ge 1'
+  prove s8w "an edge from the far side names the host whose evidence it rests on (§19.4)" \
+    'grep -qF "\"link\":\"testbox\"" /tmp/near.json'
+  prove s8x "and it names the provider that observed it (§11.4)" \
+    'grep -qF "\"provider\":" /tmp/near.json'
+  prove s8y "no confidence outside the fixed vocabulary of §11.5 reaches a remote edge" \
+    'test "$(grep -o "\"confidence\":\"[a-z_]*\"" /tmp/near.json | sort -u | grep -cvE "\"confidence\":\"(exact|strong|inferred|user_declared|unknown)\"")" -eq 0'
+
+  echo '== the federated map is asked for; the default map never expands a remote graph (§19.3) =='
+  ono -c "$LINK; map --json" > /tmp/localmap.json
+  prove s8z "the default root map does not walk the linked host (§19.3)" \
+    'test "$(grep -o "testbox" /tmp/localmap.json | wc -l)" -le 1'
+  ono -c "$LINK; map links --json" > /tmp/federated.json
+  prove s8aa "the federated map shows the linked host (§19.3)" \
+    'grep -qF "testbox" /tmp/federated.json'
+  prove s8ab "beside the local root, so it is a map of hosts and not of one (§19.3)" \
+    'test "$(grep -o "\"landmark_reasons\":" /tmp/federated.json | wc -l)" -ge 2'
+  prove s8ac "the two are joined by an edge (§19.3, §22)" \
+    'grep -qF "\"relation\":\"host.linked_to\"" /tmp/federated.json'
+  prove s8ad "whose confidence is the evidence it rests on, from §11.5 own vocabulary (§19.4)" \
+    'grep -qF "\"confidence\":\"exact\"" /tmp/federated.json'
+  prove s8ae "and it is a renderer-independent SpatialMap like any other (§22)" \
+    'grep -qF "\"nodes\":[" /tmp/federated.json && grep -qF "\"edges\":[" /tmp/federated.json && ! grep -qE "\"(x|y|row|col|column|position|coordinate|layout|screen)\":" /tmp/federated.json'
+
+  echo '== jump never dials (§35.4) =='
+  prove s8af "a hostname nothing links to is refused, not resolved (§35.4, §40)" \
+    'out=$(timeout 10 ono -c "try { jump prod/web01.invalid } catch e { \$e | to json }" 2>&1); printf "%s" "$out" | grep -q "\"name\":\"spatial\."'
+  prove s8ag "and the refusal carries the stable, user-visible code (§43)" \
+    'timeout 10 ono -c "try { jump prod/web01.invalid } catch e { \$e | to json }" 2>&1 | grep -q "Ono-Sendai-E"'
+  prove s8ah "the refusal takes no longer than a decision takes (§34, §35.4)" \
+    'timeout 5 ono -c "try { jump prod/web01.invalid } catch e { true }" > /dev/null 2>&1'
+
+  echo '== a link that is gone is stale, never empty (§35.2, §43.7, §53) =='
+  ono -c "$LINK; detach link testbox; look --json" > /tmp/detached.json 2>/dev/null
+  prove s8ai "a detached link stays in the link map (§19.1)" \
+    'grep -qF "\"name\":\"testbox\"" /tmp/detached.json'
+  prove s8aj "with a state that is not connected (§19.1, §35.2)" \
+    'ono -c "$LINK; detach link testbox; look --json | from json | select links | to json" 2>/dev/null | grep -qE "\"state\":\"(stale|disconnected)\""'
+  ono -c "$LINK; jump testbox; detach link testbox; look --json" > /tmp/stale.json 2>/dev/null
+  prove s8ak "a place behind a link that is gone reports stale (§35.2, §43.7)" \
+    'grep -qF "\"freshness\":\"stale\"" /tmp/stale.json'
+  prove s8al "its exits say stale rather than counting zero of anything (§35.2, §53)" \
+    'grep -qF "\"state\":\"stale\"" /tmp/stale.json && ! grep -qF "\"state\":\"empty\"" /tmp/stale.json'
+  prove s8am "and it still names the host it is a place on (§2.17, §20.3)" \
+    'grep -qF "\"scope\":\"remote_host:testbox\"" /tmp/stale.json'
+  prove s8an "entering the link again makes it followed again (§19.1)" \
+    'ono -c "$LINK; detach link testbox; enter link testbox; leave; look --json | from json | select links | to json" 2>/dev/null | grep -qF "\"state\":\"connected\""'
+
+  echo '== the remote surface composes with the rest of the shell (§19.1, §29.4) =='
+  prove s8ao "get link still answers exactly what v0.2 declares (§9.1)" \
+    'ono -c "$LINK; get link | select name state | to json" | grep -qF "\"state\":\"connected\""'
+  prove s8ap "get host lists the host the link reaches (§9.1, §19.1)" \
+    'ono -c "$LINK; get host | select name | to json" | grep -qF "testbox"'
+  prove s8aq "get host reports how a held link reaches the host it names (§9.1, §19.1)" \
+    'ono -c "$LINK; get host | select name source transport | to json" | grep -qF "\"source\":\"link\"" '
+  prove s8ar "the link map is an ordinary value a script reads (§29.4)" \
+    'ono -c "$LINK; look --json | from json | select links | to json" | grep -qF "testbox"'
+  prove s8as "and the shell is still a Unix shell on the far side of a link (§52.2)" \
+    'ono -c "$LINK; jump testbox; exec:printf \"still-unix\\n\"" 2>/dev/null | grep -qF "still-unix"'
+stdout-contains: PROVED s8a
+stdout-contains: PROVED s8b
+stdout-contains: PROVED s8c
+stdout-contains: PROVED s8d
+stdout-contains: PROVED s8e
+stdout-contains: PROVED s8f
+stdout-contains: PROVED s8g
+stdout-contains: PROVED s8h
+stdout-contains: PROVED s8i
+stdout-contains: PROVED s8j
+stdout-contains: PROVED s8k
+stdout-contains: PROVED s8l
+stdout-contains: PROVED s8m
+stdout-contains: PROVED s8n
+stdout-contains: PROVED s8o
+stdout-contains: PROVED s8-step-from
+stdout-contains: PROVED s8-step-to
+stdout-contains: PROVED s8-step-movement
+stdout-contains: PROVED s8-step-timestamp
+stdout-contains: PROVED s8-step-host
+stdout-contains: PROVED s8-step-scope_crossing
+stdout-contains: PROVED s8p
+stdout-contains: PROVED s8q
+stdout-contains: PROVED s8r
+stdout-contains: PROVED s8s
+stdout-contains: PROVED s8t
+stdout-contains: PROVED s8u
+stdout-contains: PROVED s8v
+stdout-contains: PROVED s8w
+stdout-contains: PROVED s8x
+stdout-contains: PROVED s8y
+stdout-contains: PROVED s8z
+stdout-contains: PROVED s8aa
+stdout-contains: PROVED s8ab
+stdout-contains: PROVED s8ac
+stdout-contains: PROVED s8ad
+stdout-contains: PROVED s8ae
+stdout-contains: PROVED s8af
+stdout-contains: PROVED s8ag
+stdout-contains: PROVED s8ah
+stdout-contains: PROVED s8ai
+stdout-contains: PROVED s8aj
+stdout-contains: PROVED s8ak
+stdout-contains: PROVED s8al
+stdout-contains: PROVED s8am
+stdout-contains: PROVED s8an
+stdout-contains: PROVED s8ao
+stdout-contains: PROVED s8ap
+stdout-contains: PROVED s8aq
+stdout-contains: PROVED s8ar
+stdout-contains: PROVED s8as
+stdout-not-contains: FAILED

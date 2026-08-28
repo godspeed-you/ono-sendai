@@ -74,6 +74,9 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     built.register(std::sync::Arc::new(crate::spatial::Map::new(
         crate::spatial::PinStore::of(session),
     )));
+    built.register(std::sync::Arc::new(crate::spatial::MapLinks::new(
+        crate::spatial::PinStore::of(session),
+    )));
     built.register(std::sync::Arc::new(crate::spatial::Home));
     built.register(std::sync::Arc::new(crate::spatial::Back));
     built.register(std::sync::Arc::new(crate::spatial::Up));

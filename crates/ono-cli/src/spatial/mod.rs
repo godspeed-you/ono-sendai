@@ -18,6 +18,7 @@ pub mod commands;
 pub mod complete;
 pub mod find;
 pub mod interactive;
+pub mod links;
 pub mod map;
 pub mod movement;
 pub mod pins;
@@ -29,11 +30,12 @@ pub mod view;
 
 pub use commands::{Enter, Follow, Home, Look, Near, enter_observed};
 pub use find::{FindPlace, local_scope, spatial_type};
-pub use map::Map;
+pub use links::LinkFacts;
+pub use map::{Map, MapLinks};
 pub use movement::{Back, Jump, Trail, Up};
 pub use pins::{PinPlace, PinStore, UnpinPlace, pin_path};
 pub use prompt::{at_terminal, mark_interactive, place_segment};
-pub use session::{SpatialSessionState, spatial_session};
+pub use session::{RemoteHost, SpatialSessionState, spatial_session};
 
 /// Reads the `spatial.*` settings the spatial layer honours, and hands them to the session state
 /// (spec v0.4 §26.3, §34.2, §47).

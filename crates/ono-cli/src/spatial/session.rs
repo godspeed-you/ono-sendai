@@ -34,8 +34,16 @@ use tokio::sync::{Mutex, MutexGuard};
 pub struct SpatialSessionState {
     trail: NavigationTrail,
     scope: SpatialScope,
+    /// The link the session is standing on, where it has crossed into one (§19.2).
+    host: Option<RemoteHost>,
     index: SpatialIndex,
-    bridge: ProviderBridge,
+    /// One provider bridge per host, keyed by the scope it projects into.
+    ///
+    /// A bridge remembers which id it gave which object, so a socket listed before its process
+    /// still reconciles with it (§42.1). That memory is per host by construction: a bridge
+    /// shared across a link would answer `pid 1` with the local pid 1's id, which is exactly
+    /// the accidental local/remote identity merge §43.7 forbids.
+    bridges: BTreeMap<String, ProviderBridge>,
     pins: PinRegistry,
     preferences: ViewPreferences,
     /// The thresholds the built-in landmark rules of §26.2 measure against (§26.3).
@@ -45,6 +53,36 @@ pub struct SpatialSessionState {
     /// graph expands and what §24.1's summary is read from — neither may be re-read behind the
     /// provider's back (§2.16).
     records: BTreeMap<SpatialId, Arc<RecordValue>>,
+}
+
+/// A linked host the session can stand on (§19.1, §19.2).
+///
+/// The name is the *link's*, not whatever the far side calls itself: the link name is what this
+/// session can vouch for, two links may reach machines that both answer `localhost`, and §14.5
+/// forbids inferring a remote identity from a coincidence (ADR-0169).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteHost {
+    /// The link's name, as `link host` recorded it.
+    pub link: String,
+    /// The scope every object observed across the link belongs to (§3.2's `RemoteHostScope`).
+    pub scope: SpatialScope,
+}
+
+impl RemoteHost {
+    /// The host a link of this name reaches (§3.2, §10.2).
+    ///
+    /// The boot identity is unknown: no `ono.host/1` carries one, and inventing one would make
+    /// a remote lifetime identity claim something nobody observed (§2.17, §35.3).
+    #[must_use]
+    pub fn of_link(link: &str) -> Self {
+        Self {
+            link: link.to_owned(),
+            scope: SpatialScope::remote_host(
+                link,
+                ono_spatial_core::BootIdentity::unknown_boot(link),
+            ),
+        }
+    }
 }
 
 /// The view settings a session carries between commands (§46's `view_preferences`).
@@ -121,9 +159,13 @@ impl SpatialSessionState {
             )
         });
         Self {
-            trail: NavigationTrail::new(space::root().spatial_id()),
+            trail: NavigationTrail::new(space::root().spatial_id_in(None)),
             index: SpatialIndex::new(FreshnessPolicy::recommended()),
-            bridge: ProviderBridge::new(Projection::new(scope.clone(), now)),
+            bridges: BTreeMap::from([(
+                scope.to_string(),
+                ProviderBridge::new(Projection::new(scope.clone(), now)),
+            )]),
+            host: None,
             scope,
             pins: PinRegistry::new(),
             preferences,
@@ -150,9 +192,74 @@ impl SpatialSessionState {
     }
 
     /// The host and boot every observation of this session belongs to (§3.2, §10.2).
+    ///
+    /// This is the *local* host: the machine the shell runs on, whatever place the session is
+    /// standing in. [`Self::current_scope`] is the one the current place belongs to.
     #[must_use]
     pub fn scope(&self) -> &SpatialScope {
         &self.scope
+    }
+
+    /// The scope observations are made in right now: the local host, or the linked one the
+    /// session has jumped into (§3.2, §19.2).
+    #[must_use]
+    pub fn current_scope(&self) -> &SpatialScope {
+        match &self.host {
+            Some(host) => &host.scope,
+            None => &self.scope,
+        }
+    }
+
+    /// The link the session is standing on, where it has crossed into one (§19.2).
+    #[must_use]
+    pub fn host(&self) -> Option<&RemoteHost> {
+        self.host.as_ref()
+    }
+
+    /// Crosses into `host`'s geography, or back to the local one with `None` (§19.2, §3.2).
+    ///
+    /// Everything that follows — which ids the canonical geography produces, which scope an
+    /// observed object is projected into, and therefore which identity it gets — belongs to the
+    /// host named here (§43.7).
+    pub fn stand_in(&mut self, host: Option<RemoteHost>, now: Timestamp) {
+        space::stand_in(host.as_ref().map(|host| host.scope.clone()));
+        let scope = match &host {
+            Some(host) => host.scope.clone(),
+            None => self.scope.clone(),
+        };
+        self.bridges
+            .entry(scope.to_string())
+            .or_insert_with(|| ProviderBridge::new(Projection::new(scope, now)));
+        self.host = host;
+    }
+
+    /// Follows the session's host to wherever `id` actually is (§19.2, §3.2).
+    ///
+    /// A place belongs to a host, and standing on it means standing on that host: `back` across
+    /// a link leaves the remote geography as surely as the `jump` entered it, and the canonical
+    /// spaces, the provider bridge and the provider registry all follow (§43.7, §14.4).
+    pub fn arrive_at(&mut self, id: &SpatialId, now: Timestamp) {
+        let scope = ono_spatial_query::resolve::scope_of_space(id).or_else(|| {
+            self.index
+                .get(id)
+                .map(|entry| entry.object().scope().clone())
+                .filter(SpatialScope::is_remote)
+        });
+        let host = scope.map(|scope| RemoteHost {
+            link: scope.host_scope().id().to_owned(),
+            scope,
+        });
+        if host.as_ref() != self.host.as_ref() {
+            self.stand_in(host, now);
+        }
+    }
+
+    /// The bridge that projects into the scope the session is standing in.
+    fn bridge(&self) -> &ProviderBridge {
+        let key = self.current_scope().to_string();
+        self.bridges
+            .get(&key)
+            .unwrap_or_else(|| unreachable!("a bridge exists for every scope stood in"))
     }
 
     /// What the session has learned (§33.1). A cache; the providers stay authoritative (§33.2).
@@ -163,7 +270,15 @@ impl SpatialSessionState {
 
     /// The index and the bridge together, which is how anything is added to it.
     pub fn absorb_with(&mut self) -> (&mut SpatialIndex, &mut ProviderBridge) {
-        (&mut self.index, &mut self.bridge)
+        let key = match &self.host {
+            Some(host) => host.scope.to_string(),
+            None => self.scope.to_string(),
+        };
+        let bridge = self
+            .bridges
+            .get_mut(&key)
+            .unwrap_or_else(|| unreachable!("a bridge exists for every scope stood in"));
+        (&mut self.index, bridge)
     }
 
     /// Registers what a provider answered: the places the records are, the records themselves,
@@ -175,12 +290,15 @@ impl SpatialSessionState {
     /// chooses what to show (§26.1, §3.6).
     pub fn absorb(&mut self, records: &[RecordValue], at: Timestamp) -> Absorbed {
         for record in records {
-            if let Ok(object) = self.bridge.project(record) {
+            if let Ok(object) = self.bridge().project(record) {
                 self.records
                     .insert(object.spatial_id().clone(), Arc::new(record.clone()));
             }
         }
-        let absorbed = self.bridge.absorb(&mut self.index, records, at);
+        let absorbed = {
+            let (index, bridge) = self.absorb_with();
+            bridge.absorb(index, records, at)
+        };
         self.promote(records, at);
         absorbed
     }
@@ -191,14 +309,14 @@ impl SpatialSessionState {
             return;
         }
         for record in records {
-            let Ok(object) = self.bridge.project(record) else {
+            let Ok(object) = self.bridge().project(record) else {
                 continue;
             };
             let landmarks = ono_spatial_query::landmarks_of_object(
                 &object,
                 Some(record),
                 &self.thresholds,
-                &self.scope,
+                self.current_scope(),
                 at,
             );
             if !landmarks.is_empty() {
@@ -218,7 +336,7 @@ impl SpatialSessionState {
     ///
     /// `spatial.identity_conflict` when the record declares no identity §3.1 can be derived from.
     pub fn projection_of(&self, record: &RecordValue) -> Result<SpatialId, ono_value::ErrorValue> {
-        self.bridge
+        self.bridge()
             .project(record)
             .map(|object| object.spatial_id().clone())
     }
@@ -232,7 +350,7 @@ impl SpatialSessionState {
         &self,
         record: &RecordValue,
     ) -> Result<ono_spatial_core::SpatialObject, ono_value::ErrorValue> {
-        self.bridge.project(record)
+        self.bridge().project(record)
     }
 
     /// What the provider last said about the object at `id`, where this session has seen it.

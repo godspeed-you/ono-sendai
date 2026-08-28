@@ -144,7 +144,7 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 (event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
 (§45.6).
 
-- (empty — S1, S2 and S3 complete, see below; no agent holds a claim)
+- (empty — S1–S5 and S8 complete, see below; no agent holds a claim)
 
 **S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
 on each:
@@ -830,8 +830,132 @@ Green now, all previously `#[ignore]`d — 14 tests:
   failure in it.
 
 ---
+**S8 — remote systems as space — is complete (2026-08-28, agent `S8`).** ADR-0168 to ADR-0172;
+gate green; acceptance case `docker/acceptance/cases/106-spatial-remote.case` added (51
+assertions, all proved locally against the real binary).
+
+Delivered:
+
+1. **A host's geography is its own** (ADR-0168). `ono_spatial_core::space` now keeps the
+   geographies this process knows: `stand_in` moves into one, `learn` registers one without
+   moving, `space_of_id` says which space an id names *and whose*. `SpatialIdentity::space_in`
+   adds the host to a canonical space's identity for a remote scope and nothing at all for a
+   local one, so every id built before S8 is unchanged and `testbox`'s `COMPUTE` is not this
+   machine's. Twenty-odd call sites became host-correct without being edited.
+2. **`jump <link>` crosses the boundary, visibly** (§19.2, §53). The destination is the linked
+   host's root `SystemPlace`; the crossing is stated in words on stderr, so a colourless terminal
+   sees it and a script's object stream stays objects; the trail step carries both ends and the
+   `scope_crossing` naming the scope entered; the prompt takes the host in `local`'s place
+   (§21.1, §21.3) whether `enter link` or `jump` put the session there.
+3. **The session's host follows the place.** `enter`, `follow`, `up`, `back` and `jump` all call
+   `SpatialSessionState::arrive_at`, which moves the geography, the provider bridge and — through
+   `Session::pipeline_context` — the provider registry to wherever the place actually is (§14.4).
+4. **Remote identity does not merge with local** (§43.7, ADR-0169). A remote scope is named by
+   the *link*, never by what the far side calls itself, and its boot identity is honestly unknown;
+   the provider bridge is per host, so its key memory cannot bridge a link; and §27.1 step 4 is
+   now the *current host's* index, so `enter process/1` on `testbox` is not answered with the
+   local pid 1 the index still holds.
+5. **The link map** (§19.1). `ono.link-place/1` is a new contract, and `ono.place-view/1` gains a
+   nullable `links` field, present at the root of a host. A link that is not connected stays in
+   the map with the state that says so.
+6. **A link that is gone is `stale`, never empty** (§35.2, §43.7, ADR-0171). `detach link` keeps
+   its v0.2 meaning and adds one: this session stops *following* the link. Standing on such a
+   host, `look` and `near` ask nothing at all — every exit is withheld `stale` with the link
+   named, the place's `permission` and `freshness` are `stale`. That is not only about age:
+   provider calls fall back to the local registry when no link is reachable, so asking would
+   answer a question about `testbox` with this machine's objects.
+7. **Provenance and confidence on every far-side relation** (§19.4, §11.4). A relationship edge
+   observed across a link carries `Provenance::remote(provider, host, …)`, and so does the
+   declared geography of a linked host — a remote observation is never indistinguishable from a
+   local one.
+8. **The federated map** (§19.3, ADR-0172). `map links` is its own command, `ono.place.map-links`,
+   with the target word §19.3 writes; it draws this host's root beside every linked host's root,
+   joined by `host.linked_to` edges whose confidence is the evidence's — `exact` for a link this
+   session negotiated, `user_declared` for a definition nobody has connected. The default `map`
+   mentions no linked host at all, which is §19.3's other half.
+
+Green from `crates/ono-cli/tests/spatial_remote_missing.rs` — **all thirteen**, none left ignored:
+`should_list_a_linked_host_among_the_places_when_looking_at_the_local_root`,
+`should_give_a_linked_host_a_root_place_distinct_from_the_local_root`,
+`should_announce_the_boundary_in_plain_text_when_jumping_to_a_linked_host`,
+`should_mark_the_remote_host_in_the_prompt_after_a_jump`,
+`should_record_the_host_and_the_scope_crossing_of_every_step_in_the_trail`,
+`should_return_home_to_the_local_root_from_a_remote_place`,
+`should_keep_a_remote_process_place_distinct_from_the_local_one_with_the_same_pid`,
+`should_report_a_place_behind_a_detached_link_as_stale_rather_than_empty`,
+`should_keep_a_detached_link_visible_with_its_state_in_the_link_map`,
+`should_carry_provenance_and_confidence_on_every_relation_that_comes_from_the_far_side`,
+`should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link`,
+`should_not_expand_a_remote_graph_into_the_default_root_map`,
+`should_show_the_linked_hosts_when_the_federated_map_is_asked_for`.
+
+**Two RED tests of this tranche contradict each other, and S7 owns the other one.** ADR-0170 has
+the trace in full. `spatial_remote_missing::should_return_home_to_the_local_root_from_a_remote_place`
+is only satisfiable if `home` does not push the place it left onto the stack `back` walks;
+`spatial_identity_missing::should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_dead_place`
+(still ignored, assigned to S7) is only satisfiable if it does. The two scripts are structurally
+identical — `L → P → home(L)` against `L → T → C → home(T)` — so no rule about `home` alone
+satisfies both. S8 implemented the S8 reading (`Movement::Home.extends_history() == false`, on the
+same argument that already made `back` not a toggle) and recorded the collision. **Whoever
+un-ignores the tombstone test reads ADR-0170 first.**
+
+**What S9 and S10 need from this phase** — the three things:
+
+- **A place's host is `SpatialSessionState::current_scope()`, not `scope()`.** The latter is the
+  machine the shell runs on and never changes; the former is the host the session is standing on.
+  Anything that projects, ranks or signs an observation wants the second.
+- **`crate::spatial::links` is the only place that answers "may I cross this link".** Both
+  `Session::pipeline_context` (which registry answers) and the spatial views (is this place stale)
+  read `links::reachable`. A plugin space or an adapted object that lives on a linked host asks
+  the same function.
+- **The link name is the scope id.** `remote_host:<link>` is the whole identity of a remote scope
+  (ADR-0169), so an adapter or a plugin that wants to place a remote object composes its scope
+  from the link name and nothing else.
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- §19.1's link map has no latency and no "last seen": `12ms` and `last seen 3h ago` are in the
+  spec's own example, and nothing in this build measures either. `ono.link-place/1` carries no
+  field for them rather than a null one nobody fills.
+- §19.4's *genuinely* two-sided cross-host correlation — a connection whose remote endpoint maps
+  to a linked host (§14.5) — is not built. What is built is the honesty requirement that holds for
+  every far-side edge: it says who observed it, from where, and how sure it is. The richer fixture
+  §43.3 asks for needs two hosts with a real connection between them, which an unprivileged
+  offline container cannot make.
+- A neighbour reached by canonical hierarchy rather than by an edge still carries a null
+  `confidence` and a null `provider`: there is no relationship to explain, and §2.6 forbids
+  inventing one. Every neighbour of a *process* has an edge, which is why the §19.4 test passes;
+  a place whose exits are collections would show the nulls.
+- `map links` draws one hop. §19.3's picture has `prod/web01 ----- prod/db01`, a link between two
+  *remote* hosts, which this session cannot observe: it would have to ask `testbox` for its own
+  link table, and nothing in the protocol carries one.
+- Two links to the same machine under two names are two scopes and therefore two sets of places.
+  That is a false distinction rather than a false merge, and §2.17 prefers it — but a session that
+  does it will see the same process twice.
+
+---
+
+
 
 ## Next up (ordered)
+
+- [ ] **A bounded map is not a superset of a bounded filtered map, and §43.2 says it must be.**
+  Found by S8 on 2026-08-28 while running the gate; **it is not an S8 regression** — it
+  reproduces identically on `ffbb221`, S5's own head, on the same machine. The two tests
+  `spatial_map_missing::should_only_remove_edges_when_a_relation_filter_narrows_the_map` and
+  `…should_only_remove_nodes_and_leave_no_dangling_edge_when_a_type_filter_narrows_the_map`
+  compare `map --all` with `map --all --type <t>` and require the second to be a subset of the
+  first. `ono_spatial_query::map::project` filters the *candidates* and then bounds what is left
+  to `spatial.map.node_budget`, so on a host with more objects than the budget the two runs pick
+  two different hundreds and the filtered map contains nodes the unfiltered one cut. Measured on
+  a 338-process host: both maps carry 99 nodes, and 3–5 of the filtered ones are absent from the
+  unfiltered one. The container has far fewer processes, which is why acceptance case 105 is
+  green and the unit tests are only red on a busy machine. §43.2 is unambiguous — "filtering
+  removes objects, it never creates them" — so the test is right and the projection is the
+  defect. The fix is S5's or S11's, it is a `fix` of its own, and it changes what `--type` and
+  `--relations` return: bound first and filter the bounded set, or carry the unfiltered ranking
+  into the filtered projection. Exit test: the two tests above, green on a host with more
+  processes than `spatial.map.node_budget`.
 
 - [ ] **Found by the dead-check sweep of `xtask/` (2026-08-28, `harness`, ADR-0159).** Same
   family as the repaired argument-mode check, but each is a different *kind* of change, so none

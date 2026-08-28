@@ -179,6 +179,25 @@ impl SpatialIdentity {
         Self::stable(SpatialType::System, [("space", space_id)])
     }
 
+    /// The identity of a canonical space in `scope`'s host geography (§19.2, §43.7).
+    ///
+    /// The host is part of what the place *is*: `prod/web01`'s `COMPUTE` and this machine's are
+    /// two conceptual objects, and §43.7 forbids the accidental merge that one shared id would
+    /// be. A local scope adds nothing, so every id built before hosts existed is unchanged.
+    #[must_use]
+    pub fn space_in(space_id: &str, scope: Option<&crate::SpatialScope>) -> Self {
+        match scope.filter(|scope| scope.is_remote()) {
+            Some(scope) => Self::stable(
+                SpatialType::System,
+                [
+                    ("host".to_owned(), scope.host_scope().to_string()),
+                    ("space".to_owned(), space_id.to_owned()),
+                ],
+            ),
+            None => Self::space(space_id),
+        }
+    }
+
     /// The tier.
     #[must_use]
     pub fn tier(&self) -> IdentityTier {

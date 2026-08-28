@@ -8,7 +8,10 @@
 //! This table is the same geography `docs/spec/spatial/spaces.yaml` declares, and
 //! `cargo run -p xtask -- spec-check` fails when the two disagree in either direction.
 
-use crate::SpatialType;
+use std::collections::BTreeMap;
+use std::sync::{OnceLock, RwLock};
+
+use crate::{SpatialScope, SpatialType};
 
 /// The zoom level of §8.1 a space sits at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -122,10 +125,145 @@ impl CanonicalSpace {
     }
 
     /// The space's opaque identity, which is the same in every session (§42.1).
+    ///
+    /// The geography is per host (§19.2: a `jump` across a link "MUST produce a new
+    /// `SystemPlace`"), so the id is the one for the host this process is currently standing in
+    /// — the local one until [`stand_in`] says otherwise. Two hosts' `COMPUTE` are two places,
+    /// and §43.7 forbids merging them.
     #[must_use]
     pub fn spatial_id(&self) -> crate::SpatialId {
-        crate::SpatialId::of_space(self.id)
+        self.spatial_id_in(standing_in().as_ref())
     }
+
+    /// The space's identity in `scope`'s host geography.
+    ///
+    /// `None`, and any scope on the local host, give the local geography — so every id this
+    /// crate produced before hosts existed is unchanged (§42.1: the same object resolves to the
+    /// same id).
+    #[must_use]
+    pub fn spatial_id_in(&self, scope: Option<&SpatialScope>) -> crate::SpatialId {
+        crate::SpatialIdentity::space_in(self.id, scope).spatial_id()
+    }
+
+    /// The label a place view shows for the space, in `scope`'s host geography.
+    ///
+    /// §7.1 makes the root place of a host the host itself, and §19.3 draws a federated map as a
+    /// list of hosts — `prod/web01`, `home/nas01` — so a remote root is called by the name of
+    /// the host it is the root of. Everything below it keeps its own label: the host is already
+    /// the first segment of the place path (§27.2's `prod/web01/compute/processes`), and
+    /// repeating it on every domain would say the same thing twice.
+    #[must_use]
+    pub fn label_in(&self, scope: Option<&SpatialScope>) -> String {
+        match scope.filter(|scope| scope.is_remote() && self.kind == SpaceKind::Root) {
+            Some(scope) => scope.host_scope().id().to_owned(),
+            _ => self.label.to_owned(),
+        }
+    }
+}
+
+/// The host geographies this process can stand in (§19.2, §29.2, §46).
+///
+/// A session is a process (§29.2: "the current place is script-local"; the spatial state of
+/// `ono-cli` is per process for exactly that reason), so the set of host geographies a session
+/// has entered is process state and lives here, beside the geography it indexes. Nothing in this
+/// module observes anything: `stand_in` is told which host the shell moved to, and everything
+/// else is arithmetic over the declared table above.
+#[derive(Debug)]
+struct Geographies {
+    /// The host the process is standing in, or `None` for the local one.
+    standing: Option<SpatialScope>,
+    /// Every canonical space id this process has produced, and the host geography it belongs to.
+    known: BTreeMap<crate::SpatialId, (&'static CanonicalSpace, Option<SpatialScope>)>,
+    /// The remote hosts whose geography is in `known`, so learning one twice is cheap.
+    hosts: Vec<SpatialScope>,
+}
+
+impl Geographies {
+    fn local() -> Self {
+        let mut known = BTreeMap::new();
+        for space in SPACES {
+            known.insert(space.spatial_id_in(None), (space, None));
+        }
+        Self {
+            standing: None,
+            known,
+            hosts: Vec::new(),
+        }
+    }
+
+    fn learn(&mut self, scope: &SpatialScope) {
+        if self.hosts.contains(scope) {
+            return;
+        }
+        for space in SPACES {
+            self.known.insert(
+                space.spatial_id_in(Some(scope)),
+                (space, Some(scope.clone())),
+            );
+        }
+        self.hosts.push(scope.clone());
+    }
+}
+
+fn geographies() -> &'static RwLock<Geographies> {
+    static GEOGRAPHIES: OnceLock<RwLock<Geographies>> = OnceLock::new();
+    GEOGRAPHIES.get_or_init(|| RwLock::new(Geographies::local()))
+}
+
+/// Moves the process into `scope`'s host geography, or back to the local one with `None`.
+///
+/// Every canonical space id produced afterwards is that host's, which is what makes `home`
+/// return to "the root `SYSTEM` place for the current host" (§6.6) and what keeps a remote
+/// `COMPUTE` from being the local one (§43.7). The host is remembered, so a place left behind on
+/// the trail is still recognisable after the session has moved on (§20.3).
+pub fn stand_in(scope: Option<SpatialScope>) {
+    let Ok(mut geographies) = geographies().write() else {
+        return;
+    };
+    if let Some(scope) = scope.as_ref().filter(|scope| scope.is_remote()) {
+        geographies.learn(scope);
+        geographies.standing = Some(scope.clone());
+    } else {
+        geographies.standing = None;
+    }
+}
+
+/// Registers `scope`'s geography without moving into it (§19.1, §19.3).
+///
+/// A host this session holds a link to has a root place whether or not anyone has jumped to it:
+/// §4 gives every host the canonical geography, and §19.1 already lists the link as somewhere to
+/// go. Learning it is what lets the federated map name the far root without pretending to stand
+/// on it (§19.3, §35.4).
+pub fn learn(scope: &SpatialScope) {
+    if !scope.is_remote() {
+        return;
+    }
+    if let Ok(mut geographies) = geographies().write() {
+        geographies.learn(scope);
+    }
+}
+
+/// The remote host geography the process is standing in, or `None` for the local one (§19.2).
+#[must_use]
+pub fn standing_in() -> Option<SpatialScope> {
+    geographies()
+        .read()
+        .ok()
+        .and_then(|geographies| geographies.standing.clone())
+}
+
+/// The canonical space an id names and the host geography it belongs to, where it names one.
+///
+/// `None` in the second position is the local host. An id of a host this process never entered
+/// is not a canonical space here — which is honest: nothing in this session can say what it is.
+#[must_use]
+pub fn space_of_id(
+    id: &crate::SpatialId,
+) -> Option<(&'static CanonicalSpace, Option<SpatialScope>)> {
+    geographies()
+        .read()
+        .ok()
+        .and_then(|geographies| geographies.known.get(id).cloned())
 }
 
 /// The id of the root space every session starts at (§46.1).
