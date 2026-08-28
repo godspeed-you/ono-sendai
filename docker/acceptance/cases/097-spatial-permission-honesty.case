@@ -87,6 +87,27 @@ run: |
      grep -qF "available on request" /tmp/lonely.json &&
      ! grep -qF "permission_denied" /tmp/lonely.json'
 
+  # The same rule at the other end of §32.1's cost classes: joining a socket to the process
+  # holding it means reading every `/proc/<pid>/fd` on the host, so a default `look` at a
+  # listener does not do it — and must not print the exit it did not read as a count. The
+  # listener is reached from a property, never from its owner, so nothing has told the shell who
+  # holds it (ADR-0209, dogfood finding 2 of 2026-08-28).
+  /opt/ono-fixtures/spatial/web-service.pl 18097 "$LONELY" 1 90 /tmp/fixture-097.state \
+    > /tmp/spatial/server-097.log 2>&1 &
+  for _ in $(seq 40); do [ -s /tmp/fixture-097.state ] && break; sleep 0.5; done
+  . /tmp/fixture-097.state
+  echo "fixture: listener main=$FIXTURE_WEB_MAIN port=$FIXTURE_WEB_PORT"
+  REACH="find place --type listener --where local.port == $FIXTURE_WEB_PORT | take 1 | enter"
+
+  echo "== an owner nobody looked up is unknown, not zero (§35.2, §32.1, §32.2) =="
+  prove 44.8m "the owner of a socket nobody asked about is unknown, never a count of zero" \
+    'place "$REACH" "look --json" > /tmp/listener.json;
+     grep -qF "\"process\"" /tmp/listener.json &&
+     ! grep -qE "\"process\" *: *\{[^}]*\"state\" *: *\"(empty|available)\"" /tmp/listener.json &&
+     grep -qF "available on request" /tmp/listener.json'
+  prove 44.8n "asked for explicitly, the same exit names the process that holds the socket (§6.2)" \
+    'place "$REACH" "look --all --json" | grep -qF "$FIXTURE_WEB_MAIN"'
+
   echo "== a root-only file: the place exists, the content does not become visible (§35.1) =="
   prove 44.8i "the file place answers with the metadata the kernel does give out (§15.5)" \
     'place "enter /etc/shadow" "look --json" | grep -qF "/etc/shadow"'
@@ -111,7 +132,7 @@ run: |
      ! grep -qF "secret.txt" /tmp/denied-map2.json'
 
   chmod 700 "$DENIED"
-  kill "$HOLDER" 2>/dev/null
+  kill "$HOLDER" "$FIXTURE_WEB_MAIN" 2>/dev/null
   echo "permission checks done"
 exit: 0
 stdout-contains: PROVED 44.8a
@@ -122,6 +143,8 @@ stdout-contains: PROVED 44.8e
 stdout-contains: PROVED 44.8f
 stdout-contains: PROVED 44.8g
 stdout-contains: PROVED 44.8h
+stdout-contains: PROVED 44.8m
+stdout-contains: PROVED 44.8n
 stdout-contains: PROVED 44.8i
 stdout-contains: PROVED 44.8j
 stdout-contains: PROVED 44.8k

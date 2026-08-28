@@ -310,9 +310,12 @@ pub fn socket_schema() -> Arc<Schema> {
                         .with_doc(
                             "The owning process, as an identity map of `pid` and `name`. Null \
                              unless `--process` was given, because finding the owner means \
-                             scanning every `/proc/<pid>/fd` on the machine; null also when no \
-                             process owns the socket, or when this user may not see the owner. \
-                             Spec §10.5 forbids collapsing those two into an empty string.",
+                             scanning every `/proc/<pid>/fd` on the machine, and null again when \
+                             that scan saw every process and none of them held this socket. \
+                             Where the scan was refused a process, the field carries that \
+                             refusal as an `io.permission_denied` error rather than a null: an \
+                             owner this reader may not see is denied, not absent (v0.4 §35.2, \
+                             §2.17).",
                         ),
                 )
                 .field(

@@ -698,6 +698,9 @@ in `docs/dogfood/v0.4-2026-08-28.md` and in `docs/STATE.md` under *Next up*.
       `spatial_contracts_missing.rs::should_report_denied_information_as_denied_rather_than_as_an_empty_collection`,
       `spatial_topology_missing.rs::should_distinguish_an_unavailable_group_from_an_empty_one_when_a_domain_has_no_provider`,
       `spatial_relationships_missing.rs::should_report_the_unreadable_namespace_group_as_unknown_rather_than_absent`,
+      `::should_not_report_the_owner_of_a_socket_nobody_looked_up_as_no_owner` (ADR-0209 — a
+      reference field a provider left null is never an empty exit, which is what
+      `docs/dogfood/v0.4-2026-08-28.md` finding 2 found the shell doing at a socket's owner),
       case `097`.
 - [x] **v0.3 adapted canonical objects participate where available** (§37). An adapted
       observation and its native twin reconcile to one place with both sources retained, and raw

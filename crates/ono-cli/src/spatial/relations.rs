@@ -501,7 +501,21 @@ pub async fn observe(
     // §35.2 and §2.17: an exit nothing in this build can fill is `unsupported`, which is a
     // different answer from `empty`. Saying "no sockets" about a relation nobody serves would be
     // a count taken from nowhere.
-    answered.extend(composed_labels(object_type).iter().copied());
+    //
+    // A composed exit answers for itself only where the record actually stated it. A reference
+    // field the provider left null states nothing, and where a relationship provider serves the
+    // same exit and this view declined to spend its budget on it (§32.1), the answer belongs to
+    // that provider and has not been asked for: "the owner of this socket" is a scan of every
+    // `/proc/<pid>/fd` on the host. Claiming the composed source answered turned that into
+    // `process 0`, which is §35.2's own counter-example and the false-empty rendering §42.4
+    // forbids (ADR-0209).
+    let stated = stated_labels(session, id);
+    answered.extend(
+        composed_labels(object_type)
+            .iter()
+            .copied()
+            .filter(|label| !declined.contains(label) || stated.contains(label)),
+    );
     let unanswered: Vec<&'static str> = relation::exits_from(object_type)
         .map(|(label, _)| label)
         .filter(|label| !answered.contains(label))
@@ -525,6 +539,29 @@ pub async fn observe(
         index.record_withheld(id, label, state, &detail);
     }
     Ok(())
+}
+
+/// The exits of the place at `id` that something has actually said an answer for: an edge under
+/// that label, or a recorded state saying why there is none (§35.2).
+///
+/// A label that is in neither is a label nobody has answered yet, which is not the same as a
+/// label whose answer is nothing.
+fn stated_labels(session: &SpatialSessionState, id: &SpatialId) -> BTreeSet<&'static str> {
+    let mut stated: BTreeSet<&'static str> = edges_by_label(session, id).into_keys().collect();
+    let index = session.index();
+    let Some(entry) = index.get(id) else {
+        return stated;
+    };
+    let object_type = entry.object().object_type();
+    for (label, _, _) in index.withheld(id) {
+        if let Some(declared) = relation::exits_from(object_type)
+            .map(|(declared, _)| declared)
+            .find(|declared| *declared == label)
+        {
+            stated.insert(declared);
+        }
+    }
+    stated
 }
 
 /// The confidence an edge may carry: the provider's own claim, never above what the relation

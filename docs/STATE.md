@@ -93,6 +93,15 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+**S11c — the four defects the v0.4 dogfooding session left open (2026-08-28, agent `S11c`).**
+`docs/dogfood/v0.4-2026-08-28.md` findings 1–4, each RED-first, each its own commit, each with
+an ADR in the range 0209–0213. Files: `crates/ono-provider-netlink/src/{owners,socket,schema}.rs`,
+`crates/ono-cli/src/spatial/{relations,find,commands}.rs`, `crates/ono-cli/src/report.rs`,
+`crates/ono-spatial-query/src/{discovery,resolve}.rs`, `crates/ono-spatial-render/src/lib.rs`,
+`docker/acceptance/cases/{097,101,109}`.
+
+- [x] finding 2 — a `null` a provider answered is rendered as `empty` (ADR-0209)
+
 **S6 + S7 + S8 + the map correction are integrated on one branch (2026-08-28, agent `integrate-1`).**
 Three merges, in that order, on top of `implementation` at `cbbcd2c`; gate green, acceptance 75/75.
 The resolutions worth knowing later:
@@ -1358,24 +1367,6 @@ and the fix is theirs: wait for the *place*, not for a byte count.
 
 ## Next up (ordered)
 
-- [ ] **A group the provider answered `null` for is reported `empty`, not `unknown` (§2.17,
-  §35.2).** Found by dogfooding, 2026-08-28, and the one release-relevant defect that session
-  produced. At a listener owned by another user, `look` says `process 0`: `get socket --listening`
-  honestly carries `"process": null` — an unprivileged process cannot read another user's socket
-  owner, and `ss -ltnp` shows the same blank — and the spatial layer turns that `null` into a
-  group with `count: 0, state: "available"`, which is §35.2's own counter-example. `null` is the
-  provider saying it does not know; only a field that carried an *error* reaches
-  `SpatialIndex::relation_summary`'s withheld path today. **The fix belongs to the provider, not
-  to the spatial layer**: `ProviderBridge`'s `Reader::refused` does exactly what §35.2 asks with
-  what it is given, and `null` is genuinely ambiguous at that seam — a TIME_WAIT socket has no
-  owning process, and an unreadable one has an owner nobody may see. `ono-provider-netlink` is
-  where the two are still distinguishable, so `ono.socket/1`'s `process` must carry an
-  `io.permission_denied` error where the join could not be made and `null` only where there is
-  no owner (§42.4, §2.17, AGENTS.md §6). Exit test: on a host with a socket owned by another
-  uid, `get socket --listening | where …` carries an error rather than `null` in `process`, and
-  `look` at that listener answers state `unknown` for its `process` group with no count;
-  `docs/decisions/ADR-0203`'s T17 row then names that test too. Reproduce today:
-  `ono -c "enter network; enter listeners; enter <a port owned by another uid>; look"`.
 - [ ] **`find place --where` swallows unknown fields and evaluation errors (§2.17, §29.3; v0.2
   §11.3).** `find place --type process --where nosuchfield == 1 | count` answers `0` where
   `get process | where nosuchfield == 1` refuses with `Ono-Sendai-E0202`; `--where memory > 1`

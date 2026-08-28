@@ -318,8 +318,18 @@ fn endpoint(
 
 /// The owning process as the identity map the `process` field carries.
 fn owner_of(owners: Option<&SocketOwners>, inode: u64) -> Value {
-    let Some(owner) = owners.and_then(|owners| owners.owner(inode)) else {
+    let Some(owners) = owners else {
+        // Nobody looked. The field is unknown, and spec §35.3 spells an unknown null.
         return Value::Null;
+    };
+    let Some(owner) = owners.owner(inode) else {
+        // The scan ran and did not attribute this inode. Whether that means "nobody holds it" or
+        // "the process that holds it is not yours to read" is the scan's own answer, and v0.4
+        // §35.2 keeps the two apart: a refusal is denied, never absent.
+        return match owners.refusal() {
+            Some(refusal) => refusal.into_value(),
+            None => Value::Null,
+        };
     };
     let mut identity = MapValue::new();
     identity.insert("pid".into(), Value::Int(i128::from(owner.pid())));

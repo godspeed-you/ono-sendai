@@ -602,6 +602,77 @@ fn should_bound_the_neighborhood_by_default_and_widen_it_with_all() {
     );
 }
 
+/// One exit of a `PlaceView`, by the word `look` prints for it (§24.2).
+fn exit_group(view: &Value, label: &str) -> Value {
+    for container in ["exits", "groups"] {
+        let Some(found) = view.get(container) else {
+            continue;
+        };
+        if let Some(group) = found.get(label) {
+            return group.clone();
+        }
+        if let Some(groups) = found.as_sequence() {
+            for group in groups {
+                if group.get("label").and_then(Value::as_str) == Some(label) {
+                    return group.clone();
+                }
+            }
+        }
+    }
+    panic!(
+        "spec §24.2: the place view carries a `{label}` exit, got {}",
+        rendered(view)
+    )
+}
+
+#[test]
+fn should_not_report_the_owner_of_a_socket_nobody_looked_up_as_no_owner() {
+    // §35.2, §2.17 and §32.2. Joining a socket to the process holding it means reading every
+    // `/proc/<pid>/fd` on the host — `expensive` in §32.1's cost classes — so a default `look`
+    // does not spend it, and §32.1 forbids it from doing so. What it may not do is print the
+    // exit as a count: `empty` is "they were read and there are none", and this listener has an
+    // owner, namely the process running this test. §32.2 gives the honest spelling for an exit
+    // nobody has paid for yet — "available on request" — and §35.2 keeps it distinct from `0`.
+    //
+    // The second half is the same fact from the other side: asked for explicitly, the exit
+    // answers with the owner, or says it may not be seen. Never with nothing.
+    let (listening, port) = listener();
+    let run = ono(&format!("enter 127.0.0.1:{port}; look --json"));
+    let view = place_view(&run);
+    let group = exit_group(&view, "process");
+    let state = group
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        !matches!(state.as_str(), "empty" | "available"),
+        "spec §35.2/§2.17: the owner of this socket was never looked up, so the exit may not be \
+         reported as read — got state {state:?} in {}",
+        rendered(&group)
+    );
+
+    let asked = ono(&format!("enter 127.0.0.1:{port}; look --all --json"));
+    let view = place_view(&asked);
+    let group = exit_group(&view, "process");
+    let state = group
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let count = group
+        .get("count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    assert!(
+        (state == "available" && count >= 1) || state == "permission_denied",
+        "spec §35.2/§6.2: asked for, the owner of a socket this test holds is either named or \
+         refused — got state {state:?} count {count} in {}",
+        rendered(&group)
+    );
+    drop(listening);
+}
+
 #[test]
 fn should_report_the_unreadable_namespace_group_as_unknown_rather_than_absent() {
     // §16.2, §35.2 and invariant 17: unprivileged, `/proc/1/ns` and `/proc/1/fd` are refused by
