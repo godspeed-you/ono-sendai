@@ -57,6 +57,14 @@ fields:
     doc: >-
       The word that provider uses for the relation — `reads`, `runs-as`. The same word `trace`
       prints for the same edge (§31.3); null where the neighbour is reached by hierarchy.
+  evidence:
+    type: record
+    nullable: true
+    doc: >-
+      §11.4's "raw evidence/reference where safe": what the provider actually saw, as it reported
+      it — the descriptor and the access mode of an open file, the inode of a socket. Empty where
+      the provider recorded no detail; null for a hierarchical member, which is containment and
+      has no observation behind it (§2.6, §3.4).
   provenance:
     type: record
     required: true

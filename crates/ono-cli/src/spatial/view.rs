@@ -938,6 +938,15 @@ pub fn neighborhood_record(
     .build())
 }
 
+/// What the provider saw beside the fact, without the relation's own word (§11.4).
+fn evidence_of(edge: &ono_spatial_core::RelationshipEdge) -> ono_value::MapValue {
+    edge.attributes()
+        .iter()
+        .filter(|(key, _)| *key != "provider_relation")
+        .map(|(key, value)| (std::sync::Arc::from(key), value.clone()))
+        .collect()
+}
+
 /// One neighbour as `ono.spatial-neighbor/1` (§6.2).
 pub fn neighbor_record(
     index: &SpatialIndex,
@@ -1024,6 +1033,15 @@ pub fn neighbor_record(
         edge.as_ref()
             .and_then(|edge| edge.attributes().get("provider_relation").cloned())
             .unwrap_or(Value::Null),
+    )?
+    // §11.4's "raw evidence/reference where safe": the detail the provider recorded beside the
+    // fact — the descriptor an open file was read through, the inode of a socket. The relation's
+    // own word travels in `provider_relation`, so it is not repeated here.
+    .set(
+        "evidence",
+        edge.as_ref().map_or(Value::Null, |edge| {
+            Value::Map(std::sync::Arc::new(evidence_of(edge)))
+        }),
     )?
     .set("spatial_id", field("spatial_id"))?
     .set("name", field("name"))?

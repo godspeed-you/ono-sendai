@@ -57,6 +57,14 @@ fields:
     type: string
     required: true
     doc: Who observed it (§11.4). The canonical geography is asserted by the spatial layer itself.
+  evidence:
+    type: map
+    required: true
+    doc: >-
+      §11.4's "raw evidence/reference where safe": what the provider actually saw, as it reported
+      it — the descriptor and the access mode of an open file, the inode of a socket. Empty for a
+      hierarchy edge, which is containment declared by the spatial layer and has no observation
+      behind it (§2.6, §3.4, §4.1).
   provenance:
     type: map
     required: true

@@ -29,7 +29,7 @@ use ono_spatial_core::{
     SpaceKind, SpatialId, SpatialType,
 };
 use ono_spatial_index::{PinRegistry, SpatialIndex};
-use ono_value::Provenance;
+use ono_value::{MapValue, Provenance};
 use sha2::{Digest, Sha256};
 
 /// The default visible-node budget of a text map (§34.2).
@@ -293,6 +293,11 @@ pub struct MapEdge {
     pub direction: Direction,
     /// Where the assertion came from (§11.4).
     pub provenance: Provenance,
+    /// What the provider saw beside the fact — §11.4's "raw evidence/reference where safe".
+    ///
+    /// Empty for a hierarchy edge: the canonical geography is declared by the spatial layer
+    /// itself (§4.1), so there is no observation behind it to show.
+    pub evidence: MapValue,
     /// When it was observed (§11.4).
     pub observed_at: Option<Timestamp>,
 }
@@ -825,6 +830,7 @@ fn edges_of(
                 "ono.spatial",
                 ono_value::SchemaId::new("ono.spatial-map", 1),
             ),
+            evidence: MapValue::new(),
             observed_at: index
                 .get(&place.id)
                 .map(ono_spatial_index::IndexEntry::observed_at),
@@ -866,6 +872,12 @@ fn edges_of(
             confidence: edge.confidence(),
             direction: edge.direction(),
             provenance: edge.provenance().clone(),
+            evidence: edge
+                .attributes()
+                .iter()
+                .filter(|(key, _)| *key != "provider_relation")
+                .map(|(key, value)| (std::sync::Arc::from(key), value.clone()))
+                .collect(),
             observed_at: Some(edge.observed_at()),
         });
     }

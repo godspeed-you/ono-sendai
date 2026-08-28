@@ -763,3 +763,52 @@ fn should_record_the_relation_it_traversed_when_a_follow_enters_the_trail() {
         "spec §20.1: the step records where the movement came from and where it went, got {shown}"
     );
 }
+
+#[test]
+fn should_carry_the_raw_evidence_of_an_edge_when_a_neighbour_or_a_map_edge_is_read() {
+    // §11.4's list ends with "raw evidence/reference where safe", and the v0.2 relationship graph
+    // already reports it: `linux.open-files` names the descriptor number the fact was read from.
+    // The spatial projection dropped it, so the edge said who observed it and never what they
+    // saw. ADR-0164 makes the edge itself the answer to `inspect relation`, so the evidence
+    // belongs on the edge rather than behind a second command.
+    let holder = FileHolder::spawn();
+
+    let neighbours = ono(&format!(
+        "enter process {}; near --type file | to json",
+        holder.pid()
+    ));
+    let rows = rows(&neighbours, "near --type file | to json");
+    let held = rows
+        .iter()
+        .find(|row| rendered(row).contains(&holder.path()))
+        .unwrap_or_else(|| {
+            panic!(
+                "spec §12: the process holds the file, so it is among its neighbours, got {:?}",
+                neighbours.stdout()
+            )
+        });
+    let evidence = held.get("evidence").unwrap_or_else(|| {
+        panic!("spec §11.4: an edge carries the raw evidence it was read from, got {held:?}")
+    });
+    assert!(
+        rendered(evidence).contains("fd"),
+        "spec §11.4/§37.2: the evidence is what the provider saw — the descriptor of the open \
+         file — not a second copy of its name, got {evidence:?}"
+    );
+
+    let mapped = ono(&format!("enter process {}; map --json", holder.pid()));
+    let file_edge = map_edges(&mapped)
+        .into_iter()
+        .find(|edge| rendered(edge).contains(&holder.path()));
+    let file_edge = file_edge.unwrap_or_else(|| {
+        panic!(
+            "spec §22: the map of the process carries the edge to the file it holds, got {:?}",
+            mapped.stdout()
+        )
+    });
+    assert!(
+        file_edge.get("evidence").is_some(),
+        "spec §11.4/§22: a map edge answers `inspect relation`, so it carries the same evidence, \
+         got {file_edge:?}"
+    );
+}

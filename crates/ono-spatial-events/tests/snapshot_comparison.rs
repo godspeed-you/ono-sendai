@@ -53,6 +53,7 @@ fn edge(name: &str, source: &str, target: &str) -> MapEdge {
         confidence: Confidence::Strong,
         direction: Direction::Outbound,
         provenance: Provenance::local("linux.sock-diag", ono_value::SchemaId::new("ono.socket", 1)),
+        evidence: ono_value::MapValue::new(),
         observed_at: None,
     }
 }

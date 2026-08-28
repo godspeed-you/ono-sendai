@@ -887,6 +887,7 @@ Default view: `relation`, `source_label`, `target_label`, `confidence`, `provide
 | `confidence` | `enum` | — | required | How confident the assertion is (§11.5). A map must show an inferred edge differently from an exact one. |
 | `direction` | `enum` | — | required | Which way the edge runs (§3.5). |
 | `provider` | `string` | — | required | Who observed it (§11.4). The canonical geography is asserted by the spatial layer itself. |
+| `evidence` | `map` | — | required | §11.4's "raw evidence/reference where safe": what the provider actually saw, as it reported it — the descriptor and the access mode of an open file, the inode of a socket. Empty for a hierarchy edge, which is containment declared by the spatial layer and has no observation behind it (§2.6, §3.4, §4.1). |
 | `provenance` | `map` | — | required | The full v0.2 provenance of the assertion (§11.4). |
 | `observed_at` | `timestamp` | — | nullable | When it was observed; null when nothing recorded an observation time (§2.17). |
 | `changed` | `string` | — | nullable | How the edge changed inside the change window — §22's optional `changed` field; null without an event source or a comparison snapshot (§24.3). |
@@ -1616,6 +1617,7 @@ Default view: `relation`, `display_name`, `spatial_type`, `state`
 | `confidence` | `enum` | — | nullable | How certain the edge is (§11.5). An inferred edge is never labelled exact, whatever the relation registry would admit; null for a hierarchical member. |
 | `provider` | `string` | — | nullable | Who asserted the edge — `linux.open-files`, `linux.process-tree`. The v0.2 relationship provider's own id, because §2.16 forbids the spatial layer from becoming a second source. Null for a hierarchical member. |
 | `provider_relation` | `string` | — | nullable | The word that provider uses for the relation — `reads`, `runs-as`. The same word `trace` prints for the same edge (§31.3); null where the neighbour is reached by hierarchy. |
+| `evidence` | `record` | — | nullable | §11.4's "raw evidence/reference where safe": what the provider actually saw, as it reported it — the descriptor and the access mode of an open file, the inode of a socket. Empty where the provider recorded no detail; null for a hierarchical member, which is containment and has no observation behind it (§2.6, §3.4). |
 | `provenance` | `record` | — | required | Where the edge was observed, when, and by whom (§11.4, §27.4). |
 | `observed_at` | `timestamp` | — | nullable | When the edge was last seen (§11.4); null for a hierarchical member. |
 | `spatial_id` | `string` | — | required | The opaque, stable identity of the neighbour (§3.1). |

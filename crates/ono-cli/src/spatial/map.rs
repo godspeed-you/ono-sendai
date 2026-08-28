@@ -624,6 +624,13 @@ fn edge_record(edge: &MapEdge) -> Result<RecordValue, ErrorValue> {
     .set("confidence", Value::string(edge.confidence.as_str()))?
     .set("direction", Value::string(edge.direction.as_str()))?
     .set("provider", Value::string(edge.provenance.provider()))?
+    // §11.4's "raw evidence/reference where safe": ADR-0164 makes the edge itself the answer to
+    // `inspect relation`, so what the provider saw travels on it rather than behind a second
+    // command.
+    .set(
+        "evidence",
+        Value::Map(std::sync::Arc::new(edge.evidence.clone())),
+    )?
     .set(
         "provenance",
         ono_command::provenance_value(&edge.provenance),
