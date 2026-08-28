@@ -144,7 +144,9 @@ fn enter_directory(session: &mut Session, path: &str) -> Eval<ExitStatus> {
     let destination = session.cwd().join(path);
     let destination = destination.canonicalize().map_err(|error| {
         Flow::Failed(ErrorValue::new(
-            ErrorCode::IoNotFound,
+            // ADR-0191: a navigation that cannot resolve its place is `spatial.not_found`,
+            // which is already what the bare `enter <path>` spelling answers.
+            ErrorCode::SpatialNotFound,
             format!("cannot enter {}: {error}", destination.display()),
         ))
     })?;
@@ -171,7 +173,9 @@ fn enter_link(session: &mut Session, name: String) -> Eval<ExitStatus> {
     if session.link_registry(&name).is_none() {
         return Err(Flow::Failed(
             ErrorValue::new(
-                ErrorCode::ResolveTargetNotFound,
+                // A link is a place in the §19.1 link map, so a link that is not there is a
+                // destination that is not there (ADR-0191).
+                ErrorCode::SpatialNotFound,
                 format!("this session holds no link named `{name}`"),
             )
             .with_help(format!("`link host {name}` creates one (spec §21.1)")),
@@ -268,7 +272,7 @@ fn enter_object(session: &mut Session, stage: &Stage, target: &str) -> Eval<Exit
 fn is_absence(error: &ErrorValue) -> bool {
     matches!(
         error.code(),
-        ErrorCode::IoNotFound | ErrorCode::ResolveTargetNotFound
+        ErrorCode::IoNotFound | ErrorCode::ResolveTargetNotFound | ErrorCode::SpatialNotFound
     )
 }
 
@@ -309,16 +313,17 @@ fn missing_destination(
              allows; `trail` still carries where it was (spec v0.4 §10.3, §20.3)",
         );
     }
-    // A place this session never saw is not a place that went away, and v0.2 §14.3's own refusal
-    // already says so: `resolve.target_not_found` names the target and the identity that answered
-    // to nothing. v0.4 §40 does not supersede it — it adds the second condition, above.
+    // A place this session never saw is not a place that went away: it is the second of §40's
+    // two conditions. `enter` is navigation under ADR-0142 whichever grammar reached it, so its
+    // refusal belongs to the spatial family and not to v0.2 §14.3's `resolve.target_not_found`
+    // (ADR-0191).
     ErrorValue::new(
-        ErrorCode::ResolveTargetNotFound,
+        ErrorCode::SpatialNotFound,
         format!("no {target} answers to `{asked}`"),
     )
     .with_help(format!(
         "`get {target}` shows what exists, and `find place <text>` what this shell can enter \
-         (spec v0.2 §14.3, v0.4 §6.8)"
+         (spec v0.4 §6.8, §40)"
     ))
 }
 

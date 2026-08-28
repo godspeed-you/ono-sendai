@@ -465,8 +465,9 @@ fn should_refuse_to_enter_a_process_that_does_not_exist() {
         run.output()
     );
     assert!(
-        run.stderr().contains("Ono-Sendai-E0301") || run.stderr().contains("Ono-Sendai-E0102"),
-        "the refusal is a structured not-found (errors.yaml `io.not_found` or `resolve.target_not_found`), got {:?}",
+        run.stderr().contains("Ono-Sendai-E1001"),
+        "the refusal is the structured not-found of a failed navigation (errors.yaml \
+         `spatial.not_found`, ADR-0191), got {:?}",
         run.stderr()
     );
     assert!(

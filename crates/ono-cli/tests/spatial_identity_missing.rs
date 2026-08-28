@@ -471,7 +471,6 @@ fn alive_state(view: &Value) -> bool {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 §40's two conditions are delivered and distinct — `enter process <exited>` answers `spatial.destination_gone` naming the tombstone and its age, which is what this test's `gone` half checks, and it passes. The `never` half asks for two things this increment does not owe. (1) `never.stderr()` must carry `spatial.not_found`, but the v0.2 spelling `enter <target> <identity>` refuses with `resolve.target_not_found`, which `identity_missing::should_refuse_to_enter_a_user_that_does_not_exist` pins as `Ono-Sendai-E0102`; v0.4 §40 adds the gone condition, it does not supersede v0.2 §14.3's refusal, and deciding to re-spell every `enter <target>` refusal is a contract change of its own. (2) `!never.status().is_success()`, but the refused `enter` leaves the place at the root — v0.4 §40, asserted outright by `spatial_storage_missing::should_refuse_a_path_that_does_not_exist_with_a_structured_error` — so the following `look --json` succeeds and ADR-0008 makes a script's status its last statement's, as every Bourne-family shell does. Un-ignored by the increment that settles both in an ADR. ADR-0179 §Spec deviation carries the analysis."]
 fn should_distinguish_a_tombstone_from_a_place_that_never_existed() {
     // §40 gives `spatial.not_found` and `spatial.destination_gone` as separate error codes, and
     // §53 settles that unknown/denied is distinct from empty. "It is gone" and "there is no
@@ -483,7 +482,10 @@ fn should_distinguish_a_tombstone_from_a_place_that_never_existed() {
         "enter process {pid}\nlook --json\n{kill}\nenter process {pid}\nlook --json",
         kill = kill_statement(pid)
     ));
-    let never = ono("enter process 4000000\nlook --json");
+    // ADR-0191: the status read here is the refused `enter`'s own. A script that continues past
+    // a failed statement exits with its last statement's status (ADR-0008), so a trailing `look`
+    // would report the `look`, not the refusal.
+    let never = ono("enter process 4000000");
 
     assert!(
         !never.status().is_success(),

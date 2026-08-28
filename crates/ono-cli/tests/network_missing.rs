@@ -677,9 +677,9 @@ fn should_refuse_to_enter_an_interface_that_does_not_exist() {
     );
     let run = ono("enter interface ono-definitely-not-an-interface0; get context | to json");
     assert!(
-        run.stderr().contains("Ono-Sendai-E0102"),
-        "the refusal is `resolve.target_not_found` for the named interface — the same answer \
-         `enter service` gives for a unit that does not exist — got {:?}",
+        run.stderr().contains("Ono-Sendai-E1001"),
+        "the refusal is `spatial.not_found` for the named interface — the same answer \
+         `enter service` gives for a unit that does not exist (ADR-0191) — got {:?}",
         run.stderr()
     );
     assert_eq!(

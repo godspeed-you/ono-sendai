@@ -68,7 +68,7 @@ stdout-contains: [{"name":"preprod"}]
 stdout-contains: {"identity":"testbox","kind":"link"}
 stdout-contains: [{"name":"testbox","state":"connected"}]
 stdout-contains: [{"operation":"ono.link.remove","status":"success"}]
-stdout-contains: Ono-Sendai-E0102
+stdout-contains: Ono-Sendai-E1001
 stdout-contains: Ono-Sendai-E0601
 stdout-contains: "agent":"ono/
 stdout-contains: "reachable":true
