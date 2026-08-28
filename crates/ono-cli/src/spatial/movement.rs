@@ -61,66 +61,83 @@ impl CommandImpl for Back {
         Box::pin(async move {
             let now = Timestamp::now();
             let mut session = spatial_session().await;
-
-            // Which of the places behind us are still places is decided before the trail is
-            // touched, so the walk itself never reaches into the index it is being read against.
-            let alive: BTreeSet<SpatialId> = session
-                .trail()
-                .history()
-                .filter(|id| still_a_place(session.index(), id))
-                .cloned()
-                .collect();
-            match session.trail_mut().back(now, |id| alive.contains(id)) {
-                BackOutcome::Returned { .. } => {}
-                BackOutcome::Skipped { skipped, .. } => {
-                    // §20.3 step 2: skip to the nearest valid previous place "only after
-                    // informing the user". The movement succeeded, so this is a notice on stderr
-                    // rather than a failure — a script that navigates must not die because a
-                    // process it visited has since exited.
-                    eprintln!(
-                        "{}: {} place{} on the trail no longer exist{}; went back past {}",
-                        ono_core::SHORT_NAME,
-                        skipped.len(),
-                        if skipped.len() == 1 { "" } else { "s" },
-                        if skipped.len() == 1 { "s" } else { "" },
-                        skipped
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                }
-                BackOutcome::AllGone { skipped } => {
-                    return Err(ErrorValue::new(
-                        ErrorCode::SpatialDestinationGone,
-                        format!(
-                            "every place behind this one is gone: {}",
-                            skipped
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                    )
-                    .with_help(
-                        "the trail keeps the record of where they were; `home` returns to the \
-                         root of this host (spec v0.4 §20.3, §6.6)",
-                    ));
-                }
-                BackOutcome::Empty => {
-                    return Err(ErrorValue::new(
-                        ErrorCode::SpatialHistoryEmpty,
-                        "this session has not moved yet, so there is nowhere to go back to",
-                    )
-                    .with_help(
-                        "`up` moves to the canonical parent instead, which is a different \
-                         question (spec v0.4 §6.6, §40)",
-                    ));
-                }
-            }
+            go_back(&mut session, now)?;
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })
     }
+}
+
+/// One step back along the navigation history (spec v0.4 §6.6, §20.1, §20.3).
+///
+/// A free function rather than the body of [`Back`], because §43.4 requires the same semantic
+/// action inside the full-screen view and two implementations of "back" would eventually be two
+/// different answers.
+///
+/// # Errors
+///
+/// `spatial.history_empty` when the session has not moved, and `spatial.destination_gone` when
+/// every place behind this one has ended.
+pub fn go_back(
+    session: &mut SpatialSessionState,
+    now: Timestamp,
+) -> Result<(), ono_value::ErrorValue> {
+    // Which of the places behind us are still places is decided before the trail is
+    // touched, so the walk itself never reaches into the index it is being read against.
+    let alive: BTreeSet<SpatialId> = session
+        .trail()
+        .history()
+        .filter(|id| still_a_place(session.index(), id))
+        .cloned()
+        .collect();
+    match session.trail_mut().back(now, |id| alive.contains(id)) {
+        BackOutcome::Returned { .. } => {}
+        BackOutcome::Skipped { skipped, .. } => {
+            // §20.3 step 2: skip to the nearest valid previous place "only after
+            // informing the user". The movement succeeded, so this is a notice on stderr
+            // rather than a failure — a script that navigates must not die because a
+            // process it visited has since exited.
+            eprintln!(
+                "{}: {} place{} on the trail no longer exist{}; went back past {}",
+                ono_core::SHORT_NAME,
+                skipped.len(),
+                if skipped.len() == 1 { "" } else { "s" },
+                if skipped.len() == 1 { "s" } else { "" },
+                skipped
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        BackOutcome::AllGone { skipped } => {
+            return Err(ErrorValue::new(
+                ErrorCode::SpatialDestinationGone,
+                format!(
+                    "every place behind this one is gone: {}",
+                    skipped
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )
+            .with_help(
+                "the trail keeps the record of where they were; `home` returns to the \
+                 root of this host (spec v0.4 §20.3, §6.6)",
+            ));
+        }
+        BackOutcome::Empty => {
+            return Err(ErrorValue::new(
+                ErrorCode::SpatialHistoryEmpty,
+                "this session has not moved yet, so there is nowhere to go back to",
+            )
+            .with_help(
+                "`up` moves to the canonical parent instead, which is a different \
+                 question (spec v0.4 §6.6, §40)",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `up` — the movement that follows the canonical hierarchy (spec v0.4 §6.6, §11.3, §43.2).
@@ -140,30 +157,46 @@ impl CommandImpl for Up {
         Box::pin(async move {
             let now = Timestamp::now();
             let mut session = spatial_session().await;
-            let here = session.current_place().clone();
-
-            // §11.3: one canonical parent, deterministic, computed from the place's own rule
-            // chain — the same answer the place view already declares under `canonical_parent`,
-            // because asking twice is how a hierarchy stops being one.
-            let Some(there) = ono_spatial_query::resolve::parent_of(session.index(), &here) else {
-                return Err(ErrorValue::new(
-                    ErrorCode::SpatialNoParent,
-                    "this place is the top of the canonical hierarchy of this host",
-                )
-                .with_help(
-                    "`back` returns through navigation history instead, which is a different \
-                     question (spec v0.4 §6.6, §7.1, §40)",
-                ));
-            };
-            let crossing = crossing_between(&session, &here, &there);
-            let mut step = NavigationStep::new(now, here, there, Movement::Up);
-            if let Some(crossing) = crossing {
-                step = step.crossing(crossing);
-            }
-            session.trail_mut().record(step);
+            go_up(&mut session, now)?;
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })
     }
+}
+
+/// One step up the canonical hierarchy (spec v0.4 §6.6, §11.3, §43.2).
+///
+/// Shared with the full-screen view for the reason [`go_back`] is: §23.3 binds `u` to the same
+/// semantic action, and it must be the same action.
+///
+/// # Errors
+///
+/// `spatial.no_parent` at the top of the hierarchy of this host.
+pub fn go_up(
+    session: &mut SpatialSessionState,
+    now: Timestamp,
+) -> Result<(), ono_value::ErrorValue> {
+    let here = session.current_place().clone();
+
+    // §11.3: one canonical parent, deterministic, computed from the place's own rule
+    // chain — the same answer the place view already declares under `canonical_parent`,
+    // because asking twice is how a hierarchy stops being one.
+    let Some(there) = ono_spatial_query::resolve::parent_of(session.index(), &here) else {
+        return Err(ErrorValue::new(
+            ErrorCode::SpatialNoParent,
+            "this place is the top of the canonical hierarchy of this host",
+        )
+        .with_help(
+            "`back` returns through navigation history instead, which is a different \
+             question (spec v0.4 §6.6, §7.1, §40)",
+        ));
+    };
+    let crossing = crossing_between(session, &here, &there);
+    let mut step = NavigationStep::new(now, here, there, Movement::Up);
+    if let Some(crossing) = crossing {
+        step = step.crossing(crossing);
+    }
+    session.trail_mut().record(step);
+    Ok(())
 }
 
 /// `jump <selector>` — movement without adjacency (spec v0.4 §6.5, §20.1, §20.4).

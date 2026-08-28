@@ -73,6 +73,66 @@ impl Charset {
     }
 }
 
+/// One drawn line, and what of the map it draws.
+///
+/// The text is what a reader sees; the identity beside it is what a *cursor* needs, so the
+/// full-screen view of §23.3 can focus a node without re-deciding which nodes there are (§45.4,
+/// §49.5). A line that draws nothing addressable — a heading, a blank, a section label — carries
+/// neither.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapLine {
+    text: String,
+    node: Option<String>,
+    relation: Option<String>,
+}
+
+impl MapLine {
+    /// A line that draws nothing a cursor can land on.
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            node: None,
+            relation: None,
+        }
+    }
+
+    /// A line that draws the node `id`.
+    fn at(text: String, id: &str) -> Self {
+        Self {
+            text,
+            node: Some(id.to_owned()),
+            relation: None,
+        }
+    }
+
+    /// A line that draws a relationship edge to `id`.
+    fn edge(text: String, id: &str, relation: &str) -> Self {
+        Self {
+            text,
+            node: Some(id.to_owned()),
+            relation: Some(relation.to_owned()),
+        }
+    }
+
+    /// What the line says.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The node or cluster the line draws, where it draws one.
+    #[must_use]
+    pub fn node(&self) -> Option<&str> {
+        self.node.as_deref()
+    }
+
+    /// The relation the line draws, where the line is a relationship edge (§23.5).
+    #[must_use]
+    pub fn relation(&self) -> Option<&str> {
+        self.relation.as_deref()
+    }
+}
+
 /// The lines an `ono.spatial-map/1` reads as, at a terminal `width` columns wide.
 ///
 /// Nothing is laid out to a fixed page: every line is fitted to the width the caller states, so
@@ -80,12 +140,21 @@ impl Charset {
 /// presentation and no snapshot is a contract).
 #[must_use]
 pub fn spatial_map(map: &RecordValue, width: usize, charset: Charset) -> Vec<String> {
+    map_lines(map, width, charset)
+        .into_iter()
+        .map(|line| line.text)
+        .collect()
+}
+
+/// The same drawing, with the identity of whatever each line draws (§23.3, §23.4).
+#[must_use]
+pub fn map_lines(map: &RecordValue, width: usize, charset: Charset) -> Vec<MapLine> {
     let width = width.max(20);
     let nodes = list(map, "nodes");
     let clusters = list(map, "clusters");
     let edges = list(map, "edges");
 
-    let mut lines = vec![fit(&heading(map, nodes.len()), width)];
+    let mut lines = vec![MapLine::plain(fit(&heading(map, nodes.len()), width))];
 
     // The hierarchy, as the tree §39.3 allows a map to collapse into. It is drawn from the map's
     // own `hierarchy` edges: the renderer decides nothing about who contains whom (§45.4).
@@ -93,10 +162,13 @@ pub fn spatial_map(map: &RecordValue, width: usize, charset: Charset) -> Vec<Str
     let children = hierarchy(&edges);
     let center = text(map, "center").unwrap_or_default();
     let mut drawn: BTreeSet<String> = BTreeSet::new();
-    lines.push(String::new());
-    lines.push(fit(
-        &format!("  {}", node_line(&labels, &center, charset)),
-        width,
+    lines.push(MapLine::plain(String::new()));
+    lines.push(MapLine::at(
+        fit(
+            &format!("  {}", node_line(&labels, &center, charset)),
+            width,
+        ),
+        &center,
     ));
     lines.extend(branch(
         &labels, &children, &center, "  ", charset, width, &mut drawn,
@@ -109,49 +181,53 @@ pub fn spatial_map(map: &RecordValue, width: usize, charset: Charset) -> Vec<Str
         .filter(|id| **id != center && !drawn.contains(*id))
         .collect();
     if !loose.is_empty() {
-        lines.push(String::new());
-        lines.push("  also here".to_owned());
+        lines.push(MapLine::plain(String::new()));
+        lines.push(MapLine::plain("  also here".to_owned()));
         for id in loose {
-            lines.push(fit(
-                &format!("    {}", node_line(&labels, id, charset)),
-                width,
+            lines.push(MapLine::at(
+                fit(&format!("    {}", node_line(&labels, id, charset)), width),
+                id,
             ));
         }
     }
 
     let relations = relation_lines(&edges, charset);
     if !relations.is_empty() {
-        lines.push(String::new());
-        lines.push("  relations".to_owned());
-        for line in relations {
-            lines.push(fit(&format!("    {line}"), width));
+        lines.push(MapLine::plain(String::new()));
+        lines.push(MapLine::plain("  relations".to_owned()));
+        for drawn in relations {
+            lines.push(MapLine::edge(
+                fit(&format!("    {}", drawn.text), width),
+                &drawn.target,
+                &drawn.relation,
+            ));
         }
     }
 
     let landmarks = list(map, "landmarks");
     if !landmarks.is_empty() {
-        lines.push(String::new());
-        lines.push("  landmarks".to_owned());
+        lines.push(MapLine::plain(String::new()));
+        lines.push(MapLine::plain("  landmarks".to_owned()));
         for landmark in &landmarks {
             let name = text(landmark, "name").unwrap_or_default();
             let reason = text(landmark, "reason")
                 .unwrap_or_default()
                 .replace('_', " ");
             let evidence = text(landmark, "evidence").unwrap_or_default();
-            lines.push(fit(
+            lines.push(MapLine::plain(fit(
                 &format!(
                     "    {} {name}  {reason} {} {evidence}",
                     charset.landmark(),
                     charset.dash()
                 ),
                 width,
-            ));
+            )));
         }
     }
 
     if let Some(closing) = hidden_line(map) {
-        lines.push(String::new());
-        lines.push(fit(&format!("  {closing}"), width));
+        lines.push(MapLine::plain(String::new()));
+        lines.push(MapLine::plain(fit(&format!("  {closing}"), width)));
     }
     lines
 }
@@ -245,7 +321,7 @@ fn branch(
     charset: Charset,
     width: usize,
     drawn: &mut BTreeSet<String>,
-) -> Vec<String> {
+) -> Vec<MapLine> {
     let (branch_mark, last_mark, trunk) = charset.branches();
     let Some(here) = children.get(parent) else {
         return Vec::new();
@@ -263,9 +339,12 @@ fn branch(
         } else {
             branch_mark
         };
-        lines.push(fit(
-            &format!("{prefix}{mark}{}", node_line(labels, child, charset)),
-            width,
+        lines.push(MapLine::at(
+            fit(
+                &format!("{prefix}{mark}{}", node_line(labels, child, charset)),
+                width,
+            ),
+            child,
         ));
         let deeper = if position == last {
             format!("{prefix}   ")
@@ -303,9 +382,16 @@ fn node_line(labels: &BTreeMap<String, Drawn>, id: &str, charset: Charset) -> St
     line
 }
 
+/// One relationship line: what it says, and which edge it says it about.
+struct DrawnEdge {
+    text: String,
+    target: String,
+    relation: String,
+}
+
 /// The relationships that are not containment, each showing its direction, its relation and — as
 /// §23.5 requires — whether it was observed or inferred.
-fn relation_lines(edges: &[RecordValue], charset: Charset) -> Vec<String> {
+fn relation_lines(edges: &[RecordValue], charset: Charset) -> Vec<DrawnEdge> {
     edges
         .iter()
         .filter(|edge| text(edge, "kind").as_deref() == Some("relationship"))
@@ -313,13 +399,17 @@ fn relation_lines(edges: &[RecordValue], charset: Charset) -> Vec<String> {
             let source = text(edge, "source_label")
                 .or_else(|| text(edge, "source"))
                 .unwrap_or_default();
-            let target = text(edge, "target_label")
+            let target_label = text(edge, "target_label")
                 .or_else(|| text(edge, "target"))
                 .unwrap_or_default();
             let relation = text(edge, "relation").unwrap_or_default();
             let confidence = text(edge, "confidence").unwrap_or_default();
             let arrow = charset.arrow(confidence == "exact");
-            format!("{source} {arrow} {target}  {relation} ({confidence})")
+            DrawnEdge {
+                text: format!("{source} {arrow} {target_label}  {relation} ({confidence})"),
+                target: text(edge, "target").unwrap_or_default(),
+                relation,
+            }
         })
         .collect()
 }
