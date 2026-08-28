@@ -76,9 +76,17 @@ impl CommandImpl for Look {
             // exits — every group lists the places behind it — rather than dumping the object's
             // properties, which §24.1 reserves for `inspect`.
             let request = NeighborhoodRequest::new().all(all);
-            let (neighborhood, permission) =
+            let (neighborhood, permission, cached) =
                 view::neighborhood_here(ctx, &mut session, &request, now).await?;
-            let view = place_view(&session, &neighborhood, permission, all, changes, now)?;
+            let view = place_view(
+                &session,
+                &neighborhood,
+                permission,
+                all,
+                changes,
+                cached,
+                now,
+            )?;
 
             if json {
                 let document = ono_value::to_json_data(&Value::Record(Arc::new(view)));
@@ -109,6 +117,7 @@ fn place_view(
     permission: PermissionState,
     all: bool,
     changes: Option<ono_value::Duration>,
+    cached: bool,
     now: Timestamp,
 ) -> Result<RecordValue, ErrorValue> {
     let here = session.current_place().clone();
@@ -194,7 +203,7 @@ fn place_view(
     .set("place", Value::Record(Arc::new(place)))?
     .set(
         "freshness",
-        Value::string(source_freshness(neighborhood, index, &here, now)),
+        Value::string(source_freshness(neighborhood, index, &here, cached, now)),
     )?
     .set("groups", Value::list(groups))?
     .set("exits", Value::Map(Arc::new(exits)))?
@@ -218,6 +227,7 @@ fn source_freshness(
     neighborhood: &ono_spatial_core::Neighborhood,
     index: &ono_spatial_index::SpatialIndex,
     here: &ono_spatial_core::SpatialId,
+    cached: bool,
     now: Timestamp,
 ) -> &'static str {
     if index.freshness(here, now) == ono_spatial_core::Freshness::Stale {
@@ -226,7 +236,10 @@ fn source_freshness(
     if neighborhood.completeness() == ono_spatial_core::Completeness::Partial {
         return "partial";
     }
-    "polled"
+    // §33.1 and §34 make a repeated view a read of the index rather than a second sweep of the
+    // providers; §25.3 has the word for a view that was read, and using `polled` for it would
+    // claim a freshness this answer does not have (ADR-0186).
+    if cached { "cached" } else { "polled" }
 }
 
 /// The change section of §24.3, which never invents a change.
@@ -350,7 +363,7 @@ impl CommandImpl for Near {
                 request = request.changed_within(span_of(window));
             }
             with_pins(&mut session, self.pins.as_ref(), now).await?;
-            let (neighborhood, _) =
+            let (neighborhood, _, _) =
                 view::neighborhood_here(ctx, &mut session, &request, now).await?;
 
             let here = session.current_place().clone();
