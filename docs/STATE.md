@@ -835,6 +835,24 @@ un-ignores the tombstone test reads ADR-0170 first.**
 
 ## Next up (ordered)
 
+- [ ] **A bounded map is not a superset of a bounded filtered map, and §43.2 says it must be.**
+  Found by S8 on 2026-08-28 while running the gate; **it is not an S8 regression** — it
+  reproduces identically on `ffbb221`, S5's own head, on the same machine. The two tests
+  `spatial_map_missing::should_only_remove_edges_when_a_relation_filter_narrows_the_map` and
+  `…should_only_remove_nodes_and_leave_no_dangling_edge_when_a_type_filter_narrows_the_map`
+  compare `map --all` with `map --all --type <t>` and require the second to be a subset of the
+  first. `ono_spatial_query::map::project` filters the *candidates* and then bounds what is left
+  to `spatial.map.node_budget`, so on a host with more objects than the budget the two runs pick
+  two different hundreds and the filtered map contains nodes the unfiltered one cut. Measured on
+  a 338-process host: both maps carry 99 nodes, and 3–5 of the filtered ones are absent from the
+  unfiltered one. The container has far fewer processes, which is why acceptance case 105 is
+  green and the unit tests are only red on a busy machine. §43.2 is unambiguous — "filtering
+  removes objects, it never creates them" — so the test is right and the projection is the
+  defect. The fix is S5's or S11's, it is a `fix` of its own, and it changes what `--type` and
+  `--relations` return: bound first and filter the bounded set, or carry the unfiltered ranking
+  into the filtered projection. Exit test: the two tests above, green on a host with more
+  processes than `spatial.map.node_budget`.
+
 - [ ] **Found by the dead-check sweep of `xtask/` (2026-08-28, `harness`, ADR-0159).** Same
   family as the repaired argument-mode check, but each is a different *kind* of change, so none
   was fixed there (AGENTS.md §4):
