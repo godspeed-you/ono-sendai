@@ -697,6 +697,15 @@ pub fn concise_path(index: &SpatialIndex, id: &SpatialId) -> String {
 /// `nginx/1842` by the paths they sit at).
 #[must_use]
 pub fn place_path(index: &SpatialIndex, id: &SpatialId) -> String {
+    path_above(index, id, &mut BTreeSet::new())
+}
+
+/// [`place_path`], carrying the places already on the way up.
+///
+/// The chain the index holds is a tree by construction, and a walk that assumes so is a crashed
+/// shell the day something files two places inside each other. `walked` is what makes the walk
+/// terminate whatever the index was told: a place already on the way up is where the path stops.
+fn path_above(index: &SpatialIndex, id: &SpatialId, walked: &mut BTreeSet<SpatialId>) -> String {
     if let Some((space, scope)) = space::space_of_id(id) {
         return space_path_in(space.id, scope.as_ref());
     }
@@ -704,7 +713,10 @@ pub fn place_path(index: &SpatialIndex, id: &SpatialId) -> String {
         return locality(None).to_owned();
     };
     let scope = entry.object().scope();
-    let parent = entry.canonical_parent().map(|edge| edge.parent().clone());
+    let parent = entry
+        .canonical_parent()
+        .map(|edge| edge.parent().clone())
+        .filter(|_| walked.insert(id.clone()));
     let mut path = String::from(locality(Some(scope)));
     if let Some(parent) = parent {
         let rest = match space_of(&parent) {
@@ -713,7 +725,7 @@ pub fn place_path(index: &SpatialIndex, id: &SpatialId) -> String {
                 .map(|(_, rest)| rest.to_owned())
                 .unwrap_or_default(),
             None => index.get(&parent).map_or_else(String::new, |parent| {
-                let above = place_path(index, parent.object().spatial_id());
+                let above = path_above(index, parent.object().spatial_id(), walked);
                 let above = above.split_once('/').map_or("", |(_, rest)| rest);
                 if above.is_empty() {
                     parent.object().display_name().to_owned()

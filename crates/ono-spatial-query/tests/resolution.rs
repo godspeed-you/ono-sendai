@@ -14,6 +14,7 @@ use ono_core::ErrorCode;
 use ono_spatial_core::{Freshness, SpatialId, SpatialType, space};
 use ono_spatial_index::SpatialIndex;
 use ono_spatial_query::{Resolution, ResolutionStep, SelectorContext, place_path, resolve};
+use ono_value::Value;
 
 /// An index holding the given records, absorbed through the provider bridge.
 fn indexed(records: &[ono_value::RecordValue]) -> SpatialIndex {
@@ -287,5 +288,46 @@ fn should_name_the_place_path_of_a_canonical_space_from_the_host_down() {
                 .spatial_id()
         ),
         "local/compute/services"
+    );
+}
+
+#[test]
+fn should_answer_a_place_path_rather_than_looping_when_the_hierarchy_holds_a_cycle() {
+    // §11.3 makes the canonical parent deterministic, and a path that walks it must terminate
+    // whatever the index was told. Two directories filed inside each other is a cycle a
+    // non-canonical path spelling can produce, and a walk that follows it forever is a crashed
+    // shell rather than a wrong answer.
+    let one = common::record(
+        "ono.file/1",
+        &[
+            ("path", Value::string("/srv/one")),
+            ("kind", Value::string("dir")),
+            ("device", Value::string("0:1")),
+            ("inode", Value::Int(11)),
+        ],
+    );
+    let two = common::record(
+        "ono.file/1",
+        &[
+            ("path", Value::string("/srv/two")),
+            ("kind", Value::string("dir")),
+            ("device", Value::string("0:1")),
+            ("inode", Value::Int(12)),
+        ],
+    );
+    let mut index = indexed(&[one, two]);
+    let ids: Vec<SpatialId> = index
+        .of_type(SpatialType::Directory)
+        .into_iter()
+        .map(|entry| entry.object().spatial_id().clone())
+        .collect();
+    assert_eq!(ids.len(), 2, "the fixture is two directories, got {ids:?}");
+    assert!(index.set_path_parent(&ids[0], &ids[1]));
+    assert!(index.set_path_parent(&ids[1], &ids[0]));
+
+    let path = place_path(&index, &ids[0]);
+    assert!(
+        path.starts_with("local"),
+        "§27.2: the path still starts at the host, got {path}"
     );
 }

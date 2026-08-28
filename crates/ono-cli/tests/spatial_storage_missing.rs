@@ -706,3 +706,35 @@ fn should_summarize_a_large_directory_instead_of_enumerating_it() {
          than silently dropped, got {shown}"
     );
 }
+
+#[test]
+fn should_stand_in_the_directory_a_path_names_however_the_path_spells_it() {
+    // §15.1 identifies a filesystem place by the object, not by the text that reached it, and
+    // §42.1 makes one object one place. `…/child/..` and `…` are the same directory, so entering
+    // either stands in the same place — and the path hierarchy §15.1 keeps must stay a tree
+    // whichever spelling was typed. It did not: the two spellings put each directory inside the
+    // other, and the first `look` that walked the chain died of it.
+    let dir = scratch();
+    let child = dir.path().join("child");
+    std::fs::create_dir(&child).expect("the test makes its own directory");
+
+    let run = ono(&format!(
+        "enter {}; look --json",
+        child.join("..").display()
+    ));
+    run.assert_success();
+    assert!(
+        !run.stderr().contains("stack overflow") && !run.stderr().contains("fatal runtime error"),
+        "§15.1: a path spelled through `..` is an ordinary place, got {:?}",
+        run.stderr()
+    );
+
+    let view = place_view(run.stdout(), &run);
+    let shown = rendered(&view);
+    let canonical = canonical(dir.path());
+    assert!(
+        shown.contains(&canonical.display().to_string()),
+        "§42.1: `child/..` is the parent directory, and that is the place the shell stands in; \
+         got {shown}"
+    );
+}

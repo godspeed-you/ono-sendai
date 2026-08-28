@@ -53,11 +53,17 @@ pub fn absolute(session: &Session, word: &str) -> PathBuf {
     } else {
         PathBuf::from(word)
     };
-    if path.is_absolute() {
+    let path = if path.is_absolute() {
         path
     } else {
         session.cwd().join(path)
-    }
+    };
+    // §15.1 identifies a filesystem place by the object, not by the text that reached it, and
+    // §42.1 makes one object one place: `/srv/app/..` and `/srv` are the same directory, so the
+    // spelling is resolved away before anything observes it. A path that cannot be resolved —
+    // it is not there, or this user may not walk to it — keeps the words the user typed, so the
+    // provider is the one that decides which of those two it is (§35.2).
+    std::fs::canonicalize(&path).unwrap_or(path)
 }
 
 /// Makes the filesystem object at `path` the current place, observing it first (§2.16, §15.4).
@@ -184,25 +190,43 @@ pub(crate) async fn observe_place_at(
     Ok(there)
 }
 
-/// The record the file provider answers for one path, where it answers at all.
-async fn read_path(
-    providers: &ono_provider_api::ProviderRegistry,
-    path: &Path,
-) -> Option<RecordValue> {
+/// What the file provider had to say about one path (§35.2's three distinct answers).
+enum PathAnswer {
+    /// The object is there and this is it.
+    Found(RecordValue),
+    /// The provider was refused, and this is what it said.
+    Denied(String),
+    /// Nothing answered, and nothing was refused.
+    Absent,
+}
+
+/// The record the file provider answers for one path, or why it could not.
+async fn read_path(providers: &ono_provider_api::ProviderRegistry, path: &Path) -> PathAnswer {
     let query = Query::target("file").with(Selector::field(
         "path",
         Value::Path(std::sync::Arc::from(path)),
     ));
-    let stream = providers.snapshot(&query).ok()?;
-    stream
-        .collect()
-        .await
+    let Ok(stream) = providers.snapshot(&query) else {
+        return PathAnswer::Absent;
+    };
+    let collected = stream.collect().await;
+    let refusal = collected
+        .errors()
+        .iter()
+        .find(|error| error.code().kind() == ono_core::ErrorKind::Permission)
+        .map(|error| error.message().to_owned());
+    let found = collected
         .into_values()
         .into_iter()
         .find_map(|value| match value {
             Value::Record(record) => Some(RecordValue::clone(&record)),
             _ => None,
-        })
+        });
+    match (found, refusal) {
+        (Some(record), _) => PathAnswer::Found(record),
+        (None, Some(reason)) => PathAnswer::Denied(reason),
+        (None, None) => PathAnswer::Absent,
+    }
 }
 
 /// The mount points this session knows, deepest first (§15.2, §2.16).
