@@ -68,13 +68,13 @@ pub struct SpatialSessionState {
     /// stood for, so it projects this observation again rather than asking the system a second
     /// time and answering about a different moment (ADR-0183).
     last_map: Option<(SpatialId, ono_spatial_query::MapHorizon)>,
-    /// What each provider target answered, and when, **per scope** (§33.1, §33.3, §34, §43.7).
-    ///
-    /// The scope is part of the key because a target is a question and the host it was asked on
-    /// is part of the question: `process` answered on `local` says nothing about `process` on a
-    /// link, and recalling one for the other would be the accidental merge across a host
-    /// boundary §43.7 forbids (ADR-0190).
-    targets: BTreeMap<(String, &'static str), TargetObservation>,
+    /// What each provider query answered, and when (§33.1, §33.3, §34). The key is the target,
+    /// or the target and the one selector that narrowed it — `dir` asked about `/etc` is not
+    /// `dir` asked about `/var` — and it is written **in the scope it was asked in**, because a
+    /// target is a question and the host it was asked on is part of it: `process` answered on
+    /// `local` says nothing about `process` on a link, and reading one for the other would be
+    /// the accidental merge across a host boundary §43.7 forbids (ADR-0186, ADR-0190).
+    targets: BTreeMap<String, TargetObservation>,
 }
 
 /// A linked host the session can stand on (§19.1, §19.2).
@@ -500,10 +500,8 @@ impl SpatialSessionState {
     /// goes stale in five seconds even when it also yields something slower. A target that
     /// answered with no places at all takes the policy's default.
     #[must_use]
-    pub fn recall(&self, target: &'static str, now: Timestamp) -> Option<&TargetObservation> {
-        let seen = self
-            .targets
-            .get(&(self.current_scope().to_string(), target))?;
+    pub fn recall(&self, key: &str, now: Timestamp) -> Option<&TargetObservation> {
+        let seen = self.targets.get(&self.scoped(key))?;
         let policy = self.index.freshness_policy();
         let fresh = seen.places.keys().all(|object_type| {
             policy.freshness(*object_type, Some(seen.at), false, now)
@@ -518,13 +516,13 @@ impl SpatialSessionState {
         fresh.then_some(seen)
     }
 
-    /// Records what a provider target answered, so the next command can read it (§33.1).
-    pub fn remember(&mut self, target: &'static str, observation: TargetObservation) {
-        let scope = self.current_scope().to_string();
-        self.targets.insert((scope, target), observation);
+    /// Records what a provider query answered, so the next command can read it (§33.1).
+    pub fn remember(&mut self, key: impl Into<String>, observation: TargetObservation) {
+        let key = self.scoped(&key.into());
+        self.targets.insert(key, observation);
     }
 
-    /// Drops what the targets last answered, so the next observation asks them again (§33.2).
+    /// Drops what the queries last answered, so the next observation asks them again (§33.2).
     ///
     /// ADR-0186's lifetime is an assumption that nothing moved in the meantime. A live view is
     /// re-projected precisely when something did, and §2.12 requires the picture to correspond
@@ -532,6 +530,11 @@ impl SpatialSessionState {
     /// it live (§25.2, ADR-0190).
     pub fn forget_targets(&mut self) {
         self.targets.clear();
+    }
+
+    /// The recall key for `key` on the host this session is standing on (§43.7, ADR-0190).
+    fn scoped(&self, key: &str) -> String {
+        format!("{}\u{1f}{key}", self.current_scope())
     }
 
     /// What the provider last said about the object at `id`, where this session has seen it.

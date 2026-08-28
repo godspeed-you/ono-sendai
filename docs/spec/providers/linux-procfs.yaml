@@ -42,10 +42,12 @@ providers:
       # object after a rename (§10.1 Tier A).
       identity_strategy: stable
       # `path.parent` is not a relation: §3.4 and §15.1 make the Unix path tree hierarchy, so
-      # `up` from a file goes to the directory that contains it and `up` from the directory a
-      # mount provides crosses the mount boundary first (§15.3, ADR-0135).
+      # `up` from a file goes to the directory that contains it and `up` from a directory goes to
+      # the directory above it. A directory *root* has no path above it, and goes up to the mount
+      # that provides it — which is where §15.2's MOUNTS -> DIRECTORY ROOTS meets the Unix tree
+      # (ADR-0135, ADR-0187).
       canonical_parent:
-        Directory: [mount.backs_directory, path.parent, storage.directories]
+        Directory: [path.parent, mount.backs_directory, storage.directories]
         File: [path.parent]
       relationships:
         - mount.backs_directory

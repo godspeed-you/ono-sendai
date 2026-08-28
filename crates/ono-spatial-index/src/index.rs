@@ -273,6 +273,25 @@ impl SpatialIndex {
         true
     }
 
+    /// The places the Unix path tree puts directly inside `id` (§15.1, §15.4, §3.4).
+    ///
+    /// The reverse of [`SpatialIndex::set_path_parent`], and hierarchy rather than relationship:
+    /// §3.4 lists "Directory -> child Directory" among the hierarchical edges, so a directory's
+    /// children are not an edge anybody follows but the tree the filesystem already is. Only the
+    /// entries this session has actually observed appear — §33.3 makes the filesystem
+    /// query-driven, and the index never invents a child nobody read.
+    #[must_use]
+    pub fn path_children(&self, id: &SpatialId) -> Vec<SpatialId> {
+        let mut children: Vec<SpatialId> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.path_parent.as_ref() == Some(id))
+            .map(|(child, _)| child.clone())
+            .collect();
+        children.sort();
+        children
+    }
+
     /// Records that one exit of `id` could not be read, and what the user must be told instead
     /// (§35.2, §42.4).
     ///

@@ -937,6 +937,23 @@ Default view: `name`, `kind`, `location`, `context_window`, `tools`, `data_polic
 | `available` | `bool` | — | required | Whether the provider can answer right now. |
 | `unavailable_reason` | `string` | — | nullable | Why it cannot, when it cannot (spec §35.3). Null when it is available. |
 
+## MountBoundary — `ono.mount-boundary/1`
+
+The mount a path place sits on — where it is, what it is, and whether it is remote.
+
+Identity: `local_path`
+
+Default view: `local_path`, `filesystem`, `source`, `remote`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `local_path` | `path` | — | required | The mount point, as §15.3's "local path" (`ono.mount/1`'s `target`). |
+| `filesystem` | `string` | — | required | The filesystem type the kernel names, straight from `ono.mount/1`. |
+| `source` | `string` | — | required | What is mounted there — a device, a network export, a pseudo-filesystem name. |
+| `remote` | `bool` | — | required | Whether the filesystem lives on another machine (§15.3's `remote yes`). Decided from the filesystem type and the source, never guessed from the mount point (ADR-0187). |
+| `read_only` | `bool` | — | nullable | Whether the mount is read-only, where the provider said. |
+| `mount` | `string` | — | nullable | The `spatial_id` of the mount place, so `enter`/`up` can reach it (§15.2, §3.1). |
+
 ## MountEvent — `ono.mount-event/1`
 
 One mount, unmount or remount, as a live stream emits it.
@@ -1124,6 +1141,7 @@ Default view: `label`, `type`, `hostname`, `generated_at`
 | `links` | `list<ono.link-place/1>` | — | nullable | The links this session holds, with the state of each (§19.1's link map). Present at the root of a host, where a linked host is one of the places reachable from here; null anywhere else, because a link is not a neighbour of a process. A link that is not connected stays in the list with the state that says so — dropping it would be the `empty` answer §35.2 forbids. |
 | `landmarks` | `list<ono.landmark/1>` | — | required | What deserves attention here (§3.7, §26). Empty is an answer; null would not be. |
 | `neighborhood` | `ono.neighborhood/1` | — | required | The bounded, ranked projection around the place, with what it left out (§3.6). |
+| `boundary` | `ono.mount-boundary/1` | — | nullable | The mount boundary this place sits on (§15.3). Present on a filesystem place — the mount point it is under, its filesystem, its source and whether that is remote — so that "crossing a mount boundary MUST be discoverable" is true of the place and not only of the step that reached it. Null anywhere the path tree does not reach. |
 | `system` | `ono.system/1` | — | nullable | The `SystemPlace` of §7.1 in full, carried by `look --all` at the root. §24.1 keeps the exhaustive view of the object behind a place out of the default `look`, so the default names the system and `--all` describes it. |
 | `changed` | `ono.change-summary/1` | — | nullable | What changed in the window `--changes` asked for (§24.3). Null when the user did not ask; never a fabricated summary when no event source or comparison snapshot exists. |
 | `generated_at` | `timestamp` | — | required | When the view was made. |

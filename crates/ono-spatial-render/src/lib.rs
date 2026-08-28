@@ -50,6 +50,16 @@ pub fn place_view(view: &RecordValue, width: usize) -> Vec<String> {
         lines.push(fit(&format!(" tombstone — {state}"), width));
     }
 
+    // §15.3 shows the boundary as its own block, directly under the heading, because it is what
+    // tells a user which filesystem they are standing on before anything else about the place.
+    if let Some(boundary) = record(view, "boundary") {
+        lines.push(String::new());
+        lines.push(" boundary".to_owned());
+        for line in boundary_lines(&boundary) {
+            lines.push(fit(&line, width));
+        }
+    }
+
     let groups = list(view, "groups");
     if !groups.is_empty() {
         lines.push(String::new());
@@ -149,6 +159,48 @@ fn exit_line(group: &RecordValue) -> String {
         }
     };
     format!("   {label:<LABEL_WIDTH$} {right}")
+}
+
+/// The mount boundary, in the four lines §15.3 writes it in.
+///
+/// §15.3's own example is the contract:
+///
+/// ```text
+/// boundary
+///   local path     /mnt/backup
+///   filesystem     nfs
+///   source         nas01:/exports/backup
+///   remote         yes
+/// ```
+fn boundary_lines(boundary: &RecordValue) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut row = |label: &str, value: String| {
+        if !value.is_empty() {
+            lines.push(format!("   {label:<LABEL_WIDTH$} {value}"));
+        }
+    };
+    row(
+        "local path",
+        match boundary.get("local_path") {
+            Some(Value::Path(path)) => path.display().to_string(),
+            Some(Value::String(text)) => text.to_string(),
+            _ => String::new(),
+        },
+    );
+    row(
+        "filesystem",
+        text(boundary, "filesystem").unwrap_or_default(),
+    );
+    row("source", text(boundary, "source").unwrap_or_default());
+    row(
+        "remote",
+        match boundary.get("remote") {
+            Some(Value::Bool(true)) => "yes".to_owned(),
+            Some(Value::Bool(false)) => "no".to_owned(),
+            _ => String::new(),
+        },
+    );
+    lines
 }
 
 /// One landmark, with the reason §3.7 makes mandatory.

@@ -76,53 +76,223 @@ pub fn enter_path(session: &mut Session, path: &Path) -> Result<(SpatialId, bool
             "the operating system refused to start the runtime",
         )
     })?;
-    let query = Query::target("file").with(Selector::field(
-        "path",
-        Value::Path(std::sync::Arc::from(path)),
-    ));
     let providers = providers.clone();
     let now = Timestamp::now();
-    let display = path.display().to_string();
+    let path = path.to_path_buf();
 
     runtime.block_on(async move {
-        let records: Vec<RecordValue> = match providers.snapshot(&query) {
-            Ok(stream) => stream
-                .collect()
-                .await
-                .into_values()
-                .into_iter()
-                .filter_map(|value| match value {
-                    Value::Record(record) => Some(RecordValue::clone(&record)),
-                    _ => None,
-                })
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-        let Some(record) = records.first() else {
-            return Err(ErrorValue::new(
-                ErrorCode::SpatialNotFound,
-                format!("no place answers to `{display}`"),
-            )
-            .with_help("the path does not exist, or no provider can read it (spec v0.4 §40)"));
-        };
         let mut state = crate::spatial::spatial_session().await;
-        let there = state.projection_of(record)?;
-        state.absorb(&records, now);
+        let there = observe_place_at(&providers, &mut state, &path, now).await?;
         let is_directory = state
             .index()
             .get(&there)
             .is_some_and(|entry| entry.object().object_type() == SpatialType::Directory);
         let here = state.current_place().clone();
         if here != there {
-            state.trail_mut().record(NavigationStep::new(
-                now,
-                here,
-                there.clone(),
-                Movement::Enter,
-            ));
+            let mut step = NavigationStep::new(now, here.clone(), there.clone(), Movement::Enter);
+            if let Some(crossing) =
+                crate::spatial::movement::crossing_between(&state, &here, &there)
+            {
+                step = step.crossing(crossing);
+            }
+            state.trail_mut().record(step);
         }
         Ok((there, is_directory))
     })
+}
+
+/// Observes the filesystem object at `path`, everything §15 needs around it, and registers it.
+///
+/// Three observations, because §15 makes a path place three things at once (ADR-0187):
+///
+/// - the object itself, which is the place;
+/// - the **mount table**, so the boundary of §15.3 can be named and the mount point can lead up
+///   to its mount (§11.1's rule chain for a directory);
+/// - the **enclosing directory**, so `up` from a file reaches it — §15.1 keeps the Unix path
+///   tree, and the path tree is hierarchy, not a relation (§3.4).
+///
+/// Every fact comes from a provider (§2.16): the mount table is `get mount`, not
+/// `/proc/self/mountinfo` read behind its back.
+///
+/// # Errors
+///
+/// `spatial.not_found` when no provider answers for the path (§40).
+pub(crate) async fn observe_place_at(
+    providers: &ono_provider_api::ProviderRegistry,
+    state: &mut crate::spatial::SpatialSessionState,
+    path: &Path,
+    now: Timestamp,
+) -> Result<SpatialId, ErrorValue> {
+    let Some(record) = read_path(providers, path).await else {
+        return Err(ErrorValue::new(
+            ErrorCode::SpatialNotFound,
+            format!("no place answers to `{}`", path.display()),
+        )
+        .with_help("the path does not exist, or no provider can read it (spec v0.4 §40)"));
+    };
+    let there = state.projection_of(&record)?;
+    state.absorb(std::slice::from_ref(&record), now);
+
+    crate::spatial::view::observe_targets_with(providers, state, &["mount"], now).await;
+    link_mount(state, &there, path, now);
+
+    // §15.1: the enclosing directory is the parent of the Unix path tree. `up` consults it at
+    // exactly the position `path.parent` holds in the rule chain, so a mount point still goes up
+    // to its mount first (§15.3).
+    if let Some(parent) = path.parent()
+        && parent != path
+        && let Some(record) = read_path(providers, parent).await
+    {
+        let above = state.projection_of(&record)?;
+        state.absorb(std::slice::from_ref(&record), now);
+        let (index, _) = state.absorb_with();
+        index.set_path_parent(&there, &above);
+    }
+    Ok(there)
+}
+
+/// The record the file provider answers for one path, where it answers at all.
+async fn read_path(
+    providers: &ono_provider_api::ProviderRegistry,
+    path: &Path,
+) -> Option<RecordValue> {
+    let query = Query::target("file").with(Selector::field(
+        "path",
+        Value::Path(std::sync::Arc::from(path)),
+    ));
+    let stream = providers.snapshot(&query).ok()?;
+    stream
+        .collect()
+        .await
+        .into_values()
+        .into_iter()
+        .find_map(|value| match value {
+            Value::Record(record) => Some(RecordValue::clone(&record)),
+            _ => None,
+        })
+}
+
+/// The mount points this session knows, deepest first (§15.2, §2.16).
+///
+/// Deepest first because that is how a path is matched to the mount that actually provides it:
+/// `/var/lib/docker` is provided by `/var/lib/docker` and not by `/`.
+fn known_mounts(state: &crate::spatial::SpatialSessionState) -> Vec<(PathBuf, SpatialId)> {
+    let mut mounts: Vec<(PathBuf, SpatialId)> = state
+        .index()
+        .of_type(SpatialType::Mount)
+        .into_iter()
+        .filter_map(|entry| {
+            let target = match entry.canonical_ref().id().values().first() {
+                Some(Value::Path(path)) => path.to_path_buf(),
+                Some(Value::String(text)) => PathBuf::from(text.as_ref()),
+                _ => return None,
+            };
+            Some((target, entry.object().spatial_id().clone()))
+        })
+        .collect();
+    mounts.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
+    mounts
+}
+
+/// The mount that provides `path`, as the mount provider reports the table (§15.3).
+pub(crate) fn mount_of(
+    state: &crate::spatial::SpatialSessionState,
+    path: &Path,
+) -> Option<(PathBuf, SpatialId)> {
+    known_mounts(state)
+        .into_iter()
+        .find(|(target, _)| path.starts_with(target))
+}
+
+/// The path a place stands on, where it stands on one (§15.1).
+pub(crate) fn path_of(
+    state: &crate::spatial::SpatialSessionState,
+    id: &SpatialId,
+) -> Option<PathBuf> {
+    match state.record_of(id)?.get("path") {
+        Some(Value::Path(path)) => Some(path.to_path_buf()),
+        Some(Value::String(text)) => Some(PathBuf::from(text.as_ref())),
+        _ => None,
+    }
+}
+
+/// Records `mount.backs_directory` between a directory and the mount that provides it (§15.3).
+///
+/// §15.4 lists the mount boundary among a directory place's neighbours and §15.2 files directory
+/// roots under MOUNTS, so the edge is drawn for every directory the mount provides — not only for
+/// its mount point. It is hierarchy only where the Unix path tree runs out: a directory with a
+/// path above it goes up the path (§15.1), and a directory root goes up to its mount (ADR-0187).
+pub(crate) fn link_mount_of(
+    state: &mut crate::spatial::SpatialSessionState,
+    place: &SpatialId,
+    now: Timestamp,
+) {
+    let Some(path) = path_of(state, place) else {
+        return;
+    };
+    link_mount(state, place, &path, now);
+}
+
+fn link_mount(
+    state: &mut crate::spatial::SpatialSessionState,
+    place: &SpatialId,
+    path: &Path,
+    now: Timestamp,
+) {
+    if state
+        .index()
+        .get(place)
+        .is_none_or(|entry| entry.object().object_type() != SpatialType::Directory)
+    {
+        return;
+    }
+    let Some((_, mount)) = mount_of(state, path) else {
+        return;
+    };
+    let Some(spec) = ono_spatial_core::relation::spec("mount.backs_directory") else {
+        return;
+    };
+    let edge = ono_spatial_core::RelationshipEdge::new(
+        mount,
+        place.clone(),
+        spec.relation_type(),
+        ono_spatial_core::Confidence::Exact,
+        ono_value::Provenance::local("ono.spatial", ono_value::SchemaId::new("ono.mount", 1))
+            .observed_at(now),
+        now,
+    );
+    let (index, _) = state.absorb_with();
+    index.record_edge(edge);
+}
+
+/// The scope boundary a movement between two path places crosses, where it crosses one (§15.3).
+///
+/// §3.2 lists `filesystem` among the scope kinds and §15.3 makes the mount its boundary, so a
+/// step from a place on one mount to a place on another crosses one — which §2.18 and §3.2
+/// require to be observable in the trail. The scopes are named by their mount points, because
+/// that is the name a user typed to get here.
+pub(crate) fn filesystem_crossing(
+    state: &crate::spatial::SpatialSessionState,
+    from: &SpatialId,
+    to: &SpatialId,
+) -> Option<ono_spatial_core::ScopeBoundary> {
+    let here = path_of(state, from)?;
+    let there = path_of(state, to)?;
+    let (left, _) = mount_of(state, &here)?;
+    let (entered, _) = mount_of(state, &there)?;
+    if left == entered {
+        return None;
+    }
+    let scope = state.scope();
+    let from_scope = scope.nest(
+        ono_spatial_core::ScopeKind::Filesystem,
+        &left.display().to_string(),
+    );
+    let to_scope = scope.nest(
+        ono_spatial_core::ScopeKind::Filesystem,
+        &entered.display().to_string(),
+    );
+    from_scope.boundary_to(&to_scope)
 }
 
 /// Moves the place with `cd`, where §30.3 says it should.
@@ -176,4 +346,133 @@ fn place_is_storage() -> bool {
                 | SpatialType::BlockDevice
         )
     })
+}
+
+/// Whether a filesystem lives on another machine (§15.3's `remote yes`).
+///
+/// The kernel does not report it, so it is read off the two facts the mount provider does give:
+/// the filesystem type, and the shape of the source. Both are conservative — a type this build
+/// does not know is local, and a local device path is never called remote — because §2.17 makes
+/// an honest `no` better than a guessed `yes` (ADR-0187).
+#[must_use]
+pub fn is_remote_filesystem(filesystem: &str, source: &str) -> bool {
+    // The network filesystems Linux ships, plus the FUSE spellings of the same things.
+    const NETWORK: &[&str] = &[
+        "nfs",
+        "nfs4",
+        "cifs",
+        "smb3",
+        "smbfs",
+        "afs",
+        "ceph",
+        "glusterfs",
+        "lustre",
+        "ocfs2",
+        "9p",
+        "sshfs",
+        "davfs",
+        "beegfs",
+        "orangefs",
+        "gfs2",
+        "pvfs2",
+    ];
+    let kind = filesystem.to_ascii_lowercase();
+    let bare = kind.strip_prefix("fuse.").unwrap_or(&kind);
+    if NETWORK.contains(&bare) {
+        return true;
+    }
+    // A `host:/export` or `//host/share` source is a network location whatever the type is
+    // called; a device path and a pseudo-filesystem name are not.
+    if source.starts_with("//") {
+        return true;
+    }
+    match source.split_once(':') {
+        Some((host, rest)) => !host.is_empty() && rest.starts_with('/') && !source.starts_with('/'),
+        None => false,
+    }
+}
+
+/// Reads the entries of a directory place and files them under it (§15.1, §15.4, §33.3).
+///
+/// §33.3 makes the filesystem query-driven, so nothing walks it until somebody stands in it; and
+/// then the whole listing is read, because §15.4's summary is a statement about how many entries
+/// there *are*, and a count taken from a truncated read would be a number from nowhere (§2.17).
+/// What bounds the *view* is the neighborhood budget, not the read (§34.2).
+///
+/// The listing is remembered like any other provider answer, so standing in a directory and
+/// looking twice reads it once (§33.1, ADR-0186).
+pub(crate) async fn observe_children(
+    providers: &ono_provider_api::ProviderRegistry,
+    state: &mut crate::spatial::SpatialSessionState,
+    place: &SpatialId,
+    path: &Path,
+    now: Timestamp,
+) {
+    if providers.for_target("dir").is_empty() {
+        return;
+    }
+    let key = format!("dir:{}", path.display());
+    if let Some(seen) = state.recall(&key, now) {
+        // The entries are already in the index, filed under this place: nothing to do but not
+        // ask again.
+        let _ = seen;
+        return;
+    }
+    let query = Query::target("dir").with(Selector::field(
+        "path",
+        Value::Path(std::sync::Arc::from(path)),
+    ));
+    let mut observation = crate::spatial::session::TargetObservation {
+        at: now,
+        places: std::collections::BTreeMap::new(),
+        refusal: None,
+        served: false,
+    };
+    match providers.snapshot(&query) {
+        Err(error) => {
+            observation.refusal = Some((
+                ono_spatial_core::PermissionState::of_refusal(&error),
+                error.message().to_owned(),
+            ));
+        }
+        Ok(stream) => {
+            let collected = stream.collect().await;
+            if let Some(error) = collected.errors().first() {
+                observation.refusal = Some((
+                    ono_spatial_core::PermissionState::of_refusal(error),
+                    error.message().to_owned(),
+                ));
+            }
+            let records: Vec<RecordValue> = collected
+                .into_values()
+                .into_iter()
+                .filter_map(|value| match value {
+                    Value::Record(record) => Some(RecordValue::clone(&record)),
+                    _ => None,
+                })
+                .collect();
+            if !records.is_empty() || observation.refusal.is_none() {
+                observation.served = true;
+                state.absorb(&records, now);
+                for record in &records {
+                    let Ok(child) = state.projection_of_object(record) else {
+                        continue;
+                    };
+                    let id = child.spatial_id().clone();
+                    observation
+                        .places
+                        .entry(child.object_type())
+                        .or_default()
+                        .push(id.clone());
+                    let (index, _) = state.absorb_with();
+                    index.set_path_parent(&id, place);
+                }
+            }
+        }
+    }
+    if let Some((state_word, detail)) = observation.refusal.clone() {
+        let (index, _) = state.absorb_with();
+        index.record_withheld(place, "children", state_word, &detail);
+    }
+    state.remember(key, observation);
 }
