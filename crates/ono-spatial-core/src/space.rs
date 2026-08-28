@@ -174,7 +174,7 @@ struct Geographies {
     standing: Option<SpatialScope>,
     /// Every canonical space id this process has produced, and the host geography it belongs to.
     known: BTreeMap<crate::SpatialId, (&'static CanonicalSpace, Option<SpatialScope>)>,
-    /// The remote hosts entered, in the order they were first entered (§19.3's federated map).
+    /// The remote hosts whose geography is in `known`, so learning one twice is cheap.
     hosts: Vec<SpatialScope>,
 }
 
@@ -250,16 +250,6 @@ pub fn standing_in() -> Option<SpatialScope> {
         .read()
         .ok()
         .and_then(|geographies| geographies.standing.clone())
-}
-
-/// The remote hosts whose geography this process has entered, oldest first (§19.3).
-#[must_use]
-pub fn hosts() -> Vec<SpatialScope> {
-    geographies()
-        .read()
-        .ok()
-        .map(|geographies| geographies.hosts.clone())
-        .unwrap_or_default()
 }
 
 /// The canonical space an id names and the host geography it belongs to, where it names one.
