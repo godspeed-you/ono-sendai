@@ -150,6 +150,51 @@ cost_classes:
   - name: remote
     doc: Requires a remote operation across a link (§19, §35.4).
 
+# §42. What a provider that exposes objects to spatial navigation must declare, in its own entry
+# under `docs/spec/providers/`. §42 lists the eight claims; this block fixes the two vocabularies
+# they need that no other section already gives, and `spec-check` holds every claim against the
+# geography, the relation table and the schemas the provider declares (ADR-0132).
+provider_claims:
+  required:
+    - identity_strategy
+    - canonical_parent
+    - relationships
+    - freshness
+    - events
+    - permissions
+    - cost_class
+    - landmark_metrics
+  rules:
+    identity_strategy: >-
+      One of `identity_tiers`, and never stronger than the weakest ceiling among the spatial
+      types the provider serves: a claim is a promise about every object the provider exposes,
+      so a provider serving both a filesystem (Tier A) and a mount (Tier B) claims `lifetime`.
+      Weaker than the ceiling is always allowed; stronger never is (§10.1, §42.1).
+    canonical_parent: >-
+      One entry per spatial type the provider's targets name, holding the ordered chain `up`
+      follows for that type: the relations of the canonical-parent rule first, then the
+      collection space it falls back to, or an empty chain where the type has neither (§11.3).
+    relationships: >-
+      The relations of `relations.yaml` the provider's objects take part in and it can supply
+      the evidence for. A relation nobody serves is a promise nobody keeps, so this list names
+      only what the provider bridge actually derives from this provider's records (§32).
+    permissions: >-
+      The subset of `permission_states` this provider can report. It must contain
+      `permission_denied` or `unknown` wherever the provider can be refused, because §42.4
+      forbids denied information from arriving as an empty collection.
+    landmark_metrics: >-
+      The fields of the provider's own schemas that feed the landmark rules of §26. Each name
+      must be a field of one of the schemas the provider declares.
+  freshness:
+    - name: on_demand
+      doc: Every query reads the source again; the index caches, the provider does not.
+    - name: cached
+      doc: The provider holds a snapshot of its own and refreshes it on its own schedule.
+    - name: event
+      doc: >-
+        A subscription delivers changes, so an object stays current by construction and the
+        index can mark it `live` (§25.3, §33.3).
+
 # §47's required configuration keys, with the defaults the specification spells out. The typed
 # catalogue in `ono-cli` is the implementation; `spec-check` holds the two together.
 settings:

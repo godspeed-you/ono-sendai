@@ -144,7 +144,12 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 (event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
 (§45.6).
 
-- (empty — S1 complete, see below; no agent holds a claim)
+- [S2 | 2026-08-28] **S2 — provider identity and relation bridge (§50 Phase S2)** — files:
+  `docs/spec/providers/*.yaml`, `docs/spec/spatial/{spatial,relations}.yaml`,
+  `docs/spec/schemas/{process,process-detail,cgroup}.v1.yaml`, `crates/ono-spatial-core/src/`,
+  `crates/ono-spatial-index/src/`, `crates/ono-provider-linux/src/{process,procfs}.rs`,
+  `crates/ono-provider-api/src/object.rs`, `xtask/src/contracts.rs`, ADR-0132–0136.
+  Not touched: `docs/ACCEPTANCE.md` (a second agent writes §4.7 in parallel).
 
 **S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
 on each:

@@ -9,6 +9,18 @@ providers:
     targets: [interface]
     capabilities: [interface.list, interface.set]
     schemas: [ono.interface/1]
+    spatial:
+      identity_strategy: stable
+      canonical_parent:
+        Interface: [network.interfaces]
+      relationships:
+        - interface.has_address
+        - route.via_interface
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, permission_denied]
+      cost_class: cheap
+      landmark_metrics: [state, rx_bytes, tx_bytes, mtu]
 
   - id: linux.netlink
     doc: >-
@@ -17,12 +29,35 @@ providers:
     targets: [route]
     capabilities: [route.list, route.set]
     schemas: [ono.route/1]
+    spatial:
+      # A route is identified by the tuple it carries; delete it and add it again and it is a
+      # new route with the same shape (§10.1 Tier B).
+      identity_strategy: lifetime
+      canonical_parent:
+        Route: [network.routes]
+      relationships:
+        - route.via_interface
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, permission_denied]
+      cost_class: cheap
+      landmark_metrics: [metric, protocol, type]
 
   - id: linux.netlink
     doc: Neighbors, from rtnetlink (RTM_GETNEIGH).
     targets: [neighbor]
     capabilities: [neighbor.list]
     schemas: [ono.neighbor/1]
+    spatial:
+      identity_strategy: lifetime
+      canonical_parent:
+        Neighbor: [network.neighbors]
+      relationships: []
+      freshness: on_demand
+      events: false
+      permissions: [available, empty, permission_denied]
+      cost_class: cheap
+      landmark_metrics: [state, updated]
 
   - id: linux.sock-diag
     doc: >-
@@ -31,3 +66,18 @@ providers:
     targets: [socket, connection]
     capabilities: [socket.list, connection.list, socket.close]
     schemas: [ono.socket/1, ono.endpoint/1]
+    spatial:
+      # A socket inode is reused after the socket closes, so the identity lasts exactly as
+      # long as the socket does (§10.1 Tier B).
+      identity_strategy: lifetime
+      canonical_parent:
+        Listener: [process.owns_socket, network.listeners]
+        Connection: [socket.accepts_connection, network.connections]
+      relationships:
+        - process.owns_socket
+        - socket.connected_to
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, permission_denied]
+      cost_class: normal
+      landmark_metrics: [state, protocol]

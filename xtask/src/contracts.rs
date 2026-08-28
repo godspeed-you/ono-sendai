@@ -82,6 +82,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     problems.extend(check_adapter_packs(root));
     problems.extend(check_spatial_registry(root));
     problems.extend(check_spatial_implementation(root));
+    problems.extend(check_provider_claims(root));
 
     problems.sort_by(|a, b| (&a.location, &a.detail).cmp(&(&b.location, &b.detail)));
     problems
@@ -1490,5 +1491,397 @@ fn vocabulary(document: &Yaml, key: &str) -> BTreeSet<String> {
     sequence(document, key)
         .into_iter()
         .filter_map(|entry| string_at(entry, "name").or_else(|| string_at(entry, "id")))
+        .collect()
+}
+
+/// Checks the §42 spatial claims every provider that feeds the spatial index must declare.
+///
+/// §42 lists eight required claims and gives no vocabulary for most of them; ADR-0132 fixes the
+/// shape and this function enforces it. The checks that matter are the ones a reader cannot make
+/// by eye:
+///
+/// - a provider may claim a **weaker** identity tier than the types it serves allow, never a
+///   stronger one — a claim is a promise about every object the provider exposes, so the ceiling
+///   is the weakest of them (§10.1, §42.1);
+/// - the declared canonical-parent chain is exactly the chain `ono_spatial_core::parent_rules`
+///   and the geography implement, so `up` cannot mean one thing in the contract and another in
+///   the shell (§11.3);
+/// - every relation named is one `relations.yaml` declares and one that actually touches a type
+///   the provider serves (§32, §42.3);
+/// - denied information has somewhere to go: a provider that can be refused declares
+///   `permission_denied` or `unknown`, because §42.4 forbids a false empty collection;
+/// - every landmark metric is a field of a schema the provider declares (§26, §42).
+#[must_use]
+pub fn check_provider_claims(root: &Path) -> Vec<Problem> {
+    let providers = root.join("docs").join("spec").join("providers");
+    if !providers.is_dir() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+
+    let subsystem = std::fs::read_to_string(
+        root.join("docs")
+            .join("spec")
+            .join("spatial")
+            .join("spatial.yaml"),
+    )
+    .ok()
+    .and_then(|text| serde_yaml_ng::from_str::<Yaml>(&text).ok());
+    let Some(subsystem) = subsystem else {
+        return problems;
+    };
+    let claims_block = subsystem
+        .get("provider_claims")
+        .cloned()
+        .unwrap_or_default();
+    let required = string_sequence(&claims_block, "required");
+    let freshness: BTreeSet<String> = vocabulary(&claims_block, "freshness");
+    let relations: BTreeSet<String> = ono_spatial_core::relations()
+        .iter()
+        .map(|relation| relation.id.to_owned())
+        .collect();
+    let fields = schema_fields(root);
+
+    for path in yaml_files(&providers) {
+        let location = relative(root, &path);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        for provider in sequence(&document, "providers") {
+            let id = string_at(provider, "id").unwrap_or_default();
+            let served: BTreeSet<ono_spatial_core::SpatialType> =
+                string_sequence(provider, "targets")
+                    .iter()
+                    .flat_map(|target| ono_spatial_core::types_of_target(target))
+                    .copied()
+                    .collect();
+            let Some(claims) = provider.get("spatial") else {
+                if !served.is_empty() {
+                    problems.push(Problem {
+                        location: location.clone(),
+                        detail: format!(
+                            "`{id}` serves the spatial object types {}, so spec v0.4 §42 requires \
+                             a `spatial:` block with its eight claims",
+                            names(&served)
+                        ),
+                    });
+                }
+                continue;
+            };
+            if served.is_empty() {
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "`{id}` declares §42 spatial claims but none of its targets names a \
+                         spatial object type, so nothing it serves reaches the spatial index"
+                    ),
+                });
+                continue;
+            }
+            for key in &required {
+                if claims.get(key.as_str()).is_none() {
+                    problems.push(Problem {
+                        location: location.clone(),
+                        detail: format!("`{id}` declares no `{key}` among its §42 spatial claims"),
+                    });
+                }
+            }
+            problems.extend(check_identity_claim(&location, &id, claims, &served));
+            problems.extend(check_parent_claim(&location, &id, claims, &served));
+            problems.extend(check_relation_claim(
+                &location, &id, claims, &served, &relations,
+            ));
+            problems.extend(check_state_claims(&location, &id, claims, &freshness));
+            problems.extend(check_metric_claim(
+                &location, &id, claims, provider, &fields,
+            ));
+        }
+    }
+    problems
+}
+
+/// The spatial types, as a reader-friendly list.
+fn names(types: &BTreeSet<ono_spatial_core::SpatialType>) -> String {
+    types
+        .iter()
+        .map(|kind| kind.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// §42.1: the claimed tier may be weaker than every served type allows, never stronger.
+fn check_identity_claim(
+    location: &str,
+    id: &str,
+    claims: &Yaml,
+    served: &BTreeSet<ono_spatial_core::SpatialType>,
+) -> Vec<Problem> {
+    use ono_spatial_core::IdentityTier;
+    let Some(text) = string_at(claims, "identity_strategy") else {
+        return Vec::new();
+    };
+    let Some(claimed) = IdentityTier::from_name(&text) else {
+        return vec![Problem {
+            location: location.to_owned(),
+            detail: format!(
+                "`{id}` claims the identity strategy `{text}`, which is not one of the three \
+                 tiers of spec v0.4 §10.1"
+            ),
+        }];
+    };
+    // `IdentityTier` is ordered strongest first, so the weakest ceiling is the largest value.
+    let Some(ceiling) = served.iter().map(|kind| kind.identity_tier()).max() else {
+        return Vec::new();
+    };
+    if claimed < ceiling {
+        return vec![Problem {
+            location: location.to_owned(),
+            detail: format!(
+                "`{id}` claims `{claimed}` identity, but it serves {} and the weakest of those \
+                 allows only `{ceiling}`. A provider may claim a weaker identity than its types \
+                 allow, never a stronger one (spec v0.4 §10.1, §42.1)",
+                names(served)
+            ),
+        }];
+    }
+    Vec::new()
+}
+
+/// §11.3: the declared chain `up` follows is the chain the shell follows.
+fn check_parent_claim(
+    location: &str,
+    id: &str,
+    claims: &Yaml,
+    served: &BTreeSet<ono_spatial_core::SpatialType>,
+) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let Some(declared) = claims.get("canonical_parent") else {
+        return problems;
+    };
+    let entries: BTreeMap<String, Vec<String>> = declared
+        .as_mapping()
+        .map(|mapping| {
+            mapping
+                .iter()
+                .filter_map(|(key, value)| {
+                    let key = key.as_str()?.to_owned();
+                    let chain = value
+                        .as_sequence()
+                        .map(|list| {
+                            list.iter()
+                                .filter_map(|entry| entry.as_str().map(str::to_owned))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some((key, chain))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let expected: BTreeMap<String, Vec<String>> = served
+        .iter()
+        .map(|kind| (kind.as_str().to_owned(), parent_chain(*kind)))
+        .collect();
+
+    for (kind, chain) in &expected {
+        match entries.get(kind) {
+            Some(declared) if declared == chain => {}
+            Some(declared) => problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` declares the canonical parent of a {kind} as {declared:?}; `up` \
+                     follows {chain:?} (spec v0.4 §11.3)"
+                ),
+            }),
+            None => problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` serves {kind} objects but declares no canonical parent for them \
+                     (spec v0.4 §42)"
+                ),
+            }),
+        }
+    }
+    for kind in entries.keys() {
+        if !expected.contains_key(kind) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` declares a canonical parent for {kind}, which none of its targets \
+                     names (spec v0.4 §42)"
+                ),
+            });
+        }
+    }
+    problems
+}
+
+/// The chain `up` follows for `kind`: its canonical-parent relations, then the collection space
+/// it falls back to (§11.3).
+fn parent_chain(kind: ono_spatial_core::SpatialType) -> Vec<String> {
+    ono_spatial_core::parent_rules(kind)
+        .iter()
+        .map(|rule| rule.relation.to_owned())
+        .chain(ono_spatial_core::space::collection_for(kind).map(|space| space.id.to_owned()))
+        .collect()
+}
+
+/// §32, §42.3: a declared relation exists and touches a type the provider serves.
+fn check_relation_claim(
+    location: &str,
+    id: &str,
+    claims: &Yaml,
+    served: &BTreeSet<ono_spatial_core::SpatialType>,
+    relations: &BTreeSet<String>,
+) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    for name in string_sequence(claims, "relationships") {
+        if !relations.contains(&name) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` claims the relation `{name}`, which \
+                     docs/spec/spatial/relations.yaml does not declare"
+                ),
+            });
+            continue;
+        }
+        let Some(spec) = ono_spatial_core::relation::spec(&name) else {
+            continue;
+        };
+        if !served
+            .iter()
+            .any(|kind| kind.is_a(spec.source) || kind.is_a(spec.target))
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` claims the relation `{name}`, which runs between {} and {}; it \
+                     serves neither (spec v0.4 §42.3)",
+                    spec.source, spec.target
+                ),
+            });
+        }
+    }
+    problems
+}
+
+/// §35.2, §42.4, §32.1: the state, freshness and cost vocabularies.
+fn check_state_claims(
+    location: &str,
+    id: &str,
+    claims: &Yaml,
+    freshness: &BTreeSet<String>,
+) -> Vec<Problem> {
+    use ono_spatial_core::{CostClass, neighborhood::PermissionState};
+    let mut problems = Vec::new();
+
+    if let Some(declared) = string_at(claims, "freshness")
+        && !freshness.contains(&declared)
+    {
+        problems.push(Problem {
+            location: location.to_owned(),
+            detail: format!(
+                "`{id}` claims the freshness strategy `{declared}`, which \
+                 docs/spec/spatial/spatial.yaml does not declare"
+            ),
+        });
+    }
+    if let Some(declared) = string_at(claims, "cost_class")
+        && CostClass::from_name(&declared).is_none()
+    {
+        problems.push(Problem {
+            location: location.to_owned(),
+            detail: format!(
+                "`{id}` claims the cost class `{declared}`, which is not one of the classes of \
+                 spec v0.4 §32.1"
+            ),
+        });
+    }
+    if claims.get("events").is_some_and(|value| !value.is_bool()) {
+        problems.push(Problem {
+            location: location.to_owned(),
+            detail: format!("`{id}` must answer `events` with a boolean (spec v0.4 §42)"),
+        });
+    }
+
+    let states = string_sequence(claims, "permissions");
+    if states.is_empty() {
+        problems.push(Problem {
+            location: location.to_owned(),
+            detail: format!(
+                "`{id}` names no permission state it can report; §42.4 requires denied \
+                 information to have somewhere to go other than an empty collection"
+            ),
+        });
+    }
+    for state in &states {
+        if PermissionState::from_name(state).is_none() {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` claims the permission state `{state}`, which is not one of the six \
+                     of spec v0.4 §35.2"
+                ),
+            });
+        }
+    }
+    problems
+}
+
+/// §26, §42: a landmark metric is a field of a schema the provider declares.
+fn check_metric_claim(
+    location: &str,
+    id: &str,
+    claims: &Yaml,
+    provider: &Yaml,
+    fields: &BTreeMap<String, BTreeSet<String>>,
+) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let known: BTreeSet<&String> = string_sequence(provider, "schemas")
+        .iter()
+        .filter_map(|schema| fields.get(schema))
+        .flatten()
+        .collect();
+    let metrics = string_sequence(claims, "landmark_metrics");
+    if metrics.is_empty() {
+        problems.push(Problem {
+            location: location.to_owned(),
+            detail: format!(
+                "`{id}` names no landmark-relevant metric; §42 requires the claim, and §26 \
+                 builds every landmark rule from one"
+            ),
+        });
+    }
+    for metric in &metrics {
+        if !known.contains(metric) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` claims the landmark metric `{metric}`, which is not a field of any \
+                     schema it declares"
+                ),
+            });
+        }
+    }
+    problems
+}
+
+/// The field names of every schema under `docs/spec/schemas/`, by schema id.
+fn schema_fields(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
+    yaml_files(&root.join("docs").join("spec").join("schemas"))
+        .into_iter()
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(path).ok()?;
+            let document = serde_yaml_ng::from_str::<Yaml>(&text).ok()?;
+            Some((
+                string_at(&document, "id")?,
+                mapping_keys(&document, "fields"),
+            ))
+        })
         .collect()
 }

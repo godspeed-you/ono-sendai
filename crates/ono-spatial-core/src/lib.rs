@@ -53,4 +53,4 @@ pub use scope::{ScopeBoundary, ScopeKind, SpatialScope};
 pub use space::{CanonicalSpace, ROOT, SpaceKind, SpaceStatus, spaces};
 pub use tombstone::{Liveness, Tombstone, TombstoneRegistry};
 pub use trail::{BackOutcome, Movement, NavigationStep, NavigationTrail};
-pub use types::SpatialType;
+pub use types::{SpatialType, types_of_target};

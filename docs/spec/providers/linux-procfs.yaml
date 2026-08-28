@@ -11,18 +11,68 @@ providers:
     targets: [process, signal]
     capabilities: [process.list, process.inspect, process.signal, process.set]
     schemas: [ono.process/1, ono.process-detail/1]
+    spatial:
+      # §10.2: a pid is an attribute, a process identity is boot + pid + start time + pid
+      # namespace. The tier is therefore B, never A: the number is reused the moment the
+      # process ends.
+      identity_strategy: lifetime
+      canonical_parent:
+        Process: [service.controls_process, container.contains_process, compute.processes]
+      relationships:
+        - process.parent_of
+        - process.member_of_cgroup
+        - process.in_namespace
+        - process.opened_file
+        - service.controls_process
+        - container.contains_process
+        - user.owns_process
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, permission_denied]
+      cost_class: cheap
+      landmark_metrics: [cpu, memory, state, started]
 
   - id: linux.fs
     doc: Files and directories, from the filesystem itself.
     targets: [file, dir]
     capabilities: [file.list, file.find, file.read, file.write, file.copy, file.move, file.remove, file.set, file.open, file.watch, dir.list]
     schemas: [ono.file/1]
+    spatial:
+      # A file is device + inode: the same object under any number of paths, and the same
+      # object after a rename (§10.1 Tier A).
+      identity_strategy: stable
+      canonical_parent:
+        Directory: [mount.backs_directory, storage.directories]
+        File: [mount.backs_directory]
+      relationships:
+        - mount.backs_directory
+        - process.opened_file
+        - user.owns_file
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, permission_denied, unknown]
+      cost_class: normal
+      landmark_metrics: [size, modified, owner, mode]
 
   - id: linux.nss
     doc: Users and groups, through NSS — so LDAP and sssd answer too, not only /etc/passwd.
     targets: [user, group]
     capabilities: [user.list, group.list, user.manage, group.manage]
     schemas: [ono.user/1, ono.group/1]
+    spatial:
+      identity_strategy: stable
+      canonical_parent:
+        User: [identity.users]
+        Group: [identity.groups]
+      relationships:
+        - user.owns_process
+        - user.owns_file
+        - user.member_of_group
+      freshness: on_demand
+      events: false
+      permissions: [available, empty, unknown]
+      cost_class: cheap
+      landmark_metrics: [uid, shell]
 
   - id: ono.session
     doc: The session's own environment. The shell is the source; no kernel interface is asked.
@@ -43,6 +93,20 @@ providers:
     schemas: [ono.job/1, ono.link/1, ono.host/1, ono.plugin/1, ono.plugin-package/1,
               ono.plugin-inspection/1, ono.capability-grant/1, ono.plugin-audit-event/1,
               ono.assistant/1, ono.model-provider/1, ono.finding/1]
+    spatial:
+      # The job table is as long-lived as the session's jobs; a host is a stable name. One
+      # claim covers both, so it is the weaker of the two (§42).
+      identity_strategy: lifetime
+      canonical_parent:
+        Job: [compute.jobs]
+        Host: []
+      relationships:
+        - host.linked_to
+      freshness: event
+      events: true
+      permissions: [available, empty]
+      cost_class: cheap
+      landmark_metrics: [state, link]
 
   - id: linux.mountinfo
     doc: >-
@@ -51,9 +115,41 @@ providers:
     targets: [mount, filesystem]
     capabilities: [mount.list, filesystem.list, mount.manage]
     schemas: [ono.mount/1, ono.filesystem/1]
+    spatial:
+      # A filesystem UUID is Tier A and a mount is Tier B — a mount point is reused the
+      # moment the filesystem is unmounted. One entry serves both, so the claim is the
+      # weaker of the two (§42, §10.1).
+      identity_strategy: lifetime
+      canonical_parent:
+        Mount: [filesystem.mounted_at, storage.mounts]
+        Filesystem: [device.backs_filesystem, storage.filesystems]
+      relationships:
+        - filesystem.mounted_at
+        - mount.backs_directory
+        - device.backs_filesystem
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, permission_denied]
+      cost_class: cheap
+      landmark_metrics: [used, available, size, read_only]
 
   - id: linux.sysfs
     doc: Block and character devices, from the nodes under /dev and their sysfs entries (ADR-0097).
     targets: [device]
     capabilities: [device.list]
     schemas: [ono.device/1]
+    spatial:
+      # The device node is the identity, and it is stable for as long as the device is
+      # attached (§18: a device is a spatial object only where the provider supplies stable
+      # identity).
+      identity_strategy: stable
+      canonical_parent:
+        BlockDevice: [storage.devices]
+        Device: [devices]
+      relationships:
+        - device.backs_filesystem
+      freshness: on_demand
+      events: false
+      permissions: [available, empty, unknown]
+      cost_class: cheap
+      landmark_metrics: [size, subsystem, kind]

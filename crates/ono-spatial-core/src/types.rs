@@ -177,6 +177,36 @@ impl SpatialType {
         Self::AGGREGATES.contains(&self)
     }
 
+    /// The type this one is a special case of, where it is one (§14.3, §15.4).
+    ///
+    /// The relation table of §41.2 names the general type — `process.owns_socket` runs to a
+    /// `Socket` — while §14.3 and §14.4 make the *places* a `Listener` and a `Connection`, and
+    /// §15.4 and §15.5 do the same to `ono.file/1`. Rather than declaring one relation per
+    /// specialisation, a specialised type answers to the relations of its general type, and
+    /// nothing else: a `Directory` is a `File` for `process.opened_file`, a `File` is not a
+    /// `Directory` for `mount.backs_directory`.
+    #[must_use]
+    pub const fn generalises_to(self) -> Option<SpatialType> {
+        match self {
+            SpatialType::Listener | SpatialType::Connection => Some(SpatialType::Socket),
+            SpatialType::Directory => Some(SpatialType::File),
+            _ => None,
+        }
+    }
+
+    /// Whether an object of this type may stand where one of `other` is expected (§41.2).
+    #[must_use]
+    pub fn is_a(self, other: SpatialType) -> bool {
+        let mut here = Some(self);
+        while let Some(kind) = here {
+            if kind == other {
+                return true;
+            }
+            here = kind.generalises_to();
+        }
+        false
+    }
+
     /// The identity tier a provider can honestly claim for this type (§10.1).
     ///
     /// This is the *ceiling*, not a promise: a provider may only claim a weaker tier, never a
@@ -230,5 +260,47 @@ impl SpatialType {
 impl fmt::Display for SpatialType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// The spatial types a v0.2 provider target names (§42).
+///
+/// The provider registry of `docs/spec/providers/` speaks the target vocabulary of spec v0.2
+/// §8.1 — `process`, `socket`, `dir` — and the spatial layer speaks [`SpatialType`]. This table
+/// is the join between them, and it is deliberately the *only* one: `docs/spec/providers/*.yaml`
+/// declares its §42 claims per spatial type, `spec-check` reads the claims through this
+/// function, and the provider bridge decides an observed record's type through it too, so a
+/// provider cannot claim for one type and serve another.
+///
+/// A target that names no spatial type — `env`, `package`, `dns`, `log` — yields the empty
+/// slice: those objects are values in the typed shell, and §7 gives them no place.
+///
+/// One target may name more than one type. A `socket` is a [`SpatialType::Listener`] or a
+/// [`SpatialType::Connection`] depending on its state (§14.3, §14.4), a `device` is a
+/// [`SpatialType::BlockDevice`] or a [`SpatialType::Device`] depending on its kind (§7.4, §7.7),
+/// and which one a given record is stays the bridge's decision from the record itself.
+#[must_use]
+pub fn types_of_target(target: &str) -> &'static [SpatialType] {
+    use SpatialType as T;
+    match target {
+        "process" => &[T::Process],
+        "service" => &[T::Service],
+        "job" => &[T::Job],
+        "container" => &[T::Container],
+        "socket" => &[T::Listener, T::Connection],
+        "connection" => &[T::Connection],
+        "interface" => &[T::Interface],
+        "route" => &[T::Route],
+        "neighbor" => &[T::Neighbor],
+        "filesystem" => &[T::Filesystem],
+        "mount" => &[T::Mount],
+        "device" => &[T::BlockDevice, T::Device],
+        "dir" => &[T::Directory],
+        "file" => &[T::File],
+        "user" => &[T::User],
+        "group" => &[T::Group],
+        "session" => &[T::Session],
+        "host" => &[T::Host],
+        _ => &[],
     }
 }

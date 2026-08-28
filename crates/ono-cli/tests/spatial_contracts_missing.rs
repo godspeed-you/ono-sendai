@@ -722,7 +722,6 @@ fn should_serve_every_relation_it_declares_and_declare_every_relation_it_serves(
 // --- §42 provider conformance for spatial objects ----------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §42); un-ignored by the increment that delivers it"]
 fn should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_index() {
     // §42: "A provider that exposes objects to spatial navigation MUST pass additional
     // conformance tests beyond ordinary schema validity", and lists eight required claims. The
