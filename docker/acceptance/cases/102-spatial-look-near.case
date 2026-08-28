@@ -113,6 +113,16 @@ run: |
     'test "$(ono -c "enter compute; enter processes; exec:printf still-unix")" = "still-unix"'
 
   echo done=ok
+  echo "== the commands teach themselves (§38.1) =="
+  prove s4t "help spatial explains every verb of the §38.1 overview" \
+    'ono -c "help spatial" > /tmp/help-spatial.txt;
+     for verb in look map enter follow jump back up home near find trail; do
+       grep -qE "^ +$verb" /tmp/help-spatial.txt || { echo "no line for $verb"; cat /tmp/help-spatial.txt; exit 1; }
+     done'
+  prove s4u "the overview points at a verb's own page, and that page is the full one" \
+    'ono -c "help spatial" | grep -qF "help look" &&
+     ono -c "help look" | grep -qF -- "--json"'
+
 exit: 0
 stdout-contains: done=ok
 stdout-contains: PROVED s4a
@@ -163,4 +173,6 @@ stdout-contains: PROVED s4p
 stdout-contains: PROVED s4q
 stdout-contains: PROVED s4r
 stdout-contains: PROVED s4s
+stdout-contains: PROVED s4t
+stdout-contains: PROVED s4u
 stdout-not-contains: FAILED
