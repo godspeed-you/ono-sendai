@@ -211,6 +211,37 @@ error_codes! {
     AdapterRequiredForStructuredPipeline => "Ono-Sendai-E0911", "adapter.required_for_structured_pipeline", Type,
         "A consumer demanded objects and no adapter can provide them for this invocation.";
 
+    // --- spatial, spec v0.4 §40: the fourteen conditions of the spatial interface, allocated
+    // as the E10xx family in the order §40 lists them (ADR-0125, ADR-0127).
+    SpatialNotFound => "Ono-Sendai-E1001", "spatial.not_found", Resolution,
+        "No place, object or alias answers to this spatial selector.";
+    SpatialAmbiguousSelector => "Ono-Sendai-E1002", "spatial.ambiguous_selector", Resolution,
+        "More than one place answers to this selector and none of them is the obvious one.";
+    SpatialNotEnterable => "Ono-Sendai-E1003", "spatial.not_enterable", Type,
+        "This object exists but is not a place you can stand in.";
+    SpatialNoRelation => "Ono-Sendai-E1004", "spatial.no_relation", Resolution,
+        "No relation of that name leaves this place.";
+    SpatialNoParent => "Ono-Sendai-E1005", "spatial.no_parent", Resolution,
+        "This place has no canonical parent, so `up` has nowhere to go.";
+    SpatialHistoryEmpty => "Ono-Sendai-E1006", "spatial.history_empty", Conflict,
+        "The navigation trail holds no earlier place to return to.";
+    SpatialDestinationGone => "Ono-Sendai-E1007", "spatial.destination_gone", Resolution,
+        "The place the trail or pin points at no longer exists.";
+    SpatialPermissionDenied => "Ono-Sendai-E1008", "spatial.permission_denied", Permission,
+        "This user may not see the objects or relations behind this place.";
+    SpatialUnsupported => "Ono-Sendai-E1009", "spatial.unsupported", Provider,
+        "No installed provider can answer for this place, relation or domain.";
+    SpatialStale => "Ono-Sendai-E1010", "spatial.stale", Provider,
+        "The index's answer is older than this operation is allowed to accept.";
+    SpatialRemoteUnavailable => "Ono-Sendai-E1011", "spatial.remote_unavailable", Provider,
+        "The remote host this place belongs to cannot be reached.";
+    SpatialScopeViolation => "Ono-Sendai-E1012", "spatial.scope_violation", Permission,
+        "The movement would cross a scope boundary this session may not cross.";
+    SpatialMapTooLarge => "Ono-Sendai-E1013", "spatial.map_too_large", Stream,
+        "The requested map exceeds its node budget and cannot be drawn honestly.";
+    SpatialIdentityConflict => "Ono-Sendai-E1014", "spatial.identity_conflict", Conflict,
+        "Two observations claim to be the same object and their identities disagree.";
+
     // --- KUANG/11, spec §31.79: the K11 family of docs/spec/kuang/errors.v1.yaml, folded into
     // the global model (ADR-0108). Numbering follows §31.79's families.
     KuangPackageInvalid => "Ono-Sendai-K11001", "package.invalid", Parse,

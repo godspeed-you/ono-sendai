@@ -327,7 +327,6 @@ fn provider_declarations() -> Vec<Value> {
 // --- §40 the error model ----------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §40); un-ignored by the increment that delivers it"]
 fn should_register_the_whole_spatial_error_family_in_the_error_taxonomy() {
     // §40 names fourteen required codes. `docs/spec/errors.yaml` is the closed, additive
     // taxonomy of spec v0.2 §43 (ADR-0006): E00xx parse … E08xx stream, E09xx adapter (v0.3),
