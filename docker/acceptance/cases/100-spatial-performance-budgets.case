@@ -1,0 +1,157 @@
+# v0.4 §34 (performance budgets), measured in the container on the fixtures of §43.3, as
+# `docs/ACCEPTANCE.md` §4.7.5 requires. The two in-suite timing tests
+# (`spatial_contracts_missing::should_answer_repeated_looks_far_inside_the_look_budget` and
+# `::should_bound_the_default_map_to_its_node_budget`) deliberately use a ten-times tolerance so
+# the gate is not flaky; this case is where the real figures are asserted.
+#
+# Three things make the figures mean something:
+#
+#   * Every number is a **median** of repeated runs, so one scheduling hiccup on a build machine
+#     cannot decide the release, and the figure is printed on every run whether it passes or not.
+#   * A budget that describes a *warm, cached* operation is measured as the **marginal** cost of
+#     that operation inside one session: the same script is run with one repetition and with
+#     twenty-one, and the difference divided by twenty. Process start-up, provider discovery and
+#     the first projection are then in both figures and cancel, which is exactly what "local and
+#     cached" means in §34. Measuring `ono -c look` end to end would time the shell's start-up,
+#     which §34 budgets separately.
+#   * `startup-to-prompt` is measured through a real pseudo-terminal, because the spatial horizon
+#     of §5 is only drawn at a terminal — case `090` (`44.1m`–`44.1p`) is what proves the horizon
+#     is what is being timed here. It is measured **against a baseline of the same harness running
+#     `bash`**, because `script(1)` costs about 270 ms of its own in this image (measured: `bash`
+#     under `script` takes as long as `ono` does under it, to the millisecond). An absolute figure
+#     would therefore be a measurement of `script`, not of the shell. Both figures are printed,
+#     and the difference — everything `ono` does that `bash` does not, which is its whole start-up,
+#     its configuration, the §5 horizon and the first prompt — is what the budget is asserted on.
+#
+# §34.1 ("expensive discovery SHOULD occur asynchronously after prompt availability") is measured
+# by repeating the startup measurement on a host that has been made deliberately expensive to
+# discover: two hundred extra processes and a directory of twenty thousand entries. The budget
+# asserted is the same one; a shell that walked all of that before drawing its prompt could not
+# hold it.
+case: the performance budgets of section 34 hold on the fixtures of section 43.3
+timeout: 900
+env: NO_COLOR=1
+run: |
+  # Unlike the other cases, this one prints what the check *measured* whether it passed or
+  # failed: `docs/ACCEPTANCE.md` §4.7.5 requires the figure on every run, so that a regression
+  # which stays inside the budget is still visible in a diff of two runs.
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+    fi
+    printf '%s\n' "$out" | sed 's/^/        /'
+  }
+
+  median() { sort -n | awk '{ value[NR] = $1 } END { if (NR == 0) { print -1 } else { print value[int((NR + 1) / 2)] } }'; }
+
+  # The wall time of one whole `ono` run, in microseconds.
+  run_us() {
+    local start end
+    start=$(date +%s%N)
+    ono --no-config -c "$1" >/dev/null 2>&1
+    end=$(date +%s%N)
+    echo $(( (end - start) / 1000 ))
+  }
+
+  # The marginal cost of one repetition of `statement` inside a session that has already paid for
+  # start-up and for the first observation: median over `runs` pairs of (1 repetition, 21).
+  marginal() {
+    local label="$1" limit_ms="$2" runs="$3" prefix="$4" statement="$5"
+    local reps=21 one many i figure
+    one="$prefix$statement"
+    many="$prefix"
+    for i in $(seq $reps); do many="$many$statement"; done
+    # Warm the page cache and the index before either figure is taken.
+    ono --no-config -c "$one" >/dev/null 2>&1
+    figure=$(
+      for i in $(seq "$runs"); do
+        local short long
+        short=$(run_us "$one")
+        long=$(run_us "$many")
+        echo $(( (long - short) / (reps - 1) ))
+      done | median
+    )
+    echo "$label: ${figure}us per repetition (§34 budget ${limit_ms}ms, median of $runs pairs)"
+    test "$figure" -ge 0 && test "$figure" -le $(( limit_ms * 1000 ))
+  }
+
+  # One interactive session on a real terminal: start `$1`, let it reach its prompt, give it a
+  # line, let it exit. Median over `$2` runs, in milliseconds.
+  terminal_ms() {
+    local shell="$1" runs="$2" start end
+    printf 'exit\n' | script --quiet --return --command "$shell" /dev/null >/dev/null 2>&1
+    for _ in $(seq "$runs"); do
+      start=$(date +%s%N)
+      printf 'exit\n' | script --quiet --return --command "$shell" /dev/null >/dev/null 2>&1
+      end=$(date +%s%N)
+      echo $(( (end - start) / 1000000 ))
+    done | median
+  }
+
+  # The wall time from launching an interactive `ono` on a terminal to it having drawn its
+  # horizon and its prompt and accepted a line, with the harness's own cost taken out.
+  startup_ms() {
+    local label="$1" limit_ms="$2" runs="$3" baseline total figure
+    baseline=$(terminal_ms bash "$runs")
+    total=$(terminal_ms ono "$runs")
+    figure=$(( total - baseline ))
+    if [ "$figure" -lt 0 ]; then
+      echo "$label: ${figure}ms — below the run-to-run variation of the harness itself; counted as 0"
+      figure=0
+    fi
+    echo "$label: ${figure}ms to a usable prompt (§34 budget ${limit_ms}ms, median of $runs runs;" \
+         "${total}ms under script(1), whose own cost with bash in the same harness is ${baseline}ms)"
+    test "$figure" -le "$limit_ms"
+  }
+
+  echo "== the fixtures of §43.3 =="
+  mkdir -p /tmp/spatial/bin /tmp/spatial/data
+  cp /opt/ono-fixtures/spatial/systemctl /tmp/spatial/bin/systemctl
+  chmod +x /tmp/spatial/bin/systemctl
+  export PATH=/tmp/spatial/bin:$PATH
+  printf 'fixture payload\n' > /tmp/spatial/data/held.txt
+  /opt/ono-fixtures/spatial/web-service.pl 18090 /tmp/spatial/data/held.txt 3 150 \
+    /tmp/fixture-perf.state > /tmp/spatial/server.log 2>&1 &
+  for _ in $(seq 40); do [ -s /tmp/fixture-perf.state ] && break; sleep 0.5; done
+  . /tmp/fixture-perf.state
+  echo "fixture: main=$FIXTURE_WEB_MAIN workers=$FIXTURE_WEB_WORKERS port=$FIXTURE_WEB_PORT"
+
+  echo "== §34 budgets =="
+  echo "context: a whole non-interactive run of ono -c true takes $(run_us 'true')us in this image"
+  prove startup-to-prompt "interactive startup to a usable prompt stays under 150ms (§34)" \
+    'startup_ms startup-to-prompt 150 40'
+  prove warm-look "a repeated local look stays under 50ms (§34)" \
+    'marginal warm-look 50 15 "" "look; "'
+  prove warm-near "a cached near stays under 50ms (§34)" \
+    'marginal warm-near 50 15 "enter compute; enter processes; " "near; "'
+  prove map-l0-l1 "a cached L0/L1 map stays under 100ms (§34)" \
+    'marginal map-l0-l1 100 15 "" "map --zoom 1; "'
+  prove map-l2 "an L2 map of an ordinary host stays under 250ms (§34)" \
+    'marginal map-l2 250 15 "" "map --zoom 2; "'
+  prove find-place "a search of indexed objects stays under 100ms (§33.1, §34)" \
+    'marginal find-place 100 15 "" "find place --type process --where pid > 1 | count; "'
+
+  echo "== §34.1: expensive discovery does not block the prompt =="
+  mkdir -p /tmp/spatial/wide
+  ( cd /tmp/spatial/wide && for i in $(seq 20000); do : > "entry-$i"; done )
+  for _ in $(seq 200); do sleep 600 & done
+  echo "load: $(ls /tmp/spatial/wide | wc -l) directory entries, $(ls /proc | grep -c '^[0-9]') processes"
+  prove startup-under-load "the prompt is usable inside the same budget on a host whose discovery is expensive (§34.1)" \
+    'startup_ms startup-to-prompt-under-load 150 40'
+  kill %2 2>/dev/null || true
+  jobs -p | xargs -r kill 2>/dev/null || true
+  wait 2>/dev/null || true
+exit: 0
+stdout-contains: PROVED startup-to-prompt
+stdout-contains: PROVED warm-look
+stdout-contains: PROVED warm-near
+stdout-contains: PROVED map-l0-l1
+stdout-contains: PROVED map-l2
+stdout-contains: PROVED find-place
+stdout-contains: PROVED startup-under-load
+stdout-not-contains: FAILED
+stdout-not-contains: panicked
+stdout-not-contains: command not found
