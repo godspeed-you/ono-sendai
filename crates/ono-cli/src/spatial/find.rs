@@ -5,6 +5,7 @@
 //! provider bridge and the query layer. Nothing about which place is which, or which answers
 //! first, is decided here.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use jiff::Timestamp;
@@ -74,7 +75,20 @@ impl CommandImpl for FindPlace {
             // composition §28.2 requires (ADR-0141, superseded here).
             let mut session = crate::spatial::spatial_session().await;
 
+            let fields = root_fields(predicate.iter().flat_map(field_paths));
             let plan = plan_for(ctx.providers(), object_type, predicate.as_ref());
+            // v0.2 §11.3's pre-flight check, in the shape a cross-type search takes it: a field
+            // *some* candidate declares narrows the search, and a field *none* of them declares
+            // is a word about nothing. Answering the second with an empty stream made a typo in
+            // a script indistinguishable from an empty system (ADR-0210).
+            let declared = declared_fields(ctx.providers(), &plan, &session);
+            if let Some(field) = plan
+                .unknown_fields()
+                .iter()
+                .find(|field| !declared.contains(field.as_str()))
+            {
+                return Err(undeclared_field(field, &declared));
+            }
             let mut subjects: Vec<ono_spatial_core::SpatialId> = Vec::new();
             for target in plan.asked() {
                 let records =
@@ -95,20 +109,33 @@ impl CommandImpl for FindPlace {
                 // index, so the predicate is put to what was last said about it too. It is the
                 // same record the object was projected from, not a second reading of the system
                 // (§2.16).
-                let held: Vec<ono_spatial_core::SpatialId> = session
+                let candidates: Vec<ono_spatial_core::SpatialId> = session
                     .index()
                     .entries()
                     .map(|entry| entry.object().spatial_id().clone())
                     .filter(|id| !subjects.contains(id))
-                    .filter(|id| {
-                        session.record_of(id).is_some_and(|record| {
-                            let subject = Value::Record(Arc::clone(record));
-                            ono_command::evaluate(predicate, &subject, &scope)
-                                .is_ok_and(|answer| ono_command::is_true(&answer))
-                        })
-                    })
                     .collect();
-                subjects.extend(held);
+                for id in candidates {
+                    let Some(record) = session.record_of(&id).cloned() else {
+                        continue;
+                    };
+                    // The same rule the target plan applies to a provider target: a record whose
+                    // schema does not declare a field the predicate reads is not a candidate for
+                    // it at all, so it is not asked and cannot fail.
+                    if !fields
+                        .iter()
+                        .all(|field| record.schema().field(field).is_some())
+                    {
+                        continue;
+                    }
+                    let subject = Value::Record(record);
+                    // §2.17 and §29.3: an evaluation error is an error, not a non-match. A
+                    // search that swallowed it would answer `0` for a question it never managed
+                    // to ask (ADR-0210).
+                    if ono_command::is_true(&ono_command::evaluate(predicate, &subject, &scope)?) {
+                        subjects.push(id);
+                    }
+                }
                 request = request.among(subjects);
             }
 
@@ -256,6 +283,60 @@ fn plan_for(
     )
 }
 
+/// Every field name a place this search could reach declares.
+///
+/// Two sources, because §6.8 gives the search two: the schemas of the provider targets the plan
+/// still considers candidates, and the schemas of the records this session's index already holds
+/// — a place only a v0.3 adapter observed is in the second and in neither of the first
+/// (ADR-0201, ADR-0193).
+fn declared_fields(
+    providers: &ProviderRegistry,
+    plan: &TargetPlan,
+    session: &crate::spatial::session::SpatialSessionState,
+) -> BTreeSet<String> {
+    let mut declared: BTreeSet<String> = BTreeSet::new();
+    let mut add = |schema: &ono_value::Schema| {
+        declared.extend(
+            schema
+                .fields()
+                .iter()
+                .map(|declaration| declaration.name().to_owned()),
+        );
+    };
+    for target in plan.candidates() {
+        for provider in providers.for_target(target) {
+            for schema in provider.schemas() {
+                add(&schema);
+            }
+        }
+    }
+    for entry in session.index().entries() {
+        if let Some(record) = session.record_of(entry.object().spatial_id()) {
+            add(record.schema());
+        }
+    }
+    declared
+}
+
+/// The refusal v0.2 §11.3 asks for when a predicate names a field no place this search reaches
+/// declares.
+///
+/// The suggestion comes from the same pool the check consulted, so the answer and the suggestion
+/// cannot disagree — `--where memroy > 1` is answered with `memory` (§15.4).
+fn undeclared_field(field: &str, declared: &BTreeSet<String>) -> ErrorValue {
+    let error = ErrorValue::new(
+        ErrorCode::TypeUnknownField,
+        format!("unknown field `{field}`: no kind of place this search reaches declares it"),
+    );
+    match ono_command::closest(field, declared.iter().map(String::as_str)) {
+        Some(near) => error.with_help(format!("perhaps: {near}")),
+        None => error.with_help(
+            "`find place --type <kind>` narrows the search to one kind of place, and `type` on \
+             its stream names the fields that kind declares (spec v0.2 §11.3, §15.4)",
+        ),
+    }
+}
+
 /// Every root field path an expression reads.
 ///
 /// `state == "running"` reads `state`; `local.port == 8080` reads `local`, because a nested field
@@ -298,8 +379,10 @@ fn walk(expression: &Expr, found: &mut Vec<String>) {
 ///
 /// A provider that cannot answer here — no systemd, no container runtime — is not a failure of
 /// the search: it is a part of the system that is not present, and the search says nothing about
-/// it rather than refusing (§4, §35.2). A predicate that a record cannot be evaluated against is
-/// the same: the record does not match, and the search goes on.
+/// it rather than refusing (§4, §35.2). A predicate the record cannot be evaluated against is
+/// **not** the same: every record reaching here comes from a target whose schema declares every
+/// field the predicate reads, so a failure to evaluate is a failure of the question, and §2.17
+/// forbids reporting it as a row that did not match (ADR-0210).
 async fn observe(
     providers: &ProviderRegistry,
     target: &str,
@@ -319,9 +402,11 @@ async fn observe(
         };
         if let Some(predicate) = predicate {
             let subject = Value::Record(Arc::clone(&record));
-            match ono_command::evaluate(predicate, &subject, scope) {
-                Ok(answer) if ono_command::is_true(&answer) => {}
-                _ => continue,
+            // §2.17 and §29.3: a predicate the record cannot be evaluated against is a refusal,
+            // not a non-match — `memory > 1` compares a bytesize with an int, and the v0.2
+            // pipeline says so rather than filtering the row away (ADR-0210).
+            if !ono_command::is_true(&ono_command::evaluate(predicate, &subject, scope)?) {
+                continue;
             }
         }
         records.push(RecordValue::clone(&record));

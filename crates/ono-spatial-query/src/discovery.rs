@@ -85,6 +85,8 @@ impl Skipped {
 pub struct TargetPlan {
     asked: Vec<&'static str>,
     skipped: Vec<(&'static str, Skipped)>,
+    candidates: Vec<&'static str>,
+    unknown_fields: Vec<String>,
 }
 
 impl TargetPlan {
@@ -100,8 +102,34 @@ impl TargetPlan {
         &self.skipped
     }
 
-    /// Whether the plan asks nothing at all — which is a real answer, not a failure: a predicate
-    /// over a field no schema declares cannot match anything, and saying so costs nothing.
+    /// The targets a search of this kind could hold an answer in at all: served by a provider,
+    /// and serving the kind of place the search asked for.
+    ///
+    /// Cost and the predicate's fields narrow this further; what is *not* in it is a target the
+    /// question could never have been about.
+    #[must_use]
+    pub fn candidates(&self) -> &[&'static str] {
+        &self.candidates
+    }
+
+    /// The predicate's fields that no candidate target declares.
+    ///
+    /// A field some candidates declare narrows the search — a cross-type search is what
+    /// `find place` is for, and a mount having no `cpu` is not an error. A field *none* of them
+    /// declares is a word about nothing, and v0.2 §11.3 refuses it before anything is
+    /// enumerated rather than answering an empty stream (ADR-0210).
+    #[must_use]
+    pub fn unknown_fields(&self) -> &[String] {
+        &self.unknown_fields
+    }
+
+    /// Whether the plan asks nothing at all.
+    ///
+    /// That is a real answer where the fields exist and the candidates were narrowed away — a
+    /// search for a container on a host with no container runtime finds nothing, and says so at
+    /// no cost. It is *not* a real answer where the predicate names a field nothing declares:
+    /// see [`TargetPlan::unknown_fields`], which the caller checks first (ADR-0210, superseding
+    /// this method's earlier reading).
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.asked.is_empty()
@@ -135,6 +163,7 @@ pub fn targets_for(
             plan.skipped.push((target, Skipped::WrongType(wanted)));
             continue;
         }
+        plan.candidates.push(target);
         if let Some(missing) = fields.iter().find(|field| !declares(target, field)) {
             plan.skipped
                 .push((target, Skipped::MissingField(missing.clone())));
@@ -149,6 +178,16 @@ pub fn targets_for(
         }
         plan.asked.push(target);
     }
+    plan.unknown_fields = fields
+        .iter()
+        .filter(|field| {
+            !plan
+                .candidates
+                .iter()
+                .any(|target| declares(target, field.as_str()))
+        })
+        .cloned()
+        .collect();
     plan
 }
 

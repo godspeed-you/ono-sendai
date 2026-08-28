@@ -85,3 +85,4 @@ pub use invoke::{
     Resolver, must_be_awaited, unbound_stable_commands,
 };
 pub use registry::{CommandRegistry, Resolved};
+pub use suggest::closest;

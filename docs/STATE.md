@@ -101,6 +101,7 @@ an ADR in the range 0209–0213. Files: `crates/ono-provider-netlink/src/{owners
 `docker/acceptance/cases/{097,101,109}`.
 
 - [x] finding 2 — a `null` a provider answered is rendered as `empty` (ADR-0209)
+- [x] finding 3 — `find place --where` swallows unknown fields and evaluation errors (ADR-0210)
 
 **S6 + S7 + S8 + the map correction are integrated on one branch (2026-08-28, agent `integrate-1`).**
 Three merges, in that order, on top of `implementation` at `cbbcd2c`; gate green, acceptance 75/75.
@@ -1367,18 +1368,6 @@ and the fix is theirs: wait for the *place*, not for a byte count.
 
 ## Next up (ordered)
 
-- [ ] **`find place --where` swallows unknown fields and evaluation errors (§2.17, §29.3; v0.2
-  §11.3).** `find place --type process --where nosuchfield == 1 | count` answers `0` where
-  `get process | where nosuchfield == 1` refuses with `Ono-Sendai-E0202`; `--where memory > 1`
-  answers `0` where the pipeline reports `Ono-Sendai-E0203 cannot compare bytesize and int` per
-  row. A typo in a script cannot be told from an empty system. **This is a contract decision, not
-  a bug fix**: `docker/acceptance/cases/101-spatial-find-place.case` assertion `s3i` pins the
-  present behaviour and `TargetPlan::is_empty` defends it in prose, so reversing it needs an ADR
-  that supersedes that reading and rewrites `s3i` in the same commit. The narrow form that is
-  clearly right: refuse when *no* candidate target's schema declares the field, which is
-  `TargetPlan::skipped()` carrying nothing but `MissingField` and an empty `asked()`. Exit test:
-  that spelling refuses with E0202 naming the field, while `--type container` on a host with no
-  container runtime still answers an empty stream.
 - [ ] **A multi-line diagnostic is rendered with `\u{a}` where its line breaks belong.** Found by
   dogfooting: `follow files` at a process with eleven open files prints the whole candidate list
   on one line with literal `\u{a}` between entries. The render boundary escapes control characters

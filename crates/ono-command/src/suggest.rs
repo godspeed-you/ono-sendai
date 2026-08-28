@@ -6,10 +6,12 @@
 ///
 /// "Close enough" is a third of the typed length, rounded up and never less than one, which keeps
 /// `prcoess` → `process` while refusing to pair two unrelated short words.
-pub(crate) fn closest<'a>(
-    typed: &str,
-    candidates: impl IntoIterator<Item = &'a str>,
-) -> Option<&'a str> {
+///
+/// ```
+/// assert_eq!(ono_command::closest("stat", ["state", "started"]), Some("state"));
+/// assert_eq!(ono_command::closest("telepathy", ["state", "pid"]), None);
+/// ```
+pub fn closest<'a>(typed: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
     if typed.is_empty() {
         return None;
     }

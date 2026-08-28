@@ -709,6 +709,84 @@ fn should_stream_places_with_scope_and_provenance_when_find_searches_with_a_pred
 }
 
 #[test]
+fn should_refuse_a_predicate_over_a_field_no_kind_of_place_declares() {
+    // v0.2 §11.3 and §15.4, with v0.4 §2.17 and §29.3. `get process | where cpy > 20` refuses
+    // before anything is enumerated, and names the nearest declared field. `find place` searches
+    // across kinds instead of down one stream, but the reasoning is the same: a word no kind of
+    // place declares can only be a typo, and answering it with an empty stream makes a typo in a
+    // script indistinguishable from an empty system (ADR-0210).
+    let run = ono("find place --where telepathy == 1 | count | to json");
+    assert!(
+        !run.status().is_success(),
+        "v0.2 §11.3: a predicate over a field nothing declares is refused, got exit {:?} and \
+         stdout {:?}",
+        run.status(),
+        run.stdout()
+    );
+    let seen = format!("{}{}", run.stdout(), run.stderr());
+    assert!(
+        seen.contains("Ono-Sendai-E0202") && seen.contains("telepathy"),
+        "v0.2 §11.3: the refusal is `type.unknown_field` naming the field, got {seen:?}"
+    );
+
+    let near = ono("find place --where memroy > 1 | count | to json");
+    let seen = format!("{}{}", near.stdout(), near.stderr());
+    assert!(
+        seen.contains("memory"),
+        "v0.2 §15.4: the refusal offers the nearest declared field, got {seen:?}"
+    );
+}
+
+#[test]
+fn should_still_search_across_kinds_when_only_some_of_them_declare_the_field() {
+    // The other half of the same rule, and the reason it is not simply "refuse whenever a
+    // candidate lacks the field": a cross-type search is what `find place` is for, and a mount
+    // having no `pid` is not an error. Only a field *no* candidate declares is a typo.
+    let child = SleepChild::spawn();
+    let run = ono(&format!(
+        "find place --where pid == {} | count | to json",
+        child.pid()
+    ));
+    run.assert_success();
+    let counted = rows(&run)
+        .first()
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| {
+            panic!(
+                "§29.4: `find place | count` answers a number, got {:?}",
+                run.stdout()
+            )
+        });
+    assert!(
+        counted >= 1,
+        "§6.8: a predicate over a field only processes declare still searches the processes, got \
+         {counted}; stderr {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_surface_an_evaluation_error_rather_than_answering_an_empty_search() {
+    // §2.17 and §29.3. `memory > 1` compares a bytesize with an int, which the v0.2 pipeline
+    // reports as `Ono-Sendai-E0203` on every row. A search that swallowed it would answer `0`
+    // for a question it never managed to ask, which is uncertainty rendered as absence
+    // (ADR-0210).
+    let run = ono("find place --type process --where memory > 1 | count | to json");
+    assert!(
+        !run.status().is_success(),
+        "§2.17: a predicate that cannot be evaluated is an error, not an empty answer, got exit \
+         {:?} and stdout {:?}",
+        run.status(),
+        run.stdout()
+    );
+    let seen = format!("{}{}", run.stdout(), run.stderr());
+    assert!(
+        seen.contains("Ono-Sendai-E0203"),
+        "§2.17: the search reports the comparison the pipeline reports, got {seen:?}"
+    );
+}
+
+#[test]
 fn should_compose_with_the_v02_pipeline_when_a_find_result_is_filtered_and_counted() {
     // §29.4 with §28: `find place` participates in object pipelines rather than forming a
     // parallel silo. Two `sleep` children the test owns give a lower bound nothing can lower.

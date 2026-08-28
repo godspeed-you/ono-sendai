@@ -60,8 +60,20 @@ run: |
     'grep -qF "linux.procfs" /tmp/found.json'
 
   echo "== a search that cannot match anything says so instead of guessing (§2.17) =="
-  prove s3i "a predicate over a field no schema declares answers an empty stream, not an error" \
-    'test "$(ono -c "find place --where telepathy == 1 | count | to text")" = "0"'
+  # Corrected by ADR-0210. This assertion used to pin the opposite of the header above it: a
+  # predicate over a field nothing declares answered `0`, so a typo in a script could not be told
+  # from an empty system. v0.2 §11.3 refuses the same word one stage later — `get process | where
+  # telepathy == 1` is `Ono-Sendai-E0202` before anything is enumerated — and §2.17 forbids
+  # rendering "I could not ask this" as "there is none".
+  prove s3i "a predicate over a field no kind of place declares is refused, not answered with 0" \
+    'out=$(ono -c "find place --where telepathy == 1 | count | to text" 2>&1); status=$?;
+     test "$status" -ne 0 && printf "%s\n" "$out" | grep -qF "Ono-Sendai-E0202" &&
+     printf "%s\n" "$out" | grep -qF "telepathy"'
+  prove s3j "a field only some kinds of place declare still searches the ones that do (§6.8)" \
+    'test "$(ono -c "find place --where pid == '"$MINE"' | count | to text")" -ge 1'
+  prove s3k "a predicate that cannot be evaluated surfaces rather than shrinking the answer (§2.17)" \
+    'out=$(ono -c "find place --type process --where memory > 1 | count | to text" 2>&1); status=$?;
+     test "$status" -ne 0 && printf "%s\n" "$out" | grep -qF "Ono-Sendai-E0203"'
 
   kill "$MINE" 2>/dev/null || true
   echo done=ok
@@ -84,4 +96,6 @@ stdout-contains: PROVED s3-spatial_type
 stdout-contains: PROVED s3g
 stdout-contains: PROVED s3h
 stdout-contains: PROVED s3i
+stdout-contains: PROVED s3j
+stdout-contains: PROVED s3k
 stdout-not-contains: FAILED
