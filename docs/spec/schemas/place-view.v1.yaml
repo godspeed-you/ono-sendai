@@ -72,6 +72,14 @@ fields:
     type: ono.neighborhood/1
     required: true
     doc: The bounded, ranked projection around the place, with what it left out (§3.6).
+  boundary:
+    type: ono.mount-boundary/1
+    nullable: true
+    doc: >-
+      The mount boundary this place sits on (§15.3). Present on a filesystem place — the mount
+      point it is under, its filesystem, its source and whether that is remote — so that
+      "crossing a mount boundary MUST be discoverable" is true of the place and not only of the
+      step that reached it. Null anywhere the path tree does not reach.
   system:
     type: ono.system/1
     nullable: true

@@ -560,7 +560,6 @@ fn should_list_the_filesystems_the_providers_report_when_walking_into_the_storag
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §15.3); un-ignored by the increment that delivers it"]
 fn should_show_the_source_device_and_filesystem_when_the_place_is_a_mount_boundary() {
     // §15.3: crossing a mount boundary MUST be discoverable, and the boundary the spec draws
     // carries the local path, the filesystem and the source. The expected values come from
@@ -590,7 +589,6 @@ fn should_show_the_source_device_and_filesystem_when_the_place_is_a_mount_bounda
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.3); un-ignored by the increment that delivers it"]
 fn should_record_the_boundary_crossing_when_traversing_from_the_root_into_a_mounted_directory() {
     // §44.3 asks for the traversal itself: enter the mount and traverse into the mounted
     // directory. §3.2 fixes what that must leave behind — "Crossing a scope boundary MUST be
@@ -676,7 +674,6 @@ fn should_refuse_a_path_that_does_not_exist_with_a_structured_error() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §15.4); un-ignored by the increment that delivers it"]
 fn should_summarize_a_large_directory_instead_of_enumerating_it() {
     // §15.4: "The spatial renderer MUST NOT enumerate huge directories by default. It SHOULD
     // cluster or summarize when entry counts exceed the view budget", and §3.6 gives the

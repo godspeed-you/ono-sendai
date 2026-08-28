@@ -58,12 +58,16 @@ pub fn parent_rules(object_type: SpatialType) -> &'static [ParentRule] {
     const ADDRESS: &[ParentRule] = &[rule("interface.has_address", Containment)];
     const MOUNT: &[ParentRule] = &[rule("filesystem.mounted_at", Containment)];
     const FILESYSTEM: &[ParentRule] = &[rule("device.backs_filesystem", Containment)];
-    // §15.3: a mount is a boundary of the path tree, so `up` from the directory a mount provides
-    // arrives at the mount and the crossing is discoverable. Every other directory, and every
-    // file, goes up the Unix path tree, which §15.1 requires Ono to preserve.
+    // §15.1 is unconditional — "Ono MUST preserve canonical Unix filesystem paths and directory
+    // semantics" — so the path tree is walked first: the parent of `/mnt/backup` is `/mnt`, mount
+    // point or not. The mount comes next, and is where a directory *root* ends up: `/` has no
+    // path parent, so `up` from it reaches the mount that provides it and from there
+    // MOUNTS -> FILESYSTEMS -> STORAGE, which is §15.2's hierarchy exactly. Crossing the mount
+    // boundary stays discoverable where §3.2 and §15.3 put it — on the place, and on the
+    // navigation step that crossed it (ADR-0187).
     const DIRECTORY: &[ParentRule] = &[
-        rule("mount.backs_directory", Containment),
         rule(PATH_PARENT, Containment),
+        rule("mount.backs_directory", Containment),
     ];
     const FILE: &[ParentRule] = &[rule(PATH_PARENT, Containment)];
     match object_type {

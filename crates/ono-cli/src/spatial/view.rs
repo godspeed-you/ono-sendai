@@ -198,7 +198,9 @@ impl Observed {
 ///
 /// §33.3 makes the filesystem query-driven: nothing enumerates it, so a path only becomes a place
 /// when somebody names one. That is what a selector spelled as a path does — `storage:/data`,
-/// `/etc/nginx` — and asking for exactly that path is the whole query (§34).
+/// `/etc/nginx` — and asking for exactly that path is the whole query (§34). What is observed
+/// around it — the mount table and the enclosing directory — is §15's, and is the same for every
+/// spelling that reaches a path (ADR-0187).
 pub async fn observe_path(
     ctx: &Invocation<'_>,
     session: &mut SpatialSessionState,
@@ -208,24 +210,7 @@ pub async fn observe_path(
     if ctx.providers().for_target("file").is_empty() {
         return;
     }
-    let query = Query::target("file").with(ono_provider_api::Selector::field(
-        "path",
-        Value::Path(std::sync::Arc::from(path)),
-    ));
-    let Ok(stream) = ctx.providers().snapshot(&query) else {
-        return;
-    };
-    let records: Vec<RecordValue> = stream
-        .collect()
-        .await
-        .into_values()
-        .into_iter()
-        .filter_map(|value| match value {
-            Value::Record(record) => Some(RecordValue::clone(&record)),
-            _ => None,
-        })
-        .collect();
-    session.absorb(&records, now);
+    let _ = crate::spatial::storage::observe_place_at(ctx.providers(), session, path, now).await;
 }
 
 /// Asks a set of provider targets once and registers everything they answered (§33.1, §34).
@@ -239,6 +224,18 @@ pub async fn observe_targets(
     now: Timestamp,
 ) {
     let _ = observe(ctx.providers(), session, targets, now).await;
+}
+
+/// The same, where the caller holds the registry rather than an invocation — `cd` and
+/// `enter <path>` reach the providers from the shell's own session (§30.2, §30.3).
+pub(crate) async fn observe_targets_with(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    targets: &[&'static str],
+    now: Timestamp,
+) {
+    let targets: BTreeSet<&'static str> = targets.iter().copied().collect();
+    let _ = observe(providers, session, &targets, now).await;
 }
 
 /// Asks every target once and registers what came back (§33.1, §42.1, §34).
@@ -316,7 +313,7 @@ async fn observe(
             }
         }
         fold(&mut observed, target, &fresh);
-        session.remember(target, fresh);
+        session.remember(*target, fresh);
     }
     // "Cached" is a claim about this view, so it is only made when there was something to ask
     // and nothing was asked (§25.3, §2.17).
@@ -343,6 +340,57 @@ fn fold(
             .or_default()
             .extend(ids.iter().cloned());
     }
+}
+
+/// The `ono.mount-boundary/1` of a path place, where the path tree puts it on a mount (§15.3).
+///
+/// §15.3: "Crossing a mount boundary MUST be discoverable", and the boundary it draws carries the
+/// local path, the filesystem, the source and whether the filesystem is remote. Every one of them
+/// is read from the record the mount provider answered with (§2.16) — this composes, it does not
+/// look.
+pub fn boundary_record(
+    session: &SpatialSessionState,
+    place: &SpatialId,
+) -> Result<Value, ErrorValue> {
+    let Some(path) = crate::spatial::storage::path_of(session, place) else {
+        return Ok(Value::Null);
+    };
+    let Some((target, mount)) = crate::spatial::storage::mount_of(session, &path) else {
+        return Ok(Value::Null);
+    };
+    let Some(record) = session.record_of(&mount) else {
+        return Ok(Value::Null);
+    };
+    let text = |field: &str| -> String {
+        record
+            .get(field)
+            .and_then(|value| ono_value::canonical_text(value).ok())
+            .unwrap_or_default()
+    };
+    let filesystem = text("filesystem");
+    let source = text("source");
+    let schema = schema("ono.mount-boundary", 1)?;
+    let built = RecordValue::builder(
+        schema,
+        Provenance::local(COMPOSER, SchemaId::new("ono.mount-boundary", 1)),
+    )
+    .set("local_path", Value::Path(std::sync::Arc::from(target)))?
+    .set("filesystem", Value::string(&filesystem))?
+    .set("source", Value::string(&source))?
+    .set(
+        "remote",
+        Value::Bool(crate::spatial::storage::is_remote_filesystem(
+            &filesystem,
+            &source,
+        )),
+    )?
+    .set(
+        "read_only",
+        record.get("read_only").cloned().unwrap_or(Value::Null),
+    )?
+    .set("mount", Value::string(&mount.to_string()))?
+    .build();
+    Ok(Value::Record(std::sync::Arc::new(built)))
 }
 
 // --- the records the commands emit -----------------------------------------------------------

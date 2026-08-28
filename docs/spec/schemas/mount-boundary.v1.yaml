@@ -1,0 +1,48 @@
+# Canonical MountBoundary schema. Source: v0.4 §15.3, which is normative and shows the boundary
+# field for field:
+#
+#     boundary
+#       local path     /mnt/backup
+#       filesystem     nfs
+#       source         nas01:/exports/backup
+#       remote         yes
+#
+# "Crossing a mount boundary MUST be discoverable" — so the boundary is part of the place, not a
+# line the renderer invents, and every field of it comes from the mount provider (§2.16): the
+# spatial layer composes `ono.mount/1`, it does not read `/proc/self/mountinfo` itself.
+#
+# `remote` is not a field of `ono.mount/1`: it is decided from the filesystem type and the shape
+# of the source, and ADR-0187 records the rule and its limits.
+id: ono.mount-boundary/1
+name: MountBoundary
+summary: The mount a path place sits on — where it is, what it is, and whether it is remote.
+identity: [local_path]
+fields:
+  local_path:
+    type: path
+    required: true
+    doc: The mount point, as §15.3's "local path" (`ono.mount/1`'s `target`).
+  filesystem:
+    type: string
+    required: true
+    doc: The filesystem type the kernel names, straight from `ono.mount/1`.
+  source:
+    type: string
+    required: true
+    doc: What is mounted there — a device, a network export, a pseudo-filesystem name.
+  remote:
+    type: bool
+    required: true
+    doc: >-
+      Whether the filesystem lives on another machine (§15.3's `remote yes`). Decided from the
+      filesystem type and the source, never guessed from the mount point (ADR-0187).
+  read_only:
+    type: bool
+    nullable: true
+    doc: Whether the mount is read-only, where the provider said.
+  mount:
+    type: string
+    nullable: true
+    doc: The `spatial_id` of the mount place, so `enter`/`up` can reach it (§15.2, §3.1).
+default_view:
+  columns: [local_path, filesystem, source, remote]

@@ -184,6 +184,16 @@ pub fn neighborhood_of(
         .filter(|group| keeps_group(group, request))
         .collect();
     rank_groups(&mut groups, object_type);
+    // §15.4: a directory place's first neighbours are its children, and §3.4 makes them
+    // hierarchy rather than a relation — so they are read from the path tree the index holds,
+    // ahead of the relations, and bounded by the same budget as everything else (§34.2).
+    let children = index.path_children(center);
+    if !children.is_empty() && request.keeps_relation("children") {
+        groups.insert(
+            0,
+            NeighborhoodGroup::available("children", children.clone()).of_total(children.len()),
+        );
+    }
 
     let budget = request.group_budget(groups.len());
     let pinned: Vec<&SpatialId> = pins

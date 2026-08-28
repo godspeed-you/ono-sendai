@@ -210,6 +210,7 @@ fn place_view(
     .set("domains", domains)?
     .set("landmarks", Value::list(landmarks))?
     .set("neighborhood", Value::Record(Arc::new(neighborhood_record)))?
+    .set("boundary", view::boundary_record(session, &here)?)?
     .set("system", system)?
     .set("changed", change_summary(changes)?)?
     .set("generated_at", Value::Timestamp(now))?
@@ -467,9 +468,14 @@ impl CommandImpl for Enter {
             };
 
             if here != there {
-                session
-                    .trail_mut()
-                    .record(NavigationStep::new(now, here, there, Movement::Enter));
+                let mut step =
+                    NavigationStep::new(now, here.clone(), there.clone(), Movement::Enter);
+                if let Some(crossing) =
+                    crate::spatial::movement::crossing_between(&session, &here, &there)
+                {
+                    step = step.crossing(crossing);
+                }
+                session.trail_mut().record(step);
             }
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })

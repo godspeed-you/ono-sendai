@@ -45,8 +45,10 @@ pub struct SpatialSessionState {
     /// graph expands and what §24.1's summary is read from — neither may be re-read behind the
     /// provider's back (§2.16).
     records: BTreeMap<SpatialId, Arc<RecordValue>>,
-    /// What each provider target answered, and when (§33.1, §33.3, §34).
-    targets: BTreeMap<&'static str, TargetObservation>,
+    /// What each provider query answered, and when (§33.1, §33.3, §34). The key is the
+    /// target, or the target and the one selector that narrowed it — `dir` asked about `/etc` is
+    /// not `dir` asked about `/var`.
+    targets: BTreeMap<String, TargetObservation>,
 }
 
 /// What one provider target answered the last time it was asked (§33.1, §33.3).
@@ -288,9 +290,9 @@ impl SpatialSessionState {
         fresh.then_some(seen)
     }
 
-    /// Records what a provider target answered, so the next command can read it (§33.1).
-    pub fn remember(&mut self, target: &'static str, observation: TargetObservation) {
-        self.targets.insert(target, observation);
+    /// Records what a provider query answered, so the next command can read it (§33.1).
+    pub fn remember(&mut self, key: impl Into<String>, observation: TargetObservation) {
+        self.targets.insert(key.into(), observation);
     }
 
     /// What the provider last said about the object at `id`, where this session has seen it.

@@ -172,7 +172,9 @@ fn composed_labels(object_type: SpatialType) -> &'static [&'static str] {
             "files",
         ],
         T::Socket | T::Listener | T::Connection => &["process", "peer", "connections", "listener"],
-        T::File | T::Directory => &["owner"],
+        // §15.4 lists the mount boundary among a directory place's neighbours, and the mount
+        // table is the shell's to compose from `get mount` (§2.16, ADR-0187).
+        T::File | T::Directory => &["owner", "mount"],
         T::Filesystem => &["mounts", "device"],
         T::Mount => &["directory"],
         T::Address | T::Route => &["interface"],
@@ -191,6 +193,8 @@ fn adjacent_targets(object_type: SpatialType) -> &'static [&'static str] {
     use SpatialType as T;
     match object_type {
         T::Socket | T::Listener | T::Connection => &["socket"],
+        // §15.3, §15.4: a path place sits on a mount, and the mount table says which.
+        T::File | T::Directory => &["mount"],
         T::Mount => &["filesystem"],
         T::Filesystem => &["mount"],
         T::Interface => &["route"],
@@ -335,6 +339,18 @@ pub async fn observe(
     let adjacent: BTreeSet<&'static str> = adjacent_targets(object_type).iter().copied().collect();
     if !adjacent.is_empty() {
         crate::spatial::view::observe_targets(ctx, session, &adjacent, now).await;
+    }
+    // §15.3, §15.4: the mount a path place sits on is a fact of the mount table, composed here
+    // so that looking at a directory shows the same boundary entering it did (ADR-0187).
+    if matches!(object_type, SpatialType::Directory | SpatialType::File) {
+        crate::spatial::storage::link_mount_of(session, id, now);
+    }
+    // §15.4: "A directory place MUST support normal path navigation" — so standing in one shows
+    // what is in it. The listing is bounded by the view, never by the read (ADR-0188).
+    if object_type == SpatialType::Directory
+        && let Some(path) = crate::spatial::storage::path_of(session, id)
+    {
+        crate::spatial::storage::observe_children(ctx.providers(), session, id, &path, now).await;
     }
 
     let mut answered: BTreeSet<&'static str> = BTreeSet::new();

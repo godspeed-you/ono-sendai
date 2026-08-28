@@ -307,7 +307,12 @@ fn pinned_place(session: &SpatialSessionState, name: &str) -> Result<SpatialId, 
 }
 
 /// The scope boundary a movement between two places crosses, where it crosses one (§3.2, §2.18).
-fn crossing_between(
+///
+/// Two boundaries can lie between two places, and the object's own scope is the outer one: a
+/// host, a container, a namespace. Where both ends belong to the same scope the path tree can
+/// still have crossed a mount, which §3.2 also calls a scope and §15.3 requires to be
+/// discoverable — so the filesystem boundary is asked second, never instead (ADR-0187).
+pub(crate) fn crossing_between(
     session: &SpatialSessionState,
     from: &SpatialId,
     to: &SpatialId,
@@ -315,6 +320,7 @@ fn crossing_between(
     let here = scope_of(session, from);
     let there = scope_of(session, to);
     here.boundary_to(&there)
+        .or_else(|| crate::spatial::storage::filesystem_crossing(session, from, to))
 }
 
 /// The scope a place belongs to: its own where it was observed, the session's where it is
