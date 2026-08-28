@@ -1285,7 +1285,6 @@ fn should_expose_every_spatial_setting_as_a_typed_setting_with_its_default() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §47); un-ignored by the increment that delivers it"]
 fn should_keep_the_typed_shell_working_when_the_spatial_layer_is_disabled() {
     // §47: "Disabling `spatial.enabled` MUST leave the typed shell and ordinary commands
     // functional." The pipeline still answers; the spatial verb refuses in a way a script can

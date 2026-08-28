@@ -42,6 +42,11 @@ const HORIZON: usize = 24;
 /// The places `enter` can reach from where the session is standing (§9.4, §24.2).
 #[must_use]
 pub fn places_here() -> Vec<Offer> {
+    if !crate::spatial::session::configured_flag_or("spatial.enabled", true) {
+        // §47: with the layer off there is no neighbourhood to complete from, and offering one
+        // would promise a `enter compute` that refuses.
+        return Vec::new();
+    }
     let Ok(state) = crate::spatial::session::session_state().try_lock() else {
         return Vec::new();
     };
@@ -97,6 +102,9 @@ pub fn places_here() -> Vec<Offer> {
 /// The relations the current place actually has, with the count or state §9.4 allows (§3.5, §12).
 #[must_use]
 pub fn relations_here() -> Vec<Offer> {
+    if !crate::spatial::session::configured_flag_or("spatial.enabled", true) {
+        return Vec::new();
+    }
     let Ok(state) = crate::spatial::session::session_state().try_lock() else {
         return Vec::new();
     };

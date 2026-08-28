@@ -328,7 +328,11 @@ fn enter_record(
     // v0.4 §30.2: "`enter` changes the spatial place." The context frame of §14.3 narrows later
     // commands; the place of v0.4 §46 says where the session is standing. One `enter` sets both,
     // and §30.4 keeps them separate pieces of state.
-    if let Some((runtime, _)) = session.pipeline_context() {
+    // §47 switches the place off with the rest of the layer: the context frame still narrows
+    // later commands, and nothing moves a place no spatial verb will answer for.
+    if !crate::spatial::disabled(session)
+        && let Some((runtime, _)) = session.pipeline_context()
+    {
         runtime.block_on(crate::spatial::enter_observed(record));
     }
     let registry = crate::native::registry().map_err(Flow::Failed)?;

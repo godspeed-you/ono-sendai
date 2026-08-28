@@ -110,6 +110,15 @@ pub fn configured_flag(key: &str) -> bool {
     )
 }
 
+/// The same, for a setting whose §47 default is `true` — `spatial.enabled` is the one.
+#[must_use]
+pub fn configured_flag_or(key: &str, fallback: bool) -> bool {
+    match SETTINGS.get().and_then(|values| values.get(key)) {
+        Some(ono_value::Value::Bool(state)) => *state,
+        _ => fallback,
+    }
+}
+
 impl SpatialSessionState {
     /// A fresh session: standing at the local SYSTEM root, with an empty trail (§46.1).
     #[must_use]

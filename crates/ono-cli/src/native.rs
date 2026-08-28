@@ -545,6 +545,7 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
                 format!("`{}` is not a native command here", stage.span),
             ))
         })?;
+        refuse_switched_off_spatial(session, contract, stage)?;
         let arguments =
             crate::expand::expand_globs(session, &stage.arguments).map_err(Flow::Failed)?;
         let resolved = registry
@@ -1335,6 +1336,23 @@ fn seed_bytes(values: Vec<Value>) -> Result<Vec<u8>, Flow> {
     Ok(bytes_of(&values))
 }
 
+/// Refuses a spatial verb while `spatial.enabled` is false (spec v0.4 §47, §40).
+///
+/// §47: "Disabling `spatial.enabled` MUST leave the typed shell and ordinary commands
+/// functional." Off switches off the verbs of §6 and nothing else, and they refuse by name
+/// rather than disappearing — `try { look } catch e { $e.name }` reads `spatial.unsupported`,
+/// which a script can branch on, where a missing command could only be guessed at.
+fn refuse_switched_off_spatial(
+    session: &Session,
+    contract: &'static CommandContract,
+    stage: &Stage,
+) -> Eval<()> {
+    if contract.id().starts_with("ono.place.") && crate::spatial::disabled(session) {
+        return Err(Flow::Failed(crate::spatial::switched_off(head_name(stage))));
+    }
+    Ok(())
+}
+
 /// Runs one run of native stages, answering with the bytes a following child process would read.
 #[expect(
     clippy::too_many_arguments,
@@ -1365,6 +1383,7 @@ fn run_native_segment(
                 format!("`{}` is not a native command here", stage.span),
             ))
         })?;
+        refuse_switched_off_spatial(session, contract, stage)?;
         let arguments =
             crate::expand::expand_globs(session, &stage.arguments).map_err(Flow::Failed)?;
         let resolved = registry
