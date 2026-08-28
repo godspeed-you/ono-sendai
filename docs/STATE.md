@@ -115,7 +115,7 @@ is split, because 102 of the 175 tests first become attemptable when the command
 | S4c `back`/`up`/`home`/`trail`/`jump`/`pin` | ~25 | §46 session state, §29.2 script isolation — **done**, 19 tests |
 | S4d storage and the cwd distinction | ~12 | §15 mount boundaries |
 | S4e the `spatial.enabled` refusal path and the §34 budgets | ~5 | §47 behaviour half |
-| S5 | 27 | §26 landmark engine, §39 ASCII fallback |
+| S5 | 27 | §26 landmark engine, §39 ASCII fallback — **done**, 26 tests; 2 deferred (ADR-0165) |
 | S6 | 13 | §5 startup horizon, §21 prompt/HUD, §27.2 picker, §9.4 completion |
 | S7 | 7 | — |
 | S8 | 12 | — |
@@ -626,6 +626,104 @@ where `back` lands.
   `from_ref`/`to_ref` for a file reads `file/0:46`. It is honest — that *is* the provider's
   reference — but it is not a spelling anyone types. Whoever gives `ono.file/1` a path-shaped alias
   fixes the trail's readability for free.
+
+**S5 — semantic maps, the landmark engine and the ASCII fallback — is complete (2026-08-28, agent
+`S5`).** ADR-0162 to ADR-0166; gate green; acceptance case
+`docker/acceptance/cases/105-spatial-map.case` added (55 assertions).
+
+Delivered:
+
+1. `crates/ono-spatial-query/src/map.rs` — the `SpatialMap` projection: §23.1's ranking, §8.1's
+   five zoom levels, §8.2's clustering, §8.3's expansion, the §34.2 budgets and the §6.9 filters.
+   It is handed a *horizon* by the shell and asks no provider anything (§45.3, §2.16).
+2. `crates/ono-spatial-query/src/landmark.rs` — **the landmark engine §50 assigns to no phase**
+   (ADR-0163). Eight of §3.7's fourteen reasons are produced from real provider fields; the other
+   six are documented absences, not silent branches.
+3. `crates/ono-spatial-render/src/map.rs` — the default textual map of §23.2 as a ranked tree,
+   width-aware, with the ASCII fallback §39.2 requires (ADR-0166).
+4. `crates/ono-cli/src/spatial/map.rs` — the `map` command, its contract in `docs/spec/verbs.yaml`
+   and `docs/spec/commands/spatial.yaml`, and five new schemas: `ono.spatial-map/1`,
+   `ono.map-node/1`, `ono.map-edge/1`, `ono.map-cluster/1`, `ono.hidden-summary/1` (ADR-0162).
+5. `spatial.map.node_budget`, `spatial.landmarks.*` and `spatial.look.change_window` are now
+   *read* — `crate::spatial::configure_from` hands the session what the user configured, which is
+   what makes §26.3's "inspectable and configurable" true rather than advertised.
+
+Green now, all previously `#[ignore]`d — 26 tests:
+
+- `spatial_map_missing` (21 of the 24; the three §24 tests were already green): the six §22
+  contract tests, the two §43.2 filter tests, the four §8 zoom and cluster tests, `--focus`, the
+  three landmark tests, and the three §23.2/§39 rendering tests.
+- `spatial_contracts_missing` (2): `should_serve_exactly_the_canonical_spaces_the_registry_declares`,
+  `should_bound_the_default_map_to_its_node_budget`.
+- `spatial_navigation_missing` (1): `should_answer_a_bounded_graph_when_map_json_runs_without_a_tty`.
+- `spatial_topology_missing` (1): `should_answer_look_near_and_map_without_an_object_name_when_at_the_root`.
+- `spatial_identity_missing` (1): `should_resolve_every_edge_endpoint_to_a_node_or_an_explicit_off_map_endpoint`.
+- `spatial_relationships_missing` (1): `should_explain_every_edge_with_relation_provider_and_confidence_when_mapping_a_process`.
+- 17 new crate-level outcome tests: `crates/ono-spatial-query/tests/{map,landmarks}.rs`.
+
+**Left ignored, with the reason on the test** (both in `spatial_map_missing`):
+
+- `should_show_more_than_the_default_when_the_map_is_asked_for_all` — **its two halves contradict
+  each other and the contracts suite.** The first (`--all` is strictly larger than the default) is
+  delivered and green. The second asks that `--all` at a 300-process collection contain one
+  particular freshly spawned process; `spatial_contracts_missing::should_bound_the_default_map_to_its_node_budget`
+  requires `--all` to stay inside `spatial.map.node_budget` (100) and §34.2 prohibits unbounded
+  rendering, so only a clock-relative ranking could reach it — and that makes the two §43.2 filter
+  tests compare two maps of two different moments and fail. ADR-0165 carries the analysis under a
+  `Spec deviation` heading. Reconciling it needs either a second, larger explicit bound or a
+  fixture the map is guaranteed to rank in.
+- `should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded` — **delivered
+  and green with `--test-threads=1`.** It compares a cluster's member count from one `ono` run
+  against the nodes a second run draws, and every sibling test in the binary spawns and reaps
+  twelve processes between the two, so the collection it counts is a different size each time.
+  Same family as the two topology fixtures S4b left.
+
+**What S6 needs from this renderer** — the four things:
+
+- **The seam is `spatial_map`'s input, not its output.** `ono_spatial_render::spatial_map(record,
+  width, charset)` is the whole text projection; the full-screen view of §23.3 takes the same
+  `ono.spatial-map/1` record — already ranked, bounded and clustered by `ono-spatial-query` — and
+  adds a viewport, a cursor and the key bindings. It must not re-select or re-rank, or the two
+  views will disagree about what the system looks like (§45.4, §49.5).
+- **Focus is already a request, not a mode.** `MapRequest::focus(node)` goes in and
+  `SpatialMap::focus` comes out beside `center`; moving the cursor is a new projection with a new
+  focus and no movement of the place (§23.4). `Enter` on the focused node is `enter <id>`, which
+  `crate::spatial::commands::resolved_place` already resolves.
+- **The interactive budget is the same number.** §34.2's 100 nodes is `spatial.map.node_budget`,
+  which `--all` already uses and `crate::spatial::configure_from` already reads.
+- **Colour is S6's to add and no semantics may depend on it.** §39.1 lists six things colour must
+  never be needed for; all six are carried by a word or a glyph today (`◆` for a landmark, `~~▸`
+  for an inferred edge, the confidence word, the state word), and the ASCII/Unicode choice is
+  `Charset`, decided from the locale and `TERM` in `crate::sink`.
+
+**What S7 needs from this map projection** — the three things:
+
+- **`live_capable` is `false` and says so honestly.** Nothing in this build subscribes to a
+  provider event, so §25.1's live map has no source; S7 flips the field when it has one, and
+  `map --live`/`map --changes` of §6.9 are declared in no contract until then.
+- **`MapEdge.changed` and `MapNode` are ready for a change state.** The edge already carries a
+  `changed` field (null today, §24.3 forbids inventing one), and the three change reasons of §3.7
+  — `new_object`, `removed_object`, `connection_spike` — are exactly the ones ADR-0163 leaves
+  undelivered because they are differences between two observations (§25.4), not facts about one.
+- **Landmarks are recomputed on every `absorb`,** so a live update recomputes them for free; what
+  S7 adds is the diff that makes a *change* visible, and the rule that a landmark asking for
+  attention reorders the map while one that merely informs does not (ADR-0165).
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- §26.2's high-memory rule cannot fire: no provider serves a host or cgroup memory budget, so a
+  share cannot be computed and §2.16 forbids the spatial layer reading `/proc/meminfo` itself. The
+  threshold setting stays inspectable. Same for the restart-loop rule: `ono.service/1` declares no
+  restart count.
+- §26.2 names four network rules — interface down, route change, unusually high traffic, new
+  remote peer — that §3.7's closed reason vocabulary has no word for. A core landmark may not
+  invent a reason (§3.7), so they are absent rather than approximated.
+- Clustering has one dimension, the canonical collection (§8.2's first). A cluster by user, by
+  cgroup or by container is a real increment with its own test; the dimension is already a field
+  on `ono.map-cluster/1`, so adding one changes no contract.
+- `map` honours `COLUMNS` even when stdout is redirected, which no other view does (ADR-0166).
+  Whoever decides that the whole renderer should do the same has one function to change,
+  `crate::sink::terminal_width`, and the table snapshots to re-check.
 
 ---
 
