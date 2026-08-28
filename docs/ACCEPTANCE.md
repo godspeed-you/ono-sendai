@@ -542,6 +542,475 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       and this subsection has no unticked box. — `scripts/release-check.sh`; `docs/STATE.md` *In progress* is empty, no
       `#[ignore]` exists in the tree, CI runs the gate and the acceptance suite on every push.
 
+### 4.7 The v0.4 tranche — Spatial Systems Interface
+
+`docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` layers a navigable projection of
+the system onto the released v0.3 shell (ADR-0124 … ADR-0131). This subsection is its definition
+of done: the release criteria of v0.4 §52 — §52.1 functional, §52.2 quality, §52.3 the product
+experience — together with the ten acceptance scenarios of §44, the twenty invariants of §2 and
+the performance budgets of §34, in boxes a script can check.
+
+The executable requirements exist already and are red: the nine RED suites
+`crates/ono-cli/tests/spatial_*_missing.rs` (175 `#[ignore]`d tests) and the ten
+`docker/acceptance/cases/09x-spatial-*.case.v04` scenarios (139 assertions, kept out of the
+referee by their suffix). **A box below is ticked only when the tests it names run un-ignored
+and green in the gate, or its case runs in the container** — never on judgement (§3), never by
+reading code, and never because a phase of v0.4 §50 is reported complete. Where a test named
+here does not exist yet, the box names the file and behaviour the delivering increment must
+create; writing it is part of that increment, not of a later one. ADR-0137 records what closes
+a box that no test can prove — the security review of §52.2 and the dogfooding of §52.3 — and
+the three artifacts this subsection requires the tranche to build.
+
+Two conventions this subsection relies on:
+
+- **The rename rule.** A `.case.v04` file is out of the suite (`scripts/acceptance.sh` collects
+  `*.case`). The increment that delivers a scenario renames its file to `.case` in the same
+  commit as the behaviour, and from then on the referee runs it (`docker/acceptance/cases/README-v0.4.md`).
+  A scenario box is ticked only after that rename, so a green acceptance run is what ticks it.
+- **The spelling.** ADR-0124 keeps bare `find` on findutils and spells the spatial search
+  `find place`; the RED suites and four of the cases predate the ADR and are rewritten by the
+  increment that delivers v0.4 §6.8, in that increment's commit.
+
+The v0.4 tranche is finished when this subsection has no unticked box and
+`scripts/release-check.sh` prints the release line again.
+
+#### 4.7.1 Functional release criteria (v0.4 §52.1)
+
+- [ ] **Root `SYSTEM` and canonical domains exist** (§7, §4). `home` reports the root place,
+      `look` at the root lists exactly the six canonical domains of §4 with a permission state
+      on each, and the root's identity is the same across sessions —
+      `spatial_topology_missing.rs::should_report_the_system_root_as_the_current_place_when_home_runs`,
+      `::should_list_exactly_the_six_canonical_domains_when_looking_at_the_system_root`,
+      `::should_carry_a_permission_state_on_every_domain_so_an_unavailable_one_stays_visible`,
+      `::should_keep_the_same_spatial_id_for_the_root_across_separate_sessions`,
+      `::should_enter_every_canonical_domain_when_named_at_the_root`,
+      `spatial_contracts_missing.rs::should_start_every_session_at_the_local_system_root` and
+      `::should_serve_exactly_the_canonical_spaces_the_registry_declares` (the registry and the
+      shell cannot drift apart), case `090`.
+- [ ] **Users can discover objects without prior names** (§9, §2.1). A process, a listening
+      socket and a running service are each reached from a predicate over visible metadata, with
+      the name never typed —
+      `spatial_topology_missing.rs::should_reach_a_process_it_never_names_when_only_a_predicate_over_visible_metadata_is_known`,
+      `::should_discover_a_listening_socket_by_its_port_and_follow_it_to_its_owning_process`,
+      `::should_reach_a_running_service_by_its_visible_state_when_a_service_manager_answers`,
+      `::should_answer_look_near_and_map_without_an_object_name_when_at_the_root`,
+      `spatial_navigation_missing.rs::should_stream_places_with_scope_and_provenance_when_find_searches_with_a_predicate`,
+      cases `090` and `091`, whose house rule is that no case types the name of the object it
+      discovers.
+- [ ] **All core spatial commands are implemented** (§6). `look`, `near`, `enter`, `follow`,
+      `jump`, `back`, `up`, `home`, `trail`, `find place`, `map`, `pin`/`unpin` each answer with
+      the contract §6 gives them —
+      `spatial_navigation_missing.rs` (one test per verb: `::should_describe_the_current_place_as_a_structured_view_when_look_runs_without_a_tty`,
+      `::should_stream_neighbors_that_compose_with_the_pipeline_when_near_runs_in_a_script`,
+      `::should_move_into_the_hierarchical_child_when_entering_a_canonical_domain_and_its_group`,
+      `::should_traverse_the_relationship_edge_when_following_the_parent_relation`,
+      `::should_move_across_scopes_and_record_both_ends_when_jumping_to_a_resolved_place`,
+      `::should_return_to_the_process_when_back_follows_the_navigation_history`,
+      `::should_move_to_the_network_hierarchy_parent_when_up_follows_the_canonical_hierarchy`,
+      `::should_return_to_the_system_root_when_home_runs_after_deep_navigation`,
+      `::should_record_every_movement_with_its_kind_and_relation_when_the_trail_is_read_as_json`,
+      `::should_answer_a_bounded_graph_when_map_json_runs_without_a_tty`),
+      `spatial_contracts_missing.rs::should_keep_the_trail_session_local_while_a_pin_survives_the_session`,
+      and `help spatial` complete for each with a generated reference page
+      (`xtask/tests/reference.rs` extended to `docs/reference/spatial/`, `spec-check` in the gate).
+- [ ] **Hierarchy and graph traversal are distinct** (§11, §6.6). `up` walks the canonical
+      hierarchy and `back` the trail; `follow` refuses a canonical child that is not a
+      relationship edge; every object keeps all its relationship parents while naming one
+      canonical parent —
+      `spatial_relationships_missing.rs::should_refuse_to_follow_a_canonical_child_that_is_not_a_relationship_edge`,
+      `::should_leave_the_relationship_chain_with_up_after_following_a_socket_edge`,
+      `spatial_identity_missing.rs::should_keep_every_relationship_parent_while_naming_one_canonical_parent`,
+      `::should_move_to_the_declared_canonical_parent_deterministically_when_going_up`,
+      `spatial_navigation_missing.rs::should_move_to_the_network_hierarchy_parent_when_up_follows_the_canonical_hierarchy`,
+      case `095`.
+- [ ] **Typed pipeline and spatial selection interoperate** (§28). `look --json` and `near`
+      read back into the v0.2 pipeline, a pipeline result is entered as a place, and a spatial
+      result composes with `where`/`take`/`count` —
+      `spatial_navigation_missing.rs::should_read_back_into_the_pipeline_when_look_json_is_parsed_by_from_json`,
+      `::should_move_into_the_selected_object_when_a_pipeline_result_is_entered`,
+      `::should_compose_with_the_v02_pipeline_when_a_find_result_is_filtered_and_counted`,
+      `spatial_topology_missing.rs::should_stream_neighbors_as_pipeline_objects_when_near_runs_at_the_root`,
+      case `091`.
+- [ ] **Storage paths integrate with cwd according to this spec** (§15, §30). Entering a
+      directory moves cwd and place together, entering a process or a socket moves neither, `cd`
+      moves the place only under `storage-only`, `PWD` never carries a non-directory place, and
+      a mount boundary shows its source — the whole of
+      `crates/ono-cli/tests/spatial_storage_missing.rs` (12 tests) and case `092`.
+- [ ] **Remote host roots can be entered/jumped when links exist** (§19). A linked host is a
+      place with a root distinct from the local one, `jump` announces the boundary, the trail
+      records the host crossing, and a hostname that is not a link is refused —
+      `crates/ono-cli/tests/spatial_remote_missing.rs` (13 tests, notably
+      `::should_give_a_linked_host_a_root_place_distinct_from_the_local_root`,
+      `::should_announce_the_boundary_in_plain_text_when_jumping_to_a_linked_host`,
+      `::should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link`), case `094` (§19a–g).
+- [ ] **Map text rendering works without a full-screen TUI** (§23.2, §29.1). `map` renders as
+      text into a pipe, `map --json` answers the §22 document off a terminal, and a narrow
+      terminal collapses the layout without changing the semantics —
+      `spatial_map_missing.rs::should_render_a_text_map_when_stdout_is_a_pipe_and_no_full_screen_view_is_possible`,
+      `::should_fit_the_text_map_into_the_terminal_when_the_terminal_is_narrow`,
+      `::should_return_a_spatial_map_document_when_map_json_runs_without_a_tty`,
+      `spatial_navigation_missing.rs::should_answer_a_bounded_graph_when_map_json_runs_without_a_tty`,
+      case `090` (the text map assertions).
+- [ ] **Full-screen map works on supported interactive terminals** (§23.3, §23.4). At a real
+      PTY the view opens, focus moves without changing the place, Enter changes it, back
+      returns, and closing restores the shell screen —
+      `spatial_interactive_missing.rs::should_restore_the_shell_screen_when_the_full_screen_map_closes`,
+      `::should_change_the_place_only_on_enter_when_focus_moves_inside_the_map`,
+      `::should_return_to_the_previous_place_when_back_is_used_at_the_prompt_and_in_the_map`,
+      case `099`.
+- [ ] **The live map reflects real changes** (§25). An edge appears when a connection opens and
+      is removed when it closes, a live view emits nothing while nothing happens, and no change
+      section is invented where no event source exists —
+      `spatial_relationships_missing.rs::should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes`,
+      `spatial_map_missing.rs::should_not_invent_a_change_section_when_no_snapshot_or_event_source_exists`,
+      case `098`, whose assertions require a real state change per §43.6 ("no test may pass
+      based only on timer animation").
+- [ ] **Tombstones and lifetime identity prevent PID/object reuse confusion** (§10). A visited
+      process that exits becomes a tombstone distinct from a place that never existed, a
+      tombstone refuses traversal and never resolves to a live object, `back` returns the
+      tombstone with the trail record intact, and the replacement process is a different
+      identity — `crates/ono-cli/tests/spatial_identity_missing.rs`
+      (`::should_carry_a_lifetime_descriptor_rather_than_the_bare_pid_as_process_identity`,
+      `::should_report_a_tombstone_rather_than_a_live_place_when_the_visited_process_has_exited`,
+      `::should_distinguish_a_tombstone_from_a_place_that_never_existed`,
+      `::should_refuse_to_traverse_a_relationship_when_the_place_is_a_tombstone`,
+      `::should_never_resolve_a_tombstoned_place_to_a_live_object`,
+      `::should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_dead_place`,
+      `::should_not_confuse_the_old_and_the_new_process_when_a_place_is_replaced`),
+      the §43.2 property `PID reuse -> different lifetime SpatialId` in
+      `crates/ono-spatial-core/tests/properties.rs`, case `096`.
+- [ ] **Permissions remain honest** (§35.1, §35.2). A neighborhood group carries one of the six
+      states of §35.2, denied is reported as denied rather than as an empty collection, an
+      unavailable group is distinct from an empty one, and navigation triggers no escalation —
+      `spatial_identity_missing.rs::should_report_permission_denied_rather_than_zero_files_for_another_users_process`,
+      `::should_report_a_real_file_list_for_a_process_this_user_owns`,
+      `::should_name_one_of_the_defined_permission_states_for_every_neighborhood_group`,
+      `spatial_contracts_missing.rs::should_report_denied_information_as_denied_rather_than_as_an_empty_collection`,
+      `spatial_topology_missing.rs::should_distinguish_an_unavailable_group_from_an_empty_one_when_a_domain_has_no_provider`,
+      `spatial_relationships_missing.rs::should_report_the_unreadable_namespace_group_as_unknown_rather_than_absent`,
+      case `097`.
+- [ ] **v0.3 adapted canonical objects participate where available** (§37). An adapted
+      observation and its native twin reconcile to one place with both sources retained, and raw
+      command output never becomes a place —
+      `spatial_contracts_missing.rs::should_reconcile_an_adapted_object_with_its_native_twin_into_one_place`,
+      `::should_never_let_raw_command_output_become_a_place`,
+      `spatial_identity_missing.rs::should_resolve_the_adapter_view_and_the_native_view_of_one_process_to_one_spatial_id`,
+      case `091` (the §37.1 identity-merge assertions).
+- [ ] **KUANG/11 can extend spatial relationships under capabilities** (§36). A package's edges
+      stay out of the map until its capability is granted and carry the contributing package as
+      their origin when they appear —
+      `spatial_contracts_missing.rs::should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted`,
+      `::should_carry_the_contributing_package_as_the_origin_of_every_plugin_edge`, with the
+      spatial contribution APIs validated before load by `ono_kuang_testhost` in the same shape
+      as `ono-kuang-testhost/tests/adapter_package.rs` (§4.6.2).
+
+#### 4.7.2 Quality and product experience (v0.4 §52.2, §52.3)
+
+v0.4 §52.2 states nine bullets; the second ("unit/property/integration/PTY tests pass") is one
+sentence covering the four test layers of §43.1–§43.4, and is expanded here into one box per
+layer so that each layer's own checklist is checkable.
+
+- [ ] **All spatial registries validate.** `docs/spec/spatial/{spatial,spaces,relations,landmarks}.yaml`
+      (ADR-0126, ADR-0128) exist, are complete in the shape of §41.1/§41.2, and cannot drift
+      from the shell: every declared space is served and every served space is declared, the
+      same for relations, and the settings block equals the typed catalogue —
+      `spatial_contracts_missing.rs::should_ship_the_machine_readable_spatial_registry`,
+      `::should_declare_every_canonical_space_with_the_fields_the_registry_requires`,
+      `::should_declare_every_relation_with_its_direction_labels_and_confidence`,
+      `::should_serve_exactly_the_canonical_spaces_the_registry_declares`,
+      `::should_serve_every_relation_it_declares_and_declare_every_relation_it_serves`,
+      `crates/ono-cli/tests/spatial_registry.rs` (the settings direction) and
+      `cargo run -p xtask -- spec-check` on every gate run.
+- [ ] **Unit tests pass** (§43.1). Each of the thirteen areas §43.1 requires — `SpatialId`
+      stability, canonical parent selection, selector precedence, ambiguity detection,
+      neighborhood ranking, clustering, landmark thresholds, trail operations, tombstone
+      resolution, relation inverse handling, scope boundary detection, map node/edge filtering,
+      permission-state preservation — has a named test in the spatial crates
+      (`crates/ono-spatial-core/tests/{identity,hierarchy,relations,trail,projection}.rs`,
+      `crates/ono-spatial-index/tests/index.rs`, and the query/render/events crates as §45
+      creates them), with `xtask/tests/spatial_evidence.rs` asserting that no §43.1 area is
+      without one.
+- [ ] **Property tests pass** (§43.2). The seven properties §43.2 lists are seeded property
+      tests in `crates/ono-spatial-core/tests/properties.rs`: `back(enter(x))` returns the prior
+      place, `up` never traverses a graph edge, map coordinates never affect identity, filtering
+      cannot create unknown edges, one stable provider identity yields one `SpatialId`, PID
+      reuse yields a different lifetime id, and every rendered edge references a rendered node or
+      an explicit off-map endpoint (also
+      `spatial_identity_missing.rs::should_resolve_every_edge_endpoint_to_a_node_or_an_explicit_off_map_endpoint`).
+- [ ] **Integration fixtures pass** (§43.3). The deterministic fixture under
+      `docker/acceptance/fixtures/spatial/` creates every element §43.3 names — two services,
+      one service with several processes, a process holding a known file, a TCP listener, a
+      client/server connection, a mount boundary, a namespace or container boundary where the
+      environment permits, several users, and a failing/restarting service — and the §43.3
+      example acceptance path runs against it without naming the objects: cases `091`, `093`,
+      `094`, `096`.
+- [ ] **PTY interaction tests pass** (§43.4). All nine PTY checks of §43.4 are driven through a
+      real pseudo-terminal — `crates/ono-cli/tests/spatial_interactive_missing.rs` (12 tests:
+      startup horizon, ambiguity picker, map open/close, focus without place change, Enter
+      changes place, back returns, resize preserves the place, Ctrl-C leaves the shell alive,
+      an external program still works after the map closes) and case `099`.
+- [ ] **Acceptance scenarios pass.** All ten §44 scenarios of §4.7.3 are renamed from
+      `.case.v04` to `.case` and green in `scripts/acceptance.sh`, and no `*.case.v04` file
+      remains in `docker/acceptance/cases/` — asserted in the gate by
+      `xtask/tests/spatial_evidence.rs`, so a scenario cannot be quietly left out of the suite.
+- [ ] **No release-blocking known defects remain.** `docs/STATE.md` *In progress* is empty, the
+      workspace holds no `#[ignore]`d test (`cargo run -p xtask -- spec-check`'s unfinished-work
+      scan), and every *Deferred* entry names an ADR saying why it does not block the release —
+      the same bar §4.5 sets for v0.2 and §4.6.5 for v0.3.
+- [ ] **Performance targets are measured, and major violations resolved or documented.** Every
+      box of §4.7.5 is ticked; any budget that is exceeded is recorded in an ADR naming the
+      figure measured, the cause and the decision, and the ADR is cited by the §4.7.5 box that
+      would otherwise be unticked. A budget is never ticked from a figure nobody measured.
+- [ ] **Security review completed** (§35, §51 SEC-S01). No test can conclude a review, so the
+      accepted evidence is fixed here: an ADR titled *the spatial enumeration review* extends the
+      T1–T15 threat table of ADR-0015 with a row per §35 boundary — §35.1 no revelation the
+      provider would refuse, §35.2 the six states, §35.3 no escalation from navigation, §35.4 no
+      connection a link did not authorise, §35.5 plugin nodes filtered by capability before the
+      merge — and **each row names a passing test**, exactly as ADR-0015's rows do.
+      `xtask/tests/spatial_evidence.rs` asserts that every test named in that table exists and
+      is not ignored, so the box is ticked by the suite, not by the reviewer's opinion. Named
+      today: `spatial_identity_missing.rs::should_report_permission_denied_rather_than_zero_files_for_another_users_process`
+      (§35.1/§35.2), `::should_name_one_of_the_defined_permission_states_for_every_neighborhood_group`
+      (§35.2), case `097` (§35.3, no escalation),
+      `spatial_remote_missing.rs::should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link`
+      (§35.4), `spatial_contracts_missing.rs::should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted`
+      (§35.5).
+- [ ] **The renderer works with colour disabled and with an ASCII fallback** (§39.1, §39.2).
+      The six distinctions §39.1 forbids colour to own — current node, inferred edge, failed
+      state, remote boundary, root privilege, focused item — are legible without colour, and the
+      map draws in plain ASCII on an ASCII-only terminal —
+      `spatial_map_missing.rs::should_render_the_map_in_plain_ascii_when_colour_is_disabled_and_the_terminal_is_ascii_only`,
+      `spatial_interactive_missing.rs::should_keep_the_same_spatial_semantics_when_look_runs_at_forty_columns`,
+      `spatial_remote_missing.rs::should_mark_the_remote_host_in_the_prompt_after_a_jump`, and
+      the §43.5 renderer snapshots at 40, 80, 120 and 200 columns in the spatial renderer crate
+      (`crates/ono-spatial-render/tests/`) — snapshots as presentation tests only, never a data
+      contract.
+- [ ] **Terminal state survives entering and exiting full-screen views** (§23.3, §49.8). After
+      the map closes the shell screen is restored, an external interactive program still owns
+      the terminal, and a resize while a view is open does not move the place —
+      `spatial_interactive_missing.rs::should_restore_the_shell_screen_when_the_full_screen_map_closes`,
+      `::should_leave_the_terminal_in_order_for_an_external_program_after_the_map_closes`,
+      `::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`,
+      case `099` (terminal size and mode after the view, jobs, clean exit).
+- [ ] **Provider conformance proves identity and permission semantics** (§42). Every provider
+      that feeds the spatial index declares the §42 spatial claims and passes the four §42
+      conformance tests — identity stability (§42.1), reuse safety (§42.2), relation integrity
+      (§42.3), permission state (§42.4) — generated from `docs/spec/providers/*.yaml` the way
+      the v0.2 conformance suites are:
+      `spatial_contracts_missing.rs::should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_index`,
+      `::should_resolve_repeated_observations_of_one_object_to_the_same_spatial_id`,
+      `::should_report_denied_information_as_denied_rather_than_as_an_empty_collection`, and the
+      per-provider spatial conformance suites in `crates/ono-provider-*/tests/`.
+- [ ] **The product-experience statement is demonstrated** (v0.4 §52.3). §52.3 requires
+      "concrete test scenarios **and** dogfooding", so it is ticked by two things together, and
+      neither is an opinion. The scenarios: cases `090`–`099` green, with the house rule of
+      `docker/acceptance/cases/README-v0.4.md` — no case types the name of the object it is
+      supposed to discover — asserted mechanically by `xtask/tests/spatial_evidence.rs`, which
+      is what makes the ten cases evidence *for this statement* rather than merely for §44. The
+      dogfooding: at least one session of at least an hour on a host the author did not prepare,
+      recorded in `docs/dogfood/v0.4-<date>.md` as the transcript of what was asked and what the
+      shell answered, with every defect it produced filed in `docs/STATE.md` and either fixed or
+      carried as a *Deferred* entry with an ADR. The record is the evidence; the box is ticked
+      when the record exists, the defects it names are closed or deferred with a reason, and the
+      cases above are green.
+
+#### 4.7.3 The ten acceptance scenarios (v0.4 §44)
+
+One box per scenario. Each is ticked when its file has been **renamed from `*.case.v04` to
+`*.case`** in the same commit as the behaviour it proves, and the renamed case is green in
+`scripts/acceptance.sh` — the rename is the delivery, because a `.case.v04` file is invisible to
+the referee.
+
+- [ ] **§44.1 cold-start discovery** — `docker/acceptance/cases/090-spatial-cold-start-discovery.case`
+      (18 assertions, `44.1a`–`44.1r`): the canonical domains and a meaningful object reached
+      from `look`, `map`, `near`, completion and `find place` alone, the text map inside the
+      §22 contract and the ~30-node budget, the startup horizon at a terminal, and the two §34
+      budget assertions `44.1q`/`44.1r`.
+- [ ] **§44.2 unknown web service** — `091-spatial-unknown-web-service.case` (17 assertions):
+      the fixture web service selected by visible metadata without its name, entered, its
+      process and its listening socket followed, the trail naming the relation, an unavailable
+      provider reported honestly, and the §37.1 adapter identity merge.
+- [ ] **§44.3 storage discovery** — `092-spatial-storage-discovery.case` (15 assertions): the
+      storage domain walked without mount names, the secondary mount entered, its source and
+      boundary shown, the mounted directory traversed, `cd` versus `enter` per §30, and a large
+      directory summarised with its hidden count.
+- [ ] **§44.4 process → file → process** — `093-spatial-process-file-process.case` (14
+      assertions): the open-file relation traversed in both directions, `inspect relation`
+      explaining it with provider and confidence, and empty distinguished from denied.
+- [ ] **§44.5 network path** — `094-spatial-network-path.case` (15 assertions): service →
+      process → socket → connection navigated by relationship discovery, plus the §19 half —
+      the link map, `jump` across it, no auto-expansion of a remote graph, and no local/remote
+      identity merge.
+- [ ] **§44.6 back versus up** — `095-spatial-back-versus-up.case` (15 assertions): after the
+      §44.6 walk, `back` returns to the process and `up` to the socket's canonical network
+      parent, with `trail --compact`, `history_empty` and `no_parent` asserted.
+- [ ] **§44.7 identity replacement** — `096-spatial-identity-replacement.case` (13 assertions):
+      the entered service process is restarted, the old place becomes a tombstone, the service
+      place stays stable and shows the replacement, the trail record survives, and a movement
+      onto the tombstone is refused.
+- [ ] **§44.8 permission honesty** — `097-spatial-permission-honesty.case` (12 assertions): a
+      non-root user investigating a restricted process sees `permission_denied` and `unknown` as
+      distinct from empty, no escalation is attempted, and a map of a denied place shows the
+      boundary.
+- [ ] **§44.9 live map** — `098-spatial-live-map.case` (10 assertions): with `map --live`
+      watching, an opened connection makes a real edge appear and a closed one makes it
+      disappear or tombstone, nothing is emitted while nothing changes, freshness is shown, and
+      Ctrl-C ends the view without killing the shell.
+- [ ] **§44.10 raw shell continuity** — `099-spatial-raw-shell-continuity.case` (10
+      assertions): after extensive navigation and full-screen map use, interactive process
+      control, terminal state, terminal size and mode, jobs and cwd are all still correct, and
+      the shell exits cleanly.
+
+#### 4.7.4 The twenty core spatial invariants (v0.4 §2)
+
+One box per invariant, each naming the test that fails when the invariant is violated. Several
+invariants are guarded by the same test; where that is so it is said, and no test is invented to
+give an invariant one of its own.
+
+- [ ] **§2.1 Discovery before naming.** Violated the moment an object needs its name as input —
+      caught by `spatial_topology_missing.rs::should_reach_a_process_it_never_names_when_only_a_predicate_over_visible_metadata_is_known`
+      and `::should_answer_look_near_and_map_without_an_object_name_when_at_the_root`; cases
+      `090`/`091` (which never type the discovered name). Same proof as §4.7.1's discovery box.
+- [ ] **§2.2 Location is explicit.** Caught by
+      `spatial_navigation_missing.rs::should_describe_the_current_place_as_a_structured_view_when_look_runs_without_a_tty`,
+      `spatial_topology_missing.rs::should_describe_the_current_place_with_an_id_kind_name_scope_and_permission_when_looking`
+      and, at a terminal, `spatial_interactive_missing.rs::should_name_the_current_place_in_the_prompt_and_follow_it_when_the_place_changes`
+      (shared with §2.20).
+- [ ] **§2.3 Movement changes context.** A verb that prints an object without moving fails
+      `spatial_navigation_missing.rs::should_move_into_the_hierarchical_child_when_entering_a_canonical_domain_and_its_group`,
+      `::should_traverse_the_relationship_edge_when_following_the_parent_relation` and
+      `::should_move_across_scopes_and_record_both_ends_when_jumping_to_a_resolved_place`, each
+      of which reads the place *after* the command; the inverse — a command that moves and must
+      not — is `spatial_relationships_missing.rs::should_keep_the_current_place_when_trace_projects_the_relationship_graph`.
+- [ ] **§2.4 Every movement is reversible.** Caught by
+      `spatial_navigation_missing.rs::should_return_to_the_process_when_back_follows_the_navigation_history`,
+      `::should_answer_history_empty_when_back_runs_with_no_previous_place`,
+      `spatial_relationships_missing.rs::should_return_to_the_process_with_back_after_following_a_socket_edge`
+      and, for a destination that died, `spatial_identity_missing.rs::should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_dead_place`;
+      case `095`.
+- [ ] **§2.5 Every edge is explainable.** Caught by
+      `spatial_relationships_missing.rs::should_explain_every_edge_with_relation_provider_and_confidence_when_mapping_a_process`
+      and `spatial_identity_missing.rs::should_carry_source_provenance_and_confidence_on_every_relationship_edge`;
+      case `093` (`inspect relation`).
+- [ ] **§2.6 Hierarchy and graph are separate concepts.** Caught by
+      `spatial_relationships_missing.rs::should_refuse_to_follow_a_canonical_child_that_is_not_a_relationship_edge`
+      and `spatial_identity_missing.rs::should_keep_every_relationship_parent_while_naming_one_canonical_parent`.
+      Same proof as §4.7.1's hierarchy/graph box.
+- [ ] **§2.7 No fabricated geometry.** Caught by
+      `spatial_map_missing.rs::should_omit_screen_coordinates_when_map_json_returns_the_semantic_contract`
+      and the §43.2 property `map coordinates never affect semantic identity` in
+      `crates/ono-spatial-core/tests/properties.rs` (shared with §2.19).
+- [ ] **§2.8 Stable identity beats transient identifiers.** Caught by
+      `spatial_identity_missing.rs::should_carry_a_lifetime_descriptor_rather_than_the_bare_pid_as_process_identity`,
+      `::should_give_different_spatial_ids_to_two_processes_that_share_a_display_name`,
+      `::should_return_the_same_spatial_id_when_the_same_place_is_observed_by_two_shell_invocations`
+      and the property `PID reuse -> different lifetime SpatialId`; case `096`.
+- [ ] **§2.9 The horizon is bounded.** Caught by
+      `spatial_topology_missing.rs::should_bound_the_root_horizon_instead_of_listing_every_known_object`,
+      `::should_bound_the_neighborhood_and_count_what_it_hides_when_a_place_has_many_neighbors`,
+      `spatial_map_missing.rs::should_bound_the_default_map_when_the_host_holds_more_objects_than_the_view_budget`
+      and `spatial_contracts_missing.rs::should_bound_the_default_map_to_its_node_budget`
+      (shared with §4.7.5's view-budget box).
+- [ ] **§2.10 Zoom is semantic.** Caught by
+      `spatial_map_missing.rs::should_aggregate_into_the_canonical_domains_when_the_zoom_level_is_coarse`,
+      `::should_report_how_many_objects_a_cluster_stands_for_when_the_view_budget_is_exceeded`
+      and `::should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded` —
+      a view that merely hid rows fails the last of these.
+- [ ] **§2.11 Landmarks reflect significance.** Caught by
+      `spatial_map_missing.rs::should_expose_a_built_in_reason_for_every_landmark_when_map_json_reports_them`,
+      `::should_mark_a_listener_on_every_interface_as_a_public_listener_landmark`,
+      `::should_expose_landmark_thresholds_as_inspectable_and_configurable_settings` and
+      `spatial_topology_missing.rs::should_expose_a_reason_on_every_landmark_when_a_place_reports_landmarks`.
+- [ ] **§2.12 Live views reflect real change.** Caught by
+      `spatial_relationships_missing.rs::should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes`
+      and `spatial_map_missing.rs::should_not_invent_a_change_section_when_no_snapshot_or_event_source_exists`;
+      case `098`, which requires a real change for every assertion (§43.6).
+- [ ] **§2.13 Text remains sufficient.** Every test in the eight non-PTY spatial suites drives
+      the shell through `ono -c` with no terminal at all, so a spatial operation that needed a
+      TUI could not pass any of them; named explicitly by
+      `spatial_map_missing.rs::should_render_a_text_map_when_stdout_is_a_pipe_and_no_full_screen_view_is_possible`
+      and `spatial_navigation_missing.rs::should_answer_a_bounded_graph_when_map_json_runs_without_a_tty`.
+- [ ] **§2.14 TTY richness is optional presentation.** Caught by
+      `spatial_map_missing.rs::should_return_the_same_node_identities_when_the_terminal_width_changes`
+      and `spatial_interactive_missing.rs::should_keep_the_same_spatial_semantics_when_look_runs_at_forty_columns`,
+      with the v0.2 determinism floor of §4.2 (`034-redirected-output-is-deterministic`) still
+      green for the spatial commands.
+- [ ] **§2.15 Unix remains underneath.** Caught by
+      `spatial_navigation_missing.rs::should_keep_running_external_commands_when_spatial_navigation_has_happened`,
+      `::should_run_the_native_spatial_find_and_keep_the_external_find_reachable_when_both_exist`
+      and `::should_run_the_native_spatial_look_and_keep_the_external_look_reachable_when_both_exist`
+      (ADR-0124); case `099` and the still-green v0.3 case `087`.
+- [ ] **§2.16 Providers own facts.** Caught by
+      `spatial_contracts_missing.rs::should_resolve_repeated_observations_of_one_object_to_the_same_spatial_id`,
+      `::should_never_let_raw_command_output_become_a_place` and
+      `spatial_relationships_missing.rs::should_name_the_same_relation_and_provider_as_trace_when_the_neighbor_is_the_open_file`
+      — the spatial layer answering differently from the provider it composes is exactly what
+      the last of these fails on; ADR-0131's refusing index is pinned by
+      `crates/ono-spatial-index/tests/index.rs`.
+- [ ] **§2.17 Unknown is visible.** Caught by the six permission tests of §4.7.1's honesty box,
+      chiefly `spatial_identity_missing.rs::should_name_one_of_the_defined_permission_states_for_every_neighborhood_group`
+      and `spatial_topology_missing.rs::should_distinguish_an_unavailable_group_from_an_empty_one_when_a_domain_has_no_provider`;
+      case `097`. Same proof as that box.
+- [ ] **§2.18 Remote boundaries are visible.** Caught by
+      `spatial_remote_missing.rs::should_announce_the_boundary_in_plain_text_when_jumping_to_a_linked_host`,
+      `::should_record_the_host_and_the_scope_crossing_of_every_step_in_the_trail`,
+      `::should_keep_a_remote_process_place_distinct_from_the_local_one_with_the_same_pid` and,
+      for the mount boundary, `spatial_storage_missing.rs::should_record_the_boundary_crossing_when_traversing_from_the_root_into_a_mounted_directory`.
+- [ ] **§2.19 The user's place survives rendering changes.** Caught by
+      `spatial_interactive_missing.rs::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`,
+      `spatial_map_missing.rs::should_return_the_same_node_identities_when_the_terminal_width_changes`
+      and `::should_not_change_the_current_place_when_a_map_focuses_a_node` (shared with §2.7).
+- [ ] **§2.20 Spatial state is inspectable and scriptable.** Caught by
+      `spatial_map_missing.rs::should_describe_identity_state_exits_and_landmarks_when_look_json_reports_a_place`,
+      `spatial_navigation_missing.rs::should_record_every_movement_with_its_kind_and_relation_when_the_trail_is_read_as_json`,
+      `::should_read_back_into_the_pipeline_when_look_json_is_parsed_by_from_json` and
+      `spatial_contracts_missing.rs::should_keep_a_scripts_navigation_out_of_the_callers_place`
+      (§29.2); case `092`.
+
+#### 4.7.5 Performance budgets (v0.4 §34)
+
+Measured in the acceptance container on the fixtures of §43.3, by a case in the shape of
+`060-performance-budgets`: `docker/acceptance/cases/100-spatial-performance-budgets.case` prints
+the figure it measured on every run and asserts it against the budget, as a median of repeated
+runs so a loaded machine does not decide the release. The two in-suite timing tests
+(`spatial_contracts_missing.rs::should_answer_repeated_looks_far_inside_the_look_budget` and
+`::should_bound_the_default_map_to_its_node_budget`) deliberately use a ten-times tolerance so
+the gate is not flaky; **they do not tick these boxes** — the container case does, at the real
+figure. A budget that cannot be met is documented per §4.7.2's performance box, and the ADR that
+documents it is named in the box before it may be ticked.
+
+- [ ] **Interactive startup to usable prompt < 150 ms** — `100-spatial-performance-budgets`
+      (`startup-to-prompt`), measured as a median of at least 40 runs, with case `090`'s
+      startup-horizon assertions proving the horizon is what is being timed.
+- [ ] **Basic `look`, local and cached, < 50 ms** — `100-spatial-performance-budgets`
+      (`warm-look`), the marginal cost of a repeated `look` in one session; case `090`
+      assertion `44.1q`.
+- [ ] **`near` cached < 50 ms** — `100-spatial-performance-budgets` (`warm-near`), measured the
+      same way against the neighborhood of a place with many neighbors.
+- [ ] **Map L0/L1 cached < 100 ms** — `100-spatial-performance-budgets` (`map-l0-l1`), with the
+      zoom level pinned by `spatial_map_missing.rs::should_report_the_requested_canonical_zoom_level_when_map_json_selects_one`.
+- [ ] **Map L2 on an ordinary host < 250 ms** — `100-spatial-performance-budgets` (`map-l2`);
+      case `090` assertion `44.1r`.
+- [ ] **Focus and navigation inside a rendered map < 16 ms per frame** —
+      `crates/ono-cli/tests/spatial_interactive_missing.rs` measuring the frame cost of focus
+      movement at a real PTY, in the shape of `ono-editor/tests/latency.rs` (§4.3), which bounds
+      the editor's keystroke-to-frame path two orders under its own budget.
+- [ ] **Search of common indexed objects < 100 ms** — `100-spatial-performance-budgets`
+      (`find-place`), a `find place --where …` over the fixture's objects answered from the
+      index rather than a provider sweep (§33.1).
+- [ ] **Expensive discovery does not block the prompt** (§34.1). The prompt is usable before
+      cold discovery finishes and the view updates progressively — asserted at a real terminal
+      by `spatial_interactive_missing.rs::should_show_the_spatial_horizon_when_the_session_starts_at_a_terminal_and_never_in_a_pipe`
+      together with the `startup-to-prompt` measurement above on a host whose discovery is
+      deliberately slow (the slow-NSS fixture of §4.3).
+- [ ] **View budgets are enforced, never unbounded** (§34.2). The text map stays at about 30
+      nodes and the interactive map at 100 before mandatory clustering, and what was left out is
+      disclosed — `spatial_contracts_missing.rs::should_bound_the_default_map_to_its_node_budget`,
+      `spatial_map_missing.rs::should_bound_the_default_map_when_the_host_holds_more_objects_than_the_view_budget`,
+      `::should_show_more_than_the_default_when_the_map_is_asked_for_all`,
+      `spatial_storage_missing.rs::should_summarize_a_large_directory_instead_of_enumerating_it`;
+      cases `090` and `092` (shared with §2.9).
+
 ## 5. Stopping rule
 
 An agent stops when `scripts/release-check.sh` prints `release-check: the shell is
@@ -550,3 +1019,15 @@ release-ready`. Any other outcome means there is a next task in `docs/STATE.md`.
 Running out of easy work is not a stopping condition. Neither is a green quality gate, a passing
 acceptance suite on its own, a completed phase, or a tidy-looking repository. If a box in
 section 4 is unticked, the work is unfinished, and the next increment starts.
+
+**Every subsection of section 4 counts, including the tranches.** The checklist grew with the
+specification: sections 4.1–4.5 are the v0.2 shell, section 4.6 is the v0.3 External Command
+Adaptation Layer, and section 4.7 is the v0.4 Spatial Systems Interface. A tranche whose
+subsection still holds an unticked box is an unfinished product, however green the gate and the
+acceptance suite are on their own, and the run continues into it.
+
+`scripts/release-check.sh` reads the checklist generically — it greps this file for lines
+beginning `- [ ]` and fails on the first one — so a new subsection is seen the moment it is
+written, and no subsection can be excluded from the stopping rule by being added late. The
+counterpart of that generosity is that a box must never be written in a form no proof can close:
+section 3 governs every subsection alike.
