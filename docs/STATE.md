@@ -408,6 +408,111 @@ Green now, all previously `#[ignore]`d — 32 tests:
   Seen once, passing on re-run and green in the container; the test is right and the environment
   is what moved.
 
+**S4b — `enter` on any place, and `follow` along a real edge — is complete (2026-08-28, agent
+`S4b`).** ADR-0146 to ADR-0149; gate green; acceptance case
+`docker/acceptance/cases/103-spatial-enter-follow.case` added (31 assertions).
+
+The increment turned on the thing S4a left dark: **an object place had no exits**. `near` at a
+process answered nothing, because the only source of relationship edges was the record-field
+bridge, which reads a `ppid` and a `cgroup` and cannot know which files a process holds open.
+ADR-0146 makes the edges of an object place the ones the **v0.2 relationship providers** of
+`ono-graph` assert about that object — the same providers `trace` walks — translated into the
+declared relations of `docs/spec/spatial/relations.yaml`. A neighbour therefore reports the
+relation word and the provider id `trace` reports for the same edge (§2.16, §31.3), and the
+record-field bridge keeps only the relations no relationship provider serves (cgroup, namespace,
+container, and the listener a connection was accepted by).
+
+**What S4c needs to know** — the five things:
+
+- **The trail is written and still unread.** Every movement records a `NavigationStep`:
+  `enter`/`home` from S4a, and now `follow` with `.along(relation)` — §6.4's "the relation
+  traversed MUST be recorded". `back`, `up`, `trail` and `jump` read what is already there.
+  `crates/ono-cli/tests/spatial_relationships_missing.rs::should_record_the_relation_it_traversed_when_a_follow_enters_the_trail`
+  is the test waiting on `trail --json`, and
+  `spatial_topology_missing::should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner`
+  is green up to its last statement, which is `trail --json`.
+- **`up` is `place.canonical_parent`, and it is already on every place view.** The place record
+  carries `canonical_parent` (§11.3, §33.1) and no longer carries a second `parent` field
+  answering the same question (ADR-0148). `ono_spatial_query::resolve::parent_of` computes it.
+  `spatial_identity_missing::should_move_to_the_declared_canonical_parent_deterministically_when_going_up`
+  asserts `up` lands on exactly that id and that `follow parent` lands somewhere else.
+- **Resolution and observation are one function.** `crate::spatial::commands::resolved_place`
+  resolves a selector the way §27.1 orders it and, when nothing visible answers, plans the
+  provider targets the *selector* implies and asks those. `jump` is the same resolution with
+  §27.1's step 6 allowed (`SelectorContext::across_links`) and a `Movement::Jump` step; it needs
+  no new observation machinery.
+- **A place view is still one function**, and it now carries what a movement needs to be checked
+  from outside: `canonical_ref`, `lifetime`, `state`, `summary`, the `exits` map keyed by the
+  word `look` prints, and the object's own identity fields at the top level, so
+  `look --json | from json | where pid == 1842` is an ordinary pipeline (ADR-0148).
+- **A refusal prints its dotted name.** `ono: Ono-Sendai-E1006 spatial.history_empty …` — the
+  renderer shows both halves of §43's identity now, so `back` at an empty trail and `up` at the
+  root are distinguishable in a terminal as well as in `catch e { $e.name }` (ADR-0148).
+
+Green now, all previously `#[ignore]`d — 39 tests:
+
+- `spatial_relationships_missing` (9): `should_enter_the_open_file_when_following_it_from_the_holding_process`,
+  `should_name_the_holding_process_among_the_file_neighbors_when_the_file_is_the_place`,
+  `should_name_the_same_relation_and_provider_as_trace_when_the_neighbor_is_the_open_file`,
+  `should_enter_the_listening_socket_when_following_it_from_its_owner_process`,
+  `should_reach_the_accepted_connection_when_following_it_from_the_listening_socket`,
+  `should_refuse_the_traversal_with_no_relation_when_the_process_owns_no_socket`,
+  `should_refuse_to_follow_a_canonical_child_that_is_not_a_relationship_edge`,
+  `should_bound_the_neighborhood_by_default_and_widen_it_with_all`,
+  `should_report_the_unreadable_namespace_group_as_unknown_rather_than_absent`.
+- `spatial_navigation_missing` (8): the two `enter` tests, `should_traverse_the_relationship_edge_when_following_the_parent_relation`,
+  `should_answer_no_relation_when_following_an_edge_the_current_place_does_not_have`,
+  the three ambiguity tests, `should_leave_the_callers_place_untouched_when_a_called_script_navigates`.
+- `spatial_identity_missing` (11): the four identity tests (287, 313, 334, 362), the three
+  permission-honesty tests, `should_keep_every_relationship_parent_while_naming_one_canonical_parent`,
+  `should_carry_source_provenance_and_confidence_on_every_relationship_edge`,
+  `should_use_the_defined_confidence_vocabulary_and_never_call_an_inferred_edge_exact`,
+  `should_expose_how_fresh_the_data_behind_a_place_is`.
+- `spatial_storage_missing` (9): the six §30 tests (cwd, place, `cd`, `PWD`), the two §44.3
+  walking tests, `should_refuse_a_path_that_does_not_exist_with_a_structured_error`.
+- `spatial_topology_missing` (1): `should_discover_a_listening_socket_by_its_port_and_follow_it_to_its_owning_process`.
+- `spatial_contracts_missing` (3): `should_refuse_an_unknown_place_with_a_structured_spatial_error`,
+  `should_serve_every_relation_it_declares_and_declare_every_relation_it_serves`,
+  `should_report_denied_information_as_denied_rather_than_as_an_empty_collection`.
+
+**Left ignored, with the reason on the test** (each carries it in its `#[ignore]` line):
+
+- `spatial_topology_missing::should_reach_a_process_it_never_names_…` and
+  `…should_offer_the_process_exits_…` — **delivered and green with `--test-threads=1`.** The
+  fixture selects its process with `ppid == std::process::id()`, and under cargo's default
+  parallelism that also matches the children every other test in the same binary spawned, so the
+  discovery walk reaches one of theirs. The fixture needs a predicate unique to itself.
+- `spatial_topology_missing::should_follow_the_parent_relation_…` — the `follow parent` half is
+  green; the test's last statement is `trail --json` (S4c).
+- `spatial_topology_missing::should_reach_a_running_service_…` — **the test and the inherited
+  v0.2 contract disagree.** It selects with `--where state == "running"`, and `ono.service/1`
+  declares `state` as `active | reloading | inactive | failed | activating | deactivating |
+  unknown` and reports `running` as the *substate*. No service on a systemd host answers to it.
+  In the acceptance container there is no service manager and the test takes its skip branch.
+- `spatial_contracts_missing::should_refuse_an_ambiguous_selector_in_a_script_…` — the ambiguity
+  path is delivered, but the fixture copies `/bin/sleep` to a new name and runs it twice; on a
+  host whose coreutils is a multi-call binary (Ubuntu 25.10) the copy refuses to start
+  (`coreutils: unknown program 'ono-spatial-twin'`), so nothing answers to the name and the
+  refusal is `spatial.not_found`. The fixture needs a program it can rename.
+- everything that needs `back`, `up`, `trail`, `jump`, `pin` (S4c), `map` (S5), the mount
+  boundary and the directory summary (S4d), or tombstones (S7).
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- `process.connects_to` is declared and nothing serves it: the v0.2 graph reports a process's
+  sockets, not its endpoints, and the endpoint at the far end is the *socket's* `peer`. The exit
+  answers `unsupported`, which §35.2 makes a real answer; removing the relation or serving it is
+  a decision for whoever writes the endpoint provider.
+- `interface.has_address` has the same shape: `network/addresses` has no provider target, so an
+  interface's `addresses` exit is `unsupported` rather than a list.
+- A file place's `owner` is `unknown — available on request`: `user.owns_file` is
+  `CostClass::Expensive` and no user record is observed at a file place. Loading it on
+  `near --type user` is one line in `relations::adjacent_targets` and one test.
+- **`cargo test` retains no results between statements of one `-c` script until now.**
+  `stage_scope` did not populate `Scope::previous`, so `@-1` in a command argument resolved to
+  null while `@-1` at the head of a pipeline worked. Fixed here because `enter @-1` is §28.2;
+  every other command that takes a value argument gains the same reference.
+
 ---
 
 ## Next up (ordered)
