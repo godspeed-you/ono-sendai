@@ -1,0 +1,153 @@
+# v0.4 §50 Phase S4's fourth part — the storage remainder — and the configuration behaviour of
+# §47. §7.4 (what STORAGE provides), §15.1 (the Unix tree stays), §15.2 (the storage hierarchy),
+# §15.3 (mount boundaries), §15.4 (the directory place and its view budget), §15.5 (the file
+# place), §30 (cwd versus place), §34/§33.1 (a repeated view is read, not recomputed), §44.3
+# (storage discovery without prior mount names) and §47 (`spatial.enabled = false` leaves the
+# typed shell working).
+#
+# No mount name is typed as input anywhere in this case. The walk is `home -> storage -> mounts`,
+# and the mount it then crosses into is one the shell itself named — which is what §44.3 means by
+# "without prior mount names". The container mounts /proc, /sys and a tmpfs on /dev, so there is
+# always a second filesystem directly below `/` to cross into; the case picks whichever one the
+# shell reports first and says which it chose.
+case: storage discovery, the mount boundary, and the shell with its spatial layer switched off
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo "== §44.3: home -> storage -> mounts/filesystems, by hierarchy alone =="
+  prove s4d-a "the mounts place lists mounts, and every one of them is one \`get mount\` reports (§2.16)" \
+    'ono -c "home; enter storage; enter mounts; near --all | to text --field name" > /tmp/s4d-places.txt &&
+     test -s /tmp/s4d-places.txt &&
+     ono -c "get mount | to text --field target" > /tmp/s4d-known.txt &&
+     while read -r place; do grep -qxF "$place" /tmp/s4d-known.txt || exit 1; done < /tmp/s4d-places.txt'
+  prove s4d-b "the root mount is among them, so the walk reached the real table (§44.3)" \
+    'grep -qx "/" /tmp/s4d-places.txt'
+  prove s4d-c "filesystems are a different place family from mounts (§7.4, §15.2)" \
+    'test "$(ono -c "home; enter storage; enter filesystems; near --all | count | to text")" -ge 1'
+
+  # The shell names the mount; the case only reads what it said.
+  TARGET=""
+  while read -r candidate; do
+    case "$candidate" in
+      /) continue ;;
+      /*/*) continue ;;
+      /*) if [ -d "$candidate" ]; then TARGET="$candidate"; break; fi ;;
+    esac
+  done < /tmp/s4d-places.txt
+  echo "the shell named this second filesystem: ${TARGET:-<none>}"
+  prove s4d-d "a mount below \`/\` was discovered without its name being typed (§44.3)" \
+    'test -n "$TARGET"'
+
+  echo "== §15.3: the boundary is part of the place =="
+  ono -c "enter $TARGET; look --json" > /tmp/s4d-boundary.json 2>&1
+  ono -c "enter $TARGET; look" > /tmp/s4d-boundary.txt 2>&1
+  prove s4d-e "entering the mount names its local path (§15.3)" \
+    'grep -qF "\"local_path\":\"$TARGET\"" /tmp/s4d-boundary.json'
+  prove s4d-f "the boundary names the filesystem the mount provider reports (§15.3, §2.16)" \
+    'fs=$(ono -c "get mount $TARGET | to text --field filesystem") &&
+     test -n "$fs" && grep -qF "\"filesystem\":\"$fs\"" /tmp/s4d-boundary.json'
+  prove s4d-g "the boundary names the source the mount provider reports (§15.3, §2.16)" \
+    'src=$(ono -c "get mount $TARGET | to text --field source") &&
+     test -n "$src" && grep -qF "\"source\":\"$src\"" /tmp/s4d-boundary.json'
+  prove s4d-h "the boundary answers whether the filesystem is remote, rather than staying silent (§15.3, §2.17)" \
+    'grep -qE "\"remote\":(true|false)" /tmp/s4d-boundary.json'
+  prove s4d-i "a colourless terminal sees the same four facts as text (§15.3, §39.1)" \
+    'grep -q "boundary" /tmp/s4d-boundary.txt &&
+     grep -q "local path" /tmp/s4d-boundary.txt &&
+     grep -q "filesystem" /tmp/s4d-boundary.txt &&
+     grep -q "remote" /tmp/s4d-boundary.txt'
+
+  echo "== §3.2/§2.18: crossing the boundary is recorded in the trail =="
+  ono -c "enter /; enter $TARGET; trail --json" > /tmp/s4d-trail.json 2>&1
+  prove s4d-j "the step from \`/\` into the mount carries a scope crossing (§3.2, §2.18)" \
+    'grep -qF "\"kind\":\"filesystem\"" /tmp/s4d-trail.json'
+  prove s4d-k "the crossing names both sides, and does not claim to have left the host (§2.18)" \
+    'grep -qF "\"to\":\"filesystem:$TARGET\"" /tmp/s4d-trail.json &&
+     grep -qF "\"entering\":true" /tmp/s4d-trail.json'
+
+  echo "== §15.1/§15.4: the mounted directory is an ordinary Unix place =="
+  mkdir -p /tmp/s4d/deeper
+  printf 'held by the case\n' > /tmp/s4d/deeper/marker.conf
+  prove s4d-l "traversing into a directory shows what is really in it (§15.4)" \
+    'ono -c "enter /tmp/s4d/deeper; look" | grep -qF "children"'
+  prove s4d-m "entering a directory moves the working directory with the place (§30.2)" \
+    'test "$(ono -c "enter /tmp/s4d/deeper; pwd")" = "/tmp/s4d/deeper"'
+  prove s4d-n "\`up\` from a file reaches the directory that holds it (§15.1, §15.5)" \
+    'ono -c "enter /tmp/s4d/deeper/marker.conf; up; look --json" | grep -qF "\"/tmp/s4d/deeper\""'
+  prove s4d-o "entering a file leaves the working directory alone (§30.2, §53)" \
+    'test "$(ono -c "cd /tmp; enter /tmp/s4d/deeper/marker.conf; pwd")" = "/tmp"'
+
+  echo "== §15.4/§34.2: a large directory is summarised, never enumerated =="
+  mkdir -p /tmp/s4d/many
+  i=0; while [ $i -lt 400 ]; do : > "/tmp/s4d/many/entry-$i"; i=$((i + 1)); done
+  ono -c "enter /tmp/s4d/many; look --json" > /tmp/s4d-many.json 2>&1
+  prove s4d-p "the directory place counts all 400 entries (§15.4: the summary is a real count)" \
+    'grep -qF "\"count\":400" /tmp/s4d-many.json'
+  prove s4d-q "and does not list them: the view stays inside its budget (§15.4, §34.2)" \
+    'test "$(grep -o "entry-[0-9]*" /tmp/s4d-many.json | sort -u | wc -l)" -lt 400'
+  prove s4d-r "what it left out is disclosed rather than dropped (§15.4, §3.6)" \
+    'ono -c "enter /tmp/s4d/many; look" | grep -q "more not shown"'
+  prove s4d-s "the entries stay reachable as data — the pipeline is not replaced (§49.7)" \
+    'test "$(ono -c "get dir /tmp/s4d/many | count | to text")" = "400"'
+
+  echo "== §33.1/§34: a repeated view is read, not recomputed =="
+  prove s4d-t "the first look at a place polls the providers (§25.3)" \
+    'ono -c "home; enter storage; enter mounts; look --json" | grep -qF "\"freshness\":\"polled\""'
+  prove s4d-u "a second look in the same session is answered from the index and says so (§33.1, §25.3)" \
+    'ono -c "home; enter storage; enter mounts; look --json; look --json" | tail -1 | grep -qF "\"freshness\":\"cached\""'
+
+  echo "== §47: the shell keeps working with the spatial layer switched off =="
+  prove s4d-v "the typed pipeline is untouched by the spatial switch (§47)" \
+    'test "$(ono -c "set config spatial.enabled = false
+  get process | where pid == 1 | count | to text" | tail -1)" = "1"'
+  prove s4d-w "a spatial verb refuses by name a script can branch on (§47, §40)" \
+    'ono -c "set config spatial.enabled = false
+  try { look --json } catch e { \$e | to json }" | grep -qF "\"name\":\"spatial.unsupported\""'
+  prove s4d-x "the refusal carries the stable code beside the name (§43)" \
+    'ono -c "set config spatial.enabled = false
+  look" 2>&1 | grep -qF "Ono-Sendai-E1009"'
+  prove s4d-y "and \`look\` is still the shell's own verb, not the external program (§47, ADR-0124)" \
+    'ono -c "set config spatial.enabled = false
+  look" 2>&1 | grep -qv "/usr/bin/look"'
+
+  rm -rf /tmp/s4d
+  echo "storage and configuration checks done"
+exit: 0
+stdout-contains: PROVED s4d-a
+stdout-contains: PROVED s4d-b
+stdout-contains: PROVED s4d-c
+stdout-contains: PROVED s4d-d
+stdout-contains: PROVED s4d-e
+stdout-contains: PROVED s4d-f
+stdout-contains: PROVED s4d-g
+stdout-contains: PROVED s4d-h
+stdout-contains: PROVED s4d-i
+stdout-contains: PROVED s4d-j
+stdout-contains: PROVED s4d-k
+stdout-contains: PROVED s4d-l
+stdout-contains: PROVED s4d-m
+stdout-contains: PROVED s4d-n
+stdout-contains: PROVED s4d-o
+stdout-contains: PROVED s4d-p
+stdout-contains: PROVED s4d-q
+stdout-contains: PROVED s4d-r
+stdout-contains: PROVED s4d-s
+stdout-contains: PROVED s4d-t
+stdout-contains: PROVED s4d-u
+stdout-contains: PROVED s4d-v
+stdout-contains: PROVED s4d-w
+stdout-contains: PROVED s4d-x
+stdout-contains: PROVED s4d-y
+stdout-contains: storage and configuration checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked
