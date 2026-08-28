@@ -994,17 +994,21 @@ carries the mapping, and `docker/acceptance/fixtures/spatial/` the deterministic
 asks for (a listener holding a known file open and forking workers, its client, and a service
 manager stand-in in the shape the v0.3 systemd adapters decode).
 
-**Before the first increment, three decisions need an ADR** — the suites had to read the spec to
-write the tests, and these are what they could not settle:
+**The three questions the suites could not settle are decided** (2026-08-28), so the first
+increment starts from a fixed contract rather than from an assumption:
 
-1. `find` and `look` are v0.4 spatial verbs (§6.1, §6.8) and existing Unix programs, and `find`
-   is already claimed by the v0.3 adapter `org.ono.compat.findutils.find`. The suites assume the
-   spatial verb wins the bare name while the program stays reachable (v0.2 §6.5 resolution
-   order, `exec:find`); that has to be decided, not assumed.
-2. The `spatial.*` error family of §40 has no numeric codes: the suites assert the dotted names
-   and name E10xx as the next free block after the v0.3 adapter family.
-3. §41's registry is written `docs/spec/spatial.yaml` flat while this repository nests by family;
-   the drift tests accept `docs/spec/spatial/<name>` first, then the flat spelling.
+1. **ADR-0124** — spatial verbs resolve by v0.2 §6.5 and take the bare name, except where a
+   widely used program already answers to it: `find` keeps its target word, so the spatial
+   search is **`find place`** beside the existing `find file`/`find command`, and bare `find`
+   keeps reaching findutils through the v0.3 adapter (acceptance case 087 stays green). `look`
+   shadows util-linux `look`, which stays reachable as `exec:look`. **The RED suites assume the
+   bare `find`: the increment delivering §6.8 rewrites those assertions in the same commit**
+   (`spatial_navigation_missing.rs`, `spatial_topology_missing.rs`, cases 090/091/097).
+2. **ADR-0125** — the fourteen `spatial.*` conditions of §40 become the family `spatial`,
+   `Ono-Sendai-E1001`–`E1014`, in `docs/spec/errors.yaml`; no separate `spatial-errors.yaml`,
+   because one taxonomy in two files is the drift `spec-check` exists to catch.
+3. **ADR-0126** — the registry lives in `docs/spec/spatial/{spatial,spaces,relations,landmarks}.yaml`,
+   following `docs/spec/kuang/` rather than §41's flat spelling.
 
 Further readings the suites fixed, each written at its test: the `PlaceView`/`SpatialMap` field
 names §22 and §20.1 give verbatim are pinned, the nesting §6.1 leaves open is not; `map --zoom`,
