@@ -68,6 +68,18 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
         crate::spatial::PinStore::of(session),
     )));
     built.register(std::sync::Arc::new(crate::spatial::Home));
+    built.register(std::sync::Arc::new(crate::spatial::Back));
+    built.register(std::sync::Arc::new(crate::spatial::Up));
+    built.register(std::sync::Arc::new(crate::spatial::Jump::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Trail));
+    built.register(std::sync::Arc::new(crate::spatial::PinPlace::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::UnpinPlace::new(
+        crate::spatial::PinStore::of(session),
+    )));
     Ok(TABLE.get_or_init(|| built))
 }
 

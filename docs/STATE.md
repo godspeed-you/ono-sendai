@@ -112,7 +112,7 @@ is split, because 102 of the 175 tests first become attemptable when the command
 | S3 | 3 | — (`find place` + the ADR-0124 rewrite in one commit) |
 | S4a `look`/`near` + domains | ~30 | §31 `trace` interop (a trace never moves the place) — **done**, 32 tests |
 | S4b `enter`/`follow` | ~30 | §30 `cd`/place integration, §35 permission honesty |
-| S4c `back`/`up`/`home`/`trail`/`jump`/`pin` | ~25 | §46 session state, §29.2 script isolation |
+| S4c `back`/`up`/`home`/`trail`/`jump`/`pin` | ~25 | §46 session state, §29.2 script isolation — **done**, 19 tests |
 | S4d storage and the cwd distinction | ~12 | §15 mount boundaries |
 | S4e the `spatial.enabled` refusal path and the §34 budgets | ~5 | §47 behaviour half |
 | S5 | 27 | §26 landmark engine, §39 ASCII fallback |
@@ -482,6 +482,7 @@ Green now, all previously `#[ignore]`d — 39 tests:
   fixture selects its process with `ppid == std::process::id()`, and under cargo's default
   parallelism that also matches the children every other test in the same binary spawned, so the
   discovery walk reaches one of theirs. The fixture needs a predicate unique to itself.
+  *(Fixed 2026-08-28 by agent `fixtures` — see below.)*
 - `spatial_topology_missing::should_follow_the_parent_relation_…` — the `follow parent` half is
   green; the test's last statement is `trail --json` (S4c).
 - `spatial_topology_missing::should_reach_a_running_service_…` — **the test and the inherited
@@ -489,13 +490,43 @@ Green now, all previously `#[ignore]`d — 39 tests:
   declares `state` as `active | reloading | inactive | failed | activating | deactivating |
   unknown` and reports `running` as the *substate*. No service on a systemd host answers to it.
   In the acceptance container there is no service manager and the test takes its skip branch.
+  *(Resolved 2026-08-28 by ADR-0167 — see below.)*
 - `spatial_contracts_missing::should_refuse_an_ambiguous_selector_in_a_script_…` — the ambiguity
   path is delivered, but the fixture copies `/bin/sleep` to a new name and runs it twice; on a
   host whose coreutils is a multi-call binary (Ubuntu 25.10) the copy refuses to start
   (`coreutils: unknown program 'ono-spatial-twin'`), so nothing answers to the name and the
   refusal is `spatial.not_found`. The fixture needs a program it can rename.
+  *(Fixed 2026-08-28 by agent `fixtures` — see below.)*
 - everything that needs `back`, `up`, `trail`, `jump`, `pin` (S4c), `map` (S5), the mount
   boundary and the directory summary (S4d), or tombstones (S7).
+
+**The three fixture-blocked v0.4 tests are delivered (2026-08-28, agent `fixtures`).** No
+assertion was weakened; only the fixtures were corrected, per AGENTS.md §11. One commit,
+ADR-0167.
+
+- `spatial_topology_missing::should_reach_a_process_it_never_names_…` and
+  `…should_offer_the_process_exits_…` — `SleepChild::selector()` now spells
+  `ppid == <test pid> and pid == <child pid>`. Parentage alone matched every other test's `ono`
+  shells in the same binary; the child's own pid is known to the fixture, and §9's "discovery
+  without prior names" forbids naming the *object* (its command name), not pointing at one's own
+  fixture. The walk is still `find place` → `enter @-1` → `look`. The same selector now serves
+  `should_follow_the_parent_relation_…` and the `follow` completion test, which carried the same
+  latent race.
+- `spatial_contracts_missing::should_refuse_an_ambiguous_selector_…` — the twins are now a
+  **symlink to `/bin/sh`**, not a copy of `/bin/sleep`. Two facts fix the fixture: the kernel
+  takes `comm` (the `name` of `ono.process/1`) from the basename of the path handed to `execve`,
+  symlink included, and it truncates it to 15 characters — hence `ono-twin-place`, not
+  `ono-spatial-twin`. A *copy* additionally loses to `ETXTBSY` under parallelism, because a
+  concurrent test's `spawn` inherits the copy's write descriptor across `fork`; a symlink leaves
+  no descriptor. Each twin is `sh -c 'read line'` on a pipe the test holds, and the test waits
+  for `/proc/<pid>/comm` before asking the shell to resolve the name.
+- `spatial_topology_missing::should_reach_a_running_service_…` — ADR-0167: a running service is
+  `state == "active" and substate == "running"`, held in the suite's `RUNNING_SERVICE` constant.
+  `running` is a *substate* in `ono.service/1`, never a `state`; requiring both also keeps
+  `active`/`exited` oneshots and `active`/`plugged` `.device` units — which have no process for
+  §44.2's "follow one of its processes" — out of the selection.
+- Proof: each file run ten times in a row under cargo's **default** parallelism, 10/10 green,
+  in a clean worktree at `da26bba` carrying only these fixture changes.
 
 **Found, not fixed, and deliberately outside this increment:**
 
@@ -512,6 +543,89 @@ Green now, all previously `#[ignore]`d — 39 tests:
   `stage_scope` did not populate `Scope::previous`, so `@-1` in a command argument resolved to
   null while `@-1` at the head of a pipeline worked. Fixed here because `enter @-1` is §28.2;
   every other command that takes a value argument gains the same reference.
+
+**S4c — movement through history and hierarchy (`back`, `up`, `home`, `trail`, `jump`,
+`pin`/`unpin`) — is complete (2026-08-28, agent `S4c`).** ADR-0150 to ADR-0153; acceptance case
+`docker/acceptance/cases/104-spatial-back-up-home-trail.case` added (25 assertions).
+
+The increment turned the trail from something written into something read, and fixed the one rule
+that made §44.6 undemonstrable. Six commands are new — `back`, `up`, `jump`, `trail`, `pin`,
+`unpin` — with their contracts in `docs/spec/commands/spatial.yaml`, their verbs in
+`docs/spec/verbs.yaml` and one new schema, `ono.navigation-step/1`.
+
+**What the next phases need to know:**
+
+- **`trail` answers `ono.navigation-step/1`** (ADR-0150). §20.1's six fields, plus `from_ref`/
+  `to_ref` (the `<type>/<key>` spelling a user can type back), `from_name`/`to_name`, `relation_id`
+  beside the `relation` *word*, and `host`. `trail` streams the records, `trail --json` writes them
+  as one array, `trail --compact` writes §20.2's breadcrumb. **S8** will need `host` to become
+  per-step rather than the session's — it is set in one place, `movement::step_record`.
+- **`scope_crossing` is already recorded and already rendered.** Every `jump` and `up` compares the
+  scope of both ends and records the boundary where they differ, as a record with `kind`, `from`,
+  `to`, `entering` and `remote`. **S4d**'s mount boundary (§44.3) and **S8**'s host boundary both
+  need only the two ends to carry different scopes; nothing in the trail has to change.
+- **A socket's canonical parent is `network.listeners`, not the process that owns it**
+  (ADR-0151, a fix). The S1 rule chain made `up` from a socket land on the same place as `back`,
+  which is precisely the distinction §44.6 exists to demonstrate. `parent_rules(Listener)` and
+  `parent_rules(Connection)` are now empty and fall through to the collection space;
+  `docs/spec/providers/linux-netlink.yaml` declares the same chain, because `spec-check` compares
+  them. A socket's `place_path` is therefore `local/network/listeners`.
+- **`still_a_place` in `crates/ono-cli/src/spatial/movement.rs` is the seam S7 needs** (ADR-0152).
+  §20.3's four outcomes are all implemented — return, skip-with-a-notice, `spatial.destination_gone`,
+  `spatial.history_empty` — behind one predicate that today answers "the session still knows this
+  place". A tombstone makes that predicate answer differently and makes `back` return the tombstone.
+- **A pin stores the place's *name* as its selector, plus its type** (ADR-0153). `jump @<pin>` reads
+  what `with_pins` already resolved; a pin whose place is gone is `spatial.destination_gone` and
+  stays in the store. **S5**'s landmark engine gets `user_pinned` from the same registry the query
+  layer already ranks by; nothing new is needed there.
+
+Green now, all previously `#[ignore]`d — 19 tests:
+
+- `spatial_navigation_missing` (9): `should_move_across_scopes_and_record_both_ends_when_jumping_to_a_resolved_place`,
+  `should_return_to_the_process_when_back_follows_the_navigation_history`,
+  `should_move_to_the_network_hierarchy_parent_when_up_follows_the_canonical_hierarchy`,
+  `should_return_to_the_system_root_when_home_runs_after_deep_navigation`,
+  `should_answer_history_empty_when_back_runs_with_no_previous_place`,
+  `should_answer_no_parent_when_up_runs_at_the_system_root`,
+  `should_record_every_movement_with_its_kind_and_relation_when_the_trail_is_read_as_json`,
+  `should_answer_not_found_when_a_navigation_argument_names_nothing`,
+  `should_start_at_the_system_root_with_an_empty_trail_when_a_new_session_begins`.
+- `spatial_contracts_missing` (4): `should_refuse_to_go_back_or_up_from_the_root_with_a_named_spatial_error`,
+  `should_start_every_session_at_the_local_system_root`,
+  `should_keep_a_scripts_navigation_out_of_the_callers_place`,
+  `should_keep_the_trail_session_local_while_a_pin_survives_the_session`.
+- `spatial_relationships_missing` (3): `should_return_to_the_process_with_back_after_following_a_socket_edge`,
+  `should_leave_the_relationship_chain_with_up_after_following_a_socket_edge`,
+  `should_record_the_relation_it_traversed_when_a_follow_enters_the_trail`.
+- `spatial_identity_missing` (2): `should_move_to_the_declared_canonical_parent_deterministically_when_going_up`,
+  `should_not_confuse_the_old_and_the_new_process_when_a_place_is_replaced`.
+- `spatial_topology_missing` (1): `should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner`
+  — its last statement was `trail --json`.
+
+**One assertion changed, with ADR-0151 in the same commit.**
+`spatial_navigation_missing::should_move_to_the_network_hierarchy_parent_when_up_follows_the_canonical_hierarchy`
+built its haystack from `display_name` and `scope`; under ADR-0140 the field that names the
+canonical location is `place_path`, and `scope` is the §3.2 boundary (`host:web01`). `place_path`
+is now in the haystack. What the test demands is unchanged: `up` lands under NETWORK and is not
+where `back` lands.
+
+**Left ignored, with the reason on the test:**
+
+- `spatial_identity_missing::should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_dead_place`
+  — `back` returns to the recorded place and the trail keeps the record, but the test also demands
+  that the place say it is dead, which is S7's tombstone (§10.3). Attempted and left.
+
+**Found, not fixed, and outside this increment:**
+
+- **`up` from a file place answers `spatial.no_parent`.** `parent_rules(File)` is `[path.parent]`,
+  and `path.parent` is only supplied by `canonical_parent_with`, which `resolve::parent_of` does not
+  call because only the caller knows which directories have been observed. §15.1 makes the enclosing
+  directory a file's parent, so this is a real gap and it is **S4d's**: it needs the directory
+  observed, which is the same query §15.4 and §44.3 need anyway.
+- `docs/spec/schemas/file.v1.yaml` gives a file the identity `[device, inode]`, so a trail step's
+  `from_ref`/`to_ref` for a file reads `file/0:46`. It is honest — that *is* the provider's
+  reference — but it is not a spelling anyone types. Whoever gives `ono.file/1` a path-shaped alias
+  fixes the trail's readability for free.
 
 ---
 

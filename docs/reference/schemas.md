@@ -896,6 +896,29 @@ Default view: `id`, `type`, `processes`, `pid`, `user`, `command`
 | `uid` | `int` | — | nullable | That user's id. |
 | `command` | `string` | — | nullable | That process's command line. |
 
+## NavigationStep — `ono.navigation-step/1`
+
+One movement of the session's navigation trail, from one place to another.
+
+Identity: `timestamp`, `from`, `to`
+
+Default view: `movement`, `from_name`, `to_name`, `relation`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `timestamp` | `timestamp` | — | required | When the movement happened (§20.1). |
+| `movement` | `enum` | — | required | Which of §6's movements it was (§20.1). |
+| `from` | `string` | — | required | The opaque `SpatialId` the movement started at (§20.1, §3.1). |
+| `to` | `string` | — | required | The opaque `SpatialId` it arrived at (§20.1, §3.1). |
+| `from_ref` | `string` | — | nullable | The place it started at, in the canonical `<type>/<key>` spelling of §11.2 and §27.2 — `process/1842`, `compute.processes`. Null where the session no longer knows the place. |
+| `to_ref` | `string` | — | nullable | The same for the place it arrived at. |
+| `from_name` | `string` | — | nullable | What a person calls the place it started at (§3.1's `display_name`). |
+| `to_name` | `string` | — | nullable | What a person calls the place it arrived at. |
+| `relation` | `string` | — | nullable | The word the traversal was spelled with — `socket`, `parent`, `owner` (§6.4). Null for every movement that is not a `follow`, because hierarchy is not a relationship (§2.6). |
+| `relation_id` | `string` | — | nullable | The relation the word named, as `docs/spec/spatial/relations.yaml` declares it — `process.owns_socket`. A relation has two ends and therefore two words, so the id alone does not say which way the movement went; both travel together (§11.4, §41.2). |
+| `scope_crossing` | `record` | — | nullable | The scope boundary the movement crossed, where it crossed one: the scope left, the scope entered, the kind of boundary and whether it is remote (§3.2, §2.18). Null where both ends belong to the same scope — never omitted, because an invisible crossing makes the trail lie. |
+| `host` | `string` | — | required | The host scope the movement happened on, so a cross-host path can be read back unambiguously (§19, §20.1). |
+
 ## Neighbor — `ono.neighbor/1`
 
 An ARP or NDP neighbour table entry.

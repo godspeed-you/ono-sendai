@@ -20,10 +20,10 @@ use crate::spatial::session::{SpatialSessionState, spatial_session};
 use crate::spatial::view;
 
 /// The provider id the spatial layer signs its own composition with (ADR-0140).
-const COMPOSER: &str = "ono.spatial";
+pub(crate) const COMPOSER: &str = "ono.spatial";
 
 /// Reads the session's pins from the store, once per command that needs them (§46.1).
-async fn with_pins(
+pub(crate) async fn with_pins(
     session: &mut SpatialSessionState,
     store: Option<&crate::spatial::PinStore>,
     now: Timestamp,
@@ -71,7 +71,7 @@ impl CommandImpl for Look {
 
             let mut session = spatial_session().await;
             let changes = window_of(arguments.option("changes"), session.preferences());
-            with_pins(&mut session, self.pins.as_ref(), now).await?;
+            load_pins(&mut session, self.pins.as_ref(), now).await?;
             // §6.1: `look` describes the place and its immediate horizon. `--all` widens the
             // exits — every group lists the places behind it — rather than dumping the object's
             // properties, which §24.1 reserves for `inspect`.
@@ -349,7 +349,7 @@ impl CommandImpl for Near {
             if let Some(window) = window_of(arguments.option("changed"), session.preferences()) {
                 request = request.changed_within(span_of(window));
             }
-            with_pins(&mut session, self.pins.as_ref(), now).await?;
+            load_pins(&mut session, self.pins.as_ref(), now).await?;
             let (neighborhood, _) =
                 view::neighborhood_here(ctx, &mut session, &request, now).await?;
 
@@ -425,7 +425,7 @@ impl CommandImpl for Enter {
             let piped = ctx.take_input();
 
             let mut session = spatial_session().await;
-            with_pins(&mut session, self.pins.as_ref(), now).await?;
+            load_pins(&mut session, self.pins.as_ref(), now).await?;
             let here = session.current_place().clone();
 
             // §28.2: "A structured pipeline result containing spatially identifiable objects MUST
@@ -518,12 +518,17 @@ fn enter_projected(
 
 /// The place a selector names, observing what it implies where the index does not hold it yet.
 ///
+/// # Errors
+///
+/// The §40 refusal `resolve` produced: `spatial.not_found` for a word nothing answers to, or
+/// `spatial.ambiguous_selector` for one several places answer to (§27.1, §27.2).
+///
 /// §27.1 resolves against what is visible first, so nothing is asked of a provider while a
 /// declared child or a known neighbour answers. When none does, the *selector* says which
 /// providers could hold the answer, exactly as a predicate does for `find place` (§34, §45.3):
 /// `enter 1842` is a question about processes and about everything else that answers to `1842`,
 /// and it is asked once.
-async fn resolved_place(
+pub async fn resolved_place(
     ctx: &Invocation<'_>,
     session: &mut SpatialSessionState,
     here: &ono_spatial_core::SpatialId,
@@ -536,6 +541,14 @@ async fn resolved_place(
         && let Some(space) = ono_spatial_query::resolve::space_of(here)
     {
         view::observe_space(ctx, session, space, false, now).await?;
+        resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
+    }
+    if matches!(resolution, ono_spatial_query::Resolution::NotFound)
+        && let Some(path) = absolute_path_in(selector)
+    {
+        // §33.3: the path tree is query-driven, so a path is a place only once somebody names
+        // one. `jump storage:/data` and `enter /etc/nginx` name one (§6.5, §15.1).
+        view::observe_path(ctx, session, &path, now).await;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
     if matches!(resolution, ono_spatial_query::Resolution::NotFound) {
@@ -554,8 +567,23 @@ async fn resolved_place(
     Ok(found.spatial_id().clone())
 }
 
+/// The absolute path a selector names, where it names one.
+///
+/// Two spellings reach the path tree: the path itself, and the scoped form §6.5 writes a `jump`
+/// with — `storage:/data`. Only absolute paths, because a command has no working directory of its
+/// own: a relative one is resolved by the evaluator before it ever reaches a place (§30.2).
+fn absolute_path_in(selector: &str) -> Option<std::path::PathBuf> {
+    let candidate = selector
+        .split_once(':')
+        .map_or(selector, |(_, rest)| rest)
+        .trim();
+    candidate
+        .starts_with('/')
+        .then(|| std::path::PathBuf::from(candidate))
+}
+
 /// The kind of place a `<type>/<key>` selector names, where it names one (§11.2's `process/1842`).
-fn type_hint(selector: &str) -> Option<SpatialType> {
+pub(crate) fn type_hint(selector: &str) -> Option<SpatialType> {
     let (kind, key) = selector.split_once('/')?;
     if key.is_empty() {
         return None;
@@ -595,7 +623,7 @@ impl CommandImpl for Home {
     }
 }
 
-fn text_of(value: &Value) -> Option<String> {
+pub(crate) fn text_of(value: &Value) -> Option<String> {
     match value {
         Value::Null => None,
         other => ono_value::canonical_text(other)
@@ -655,7 +683,7 @@ impl CommandImpl for Follow {
             let now = Timestamp::now();
 
             let mut session = spatial_session().await;
-            with_pins(&mut session, self.pins.as_ref(), now).await?;
+            load_pins(&mut session, self.pins.as_ref(), now).await?;
             let here = session.current_place().clone();
 
             // §11.1: hierarchy is not the graph. A canonical space is reached with `enter`, and
@@ -808,7 +836,10 @@ impl CommandImpl for Follow {
             };
 
             let step = NavigationStep::new(now, here, there, Movement::Follow)
-                .along(specs[0].relation_type());
+                .along(specs[0].relation_type())
+                // §6.4: the relation traversed is recorded — and a relation has two ends and
+                // therefore two words, so the word this traversal took travels with the id.
+                .spelled(relation.as_str());
             session.trail_mut().record(step);
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })

@@ -638,7 +638,6 @@ fn should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_d
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §44.7); un-ignored by the increment that delivers it"]
 fn should_not_confuse_the_old_and_the_new_process_when_a_place_is_replaced() {
     // §44.7 identity replacement, as §53 settles it: "Old process tombstones; stable service
     // remains; new process has new identity." An unprivileged offline test cannot restart a
@@ -836,7 +835,6 @@ fn should_keep_every_relationship_parent_while_naming_one_canonical_parent() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/…v0.4…md §11.3); un-ignored by the increment that delivers it"]
 fn should_move_to_the_declared_canonical_parent_deterministically_when_going_up() {
     // §11.3: "The canonical parent MUST be deterministic for a given view profile." §43.2:
     // "up never traverses arbitrary graph edges." §6.6 fixes the reading with its own example —

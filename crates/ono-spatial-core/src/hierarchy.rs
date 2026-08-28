@@ -48,8 +48,13 @@ pub fn parent_rules(object_type: SpatialType) -> &'static [ParentRule] {
         rule("service.controls_process", Grouping),
         rule("container.contains_process", Containment),
     ];
-    const SOCKET: &[ParentRule] = &[rule("process.owns_socket", Containment)];
-    const CONNECTION: &[ParentRule] = &[rule("socket.accepts_connection", Containment)];
+    // §6.6 settles the sharp case in its own words: `up` from a socket "returns to the canonical
+    // parent of the socket in the currently active map projection, normally `NETWORK/SOCKETS`,
+    // not necessarily to the process", and §44.6 makes the distinction from `back` an acceptance
+    // scenario. A socket therefore has no operational parent rule at all: it goes up its own
+    // network collection, and the process that owns it stays a relationship `follow` traverses.
+    const SOCKET: &[ParentRule] = &[];
+    const CONNECTION: &[ParentRule] = &[];
     const ADDRESS: &[ParentRule] = &[rule("interface.has_address", Containment)];
     const MOUNT: &[ParentRule] = &[rule("filesystem.mounted_at", Containment)];
     const FILESYSTEM: &[ParentRule] = &[rule("device.backs_filesystem", Containment)];

@@ -177,6 +177,40 @@ impl Observed {
     }
 }
 
+/// Observes the filesystem object at an absolute path, and registers it (§15.1, §33.3).
+///
+/// §33.3 makes the filesystem query-driven: nothing enumerates it, so a path only becomes a place
+/// when somebody names one. That is what a selector spelled as a path does — `storage:/data`,
+/// `/etc/nginx` — and asking for exactly that path is the whole query (§34).
+pub async fn observe_path(
+    ctx: &Invocation<'_>,
+    session: &mut SpatialSessionState,
+    path: &std::path::Path,
+    now: Timestamp,
+) {
+    if ctx.providers().for_target("file").is_empty() {
+        return;
+    }
+    let query = Query::target("file").with(ono_provider_api::Selector::field(
+        "path",
+        Value::Path(std::sync::Arc::from(path)),
+    ));
+    let Ok(stream) = ctx.providers().snapshot(&query) else {
+        return;
+    };
+    let records: Vec<RecordValue> = stream
+        .collect()
+        .await
+        .into_values()
+        .into_iter()
+        .filter_map(|value| match value {
+            Value::Record(record) => Some(RecordValue::clone(&record)),
+            _ => None,
+        })
+        .collect();
+    session.absorb(&records, now);
+}
+
 /// Asks a set of provider targets once and registers everything they answered (§33.1, §34).
 ///
 /// The plan of which targets to ask belongs to `ono-spatial-query` (§45.3); asking is the

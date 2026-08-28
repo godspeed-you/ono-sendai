@@ -35,6 +35,13 @@ use serde_yaml_ng::Value;
 /// The §11.5 confidence vocabulary.
 const CONFIDENCE: [&str; 5] = ["exact", "strong", "inferred", "user_declared", "unknown"];
 
+/// The name the two twins of the ambiguity test answer to.
+///
+/// Fifteen characters at most: the kernel's `comm`, which `ono.process/1` reports as `name`, is
+/// the basename of the exec'd file truncated to that length, and a fixture that wants to be
+/// resolved by its name must fit inside it.
+const TWIN_NAME: &str = "ono-twin-place";
+
 /// The permission states of §35.2, which "MUST remain distinct".
 const PERMISSION_STATES: [&str; 6] = [
     "available",
@@ -254,6 +261,22 @@ fn rendered(value: &Value) -> String {
     serde_yaml_ng::to_string(value).expect("a value serialises")
 }
 
+/// Waits until the kernel reports `pid` under `name`, so a fixture process is observable before
+/// the shell is asked to resolve it. `spawn` returns once the fork has succeeded; the `exec` that
+/// gives the child its name happens a moment later.
+fn wait_until_named(pid: u32, name: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .is_ok_and(|comm| comm.trim() == name)
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("the fixture process {pid} never appeared under the name `{name}`");
+}
+
 // --- reading the contracts --------------------------------------------------------------------
 
 fn spec_dir() -> PathBuf {
@@ -400,27 +423,41 @@ fn should_refuse_an_unknown_place_with_a_structured_spatial_error() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface — the ambiguity path is delivered (`enter <name>` answers `spatial.ambiguous_selector` when two places answer to one name), but this fixture cannot build two twins on a host whose `/bin/sleep` is a multi-call coreutils binary: a copy under another name refuses to run at all, so nothing answers to the name. Un-ignored by the increment that gives the fixture a program it can rename"]
 fn should_refuse_an_ambiguous_selector_in_a_script_rather_than_open_a_picker() {
     // §29.3: "Scripts MUST never open interactive pickers. Ambiguity is an error unless the
     // script explicitly selects first/unique or uses an exact ID." §27.2 names the error.
     // Two processes with the same name make the selector genuinely ambiguous; the name is
-    // unique to this test's scratch directory, so nothing on the machine can collide with it.
+    // invented by this test, so nothing on the machine can collide with it.
     let dir = scratch();
-    let twin = dir.path().join("ono-spatial-twin");
-    std::fs::copy("/bin/sleep", &twin).expect("a sleeping child to copy");
-    let mode = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-    std::fs::set_permissions(&twin, mode).expect("the copy is executable");
+    let twin = dir.path().join(TWIN_NAME);
+    // Not a copy of `/bin/sleep`: on many Linux hosts it is a multi-call `coreutils` binary that
+    // dispatches on its own argv[0], so a copy under another name answers `unknown program` and
+    // exits — nothing then carries the name and nothing is ambiguous. A symlink to `/bin/sh` does
+    // carry it: the kernel takes a process's `comm` — the `name` of `ono.process/1` — from the
+    // basename of the path handed to `execve`, and a shell does not care what it was called.
+    // A symlink also leaves no writable descriptor behind, which a copy does: a concurrent test's
+    // `spawn` inherits that descriptor across `fork` and the twin's `exec` then fails `ETXTBSY`.
+    std::os::unix::fs::symlink("/bin/sh", &twin).expect("a shell to reach under the twin name");
+    // Each twin blocks reading the pipe this test holds open, so both stay alive for the whole
+    // `enter` and neither execs anything else that would take the name away again.
     let mut children: Vec<std::process::Child> = (0..2)
         .map(|_| {
             std::process::Command::new(&twin)
-                .arg("30")
+                .args(["-c", "read line"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn()
                 .expect("the twin starts")
         })
         .collect();
+    for child in &children {
+        wait_until_named(child.id(), TWIN_NAME);
+    }
 
-    let run = ono("try { enter ono-spatial-twin } catch e { $e | to json }");
+    let run = ono(&format!(
+        "try {{ enter {TWIN_NAME} }} catch e {{ $e | to json }}"
+    ));
     let error = caught(&run, "§29.3: ambiguity in a script is an error value");
     assert_eq!(
         text_at(&error, "name", "§40: an error carries its dotted name"),
@@ -430,7 +467,7 @@ fn should_refuse_an_ambiguous_selector_in_a_script_rather_than_open_a_picker() {
     );
     let disambiguation = rendered(&error);
     assert!(
-        disambiguation.contains("ono-spatial-twin"),
+        disambiguation.contains(TWIN_NAME),
         "§27.2: the refusal shows the candidates it could not choose between, got {error:?}"
     );
 

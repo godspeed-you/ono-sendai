@@ -240,3 +240,186 @@ pub fn resolved_pins(
     }
     resolved
 }
+
+// --- the commands (spec v0.4 §6, §20.4) -------------------------------------------------------
+
+/// `pin [--name <name>]` — mark the current place as a persistent user landmark (§20.4, §26.4).
+#[derive(Debug)]
+pub struct PinPlace {
+    store: Option<PinStore>,
+}
+
+impl PinPlace {
+    /// The implementation registered against `ono.place.pin`.
+    #[must_use]
+    pub fn new(store: Option<PinStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl ono_command::CommandImpl for PinPlace {
+    fn id(&self) -> &str {
+        "ono.place.pin"
+    }
+
+    fn invoke(
+        &self,
+        _ctx: &mut ono_command::Invocation<'_>,
+    ) -> Result<ono_command::Outcome, ErrorValue> {
+        Err(ono_command::must_be_awaited("pin"))
+    }
+
+    fn invoke_async<'a>(
+        &'a self,
+        ctx: &'a mut ono_command::Invocation<'_>,
+    ) -> ono_command::OutcomeFuture<'a> {
+        Box::pin(async move {
+            let wanted = ctx
+                .arguments()
+                .option("name")
+                .and_then(crate::spatial::commands::text_of);
+            let now = Timestamp::now();
+            let store = self.store.as_ref().ok_or_else(no_store)?;
+
+            let mut session = crate::spatial::spatial_session().await;
+            let here = session.current_place().clone();
+            let (name, selector, object_type) = describe(&session, &here, wanted.as_deref())?;
+
+            let mut pins = store.load()?;
+            pins.insert(Pin::new(
+                name,
+                here.clone(),
+                selector,
+                object_type,
+                session.scope().to_string(),
+                now,
+            ));
+            store.save(&pins)?;
+            session.set_pins(pins);
+
+            // The answer is the place, marked: §28.1 makes a selected place a typed value, and a
+            // command that changed something the user can see says what it changed.
+            let record = crate::spatial::view::place_record(
+                session.index(),
+                &here,
+                session.scope(),
+                ono_spatial_core::PermissionState::Available,
+                true,
+                now,
+            )?;
+            Ok(ono_command::Outcome::Values(
+                ono_pipeline::ValueStream::from_values(vec![ono_value::Value::Record(
+                    std::sync::Arc::new(record),
+                )]),
+            ))
+        })
+    }
+}
+
+/// `unpin [<name>]` — remove a user landmark (§6, §20.4).
+#[derive(Debug)]
+pub struct UnpinPlace {
+    store: Option<PinStore>,
+}
+
+impl UnpinPlace {
+    /// The implementation registered against `ono.place.unpin`.
+    #[must_use]
+    pub fn new(store: Option<PinStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl ono_command::CommandImpl for UnpinPlace {
+    fn id(&self) -> &str {
+        "ono.place.unpin"
+    }
+
+    fn invoke(
+        &self,
+        _ctx: &mut ono_command::Invocation<'_>,
+    ) -> Result<ono_command::Outcome, ErrorValue> {
+        Err(ono_command::must_be_awaited("unpin"))
+    }
+
+    fn invoke_async<'a>(
+        &'a self,
+        ctx: &'a mut ono_command::Invocation<'_>,
+    ) -> ono_command::OutcomeFuture<'a> {
+        Box::pin(async move {
+            let named = ctx
+                .arguments()
+                .selector("name")
+                .and_then(crate::spatial::commands::text_of);
+            let store = self.store.as_ref().ok_or_else(no_store)?;
+
+            let mut session = crate::spatial::spatial_session().await;
+            let here = session.current_place().clone();
+            let mut pins = store.load()?;
+
+            // Without a name, `unpin` removes the pin on the place the user is standing on, which
+            // is the mirror of the `pin` that has no name either (§20.4).
+            let name = match named {
+                Some(name) => name,
+                None => pins
+                    .pins()
+                    .find(|pin| pin.spatial_id() == &here)
+                    .map(|pin| pin.name().to_owned())
+                    .ok_or_else(|| {
+                        ErrorValue::new(
+                            ErrorCode::SpatialNotFound,
+                            "this place is not pinned, so there is nothing to remove",
+                        )
+                        .with_help(
+                            "`unpin <name>` removes a pin on another place (spec v0.4 §20.4)",
+                        )
+                    })?,
+            };
+            if pins.remove(&name).is_none() {
+                return Err(ErrorValue::new(
+                    ErrorCode::SpatialNotFound,
+                    format!("no pin is called `{name}`"),
+                ));
+            }
+            store.save(&pins)?;
+            session.set_pins(pins);
+            Ok(ono_command::Outcome::Values(
+                ono_pipeline::ValueStream::from_values(Vec::new()),
+            ))
+        })
+    }
+}
+
+/// The name, the resilient selector and the identity metadata a pin on `here` stores (§20.4).
+///
+/// The selector is the name the place answers to rather than the identity it has now: that is the
+/// half that survives a restart, and the object type beside it is what keeps `nginx` the service
+/// from being re-bound to `nginx` the process.
+fn describe(
+    session: &crate::spatial::SpatialSessionState,
+    here: &SpatialId,
+    wanted: Option<&str>,
+) -> Result<(String, String, SpatialType), ErrorValue> {
+    if let Some(space) = ono_spatial_query::resolve::space_of(here) {
+        let name = wanted.unwrap_or(space.label).to_owned();
+        return Ok((name, space.id.to_owned(), space.object_type));
+    }
+    let entry = session.index().get(here).ok_or_else(|| {
+        ErrorValue::new(
+            ErrorCode::SpatialNotFound,
+            "this session no longer knows the place it is standing on",
+        )
+    })?;
+    let selector = entry.object().display_name().to_owned();
+    let name = wanted.unwrap_or(&selector).to_owned();
+    Ok((name, selector, entry.object().object_type()))
+}
+
+/// The refusal for a session that has nowhere to keep a pin (§46.1).
+fn no_store() -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::IoPermissionDenied,
+        "this session has no state directory, so a pin could not outlive it",
+    )
+    .with_help("set `XDG_STATE_HOME` or `HOME` (spec v0.4 §46.1)")
+}

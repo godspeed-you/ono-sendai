@@ -509,7 +509,6 @@ fn should_refuse_to_follow_a_canonical_child_that_is_not_a_relationship_edge() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.6); un-ignored by the increment that delivers it"]
 fn should_return_to_the_process_with_back_after_following_a_socket_edge() {
     // §44.6 and invariant 4: `back` follows the actual navigation trail, so after a real
     // relationship hop it returns through that hop to the process that owns the socket.
@@ -523,7 +522,6 @@ fn should_return_to_the_process_with_back_after_following_a_socket_edge() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.6); un-ignored by the increment that delivers it"]
 fn should_leave_the_relationship_chain_with_up_after_following_a_socket_edge() {
     // §44.6 and §6.6: `up` follows the canonical hierarchy, so from the socket it reaches the
     // socket's network parent (§14.1 `NETWORK -> LISTENERS`) — never the process the
@@ -726,7 +724,6 @@ fn should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_a
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §20.1); un-ignored by the increment that delivers it"]
 fn should_record_the_relation_it_traversed_when_a_follow_enters_the_trail() {
     // §6.4: "The relation traversed MUST be recorded in the navigation trail", and §20.1 fixes
     // the step's fields — from, to, movement, relation. §29.1 makes `trail --json` work without

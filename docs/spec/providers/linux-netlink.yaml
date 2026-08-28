@@ -70,9 +70,13 @@ providers:
       # A socket inode is reused after the socket closes, so the identity lasts exactly as
       # long as the socket does (§10.1 Tier B).
       identity_strategy: lifetime
+      # §6.6: `up` from a socket reaches "the canonical parent of the socket in the currently
+      # active map projection, normally `NETWORK/SOCKETS`, not necessarily to the process" — so
+      # the chain is the network collection alone, and the owning process stays a relationship
+      # `follow` traverses (§44.6, ADR-0151).
       canonical_parent:
-        Listener: [process.owns_socket, network.listeners]
-        Connection: [socket.accepts_connection, network.connections]
+        Listener: [network.listeners]
+        Connection: [network.connections]
       relationships:
         - process.owns_socket
         - socket.connected_to

@@ -124,6 +124,48 @@ verbs:
     pipeline_role: context
     mutating: false
     stability: stable
+  - id: ono.verb.jump
+    verb: jump
+    semantics: Move directly to a resolved place outside the immediate neighborhood.
+    typical_targets: [place]
+    pipeline_role: context
+    mutating: false
+    stability: stable
+  - id: ono.verb.back
+    verb: back
+    semantics: Return to the previous place in actual navigation history.
+    typical_targets: [place]
+    pipeline_role: context
+    mutating: false
+    stability: stable
+  - id: ono.verb.up
+    verb: up
+    semantics: Move to the canonical hierarchical parent.
+    typical_targets: [place]
+    pipeline_role: context
+    mutating: false
+    stability: stable
+  - id: ono.verb.trail
+    verb: trail
+    semantics: Show the navigation trail.
+    typical_targets: [place]
+    pipeline_role: producer
+    mutating: false
+    stability: stable
+  - id: ono.verb.pin
+    verb: pin
+    semantics: Mark an object as a user landmark.
+    typical_targets: [place]
+    pipeline_role: producer
+    mutating: false
+    stability: stable
+  - id: ono.verb.unpin
+    verb: unpin
+    semantics: Remove a user landmark.
+    typical_targets: [place]
+    pipeline_role: context
+    mutating: false
+    stability: stable
 
   # --- context ----------------------------------------------------------------------------
   - id: ono.verb.enter

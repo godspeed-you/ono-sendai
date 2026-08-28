@@ -160,3 +160,141 @@ commands:
     examples:
       - home
       - home; look
+
+  - id: ono.place.back
+    verb: back
+    target: null
+    summary: Return to the previous place in the actual navigation history.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: "null"
+    provider_capability: null
+    selectors: []
+    options: []
+    privilege: none
+    streaming: false
+    phase: S
+    note: >-
+      §53: "`back` follows history; `up` follows canonical hierarchy." The two never collapse into
+      one message either: an empty trail is `spatial.history_empty` and a place with no canonical
+      parent is `spatial.no_parent` (v0.4 §40). Where a place on the way back no longer exists,
+      §20.3 makes the shell say so before it skips past it, and the trail record is retained.
+    examples:
+      - back
+      - follow socket :443; back
+
+  - id: ono.place.up
+    verb: up
+    target: null
+    summary: Move to the canonical hierarchical parent of the current place.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: "null"
+    provider_capability: null
+    selectors: []
+    options: []
+    privilege: none
+    streaming: false
+    phase: S
+    note: >-
+      §6.6 and §43.2: `up` follows the canonical hierarchy and never a relationship edge, so from
+      a socket it reaches the socket's network collection rather than the process that owns it —
+      that one is `follow owner`. The parent is the `canonical_parent` the place view already
+      declares (v0.4 §11.3, §33.1). At the root of a host there is none: `spatial.no_parent`.
+    examples:
+      - up
+      - home; enter compute; enter processes; up
+
+  - id: ono.place.jump
+    verb: jump
+    target: null
+    summary: Move directly to a resolved place, without adjacency and across scopes.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: "null"
+    provider_capability: null
+    selectors:
+      - {name: selector, type: string, doc: "The place to move to: a name, a `<type>/<key>` or `<domain>:<key>` spelling, a spatial id, or `@<pin>` for a bookmark (v0.4 §6.5, §20.4, §27.1)."}
+    options: []
+    privilege: conditional
+    streaming: false
+    phase: S
+    note: >-
+      §6.5: `jump` "performs global or cross-scope place resolution without requiring adjacency"
+      and "MUST visibly record the source and destination in the trail" — so its step carries both
+      ends and, where the move crossed one, the scope boundary (v0.4 §20.1, §3.2).
+    examples:
+      - jump storage:/data
+      - jump process/1842
+      - jump @edge-proxy
+
+  - id: ono.place.trail
+    verb: trail
+    target: null
+    summary: Show the navigation trail of this session, movement by movement.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: "stream<ono.navigation-step/1> | string"
+    provider_capability: null
+    selectors: []
+    options:
+      - {name: json, type: bool, doc: "Write the steps as one JSON document rather than rendering them (v0.4 §6.7, §29.1)."}
+      - {name: compact, type: bool, doc: "Write the breadcrumb of the current place — `local > compute > processes > 1842` — instead of the steps (v0.4 §6.7, §20.2)."}
+    privilege: none
+    streaming: true
+    phase: S
+    note: >-
+      §6.7: "The trail is session state, not command history", and §46.1 keeps it session-local —
+      `spatial.trail.persist` is `false` by default, so a new session starts with an empty trail
+      while pins survive. Every step preserves what §20.1 lists: both ends, the movement kind, the
+      relation where there was one, the scope crossing where there was one, and the timestamp.
+    examples:
+      - trail
+      - trail --json
+      - trail --compact
+
+  - id: ono.place.pin
+    verb: pin
+    target: null
+    summary: Mark the current place as a persistent user landmark.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: ono.spatial-place/1
+    provider_capability: null
+    selectors: []
+    options:
+      - {name: name, type: string, doc: "What to call the pin; `jump @<name>` reaches it. Without one the place's own name is used (v0.4 §20.4)."}
+    privilege: none
+    streaming: false
+    phase: S
+    note: >-
+      §20.4: a pin stores "a resilient selector and identity metadata rather than only a rendered
+      path", so it keeps the place's identity, the name it answers to and its spatial type. §46.1
+      lets pins persist where the trail may not; they live in the session's state directory.
+    examples:
+      - pin
+      - pin --name edge-proxy
+
+  - id: ono.place.unpin
+    verb: unpin
+    target: null
+    summary: Remove a user landmark.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: "null"
+    provider_capability: null
+    selectors:
+      - {name: name, type: string, doc: "Which pin to remove. Without one, the pin on the current place is removed (v0.4 §6, §20.4)."}
+    options: []
+    privilege: none
+    streaming: false
+    phase: S
+    examples:
+      - unpin
+      - unpin edge-proxy

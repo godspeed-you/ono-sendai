@@ -470,7 +470,6 @@ fn should_answer_no_relation_when_following_an_edge_the_current_place_does_not_h
 // --- jump ------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.5, §20.1); un-ignored by the increment that delivers it"]
 fn should_move_across_scopes_and_record_both_ends_when_jumping_to_a_resolved_place() {
     // §6.5: `jump` resolves a place without adjacency and MUST visibly record source and
     // destination in the trail. The jump here crosses from a COMPUTE place to a STORAGE place —
@@ -512,7 +511,6 @@ fn should_move_across_scopes_and_record_both_ends_when_jumping_to_a_resolved_pla
 // --- back, up, home --------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.6, §44.6); un-ignored by the increment that delivers it"]
 fn should_return_to_the_process_when_back_follows_the_navigation_history() {
     // §44.6, first half: after descending the hierarchy to a process and following its socket,
     // `back` MUST return to the process. Invariant 4: every movement is reversible along the
@@ -534,7 +532,6 @@ fn should_return_to_the_process_when_back_follows_the_navigation_history() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.6, §44.6, §7.3); un-ignored by the increment that delivers it"]
 fn should_move_to_the_network_hierarchy_parent_when_up_follows_the_canonical_hierarchy() {
     // §44.6, second half, over the identical path: `up` MUST go to the socket's canonical
     // hierarchy parent — under NETWORK — and therefore NOT to the process `back` returns to.
@@ -549,9 +546,14 @@ fn should_move_to_the_network_hierarchy_parent_when_up_follows_the_canonical_hie
         "§6.6/§44.6: `up` follows canonical hierarchy, not history — it does not land on the \
          process, got {up:?}"
     );
+    // ADR-0151: the field that names where a place sits in the canonical hierarchy is
+    // `place_path` (`local/network/listeners`), because ADR-0140 keeps `scope` for the §3.2
+    // boundary — `host:web01`. The assertion is the one this test always made, over the field
+    // that carries the answer.
     let where_it_landed = format!(
-        "{} {}",
+        "{} {} {}",
         text(&up, "display_name").to_lowercase(),
+        text(&up, "place_path").to_lowercase(),
         serde_yaml_ng::to_string(&up["scope"])
             .unwrap_or_default()
             .to_lowercase()
@@ -571,7 +573,6 @@ fn should_move_to_the_network_hierarchy_parent_when_up_follows_the_canonical_hie
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.6, §7.1); un-ignored by the increment that delivers it"]
 fn should_return_to_the_system_root_when_home_runs_after_deep_navigation() {
     // §6.6: `home` returns to the root SYSTEM place of the current host. §7.1: that root is a
     // SystemPlace naming the host and its domains, never a flat list of every known object.
@@ -593,7 +594,6 @@ fn should_return_to_the_system_root_when_home_runs_after_deep_navigation() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §40, §6.6); un-ignored by the increment that delivers it"]
 fn should_answer_history_empty_when_back_runs_with_no_previous_place() {
     // §40 requires `spatial.history_empty`. A fresh non-interactive session has moved nowhere,
     // so there is nothing to return to and the refusal must be structured rather than silent.
@@ -606,7 +606,6 @@ fn should_answer_history_empty_when_back_runs_with_no_previous_place() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §40, §6.6); un-ignored by the increment that delivers it"]
 fn should_answer_no_parent_when_up_runs_at_the_system_root() {
     // §40 requires `spatial.no_parent`, and §7.1 makes the SYSTEM root the top of the canonical
     // hierarchy for a host: above it there is nothing to move to.
@@ -617,7 +616,6 @@ fn should_answer_no_parent_when_up_runs_at_the_system_root() {
 // --- trail -----------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.7, §20.1, §29.1); un-ignored by the increment that delivers it"]
 fn should_record_every_movement_with_its_kind_and_relation_when_the_trail_is_read_as_json() {
     // §29.1: `trail --json` MUST work without a TTY. §20.1 spells the NavigationStep field by
     // field, and §6.4 requires the traversed relation to be recorded. The path is the §44.6 one:
@@ -847,7 +845,6 @@ fn should_resolve_the_ambiguity_when_the_script_names_the_exact_spatial_id() {
 // --- not found -------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §40, §6.3, §6.4, §6.5); un-ignored by the increment that delivers it"]
 fn should_answer_not_found_when_a_navigation_argument_names_nothing() {
     // §40 requires `spatial.not_found`. The name below cannot exist as a place, a relation or a
     // bookmark on any host, so every navigation verb must refuse it the same structured way
@@ -937,7 +934,6 @@ fn should_leave_the_callers_place_untouched_when_a_called_script_navigates() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §46.1, §29.2); un-ignored by the increment that delivers it"]
 fn should_start_at_the_system_root_with_an_empty_trail_when_a_new_session_begins() {
     // §46.1: the default v0.4 behaviour is to start at the local SYSTEM root, and trail
     // persistence across sessions is off. So one run's navigation is invisible to the next even

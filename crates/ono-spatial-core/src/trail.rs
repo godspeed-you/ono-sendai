@@ -6,6 +6,8 @@
 //! including the `back`s — beside a stack of the places a user is standing on top of. Going back
 //! never erases the record it went back through (§20.3).
 
+use std::sync::Arc;
+
 use jiff::Timestamp;
 
 use crate::{RelationType, ScopeBoundary, SpatialId};
@@ -78,6 +80,7 @@ pub struct NavigationStep {
     to: SpatialId,
     movement: Movement,
     relation: Option<RelationType>,
+    word: Option<Arc<str>>,
     scope_crossing: Option<ScopeBoundary>,
 }
 
@@ -91,6 +94,7 @@ impl NavigationStep {
             to,
             movement,
             relation: None,
+            word: None,
             scope_crossing: None,
         }
     }
@@ -99,6 +103,18 @@ impl NavigationStep {
     #[must_use]
     pub fn along(mut self, relation: RelationType) -> Self {
         self.relation = Some(relation);
+        self
+    }
+
+    /// Records the word the traversal was spelled with — `socket`, `parent`, `owner`.
+    ///
+    /// A relation has one declared id and two ends, and the two ends are two different words
+    /// (§41.2's `canonical_label` and `inverse_label`). The id alone therefore does not say which
+    /// way the movement went, so the word `follow` took is kept beside it: that is what §6.7's
+    /// trail shows and what tells a `socket` hop from the `owner` hop back.
+    #[must_use]
+    pub fn spelled(mut self, word: impl Into<Arc<str>>) -> Self {
+        self.word = Some(word.into());
         self
     }
 
@@ -137,6 +153,12 @@ impl NavigationStep {
     #[must_use]
     pub fn relation(&self) -> Option<&RelationType> {
         self.relation.as_ref()
+    }
+
+    /// The word the traversal was spelled with, where one was recorded.
+    #[must_use]
+    pub fn word(&self) -> Option<&str> {
+        self.word.as_deref()
     }
 
     /// The scope boundary crossed, where one was.

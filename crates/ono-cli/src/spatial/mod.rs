@@ -16,6 +16,7 @@
 
 pub mod commands;
 pub mod find;
+pub mod movement;
 pub mod pins;
 pub mod relations;
 pub mod session;
@@ -24,5 +25,6 @@ pub mod view;
 
 pub use commands::{Enter, Follow, Home, Look, Near, enter_observed};
 pub use find::{FindPlace, local_scope, spatial_type};
-pub use pins::{PinStore, pin_path};
+pub use movement::{Back, Jump, Trail, Up};
+pub use pins::{PinPlace, PinStore, UnpinPlace, pin_path};
 pub use session::{SpatialSessionState, spatial_session};

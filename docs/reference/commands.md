@@ -5039,6 +5039,159 @@ home
 home; look
 ```
 
+### `back`
+
+Return to the previous place in the actual navigation history.
+
+| | |
+|---|---|
+| id | `ono.place.back` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Examples**
+
+```text
+back
+follow socket :443; back
+```
+
+### `up`
+
+Move to the canonical hierarchical parent of the current place.
+
+| | |
+|---|---|
+| id | `ono.place.up` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Examples**
+
+```text
+up
+home; enter compute; enter processes; up
+```
+
+### `jump`
+
+Move directly to a resolved place, without adjacency and across scopes.
+
+| | |
+|---|---|
+| id | `ono.place.jump` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `selector` | `string` | The place to move to: a name, a `<type>/<key>` or `<domain>:<key>` spelling, a spatial id, or `@<pin>` for a bookmark (v0.4 §6.5, §20.4, §27.1). |
+
+**Examples**
+
+```text
+jump storage:/data
+jump process/1842
+jump @edge-proxy
+```
+
+### `trail`
+
+Show the navigation trail of this session, movement by movement.
+
+| | |
+|---|---|
+| id | `ono.place.trail` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `stream<ono.navigation-step/1> | string` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--json` | `bool` | Write the steps as one JSON document rather than rendering them (v0.4 §6.7, §29.1). |
+| `--compact` | `bool` | Write the breadcrumb of the current place — `local > compute > processes > 1842` — instead of the steps (v0.4 §6.7, §20.2). |
+
+**Examples**
+
+```text
+trail
+trail --json
+trail --compact
+```
+
+### `pin`
+
+Mark the current place as a persistent user landmark.
+
+| | |
+|---|---|
+| id | `ono.place.pin` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `ono.spatial-place/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--name` | `string` | What to call the pin; `jump @<name>` reaches it. Without one the place's own name is used (v0.4 §20.4). |
+
+**Examples**
+
+```text
+pin
+pin --name edge-proxy
+```
+
+### `unpin`
+
+Remove a user landmark.
+
+| | |
+|---|---|
+| id | `ono.place.unpin` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `name` | `string` | Which pin to remove. Without one, the pin on the current place is removed (v0.4 §6, §20.4). |
+
+**Examples**
+
+```text
+unpin
+unpin edge-proxy
+```
+
 ## storage
 
 ### `get mount`

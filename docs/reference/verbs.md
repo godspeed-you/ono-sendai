@@ -20,6 +20,12 @@ The controlled vocabulary of spec §7. The registry is deliberately small: a mod
 | `near` | Stream the ranked, bounded neighbourhood of the current place. | place | producer | no |
 | `follow` | Traverse one relationship edge of the current place. | place | context | no |
 | `home` | Return to the root system place of the active host or link. | place | context | no |
+| `jump` | Move directly to a resolved place outside the immediate neighborhood. | place | context | no |
+| `back` | Return to the previous place in actual navigation history. | place | context | no |
+| `up` | Move to the canonical hierarchical parent. | place | context | no |
+| `trail` | Show the navigation trail. | place | producer | no |
+| `pin` | Mark an object as a user landmark. | place | producer | no |
+| `unpin` | Remove a user landmark. | place | context | no |
 | `enter` | Make a resource the active interaction context. | dir, container, service | context | no |
 | `leave` | Pop the active context. | context | context | no |
 | `connect` | Create a protocol connection. | host, socket, database | consumer/context | yes |
