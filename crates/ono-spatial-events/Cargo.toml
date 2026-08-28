@@ -1,0 +1,22 @@
+[package]
+name = "ono-spatial-events"
+description = "Live spatial state for Ono-Sendai: provider event merge, snapshot comparison, change state and live map messages (spec v0.4 §25, §45.5)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-spatial-core.workspace = true
+ono-spatial-index.workspace = true
+ono-spatial-query.workspace = true
+ono-value.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

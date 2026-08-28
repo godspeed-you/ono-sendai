@@ -248,18 +248,108 @@ fn enter_object(session: &mut Session, stage: &Stage, target: &str) -> Eval<Exit
         .iter()
         .find_map(|value| value.as_record().ok().cloned());
     let Some(record) = found else {
-        if let Some(failure) = collected.errors().first() {
+        // A provider that could not read is a different answer from one that read and found
+        // nothing (§35.2), and only the second is a statement about the place (§40).
+        if let Some(failure) = collected.errors().iter().find(|error| !is_absence(error)) {
             return Err(Flow::Failed(failure.clone()));
         }
-        return Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::ResolveTargetNotFound,
-                format!("no {target} answers to `{asked}`"),
-            )
-            .with_help(format!("`get {target}` shows what exists")),
-        ));
+        return Err(Flow::Failed(missing_destination(
+            session, target, &bound, &asked,
+        )));
     };
     enter_record(session, target, &record)
+}
+
+/// Whether an error means the object is not there, rather than that it could not be read.
+///
+/// v0.4 §35.2 keeps the two apart and §40 gives the first its own name. `/proc/1842/stat: No
+/// such file or directory` is what a process exiting looks like from outside — it is the answer,
+/// not a failure to obtain one.
+fn is_absence(error: &ErrorValue) -> bool {
+    matches!(
+        error.code(),
+        ErrorCode::IoNotFound | ErrorCode::ResolveTargetNotFound
+    )
+}
+
+/// The refusal for a movement whose destination is not there (v0.4 §40, §10.3, §20.3).
+///
+/// §40 names two conditions and keeps them apart: `spatial.not_found` for a place that is not
+/// there, and `spatial.destination_gone` for one that was and is not — with the actionable next
+/// step §40 asks for, in the words its own example uses:
+///
+/// ```text
+/// destination no longer exists
+/// process/1842 exited 12s ago
+/// ```
+///
+/// Which of the two it is, is a question only the session can answer: a tombstone exists exactly
+/// where this session watched the place go (§10.3).
+fn missing_destination(
+    session: &mut Session,
+    target: &str,
+    bound: &ono_command::BoundArguments,
+    asked: &str,
+) -> ErrorValue {
+    let now = jiff::Timestamp::now();
+    if let Some((tombstone, key)) = tombstone_for(session, target, bound, now) {
+        let age = ono_value::Duration::from_nanoseconds(
+            tombstone
+                .age(now)
+                .total(jiff::Unit::Nanosecond)
+                .unwrap_or(0.0)
+                .max(0.0) as i128,
+        );
+        return ErrorValue::new(
+            ErrorCode::SpatialDestinationGone,
+            format!("destination no longer exists: {target}/{key} ended {age} ago",),
+        )
+        .with_help(
+            "the place is kept as a tombstone for as long as `spatial.tombstone.lifetime` \
+             allows; `trail` still carries where it was (spec v0.4 §10.3, §20.3)",
+        );
+    }
+    // A place this session never saw is not a place that went away, and v0.2 §14.3's own refusal
+    // already says so: `resolve.target_not_found` names the target and the identity that answered
+    // to nothing. v0.4 §40 does not supersede it — it adds the second condition, above.
+    ErrorValue::new(
+        ErrorCode::ResolveTargetNotFound,
+        format!("no {target} answers to `{asked}`"),
+    )
+    .with_help(format!(
+        "`get {target}` shows what exists, and `find place <text>` what this shell can enter \
+         (spec v0.2 §14.3, v0.4 §6.8)"
+    ))
+}
+
+/// The tombstone of the place a `enter <target> <identity>` names, where this session knew it.
+///
+/// The provider has just been asked about this one object and has said it is not there, so this
+/// *is* the observation that ends its lifetime (§33.2): a place this session has seen becomes a
+/// tombstone here, and a place it never saw stays unknown. That is the whole difference between
+/// §40's `spatial.destination_gone` and its `spatial.not_found`.
+fn tombstone_for(
+    session: &mut Session,
+    target: &str,
+    bound: &ono_command::BoundArguments,
+    now: jiff::Timestamp,
+) -> Option<(ono_spatial_core::Tombstone, String)> {
+    let key = bound
+        .selectors()
+        .iter()
+        .find_map(|(_, binding)| binding.value())
+        .and_then(|value| ono_value::canonical_text(value).ok())?;
+    let (runtime, _) = session.pipeline_context()?;
+    runtime.block_on(async {
+        let mut spatial = crate::spatial::spatial_session().await;
+        let known = crate::spatial::relations::types_of_target(target)
+            .into_iter()
+            .find_map(|object_type| spatial.reference(object_type, &key))?;
+        spatial.record_removed(&known, now);
+        spatial
+            .tombstone_of(&known, now)
+            .map(|tombstone| (tombstone.clone(), key.clone()))
+    })
 }
 
 /// Runs `… | enter <target>`: the object arrives through the pipeline (spec §14.3, ADR-0075).

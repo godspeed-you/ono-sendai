@@ -1,0 +1,182 @@
+# v0.4 §50 Phase S7 — live topology: `map --live` subscribing to the change events of everything
+# a place is drawn from (§25.1), the animation policy that forbids motion without change (§25.2,
+# §2.12), the freshness a live view must expose (§25.3), the provenance a change inferred from
+# snapshots must carry (§25.4), and §22's `live_capable`.
+#
+# The scenario is §44.9: a connection is opened while a live map watches the network neighborhood
+# it belongs to, and closed again. Everything here is real kernel state — the fixture listener
+# accepts a real TCP connection from a real second process — because §43.6 forbids a test passing
+# "based only on timer animation".
+#
+# The reading this case pins, and the one that bites: a live view that keeps emitting while the
+# topology is unchanged is showing activity the machine is not having. The quiet window therefore
+# requires `map --live` at a place nothing is changing to be *unable* to produce five values in
+# six seconds. A heartbeat carrying no change is a §25.2 violation under this reading, not an
+# implementation detail.
+#
+# Everything runs unprivileged, with no network beyond loopback, and nothing below types the name
+# of an object the shell has not printed first.
+case: a live map that moves only when the machine does
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== a still place produces no live values at all (§25.2, §2.12, §43.6) =='
+  # The users of a container do not change while this case runs, so a live view of them has
+  # nothing to report. Five values cannot be collected, and the run has to be cut off.
+  timeout 6 ono -c 'home; enter identity; enter users; map --live --json | take 5 | to json' \
+    > /tmp/s7-quiet.out 2>&1
+  QUIET_STATUS=$?
+  prove s7a "five live values cannot be collected from a place nothing is changing (§25.2, §43.6)" \
+    'test "$QUIET_STATUS" -eq 124'
+  prove s7b "and the run said nothing rather than emitting a heartbeat (§25.2)" \
+    '! grep -q "map_id" /tmp/s7-quiet.out'
+
+  echo '== the fixture: a real listener, and a real client that comes and goes (§43.3, §44.9) =='
+  /opt/ono-fixtures/spatial/web-service.pl 18081 /etc/hostname 1 120 /tmp/s7-fixture.state \
+    > /tmp/s7-server.log 2>&1 &
+  for _ in $(seq 40); do [ -s /tmp/s7-fixture.state ] && break; sleep 0.5; done
+  . /tmp/s7-fixture.state
+  echo "fixture: server=$FIXTURE_WEB_MAIN listener=:$FIXTURE_WEB_PORT"
+
+  prove s7c "a map of the listener says whether it can be watched at all (§22)" \
+    'ono -c "enter socket $FIXTURE_WEB_PORT; map --json" | grep -qF "\"live_capable\":true"'
+  prove s7k "a map asked once says it is not a live one (§25.1)" \
+    'ono -c "enter socket $FIXTURE_WEB_PORT; map --json" | grep -qF "\"live\":false"'
+
+  # `| to json` writes the three values as JSON *strings*, so every quote inside them is escaped.
+  # Unescaping once is what lets the assertions below read like the contract they are checking.
+  plain() { sed 's/\\"/"/g' "$1"; }
+
+  echo '== a connection the fixture opens reaches the live map (§44.9, §25.1, §43.6) =='
+  # Two values end this window: the opening snapshot, and the connection appearing. The client
+  # starts *after* the map is already watching, so the appearance cannot be a startup artefact.
+  ( timeout 60 ono -c \
+      "enter socket $FIXTURE_WEB_PORT; map --live --json | take 2 | to json" \
+      > /tmp/s7-appear.out 2>&1 ) &
+  APPEAR=$!
+  sleep 4
+  /opt/ono-fixtures/spatial/client.pl 127.0.0.1 "$FIXTURE_WEB_PORT" 120 \
+    > /tmp/s7-client.log 2>&1 &
+  CLIENT=$!
+  for _ in $(seq 20); do [ -s /tmp/s7-client.log ] && break; sleep 0.5; done
+  CLIENT_PORT=$(sed -n 's/^LOCAL=[^:]*:\([0-9]*\).*/\1/p' /tmp/s7-client.log)
+  echo "fixture: client connected from port ${CLIENT_PORT:-<none>}"
+  wait "$APPEAR" 2>/dev/null
+  plain /tmp/s7-appear.out > /tmp/s7-appear.json
+
+  prove s7d "the stream begins with a snapshot that invents no change (§24.3, §25.1, ADR-0024)" \
+    'grep -qF "\"changes\":[]" /tmp/s7-appear.json'
+  prove s7e "the connection the fixture opened really reaches the live map (§44.9, §43.6)" \
+    'test -n "$CLIENT_PORT" && grep -qF "$CLIENT_PORT" /tmp/s7-appear.json'
+  prove s7f "its arrival is reported as a node that appeared (§25.1, §3.7)" \
+    'grep -qF "\"kind\":\"node_appeared\"" /tmp/s7-appear.json'
+  prove s7g "and as the edge the listener accepted it on (§25.1, §14.4)" \
+    'grep -qF "\"kind\":\"edge_appeared\"" /tmp/s7-appear.json'
+  prove s7i "the change names the §3.7 reason it is (§3.7)" \
+    'grep -qF "\"reason\":\"new_object\"" /tmp/s7-appear.json'
+  prove s7j "every live value says how fresh it is, in §25.3's own vocabulary (§25.3)" \
+    'grep -qE "\"freshness\":\"(event_driven|polled|cached|stale|partial)\"" /tmp/s7-appear.json'
+  prove s7l "and what the change was observed through (§25.4)" \
+    'grep -qE "\"change_source\":\"(provider_events|snapshot_comparison)\"" /tmp/s7-appear.json'
+  prove s7m "no screen coordinate reaches a live projection either (§22, §2.7)" \
+    '! grep -qE "\"(x|y|row|col|column|position|coordinate|coordinates|layout|screen|px)\":" /tmp/s7-appear.json'
+
+  echo '== and when it goes away the live map says so, rather than keeping it (§44.9, §33.2) =='
+  # The service is stopped while a second window watches. Every socket of a killed process is
+  # closed by the kernel, so this removal is as real as the arrival above was.
+  ( timeout 60 ono -c \
+      "enter socket $FIXTURE_WEB_PORT; map --live --json | take 2 | to json" \
+      > /tmp/s7-vanish.out 2>&1 ) &
+  VANISH=$!
+  sleep 4
+  kill "$FIXTURE_WEB_MAIN" $FIXTURE_WEB_WORKERS "$CLIENT" 2>/dev/null
+  wait "$VANISH" 2>/dev/null
+  plain /tmp/s7-vanish.out > /tmp/s7-vanish.json
+
+  prove s7h "the connection that closed is reported as gone, not as silence (§25.1, §10.3)" \
+    'grep -qF "\"kind\":\"node_removed\"" /tmp/s7-vanish.json'
+  prove s7h2 "and so is the edge it was reached along (§25.1, §33.2)" \
+    'grep -qF "\"kind\":\"edge_removed\"" /tmp/s7-vanish.json'
+  prove s7h3 "a removal names the §3.7 reason it is (§3.7)" \
+    'grep -qF "\"reason\":\"removed_object\"" /tmp/s7-vanish.json'
+  prove s7h4 "a live value says it is one (§25.1)" \
+    'grep -qF "\"live\":true" /tmp/s7-vanish.json'
+
+  echo '== a place that went away is a tombstone, and refuses what needs it alive (§10.3) =='
+  sh -c 'sleep 120 >/dev/null 2>&1 </dev/null & echo $!' > /tmp/s7-doomed.pid
+  DOOMED=$(cat /tmp/s7-doomed.pid)
+  ono -c "enter process $DOOMED
+  look --json
+  sh -c \"kill -9 $DOOMED; for i in 1 2 3 4 5 6 7 8 9 10; do [ -d /proc/$DOOMED ] || break; sleep 0.2; done\"
+  look --json" > /tmp/s7-tomb.out 2>&1
+  prove s7n "the place the process was is still the same place after it exits (§10.3)" \
+    'test "$(grep -o "\"spatial_id\":\"ono:lifetime:[0-9a-f]*\"" /tmp/s7-tomb.out | sort -u | wc -l)" -eq 1'
+  prove s7o "and it says it is a tombstone rather than repeating the live state (§10.3, §33.2)" \
+    'grep -qF "\"tombstone\":{" /tmp/s7-tomb.out && grep -qF "\"state\":\"exited\"" /tmp/s7-tomb.out'
+  prove s7p "a tombstone is visually distinct without colour (§10.3, §39.1)" \
+    'sh -c "sleep 120 >/dev/null 2>&1 </dev/null & echo \$!" > /tmp/s7-p.pid;
+     P=$(cat /tmp/s7-p.pid);
+     ono -c "enter process $P
+     sh -c \"kill -9 $P; for i in 1 2 3 4 5; do [ -d /proc/$P ] || break; sleep 0.2; done\"
+     look" | grep -qi "tombstone"'
+  prove s7q "and it refuses a traversal that needs the object to be there (§10.3, §40)" \
+    'sh -c "sleep 120 >/dev/null 2>&1 </dev/null & echo \$!" > /tmp/s7-q.pid;
+     P=$(cat /tmp/s7-q.pid);
+     ono -c "enter process $P
+     sh -c \"kill -9 $P; for i in 1 2 3 4 5; do [ -d /proc/$P ] || break; sleep 0.2; done\"
+     follow parent" 2>&1 | grep -qF "spatial.destination_gone"'
+
+  echo '== the change section says which of three things it means (§24.3, §25.4, §2.17) =='
+  # The change summary is the one object under `changed`; its keys are written in order and its
+  # `entries` are empty here, so cutting it out with `grep -o` cannot pick up a group's state.
+  ono -c 'home; look --json --changes 1m' 2>&1 \
+    | grep -o '"changed":{[^}]*}' > /tmp/s7-change1.out
+  prove s7r "a first look has nothing to compare to and says so, never \"nothing changed\" (§24.3)" \
+    'grep -qF "\"state\":\"unknown\"" /tmp/s7-change1.out'
+  prove s7t "and it lists no change at all where it has no source for one (§24.3, §25.4)" \
+    'grep -qF "\"entries\":[]" /tmp/s7-change1.out && grep -qF "\"source\":null" /tmp/s7-change1.out'
+  ono -c 'home
+  look --json --changes 1m
+  look --json --changes 1m' > /tmp/s7-change2.out 2>&1
+  prove s7s "a second look has a comparison snapshot and names it as its source (§25.4)" \
+    'tail -1 /tmp/s7-change2.out | grep -qF "\"source\":\"snapshot_comparison\""'
+
+  kill $FIXTURE_WEB_MAIN $FIXTURE_WEB_WORKERS "$CLIENT" 2>/dev/null
+  echo "fixture: stopped"
+exit: 0
+stdout-contains: PROVED s7a
+stdout-contains: PROVED s7b
+stdout-contains: PROVED s7c
+stdout-contains: PROVED s7d
+stdout-contains: PROVED s7e
+stdout-contains: PROVED s7f
+stdout-contains: PROVED s7g
+stdout-contains: PROVED s7h
+stdout-contains: PROVED s7h2
+stdout-contains: PROVED s7h3
+stdout-contains: PROVED s7h4
+stdout-contains: PROVED s7i
+stdout-contains: PROVED s7j
+stdout-contains: PROVED s7k
+stdout-contains: PROVED s7l
+stdout-contains: PROVED s7m
+stdout-contains: PROVED s7n
+stdout-contains: PROVED s7o
+stdout-contains: PROVED s7p
+stdout-contains: PROVED s7q
+stdout-contains: PROVED s7r
+stdout-contains: PROVED s7s
+stdout-contains: PROVED s7t
+stdout-contains: fixture: stopped
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

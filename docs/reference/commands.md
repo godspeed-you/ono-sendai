@@ -5050,7 +5050,7 @@ Project the bounded, ranked graph around a place — as text, or as a `SpatialMa
 | `--relations` | `string` | Keep only these relations' edges, comma-separated. Filtering removes edges; it never creates one (v0.4 §6.9, §43.2). |
 | `--type` | `string` | Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener` (v0.4 §6.9, §3.3). |
 | `--all` | `bool` | The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2, §47). |
-| `--live` | `bool` | Keep the full-screen view current from a polling source, saying so in §25.3's vocabulary. Needs a terminal to draw into (v0.4 §25.1, §25.3, §29.1). |
+| `--live` | `bool` | Keep the map current. At an interactive terminal it is the full-screen view of §23.3, redrawn from a polling source and saying so in §25.3's vocabulary; where the values are consumed instead, it is a stream that subscribes to the change events of everything this place is drawn from — the first value is the current state, every value after it is something that moved (v0.4 §25.1, §25.2, §25.3, §29.1). |
 
 **Examples**
 
@@ -5059,6 +5059,7 @@ map
 map --json
 map --zoom 1
 map --all --type process
+map --live --json
 ```
 
 ### `map links`

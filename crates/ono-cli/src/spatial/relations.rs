@@ -19,9 +19,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use ono_command::Invocation;
 use ono_graph::{Node, ProcessUsers, RelationshipProvider, kernel_relationships};
-use ono_provider_api::{Query, Selector};
+use ono_provider_api::{ProviderRegistry, Query, Selector};
 use ono_spatial_core::{
     Confidence, PermissionState, RelationSpec, RelationshipEdge, SpatialId, SpatialType, relation,
 };
@@ -187,7 +186,7 @@ fn composed_labels(object_type: SpatialType) -> &'static [&'static str] {
 /// A listener's connections are other socket records; a mount's filesystem is a filesystem
 /// record. Neither is a relation the v0.2 relationship graph serves, and both are facts the
 /// providers already state — they only have to be asked for.
-fn adjacent_targets(object_type: SpatialType) -> &'static [&'static str] {
+pub(crate) fn adjacent_targets(object_type: SpatialType) -> &'static [&'static str] {
     use SpatialType as T;
     match object_type {
         T::Socket | T::Listener | T::Connection => &["socket"],
@@ -201,7 +200,7 @@ fn adjacent_targets(object_type: SpatialType) -> &'static [&'static str] {
 
 /// The provider target that serves objects of `object_type`, and the field another record names
 /// one by — what it takes to ask the provider about this one object again (§33.2).
-fn target_of(object_type: SpatialType) -> Option<(&'static str, &'static str)> {
+pub(crate) fn target_of(object_type: SpatialType) -> Option<(&'static str, &'static str)> {
     use SpatialType as T;
     Some(match object_type {
         T::Process => ("process", "pid"),
@@ -224,13 +223,22 @@ fn target_of(object_type: SpatialType) -> Option<(&'static str, &'static str)> {
     })
 }
 
+/// The kinds of place a v0.2 provider target serves — the inverse of [`target_of`].
+pub(crate) fn types_of_target(target: &str) -> Vec<SpatialType> {
+    SpatialType::ALL
+        .iter()
+        .copied()
+        .filter(|object_type| target_of(*object_type).is_some_and(|(name, _)| name == target))
+        .collect()
+}
+
 /// Asks the provider that serves `id` about it again, and registers what it answered (§33.2).
 ///
 /// A process is asked for its detail view: §12 lists its cgroup, its namespaces, its open files
 /// and its sockets among the exits of a process place, and `ono.process-detail/1` is where the
 /// v0.2 provider states them. Anything else is asked for plainly.
 async fn refresh(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     id: &SpatialId,
     now: Timestamp,
@@ -239,7 +247,7 @@ async fn refresh(
     let (target, field) = target_of(object_type)?;
     let key = reference_value(session, id, field)?;
 
-    if ctx.providers().for_target(target).is_empty() {
+    if providers.for_target(target).is_empty() {
         return session.record_of(id).cloned();
     }
     let plain = Query::target(target).with(Selector::field(field, key.clone()));
@@ -251,32 +259,63 @@ async fn refresh(
         let detail = Query::target(target)
             .with(Selector::field(field, key))
             .option("detail", Value::Bool(true));
-        let records = answered(ctx, &detail).await;
+        let (records, _) = answered(providers, &detail).await;
         session.absorb(&records, now);
     }
-    let records = answered(ctx, &plain).await;
-    if records.is_empty() {
+    let (records, refused) = answered(providers, &plain).await;
+    if refused {
+        // §35.2 and §42.4: a provider that could not read is not a provider that found nothing.
+        // Refusing to read a place is never evidence that the place has gone.
+        return session.record_of(id).cloned();
+    }
+    // §33.2: "The index is a cache. Providers remain authoritative." The provider was asked
+    // about this one object and did not answer for it, so it is not there any more — and the
+    // last live answer must not be handed on as if it still were (§10.3, ADR-0179).
+    if !records
+        .iter()
+        .any(|record| session.projection_of(record).is_ok_and(|seen| &seen == id))
+    {
+        session.record_removed(id, now);
         return session.record_of(id).cloned();
     }
     session.absorb(&records, now);
     session.record_of(id).cloned()
 }
 
-/// The records a query answered with, or none where the provider refused.
-async fn answered(ctx: &Invocation<'_>, query: &Query) -> Vec<RecordValue> {
-    let Ok(stream) = ctx.providers().snapshot(query) else {
-        return Vec::new();
+/// The records a query answered with, and whether the provider refused to answer at all.
+///
+/// The two are different facts and §35.2 keeps them apart: an empty answer from a provider that
+/// read the system means the object is not there, and an empty answer from one that could not
+/// read means nothing at all (§42.4). Only the first may end a place's lifetime (§10.3).
+async fn answered(providers: &ProviderRegistry, query: &Query) -> (Vec<RecordValue>, bool) {
+    let Ok(stream) = providers.snapshot(query) else {
+        return (Vec::new(), true);
     };
-    stream
-        .collect()
-        .await
+    let collected = stream.collect().await;
+    let refused = collected.errors().iter().any(could_not_read);
+    let records = collected
         .into_values()
         .into_iter()
         .filter_map(|value| match value {
             Value::Record(record) => Some(RecordValue::clone(&record)),
             _ => None,
         })
-        .collect()
+        .collect();
+    (records, refused)
+}
+
+/// Whether an error means the provider could not read, rather than that the object is not there.
+///
+/// §35.2 and §42.4 make the two different answers, and §10.3 only lets the second one end a
+/// place's lifetime. `io.not_found` from a query that named one object is the provider saying the
+/// object is gone — `/proc/1842/stat: No such file or directory` is exactly what a process exiting
+/// looks like from outside. Everything else is a reading failure, and a reading failure is never
+/// evidence of absence.
+fn could_not_read(error: &ErrorValue) -> bool {
+    !matches!(
+        error.code(),
+        ono_core::ErrorCode::IoNotFound | ono_core::ErrorCode::ResolveTargetNotFound
+    )
 }
 
 /// The value another record would name this place by — its provider reference key.
@@ -305,13 +344,13 @@ fn reference_value(session: &SpatialSessionState, id: &SpatialId, field: &str) -
 /// Idempotent by construction: every edge carries a stable identity, so asking twice in one
 /// session adds nothing the first answer did not (§33.1, §42.1).
 pub async fn observe(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     id: &SpatialId,
     interest: &Interest,
     now: Timestamp,
 ) -> Result<(), ErrorValue> {
-    let Some(record) = refresh(ctx, session, id, now).await else {
+    let Some(record) = refresh(providers, session, id, now).await else {
         return Ok(());
     };
     let Some(node) = Node::of(&record) else {
@@ -334,11 +373,11 @@ pub async fn observe(
 
     let adjacent: BTreeSet<&'static str> = adjacent_targets(object_type).iter().copied().collect();
     if !adjacent.is_empty() {
-        crate::spatial::view::observe_targets(ctx, session, &adjacent, now).await;
+        crate::spatial::view::observe_targets(providers, session, &adjacent, now).await;
     }
 
     let mut answered: BTreeSet<&'static str> = BTreeSet::new();
-    let providers = Arc::new(ctx.providers().clone());
+    let providers = Arc::new(providers.clone());
     // §12 lists `user` among the exits of a process place, so the people behind the processes
     // are part of the neighborhood rather than an option of `trace` (v0.2 §22.3).
     let mut sources: Vec<Arc<dyn RelationshipProvider>> =

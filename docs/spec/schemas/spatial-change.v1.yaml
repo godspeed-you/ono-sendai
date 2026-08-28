@@ -1,0 +1,59 @@
+# Canonical SpatialChange schema. Source: v0.4 §25.1 (what a live map reflects — node and edge
+# appearance and removal, state transitions, landmark appearance and removal), §25.4 (a change
+# built by comparing snapshots must say so), §3.7 (the closed reason vocabulary) and §2.12
+# ("Motion and visual updates MUST correspond to actual topology or metric changes").
+#
+# It exists so that a live view can say *what* moved rather than only redraw. A stream of maps
+# with no change record leaves the reader to diff them again, and §43.6 forbids a test — or a
+# user — from having to take motion on trust.
+id: ono.spatial-change/1
+name: SpatialChange
+summary: One difference between two observations of a space, and what it was observed through.
+identity: [kind, id]
+fields:
+  kind:
+    type: enum
+    required: true
+    values:
+      - node_appeared
+      - node_removed
+      - node_changed
+      - edge_appeared
+      - edge_removed
+      - landmark_appeared
+      - landmark_removed
+    doc: What kind of difference this is (§25.1).
+  id:
+    type: string
+    required: true
+    doc: The node identity or edge identity it happened to — the same id the map draws.
+  observed_at:
+    type: timestamp
+    required: true
+    doc: >-
+      When the difference was seen. §24.3 forbids a fabricated change summary, and a change with
+      no time behind it is exactly that.
+  label:
+    type: string
+    required: true
+    doc: What a person calls it, so the change reads without resolving the id (§11.4).
+  reason:
+    type: string
+    nullable: true
+    doc: >-
+      The §3.7 landmark reason this change amounts to — `new_object`, `removed_object` or
+      `recently_changed` — or null where §3.7's closed vocabulary has no word for it. A core rule
+      may not invent one.
+  places:
+    type: list<string>
+    required: true
+    doc: >-
+      The places the change touches, whose landmarks §26 has to re-judge: one for a node, both
+      ends for an edge.
+  source:
+    type: enum
+    required: true
+    values: [provider_events, snapshot_comparison]
+    doc: >-
+      How it was observed (§25.4). `snapshot_comparison` is the provenance §25.4 requires of a
+      change inferred by comparing successive projections rather than announced by a provider.

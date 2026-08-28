@@ -24,7 +24,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use ono_spatial_core::{NavigationTrail, Projection, SpatialId, SpatialScope, space};
+use ono_spatial_core::{
+    Liveness, NavigationTrail, Projection, SpatialId, SpatialScope, Tombstone, TombstoneRegistry,
+    space,
+};
 use ono_spatial_index::{Absorbed, FreshnessPolicy, PinRegistry, ProviderBridge, SpatialIndex};
 use ono_value::RecordValue;
 use tokio::sync::{Mutex, MutexGuard};
@@ -48,6 +51,13 @@ pub struct SpatialSessionState {
     preferences: ViewPreferences,
     /// The thresholds the built-in landmark rules of §26.2 measure against (§26.3).
     thresholds: ono_spatial_query::LandmarkThresholds,
+    /// What each place's neighborhood looked like when it was last asked about with
+    /// `--changes` — the comparison snapshot of §25.4, and the only thing that lets §24.3's
+    /// change section say anything without an event stream.
+    baselines: BTreeMap<SpatialId, ono_spatial_events::PlaceSnapshot>,
+    /// The places that went away while this session was watching, for as long as §10.3 keeps
+    /// them (§20.3, §46). The index keeps their identity; this keeps the fact that they ended.
+    tombstones: TombstoneRegistry,
     /// The last record each place was observed as. The index holds what a place *is* (§33.1);
     /// this holds what the provider last said about it, which is what the v0.2 relationship
     /// graph expands and what §24.1's summary is read from — neither may be re-read behind the
@@ -92,6 +102,10 @@ pub struct ViewPreferences {
     pub change_window: ono_value::Duration,
     /// How many nodes a map may draw (§34.2, §47's `spatial.map.node_budget`).
     pub map_node_budget: usize,
+    /// How long a removed place remains reachable as a tombstone (§10.3).
+    pub tombstone_lifetime: ono_value::Duration,
+    /// How often a live view re-reads its sources where nothing subscribes (§25.1).
+    pub live_interval: ono_value::Duration,
 }
 
 impl Default for ViewPreferences {
@@ -100,6 +114,14 @@ impl Default for ViewPreferences {
         Self {
             change_window: ono_value::Duration::from_nanoseconds(5 * 60 * 1_000_000_000),
             map_node_budget: ono_spatial_query::MAP_NODE_BUDGET,
+            // §10.3 says "short-lived" and nothing more; a minute is long enough that a `back`
+            // onto a process that has just exited arrives, and short enough that a place cannot
+            // come back from the dead in the middle of an investigation (ADR-0179).
+            tombstone_lifetime: ono_value::Duration::from_nanoseconds(60 * 1_000_000_000),
+            // §34 budgets a view at well under a second, and §25.2 forbids activity that is not
+            // change; half a second is fast enough that a connection opening is seen while it is
+            // open, and slow enough to cost nothing anyone notices (ADR-0180).
+            live_interval: ono_value::Duration::from_nanoseconds(500 * 1_000_000),
         }
     }
 }
@@ -118,6 +140,12 @@ static CONFIGURED: std::sync::OnceLock<(ViewPreferences, ono_spatial_query::Land
 /// `spatial.reduced_motion` (§47).
 static SETTINGS: std::sync::OnceLock<BTreeMap<String, ono_value::Value>> =
     std::sync::OnceLock::new();
+
+/// A configured duration as the span the tombstone registry counts in.
+fn span_of(duration: ono_value::Duration) -> jiff::Span {
+    let seconds = i64::try_from(duration.nanoseconds() / 1_000_000_000).unwrap_or(60);
+    jiff::Span::new().seconds(seconds.max(1))
+}
 
 /// Records the settings the spatial layer reads (§26.3, §34.2, §47).
 pub fn configure(preferences: ViewPreferences, thresholds: ono_spatial_query::LandmarkThresholds) {
@@ -158,6 +186,7 @@ impl SpatialSessionState {
                 ono_spatial_query::LandmarkThresholds::default(),
             )
         });
+        let tombstones = TombstoneRegistry::new(span_of(preferences.tombstone_lifetime));
         Self {
             trail: NavigationTrail::new(space::root().spatial_id_in(None)),
             index: SpatialIndex::new(FreshnessPolicy::recommended()),
@@ -170,6 +199,8 @@ impl SpatialSessionState {
             pins: PinRegistry::new(),
             preferences,
             thresholds,
+            tombstones,
+            baselines: BTreeMap::new(),
             records: BTreeMap::new(),
         }
     }
@@ -291,6 +322,9 @@ impl SpatialSessionState {
     pub fn absorb(&mut self, records: &[RecordValue], at: Timestamp) -> Absorbed {
         for record in records {
             if let Ok(object) = self.bridge().project(record) {
+                // §33.2: the providers are authoritative. A place one of them answers for is a
+                // live place, whatever this session remembers about it having gone quiet.
+                self.tombstones.forget(object.spatial_id());
                 self.records
                     .insert(object.spatial_id().clone(), Arc::new(record.clone()));
             }
@@ -325,6 +359,58 @@ impl SpatialSessionState {
         }
     }
 
+    /// Replaces what this session last saw around `id`, and answers with what it saw before
+    /// (§25.4).
+    ///
+    /// Returns `None` the first time a place is asked about: §24.3 forbids inventing a change
+    /// summary where no comparison snapshot exists, and "there was nothing to compare to" is a
+    /// different answer from "nothing changed" (§2.17).
+    pub fn rebase(
+        &mut self,
+        id: &SpatialId,
+        snapshot: ono_spatial_events::PlaceSnapshot,
+    ) -> Option<ono_spatial_events::PlaceSnapshot> {
+        self.baselines.insert(id.clone(), snapshot)
+    }
+
+    /// Records that the providers no longer answer for the place at `id` (§10.3, §33.2).
+    ///
+    /// The index keeps the entry, because §10.3 makes a tombstone the *same* place — "the
+    /// identity is retained" is what tells it from a place that never existed (§40) — and §20.3
+    /// makes `back` arrive at one. What changes is that the object's lifetime closes and the
+    /// session remembers that it ended, so nothing reads the last live answer back as current.
+    pub fn record_removed(&mut self, id: &SpatialId, at: Timestamp) {
+        if self.tombstones.recorded(id) {
+            return;
+        }
+        let Some(entry) = self.index.get(id) else {
+            return;
+        };
+        let tombstone = Tombstone::new(
+            id.clone(),
+            entry.object().object_type(),
+            entry.object().display_name(),
+            at,
+        );
+        self.tombstones.record(tombstone);
+        self.index.mark_ended(id, at);
+        self.index.forget_edges(id);
+        self.tombstones.prune(at);
+    }
+
+    /// Whether the place at `id` is still there (§10.3, §20.3, §33.2).
+    #[must_use]
+    pub fn liveness(&self, id: &SpatialId, now: Timestamp) -> Liveness {
+        self.tombstones
+            .resolve(id, !self.tombstones.recorded(id), now)
+    }
+
+    /// The tombstone of `id`, where one is still held (§10.3).
+    #[must_use]
+    pub fn tombstone_of(&self, id: &SpatialId, now: Timestamp) -> Option<&Tombstone> {
+        self.tombstones.get(id, now)
+    }
+
     /// Replaces the landmark thresholds with the ones the user configured (§26.3).
     pub fn set_thresholds(&mut self, thresholds: ono_spatial_query::LandmarkThresholds) {
         self.thresholds = thresholds;
@@ -351,6 +437,19 @@ impl SpatialSessionState {
         record: &RecordValue,
     ) -> Result<ono_spatial_core::SpatialObject, ono_value::ErrorValue> {
         self.bridge().project(record)
+    }
+
+    /// The place another record's reference names — a pid, a unit name, an interface (§45.2).
+    ///
+    /// This is the bridge's `resolve`, not the alias index: it answers what a *record* names,
+    /// which is what a `enter <target> <identity>` argument is.
+    #[must_use]
+    pub fn reference(
+        &self,
+        object_type: ono_spatial_core::SpatialType,
+        key: &str,
+    ) -> Option<SpatialId> {
+        self.bridge().resolve(object_type, key).cloned()
     }
 
     /// What the provider last said about the object at `id`, where this session has seen it.

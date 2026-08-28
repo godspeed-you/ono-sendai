@@ -188,6 +188,25 @@ impl TombstoneRegistry {
         }
     }
 
+    /// Whether this registry ever recorded that `id` went away — expired or not.
+    ///
+    /// [`TombstoneRegistry::resolve`] takes the providers' answer as its input, because §33.2
+    /// makes them authoritative. A caller that has no fresh answer needs this instead: without
+    /// it, an expired tombstone would read as a place nobody ever saw go, which is the opposite
+    /// of what happened.
+    #[must_use]
+    pub fn recorded(&self, id: &SpatialId) -> bool {
+        self.entries.contains_key(id)
+    }
+
+    /// Drops the tombstone of `id`, because a provider answered for it again.
+    ///
+    /// §33.2: the index is a cache and the providers are authoritative. An object that is there
+    /// is there, whatever this registry remembers about an id that had gone quiet.
+    pub fn forget(&mut self, id: &SpatialId) -> bool {
+        self.entries.remove(id).is_some()
+    }
+
     /// The tombstone of `id`, if one is still held as of `now`.
     #[must_use]
     pub fn get(&self, id: &SpatialId, now: Timestamp) -> Option<&Tombstone> {

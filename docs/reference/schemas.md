@@ -1536,6 +1536,22 @@ Default view: `protocol`, `local`, `remote`, `state`, `process`
 | `user` | `ref<ono.user/1>` | — | nullable | The owning user. |
 | `inode` | `int` | — | nullable | The socket inode; the identity field, null when the provider cannot supply it. |
 
+## SpatialChange — `ono.spatial-change/1`
+
+One difference between two observations of a space, and what it was observed through.
+
+Identity: `kind`, `id`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What kind of difference this is (§25.1). |
+| `id` | `string` | — | required | The node identity or edge identity it happened to — the same id the map draws. |
+| `observed_at` | `timestamp` | — | required | When the difference was seen. §24.3 forbids a fabricated change summary, and a change with no time behind it is exactly that. |
+| `label` | `string` | — | required | What a person calls it, so the change reads without resolving the id (§11.4). |
+| `reason` | `string` | — | nullable | The §3.7 landmark reason this change amounts to — `new_object`, `removed_object` or `recently_changed` — or null where §3.7's closed vocabulary has no word for it. A core rule may not invent one. |
+| `places` | `list<string>` | — | required | The places the change touches, whose landmarks §26 has to re-judge: one for a node, both ends for an edge. |
+| `source` | `enum` | — | required | How it was observed (§25.4). `snapshot_comparison` is the provenance §25.4 requires of a change inferred by comparing successive projections rather than announced by a provider. |
+
 ## SpatialMap — `ono.spatial-map/1`
 
 The bounded, ranked, renderer-independent projection of the graph around a place.
@@ -1559,6 +1575,10 @@ Default view: `center`, `zoom_level`, `completeness`, `generated_at`
 | `generated_at` | `timestamp` | — | required | When the projection was made. |
 | `completeness` | `enum` | — | required | Whether everything known is drawn, the budget hid some, a source could not be read, or neither could be established (§3.6, §35.2). |
 | `live_capable` | `bool` | — | required | Whether this map can subscribe to change events and update in place (§22, §25.1). |
+| `live` | `bool` | — | required | Whether this projection came out of a live view (§25.1). False for a `map` asked once, which is a picture of one moment and says so. |
+| `freshness` | `enum` | — | required | §25.3's five words: how the data behind this projection is kept current. A live view MUST expose it, and a still one answers for the observation it was built from. |
+| `change_source` | `enum` | — | nullable | What the changes below were observed through (§25.4), or null where nothing was watching. |
+| `changes` | `list<ono.spatial-change/1>` | — | required | What moved since the previous value of a live stream (§25.1). Empty for the opening snapshot and for a `map` asked once — §24.3 forbids inventing a change where no event source or comparison snapshot exists, and §25.2 forbids reporting one where nothing moved. |
 
 ## SpatialNeighbor — `ono.spatial-neighbor/1`
 
@@ -1616,6 +1636,7 @@ Default view: `name`, `spatial_type`, `place_path`, `freshness`
 | `canonical_parent` | `string` | — | nullable | The `spatial_id` `up` reaches (§11.3), spelled under the name §33.1 gives the field. It is the same answer as `parent`, and it is deterministic for a given view profile. |
 | `state` | `any` | — | nullable | The object's own state, as the provider reports it — `running`, `listen`, `active`. §24.1 puts it at the top of a place view; null where the object has none. |
 | `summary` | `record` | — | nullable | What the provider's default view says about the object — a process's user and memory, a mount's filesystem and source, a socket's endpoints (§12, §13, §14.3, §15.3). §24.1 budgets this: the exhaustive property list is `inspect`'s, not a place view's. |
+| `tombstone` | `record` | — | nullable | §10.3: present exactly when this place is a tombstone — when the object went away, how long ago, and what took its place where a replacement can be identified. Its presence is what makes a tombstone "visually distinct" in a structured reader, the way the rendering makes it distinct on a terminal. Null for a place that is still there. |
 | `lifetime` | `record` | — | nullable | §3.1's `lifetime`: the identity tier, when the object was first and last observed, when it started where the provider states that, and when it ended where it has (§10.1, §10.2, §10.3). Null for a canonical space, which is declared rather than born. |
 | `freshness` | `enum` | — | required | How current the answer is (§27.4, §33.4). `unknown` is not `fresh`: a place that was never observed says so (§2.17). |
 | `observed_at` | `timestamp` | — | nullable | When a provider last saw the object; null for a canonical space, which nobody observes. |

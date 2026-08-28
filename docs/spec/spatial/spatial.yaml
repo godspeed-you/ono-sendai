@@ -239,6 +239,19 @@ settings:
     type: string
     default: 5m
     doc: How far back `look`'s change section and the change landmarks reach (§24.3, §26).
+  - key: spatial.tombstone.lifetime
+    type: string
+    default: 1m
+    doc: >-
+      How long a removed place stays reachable as a tombstone (§10.3). "Short-lived" is the
+      contract: long enough that `back` onto a place that has just gone arrives at it, short
+      enough that nothing returns from the dead in the middle of an investigation.
+  - key: spatial.live.interval
+    type: string
+    default: 500ms
+    doc: >-
+      How often a live view re-reads a source that does not announce its own changes (§25.1,
+      §25.3). Polling is explicit, never invisible.
   - key: spatial.landmarks.enabled
     type: bool
     default: true

@@ -85,6 +85,14 @@ fields:
       What the provider's default view says about the object — a process's user and memory, a
       mount's filesystem and source, a socket's endpoints (§12, §13, §14.3, §15.3). §24.1 budgets
       this: the exhaustive property list is `inspect`'s, not a place view's.
+  tombstone:
+    type: record
+    nullable: true
+    doc: >-
+      §10.3: present exactly when this place is a tombstone — when the object went away, how long
+      ago, and what took its place where a replacement can be identified. Its presence is what
+      makes a tombstone "visually distinct" in a structured reader, the way the rendering makes it
+      distinct on a terminal. Null for a place that is still there.
   lifetime:
     type: record
     nullable: true

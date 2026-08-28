@@ -28,20 +28,24 @@ use ono_pipeline::ValueStream;
 use ono_spatial_core::{
     BackOutcome, Movement, NavigationStep, ScopeBoundary, SpatialId, SpatialScope,
 };
-use ono_spatial_index::SpatialIndex;
 use ono_value::{ErrorValue, Provenance, RecordValue, SchemaId, Value, builtin_schemas};
 
 use crate::spatial::commands::{COMPOSER, resolved_place, text_of, with_pins};
 use crate::spatial::session::{SpatialSessionState, spatial_session};
 
-/// Whether the session can still say what a place is (§20.3's "no longer exists").
+/// Whether `back` may arrive at a place (§20.3's three outcomes).
 ///
-/// A canonical space is declared geography and is always there (§4.1). Anything else is a place
-/// exactly as long as the index holds it. This build has no liveness check behind that — the
-/// tombstones of §10.3 are a later phase — so it answers what it can actually know, and a `back`
-/// onto a place the session never lost sight of returns rather than refusing (ADR-0152).
-fn still_a_place(index: &SpatialIndex, id: &SpatialId) -> bool {
-    index.contains(id) || ono_spatial_query::resolve::space_of(id).is_some()
+/// §20.3 orders them: "resolve a tombstone if available; otherwise skip to the nearest valid
+/// previous place only after informing the user; retain the original trail record." So a
+/// tombstone is a destination — that is what makes the first clause mean anything — and only a
+/// place whose tombstone has expired, or one the index no longer holds at all, is skipped.
+///
+/// A canonical space is declared geography and is always there (§4.1).
+fn still_a_place(session: &SpatialSessionState, id: &SpatialId, now: Timestamp) -> bool {
+    if ono_spatial_query::resolve::space_of(id).is_some() {
+        return true;
+    }
+    session.index().contains(id) && session.liveness(id, now).is_reachable()
 }
 
 /// `back` — the movement that follows navigation history (spec v0.4 §6.6, §20.3, §2.4).
@@ -86,7 +90,7 @@ pub fn go_back(
     let alive: BTreeSet<SpatialId> = session
         .trail()
         .history()
-        .filter(|id| still_a_place(session.index(), id))
+        .filter(|id| still_a_place(session, id, now))
         .cloned()
         .collect();
     match session.trail_mut().back(now, |id| alive.contains(id)) {
@@ -253,7 +257,7 @@ impl CommandImpl for Jump {
             // §20.4's `jump @edge-proxy`: the pin was resolved when the store was read, so the
             // bookmark names a place rather than a spelling to guess at again.
             let there = if let Some(name) = selector.strip_prefix('@') {
-                pinned_place(&session, name)?
+                pinned_place(&session, name, now)?
             } else if let Some(host) = crossed_link(&selector)? {
                 // §19.2: a link is a place, and jumping to it produces a *new* SystemPlace for
                 // the remote host rather than resolving a name in this one's geography. The
@@ -264,7 +268,7 @@ impl CommandImpl for Jump {
                 session.stand_in(Some(host), now);
                 ono_spatial_core::space::root().spatial_id()
             } else {
-                resolved_place(ctx, &mut session, &here, &selector, now).await?
+                resolved_place(ctx.providers(), &mut session, &here, &selector, now).await?
             };
 
             if here == there {
@@ -331,7 +335,11 @@ fn announce(link: &str) {
 /// `spatial.not_found` when no pin carries the name; `spatial.destination_gone` when the pin is
 /// there but nothing answers for it any more — §20.4 keeps the pin and reports the state rather
 /// than deleting what the user chose.
-fn pinned_place(session: &SpatialSessionState, name: &str) -> Result<SpatialId, ErrorValue> {
+fn pinned_place(
+    session: &SpatialSessionState,
+    name: &str,
+    now: Timestamp,
+) -> Result<SpatialId, ErrorValue> {
     let Some(pin) = session.pins().get(name) else {
         let known: Vec<&str> = session
             .pins()
@@ -349,7 +357,7 @@ fn pinned_place(session: &SpatialSessionState, name: &str) -> Result<SpatialId, 
         }));
     };
     let id = pin.spatial_id().clone();
-    if still_a_place(session.index(), &id) {
+    if still_a_place(session, &id, now) {
         return Ok(id);
     }
     Err(ErrorValue::new(

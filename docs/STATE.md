@@ -935,7 +935,79 @@ un-ignores the tombstone test reads ADR-0170 first.**
 
 ---
 
+**S7 — live topology, tombstones and the change section — is complete (2026-08-28, agent `S7`).**
+ADR-0178 to ADR-0181 and ADR-0184; acceptance case `docker/acceptance/cases/108-spatial-live.case`
+added (23 assertions, dry-run against the real binary and the real fixtures).
 
+Delivered:
+
+1. `crates/ono-spatial-events` (§45.5) — the change model, §25.3's freshness vocabulary, the
+   §25.4 snapshot comparison, the event merge over the v0.2 watch envelope, and §26's landmark
+   recalculation trigger. It reaches no provider, no terminal and no clock (ADR-0178).
+2. **Tombstones** (ADR-0179). A place becomes one when a provider that was asked about it does not
+   answer for it — and only then: `io.not_found` is the object saying it is gone, every other
+   error is a reading failure, which §35.2 forbids rendering as absence. The index keeps the entry
+   (the identity is what tells a tombstone from a place that never existed), its lifetime closes,
+   and the relationships nobody asserts any more are dropped from both ends. `look`/`near`
+   describe it, `back` arrives at it, `follow` and `enter` refuse with `spatial.destination_gone`.
+   `spatial.tombstone.lifetime` (1m) is what "short-lived" means.
+3. **`map --live`** (ADR-0180) through the v0.2 watch runtime rather than a second one
+   (`ono_command::watch_events`, §2.16). It waits on events, drains a moment before drawing it,
+   re-projects through the still `map`'s own path, and emits only a difference. `live_capable` is
+   now answered rather than assumed; every value carries `live`, `freshness`, `change_source` and
+   the `ono.spatial-change/1` list §45.5 calls the live map update message.
+4. **`look --changes`** (ADR-0181) — the §25.4 comparison against what this session last saw
+   around the place, with §24.3's three distinct answers: `unknown` (no baseline), `empty` (a
+   baseline and no difference), `available` (the differences). It compares the *complete*
+   neighborhood, because comparing the ranked one reports the ranking as change.
+5. **`home` extends the navigation history** (ADR-0184), settling the conflict between
+   `spatial_identity_missing::should_return_the_tombstone_…` and
+   `spatial_remote_missing::should_return_home_to_the_local_root_from_a_remote_place`. §20.1 writes
+   a step for `home` and §2.4 makes every movement reversible, so `back` returns through it.
+   ADR-0170 is superseded on that point; **the remote test's assertions are unchanged** and only
+   the number of `back`s it spends walking its own history moved from two to three.
+
+Green now, all previously `#[ignore]`d — 5 tests:
+
+- `spatial_identity_missing` (4): `should_report_a_tombstone_rather_than_a_live_place_when_the_visited_process_has_exited`,
+  `should_refuse_to_traverse_a_relationship_when_the_place_is_a_tombstone`,
+  `should_never_resolve_a_tombstoned_place_to_a_live_object`,
+  `should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_dead_place`.
+- `spatial_relationships_missing` (1): `should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes`.
+- 20 new crate-level outcome tests: `crates/ono-spatial-events/tests/{snapshot_comparison,event_merge}.rs`
+  (15), `crates/ono-spatial-core/tests/trail.rs` (2), `crates/ono-spatial-index/tests/index.rs` (3).
+
+**Left ignored, with the reason on the test:**
+
+- `spatial_identity_missing::should_distinguish_a_tombstone_from_a_place_that_never_existed` —
+  §40's two conditions are delivered and distinct, and the `gone` half of the test passes. The
+  `never` half asks for two things this increment does not owe, and ADR-0179 §Spec deviation
+  carries both: `enter <target> <identity>` keeps v0.2 §14.3's `resolve.target_not_found` for an
+  identity nothing answers to (`identity_missing::should_refuse_to_enter_a_user_that_does_not_exist`
+  pins `Ono-Sendai-E0102`), and the script's exit status is its last statement's under ADR-0008,
+  while the refused `enter` leaves the place where it was, so the following `look` succeeds.
+- `spatial_interactive_missing::should_keep_the_shell_alive_when_ctrl_c_ends_the_live_map` — it
+  asserts the alternate screen goes on and off around `map --live`, which is **S6's full-screen
+  view**. S7 delivers the live *stream* and the change model; the view that renders it and the
+  key that leaves it are S6's, and the test is theirs to un-ignore.
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- **A TIME_WAIT socket has inode 0, and `ono.socket/1`'s identity is `[inode]`,** so every
+  TIME_WAIT socket on a host reconciles into one place whose label is whichever record was
+  absorbed last. Visible in a live map as a connection node that "appears" carrying an unrelated
+  peer. It is a v0.2 identity contract question (which fields make a socket that socket), not a
+  spatial one — exit test: two TIME_WAIT sockets are two places.
+- An unbounded stream must be bounded and serialised to reach stdout (v0.2 §18.3), and `to json`
+  collects, so `map --live --json | take N | to json` prints nothing at all if it is cut off
+  before the Nth value. A streaming serializer — `to jsonl`, or `to json` forwarding one document
+  per value on an unbounded stream — would make a live view scriptable without knowing in advance
+  how many changes to wait for. Exit test: `map --live --json | take 100` prints its first value
+  before the second arrives.
+- `spatial_map_missing::should_only_remove_{edges,nodes}…` fail on a loaded host and pass on a
+  quiet one: each compares two `ono` runs over the whole process collection, so a process started
+  between them is a node the earlier map does not have. Same family as the cluster-expansion test
+  S5 left; they failed identically on this tree before S7 touched it.
 
 ## Next up (ordered)
 

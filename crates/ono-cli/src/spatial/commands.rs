@@ -12,6 +12,7 @@ use jiff::Timestamp;
 use ono_command::{CommandImpl, Invocation, Outcome, OutcomeFuture};
 use ono_core::ErrorCode;
 use ono_pipeline::ValueStream;
+use ono_provider_api::ProviderRegistry;
 use ono_spatial_core::{Movement, NavigationStep, PermissionState, SpatialType};
 use ono_spatial_query::{NeighborhoodRequest, SelectorContext};
 use ono_value::{ErrorValue, Provenance, RecordValue, SchemaId, Value, builtin_schemas};
@@ -76,9 +77,35 @@ impl CommandImpl for Look {
             // exits — every group lists the places behind it — rather than dumping the object's
             // properties, which §24.1 reserves for `inspect`.
             let request = NeighborhoodRequest::new().all(all);
-            let (neighborhood, permission) =
-                view::neighborhood_here(ctx, &mut session, &request, now).await?;
-            let view = place_view(&session, &neighborhood, permission, all, changes, now)?;
+            let (neighborhood, permission, whole) = view::neighborhood_and_whole(
+                ctx.providers(),
+                &mut session,
+                &request,
+                changes.is_some(),
+                now,
+            )
+            .await?;
+            // §25.4: where no event stream answers, a change is the difference between two
+            // observations — and there is one only from the second `look --changes` of a session
+            // onwards. The baseline is taken whether or not the caller asked, so the *next* ask
+            // has something to compare to.
+            let compared = changes.map(|window| {
+                let observed = whole.as_ref().unwrap_or(&neighborhood);
+                let snapshot = ono_spatial_events::PlaceSnapshot::of(session.index(), observed);
+                let here = session.current_place().clone();
+                let before = session.rebase(&here, snapshot.clone());
+                (
+                    window,
+                    before.map(|before| {
+                        ono_spatial_events::compare_places(
+                            &before,
+                            &snapshot,
+                            ono_spatial_events::Freshness::Polled,
+                        )
+                    }),
+                )
+            });
+            let view = place_view(&session, &neighborhood, permission, all, compared, now)?;
 
             if json {
                 let document = ono_value::to_json_data(&Value::Record(Arc::new(view)));
@@ -108,7 +135,7 @@ fn place_view(
     neighborhood: &ono_spatial_core::Neighborhood,
     permission: PermissionState,
     all: bool,
-    changes: Option<ono_value::Duration>,
+    changes: Option<(ono_value::Duration, Option<ono_spatial_events::ChangeSet>)>,
     now: Timestamp,
 ) -> Result<RecordValue, ErrorValue> {
     let here = session.current_place().clone();
@@ -122,6 +149,7 @@ fn place_view(
         permission,
         pinned,
         session.record_of(&here).map(std::convert::AsRef::as_ref),
+        session.tombstone_of(&here, now),
         now,
     )?;
 
@@ -220,7 +248,7 @@ fn place_view(
     .set("landmarks", Value::list(landmarks))?
     .set("neighborhood", Value::Record(Arc::new(neighborhood_record)))?
     .set("system", system)?
-    .set("changed", change_summary(changes)?)?
+    .set("changed", change_summary(changes, now)?)?
     .set("generated_at", Value::Timestamp(now))?
     .build())
 }
@@ -256,11 +284,19 @@ fn source_freshness(
 /// The change section of §24.3, which never invents a change.
 ///
 /// §24.3: "No fake change summary may be generated when no event source or comparison snapshot
-/// exists." This build has neither — the event merge and the snapshot diff of §25 are a later
-/// phase — so a caller who asks gets the §35.2 state that says so, with no entries. That is a
-/// different answer from "nothing changed", and §2.17 requires the difference to be visible.
-fn change_summary(window: Option<ono_value::Duration>) -> Result<Value, ErrorValue> {
-    let Some(window) = window else {
+/// exists." §25.4 names the one source this build has for a still view — the comparison of two
+/// successive observations — and its provenance says so. Three answers are therefore possible and
+/// §2.17 requires all three to stay apart:
+///
+/// - **`unknown`** — this session has not looked at this place before, so there is nothing to
+///   compare to. Not "nothing changed".
+/// - **`empty`** — there was a snapshot and nothing differs from it.
+/// - **`available`** — there was a snapshot and these are the differences.
+fn change_summary(
+    changes: Option<(ono_value::Duration, Option<ono_spatial_events::ChangeSet>)>,
+    now: Timestamp,
+) -> Result<Value, ErrorValue> {
+    let Some((window, compared)) = changes else {
         return Ok(Value::Null);
     };
     let schema = builtin_schemas()
@@ -271,16 +307,71 @@ fn change_summary(window: Option<ono_value::Duration>) -> Result<Value, ErrorVal
                 "the `ono.change-summary/1` contract is not in this build",
             )
         })?;
+    let (state, source, entries) = match &compared {
+        None => ("unknown", Value::Null, Vec::new()),
+        Some(changes) if changes.is_empty() => (
+            "empty",
+            Value::string(changes.source().as_str()),
+            Vec::new(),
+        ),
+        Some(changes) => {
+            let mut rows = Vec::new();
+            for change in changes.changes() {
+                rows.push(Value::Record(Arc::new(change_record(
+                    change, changes, now,
+                )?)));
+            }
+            ("available", Value::string(changes.source().as_str()), rows)
+        }
+    };
     let record = RecordValue::builder(
         schema,
         Provenance::local(COMPOSER, SchemaId::new("ono.change-summary", 1)),
     )
     .set("window", Value::Duration(window))?
-    .set("state", Value::string("unsupported"))?
-    .set("source", Value::Null)?
-    .set("entries", Value::list(Vec::new()))?
+    .set("state", Value::string(state))?
+    .set("source", source)?
+    .set("entries", Value::list(entries))?
     .build();
     Ok(Value::Record(Arc::new(record)))
+}
+
+/// One `ono.spatial-change/1` of a change section (§24.3, §25.1).
+fn change_record(
+    change: &ono_spatial_events::SpatialChange,
+    changes: &ono_spatial_events::ChangeSet,
+    now: Timestamp,
+) -> Result<RecordValue, ErrorValue> {
+    let schema = builtin_schemas()
+        .get(&SchemaId::new("ono.spatial-change", 1))
+        .ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::ProviderSchemaViolation,
+                "the `ono.spatial-change/1` contract is not in this build",
+            )
+        })?;
+    let places: Vec<Value> = change
+        .places()
+        .map(|place| Value::string(&place.to_string()))
+        .collect();
+    Ok(RecordValue::builder(
+        schema,
+        Provenance::local(COMPOSER, SchemaId::new("ono.spatial-change", 1)),
+    )
+    .set("kind", Value::string(change.kind().as_str()))?
+    .set("id", Value::string(change.subject()))?
+    .set("observed_at", Value::Timestamp(now))?
+    .set("label", Value::string(change.label()))?
+    .set(
+        "reason",
+        change
+            .kind()
+            .reason()
+            .map_or(Value::Null, |reason| Value::string(reason.as_str())),
+    )?
+    .set("places", Value::list(places))?
+    .set("source", Value::string(changes.source().as_str()))?
+    .build())
 }
 
 /// The window `--changes`/`--changed` names, or the configured default where it names none.
@@ -379,7 +470,7 @@ impl CommandImpl for Near {
             }
             with_pins(&mut session, self.pins.as_ref(), now).await?;
             let (neighborhood, _) =
-                view::neighborhood_here(ctx, &mut session, &request, now).await?;
+                view::neighborhood_here(ctx.providers(), &mut session, &request, now).await?;
 
             let here = session.current_place().clone();
             let index = session.index();
@@ -478,7 +569,7 @@ impl CommandImpl for Enter {
                     )
                     .with_help("`look` lists the exits of the current place (spec v0.4 §24.2)")
                 })?;
-                resolved_place(ctx, &mut session, &here, &selector, now).await?
+                resolved_place(ctx.providers(), &mut session, &here, &selector, now).await?
             };
 
             if here != there {
@@ -561,7 +652,7 @@ fn enter_projected(
 /// `enter 1842` is a question about processes and about everything else that answers to `1842`,
 /// and it is asked once.
 pub async fn resolved_place(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     here: &ono_spatial_core::SpatialId,
     selector: &str,
@@ -576,7 +667,7 @@ pub async fn resolved_place(
     if matches!(resolution, ono_spatial_query::Resolution::NotFound)
         && let Some(space) = ono_spatial_query::resolve::space_of(here)
     {
-        view::observe_space(ctx, session, space, false, now).await?;
+        view::observe_space(providers, session, space, false, now).await?;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
     if matches!(resolution, ono_spatial_query::Resolution::NotFound)
@@ -584,19 +675,19 @@ pub async fn resolved_place(
     {
         // §33.3: the path tree is query-driven, so a path is a place only once somebody names
         // one. `jump storage:/data` and `enter /etc/nginx` name one (§6.5, §15.1).
-        view::observe_path(ctx, session, &path, now).await;
+        view::observe_path(providers, session, &path, now).await;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
     if matches!(resolution, ono_spatial_query::Resolution::NotFound) {
         let plan = ono_spatial_query::targets_for(
             type_hint(selector),
             &std::collections::BTreeSet::new(),
-            &|target| !ctx.providers().for_target(target).is_empty(),
+            &|target| !providers.for_target(target).is_empty(),
             &|_, _| true,
         );
         let targets: std::collections::BTreeSet<&'static str> =
             plan.asked().iter().copied().collect();
-        view::observe_targets(ctx, session, &targets, now).await;
+        view::observe_targets(providers, session, &targets, now).await;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
     // §27.2: "Interactive ambiguity opens a picker." §29.3: a script never sees one, so the same
@@ -673,6 +764,47 @@ pub fn go_home(session: &mut SpatialSessionState, now: Timestamp) {
             .trail_mut()
             .record(NavigationStep::new(now, here, root, Movement::Home));
     }
+}
+
+/// The refusal §10.3 requires of an action that needs a live object, where the place is gone.
+///
+/// The message is §40's own example, which is what an actionable next step looks like here: the
+/// place, when it ended, and — where one can be identified — what took its place.
+pub(crate) fn gone_here(
+    session: &SpatialSessionState,
+    here: &ono_spatial_core::SpatialId,
+    now: Timestamp,
+) -> Option<ErrorValue> {
+    let liveness = session.liveness(here, now);
+    if liveness.accepts_actions() {
+        return None;
+    }
+    let (what, when) = liveness.tombstone().map_or_else(
+        || ("this place".to_owned(), String::new()),
+        |tombstone| {
+            let age = ono_value::Duration::from_nanoseconds(
+                tombstone
+                    .age(now)
+                    .total(jiff::Unit::Nanosecond)
+                    .unwrap_or(0.0)
+                    .max(0.0) as i128,
+            );
+            (
+                format!("`{}`", tombstone.display_name()),
+                format!(" {age} ago"),
+            )
+        },
+    );
+    Some(
+        ErrorValue::new(
+            ErrorCode::SpatialDestinationGone,
+            format!("destination no longer exists: {what} ended{when}"),
+        )
+        .with_help(
+            "a tombstone keeps the place and its trail record; it does not accept actions that \
+             need the object to be there (spec v0.4 §10.3, §40)",
+        ),
+    )
 }
 
 pub(crate) fn text_of(value: &Value) -> Option<String> {
@@ -811,7 +943,22 @@ impl CommandImpl for Follow {
             // yet is not a relation that is not there.
             let interest =
                 crate::spatial::relations::Interest::here().along(Some(relation.clone()));
-            crate::spatial::relations::observe(ctx, &mut session, &here, &interest, now).await?;
+            crate::spatial::relations::observe(
+                ctx.providers(),
+                &mut session,
+                &here,
+                &interest,
+                now,
+            )
+            .await?;
+
+            // §10.3: a tombstone "MUST NOT accept actions that require a live object", and
+            // traversing a relationship is one — the edges of a place that is gone are the ones
+            // it had, not the ones it has. The check comes after the observation because that
+            // observation is what discovers the absence (§33.2).
+            if let Some(refusal) = gone_here(&session, &here, now) {
+                return Err(refusal);
+            }
 
             // The word decides the direction: `parent` and `children` are the two exits of one
             // relation, and following the wrong one would walk the edge backwards (§12).

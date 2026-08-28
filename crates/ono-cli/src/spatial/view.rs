@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::Timestamp;
-use ono_command::Invocation;
+
 use ono_core::ErrorCode;
 use ono_pipeline::ValueStream;
 use ono_provider_api::{ProviderRegistry, Query};
@@ -61,7 +61,7 @@ impl Surroundings {
 /// objects rather than other places — one exit of its own contents. §24.2 is why: a group label
 /// is the word `enter` takes, so it names the place it leads into (ADR-0143).
 pub async fn observe_space(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     here: &'static CanonicalSpace,
     complete: bool,
@@ -83,7 +83,7 @@ pub async fn observe_space(
         .filter(|source| affordable(source.cost, complete))
         .flat_map(|source| source.targets.iter().copied())
         .collect();
-    let observed = observe(ctx.providers(), session, &targets, now).await;
+    let observed = observe(providers, session, &targets, now).await;
 
     let mut exits = Vec::with_capacity(sourced.len());
     for space in children {
@@ -183,19 +183,19 @@ impl Observed {
 /// when somebody names one. That is what a selector spelled as a path does — `storage:/data`,
 /// `/etc/nginx` — and asking for exactly that path is the whole query (§34).
 pub async fn observe_path(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     path: &std::path::Path,
     now: Timestamp,
 ) {
-    if ctx.providers().for_target("file").is_empty() {
+    if providers.for_target("file").is_empty() {
         return;
     }
     let query = Query::target("file").with(ono_provider_api::Selector::field(
         "path",
         Value::Path(std::sync::Arc::from(path)),
     ));
-    let Ok(stream) = ctx.providers().snapshot(&query) else {
+    let Ok(stream) = providers.snapshot(&query) else {
         return;
     };
     let records: Vec<RecordValue> = stream
@@ -216,12 +216,12 @@ pub async fn observe_path(
 /// The plan of which targets to ask belongs to `ono-spatial-query` (§45.3); asking is the
 /// shell's, because nothing but the shell may reach a provider (§2.16).
 pub async fn observe_targets(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     targets: &BTreeSet<&'static str>,
     now: Timestamp,
 ) {
-    let _ = observe(ctx.providers(), session, targets, now).await;
+    let _ = observe(providers, session, targets, now).await;
 }
 
 /// Asks every target once and registers what came back (§33.1, §42.1).
@@ -300,7 +300,7 @@ pub fn place_record(
     pinned: bool,
     now: Timestamp,
 ) -> Result<RecordValue, ErrorValue> {
-    place_record_of(index, id, scope, permission, pinned, None, now)
+    place_record_of(index, id, scope, permission, pinned, None, None, now)
 }
 
 /// The same record, with what the provider last said about the object beside it.
@@ -316,6 +316,7 @@ pub fn place_record_of(
     permission: PermissionState,
     pinned: bool,
     observed: Option<&RecordValue>,
+    tombstone: Option<&ono_spatial_core::Tombstone>,
     now: Timestamp,
 ) -> Result<RecordValue, ErrorValue> {
     let schema = schema("ono.spatial-place", 1)?;
@@ -379,11 +380,16 @@ pub fn place_record_of(
     let canonical_ref = entry.map_or(Value::Null, |entry| reference_record(entry.canonical_ref()));
     let canonical_parent = ono_spatial_query::resolve::parent_of(index, id)
         .map_or(Value::Null, |parent| Value::string(&parent.to_string()));
-    let state = observed
-        .and_then(|record| record.get("state"))
-        .filter(|value| !value.is_null())
-        .cloned()
-        .unwrap_or(Value::Null);
+    // §33.2: a place the providers no longer answer for is not still in the state they last
+    // reported. §10.3 gives it the state it is actually in, and the record beside it says when.
+    let state = match tombstone {
+        Some(tombstone) => Value::string(ended_state(tombstone.object_type())),
+        None => observed
+            .and_then(|record| record.get("state"))
+            .filter(|value| !value.is_null())
+            .cloned()
+            .unwrap_or(Value::Null),
+    };
     let summary = observed.map_or(Value::Null, summary_record);
 
     let record = RecordValue::builder(schema, Provenance::clone(&provenance))
@@ -392,6 +398,10 @@ pub fn place_record_of(
         .set("canonical_ref", canonical_ref)?
         .set("canonical_parent", canonical_parent)?
         .set("state", state)?
+        .set(
+            "tombstone",
+            tombstone.map_or(Value::Null, |stone| tombstone_record(stone, now)),
+        )?
         .set("summary", summary)?
         .set("name", Value::string(&name))?
         .set("display_name", Value::string(&name))?
@@ -574,6 +584,61 @@ fn lifetime_record(entry: Option<&ono_spatial_index::IndexEntry>) -> Value {
     {
         map.insert("start_time".into(), Value::string(&started));
     }
+    Value::Map(std::sync::Arc::new(map))
+}
+
+/// The state an object of this kind is in once it is gone (§10.3).
+///
+/// §10.3's own example writes `state: exited 12s ago` for a process, which is the word the
+/// provider would have used had it still been able to. A socket does not exit and a mount does
+/// not, so each family gets the word that is true of it — never one borrowed from a process.
+fn ended_state(object_type: SpatialType) -> &'static str {
+    use SpatialType as T;
+    match object_type {
+        T::Process | T::Job => "exited",
+        T::Service | T::Container => "stopped",
+        T::Socket | T::Listener | T::Connection => "closed",
+        T::Mount | T::Filesystem => "unmounted",
+        _ => "removed",
+    }
+}
+
+/// The `tombstone` of a place that is gone (§10.3).
+///
+/// §10.3's example is three lines — the object, `state: exited 12s ago`, and a replacement — and
+/// this is those three, structured. The age is computed against the caller's `now` rather than
+/// stored, so a view rendered a minute later says a minute.
+fn tombstone_record(tombstone: &ono_spatial_core::Tombstone, now: Timestamp) -> Value {
+    let mut map = ono_value::MapValue::new();
+    let age = tombstone.age(now);
+    let ago = ono_value::Duration::from_nanoseconds(
+        age.total(jiff::Unit::Nanosecond).unwrap_or(0.0).max(0.0) as i128,
+    );
+    map.insert(
+        "state".into(),
+        Value::string(&format!(
+            "{} {} ago",
+            ended_state(tombstone.object_type()),
+            ago
+        )),
+    );
+    map.insert(
+        "removed_at".into(),
+        Value::Timestamp(tombstone.removed_at()),
+    );
+    map.insert("age".into(), Value::Duration(ago));
+    map.insert(
+        "replacement".into(),
+        tombstone
+            .replacement()
+            .map_or(Value::Null, |id| Value::string(&id.to_string())),
+    );
+    map.insert(
+        "replacement_via".into(),
+        tombstone
+            .replacement_via()
+            .map_or(Value::Null, |via| Value::string(&via.to_string())),
+    );
     Value::Map(std::sync::Arc::new(map))
 }
 
@@ -843,11 +908,30 @@ pub fn system_record(
 /// from the exits the shell observed; an object the index holds has edges, and the ranking of
 /// §45.3 answers for it. Neither path ranks anything here (ADR-0143).
 pub async fn neighborhood_here(
-    ctx: &Invocation<'_>,
+    providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     request: &NeighborhoodRequest,
     now: Timestamp,
 ) -> Result<(Neighborhood, PermissionState), ErrorValue> {
+    let (neighborhood, permission, _) =
+        neighborhood_and_whole(providers, session, request, false, now).await?;
+    Ok((neighborhood, permission))
+}
+
+/// The same projection, with the unbounded one beside it where a caller needs both (§25.4).
+///
+/// `look --changes` is that caller. What it compares must not be the *ranked* neighborhood: the
+/// ranking is a view decision, and two rankings of one unchanged system differ whenever the
+/// budget cuts a tie differently — which would report change where nothing moved, the decorative
+/// motion §25.2 and §2.12 forbid. The complete set is computed from the same observation, so
+/// nothing is asked of a provider twice.
+pub async fn neighborhood_and_whole(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    request: &NeighborhoodRequest,
+    whole: bool,
+    now: Timestamp,
+) -> Result<(Neighborhood, PermissionState, Option<Neighborhood>), ErrorValue> {
     let here = session.current_place().clone();
     // §35.2/§43.7: standing on a host whose link is gone, what is behind the exits is `stale` —
     // not `empty`, and above all not the local objects the same providers would answer with if
@@ -858,26 +942,51 @@ pub async fn neighborhood_here(
         let neighborhood = ono_spatial_query::space_neighborhood(
             session.index(),
             &here,
-            exits,
+            exits.clone(),
             request,
             &pins,
             now,
         );
-        return Ok((neighborhood, PermissionState::Stale));
+        // §25.4 compares the complete set, and a stale host has one: the withheld exits, all of
+        // them. A comparison against nothing would read as "everything vanished" the moment a
+        // link went down, which is the fabricated change §2.12 forbids.
+        let complete = whole.then(|| {
+            ono_spatial_query::space_neighborhood(
+                session.index(),
+                &here,
+                exits,
+                &NeighborhoodRequest::new().all(true),
+                &pins,
+                now,
+            )
+        });
+        return Ok((neighborhood, PermissionState::Stale, complete));
     }
     if let Some(space) = ono_spatial_query::resolve::space_of(&here) {
-        let surroundings = observe_space(ctx, session, space, request.is_complete(), now).await?;
+        let surroundings =
+            observe_space(providers, session, space, request.is_complete(), now).await?;
         let permission = surroundings.permission();
         let pins = session.pins().clone();
+        let exits = surroundings.exits();
         let neighborhood = ono_spatial_query::space_neighborhood(
             session.index(),
             &here,
-            surroundings.exits(),
+            exits.clone(),
             request,
             &pins,
             now,
         );
-        return Ok((neighborhood, permission));
+        let complete = whole.then(|| {
+            ono_spatial_query::space_neighborhood(
+                session.index(),
+                &here,
+                exits,
+                &NeighborhoodRequest::new().all(true),
+                &pins,
+                now,
+            )
+        });
+        return Ok((neighborhood, permission, complete));
     }
     // An object's exits are its relationship edges, and those are the v0.2 relationship graph's
     // (§2.16, §31.3). They are read here, once, before anything is ranked.
@@ -885,11 +994,20 @@ pub async fn neighborhood_here(
         .complete(request.is_complete())
         .along(request.named_relation().map(str::to_owned))
         .of_type(request.named_type());
-    crate::spatial::relations::observe(ctx, session, &here, &interest, now).await?;
+    crate::spatial::relations::observe(providers, session, &here, &interest, now).await?;
     let pins = session.pins().clone();
     let neighborhood =
         ono_spatial_query::neighborhood_of(session.index(), &here, request, &pins, now);
-    Ok((neighborhood, PermissionState::Available))
+    let complete = whole.then(|| {
+        ono_spatial_query::neighborhood_of(
+            session.index(),
+            &here,
+            &NeighborhoodRequest::new().all(true),
+            &pins,
+            now,
+        )
+    });
+    Ok((neighborhood, PermissionState::Available, complete))
 }
 
 /// Why the host the session is standing on cannot be reached, where it cannot be (§35.4, §19.1).

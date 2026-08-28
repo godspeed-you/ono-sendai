@@ -352,6 +352,56 @@ impl SpatialIndex {
         self.entries.contains_key(id)
     }
 
+    /// Records that the object behind `id` has ended, keeping the entry itself (§10.3, §33.2).
+    ///
+    /// §10.3 keeps a removed object reachable as a tombstone, and §20.3 makes `back` arrive at
+    /// one — so the entry stays, with its identity and its place in the hierarchy intact, and
+    /// only its lifetime closes. Forgetting it outright is [`SpatialIndex::remove`], which is a
+    /// different answer: it makes the place one nobody ever saw.
+    ///
+    /// Returns whether the index held the object.
+    pub fn mark_ended(&mut self, id: &SpatialId, at: Timestamp) -> bool {
+        let Some(entry) = self.entries.get_mut(id) else {
+            return false;
+        };
+        entry.object = entry.object.clone().ended(at);
+        true
+    }
+
+    /// Drops every relationship edge that touches `id`, from both of its ends (§33.2).
+    ///
+    /// The index is a cache of what the providers asserted, and an edge nobody asserts any more
+    /// is not a relationship that merely went unmentioned — it is one that is not there. A live
+    /// view has to be able to say so, and it can only do that if the previous answer is dropped
+    /// before the current one is read.
+    ///
+    /// Returns how many edges were dropped.
+    pub fn forget_edges(&mut self, id: &SpatialId) -> usize {
+        let ends: Vec<SpatialId> = self.entries.get(id).map_or_else(Vec::new, |entry| {
+            entry
+                .edges
+                .iter()
+                .filter_map(|edge| edge.other_end(id).cloned())
+                .chain(std::iter::once(id.clone()))
+                .collect()
+        });
+        let mut dropped = 0;
+        for end in ends {
+            let Some(entry) = self.entries.get_mut(&end) else {
+                continue;
+            };
+            let before = entry.edges.len();
+            entry
+                .edges
+                .retain(|edge| edge.source() != id && edge.target() != id);
+            dropped += before - entry.edges.len();
+            let object_type = entry.object.object_type();
+            entry.canonical_parent =
+                canonical_parent_with(&end, object_type, &entry.edges, entry.path_parent.as_ref());
+        }
+        dropped
+    }
+
     /// Forgets an object that has gone away, and every alias that named only it.
     pub fn remove(&mut self, id: &SpatialId) -> Option<IndexEntry> {
         let entry = self.entries.remove(id)?;

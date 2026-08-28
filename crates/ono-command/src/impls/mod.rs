@@ -31,7 +31,7 @@ pub(crate) mod mutate;
 pub(crate) mod producer;
 mod trace;
 pub(crate) mod transform;
-mod watch;
+pub mod watch;
 
 use std::sync::Arc;
 

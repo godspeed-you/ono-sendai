@@ -44,6 +44,11 @@ pub fn place_view(view: &RecordValue, width: usize) -> Vec<String> {
     let width = width.max(20);
     let mut lines = Vec::new();
     lines.push(fit(&heading(view), width));
+    // §10.3: "A tombstone MUST be visually distinct." It is a line of its own, in words rather
+    // than in colour, because §39.1 forbids colour from carrying meaning on its own.
+    if let Some(state) = tombstone_state(view) {
+        lines.push(fit(&format!(" tombstone — {state}"), width));
+    }
 
     let groups = list(view, "groups");
     if !groups.is_empty() {
@@ -115,6 +120,18 @@ fn place_path(view: &RecordValue) -> Option<String> {
     let kind = text(&place, "spatial_type")?.to_ascii_lowercase();
     let name = text(&place, "display_name")?;
     Some(format!("{link}/{kind}/{name}"))
+}
+
+/// What a tombstoned place says about itself, where the view carries one (§10.3).
+fn tombstone_state(view: &RecordValue) -> Option<String> {
+    let place = record(view, "place")?;
+    let Some(Value::Map(tombstone)) = place.get("tombstone") else {
+        return None;
+    };
+    match tombstone.get("state") {
+        Some(Value::String(state)) => Some(state.to_string()),
+        _ => Some("gone".to_owned()),
+    }
 }
 
 /// One exit: its label, and either how many places lie behind it or why nobody could say (§24.2).

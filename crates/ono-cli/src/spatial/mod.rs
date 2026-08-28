@@ -19,6 +19,7 @@ pub mod complete;
 pub mod find;
 pub mod interactive;
 pub mod links;
+pub mod live;
 pub mod map;
 pub mod movement;
 pub mod pins;
@@ -82,11 +83,21 @@ pub fn configure_from(settings: &crate::settings::Settings) {
         storage_pressure_percent: integer("spatial.landmarks.storage_pressure", 90) as f64,
         change_window: jiff::Span::new().seconds(seconds),
     };
+    let duration = |key: &str| -> Option<ono_value::Duration> {
+        match settings.effective(key).map(|resolved| &resolved.value) {
+            Some(ono_value::Value::String(text)) => ono_value::Duration::parse(text).ok(),
+            Some(ono_value::Value::Duration(configured)) => Some(*configured),
+            _ => None,
+        }
+    };
+    let fallback = session::ViewPreferences::default();
     let preferences = session::ViewPreferences {
-        change_window: window
-            .unwrap_or_else(|| ono_value::Duration::from_nanoseconds(5 * 60 * 1_000_000_000)),
+        change_window: window.unwrap_or(fallback.change_window),
         map_node_budget: usize::try_from(integer("spatial.map.node_budget", 100).max(1))
             .unwrap_or(ono_spatial_query::MAP_NODE_BUDGET),
+        tombstone_lifetime: duration("spatial.tombstone.lifetime")
+            .unwrap_or(fallback.tombstone_lifetime),
+        live_interval: duration("spatial.live.interval").unwrap_or(fallback.live_interval),
     };
     session::configure(preferences, thresholds);
     session::configure_values(
