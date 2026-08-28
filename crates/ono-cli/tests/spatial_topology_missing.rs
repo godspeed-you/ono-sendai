@@ -933,7 +933,6 @@ fn should_offer_the_process_exits_the_spec_names_when_a_discovered_process_becom
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface — the `follow parent` half is delivered; the test also reads `trail --json` (§6.7, §20.1), which the increment that delivers `trail` un-ignores"]
 fn should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner() {
     // §2.5 and §3.5: a relationship edge (`process --parent-of--> process`) is real and
     // traversable; §6.4: `follow` traverses a relationship edge and records it in the trail.
