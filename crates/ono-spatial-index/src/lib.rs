@@ -15,10 +15,12 @@
 //! [`SpatialObject`]: ono_spatial_core::SpatialObject
 //! [`RelationshipEdge`]: ono_spatial_core::RelationshipEdge
 
+pub mod bridge;
 pub mod freshness;
 pub mod index;
 pub mod pins;
 
+pub use bridge::{Absorbed, ProviderBridge, spatial_type_of};
 pub use freshness::FreshnessPolicy;
 pub use index::{IndexEntry, Registration, SpatialIndex};
 pub use pins::{Pin, PinRegistry, PinResolution};
