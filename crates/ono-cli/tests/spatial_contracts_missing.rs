@@ -1116,6 +1116,33 @@ fn should_show_a_place_only_an_adapter_observed_when_standing_in_the_collection_
 }
 
 #[test]
+fn should_describe_a_search_result_and_a_place_view_with_the_same_record() {
+    // ADR-0140: `find place` streams `ono.spatial-place/1`, and "the same schema is the `place`
+    // of a `PlaceView`, so `look --json` and `find place` describe a place the same way". They
+    // did not: `look` carried the state and the §24.1 summary the provider reported and `find`
+    // left both null — which under §2.17 is the shell saying it does not know something it does.
+    let found = ono("find place --type process --where pid == 1 | select name state | to json");
+    found.assert_success();
+    let entered = ono("enter process 1; look --json");
+    entered.assert_success();
+
+    let view = rendered(&document(
+        &entered,
+        "§29.1: `look --json` answers off a terminal",
+    ));
+    assert!(
+        view.contains("state:"),
+        "the premise of this test: the place view reports the state of pid 1, got {view}"
+    );
+    assert!(
+        !found.stdout().contains("\"state\":null"),
+        "ADR-0140/§2.17: a search result describes the place the way the place view does, and \
+         null is the word for something nobody knows; got {:?}",
+        found.stdout()
+    );
+}
+
+#[test]
 fn should_find_a_place_by_its_properties_when_the_index_holds_it_and_no_provider_serves_it() {
     // §6.8: `find` "MUST search the spatial index **and** provider registries". The predicate was
     // evaluated against what the providers answered and against nothing else, so a place the

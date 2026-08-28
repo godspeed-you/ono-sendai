@@ -143,12 +143,17 @@ impl CommandImpl for FindPlace {
             let values: Vec<Value> = places
                 .iter()
                 .map(|place| {
-                    crate::spatial::view::place_record(
+                    crate::spatial::view::place_record_of(
                         index,
                         place.spatial_id(),
                         &scope,
                         ono_spatial_core::PermissionState::Available,
                         place.is_pinned(),
+                        // ADR-0140: one contract. A place view carries the state and the §24.1
+                        // summary the provider last reported, so a search result carries them
+                        // too — the same record, read from the same place.
+                        session.record_of(place.spatial_id()).map(AsRef::as_ref),
+                        None,
                         now,
                     )
                     .map(|record| Value::Record(Arc::new(record)))
