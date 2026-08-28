@@ -58,9 +58,18 @@ follow, one on each side of the provider boundary.
 
 2. **A composed exit is answered only where the record stated it.** `observe` now marks a
    composed exit as answered unless a relationship provider serving the same exit was declined
-   for cost *and* nothing has been stated for it — no edge under that label, no recorded state.
+   for cost *and* nothing has been stated for it — no edge under that exit, no recorded state.
    Such an exit falls through to the answer §32.2 prescribes for an expensive relationship
    nobody has paid for: `unknown — available on request`.
+
+   "Stated" is read in the vocabulary of the **group** — the word `look` prints and
+   `SpatialIndex::record_withheld` is keyed by — never the `follow` label, because an edge's two
+   ends carry two labels (`socket` and `owner`) and one group each (`sockets` and `process`).
+   The first draft compared groups against labels, so an owner the session had *already*
+   observed was overwritten with "available on request"; §32.1's own exception is "unless cached
+   or already available", and the container caught the difference in
+   `docker/acceptance/cases/091-spatial-unknown-web-service.case` `44.2m` and
+   `docker/acceptance/cases/094-spatial-network-path.case` `44.5g`.
 
 The condition is deliberately narrow. A listener's `peer` is null because the kernel said
 `0.0.0.0:0`, meaning there is no peer; no relationship provider serves that exit, nothing was
@@ -69,10 +78,12 @@ view refused to spend becomes `unknown`.
 
 ## Consequences
 
-- At a listener, a default `look` now prints `process   unknown — available on request` — for
-  another user's socket and for one's own alike, because in neither case was anything read.
-  `look --all` and `near process` spend the scan and answer with the owner, or with
-  `permission denied — N process(es) did not let their open files be read`.
+- At a listener reached cold, a default `look` now prints
+  `process   unknown — available on request` — for another user's socket and for one's own
+  alike, because in neither case was anything read. `look --all` and `near process` spend the
+  scan and answer with the owner, or with `permission denied — N process(es) did not let their
+  open files be read`. A listener reached *through* the process holding it keeps naming its
+  owner, because that edge is already in the index and §32.1 excepts what is cached.
 - §32.1 is not weakened to reach the more informative answer. A default `look` that resolved
   socket owners would be a whole-`/proc` scan per place, which is the cost class the spec names
   and forbids; the honest reading of §32.2 is that the exit is *unloaded*, not empty, and the

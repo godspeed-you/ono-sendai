@@ -760,6 +760,32 @@ fn should_not_report_the_owner_of_a_socket_nobody_looked_up_as_no_owner() {
          refused — got state {state:?} count {count} in {}",
         rendered(&group)
     );
+
+    // §32.1's own exception, and the half the container caught first: "unless cached or already
+    // available". A socket reached *through* the process that holds it arrives with that edge
+    // already observed, so its owner is named rather than offered — the decline is about the
+    // scan nobody paid for, never about an answer the session already has.
+    let cached = ono(&format!(
+        "enter process {}; follow socket :{port}; look --json",
+        std::process::id()
+    ));
+    let view = place_view(&cached);
+    let group = exit_group(&view, "process");
+    assert_eq!(
+        group.get("state").and_then(Value::as_str),
+        Some("available"),
+        "spec §32.1: an exit the session already holds an edge for is answered, got {}",
+        rendered(&group)
+    );
+    assert!(
+        group
+            .get("count")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            >= 1,
+        "spec §32.1: the owner already observed is counted, got {}",
+        rendered(&group)
+    );
     drop(listening);
 }
 

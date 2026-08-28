@@ -542,16 +542,22 @@ pub async fn observe(
 }
 
 /// The exits of the place at `id` that something has actually said an answer for: an edge under
-/// that label, or a recorded state saying why there is none (§35.2).
+/// that exit, or a recorded state saying why there is none (§35.2).
 ///
-/// A label that is in neither is a label nobody has answered yet, which is not the same as a
-/// label whose answer is nothing.
+/// An exit that is in neither is one nobody has answered yet, which is not the same as one whose
+/// answer is nothing. The vocabulary is the *group* — the word `look` prints and
+/// `record_withheld` is keyed by — and not the `follow` label, because an edge's two ends have
+/// two labels (`socket` and `owner`) and one group each (`sockets` and `process`).
 fn stated_labels(session: &SpatialSessionState, id: &SpatialId) -> BTreeSet<&'static str> {
-    let mut stated: BTreeSet<&'static str> = edges_by_label(session, id).into_keys().collect();
     let index = session.index();
     let Some(entry) = index.get(id) else {
-        return stated;
+        return BTreeSet::new();
     };
+    let mut stated: BTreeSet<&'static str> = entry
+        .edges()
+        .iter()
+        .filter_map(|edge| edge.group_from(id))
+        .collect();
     let object_type = entry.object().object_type();
     for (label, _, _) in index.withheld(id) {
         if let Some(declared) = relation::exits_from(object_type)
