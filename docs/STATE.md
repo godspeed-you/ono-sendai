@@ -144,12 +144,7 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 (event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
 (§45.6).
 
-- [S2 | 2026-08-28] **S2 — provider identity and relation bridge (§50 Phase S2)** — files:
-  `docs/spec/providers/*.yaml`, `docs/spec/spatial/{spatial,relations}.yaml`,
-  `docs/spec/schemas/{process,process-detail,cgroup}.v1.yaml`, `crates/ono-spatial-core/src/`,
-  `crates/ono-spatial-index/src/`, `crates/ono-provider-linux/src/{process,procfs}.rs`,
-  `crates/ono-provider-api/src/object.rs`, `xtask/src/contracts.rs`, ADR-0132–0136.
-  Not touched: `docs/ACCEPTANCE.md` (a second agent writes §4.7 in parallel).
+- (empty — S1 and S2 complete, see below; no agent holds a claim)
 
 **S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
 on each:
@@ -196,6 +191,55 @@ enforced against `ono-spatial-core` by `cargo run -p xtask -- spec-check`
   **not** written yet; `spatial_contracts_missing::should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_index`
   is S2's. Its `identity_strategy` must be one of `stable`/`lifetime`/`observation`, matching
   `ono_spatial_core::IdentityTier`, and its `cost_class` one of `ono_spatial_core::CostClass`.
+
+**S2 — provider identity and relation bridge — is complete (2026-08-28, agent `S2`).** Six
+commits, gate green on each:
+
+1. `feat(spatial)` the §42 provider claims in `docs/spec/providers/*.yaml`, enforced by
+   `xtask::contracts::check_provider_claims` (ADR-0132).
+2. `feat(providers)` `pid_namespace` on `ono.process/1` and `ono.process-detail/1`, read from
+   `/proc/<pid>/ns/pid` (ADR-0134).
+3. `feat(spatial)` `ono_spatial_index::bridge` — which place a record is, and reconciliation
+   (ADR-0133).
+4. `feat(spatial)` the core exact relations, composed from provider facts (ADR-0135).
+5. `feat(spatial)` permission-state propagation from the provider to the group (ADR-0136).
+6. `test(spatial)` the bridge's type table held against the canonical geography.
+
+**§50's gate for S2 — "provider objects can be reconciled into one graph without duplicate
+identity for known-equal objects" — is met**, proven twice in
+`crates/ono-spatial-index/tests/bridge.rs`: one process seen through `ono.process/1` and
+`ono.process-detail/1` is one place, and one disk seen through `linux.sysfs` (`ono.device/1`) and
+the util-linux `lsblk` adapter (`ono.block-device/1`) is one place — which is also §37.1's
+adapter identity merge, four phases early.
+
+Green from `crates/ono-cli/tests/spatial_contracts_missing.rs`:
+`should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_index`. The other 46
+new outcome tests live in the crates: `crates/ono-spatial-index/tests/{bridge,relations,conformance}.rs`
+(37) and `crates/ono-provider-linux/tests/process.rs` (3), plus the existing suites unchanged.
+
+**What S3 needs from S2** — the three things:
+
+- **`ProviderBridge` is the entry point, not `Projection::project`.** `bridge::spatial_type_of`
+  decides a record's place from the record (`ono.socket/1` → Listener or Connection,
+  `ono.file/1` → Directory or File, `ono.device/1` → BlockDevice or Device), and
+  `ProviderBridge::absorb(index, records, at)` registers a batch and settles its relations.
+  `Absorbed` keeps four outcomes apart: `added`, `reconciled`, `unplaced` (a schema §7 gives no
+  domain — a value, not an error) and `refused` (a place that could not be built). A schema that
+  no canonical domain holds — `ono.image/1`, `ono.link/1`, `ono.plugin/1`, `ono.package/1` — is
+  deliberately not a place (ADR-0133).
+- **Selector resolution has two different keys, and they are not the identity.**
+  `SpatialIndex::by_alias`/`search` answer what a *user* types (S1's alias index);
+  `ProviderBridge::resolve(type, key)` answers what another *record* names — a pid, an interface
+  name or index, a unit name, a uid, a container's full or short id, a path, a socket inode. It
+  walks `SpatialType::is_a`, so a reference to a `Socket` reaches the `Listener` it is. Neither is
+  the `SpatialId`, which stays opaque.
+- **A neighborhood group may already be refused before ranking sees it.**
+  `SpatialIndex::relation_summary` returns a `withheld` group with one of §35.2's six states and
+  the provider's own message wherever a field carried an error, and `total()` is `None` there —
+  so `near`/`look` must render the state, never fall back to a count. `SpatialIndex::withheld(id)`
+  lists them. Three places are composed rather than served — `Endpoint`, `Cgroup`, `Namespace` —
+  and are ordinary index entries with real identities (ADR-0135); `up` from a file follows the
+  Unix path tree through `ono_spatial_core::PATH_PARENT`, not a relation.
 
 **Open, and deliberately not S1's:** `docs/ACCEPTANCE.md` has no v0.4 section yet, so
 `scripts/release-check.sh` cannot see this tranche. §4.7 needs writing from v0.4 §52 before S11,
@@ -1063,6 +1107,29 @@ security review — and because re-testing these later costs nothing if they are
 ---
 
 ## Deferred / blocked
+
+**Two declared relations have no provider evidence (2026-08-28, S2, ADR-0135).** Both are
+declared in `docs/spec/spatial/relations.yaml`, claimed by no provider in `docs/spec/providers/`,
+and produce no edges. Not faked, not removed:
+
+- `service.depends_on` — `ono-provider-systemd` reads `ListUnits`, which carries no dependency
+  information; `Requires`/`Wants`/`After` need a `Get` per unit over D-Bus. §13 lists
+  dependencies and dependents among a service place's groups, so this is real work with its own
+  cost class, its own `ono.service/1` surface and its own acceptance case — exit test: a service
+  place whose `dependency` exit names `network-online.target` on the container fixture.
+- `socket.accepts_connection` — neither `sock_diag` nor procfs relates an accepted connection to
+  the listener it came from, and matching by local port would be a guess §11.5 has no value for.
+  Exit test: none until a kernel interface supplies the link.
+
+**160 orphaned `ono` shells were holding D-Bus connections (seen 2026-08-28).** Interactive/PTY
+test shells from earlier runs, up to 16 hours old and spread across the agent worktrees, had
+accumulated 214 open system-bus connections and pushed UID 1000 past
+`org.freedesktop.DBus.Error.LimitsExceeded`, which made `get session` fail intermittently in
+`crates/ono-cli/tests/identity_missing.rs` under a parallel gate run. Reaping this repository's
+own orphans made the gate green again. The leak itself is real: an interactive `ono` whose PTY
+has gone should exit — exit test: a PTY case that closes the terminal and asserts the child is
+reaped within a second. Related to the case-049 SIGHUP note above.
+
 
 **The v0.4 RED suites** (written 2026-08-27, before any implementation). Every test in the files
 below is `#[ignore]`d with the specification section that governs it, so the gate stays green
