@@ -927,6 +927,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ono-spatial-events"
+version = "0.3.0"
+dependencies = [
+ "jiff",
+ "ono-spatial-core",
+ "ono-spatial-index",
+ "ono-spatial-query",
+ "ono-testkit",
+ "ono-value",
+]
+
+[[package]]
 name = "ono-spatial-index"
 version = "0.3.0"
 dependencies = [
