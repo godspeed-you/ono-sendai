@@ -144,7 +144,14 @@ plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), 
 (event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
 (§45.6).
 
-- (empty — S1, S2 and S3 complete, see below; no agent holds a claim)
+- [S4de | 2026-08-28] **S4d + S4e — the storage remainder and the configuration behaviour.**
+  §15 (mount boundaries, the directory place and its view budget, the file place), §30, §7.4,
+  §44.3, §47 (the behaviour half), §34/§33.1 (a repeated view is read, not recomputed).
+  Files: `crates/ono-cli/src/spatial/{storage,view,commands,movement,session,mod}.rs`,
+  `crates/ono-spatial-{core,index,query,render}/src/`, `docs/spec/spatial/relations.yaml`,
+  `docs/spec/schemas/`, `docs/spec/commands/spatial.yaml`, `docs/decisions/ADR-018[5-9]-*.md`,
+  `docker/acceptance/cases/109-spatial-storage.case`, and the `#[ignore]` lines of the tests it
+  delivers in `crates/ono-cli/tests/spatial_{storage,contracts}_missing.rs`.
 
 **S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
 on each:
