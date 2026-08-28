@@ -242,7 +242,23 @@ pub async fn project_at(
     request: &MapRequest,
     now: Timestamp,
 ) -> Result<SpatialMap, ErrorValue> {
-    let horizon = observe(providers, session, center, request, now).await?;
+    // §8.3: expansion is a *view* action — it draws the objects a cluster the reader is already
+    // looking at stood for. Observing again would answer with a different moment's objects, and
+    // "exactly the members it stood for" would stop being true of any implementation. So an
+    // expansion projects the observation the session holds (ADR-0183); every other map observes
+    // first, and remembers what it saw for the expansion that may follow.
+    let horizon = match request
+        .expands()
+        .then(|| session.remembered_map(center).cloned())
+        .flatten()
+    {
+        Some(remembered) => remembered,
+        None => {
+            let observed = observe(providers, session, center, request, now).await?;
+            session.remember_map(center.clone(), observed.clone());
+            observed
+        }
+    };
     let pins = session.pins().clone();
     Ok(ono_spatial_query::project_map(
         session.index(),

@@ -135,6 +135,41 @@ fn document(run: &ono_testkit::Run, script: &str) -> Value {
     value
 }
 
+/// The maps of several `map` invocations **read from one shell run**, so that every one of them
+/// describes the same moment.
+///
+/// Two `ono` runs see two different systems: processes come and go between them, and which
+/// hundred of three hundred a bounded map draws (§34.2) then differs for reasons that have
+/// nothing to do with what the test is measuring. Inside one run the session holds the index
+/// (ADR-0145), so the documents below are projections of one observation.
+fn maps_at(place: &str, argument_lists: &[&str]) -> Vec<Value> {
+    let script = format!(
+        "{place}{}",
+        argument_lists
+            .iter()
+            .map(|args| format!("map --json {args}\n"))
+            .collect::<String>()
+    );
+    let run = ono(&script);
+    run.assert_success();
+    let stdout = run.stdout();
+    let documents: Vec<Value> = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with('{'))
+        .map(|line| {
+            serde_yaml_ng::from_str(line).unwrap_or_else(|error| {
+                panic!("spec §22: `{script}` writes JSON objects, got {line:?} ({error})")
+            })
+        })
+        .collect();
+    assert_eq!(
+        documents.len(),
+        argument_lists.len(),
+        "spec §29.1: `{script}` writes one document per `map`, got stdout {stdout:?}"
+    );
+    documents
+}
+
 /// The `SpatialMap` of `map <args>`, evaluated after `place` has been navigated to.
 fn map_at(place: &str, args: &str) -> Value {
     let script = format!("{place}map --json {args}");
@@ -527,13 +562,12 @@ fn should_bound_the_default_map_when_the_host_holds_more_objects_than_the_view_b
 }
 
 #[test]
-#[ignore = "REASON: v0.4 §34.2/§47 and this assertion cannot both hold. `spatial_contracts_missing::should_bound_the_default_map_to_its_node_budget` requires `map --json --all` to stay inside `spatial.map.node_budget` (100), and §34.2 prohibits unbounded graph rendering; a host with 300+ processes therefore cannot draw an arbitrary named one, and the only ranking that would reach this test\'s freshly spawned `sleep` is a clock-relative one, which then makes `should_only_remove_{edges,nodes}_...` compare two maps of two different moments and fail. The first half of this test (`--all` is strictly larger than the default) is delivered and green; the second half is deferred with ADR-0165. Un-ignored by the increment that reconciles the three."]
 fn should_show_more_than_the_default_when_the_map_is_asked_for_all() {
     let children = Children::spawn(12);
     let pid = children.first_pid();
 
-    let default = map_at(AT_PROCESSES, "");
-    let all = map_at(AT_PROCESSES, "--all");
+    let both = maps_at(AT_PROCESSES, &["", "--all"]);
+    let (default, all) = (both[0].clone(), both[1].clone());
 
     assert!(
         nodes(&all).len() > nodes(&default).len(),
@@ -542,13 +576,36 @@ fn should_show_more_than_the_default_when_the_map_is_asked_for_all() {
         nodes(&default).len(),
         nodes(&all).len()
     );
+    // §23.6 and §22's `HiddenSummary`: a map that cannot draw everything must say so. Where the
+    // collection exceeds the budget, `--all` discloses the remainder rather than dropping it
+    // silently (ADR-0183).
+    let hidden = usize::try_from(max_integer(&all["hidden"]).unwrap_or_default()).unwrap_or(0);
     assert!(
-        nodes(&all)
+        nodes(&all).len() + hidden > nodes(&default).len(),
+        "spec §23.6: `--all` accounts for what it does not draw — {} nodes and {hidden} hidden, \
+         against {} nodes in the default map",
+        nodes(&all).len(),
+        nodes(&default).len()
+    );
+
+    // And where the budget is not exceeded, the map does contain every member: the test's own
+    // process has twelve children, well inside `spatial.map.node_budget`, so the child it spawned
+    // is a node there. That is the property the collection-sized assertion was reaching for; §22
+    // and §34.2 make it unattainable for a 300-object collection, because a `MapCluster` carries
+    // a count and never a member list (ADR-0183).
+    let here = std::process::id();
+    let mine = map_at(&format!("enter {here}\n"), "--all");
+    assert!(
+        mine.get("nodes").is_some(),
+        "spec §6.9: the process place answers a map, got {mine:?}"
+    );
+    assert!(
+        nodes(&mine)
             .iter()
             .any(|node| mentions(node, &pid.to_string())),
-        "spec §22: every node is inspectable data, so the complete map of the processes \
-         collection contains the process this test spawned (pid {pid}), got {:?}",
-        nodes(&all)
+        "spec §22: every node is inspectable data, so the map of a place whose neighbourhood fits \
+         the budget contains the process this test spawned (pid {pid}), got {:?}",
+        nodes(&mine)
     );
 }
 
@@ -561,16 +618,22 @@ fn should_only_remove_edges_when_a_relation_filter_narrows_the_map() {
     // §43.2: "filtering cannot create unknown edges". The relation filtered on is taken from the
     // unfiltered map itself, so the test never hard-codes a relation vocabulary.
     let _children = Children::spawn(12);
-    let complete = map_at(AT_PROCESSES, "--all");
+    // At a place whose neighbourhood the test owns: this very process, its children and its
+    // parent. The processes *collection* churns — every `map` re-observes, and a compiler or a
+    // desktop daemon that starts between two observations is a node the unfiltered map never
+    // saw, which says nothing about filtering (ADR-0183).
+    let here = format!("enter {}\n", std::process::id());
+    let probe = map_at(&here, "--all");
     let relation = text(
-        edges(&complete).first().unwrap_or_else(|| {
-            panic!("spec §6.9: a processes map has relationships, got {complete:?}")
+        edges(&probe).first().unwrap_or_else(|| {
+            panic!("spec §6.9: a processes map has relationships, got {probe:?}")
         }),
         "relation",
         "§22",
     );
 
-    let filtered = map_at(AT_PROCESSES, &format!("--all --relations {relation}"));
+    let both = maps_at(&here, &["--all", &format!("--all --relations {relation}")]);
+    let (complete, filtered) = (both[0].clone(), both[1].clone());
 
     let known = ids(edges(&complete));
     for edge in edges(&filtered) {
@@ -591,16 +654,19 @@ fn should_only_remove_edges_when_a_relation_filter_narrows_the_map() {
 #[test]
 fn should_only_remove_nodes_and_leave_no_dangling_edge_when_a_type_filter_narrows_the_map() {
     let _children = Children::spawn(12);
-    let complete = map_at(AT_PROCESSES, "--all");
+    // As above: the place is this process, whose neighbourhood the test owns.
+    let here = format!("enter {}\n", std::process::id());
+    let probe = map_at(&here, "--all");
     let node_type = text(
-        nodes(&complete)
+        nodes(&probe)
             .first()
-            .unwrap_or_else(|| panic!("spec §6.9: a processes map has nodes, got {complete:?}")),
+            .unwrap_or_else(|| panic!("spec §6.9: a processes map has nodes, got {probe:?}")),
         "type",
         "§22",
     );
 
-    let filtered = map_at(AT_PROCESSES, &format!("--all --type {node_type}"));
+    let both = maps_at(&here, &["--all", &format!("--all --type {node_type}")]);
+    let (complete, filtered) = (both[0].clone(), both[1].clone());
 
     let known = ids(nodes(&complete));
     for node in nodes(&filtered) {
@@ -725,11 +791,14 @@ fn should_report_how_many_objects_a_cluster_stands_for_when_the_view_budget_is_e
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface — delivered and green when this suite runs serially (`--test-threads=1`); the test compares a cluster's member count taken from one `ono` run against the nodes a second run draws, and every sibling test in this binary spawns and reaps twelve processes between the two, so the collection it counts is a different size each time. Un-ignored by the increment that gives the fixture a process set only it can change"]
 fn should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded() {
     // §8.3: "An interactive cluster MUST be expandable without changing the underlying current
     // place". Expansion is a view action; `enter` is navigation, and this is not `enter`.
     let _children = Children::spawn(12);
+    // The collapsed map and the expanded one must describe one observation: the processes
+    // collection churns, and a cluster's member count is only comparable with the nodes that
+    // stood behind *that* count. `maps_at` takes both from one run; the cluster id is read from
+    // a probe first, because the second command needs it (ADR-0183).
     let collapsed = map_at(AT_PROCESSES, "");
     let expandable = clusters(&collapsed)
         .iter()
@@ -749,7 +818,13 @@ fn should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expande
     let cluster_id = text(&cluster, "id", "§22");
     let members = cluster["members"].as_i64().expect("a member count");
 
-    let expanded = map_at(AT_PROCESSES, &format!("--expand {cluster_id}"));
+    let both = maps_at(AT_PROCESSES, &["", &format!("--expand {cluster_id}")]);
+    let (collapsed, expanded) = (both[0].clone(), both[1].clone());
+    let members = clusters(&collapsed)
+        .iter()
+        .find(|candidate| text(candidate, "id", "§22") == cluster_id)
+        .and_then(|candidate| candidate["members"].as_i64())
+        .unwrap_or(members);
 
     let appeared: BTreeSet<String> = ids(nodes(&expanded))
         .difference(&ids(nodes(&collapsed)))
