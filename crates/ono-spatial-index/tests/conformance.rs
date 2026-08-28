@@ -246,7 +246,7 @@ fn should_report_a_denied_group_as_denied_rather_than_as_an_empty_one() {
     let groups = index.relation_summary(&process_id, 10, NOW);
     let files = groups
         .iter()
-        .find(|group| group.label() == "file")
+        .find(|group| group.label() == "files")
         .expect("a process place has a `file` exit whether or not it could be read");
 
     assert_eq!(files.state(), PermissionState::PermissionDenied);

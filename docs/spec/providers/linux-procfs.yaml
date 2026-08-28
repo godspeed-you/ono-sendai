@@ -25,7 +25,7 @@ providers:
         - process.opened_file
         - service.controls_process
         - container.contains_process
-        - user.owns_process
+        - process.run_by_user
       freshness: on_demand
       events: true
       permissions: [available, empty, permission_denied]
@@ -68,7 +68,7 @@ providers:
         User: [identity.users]
         Group: [identity.groups]
       relationships:
-        - user.owns_process
+        - process.run_by_user
         - user.owns_file
         - user.member_of_group
       freshness: on_demand

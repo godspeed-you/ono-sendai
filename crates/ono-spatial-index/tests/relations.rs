@@ -168,7 +168,7 @@ fn should_link_a_service_to_the_process_it_controls_and_the_user_that_owns_it() 
         ]
     );
     assert_eq!(
-        along(&index, &process_id, "user.owns_process"),
+        along(&index, &process_id, "process.run_by_user"),
         vec![
             bridge
                 .resolve(SpatialType::User, "33")

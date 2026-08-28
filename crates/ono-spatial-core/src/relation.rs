@@ -323,6 +323,12 @@ pub struct RelationSpec {
     pub canonical_label: &'static str,
     /// The word `follow` takes to traverse from target back to source.
     pub inverse_label: &'static str,
+    /// The word `look` prints for this exit at the source end — §12's `children`, `files`,
+    /// `sockets`. `follow` and `enter` take it too, so the word a place shows is a word a user
+    /// can type (§24.2).
+    pub canonical_group: &'static str,
+    /// The same at the target end — a socket's `owner`, a file's `openers`.
+    pub inverse_group: &'static str,
     /// What confidence the relation's edges may carry.
     pub confidence: ConfidenceClaim,
     /// What answering the relation costs.
@@ -344,9 +350,50 @@ impl RelationSpec {
     /// `parent` and `children` as separate exits of one process place, and they are the two ends
     /// of `process.parent_of`.
     pub fn labels_from(&self, from: SpatialType) -> impl Iterator<Item = &'static str> {
-        let canonical = (from == self.source).then_some(self.canonical_label);
-        let inverse = (from == self.target).then_some(self.inverse_label);
+        // `is_a` rather than equality: §14.3 and §14.4 make a listener and a connection two kinds
+        // of socket, and a relation declared to reach a `Socket` reaches both. A specialisation
+        // that lost its family's exits would be a place with no way out (§2.17).
+        let canonical = from.is_a(self.source).then_some(self.canonical_label);
+        let inverse = from.is_a(self.target).then_some(self.inverse_label);
         canonical.into_iter().chain(inverse)
+    }
+
+    /// The words `look` prints for this relation's exits at `from` — §12's own vocabulary.
+    ///
+    /// The same shape as [`RelationSpec::labels_from`], and for the same reason: a relation
+    /// between two objects of one type is two exits of the same place.
+    pub fn groups_from(&self, from: SpatialType) -> impl Iterator<Item = &'static str> {
+        let canonical = from.is_a(self.source).then_some(self.canonical_group);
+        let inverse = from.is_a(self.target).then_some(self.inverse_group);
+        canonical.into_iter().chain(inverse)
+    }
+
+    /// The exit `word` names at `from`, as `look` prints it.
+    ///
+    /// A relation between two objects of one type has two exits, and the word decides which:
+    /// `follow parent` and `follow children` are opposite directions of `process.parent_of`.
+    #[must_use]
+    pub fn group_for(&self, from: SpatialType, word: &str) -> Option<&'static str> {
+        if from.is_a(self.source) && (word == self.canonical_label || word == self.canonical_group)
+        {
+            return Some(self.canonical_group);
+        }
+        if from.is_a(self.target) && (word == self.inverse_label || word == self.inverse_group) {
+            return Some(self.inverse_group);
+        }
+        None
+    }
+
+    /// Every word a user may type to traverse this relation from `from`: the `follow` label and
+    /// the group `look` printed (§6.4, §24.2).
+    pub fn words_from(&self, from: SpatialType) -> impl Iterator<Item = &'static str> {
+        let mut words: Vec<&'static str> = self.labels_from(from).collect();
+        for group in self.groups_from(from) {
+            if !words.contains(&group) {
+                words.push(group);
+            }
+        }
+        words.into_iter()
     }
 
     /// The type a user reaches by following this relation from `from`, or `None` when the
@@ -372,6 +419,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "child",
         inverse_label: "parent",
+        canonical_group: "children",
+        inverse_group: "parent",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Cheap,
     },
@@ -382,6 +431,11 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "socket",
         inverse_label: "owner",
+        canonical_group: "sockets",
+        // §14.3 names the exit at the socket end "owner process/service", and §44.2 walks it as
+        // `follow process`. Both words reach it: the label is what the edge is called, the group
+        // is what a socket place prints.
+        inverse_group: "process",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Normal,
     },
@@ -392,6 +446,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "file",
         inverse_label: "opener",
+        canonical_group: "files",
+        inverse_group: "openers",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Expensive,
     },
@@ -402,6 +458,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "cgroup",
         inverse_label: "process",
+        canonical_group: "cgroup",
+        inverse_group: "processes",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Cheap,
     },
@@ -412,6 +470,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "namespace",
         inverse_label: "member",
+        canonical_group: "namespaces",
+        inverse_group: "members",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Cheap,
     },
@@ -422,6 +482,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "endpoint",
         inverse_label: "client",
+        canonical_group: "endpoints",
+        inverse_group: "clients",
         confidence: ConfidenceClaim::ProviderDeclared,
         cost_class: CostClass::Normal,
     },
@@ -432,8 +494,25 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "process",
         inverse_label: "service",
+        canonical_group: "processes",
+        inverse_group: "service",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Cheap,
+    },
+    RelationSpec {
+        // §13 lists a service's control group among its exits. No provider states it yet, which
+        // is why the exit answers `unsupported` rather than empty — the relation exists so the
+        // place can say that (§2.17, §35.2).
+        id: "service.in_cgroup",
+        source: SpatialType::Service,
+        target: SpatialType::Cgroup,
+        direction: Direction::Outbound,
+        canonical_label: "cgroup",
+        inverse_label: "service",
+        canonical_group: "cgroup",
+        inverse_group: "services",
+        confidence: ConfidenceClaim::ProviderDeclared,
+        cost_class: CostClass::Normal,
     },
     RelationSpec {
         id: "service.depends_on",
@@ -442,6 +521,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "dependency",
         inverse_label: "dependent",
+        canonical_group: "dependencies",
+        inverse_group: "dependents",
         confidence: ConfidenceClaim::ProviderDeclared,
         cost_class: CostClass::Normal,
     },
@@ -452,6 +533,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "process",
         inverse_label: "container",
+        canonical_group: "processes",
+        inverse_group: "container",
         // The kernel does not report container membership. A runtime that lists its own
         // processes observes it; the container id in `/proc/<pid>/cgroup` is strong evidence
         // and not an observation, so the claim is the provider's per edge (§11.5, ADR-0135).
@@ -465,6 +548,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Bidirectional,
         canonical_label: "peer",
         inverse_label: "peer",
+        canonical_group: "peer",
+        inverse_group: "peer",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Normal,
     },
@@ -475,7 +560,12 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "connection",
         inverse_label: "listener",
-        confidence: ConfidenceClaim::Fixed(Confidence::Exact),
+        canonical_group: "connections",
+        inverse_group: "listener",
+        // The kernel reports two sockets sharing a local endpoint; it never reports that one
+        // accepted the other. That join is evidence, not an observation, so the claim is the
+        // provider's and `exact` is not automatic (§11.5, ADR-0147).
+        confidence: ConfidenceClaim::ProviderDeclared,
         cost_class: CostClass::Normal,
     },
     RelationSpec {
@@ -485,6 +575,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "address",
         inverse_label: "interface",
+        canonical_group: "addresses",
+        inverse_group: "interface",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Cheap,
     },
@@ -495,6 +587,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "interface",
         inverse_label: "route",
+        canonical_group: "interface",
+        inverse_group: "routes",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Cheap,
     },
@@ -505,6 +599,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "mount",
         inverse_label: "filesystem",
+        canonical_group: "mounts",
+        inverse_group: "filesystem",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Cheap,
     },
@@ -515,6 +611,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "directory",
         inverse_label: "mount",
+        canonical_group: "directory",
+        inverse_group: "mount",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Cheap,
     },
@@ -525,16 +623,23 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "filesystem",
         inverse_label: "device",
+        canonical_group: "filesystems",
+        inverse_group: "device",
         confidence: ConfidenceClaim::ProviderDeclared,
         cost_class: CostClass::Normal,
     },
     RelationSpec {
-        id: "user.owns_process",
-        source: SpatialType::User,
-        target: SpatialType::Process,
+        // The relation runs from the process, because that is the end a user stands at when they
+        // ask whose process this is: §12 lists `user` among a process's exits, and §41.2 makes
+        // the canonical label the word `look` prints there (ADR-0147).
+        id: "process.run_by_user",
+        source: SpatialType::Process,
+        target: SpatialType::User,
         direction: Direction::Outbound,
-        canonical_label: "process",
-        inverse_label: "user",
+        canonical_label: "user",
+        inverse_label: "process",
+        canonical_group: "user",
+        inverse_group: "processes",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Normal,
     },
@@ -545,6 +650,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "file",
         inverse_label: "owner",
+        canonical_group: "files",
+        inverse_group: "owner",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Expensive,
     },
@@ -555,6 +662,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Outbound,
         canonical_label: "group",
         inverse_label: "member",
+        canonical_group: "groups",
+        inverse_group: "members",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Cheap,
     },
@@ -565,6 +674,8 @@ pub const RELATIONS: &[RelationSpec] = &[
         direction: Direction::Bidirectional,
         canonical_label: "host",
         inverse_label: "host",
+        canonical_group: "hosts",
+        inverse_group: "hosts",
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Remote,
     },
@@ -589,7 +700,7 @@ pub fn exits_from(
 ) -> impl Iterator<Item = (&'static str, &'static RelationSpec)> {
     RELATIONS.iter().flat_map(move |relation| {
         relation
-            .labels_from(from)
+            .groups_from(from)
             .map(move |label| (label, relation))
     })
 }
@@ -604,7 +715,7 @@ pub fn exits_from(
 pub fn resolve_label(from: SpatialType, label: &str) -> Vec<&'static RelationSpec> {
     RELATIONS
         .iter()
-        .filter(|relation| relation.labels_from(from).any(|declared| declared == label))
+        .filter(|relation| relation.words_from(from).any(|declared| declared == label))
         .collect()
 }
 
@@ -613,7 +724,14 @@ pub fn resolve_label(from: SpatialType, label: &str) -> Vec<&'static RelationSpe
 pub fn labels() -> Vec<&'static str> {
     let mut labels: Vec<&'static str> = RELATIONS
         .iter()
-        .flat_map(|relation| [relation.canonical_label, relation.inverse_label])
+        .flat_map(|relation| {
+            [
+                relation.canonical_label,
+                relation.inverse_label,
+                relation.canonical_group,
+                relation.inverse_group,
+            ]
+        })
         .collect();
     labels.sort_unstable();
     labels.dedup();

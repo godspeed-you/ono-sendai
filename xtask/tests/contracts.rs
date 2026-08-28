@@ -346,7 +346,7 @@ fn spatial(repo: &Scratch) {
     );
     repo.write(
         "docs/spec/spatial/relations.yaml",
-        "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Socket\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    confidence: exact\n    cost_class: cheap\n",
+        "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Socket\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    canonical_group: sockets\n    inverse_group: process\n    confidence: exact\n    cost_class: cheap\n",
     );
     let reasons = [
         "high_cpu",
@@ -440,7 +440,7 @@ fn should_reject_a_space_or_relation_naming_a_type_the_vocabulary_does_not_hold(
     spatial(&repo);
     repo.write(
         "docs/spec/spatial/relations.yaml",
-        "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Unicorn\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    confidence: exact\n    cost_class: cheap\n",
+        "version: 1\nrelations:\n  - id: process.owns_socket\n    source: Process\n    target: Unicorn\n    direction: outbound\n    canonical_label: socket\n    inverse_label: owner\n    canonical_group: sockets\n    inverse_group: process\n    confidence: exact\n    cost_class: cheap\n",
     );
     assert!(
         spatial_problems(&repo)

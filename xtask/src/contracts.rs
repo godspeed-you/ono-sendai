@@ -1059,7 +1059,7 @@ fn check_relation_table(location: &str, document: &Yaml) -> Vec<Problem> {
         let Some(implemented) = implemented.get(id.as_str()) else {
             continue;
         };
-        let fields: [(&str, String, String); 7] = [
+        let fields: [(&str, String, String); 9] = [
             (
                 "source",
                 string_at(relation, "source").unwrap_or_default(),
@@ -1084,6 +1084,16 @@ fn check_relation_table(location: &str, document: &Yaml) -> Vec<Problem> {
                 "inverse_label",
                 string_at(relation, "inverse_label").unwrap_or_default(),
                 implemented.inverse_label.to_owned(),
+            ),
+            (
+                "canonical_group",
+                string_at(relation, "canonical_group").unwrap_or_default(),
+                implemented.canonical_group.to_owned(),
+            ),
+            (
+                "inverse_group",
+                string_at(relation, "inverse_group").unwrap_or_default(),
+                implemented.inverse_group.to_owned(),
             ),
             (
                 "confidence",
@@ -1283,6 +1293,8 @@ fn check_relations(
             "direction",
             "canonical_label",
             "inverse_label",
+            "canonical_group",
+            "inverse_group",
             "confidence",
         ] {
             if relation.get(required).is_none_or(Yaml::is_null) {

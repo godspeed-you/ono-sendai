@@ -155,6 +155,21 @@ fn reference_keys(object_type: SpatialType, record: &RecordValue) -> Vec<String>
     }
     match object_type {
         SpatialType::Interface => keys.extend(text(record.get("index"))),
+        // §14.3 and §14.4: a connection names the listener it was accepted by through the local
+        // endpoint they share, and nothing else in the kernel's socket table joins the two. The
+        // key is namespaced so it can only ever be matched by that join.
+        SpatialType::Listener => {
+            if let Some(endpoint) = endpoint_name(record, "local") {
+                keys.push(format!("listener@{endpoint}"));
+                if let Some(port) = endpoint.rsplit(':').next()
+                    && endpoint
+                        .strip_suffix(&format!(":{port}"))
+                        .is_some_and(is_wildcard)
+                {
+                    keys.push(format!("listener@*:{port}"));
+                }
+            }
+        }
         SpatialType::Container => {
             if let Some(id) = keys.first().cloned()
                 && id.len() > 12
@@ -392,6 +407,9 @@ impl ProviderBridge {
             }
             for key in reference_keys(object_type, record) {
                 self.keys.insert((object_type, key), id.clone());
+            }
+            for alias in aliases_from(object_type, record) {
+                index.add_alias(&id, &alias);
             }
             let asserted = facts_of(&id, object_type, record);
             facts.extend(asserted.facts);
@@ -664,8 +682,8 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> A
                 "user",
                 "user",
                 SpatialType::User,
-                "user.owns_process",
-                false,
+                "process.run_by_user",
+                true,
             );
             // Where the provider states the container outright, this half is an observation.
             reader.relate(
@@ -675,7 +693,7 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> A
                 "container.contains_process",
                 false,
             );
-            if !reader.refused("pid_namespace", "namespace")
+            if !reader.refused("pid_namespace", "namespaces")
                 && let Some(key) = text(record.get("pid_namespace"))
             {
                 reader.push(
@@ -722,7 +740,7 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> A
                     );
                 }
             }
-            if !reader.refused("open_files", "file") {
+            if !reader.refused("open_files", "files") {
                 for path in list_of(record, "open_files") {
                     reader.push(
                         "process.opened_file",
@@ -745,6 +763,31 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> A
                 "process.owns_socket",
                 false,
             );
+            // §14.4: an established socket whose local endpoint is a listening socket's is the
+            // connection that listener accepted. The kernel states both sockets and never states
+            // the acceptance, so the edge is `strong` with the shared endpoint as its evidence
+            // (§11.5) — never `exact`, which would claim an observation nobody made.
+            if object_type == SpatialType::Connection
+                && let Some(local) = endpoint_name(record, "local")
+            {
+                let port = local.rsplit(':').next().unwrap_or_default().to_owned();
+                let mut keys = vec![format!("listener@{local}")];
+                if !port.is_empty() {
+                    keys.push(format!("listener@*:{port}"));
+                }
+                for key in keys {
+                    reader.push(
+                        "socket.accepts_connection",
+                        false,
+                        FarEnd::Known {
+                            object_type: SpatialType::Listener,
+                            key,
+                        },
+                        Confidence::Strong,
+                        vec![("evidence", Value::string(&local))],
+                    );
+                }
+            }
             if !reader.refused("remote", "peer")
                 && let Some(peer) = endpoint_name(record, "remote")
             {
@@ -766,7 +809,7 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> A
             reader.relate("owner", "owner", SpatialType::User, "user.owns_file", false);
         }
         SpatialType::Filesystem => {
-            if !reader.refused("target", "mount")
+            if !reader.refused("target", "mounts")
                 && let Some(target) = text(record.get("target"))
             {
                 reader.push(
@@ -834,7 +877,7 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> A
         SpatialType::User => {
             reader.relate(
                 "primary_group",
-                "group",
+                "groups",
                 SpatialType::Group,
                 "user.member_of_group",
                 true,
@@ -843,6 +886,55 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> A
         _ => {}
     }
     reader.out
+}
+
+/// The other names a record answers to, beyond the ones [`ono_spatial_core::aliases_of`] derives
+/// from the object itself (§27.1's "exact", §33.1's "display names and aliases").
+///
+/// Every one of them is a name the provider already stated. The kernel truncates a process's
+/// `comm` to fifteen characters, so `ono-spatial-twin` is `ono-spatial-twi` there and the name a
+/// user types is in the command line instead; a socket is called by its endpoint or its bare
+/// port; a file answers to its path and to its base name.
+fn aliases_from(object_type: SpatialType, record: &RecordValue) -> Vec<String> {
+    let mut aliases = Vec::new();
+    match object_type {
+        SpatialType::Process => {
+            if let Some(Value::List(command)) = record.get("command")
+                && let Some(program) = command.first().and_then(|value| text(Some(value)))
+            {
+                aliases.push(base_name(&program));
+            }
+            if let Some(executable) = text(record.get("executable")) {
+                aliases.push(base_name(&executable));
+            }
+        }
+        SpatialType::Socket | SpatialType::Listener | SpatialType::Connection => {
+            if let Some(local) = endpoint_name(record, "local") {
+                if let Some(port) = local.rsplit(':').next()
+                    && port.chars().all(|character| character.is_ascii_digit())
+                    && !port.is_empty()
+                {
+                    aliases.push(port.to_owned());
+                    aliases.push(format!(":{port}"));
+                }
+                aliases.push(local);
+            }
+        }
+        SpatialType::File | SpatialType::Directory => {
+            if let Some(path) = text(record.get("path")) {
+                aliases.push(base_name(&path));
+                aliases.push(path);
+            }
+        }
+        _ => {}
+    }
+    aliases.retain(|alias| !alias.is_empty());
+    aliases
+}
+
+/// The last segment of a path, or the whole text where it has none.
+fn base_name(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_owned()
 }
 
 /// The elements of a list field, as text.
@@ -868,6 +960,11 @@ fn endpoint_name(record: &RecordValue, field: &str) -> Option<String> {
         Some(port) => format!("{address}:{port}"),
         None => address,
     })
+}
+
+/// Whether an address is the kernel's "any address" for its family (§14.3).
+fn is_wildcard(address: &str) -> bool {
+    matches!(address, "0.0.0.0" | "::" | "*" | "")
 }
 
 /// The container runtime id a control-group path names, where it names one (§16.1).

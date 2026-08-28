@@ -319,9 +319,9 @@ fn should_show_every_declared_exit_even_when_it_has_no_neighbour() {
         .collect();
     for wanted in [
         "service",
-        "socket",
+        "sockets",
         "cgroup",
-        "namespace",
+        "namespaces",
         "user",
         "container",
     ] {
@@ -349,7 +349,7 @@ fn should_offer_an_expensive_relation_as_a_discoverable_but_unloaded_exit() {
     let groups = index.relation_summary(worker.spatial_id(), 10, at(1));
     let files = groups
         .iter()
-        .find(|group| group.label() == "file")
+        .find(|group| group.label() == "files")
         .expect("the open-files exit");
     assert_eq!(files.state(), PermissionState::Unknown);
     assert_eq!(files.detail(), Some("available on request"));
@@ -375,7 +375,7 @@ fn should_count_the_neighbours_a_budget_hides_rather_than_dropping_them_silently
     let groups = index.relation_summary(nginx.spatial_id(), 2, at(1));
     let processes = groups
         .iter()
-        .find(|group| group.label() == "process")
+        .find(|group| group.label() == "processes")
         .expect("the processes exit");
     assert_eq!(processes.members().len(), 2);
     assert_eq!(processes.total(), Some(5));
@@ -395,7 +395,7 @@ fn should_never_summarise_an_edge_whose_other_end_the_index_does_not_hold() {
     let groups = index.relation_summary(nginx.spatial_id(), 10, at(1));
     let processes = groups
         .iter()
-        .find(|group| group.label() == "process")
+        .find(|group| group.label() == "processes")
         .expect("the processes exit");
     assert!(
         processes.members().is_empty(),

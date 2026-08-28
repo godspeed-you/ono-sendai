@@ -18,6 +18,10 @@
 #                    ends of one edge, which is what makes the graph readable in both directions.
 #                    Labels are unique per source type, not globally: `follow process` means the
 #                    obvious thing from a service, a user and a container alike.
+# `canonical_group`  the word `look` prints for this exit at the `source` end — §12's `children`,
+#                    `files`, `sockets`. It is a word `follow` and `enter` take as well, so a
+#                    place never shows an exit a user cannot type (§24.2, ADR-0147).
+# `inverse_group`    the same at the `target` end — a socket's `owner`, a file's `openers`.
 # `confidence`       the §11.5 vocabulary — exact | strong | inferred | user_declared | unknown —
 #                    or §41.2's own `exact_or_provider_declared`, which says the edge is exact
 #                    when the provider observed it and carries the provider's own claim
@@ -35,6 +39,8 @@ relations:
     direction: outbound
     canonical_label: child
     inverse_label: parent
+    canonical_group: children
+    inverse_group: parent
     confidence: exact
     cost_class: cheap
     doc: The process tree, from `/proc/<pid>/stat` (§3.5, §12).
@@ -45,6 +51,8 @@ relations:
     direction: outbound
     canonical_label: socket
     inverse_label: owner
+    canonical_group: sockets
+    inverse_group: process
     confidence: exact
     cost_class: normal
     doc: >-
@@ -57,6 +65,8 @@ relations:
     direction: outbound
     canonical_label: file
     inverse_label: opener
+    canonical_group: files
+    inverse_group: openers
     confidence: exact
     cost_class: expensive
     doc: >-
@@ -69,6 +79,8 @@ relations:
     direction: outbound
     canonical_label: cgroup
     inverse_label: process
+    canonical_group: cgroup
+    inverse_group: processes
     confidence: exact
     cost_class: cheap
     doc: The cgroup the process is accounted to (§3.5, §16.3).
@@ -79,6 +91,8 @@ relations:
     direction: outbound
     canonical_label: namespace
     inverse_label: member
+    canonical_group: namespaces
+    inverse_group: members
     confidence: exact
     cost_class: cheap
     doc: >-
@@ -91,6 +105,8 @@ relations:
     direction: outbound
     canonical_label: endpoint
     inverse_label: client
+    canonical_group: endpoints
+    inverse_group: clients
     confidence: exact_or_provider_declared
     cost_class: normal
     doc: >-
@@ -104,11 +120,28 @@ relations:
     direction: outbound
     canonical_label: process
     inverse_label: service
+    canonical_group: processes
+    inverse_group: service
     confidence: exact
     cost_class: cheap
     doc: >-
       The processes a service manager unit currently controls (§3.5, §13). The service place is
       stable across a restart; the processes are not (§10.2).
+
+  - id: service.in_cgroup
+    source: Service
+    target: Cgroup
+    direction: outbound
+    canonical_label: cgroup
+    inverse_label: service
+    canonical_group: cgroup
+    inverse_group: services
+    confidence: exact_or_provider_declared
+    cost_class: normal
+    doc: >-
+      The control group a service manager places its unit in (§13's `resource/cgroup`). No
+      installed provider states it, so the exit answers `unsupported` rather than empty — which
+      is the difference §35.2 exists to keep.
 
   - id: service.depends_on
     source: Service
@@ -116,6 +149,8 @@ relations:
     direction: outbound
     canonical_label: dependency
     inverse_label: dependent
+    canonical_group: dependencies
+    inverse_group: dependents
     confidence: exact_or_provider_declared
     cost_class: normal
     doc: >-
@@ -128,6 +163,8 @@ relations:
     direction: outbound
     canonical_label: process
     inverse_label: container
+    canonical_group: processes
+    inverse_group: container
     confidence: exact_or_provider_declared
     cost_class: normal
     doc: >-
@@ -142,6 +179,8 @@ relations:
     direction: bidirectional
     canonical_label: peer
     inverse_label: peer
+    canonical_group: peer
+    inverse_group: peer
     confidence: exact
     cost_class: normal
     doc: >-
@@ -154,7 +193,9 @@ relations:
     direction: outbound
     canonical_label: connection
     inverse_label: listener
-    confidence: exact
+    canonical_group: connections
+    inverse_group: listener
+    confidence: exact_or_provider_declared
     cost_class: normal
     doc: A connection a listening socket accepted (§11.2, §14.3).
 
@@ -164,6 +205,8 @@ relations:
     direction: outbound
     canonical_label: address
     inverse_label: interface
+    canonical_group: addresses
+    inverse_group: interface
     confidence: exact
     cost_class: cheap
     doc: An address configured on the interface (§14.1, §14.2).
@@ -174,6 +217,8 @@ relations:
     direction: outbound
     canonical_label: interface
     inverse_label: route
+    canonical_group: interface
+    inverse_group: routes
     confidence: exact
     cost_class: cheap
     doc: The interface a route sends through (§14.1).
@@ -185,6 +230,8 @@ relations:
     direction: outbound
     canonical_label: mount
     inverse_label: filesystem
+    canonical_group: mounts
+    inverse_group: filesystem
     confidence: exact
     cost_class: cheap
     doc: Where a filesystem is mounted; a filesystem may be mounted more than once (§15.2).
@@ -195,6 +242,8 @@ relations:
     direction: outbound
     canonical_label: directory
     inverse_label: mount
+    canonical_group: directory
+    inverse_group: mount
     confidence: exact
     cost_class: cheap
     doc: >-
@@ -207,17 +256,21 @@ relations:
     direction: outbound
     canonical_label: filesystem
     inverse_label: device
+    canonical_group: filesystems
+    inverse_group: device
     confidence: exact_or_provider_declared
     cost_class: normal
     doc: The block device a filesystem lives on, where the provider can identify one (§15.2).
 
   # --- identity --------------------------------------------------------------------------------
-  - id: user.owns_process
-    source: User
-    target: Process
+  - id: process.run_by_user
+    source: Process
+    target: User
     direction: outbound
-    canonical_label: process
-    inverse_label: user
+    canonical_label: user
+    inverse_label: process
+    canonical_group: user
+    inverse_group: processes
     confidence: exact
     cost_class: normal
     doc: A process running as this user (§3.5, §17).
@@ -228,6 +281,8 @@ relations:
     direction: outbound
     canonical_label: file
     inverse_label: owner
+    canonical_group: files
+    inverse_group: owner
     confidence: exact
     cost_class: expensive
     doc: >-
@@ -240,6 +295,8 @@ relations:
     direction: outbound
     canonical_label: group
     inverse_label: member
+    canonical_group: groups
+    inverse_group: members
     confidence: exact
     cost_class: cheap
     doc: Group membership, through NSS (§17).
@@ -251,6 +308,8 @@ relations:
     direction: bidirectional
     canonical_label: host
     inverse_label: host
+    canonical_group: hosts
+    inverse_group: hosts
     confidence: exact
     cost_class: remote
     doc: >-

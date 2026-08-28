@@ -234,14 +234,17 @@ impl SpatialIndex {
             let Some(entry) = self.entries.get_mut(&end) else {
                 continue;
             };
-            if entry
+            // §33.2 makes the providers authoritative and the index a cache, so a later
+            // observation of the same edge replaces the earlier one rather than being dropped:
+            // the assertion is the same, and its provenance and observation time are newer.
+            match entry
                 .edges
                 .iter()
-                .any(|known| known.edge_id() == edge.edge_id())
+                .position(|known| known.edge_id() == edge.edge_id())
             {
-                continue;
+                Some(position) => entry.edges[position] = edge.clone(),
+                None => entry.edges.push(edge.clone()),
             }
-            entry.edges.push(edge.clone());
             let object_type = entry.object.object_type();
             entry.canonical_parent =
                 canonical_parent_with(&end, object_type, &entry.edges, entry.path_parent.as_ref());
@@ -488,10 +491,14 @@ impl SpatialIndex {
                 );
                 continue;
             }
+            // The label decides the direction, not only the relation: `process.parent_of` is one
+            // relation with two exits, and a process's `children` are the edges it is the source
+            // of while its `parent` is the one edge it is the target of (§12).
             let members: Vec<SpatialId> = entry
                 .edges
                 .iter()
                 .filter(|edge| edge.relation().as_str() == spec.id)
+                .filter(|edge| edge.group_from(id) == Some(label))
                 .filter_map(|edge| edge.other_end(id).cloned())
                 .filter(|end| self.entries.contains_key(end))
                 .collect();

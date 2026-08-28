@@ -197,7 +197,7 @@ fn should_resolve_a_label_by_the_type_the_user_is_standing_on() {
     // obvious thing from a service, a user and a container alike.
     for (from, expected) in [
         (SpatialType::Service, "service.controls_process"),
-        (SpatialType::User, "user.owns_process"),
+        (SpatialType::User, "process.run_by_user"),
         (SpatialType::Container, "container.contains_process"),
     ] {
         let found = relation::resolve_label(from, "process");
@@ -222,13 +222,13 @@ fn should_offer_a_process_the_exits_the_specification_names() {
         .collect();
     for wanted in [
         "parent",
-        "child",
+        "children",
         "service",
         "user",
         "cgroup",
-        "namespace",
-        "file",
-        "socket",
+        "namespaces",
+        "files",
+        "sockets",
         "container",
     ] {
         assert!(

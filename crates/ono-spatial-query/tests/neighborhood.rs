@@ -84,8 +84,8 @@ fn should_bound_the_projection_and_count_what_it_hid_when_a_place_has_many_neigh
         "a process's `file` exit is expensive and stays unloaded until it is asked for, so the \
          projection is not complete either (§3.6, §32.2)"
     );
-    assert_eq!(group(&bounded, "socket").total(), Some(30));
-    assert!(group(&bounded, "socket").members().len() < 30);
+    assert_eq!(group(&bounded, "sockets").total(), Some(30));
+    assert!(group(&bounded, "sockets").members().len() < 30);
     assert_eq!(bounded.center(), &center);
     assert_eq!(bounded.generated_at(), NOW);
 }
@@ -106,7 +106,7 @@ fn should_show_every_neighbor_and_hide_nothing_when_all_is_asked_for() {
         0,
         "`--all` hides no known neighbour"
     );
-    assert_eq!(group(&complete, "socket").members().len(), 30);
+    assert_eq!(group(&complete, "sockets").members().len(), 30);
 }
 
 #[test]
@@ -120,8 +120,8 @@ fn should_answer_exactly_the_requested_number_of_neighbors_when_a_limit_is_given
         &PinRegistry::new(),
         NOW,
     );
-    assert_eq!(group(&limited, "socket").members().len(), 3);
-    assert_eq!(group(&limited, "socket").total(), Some(30));
+    assert_eq!(group(&limited, "sockets").members().len(), 3);
+    assert_eq!(group(&limited, "sockets").total(), Some(30));
     assert_eq!(limited.hidden_count(), 27);
 }
 
@@ -141,7 +141,7 @@ fn should_keep_one_exit_only_when_a_relation_is_named() {
             .iter()
             .map(ono_spatial_core::NeighborhoodGroup::label)
             .collect::<Vec<_>>(),
-        vec!["socket"]
+        vec!["sockets"]
     );
 }
 
@@ -176,7 +176,7 @@ fn should_report_a_refused_exit_as_its_state_rather_than_as_a_count() {
     let (mut index, center) = process_with_sockets(2);
     assert!(index.record_withheld(
         &center,
-        "file",
+        "files",
         PermissionState::PermissionDenied,
         "permission denied for 14 process FDs",
     ));
@@ -187,7 +187,7 @@ fn should_report_a_refused_exit_as_its_state_rather_than_as_a_count() {
         &PinRegistry::new(),
         NOW,
     );
-    let files = group(&view, "file");
+    let files = group(&view, "files");
     assert_eq!(files.state(), PermissionState::PermissionDenied);
     assert_eq!(files.total(), None, "a refusal has no count (§2.17)");
     assert_eq!(files.detail(), Some("permission denied for 14 process FDs"));
@@ -211,7 +211,7 @@ fn should_rank_a_pinned_neighbor_first_and_name_it_as_a_landmark() {
             &PinRegistry::new(),
             NOW,
         ),
-        "socket",
+        "sockets",
     )
     .members()
     .last()
@@ -229,7 +229,7 @@ fn should_rank_a_pinned_neighbor_first_and_name_it_as_a_landmark() {
     ));
     let pinned = neighborhood_of(&index, &center, &NeighborhoodRequest::new(), &pins, NOW);
     assert_eq!(
-        group(&pinned, "socket").members().first(),
+        group(&pinned, "sockets").members().first(),
         Some(&last),
         "the pinned socket is ranked first"
     );
@@ -282,9 +282,9 @@ fn should_drop_a_neighbor_older_than_the_change_window_when_changes_are_asked_fo
         later,
     );
     assert_eq!(
-        group(&changed, "socket").members().len(),
+        group(&changed, "sockets").members().len(),
         0,
         "nothing was observed inside the window"
     );
-    assert_eq!(group(&changed, "socket").total(), Some(0));
+    assert_eq!(group(&changed, "sockets").total(), Some(0));
 }

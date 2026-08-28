@@ -328,6 +328,19 @@ impl RelationshipEdge {
         }
     }
 
+    /// The word `look` prints for this edge's exit, seen from `at` (§12, §24.2).
+    #[must_use]
+    pub fn group_from(&self, at: &SpatialId) -> Option<&'static str> {
+        let spec = self.relation.spec();
+        if at == &self.source {
+            Some(spec.canonical_group)
+        } else if at == &self.target {
+            Some(spec.inverse_group)
+        } else {
+            None
+        }
+    }
+
     /// The other end of the edge, seen from `at`.
     #[must_use]
     pub fn other_end(&self, at: &SpatialId) -> Option<&SpatialId> {
