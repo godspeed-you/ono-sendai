@@ -198,6 +198,13 @@ impl MapRequest {
         self
     }
 
+    /// Whether this request expands a cluster — a §8.3 view action over a map the reader is
+    /// already looking at, rather than a new question about the system.
+    #[must_use]
+    pub fn expands(&self) -> bool {
+        !self.expand.is_empty()
+    }
+
     /// How many hierarchy hops to draw. Two by default: the current place, its canonical
     /// children and what lies behind them — §6.9's "canonical children and significant direct
     /// relationships within a bounded semantic horizon".

@@ -45,6 +45,11 @@ pub struct SpatialSessionState {
     /// graph expands and what §24.1's summary is read from — neither may be re-read behind the
     /// provider's back (§2.16).
     records: BTreeMap<SpatialId, Arc<RecordValue>>,
+    /// The observation the last map was drawn from, and the place it was centred on. §8.3 makes
+    /// expanding a cluster a *view* action: it draws what the cluster in front of the reader
+    /// stood for, so it projects this observation again rather than asking the system a second
+    /// time and answering about a different moment (ADR-0183).
+    last_map: Option<(SpatialId, ono_spatial_query::MapHorizon)>,
 }
 
 /// The view settings a session carries between commands (§46's `view_preferences`).
@@ -99,6 +104,7 @@ impl SpatialSessionState {
             preferences,
             thresholds,
             records: BTreeMap::new(),
+            last_map: None,
         }
     }
 
@@ -215,6 +221,20 @@ impl SpatialSessionState {
     #[must_use]
     pub fn pins(&self) -> &PinRegistry {
         &self.pins
+    }
+
+    /// Remembers the observation a map was drawn from, so §8.3's expansion can project it again.
+    pub fn remember_map(&mut self, center: SpatialId, horizon: ono_spatial_query::MapHorizon) {
+        self.last_map = Some((center, horizon));
+    }
+
+    /// The observation the last map of `center` was drawn from, if this session drew one.
+    #[must_use]
+    pub fn remembered_map(&self, center: &SpatialId) -> Option<&ono_spatial_query::MapHorizon> {
+        self.last_map
+            .as_ref()
+            .filter(|(drawn, _)| drawn == center)
+            .map(|(_, horizon)| horizon)
     }
 
     /// Replaces the pins with what the store holds, once per command that needs them (§46.1).
