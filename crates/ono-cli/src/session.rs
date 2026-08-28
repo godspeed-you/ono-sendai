@@ -256,7 +256,11 @@ impl Session {
     #[must_use]
     pub fn new(interactive: bool) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-        let env: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
+        let mut env: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
+        // v0.4 §30.4: "`PWD` remains the filesystem working directory." A shell started from a
+        // parent that never updated it would hand every external command a `PWD` that is not
+        // where they run, so the session states its own the moment it has one.
+        env.insert(OsString::from("PWD"), cwd.as_os_str().to_owned());
         let env_provider = std::sync::Arc::new(ono_provider_linux::EnvProvider::new(
             env.iter().map(|(name, value)| {
                 ono_provider_linux::EnvBinding::inherited(
