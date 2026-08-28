@@ -93,13 +93,19 @@ pub fn spatial_type_of(record: &RecordValue) -> Option<SpatialType> {
 
 /// Whether a socket record describes a connection rather than a listener (§14.3, §14.4).
 ///
-/// A socket in `listen` is a listener whatever else it carries. Otherwise the peer decides: a
-/// socket with an endpoint at the far end is one end of a connection, and one without — a bound
-/// UDP socket, a Unix socket nobody has connected to — is a place traffic arrives at, which is
-/// what §14.3 calls a listener.
+/// The kernel's own account comes first: a socket in `listen` is a listener, and a socket in any
+/// of the states a connection passes through is a connection, whatever else the record carries.
+/// For the protocols that have no state — UDP, a Unix datagram socket — the peer decides: one
+/// with an endpoint at the far end is one end of a connection, and one without is a place traffic
+/// arrives at, which is what §14.3 calls a listener.
 fn is_connected(record: &RecordValue) -> bool {
-    if text(record.get("state")).as_deref() == Some("listen") {
-        return false;
+    match text(record.get("state")).as_deref() {
+        Some("listen") => return false,
+        Some(
+            "established" | "syn-sent" | "syn-recv" | "fin-wait-1" | "fin-wait-2" | "time-wait"
+            | "close" | "close-wait" | "last-ack" | "closing",
+        ) => return true,
+        _ => {}
     }
     record
         .get("remote")

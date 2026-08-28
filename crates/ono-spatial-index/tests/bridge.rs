@@ -15,6 +15,8 @@
 mod common;
 
 use common::{bridge, index, record, socket_with};
+use std::collections::BTreeSet;
+
 use ono_spatial_core::SpatialType;
 use ono_spatial_index::{bridge::reference_key, spatial_type_of};
 use ono_value::Value;
@@ -343,5 +345,52 @@ fn should_read_a_reference_whether_it_arrives_as_a_record_or_as_the_bare_key() {
         reference_key(&Value::Null, SpatialType::Service),
         None,
         "null is a reference to nothing, never a reference to the empty name"
+    );
+}
+
+#[test]
+fn should_place_every_object_type_the_canonical_geography_serves() {
+    // §7 and §41.1: a collection space that declares a member type and a schema is a promise
+    // that records of that schema become places of that type. This holds the bridge's table to
+    // the geography, so a space cannot quietly become one nothing can fill.
+    let served: BTreeSet<SpatialType> = ono_spatial_core::spaces()
+        .iter()
+        .filter(|space| space.is_served() && space.schema.is_some())
+        .filter_map(|space| space.member_type)
+        .collect();
+
+    let placed: BTreeSet<SpatialType> = [
+        ("ono.process/1", &[("pid", Value::Int(1))][..]),
+        ("ono.service/1", &[]),
+        ("ono.job/1", &[]),
+        ("ono.container/1", &[]),
+        ("ono.socket/1", &[("state", Value::string("listen"))]),
+        ("ono.socket/1", &[("state", Value::string("established"))]),
+        ("ono.interface/1", &[]),
+        ("ono.interface-address/1", &[]),
+        ("ono.route/1", &[]),
+        ("ono.neighbor/1", &[]),
+        ("ono.namespace/1", &[]),
+        ("ono.filesystem/1", &[]),
+        ("ono.mount/1", &[]),
+        ("ono.device/1", &[("kind", Value::string("block"))]),
+        ("ono.device/1", &[("kind", Value::string("char"))]),
+        ("ono.file/1", &[("kind", Value::string("dir"))]),
+        ("ono.file/1", &[("kind", Value::string("file"))]),
+        ("ono.user/1", &[]),
+        ("ono.group/1", &[]),
+        ("ono.session/1", &[]),
+        ("ono.host/1", &[]),
+        ("ono.cgroup/1", &[]),
+    ]
+    .into_iter()
+    .filter_map(|(schema, fields)| spatial_type_of(&record(schema, fields)))
+    .collect();
+
+    let missing: Vec<&SpatialType> = served.difference(&placed).collect();
+    assert!(
+        missing.is_empty(),
+        "every member type a served space declares must be a place some record projects to; \
+         nothing projects to {missing:?}"
     );
 }
