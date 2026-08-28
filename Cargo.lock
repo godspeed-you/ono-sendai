@@ -934,6 +934,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ono-spatial-query"
+version = "0.3.0"
+dependencies = [
+ "jiff",
+ "ono-core",
+ "ono-provider-api",
+ "ono-spatial-core",
+ "ono-spatial-index",
+ "ono-testkit",
+ "ono-value",
+]
+
+[[package]]
 name = "ono-testkit"
 version = "0.3.0"
 dependencies = [

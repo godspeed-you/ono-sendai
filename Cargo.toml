@@ -38,6 +38,7 @@ ono-kuang-testhost = { path = "crates/ono-kuang-testhost", version = "0.3.0" }
 ono-model-broker = { path = "crates/ono-model-broker", version = "0.3.0" }
 ono-spatial-core = { path = "crates/ono-spatial-core", version = "0.3.0" }
 ono-spatial-index = { path = "crates/ono-spatial-index", version = "0.3.0" }
+ono-spatial-query = { path = "crates/ono-spatial-query", version = "0.3.0" }
 ono-testkit = { path = "crates/ono-testkit", version = "0.3.0" }
 
 # Third-party. Choices and rationale: ADR-0005.
