@@ -1136,7 +1136,9 @@ Green now, all previously `#[ignore]`d — 14 tests:
 
 Each of the eight late un-ignores was run twice on its own before the ignore was removed.
 
-**Still ignored across the nine suites at the end of S4 — 26 tests, none of them S4's:**
+**Still ignored across the nine spatial suites at this commit — 6 tests, none of them S4's**
+(S7's tombstones and S8's remote federation landed in the integration between S4d's work and its
+rebase, and un-ignored the rest):
 
 | Suite | Test | Owed by |
 |---|---|---|
@@ -1145,20 +1147,15 @@ Each of the eight late un-ignores was run twice on its own before the ignore was
 | contracts | `should_reconcile_an_adapted_object_with_its_native_twin_into_one_place` | S10 |
 | contracts | `should_never_let_raw_command_output_become_a_place` | S10 |
 | identity | `should_resolve_the_adapter_view_and_the_native_view_of_one_process_to_one_spatial_id` | S10 |
-| identity | `should_report_a_tombstone_rather_than_a_live_place_when_the_visited_process_has_exited` | S7 |
 | identity | `should_distinguish_a_tombstone_from_a_place_that_never_existed` | S7 |
-| identity | `should_refuse_to_traverse_a_relationship_when_the_place_is_a_tombstone` | S7 |
-| identity | `should_never_resolve_a_tombstoned_place_to_a_live_object` | S7 |
-| identity | `should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_dead_place` | S7 |
-| relationships | `should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes` | S7 |
-| remote | all 13 | S8 (one, `should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link`, is attemptable now) |
-| map | `should_show_more_than_the_default_when_the_map_is_asked_for_all` | S5/S11 (ADR-0165) |
-| map | `should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded` | S5/S11 (fixture) |
 
-Two of the S7-owned identity tombstone tests (`…refuse_to_traverse…`, `…never_resolve…`) already
-*pass* when run with `--ignored`, and two of the S9/S10 ones do too. They were left alone on
-purpose: a test that passes because the condition it describes cannot arise yet is not delivered,
-and S7/S9/S10 should be the increments that decide it.
+`spatial_storage_missing`, `spatial_navigation_missing`, `spatial_topology_missing`,
+`spatial_map_missing`, `spatial_relationships_missing`, `spatial_remote_missing` and
+`spatial_interactive_missing` carry no `#[ignore]` at all.
+
+Two of the S9/S10 tests pass when run with `--ignored`. They were left alone on purpose: a test
+that passes because the condition it describes cannot arise yet is not delivered, and S9/S10
+should be the increments that decide it.
 
 **Found, not fixed, and deliberately outside this increment:**
 
