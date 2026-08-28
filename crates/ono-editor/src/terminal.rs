@@ -81,6 +81,107 @@ pub fn terminal_size() -> io::Result<(usize, usize)> {
     Ok((columns as usize, rows as usize))
 }
 
+/// What the terminal reported: a key, or a new window size.
+///
+/// A line editor only ever needs the first; a full-screen view needs both, because §43.4 of the
+/// v0.4 specification requires a resize to preserve the place and the focus, which is only
+/// possible for a view that is told the size changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalEvent {
+    /// A key the editor or a view can act on.
+    Key(KeyPress),
+    /// The terminal is now this many columns by this many rows.
+    Resize(usize, usize),
+}
+
+/// Waits up to `patience` for the terminal to report something usable.
+///
+/// `Ok(None)` means the time ran out with nothing to report, which is how a live view gets to do
+/// its own work between key presses without a thread of its own.
+///
+/// # Errors
+///
+/// Fails when the terminal cannot be read.
+pub fn read_event_timeout(patience: std::time::Duration) -> io::Result<Option<TerminalEvent>> {
+    let deadline = std::time::Instant::now() + patience;
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if !event::poll(left)? {
+            return Ok(None);
+        }
+        match read()? {
+            Event::Key(key) => {
+                if let Some(press) = key_press(key) {
+                    return Ok(Some(TerminalEvent::Key(press)));
+                }
+            }
+            Event::Resize(columns, rows) => {
+                return Ok(Some(TerminalEvent::Resize(columns as usize, rows as usize)));
+            }
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+    }
+}
+
+/// The alternate screen buffer, left when this value is dropped.
+///
+/// A full-screen view borrows the terminal rather than scrolling the shell's own screen away:
+/// entering the alternate buffer saves what was there, and leaving it puts it back, which is what
+/// §49.8 and §52.2 of the v0.4 specification mean by a view that is entered deliberately and left
+/// cleanly. The cursor is hidden while the view owns the screen and shown again afterwards.
+#[derive(Debug)]
+pub struct AlternateScreen {
+    _private: (),
+}
+
+impl AlternateScreen {
+    /// Enters the alternate screen buffer.
+    ///
+    /// The switch is *queued* rather than flushed, so the first [`paint`] after it leaves with
+    /// it in one write. Nobody — a person or a test reading the terminal — ever sees an empty
+    /// alternate screen between the two.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the terminal cannot be written to.
+    pub fn enter() -> io::Result<Self> {
+        let mut out = io::stdout();
+        out.queue(crossterm::terminal::EnterAlternateScreen)?;
+        out.queue(cursor::Hide)?;
+        Ok(Self { _private: () })
+    }
+}
+
+impl Drop for AlternateScreen {
+    fn drop(&mut self) {
+        // Giving the screen back matters more than reporting that it could not be given back.
+        let mut out = io::stdout();
+        let _ = out.queue(cursor::Show);
+        let _ = out.queue(crossterm::terminal::LeaveAlternateScreen);
+        let _ = out.flush();
+    }
+}
+
+/// Paints `lines` over the whole alternate screen, one per row.
+///
+/// # Errors
+///
+/// Fails when the terminal cannot be written to.
+pub fn paint(lines: &[String]) -> io::Result<()> {
+    let mut out = io::stdout();
+    out.queue(cursor::MoveTo(0, 0))?;
+    for (row, line) in lines.iter().enumerate() {
+        out.queue(cursor::MoveTo(0, u16::try_from(row).unwrap_or(u16::MAX)))?;
+        out.queue(Clear(ClearType::CurrentLine))?;
+        out.write_all(line.as_bytes())?;
+    }
+    out.queue(Clear(ClearType::FromCursorDown))?;
+    out.flush()
+}
+
 /// Raw mode, released when this value is dropped.
 ///
 /// A line editor must see every key press itself, so the terminal's own line discipline is

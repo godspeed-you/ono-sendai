@@ -26,8 +26,10 @@
 use ono_value::{RecordValue, Value};
 
 pub mod map;
+pub mod view;
 
-pub use map::{Charset, spatial_map};
+pub use map::{Charset, MapLine, map_lines, spatial_map};
+pub use view::{Action, Effect, Key, Keymap, MapView};
 
 /// How wide a label column is before the counts start.
 const LABEL_WIDTH: usize = 14;
@@ -79,13 +81,40 @@ pub fn place_view(view: &RecordValue, width: usize) -> Vec<String> {
     lines
 }
 
-/// `SYSTEM / web01` — the place, and the host it belongs to (§6.1, §7.1).
+/// `SYSTEM / web01   local` — the place, the host it belongs to, and where that is (§6.1, §7.1).
+///
+/// The third column is the place path §21.2 writes into the prompt, so what the heading says and
+/// what the prompt says are the same sentence. §5 requires the entry screen to carry "current
+/// host/context identity", which is exactly this line: the link, the host and the place.
 fn heading(view: &RecordValue) -> String {
     let label = text(view, "label").unwrap_or_default();
-    match text(view, "hostname") {
+    let mut line = match text(view, "hostname") {
         Some(host) if !host.is_empty() => format!("{label} / {host}"),
         _ => label,
+    };
+    if let Some(path) = place_path(view) {
+        line.push_str("   ");
+        line.push_str(&path);
     }
+    line
+}
+
+/// The place as §21.2 spells it: `local`, `local/compute`, `local/process/nginx`.
+///
+/// A canonical space is declared geography and carries no provider reference, and its
+/// `place_path` already names the place itself; an observed object's `place_path` names the
+/// parent chain it is filed under (§27.2), so the object is written under its link, its kind and
+/// its name instead.
+fn place_path(view: &RecordValue) -> Option<String> {
+    let place = record(view, "place")?;
+    let path = text(&place, "place_path").filter(|path| !path.is_empty())?;
+    if place.get("canonical_ref").is_none_or(Value::is_null) {
+        return Some(path);
+    }
+    let link = path.split('/').next().unwrap_or("local");
+    let kind = text(&place, "spatial_type")?.to_ascii_lowercase();
+    let name = text(&place, "display_name")?;
+    Some(format!("{link}/{kind}/{name}"))
 }
 
 /// One exit: its label, and either how many places lie behind it or why nobody could say (§24.2).

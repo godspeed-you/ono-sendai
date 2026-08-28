@@ -1439,6 +1439,9 @@ fn run_native_segment(
     let context = session.context();
     // A live view has nobody to watch it while its values are being bound (ADR-0069).
     let capturing = session.capturing();
+    // Whether the last stage's values reach a person rather than another stage, a file or a
+    // capture — the one fact a full-screen view may not decide for itself (spec v0.4 §29.1).
+    let displays = last && stage_has_no_redirection && !capturing;
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -1488,12 +1491,14 @@ fn run_native_segment(
         };
 
         let mut failed_rows = false;
-        for (contract, arguments) in &bound {
+        let final_stage = bound.len().saturating_sub(1);
+        for (position, (contract, arguments)) in bound.iter().enumerate() {
             let started = std::time::Instant::now();
             let mut invocation = Invocation::new(contract, arguments, providers)
                 .with_scope(std::sync::Arc::clone(&scope))
                 .with_context(context.clone())
-                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone());
+                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone())
+                .with_display(displays && position == final_stage);
             if let Some(previous) = stream.take() {
                 invocation = invocation.with_input(previous);
             }

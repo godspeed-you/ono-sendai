@@ -113,18 +113,36 @@ impl CommandImpl for Map {
                 None => session.current_place().clone(),
             };
 
-            let horizon = observe(ctx, &mut session, &center, &request, now).await?;
-            let pins = session.pins().clone();
-            let map = ono_spatial_query::project_map(
-                session.index(),
-                &center,
-                &horizon,
-                &request,
-                &pins,
-                session.preferences().map_node_budget,
-                now,
-            );
-            let record = map_record(&session, &map)?;
+            // §23.3, §52.1: at an interactive terminal `map` may open a full-screen view. It
+            // is the same projection with a viewport and a cursor around it, never a second
+            // selection (§45.4) — and never where the values are about to be consumed by
+            // another stage, redirected or read by a script (§29.1).
+            let live = arguments.flag("live") || crate::spatial::interactive::live_by_default();
+            if !json && crate::spatial::interactive::may_open(ctx) {
+                crate::spatial::interactive::run_map_view(
+                    ctx,
+                    &mut session,
+                    self.pins.as_ref(),
+                    center,
+                    request,
+                    live,
+                    now,
+                )
+                .await?;
+                return Ok(Outcome::Values(ValueStream::from_values(Vec::new())));
+            }
+            if live {
+                return Err(ErrorValue::new(
+                    ErrorCode::SpatialUnsupported,
+                    "`map --live` needs an interactive terminal to draw into",
+                )
+                .with_help(
+                    "`map --json` answers the same graph once, which is what a script asks for \
+                     (spec v0.4 §25.1, §29.1)",
+                ));
+            }
+
+            let record = projection(ctx, &mut session, &center, &request, now).await?;
 
             if json {
                 let document = ono_value::to_json_data(&Value::Record(Arc::new(record)));
@@ -143,6 +161,36 @@ impl CommandImpl for Map {
             ])))
         })
     }
+}
+
+/// One `ono.spatial-map/1`: the horizon the providers answer for, ranked and bounded (§22, §45.3).
+///
+/// The whole of `map`'s work, as one function, because the full-screen view of §23.3 redraws the
+/// same projection every time the place, the zoom or the live tick changes — and a second way of
+/// building it would be a second answer to what the system looks like (§49.5).
+///
+/// # Errors
+///
+/// Whatever the providers refused with while the horizon was being observed.
+pub async fn projection(
+    ctx: &Invocation<'_>,
+    session: &mut SpatialSessionState,
+    center: &SpatialId,
+    request: &MapRequest,
+    now: Timestamp,
+) -> Result<RecordValue, ErrorValue> {
+    let horizon = observe(ctx, session, center, request, now).await?;
+    let pins = session.pins().clone();
+    let map = ono_spatial_query::project_map(
+        session.index(),
+        center,
+        &horizon,
+        request,
+        &pins,
+        session.preferences().map_node_budget,
+        now,
+    );
+    map_record(session, &map)
 }
 
 /// The places and edges around `center`, as the providers answer for them (§2.16, §45.6).

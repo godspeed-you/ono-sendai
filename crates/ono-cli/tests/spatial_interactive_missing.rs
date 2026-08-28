@@ -334,7 +334,6 @@ fn twins(scratch: &Scratch, name: &str) -> (Children, String, String) {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §5); un-ignored by the increment that delivers it"]
 fn should_show_the_spatial_horizon_when_the_session_starts_at_a_terminal_and_never_in_a_pipe() {
     // §5: an interactive start MUST establish place and nearby possibilities without an explicit
     // discovery command — host identity, the canonical domains, compact counts, landmarks, and a
@@ -381,7 +380,6 @@ fn should_show_the_spatial_horizon_when_the_session_starts_at_a_terminal_and_nev
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §24); un-ignored by the increment that delivers it"]
 fn should_describe_the_current_place_when_look_runs_at_eighty_columns() {
     // §24.1: `look` prioritises identity and state, direct exits, landmarks, changes and summary
     // counts — and §24.2 makes the displayed groups real navigation targets, which is why the
@@ -415,7 +413,6 @@ fn should_describe_the_current_place_when_look_runs_at_eighty_columns() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §39.3); un-ignored by the increment that delivers it"]
 fn should_keep_the_same_spatial_semantics_when_look_runs_at_forty_columns() {
     // §39.3: at narrow widths the projection may collapse, but "spatial semantics remain
     // identical" — the place and its exits are still there. §43.5 lists 40 columns as a
@@ -450,7 +447,6 @@ fn should_keep_the_same_spatial_semantics_when_look_runs_at_forty_columns() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §21); un-ignored by the increment that delivers it"]
 fn should_name_the_current_place_in_the_prompt_and_follow_it_when_the_place_changes() {
     // §21.1: the prompt's semantic components are the link/host and the current place, and §21.2
     // has it show `<host>/<current-place-kind>/<display-name>` rather than the whole trail —
@@ -502,7 +498,6 @@ fn should_name_the_current_place_in_the_prompt_and_follow_it_when_the_place_chan
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §27.2); un-ignored by the increment that delivers it"]
 fn should_open_a_picker_and_make_the_choice_current_when_a_selector_is_ambiguous() {
     // §27.2: interactive ambiguity opens a picker, and the picker MUST show disambiguating
     // context (the example rows carry the kind and the place path). A script never sees this:
@@ -564,7 +559,6 @@ fn should_open_a_picker_and_make_the_choice_current_when_a_selector_is_ambiguous
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §23.3); un-ignored by the increment that delivers it"]
 fn should_restore_the_shell_screen_when_the_full_screen_map_closes() {
     // §52.1 requires the full-screen map on supported interactive terminals, §23.3 gives Esc as
     // "close map view, preserving current place", and §49.8 insists the shell is not a dashboard:
@@ -613,7 +607,6 @@ fn should_restore_the_shell_screen_when_the_full_screen_map_closes() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §23.4); un-ignored by the increment that delivers it"]
 fn should_change_the_place_only_on_enter_when_focus_moves_inside_the_map() {
     // §23.4 and §53 ("Does focus move the shell? No"): moving focus is a view action, exactly as
     // expanding a cluster is in §8.3; only Enter or an explicit navigation action moves the
@@ -679,7 +672,6 @@ fn should_change_the_place_only_on_enter_when_focus_moves_inside_the_map() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §43.4); un-ignored by the increment that delivers it"]
 fn should_return_to_the_previous_place_when_back_is_used_at_the_prompt_and_in_the_map() {
     // §6.6: `back` follows navigation history. §43.4 requires the same semantic action inside the
     // full-screen view, and §23.3 binds it to `b`/Backspace there; Backspace (0x7f) is the one
@@ -728,7 +720,6 @@ fn should_return_to_the_previous_place_when_back_is_used_at_the_prompt_and_in_th
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §43.4); un-ignored by the increment that delivers it"]
 fn should_keep_the_shell_alive_when_ctrl_c_ends_the_live_map() {
     // §43.4: "Ctrl-C exits live map without killing the shell". §25.1 makes `map --live` a
     // subscription that updates topology in place; ending it must leave the session, its place
@@ -775,7 +766,6 @@ fn should_keep_the_shell_alive_when_ctrl_c_ends_the_live_map() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §43.4); un-ignored by the increment that delivers it"]
 fn should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open() {
     // §43.4: "terminal resize preserves current place and focus where possible". §39.3 allows the
     // projection to collapse at the new width; what may not change is where the user is. Focus
@@ -834,7 +824,6 @@ fn should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_o
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §44.10); un-ignored by the increment that delivers it"]
 fn should_leave_the_terminal_in_order_for_an_external_program_after_the_map_closes() {
     // §44.10: after extensive navigation and full-screen map use, `vim`, `less`, `ssh` and
     // `cargo test` must still work — interactive process control, terminal state and cwd remain
@@ -892,7 +881,6 @@ fn should_leave_the_terminal_in_order_for_an_external_program_after_the_map_clos
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §9.4); un-ignored by the increment that delivers it"]
 fn should_offer_the_neighbouring_places_when_completion_runs_at_the_prompt() {
     // §9.4: completion is "a lightweight local map" — at `enter <TAB>` it MUST prioritise what is
     // visible in the current neighbourhood, which at the root is the canonical domains of §7.1.

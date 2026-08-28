@@ -13,13 +13,33 @@ pub struct Completion {
     pub span: Span,
     /// The candidates, in the order they should be offered.
     pub candidates: Vec<String>,
+    /// Lines to show at once, when the candidates are a discovery listing rather than word
+    /// completion.
+    ///
+    /// Ordinary completion earns its listing with a second Tab, so a single Tab that extends the
+    /// word does not also fill the screen. Spatial completion is the other case the v0.4
+    /// specification names: §9.4 makes `enter <TAB>` "a lightweight local map", whose whole point
+    /// is that the neighbourhood is *shown*, with the compact count or state each entry may
+    /// carry — which is why these lines are text to read and not text to insert.
+    pub listing: Vec<String>,
 }
 
 impl Completion {
     /// Candidates replacing `span`.
     #[must_use]
     pub fn new(span: Span, candidates: Vec<String>) -> Self {
-        Self { span, candidates }
+        Self {
+            span,
+            candidates,
+            listing: Vec::new(),
+        }
+    }
+
+    /// The same candidates, shown as soon as they are offered.
+    #[must_use]
+    pub fn shown(mut self, listing: Vec<String>) -> Self {
+        self.listing = listing;
+        self
     }
 
     /// No candidates at all.

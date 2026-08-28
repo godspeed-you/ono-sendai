@@ -461,6 +461,19 @@ impl Editor {
             return Outcome::Continue;
         }
 
+        // A discovery listing is shown as soon as it is offered: it is what the user asked for,
+        // not a hint that more typing would resolve. The word is still extended as far as the
+        // candidates agree, so Tab does both jobs at once.
+        if !completion.listing.is_empty() {
+            let prefix = completion.common_prefix().to_owned();
+            if prefix.len() > end - start {
+                self.buffer.replace_range(start..end, &prefix);
+            }
+            self.listing = completion.listing;
+            self.completion_offered = true;
+            return Outcome::Continue;
+        }
+
         if self.completion_offered {
             self.listing = completion.candidates;
             return Outcome::Continue;

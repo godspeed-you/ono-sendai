@@ -74,6 +74,8 @@ impl ResolutionStep {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
     spatial_id: SpatialId,
+    /// The key a person types for this place, where it is not the name itself (§11.2, §27.2).
+    key: Option<String>,
     name: String,
     object_type: SpatialType,
     place_path: String,
@@ -128,12 +130,29 @@ impl Candidate {
         self.provenance.as_ref()
     }
 
-    /// The row §27.2's picker shows: name, type, place path.
+    /// The key a person would type for this place — a process's pid, a mount's target (§11.2).
+    ///
+    /// `None` for a canonical space, whose label is already the whole name.
+    #[must_use]
+    pub fn key(&self) -> Option<&str> {
+        self.key.as_deref()
+    }
+
+    /// The row §27.2's picker shows: `nginx/1842   process   local/compute/processes`.
+    ///
+    /// §27.2's own example writes the first column as `<name>/<key>` for exactly the case that
+    /// makes a picker necessary — two places a person calls the same thing. A row that repeated
+    /// the ambiguous name three times would disambiguate nothing, which is what the section
+    /// requires of it: "The picker MUST show disambiguating context."
     #[must_use]
     pub fn row(&self) -> String {
+        let name = match &self.key {
+            Some(key) if key != &self.name => format!("{}/{key}", self.name),
+            _ => self.name.clone(),
+        };
         format!(
-            "{}  {}  {}",
-            self.name,
+            "{:<28} {:<12} {}",
+            name,
             self.object_type.as_str(),
             self.place_path
         )
@@ -562,8 +581,17 @@ fn candidate(
         return Some(space_candidate(space, step));
     }
     let entry = index.get(id)?;
+    // The first identity field is the key a person types: a process's pid, a socket's inode, a
+    // mount's target (§11.2, and the same rule the trail writes a step's reference by).
+    let key = entry
+        .canonical_ref()
+        .id()
+        .values()
+        .first()
+        .and_then(|value| ono_value::canonical_text(value).ok());
     Some(Candidate {
         spatial_id: id.clone(),
+        key,
         name: entry.object().display_name().to_owned(),
         object_type: entry.object().object_type(),
         place_path: place_path(index, id),
@@ -579,6 +607,7 @@ fn space_candidate(
 ) -> Candidate {
     Candidate {
         spatial_id: space.spatial_id(),
+        key: None,
         name: space.label.to_owned(),
         object_type: space.object_type,
         place_path: space_path(space.id),
@@ -593,6 +622,26 @@ fn space_candidate(
 #[must_use]
 pub fn space_of(id: &SpatialId) -> Option<&'static ono_spatial_core::CanonicalSpace> {
     spaces().iter().find(|space| &space.spatial_id() == id)
+}
+
+/// The place as §21.2 asks the prompt to write it: `local`, `local/compute`, `local/process/nginx`.
+///
+/// §21.2 forbids rendering the whole navigation trail — "Ono MUST NOT blindly render the entire
+/// navigation trail in the prompt" — and gives the shape instead: `<host>/<current-place-kind>/
+/// <display-name>`. A canonical space *is* its path, so it needs no kind and no name added; an
+/// observed object is written under the link it belongs to, its type and what a person calls it,
+/// because its canonical parent chain is `place_path`'s answer to a different question (§27.2).
+#[must_use]
+pub fn concise_path(index: &SpatialIndex, id: &SpatialId) -> String {
+    if let Some(space) = space_of(id) {
+        return space_path(space.id);
+    }
+    let Some(entry) = index.get(id) else {
+        return locality(None).to_owned();
+    };
+    let link = locality(Some(entry.object().scope()));
+    let kind = entry.object().object_type().as_str().to_ascii_lowercase();
+    format!("{link}/{kind}/{}", entry.object().display_name())
 }
 
 /// The canonical hierarchy path a place sits at — §27.2's third column and §6.8's `path/scope`

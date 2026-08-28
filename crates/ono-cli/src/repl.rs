@@ -175,6 +175,15 @@ impl Completer for ShellCompleter {
         let prefix = &line[start..cursor];
         let is_head = line[..start].trim().is_empty() || line[..start].trim_end().ends_with('|');
 
+        // §9.4: after a spatial verb, completion is a lightweight local map — the places or
+        // relations the session can see from where it stands, offered at once and *before* the
+        // broader matches the registry and the filesystem know about.
+        let neighbourhood = if is_head || prefix.starts_with('-') {
+            Vec::new()
+        } else {
+            spatial_offers(line, start, prefix)
+        };
+
         let mut candidates: Vec<String> = Vec::new();
 
         if let Ok(registry) = ono_command::CommandRegistry::embedded() {
@@ -216,11 +225,54 @@ impl Completer for ShellCompleter {
         candidates.sort_unstable();
         candidates.dedup();
 
-        Completion {
-            span: Span::new(start as u32, cursor as u32),
-            candidates,
+        let span = Span::new(start as u32, cursor as u32);
+        if neighbourhood.is_empty() {
+            return Completion::new(span, candidates);
         }
+
+        // §9.4: "prioritize services visible in the current neighborhood and then offer broader
+        // matches" — in that order, and shown, because the point is to teach the neighbourhood.
+        let mut listing: Vec<String> = neighbourhood
+            .iter()
+            .map(|offer| offer.line.clone())
+            .collect();
+        let mut merged: Vec<String> = neighbourhood
+            .into_iter()
+            .map(|offer| offer.insert)
+            .collect();
+        for candidate in candidates {
+            if !merged.contains(&candidate) {
+                listing.push(format!("  {candidate}"));
+                merged.push(candidate);
+            }
+        }
+        Completion::new(span, merged).shown(listing)
     }
+}
+
+/// The neighbourhood a spatial verb is asking about, where the word under the cursor is the one
+/// that names a place or a relation (spec v0.4 §9.4).
+///
+/// Only the verb's *first* word is answered this way: `enter` takes one place and `follow` takes
+/// one relation, and a second word is a selector inside that relation, which is another question.
+/// The answer is prepended to the ordinary candidates rather than replacing them, because
+/// `enter service nginx` is still the v0.2 spelling and its targets are still offered — §9.4 asks
+/// for the neighbourhood *first*, not alone.
+fn spatial_offers(line: &str, start: usize, prefix: &str) -> Vec<crate::spatial::complete::Offer> {
+    let stage = &line[..start];
+    let stage = &stage[stage.rfind(['|', ';', '&']).map_or(0, |at| at + 1)..];
+    let offers = match stage.trim() {
+        // §6.3, §6.5, §6.9: all three take a place, and the places are the same ones.
+        "enter" | "jump" | "map" => crate::spatial::complete::places_here(),
+        // §6.4, §9.4's second half: the relations this place actually has.
+        "follow" => crate::spatial::complete::relations_here(),
+        _ => return Vec::new(),
+    };
+    let prefix = prefix.to_lowercase();
+    offers
+        .into_iter()
+        .filter(|offer| offer.insert.to_lowercase().starts_with(&prefix))
+        .collect()
 }
 
 fn path_candidates(prefix: &str) -> Vec<String> {
@@ -276,6 +328,13 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
 
     if presentation.allows_color() || std::io::stdout().is_terminal() {
         print_identity_line(session, &theme, presentation);
+    }
+
+    // From here on this process is an interactive session: a picker may open, and a map may take
+    // the screen (spec v0.4 §29.1, §29.3).
+    crate::spatial::mark_interactive();
+    if std::io::stdin().is_terminal() {
+        print_startup_horizon(session, reporter);
     }
 
     // The shell ignores the signals a terminal generates for the foreground job, so Ctrl-C
@@ -480,6 +539,14 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
         .unwrap_or_else(|| "local".to_owned());
     let mut prompt = ono_editor::Prompt::plain("").segment(location, Token::PromptLink);
 
+    // Spec v0.4 §21.1: the current spatial place is a semantic component of the prompt beside the
+    // link, and §21.2 keeps it to `<host>/<place-kind>/<display-name>` so a deep traversal never
+    // takes the line the user is typing with it. The link segment above is the path's first
+    // segment, so only what the place adds to it is painted here.
+    if let Some(place) = spatial_place(session) {
+        prompt = prompt.segment(place, Token::PromptContext);
+    }
+
     // Spec §17.2: an elevated context must be impossible to miss. The kernel's answer, not
     // `$USER`'s — and painted in the token the theme reserves for exactly this.
     if ono_process::effective_uid() == 0 {
@@ -516,6 +583,39 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
         " > "
     };
     prompt.segment(marker, Token::Dim)
+}
+
+/// What the current spatial place adds to the link segment already painted (spec v0.4 §21.2).
+///
+/// `local` at the root adds nothing — the link says that — so the prompt stays exactly what v0.2
+/// showed until the user has moved somewhere. Switched off entirely by `spatial.enabled`, which
+/// §47 requires to leave the typed shell working.
+fn spatial_place(session: &Session) -> Option<String> {
+    if session.settings().flag("spatial.enabled") == Some(false) {
+        return None;
+    }
+    let path = crate::spatial::place_segment()?;
+    let (_, rest) = path.split_once('/')?;
+    Some(format!("/{rest}"))
+}
+
+/// The compact spatial horizon of spec v0.4 §5, drawn once when an interactive session starts.
+///
+/// §5: "Starting an interactive Ono session MUST provide enough information to establish place
+/// and nearby possibilities without requiring an explicit discovery command" — the host identity,
+/// the canonical domains, their counts and the current landmarks. That is exactly what `look`
+/// answers at the root, so the horizon is `look`, not a second renderer that could disagree with
+/// it (§49.5). §29.1 is the other half: it is drawn only at a terminal, so a script's streams
+/// carry nothing it did not ask for.
+fn print_startup_horizon(session: &mut Session, reporter: &Reporter) {
+    if session.settings().flag("spatial.enabled") == Some(false)
+        || session.settings().flag("spatial.startup_horizon") == Some(false)
+    {
+        return;
+    }
+    let before = session.status();
+    let _ = run_source(session, "look", reporter);
+    session.set_status(before);
 }
 
 fn environment_pairs(session: &Session) -> Vec<(&str, &str)> {

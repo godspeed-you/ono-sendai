@@ -214,6 +214,15 @@ pub const CATALOGUE: &[SettingSpec] = &[
         description: "Whether a map subscribes to change by default (spec v0.4 §25.1). Motion always means real change, never decoration.",
         default: DefaultValue::Bool(false),
     },
+    // §23.3's last line: "Key bindings MUST be configurable. Semantic actions are normative;
+    // exact single-key choices MAY be remapped." §47 lists no key for it, so this is the one the
+    // shell declares — a list of `<action>=<key…>` overrides on top of §23.3's own table.
+    SettingSpec {
+        key: "spatial.map.keys",
+        ty: SettingType::String,
+        description: "Key bindings for the full-screen map, as `<action>=<key>` entries separated by commas — `close=q, enter=Enter` (spec v0.4 §23.3). Empty leaves §23.3's table in force.",
+        default: DefaultValue::Str(""),
+    },
     SettingSpec {
         key: "spatial.map.node_budget",
         ty: SettingType::Int,
@@ -400,6 +409,24 @@ impl Settings {
     pub fn int(&self, key: &str) -> Option<i128> {
         match self.effective(key).map(|resolved| &resolved.value) {
             Some(Value::Int(number)) => Some(*number),
+            _ => None,
+        }
+    }
+
+    /// The effective value of a boolean setting.
+    #[must_use]
+    pub fn flag(&self, key: &str) -> Option<bool> {
+        match self.effective(key).map(|resolved| &resolved.value) {
+            Some(Value::Bool(state)) => Some(*state),
+            _ => None,
+        }
+    }
+
+    /// The effective value of a string setting.
+    #[must_use]
+    pub fn text(&self, key: &str) -> Option<&str> {
+        match self.effective(key).map(|resolved| &resolved.value) {
+            Some(Value::String(text)) => Some(text.as_ref()),
             _ => None,
         }
     }

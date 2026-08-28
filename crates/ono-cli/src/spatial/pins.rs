@@ -390,6 +390,50 @@ impl ono_command::CommandImpl for UnpinPlace {
     }
 }
 
+/// Pins `place` if it is not pinned, unpins it if it is, and says which happened (§20.4, §26.4).
+///
+/// The full-screen view binds `p` to exactly this (§23.3), and the two commands above are the
+/// same operation with a name argument — so the store is written the same way from both, and a
+/// pin made from the map is a pin `jump @name` reaches.
+///
+/// # Errors
+///
+/// `spatial.not_found` when the session no longer knows the place, and the store's own refusal
+/// when the pin could not be written.
+pub fn toggle_pin(
+    store: &PinStore,
+    session: &mut crate::spatial::SpatialSessionState,
+    place: &SpatialId,
+    now: Timestamp,
+) -> Result<String, ErrorValue> {
+    let mut pins = store.load()?;
+    let existing = pins
+        .pins()
+        .find(|pin| pin.spatial_id() == place)
+        .map(|pin| pin.name().to_owned());
+    let said = match existing {
+        Some(name) => {
+            pins.remove(&name);
+            format!("unpinned {name}")
+        }
+        None => {
+            let (name, selector, object_type) = describe(session, place, None)?;
+            pins.insert(Pin::new(
+                name.clone(),
+                place.clone(),
+                selector,
+                object_type,
+                session.scope().to_string(),
+                now,
+            ));
+            format!("pinned {name}")
+        }
+    };
+    store.save(&pins)?;
+    session.set_pins(pins);
+    Ok(said)
+}
+
 /// The name, the resilient selector and the identity metadata a pin on `here` stores (§20.4).
 ///
 /// The selector is the name the place answers to rather than the identity it has now: that is the

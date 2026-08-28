@@ -53,4 +53,7 @@ pub use highlight::{Highlighter, PlainHighlighter};
 pub use key::{KeyCode, KeyPress, Modifiers};
 pub use keymap::{EditAction, Keymap};
 pub use prompt::Prompt;
-pub use terminal::{RawMode, Renderer, key_press, read_key, terminal_size};
+pub use terminal::{
+    AlternateScreen, RawMode, Renderer, TerminalEvent, key_press, paint, read_event_timeout,
+    read_key, terminal_size,
+};

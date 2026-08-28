@@ -192,6 +192,7 @@ pub struct Invocation<'a> {
     context: Vec<ContextFrame>,
     adapters: Option<Arc<ono_adapter::Registry>>,
     resolver: Option<Resolver>,
+    displays: bool,
 }
 
 /// Resolves a program name to the path the shell would run, for planning (ADR-0056).
@@ -228,7 +229,29 @@ impl<'a> Invocation<'a> {
             context: Vec::new(),
             adapters: None,
             resolver: None,
+            displays: false,
         }
+    }
+
+    /// States that what this stage produces will be shown to the user rather than consumed.
+    ///
+    /// Only the evaluator can know it: a command sees neither the stages after it nor where the
+    /// statement's output goes. It is true for the last stage of a foreground statement with no
+    /// redirection, when the shell's own output is a terminal — and false for `map | to json`,
+    /// for `map > file`, for a captured substitution and for a background job.
+    ///
+    /// The one thing that turns on it is whether a full-screen view may open (spec v0.4 §23.3,
+    /// §29.1): a value that is about to be consumed by another stage is a value, not a screen.
+    #[must_use]
+    pub const fn with_display(mut self, displays: bool) -> Self {
+        self.displays = displays;
+        self
+    }
+
+    /// Whether this stage's values will be shown to the user (spec v0.4 §29.1).
+    #[must_use]
+    pub const fn displays(&self) -> bool {
+        self.displays
     }
 
     /// Makes the adapter registry and `PATH` resolution available to commands that plan —
@@ -355,6 +378,7 @@ impl<'a> Invocation<'a> {
             context: self.context.clone(),
             adapters: self.adapters.clone(),
             resolver: self.resolver.clone(),
+            displays: self.displays,
         }
     }
 }

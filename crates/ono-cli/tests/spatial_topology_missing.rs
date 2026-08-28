@@ -1133,7 +1133,6 @@ fn should_resolve_find_as_a_spatial_verb_while_the_external_tool_stays_reachable
 // --- completion as spatial discovery (§9.4) ---------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §9.4); un-ignored by the increment that delivers it"]
 fn should_complete_the_places_of_the_current_neighborhood_when_tab_follows_enter() {
     // §9.4: "completion MUST prioritize services visible in the current neighborhood and then
     // offer broader matches" — completion is a lightweight local map, not token completion.
@@ -1166,7 +1165,6 @@ fn should_complete_the_places_of_the_current_neighborhood_when_tab_follows_enter
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §9.4); un-ignored by the increment that delivers it"]
 fn should_complete_the_relations_available_from_the_current_place_when_tab_follows_follow() {
     // §9.4, second half: at a process place, `follow <TAB>` "MUST show actual available relation
     // types" — parent, child, user, cgroup, namespace, socket, file, service. Not the whole

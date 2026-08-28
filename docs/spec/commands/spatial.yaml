@@ -163,14 +163,18 @@ commands:
       - {name: relations, type: string, doc: "Keep only these relations' edges, comma-separated. Filtering removes edges; it never creates one (v0.4 §6.9, §43.2)."}
       - {name: type, type: string, doc: "Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener` (v0.4 §6.9, §3.3)."}
       - {name: all, type: bool, doc: "The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2, §47)."}
+      - {name: live, type: bool, doc: "Keep the full-screen view current from a polling source, saying so in §25.3's vocabulary. Needs a terminal to draw into (v0.4 §25.1, §25.3, §29.1)."}
     privilege: conditional
     streaming: false
     phase: S
     note: >-
       §22 fixes the answer of `map --json` field for field and forbids screen coordinates in it:
       layout belongs to the renderer. What does not fit the view budget is clustered and counted
-      in `hidden` rather than dropped (§8.2, §23.6). `--live` and `--changes` of §6.9 need the
-      event source of §25 and arrive with it.
+      in `hidden` rather than dropped (§8.2, §23.6). At an interactive terminal `map` opens the
+      full-screen view of §23.3; `--json`, a consumer downstream, a redirection or `spatial.map.mode
+      = "text"` all keep it textual (§29.1). `--live` subscribes to the polling source §25.1
+      allows where no provider event stream exists yet; the event aggregator and the change
+      highlighting of §25.4 arrive with it.
     examples:
       - map
       - map --json

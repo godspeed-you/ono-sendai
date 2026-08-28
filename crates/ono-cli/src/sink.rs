@@ -144,7 +144,7 @@ impl Sink {
             && let Ok(record) = value.as_record()
             && record.schema_id().to_string() == "ono.spatial-map/1"
         {
-            return ono_spatial_render::spatial_map(record, map_width(self.width), charset());
+            return ono_spatial_render::spatial_map(record, map_width(self.width), map_charset());
         }
         let renderer = Renderer::new();
         let mut layout = Layout::new(self.width);
@@ -201,7 +201,8 @@ fn map_width(fallback: usize) -> usize {
 /// §39.2 requires an ASCII fallback to exist; this is when it is taken. A terminal that says it
 /// is `dumb`, and a locale that does not promise UTF-8, both get ASCII — guessing wrong here
 /// prints mojibake, which is worse than a plainer drawing.
-fn charset() -> ono_spatial_render::Charset {
+#[must_use]
+pub fn map_charset() -> ono_spatial_render::Charset {
     let utf8 = ["LC_ALL", "LC_CTYPE", "LANG"]
         .iter()
         .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))

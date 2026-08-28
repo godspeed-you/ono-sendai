@@ -222,6 +222,13 @@ settings:
     type: bool
     default: false
     doc: Whether a map subscribes to change by default (§25.1).
+  - key: spatial.map.keys
+    type: string
+    default: ""
+    doc: >-
+      Key bindings for the full-screen map, as `<action>=<key…>` entries separated by commas —
+      `close=q, enter=Enter`. §23.3 makes the semantic actions normative and the single keys
+      remappable; empty leaves §23.3's own table in force.
   - key: spatial.map.node_budget
     type: int
     default: 100

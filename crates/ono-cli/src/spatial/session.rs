@@ -75,9 +75,39 @@ impl Default for ViewPreferences {
 static CONFIGURED: std::sync::OnceLock<(ViewPreferences, ono_spatial_query::LandmarkThresholds)> =
     std::sync::OnceLock::new();
 
+/// The `spatial.*` settings as the user left them, for the parts of the layer that read a word
+/// or a flag rather than a number — `spatial.map.mode`, `spatial.map.live`, `spatial.map.keys`,
+/// `spatial.reduced_motion` (§47).
+static SETTINGS: std::sync::OnceLock<BTreeMap<String, ono_value::Value>> =
+    std::sync::OnceLock::new();
+
 /// Records the settings the spatial layer reads (§26.3, §34.2, §47).
 pub fn configure(preferences: ViewPreferences, thresholds: ono_spatial_query::LandmarkThresholds) {
     let _ = CONFIGURED.set((preferences, thresholds));
+}
+
+/// Records the `spatial.*` settings verbatim, so a view can read the ones it needs (§47).
+pub fn configure_values(values: BTreeMap<String, ono_value::Value>) {
+    let _ = SETTINGS.set(values);
+}
+
+/// The effective value of a `spatial.*` string setting, where the session recorded one.
+#[must_use]
+pub fn configured_text(key: &str) -> Option<String> {
+    match SETTINGS.get()?.get(key) {
+        Some(ono_value::Value::String(text)) => Some(text.to_string()),
+        _ => None,
+    }
+}
+
+/// Whether a `spatial.*` boolean setting is on. Absent means off, which is every default this
+/// function is asked about (§47).
+#[must_use]
+pub fn configured_flag(key: &str) -> bool {
+    matches!(
+        SETTINGS.get().and_then(|values| values.get(key)),
+        Some(ono_value::Value::Bool(true))
+    )
 }
 
 impl SpatialSessionState {

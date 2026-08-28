@@ -563,6 +563,15 @@ pub async fn resolved_place(
         view::observe_targets(ctx, session, &targets, now).await;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
+    // §27.2: "Interactive ambiguity opens a picker." §29.3: a script never sees one, so the same
+    // resolution turns into `spatial.ambiguous_selector` wherever there is nobody to ask.
+    if let ono_spatial_query::Resolution::Ambiguous(candidates) = &resolution
+        && crate::spatial::at_terminal()
+        && let Some(chosen) = crate::spatial::interactive::pick(selector, candidates)
+        && let Some(candidate) = candidates.get(chosen)
+    {
+        return Ok(candidate.spatial_id().clone());
+    }
     let found = resolution.require(selector)?;
     Ok(found.spatial_id().clone())
 }
@@ -611,15 +620,22 @@ impl CommandImpl for Home {
         Box::pin(async move {
             let now = Timestamp::now();
             let mut session = spatial_session().await;
-            let here = session.current_place().clone();
-            let root = ono_spatial_core::space::root().spatial_id();
-            if here != root {
-                session
-                    .trail_mut()
-                    .record(NavigationStep::new(now, here, root, Movement::Home));
-            }
+            go_home(&mut session, now);
             Ok(Outcome::Values(ValueStream::from_values(Vec::new())))
         })
+    }
+}
+
+/// Back to the root place of this host (spec v0.4 §6.6, §7.1).
+///
+/// Shared with the full-screen view, which binds the same semantic action to `h` (§23.3).
+pub fn go_home(session: &mut SpatialSessionState, now: Timestamp) {
+    let here = session.current_place().clone();
+    let root = ono_spatial_core::space::root().spatial_id();
+    if here != root {
+        session
+            .trail_mut()
+            .record(NavigationStep::new(now, here, root, Movement::Home));
     }
 }
 

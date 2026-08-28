@@ -15,10 +15,13 @@
 //! every observation belongs to (§10.2), and the pins that outlive the session (§46.1).
 
 pub mod commands;
+pub mod complete;
 pub mod find;
+pub mod interactive;
 pub mod map;
 pub mod movement;
 pub mod pins;
+pub mod prompt;
 pub mod relations;
 pub mod session;
 pub mod storage;
@@ -29,6 +32,7 @@ pub use find::{FindPlace, local_scope, spatial_type};
 pub use map::Map;
 pub use movement::{Back, Jump, Trail, Up};
 pub use pins::{PinPlace, PinStore, UnpinPlace, pin_path};
+pub use prompt::{at_terminal, mark_interactive, place_segment};
 pub use session::{SpatialSessionState, spatial_session};
 
 /// Reads the `spatial.*` settings the spatial layer honours, and hands them to the session state
@@ -83,4 +87,11 @@ pub fn configure_from(settings: &crate::settings::Settings) {
             .unwrap_or(ono_spatial_query::MAP_NODE_BUDGET),
     };
     session::configure(preferences, thresholds);
+    session::configure_values(
+        settings
+            .effective_values()
+            .filter(|(key, _)| key.starts_with("spatial."))
+            .map(|(key, value)| (key.to_owned(), value.clone()))
+            .collect(),
+    );
 }
