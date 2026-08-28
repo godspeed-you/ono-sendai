@@ -106,6 +106,21 @@ impl CanonicalSpace {
         self.status == SpaceStatus::Stable
     }
 
+    /// The v0.2 schema of the object a user standing here is standing in (§3.1's `object_type`).
+    ///
+    /// §7.1 gives the root a contract of its own — `SystemPlace`, declared as `ono.system/1` —
+    /// because the object behind the root place is the system. No other space has one: a domain
+    /// is geography rather than an observed object, and a collection is not one of its members,
+    /// so both report the place contract itself (ADR-0140, ADR-0142). [`Self::schema`] answers a
+    /// different question: which records the place is *built from*.
+    #[must_use]
+    pub fn place_schema(&self) -> &'static str {
+        match self.kind {
+            SpaceKind::Root => self.schema.unwrap_or(PLACE_SCHEMA),
+            SpaceKind::Domain | SpaceKind::Collection => PLACE_SCHEMA,
+        }
+    }
+
     /// The space's opaque identity, which is the same in every session (§42.1).
     #[must_use]
     pub fn spatial_id(&self) -> crate::SpatialId {
@@ -116,6 +131,9 @@ impl CanonicalSpace {
 /// The id of the root space every session starts at (§46.1).
 pub const ROOT: &str = "system";
 
+/// The schema every place the spatial commands emit satisfies (ADR-0140).
+const PLACE_SCHEMA: &str = "ono.spatial-place/1";
+
 /// The canonical geography, in the order `docs/spec/spatial/spaces.yaml` declares it.
 /// The root space every session starts at (§7.1, §46.1).
 pub const SYSTEM: CanonicalSpace = CanonicalSpace {
@@ -125,7 +143,7 @@ pub const SYSTEM: CanonicalSpace = CanonicalSpace {
     kind: SpaceKind::Root,
     object_type: SpatialType::System,
     member_type: None,
-    schema: Some("ono.host/1"),
+    schema: Some("ono.system/1"),
     enterable: true,
     commands: &["look", "map", "near", "enter", "find place", "pin"],
     summary_fields: &["hostname", "os", "kernel", "uptime", "domains"],

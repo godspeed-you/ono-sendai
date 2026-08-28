@@ -14,8 +14,13 @@
 //! What it does own is the state neither of those crates can have: the host and boot identity
 //! every observation belongs to (§10.2), and the pins that outlive the session (§46.1).
 
+pub mod commands;
 pub mod find;
 pub mod pins;
+pub mod session;
+pub mod view;
 
-pub use find::{FindPlace, local_scope};
+pub use commands::{Enter, Home, Look, Near, enter_observed};
+pub use find::{FindPlace, local_scope, spatial_type};
 pub use pins::{PinStore, pin_path};
+pub use session::{SpatialSessionState, spatial_session};

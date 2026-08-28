@@ -1,0 +1,65 @@
+# Canonical NeighborhoodGroup schema. Source: v0.4 §3.6 (a `Neighborhood` is a list of groups),
+# §24.2 ("Groups as exits": a displayed group label "MUST be a valid navigation or query target
+# where practical", and "if a displayed group is not navigable, the renderer MUST not visually
+# imply that it is an exit") and §35.2 (the six permission states, which "MUST remain distinct").
+#
+# `navigable` is data rather than a rendering guess (ADR-0143): the renderer may not decide on its
+# own whether a label is an exit, because §45.4 forbids it from inventing edges.
+#
+# `count` and `state` are read together. A count is a claim about the world only where the state
+# is `available` or `empty`; where the state says the objects could not be read, the count is the
+# number of places this answer actually carries, and the text renderer shows the state in its
+# stead (§35.2's own example: "files — permission denied for 14 process FDs", never "files — 0").
+id: ono.neighborhood-group/1
+name: NeighborhoodGroup
+summary: One exit of a place — the objects a relation or a collection leads to, and what is known about them.
+identity: [label]
+fields:
+  label:
+    type: string
+    required: true
+    doc: The word a user types to take the exit — `processes`, `sockets`, `parent` (§24.2).
+  name:
+    type: string
+    required: true
+    doc: The same text under the name the object pipeline gives every object's name (v0.2 §33.5).
+  display_name:
+    type: string
+    required: true
+    doc: The same text under the name §3.1 gives the field.
+  relation:
+    type: string
+    nullable: true
+    doc: The relation the members are reached by (§3.5); null for a collection reached by containment.
+  count:
+    type: int
+    required: true
+    doc: >-
+      How many places lie behind the exit. Trustworthy as a statement about the system only when
+      `state` is `available` or `empty` (§35.2, §2.17).
+  state:
+    type: enum
+    required: true
+    values: [available, empty, unknown, permission_denied, unsupported, stale]
+    doc: What the user was told about the objects behind the exit (§35.2). These stay distinct.
+  detail:
+    type: string
+    nullable: true
+    doc: What the provider said in place of a count, for a group that could not be read (§35.2).
+  navigable:
+    type: bool
+    required: true
+    doc: Whether `enter <label>` really is a move from here (§24.2).
+  freshness:
+    type: enum
+    required: true
+    values: [live, fresh, stale, unknown]
+    doc: How current the answer is (§33.4). `unknown` is not `fresh`.
+  members:
+    type: list<ono.spatial-place/1>
+    nullable: true
+    doc: >-
+      The places behind the exit. Null in the default view, which shows counts and states; `look
+      --all` and `near` carry them (§6.1, §6.2, §24.1).
+default_view:
+  columns: [label, count, state]

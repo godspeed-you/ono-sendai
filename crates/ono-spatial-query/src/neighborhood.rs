@@ -74,6 +74,19 @@ impl NeighborhoodRequest {
         self
     }
 
+    /// Whether a place of this type survives the `--type` filter (§6.2).
+    #[must_use]
+    pub fn accepts_type(&self, object_type: SpatialType) -> bool {
+        self.object_type
+            .is_none_or(|wanted| object_type.is_a(wanted))
+    }
+
+    /// Whether the caller asked for recently changed neighbours only (§6.2's `--changed`).
+    #[must_use]
+    pub fn wants_changed(&self) -> bool {
+        self.changed_within.is_some()
+    }
+
     /// `near --limit <n>` (§6.2).
     #[must_use]
     pub fn limit(mut self, limit: usize) -> Self {
@@ -93,6 +106,24 @@ impl NeighborhoodRequest {
     pub fn in_terminal_rows(mut self, rows: usize) -> Self {
         self.terminal_rows = Some(rows);
         self
+    }
+
+    /// Whether an exit labelled `label` survives `near <relation>` (§6.2).
+    #[must_use]
+    pub fn keeps_relation(&self, label: &str) -> bool {
+        self.relation.as_ref().is_none_or(|wanted| wanted == label)
+    }
+
+    /// Whether the caller asked for the complete neighbourhood (`--all`, §6.2).
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.all
+    }
+
+    /// The bound the caller stated with `--limit`, where they stated one (§6.2).
+    #[must_use]
+    pub fn stated_limit(&self) -> Option<usize> {
+        self.limit
     }
 
     /// How many members one group may list.
@@ -259,7 +290,7 @@ fn bound(
 }
 
 /// Whether a member survives the request's `--type` and `--changed` filters.
-fn keeps_member(
+pub(crate) fn keeps_member(
     index: &SpatialIndex,
     id: &SpatialId,
     request: &NeighborhoodRequest,
@@ -286,7 +317,7 @@ fn keeps_member(
 
 /// The rank of one member: pinned first, then landmarked, then the most recently observed, then
 /// by name so that two equal members always come out in the same order (§29.3).
-fn rank_of(
+pub(crate) fn rank_of(
     index: &SpatialIndex,
     id: &SpatialId,
     pinned: &[&SpatialId],
@@ -312,7 +343,7 @@ fn rank_of(
 /// The landmark *engine* — the rules and thresholds of §26.2 and §26.3 — is a later phase. What
 /// exists now is what the index was told and what the user pinned, and that is what this returns:
 /// the field is real, and nothing in it is invented (§2.16).
-fn landmarks_of(
+pub(crate) fn landmarks_of(
     index: &SpatialIndex,
     center: &SpatialId,
     groups: &[NeighborhoodGroup],

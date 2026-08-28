@@ -4894,6 +4894,122 @@ find place --type service --where state == "active"
 find place --where local.port == 8080 | take 1
 ```
 
+### `look`
+
+Describe the current place, its exits, its landmarks and what changed around it.
+
+| | |
+|---|---|
+| id | `ono.place.look` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `ono.place-view/1 | string` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--json` | `bool` | Write the `PlaceView` as one JSON document rather than rendering it (v0.4 §6.1, §29.1). |
+| `--all` | `bool` | Widen the exits: every group lists the places behind it instead of counting them (v0.4 §6.1, §24.1). |
+| `--changes` | `duration` | Report what changed in this window, or in `spatial.look.change_window` when the duration is left out (v0.4 §6.1, §24.3). |
+
+**Examples**
+
+```text
+look
+look --json
+look --all
+```
+
+### `near`
+
+Stream the ranked, bounded neighbourhood of the current place.
+
+| | |
+|---|---|
+| id | `ono.place.near` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `stream<ono.spatial-neighbor/1>` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `relation` | `string` | One exit only — the relation or collection to look along (v0.4 §6.2). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--type` | `string` | Restrict to one spatial type — `process`, `listener`, `mount` (v0.4 §6.2, §3.3). |
+| `--changed` | `duration` | Only neighbours observed to change inside this window, or inside `spatial.look.change_window` when the duration is left out (v0.4 §6.2). |
+| `--limit` | `int` | How many neighbours to answer with. The neighbourhood is bounded by default (v0.4 §6.2, §34.2). |
+| `--all` | `bool` | The complete currently known one-hop neighbourhood. May be expensive (v0.4 §6.2). |
+
+**Examples**
+
+```text
+near
+near --limit 5
+near --type process | take 3
+```
+
+### `enter`
+
+Move into a hierarchical child or an explicitly selected place.
+
+| | |
+|---|---|
+| id | `ono.place.enter` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `selector` | `string` | The place to move into: a visible child, a visible neighbour, a canonical id or a spatial id (v0.4 §6.3, §27.1). |
+
+**Examples**
+
+```text
+enter compute
+enter processes
+enter network
+```
+
+### `home`
+
+Return to the root system place of the active host.
+
+| | |
+|---|---|
+| id | `ono.place.home` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Examples**
+
+```text
+home
+home; look
+```
+
 ## storage
 
 ### `get mount`

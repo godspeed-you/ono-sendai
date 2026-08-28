@@ -78,6 +78,22 @@ fields:
     type: list<string>
     required: true
     doc: What the navigation layer may offer for the place — `enter`, `follow`, `watch`, `act`.
+  identity:
+    type: record
+    nullable: true
+    doc: >-
+      The named components §3.1 composes the opaque `spatial_id` from — a process's boot, pid and
+      start time, a user's uid, a unit's name. Not the object's properties, which §24.1 keeps out
+      of a place and `inspect` shows in full: these are what make this place *this* place, and
+      what a reader needs to recognise it. Null for a canonical space, whose identity is its id.
+  permission:
+    type: enum
+    required: true
+    values: [available, empty, unknown, permission_denied, unsupported, stale]
+    doc: >-
+      What this user could be told about the place (§35.2). An observed object answered, so it is
+      `available`; a canonical space reports the state of what it holds, which is how an
+      unavailable domain stays visible instead of vanishing (§4, §2.17, ADR-0142).
   pinned:
     type: bool
     required: true

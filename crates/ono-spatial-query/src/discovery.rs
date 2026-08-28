@@ -174,3 +174,69 @@ pub fn root_fields(paths: impl IntoIterator<Item = String>) -> BTreeSet<String> 
 pub fn spatial_targets() -> Vec<&'static str> {
     SPATIAL_TARGETS.iter().map(|(target, _)| *target).collect()
 }
+
+/// Where the objects of one canonical space come from (§7, §32.1, §45.3).
+///
+/// A space that holds objects holds them because some provider answers for them. Which provider
+/// targets those are is a planning decision, and it is made here rather than in the shell so that
+/// `look`, `near` and `find place` all ask the same question of the same places (§45.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpaceSource {
+    /// The provider targets whose records can become places here, cheapest first.
+    pub targets: &'static [&'static str],
+    /// The spatial types this space holds. A record that projects to one of them belongs here.
+    ///
+    /// The match is exact rather than by [`SpatialType::is_a`]: `ono.socket/1` serves both
+    /// `network.listeners` and `network.connections`, and a listener is not a connection (§14.3,
+    /// §14.4). Where a space genuinely holds a family — DEVICES holds every kernel-visible device
+    /// (§7.7) — the family is written out.
+    pub accepts: &'static [SpatialType],
+    /// What enumerating it costs (§32.1). An [`CostClass::Expensive`] space is not enumerated by
+    /// an orientation command: §33.3 makes the filesystem query-driven, and a `look` that walked
+    /// it would spend the §34 budget before it said where the user is standing.
+    pub cost: CostClass,
+}
+
+/// The objects one canonical space holds, or `None` where it holds only other places (§7).
+///
+/// `None` is the root and the four domains that are pure geography: their exits are the spaces
+/// below them, and asking a provider about "COMPUTE" would be asking about a word. A space that
+/// *does* hold objects but that no target serves — `network.addresses`, `compute.cgroups`,
+/// `network.namespaces` — answers with an empty `targets`, which is how the place stays visible
+/// and reports `unsupported` rather than an empty collection (§4, §35.2, §2.17).
+#[must_use]
+pub fn source_of_space(space_id: &str) -> Option<SpaceSource> {
+    use CostClass::{Cheap, Expensive, Normal};
+    use SpatialType as T;
+    let source = |targets: &'static [&'static str],
+                  accepts: &'static [SpatialType],
+                  cost: CostClass| SpaceSource {
+        targets,
+        accepts,
+        cost,
+    };
+    Some(match space_id {
+        "containers" => source(&["container"], &[T::Container], Normal),
+        "devices" => source(&["device"], &[T::BlockDevice, T::Device], Normal),
+        "compute.processes" => source(&["process"], &[T::Process], Cheap),
+        "compute.services" => source(&["service"], &[T::Service], Normal),
+        "compute.jobs" => source(&["job"], &[T::Job], Cheap),
+        "compute.cgroups" => source(&[], &[T::Cgroup], Normal),
+        "compute.workloads" => source(&[], &[T::Workload], Normal),
+        "network.interfaces" => source(&["interface"], &[T::Interface], Cheap),
+        "network.addresses" => source(&[], &[T::Address], Cheap),
+        "network.routes" => source(&["route"], &[T::Route], Normal),
+        "network.neighbors" => source(&["neighbor"], &[T::Neighbor], Normal),
+        "network.listeners" => source(&["socket"], &[T::Listener], Normal),
+        "network.connections" => source(&["socket"], &[T::Connection], Normal),
+        "network.namespaces" => source(&[], &[T::Namespace], Normal),
+        "storage.filesystems" => source(&["filesystem"], &[T::Filesystem], Normal),
+        "storage.mounts" => source(&["mount"], &[T::Mount], Cheap),
+        "storage.devices" => source(&["device"], &[T::BlockDevice], Normal),
+        "storage.directories" => source(&["dir"], &[T::Directory], Expensive),
+        "identity.users" => source(&["user"], &[T::User], Normal),
+        "identity.groups" => source(&["group"], &[T::Group], Normal),
+        "identity.sessions" => source(&["session"], &[T::Session], Normal),
+        _ => return None,
+    })
+}

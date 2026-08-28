@@ -619,6 +619,7 @@ dependencies = [
  "ono-spatial-core",
  "ono-spatial-index",
  "ono-spatial-query",
+ "ono-spatial-render",
  "ono-testkit",
  "ono-value",
  "serde",
@@ -946,6 +947,13 @@ dependencies = [
  "ono-spatial-core",
  "ono-spatial-index",
  "ono-testkit",
+ "ono-value",
+]
+
+[[package]]
+name = "ono-spatial-render"
+version = "0.3.0"
+dependencies = [
  "ono-value",
 ]
 

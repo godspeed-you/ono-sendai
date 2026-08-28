@@ -266,7 +266,6 @@ fn on_path(name: &str) -> bool {
 // --- look ------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.1, §29.1); un-ignored by the increment that delivers it"]
 fn should_describe_the_current_place_as_a_structured_view_when_look_runs_without_a_tty() {
     // §29.1: `look --json` MUST work in non-interactive mode. §6.1: it describes the current
     // place, its grouped exits and its landmarks; the headings are presentation, the object
@@ -302,7 +301,6 @@ fn should_describe_the_current_place_as_a_structured_view_when_look_runs_without
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §5, §6.1, §29.1); un-ignored by the increment that delivers it"]
 fn should_name_the_canonical_domains_as_exits_when_look_runs_in_a_script() {
     // §6.1: `look` with no arguments MUST never require prior knowledge of object names, and §5
     // makes the available canonical domains part of the horizon it shows. Invariant 13: text
@@ -321,7 +319,6 @@ fn should_name_the_canonical_domains_as_exits_when_look_runs_in_a_script() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §29.1, §29.4); un-ignored by the increment that delivers it"]
 fn should_read_back_into_the_pipeline_when_look_json_is_parsed_by_from_json() {
     // The reading this file fixes: `--json` writes a serialized document exactly as v0.2 `to
     // json` does (§29.1 forbids a hidden TUI dependency; v0.2 §33.5 defines the serialization),
@@ -369,7 +366,6 @@ fn should_stream_neighbors_that_compose_with_the_pipeline_when_near_runs_in_a_sc
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.2); un-ignored by the increment that delivers it"]
 fn should_bound_the_neighborhood_to_the_requested_size_when_near_is_limited() {
     // §6.2: default behaviour MUST rank and bound results; `--limit <n>` fixes the bound
     // explicitly. Invariant 9: the horizon is bounded, never the whole graph.
@@ -1043,7 +1039,6 @@ fn should_run_the_native_spatial_find_and_keep_the_external_find_reachable_when_
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §6.1, §2 invariant 15); un-ignored by the increment that delivers it"]
 fn should_run_the_native_spatial_look_and_keep_the_external_look_reachable_when_both_exist() {
     // The same rule for `look`, which collides with util-linux's `look(1)` on many hosts: the
     // spatial spelling MUST be the spatial command (§6.1, §29.1), and `exec:look` MUST still be

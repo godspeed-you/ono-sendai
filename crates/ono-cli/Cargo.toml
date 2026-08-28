@@ -38,6 +38,7 @@ ono-provider-container.workspace = true
 ono-spatial-core.workspace = true
 ono-spatial-index.workspace = true
 ono-spatial-query.workspace = true
+ono-spatial-render.workspace = true
 ono-value.workspace = true
 serde.workspace = true
 serde_json.workspace = true

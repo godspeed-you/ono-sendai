@@ -37,7 +37,7 @@ spaces:
     kind: root
     object_type: System
     member_type: null
-    schema: ono.host/1
+    schema: ono.system/1
     enterable: true
     commands: [look, map, near, enter, find place, pin]
     summary_fields: [hostname, os, kernel, uptime, domains]

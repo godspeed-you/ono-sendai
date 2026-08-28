@@ -127,6 +127,15 @@ impl Sink {
                 .flat_map(|tree| layout.render_tree_styled(tree, &self.theme, self.presentation))
                 .collect();
         }
+        // A place view never renders as a table (spec v0.4 §6.1, §23.1): its headings are
+        // presentation over a structured object, and the renderer that knows them is
+        // `ono-spatial-render`, which may not invent an exit the view did not declare (§45.4).
+        if let [value] = values
+            && let Ok(record) = value.as_record()
+            && record.schema_id().to_string() == "ono.place-view/1"
+        {
+            return ono_spatial_render::place_view(record, self.width);
+        }
         let renderer = Renderer::new();
         let mut layout = Layout::new(self.width);
         if let Some(max_rows) = self.max_rows {

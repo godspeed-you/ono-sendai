@@ -221,6 +221,42 @@ impl NeighborhoodGroup {
         }
     }
 
+    /// A group in a stated §35.2 state, leading to `members` and standing for `total` places.
+    ///
+    /// The three-way split of §24.2 and §35.2 needs all three parts at once, and neither
+    /// [`available`] nor [`withheld`] can express it: an exit is *there* — `enter services` is a
+    /// move whether or not systemd answers — while what lies behind it may be unreadable, and
+    /// what lies behind it is what a count would be about. So the members say where the exit
+    /// goes, the state says what could be learned about its contents, and the total says how many
+    /// there are where that could be learned at all. A `total` of `None` is not zero (§2.17).
+    ///
+    /// [`available`]: NeighborhoodGroup::available
+    /// [`withheld`]: NeighborhoodGroup::withheld
+    #[must_use]
+    pub fn reported(
+        label: impl Into<String>,
+        state: PermissionState,
+        members: Vec<SpatialId>,
+        total: Option<usize>,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            relation: None,
+            members,
+            total,
+            state,
+            freshness: Freshness::Fresh,
+            detail: None,
+        }
+    }
+
+    /// Records what the provider said in place of a count (§35.2).
+    #[must_use]
+    pub fn explained(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
     /// A group that could not be read, and why (§35.2).
     ///
     /// `detail` is what §35.2's own example puts in the place of a count: "permission denied for

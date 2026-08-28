@@ -1060,7 +1060,6 @@ fn should_fit_the_text_map_into_the_terminal_when_the_terminal_is_narrow() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §24.1, §6.1); un-ignored by the increment that delivers it"]
 fn should_describe_identity_state_exits_and_landmarks_when_look_json_reports_a_place() {
     // §24.1 fixes the priority: identity and state, direct exits, landmarks, recent relevant
     // changes, summary counts — and "MUST NOT default to dumping all properties of the
@@ -1098,7 +1097,6 @@ fn should_describe_identity_state_exits_and_landmarks_when_look_json_reports_a_p
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §24.2); un-ignored by the increment that delivers it"]
 fn should_mark_a_group_as_an_exit_only_when_it_can_be_entered_when_look_lists_groups() {
     // §24.2: displayed group labels "MUST be valid navigation or query targets where practical",
     // and "If a displayed group is not navigable, the renderer MUST not visually imply that it is
@@ -1149,7 +1147,6 @@ fn should_mark_a_group_as_an_exit_only_when_it_can_be_entered_when_look_lists_gr
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §24.3, §53); un-ignored by the increment that delivers it"]
 fn should_not_invent_a_change_section_when_no_snapshot_or_event_source_exists() {
     // §24.3: "No fake change summary may be generated when no event source or comparison snapshot
     // exists." A one-shot script has no earlier snapshot of its own, so the reading taken here is:

@@ -21,9 +21,11 @@
 pub mod discovery;
 pub mod find;
 pub mod neighborhood;
+pub mod place;
 pub mod resolve;
 
-pub use discovery::{TargetPlan, targets_for};
+pub use discovery::{SpaceSource, TargetPlan, source_of_space, targets_for};
 pub use find::{FindRequest, FoundPlace, find_places};
 pub use neighborhood::{NeighborhoodRequest, neighborhood_of};
+pub use place::{Exit, VIEW_BUDGET, declared_children, space_neighborhood};
 pub use resolve::{Candidate, Resolution, ResolutionStep, SelectorContext, place_path, resolve};

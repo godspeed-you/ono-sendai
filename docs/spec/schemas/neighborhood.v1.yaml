@@ -1,0 +1,41 @@
+# Canonical Neighborhood schema. Source: v0.4 §3.6, field for field: "Neighborhood { center,
+# groups, landmarks, hidden_count, generated_at, completeness }". §3.6's first sentence is the
+# whole contract: "a bounded, ranked projection of objects and relationships around the current
+# place. It is not simply 'all adjacent nodes'."
+#
+# `hidden_count` and `completeness` are required because §2.17 forbids rendering what a view left
+# out as absence: a bound the reader cannot see is a bound the reader will mistake for the world.
+id: ono.neighborhood/1
+name: Neighborhood
+summary: The bounded, ranked projection of what surrounds a place.
+identity: [center, generated_at]
+fields:
+  center:
+    type: string
+    required: true
+    doc: The `spatial_id` of the place the projection is around.
+  groups:
+    type: list<ono.neighborhood-group/1>
+    required: true
+    doc: The exits, in the order the query layer ranked them (§3.6, §24.2).
+  landmarks:
+    type: list<ono.landmark/1>
+    required: true
+    doc: What deserves attention here (§3.7). Empty is an answer; null would not be.
+  hidden_count:
+    type: int
+    required: true
+    doc: How many known neighbours the view budget left out (§3.6, §34.2).
+  completeness:
+    type: enum
+    required: true
+    values: [complete, bounded, partial, unknown]
+    doc: >-
+      Whether everything adjacent is here (`complete`), the budget hid some (`bounded`), a source
+      could not be read (`partial`), or neither could be established (§3.6, §35.2).
+  generated_at:
+    type: timestamp
+    required: true
+    doc: When the projection was made.
+default_view:
+  columns: [center, hidden_count, completeness, generated_at]

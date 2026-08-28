@@ -27,9 +27,14 @@ pub enum Request {
 
 /// Whether `stage` is a context command this module runs.
 ///
-/// The decision is by head word alone: `enter` and `leave` always mean the stack, exactly as
-/// `cd` always means the shell. A program named `enter` on `PATH` stays reachable as
-/// `exec:enter` (ADR-0011).
+/// `leave` always means the stack, exactly as `cd` always means the shell. A program named
+/// `enter` on `PATH` stays reachable as `exec:enter` (ADR-0011).
+///
+/// `enter` is shared. The v0.2 form names a target — `enter dir /etc`, `enter service nginx` —
+/// and pushes a context frame; the v0.4 form names a place — `enter compute`, `enter processes`,
+/// `enter 1842` — and moves the session through the spatial geography (§6.3). A first word that
+/// the registry declares as an `enter <target>` is the first; anything else is the second, which
+/// is what lets both spellings keep their meaning without a second vocabulary (ADR-0142).
 #[must_use]
 pub fn claims(stage: &Stage) -> Option<Request> {
     let StageHead::Command(name) = &stage.head else {
@@ -39,7 +44,8 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         return None;
     }
     match name.name.as_str() {
-        "enter" => Some(Request::Enter),
+        "enter" if enters_a_declared_target(stage) => Some(Request::Enter),
+        "enter" => None,
         "leave" => Some(Request::Leave),
         "link" => Some(Request::Link),
         "load"
@@ -53,6 +59,18 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         }
         _ => None,
     }
+}
+
+/// Whether the stage's first word names a target `docs/spec/commands/` declares for `enter`.
+fn enters_a_declared_target(stage: &Stage) -> bool {
+    let Some(word) = stage
+        .arguments
+        .first()
+        .and_then(ono_parser::Argument::as_word)
+    else {
+        return false;
+    };
+    crate::native::registry().is_ok_and(|registry| registry.find("enter", Some(word)).is_some())
 }
 
 /// Runs `enter`, validating that the entered object exists before anything narrows to it.
@@ -273,6 +291,12 @@ fn enter_record(
     target: &str,
     record: &ono_value::RecordValue,
 ) -> Eval<ExitStatus> {
+    // v0.4 §30.2: "`enter` changes the spatial place." The context frame of §14.3 narrows later
+    // commands; the place of v0.4 §46 says where the session is standing. One `enter` sets both,
+    // and §30.4 keeps them separate pieces of state.
+    if let Some((runtime, _)) = session.pipeline_context() {
+        runtime.block_on(crate::spatial::enter_observed(record));
+    }
     let registry = crate::native::registry().map_err(Flow::Failed)?;
     let handle = registry.find("enter", Some(target)).and_then(|contract| {
         contract

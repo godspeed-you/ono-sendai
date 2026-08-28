@@ -95,6 +95,29 @@ verbs:
     mutating: true
     stability: stable
 
+  # --- spatial orientation (v0.4 §6) --------------------------------------------------------
+  - id: ono.verb.look
+    verb: look
+    semantics: Describe the current place and its immediate horizon.
+    typical_targets: [place]
+    pipeline_role: producer
+    mutating: false
+    stability: stable
+  - id: ono.verb.near
+    verb: near
+    semantics: Stream the ranked, bounded neighbourhood of the current place.
+    typical_targets: [place]
+    pipeline_role: producer
+    mutating: false
+    stability: stable
+  - id: ono.verb.home
+    verb: home
+    semantics: Return to the root system place of the active host or link.
+    typical_targets: [place]
+    pipeline_role: context
+    mutating: false
+    stability: stable
+
   # --- context ----------------------------------------------------------------------------
   - id: ono.verb.enter
     verb: enter

@@ -55,6 +55,16 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     built.register(std::sync::Arc::new(crate::spatial::FindPlace::new(
         crate::spatial::PinStore::of(session),
     )));
+    built.register(std::sync::Arc::new(crate::spatial::Look::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Near::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Enter::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Home));
     Ok(TABLE.get_or_init(|| built))
 }
 
@@ -362,6 +372,32 @@ fn accepts_bytes(input: &str) -> bool {
             || alternative.starts_with("string")
             || alternative.starts_with("bytes")
     })
+}
+
+/// Whether a command's output *may* be text, among the alternatives it declares.
+///
+/// `look` answers with a `PlaceView` and, when `--json` asked for it, with the one document
+/// §29.1 requires it to write without a terminal (v0.4 §6.1). Both are its output, so the
+/// contract declares both, and what it actually produced decides how the result is written.
+fn admits_bytes(contract: &CommandContract) -> bool {
+    contract
+        .output()
+        .text()
+        .split('|')
+        .map(str::trim)
+        .any(|alternative| {
+            matches!(alternative, "string" | "bytes")
+                || alternative.starts_with("string")
+                || alternative.starts_with("bytes")
+        })
+}
+
+/// Whether these values are the text such a command wrote rather than the objects it returned.
+fn wrote_text(values: &[Value]) -> bool {
+    !values.is_empty()
+        && values
+            .iter()
+            .all(|value| matches!(value, Value::String(_) | Value::Bytes(_)))
 }
 
 /// Whether a command's output is bytes or text rather than objects.
@@ -1563,13 +1599,10 @@ fn run_native_segment(
     }
 
     let stage = &list.stages[*indices.last().unwrap_or(&0)];
-    write_result(
-        session,
-        stage,
-        &values,
-        final_contract.is_some_and(produces_bytes),
-        source,
-    )?;
+    let serialised = final_contract.is_some_and(|contract| {
+        produces_bytes(contract) || (admits_bytes(contract) && wrote_text(&values))
+    });
+    write_result(session, stage, &values, serialised, source)?;
     Ok((None, status))
 }
 

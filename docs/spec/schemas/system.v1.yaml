@@ -1,0 +1,57 @@
+# Canonical SystemPlace schema. Source: v0.4 §7.1, field for field — `home` "MUST resolve to a
+# `SystemPlace` representing the active host or remote host scope", and §7.1's conceptual schema
+# names `host`, `hostname`, `os`, `kernel`, `uptime`, `domains`, `landmarks`, `links` and
+# `generated_at`.
+#
+# This is the contract behind the root place's `object_type` (ADR-0142): the object a user stands
+# in when `home` answers is the system itself, and `ono.host/1` is a different thing — the link
+# table's entry for a host Ono can reach (v0.2 §14). Identity is the host scope, because one host
+# is one system: two sessions on the same host stand in the same place (§3.1, §42.1).
+#
+# `os`, `kernel` and `uptime` are nullable because no installed provider answers for them yet: a
+# `get system` producer is a later phase, and §2.17 and §35.3 require the unknown to be visible as
+# null rather than fabricated or read behind the providers' backs (§2.16). `links` is nullable for
+# the same reason — the remote federation of §19 is phase S8.
+id: ono.system/1
+name: SystemPlace
+summary: The root place of one host — what a session stands in before it has moved anywhere.
+identity: [host]
+fields:
+  host:
+    type: string
+    required: true
+    doc: The §3.2 host scope this system is, rendered as `<kind>:<id>` — `host:web01`.
+  hostname:
+    type: string
+    required: true
+    doc: What the host calls itself.
+  os:
+    type: string
+    nullable: true
+    doc: The operating system, where a provider answers for it.
+  kernel:
+    type: string
+    nullable: true
+    doc: The kernel release, where a provider answers for it.
+  uptime:
+    type: duration
+    nullable: true
+    doc: How long the system has been up, where a provider answers for it.
+  domains:
+    type: list<ono.neighborhood-group/1>
+    required: true
+    doc: The canonical domains of §4, each with its §35.2 state — the exits of the root.
+  landmarks:
+    type: list<ono.landmark/1>
+    required: true
+    doc: What deserves attention here (§3.7). Empty is a real answer; null would not be.
+  links:
+    type: list<ono.link/1>
+    nullable: true
+    doc: The linked hosts reachable from here (§19.1); null until the federation phase serves them.
+  generated_at:
+    type: timestamp
+    required: true
+    doc: When the projection was made.
+default_view:
+  columns: [hostname, os, kernel, uptime]

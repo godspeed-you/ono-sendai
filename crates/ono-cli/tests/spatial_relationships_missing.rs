@@ -556,7 +556,6 @@ fn should_leave_the_relationship_chain_with_up_after_following_a_socket_edge() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §31.1); un-ignored by the increment that delivers it"]
 fn should_keep_the_current_place_when_trace_projects_the_relationship_graph() {
     // §31.1: `trace` returns a graph projection and MUST NOT automatically change the current
     // place. It is a relationship query; `follow` is the movement. The trace runs inside the

@@ -1,0 +1,34 @@
+# Canonical ChangeSummary schema. Source: v0.4 §24.3 — "The `changed` group SHOULD show only
+# changes relevant to the current place and recent configurable time horizon. No fake change
+# summary may be generated when no event source or comparison snapshot exists." — and §25.3/§25.4,
+# which make an event stream or a snapshot comparison the only two sources a change may come from.
+#
+# The schema exists so that "there is no source" is a statable answer rather than an omission
+# (§2.17): a change section whose `state` is `unsupported` says that nothing was watching, which
+# is a different fact from `empty`, which claims nothing happened.
+id: ono.change-summary/1
+name: ChangeSummary
+summary: What changed around a place in a time window, or why nothing can be said about it.
+identity: [window, state]
+fields:
+  window:
+    type: duration
+    required: true
+    doc: The horizon the summary covers (§24.3, `spatial.look.change_window`).
+  state:
+    type: enum
+    required: true
+    values: [available, empty, unknown, permission_denied, unsupported, stale]
+    doc: >-
+      Whether changes could be observed at all (§35.2). `unsupported` means no event source and no
+      comparison snapshot existed, which §24.3 forbids being rendered as "nothing changed".
+  source:
+    type: string
+    nullable: true
+    doc: What the changes were observed through — an event stream or a snapshot comparison (§25.4).
+  entries:
+    type: list<record>
+    required: true
+    doc: The changes themselves, each carrying the object it happened to and when it was observed.
+default_view:
+  columns: [window, state, source]

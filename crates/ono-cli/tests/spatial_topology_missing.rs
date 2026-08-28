@@ -295,7 +295,6 @@ fn wait_for(shell: &mut PtySession, seen: &mut String, needle: &str, budget: Dur
 // --- the root and the canonical domains (§4, §7.1) -------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §7.1); un-ignored by the increment that delivers it"]
 fn should_report_the_system_root_as_the_current_place_when_home_runs() {
     // §7.1: `home` MUST resolve to a SystemPlace for the active host. §2.2: Ono must always be
     // able to explain the current spatial context, so `look` after `home` names it.
@@ -319,7 +318,6 @@ fn should_report_the_system_root_as_the_current_place_when_home_runs() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §4); un-ignored by the increment that delivers it"]
 fn should_list_exactly_the_six_canonical_domains_when_looking_at_the_system_root() {
     // §4 and §53 ("Root geography? Six canonical domains"): the root offers COMPUTE, NETWORK,
     // STORAGE, CONTAINERS, IDENTITY and DEVICES — all six, and nothing else beside them.
@@ -341,7 +339,6 @@ fn should_list_exactly_the_six_canonical_domains_when_looking_at_the_system_root
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §4); un-ignored by the increment that delivers it"]
 fn should_carry_a_permission_state_on_every_domain_so_an_unavailable_one_stays_visible() {
     // §4: "Unavailable domains remain visible but carry an `unavailable`, `unsupported` or
     // `permission_denied` state rather than disappearing silently." §2.17: unknown is visible.
@@ -361,7 +358,6 @@ fn should_carry_a_permission_state_on_every_domain_so_an_unavailable_one_stays_v
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §7.1); un-ignored by the increment that delivers it"]
 fn should_bound_the_root_horizon_instead_of_listing_every_known_object() {
     // §7.1: "The root MUST never be a flat list of every object known to Ono." §2.9: the horizon
     // is bounded. §3.6: a Neighborhood is a bounded, ranked projection, not all adjacent nodes.
@@ -384,7 +380,6 @@ fn should_bound_the_root_horizon_instead_of_listing_every_known_object() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §3.1); un-ignored by the increment that delivers it"]
 fn should_describe_the_current_place_with_an_id_kind_name_scope_and_permission_when_looking() {
     // §3.1: a SpatialObject carries `spatial_id`, `object_type`, `display_name` and `scope`.
     // §3.2: a scope names the execution and discovery boundary — here the local host. §35.2 adds
@@ -431,7 +426,6 @@ fn should_describe_the_current_place_with_an_id_kind_name_scope_and_permission_w
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §3.1); un-ignored by the increment that delivers it"]
 fn should_keep_the_same_spatial_id_for_the_root_across_separate_sessions() {
     // §3.1: a SpatialId is "stable for as long as the implementation can truthfully identify the
     // same conceptual object". The root of one host is one conceptual object, so two runs of the
@@ -453,7 +447,6 @@ fn should_keep_the_same_spatial_id_for_the_root_across_separate_sessions() {
 // --- the domains themselves (§7.2 - §7.7) -----------------------------------------------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §7); un-ignored by the increment that delivers it"]
 fn should_enter_every_canonical_domain_when_named_at_the_root() {
     // §2.3: movement changes context, it does not merely print an object. §6.3: `enter` resolves
     // one place. Every one of the six domains of §4 is enterable, including the ones no provider
@@ -473,7 +466,6 @@ fn should_enter_every_canonical_domain_when_named_at_the_root() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §7.2); un-ignored by the increment that delivers it"]
 fn should_offer_the_compute_groups_the_spec_names_when_entering_compute() {
     // §7.2: "COMPUTE MUST provide access to: processes services jobs workloads cgroups". The same
     // section calls `workloads` a spatial aggregate Ono MAY form when evidence supports it, so it
@@ -492,7 +484,6 @@ fn should_offer_the_compute_groups_the_spec_names_when_entering_compute() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §7.3); un-ignored by the increment that delivers it"]
 fn should_offer_the_network_groups_the_spec_names_when_entering_network() {
     // §7.3: NETWORK MUST provide access to interfaces, addresses, routes, neighbors, listeners,
     // connections and namespaces — all seven are MUST, none is conditional on a provider.
@@ -518,7 +509,6 @@ fn should_offer_the_network_groups_the_spec_names_when_entering_network() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §7.4); un-ignored by the increment that delivers it"]
 fn should_offer_the_storage_groups_the_spec_names_when_entering_storage() {
     // §7.4: STORAGE MUST provide access to filesystems, mounts, volumes/devices where known and
     // directory roots. `filesystems` and `mounts` are unconditional; the directory entry point is
@@ -543,7 +533,6 @@ fn should_offer_the_storage_groups_the_spec_names_when_entering_storage() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §7.6); un-ignored by the increment that delivers it"]
 fn should_offer_the_identity_groups_the_spec_names_when_entering_identity() {
     // §7.6: IDENTITY MUST provide access to users, groups and active sessions. §17 adds that
     // identity spaces never reveal secrets, credentials or environment contents — this test only
@@ -562,7 +551,6 @@ fn should_offer_the_identity_groups_the_spec_names_when_entering_identity() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §7.5); un-ignored by the increment that delivers it"]
 fn should_keep_containers_and_devices_enterable_with_a_state_when_no_provider_contributes() {
     // §7.5 (provider-neutral containers), §7.7 (devices only where a provider supplies meaning)
     // and §4 (an unavailable domain stays visible with a state). An unprivileged host with no
@@ -587,7 +575,6 @@ fn should_keep_containers_and_devices_enterable_with_a_state_when_no_provider_co
 // --- the spatial layer composes provider facts, it does not invent them (§2.16) ---------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §17); un-ignored by the increment that delivers it"]
 fn should_show_the_users_the_user_provider_answers_for_when_entering_identity_users() {
     // §2.16: "Providers own facts. Ono's spatial layer composes provider data; it MUST NOT become
     // an undocumented source of system truth." So the users visible as places are a subset of
@@ -617,7 +604,6 @@ fn should_show_the_users_the_user_provider_answers_for_when_entering_identity_us
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §7.4); un-ignored by the increment that delivers it"]
 fn should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_mounts() {
     // §2.16 again, on the mount table: every mount that is a place must be a mount `get mount`
     // answers for, and `/` is always one of them (§15.3: mount boundaries are real objects).
@@ -648,7 +634,6 @@ fn should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_m
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §18); un-ignored by the increment that delivers it"]
 fn should_show_a_block_device_the_device_provider_answers_for_when_entering_devices() {
     // §18: devices are spatial objects only where a provider supplies stable identity and useful
     // relationships, and "/dev/* path existence alone is insufficient". A block device the v0.2
@@ -692,7 +677,6 @@ fn should_show_a_block_device_the_device_provider_answers_for_when_entering_devi
 // --- the neighborhood is bounded, ranked and explains what it hides (§3.6, §3.7) --------------
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §3.6); un-ignored by the increment that delivers it"]
 fn should_bound_the_neighborhood_and_count_what_it_hides_when_a_place_has_many_neighbors() {
     // §3.6: a Neighborhood carries `hidden_count`, `completeness` and `generated_at`; it "is not
     // simply all adjacent nodes". §6.2: `near` ranks and bounds by default, `--all` asks for the
@@ -730,7 +714,6 @@ fn should_bound_the_neighborhood_and_count_what_it_hides_when_a_place_has_many_n
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §3.7); un-ignored by the increment that delivers it"]
 fn should_expose_a_reason_on_every_landmark_when_a_place_reports_landmarks() {
     // §3.7: "A landmark MUST always expose its reason", drawn from the built-in vocabulary.
     // §2.11: highlighting is driven by real state, change, importance or pinning — so a landmark
@@ -782,7 +765,6 @@ fn should_expose_a_reason_on_every_landmark_when_a_place_reports_landmarks() {
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §29.4); un-ignored by the increment that delivers it"]
 fn should_stream_neighbors_as_pipeline_objects_when_near_runs_at_the_root() {
     // §29.4: `near` and `find place` return normal structured streams that participate in object
     // pipelines. §6.2 shows the shape: a relation, the object, its state. §2.20: spatial state is
@@ -1067,7 +1049,6 @@ fn should_reach_a_running_service_by_its_visible_state_when_a_service_manager_an
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §35.2); un-ignored by the increment that delivers it"]
 fn should_distinguish_an_unavailable_group_from_an_empty_one_when_a_domain_has_no_provider() {
     // §35.2: the six states are distinct, and §2.17 forbids rendering "unknown" as absence. This
     // is the invariant that makes every count in a spatial view trustworthy: a group that reports
@@ -1105,7 +1086,6 @@ fn should_distinguish_an_unavailable_group_from_an_empty_one_when_a_domain_has_n
 }
 
 #[test]
-#[ignore = "REASON: v0.4 spatial systems interface (docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md §9.3); un-ignored by the increment that delivers it"]
 fn should_resolve_find_as_a_spatial_verb_while_the_external_tool_stays_reachable_by_path() {
     // §6 fixes `find` and `look` as normative spatial verbs, and §9.3 makes the spatial search
     // the global discovery path. Both names collide with a Unix tool that exists on every host,

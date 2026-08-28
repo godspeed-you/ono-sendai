@@ -16,17 +16,8 @@ use ono_provider_api::{ProviderRegistry, Query};
 use ono_spatial_core::{BootIdentity, Projection, SpatialScope, SpatialType};
 use ono_spatial_index::{FreshnessPolicy, ProviderBridge, SpatialIndex};
 use ono_spatial_query::discovery::{TargetPlan, root_fields, targets_for};
-use ono_spatial_query::{FindRequest, FoundPlace, SelectorContext, resolve};
-use ono_value::{ErrorValue, Provenance, RecordValue, SchemaId, Value, builtin_schemas};
-
-/// The schema every place the spatial commands emit satisfies.
-const PLACE_SCHEMA: &str = "ono.spatial-place";
-
-/// The provider id the spatial layer signs its own composition with.
-///
-/// It is not a provider of facts: every field of a place comes from a record a real provider
-/// produced, and the record's own provenance travels with it (§2.16, §27.4).
-const COMPOSER: &str = "ono.spatial";
+use ono_spatial_query::{FindRequest, SelectorContext, resolve};
+use ono_value::{ErrorValue, RecordValue, Value};
 
 /// `find place` (spec v0.4 §6.8, ADR-0124).
 #[derive(Debug)]
@@ -123,9 +114,22 @@ impl CommandImpl for FindPlace {
                 pins.rebind(&name, id);
             }
             let places = ono_spatial_query::find_places(&index, &request, &pins, now);
+            // The place record is the same one `look` and `near` emit (ADR-0140): one contract,
+            // one builder, so a search result and a neighbour never read differently.
+            let scope = local_scope();
             let values: Vec<Value> = places
                 .iter()
-                .map(|place| place_record(&index, place).map(Value::Record))
+                .map(|place| {
+                    crate::spatial::view::place_record(
+                        &index,
+                        place.spatial_id(),
+                        &scope,
+                        ono_spatial_core::PermissionState::Available,
+                        place.is_pinned(),
+                        now,
+                    )
+                    .map(|record| Value::Record(Arc::new(record)))
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Outcome::Values(ValueStream::from_values(values)))
         })
@@ -138,7 +142,7 @@ impl CommandImpl for FindPlace {
 ///
 /// `spatial.unsupported` naming what the geography does know, because a type that names nothing
 /// is a question the shell cannot answer rather than a search that finds nothing.
-fn spatial_type(value: &Value) -> Result<SpatialType, ErrorValue> {
+pub fn spatial_type(value: &Value) -> Result<SpatialType, ErrorValue> {
     let text = text_of(value).unwrap_or_default();
     // The registry spells the types `Process`, `Listener`, `BlockDevice`; a user types
     // `--type process`. Case is not information here, and `near --type <type>` will read the
@@ -264,55 +268,6 @@ async fn observe(
         records.push(RecordValue::clone(&record));
     }
     Ok(records)
-}
-
-/// One found place as an `ono.spatial-place/1` record.
-fn place_record(index: &SpatialIndex, place: &FoundPlace) -> Result<Arc<RecordValue>, ErrorValue> {
-    let id = SchemaId::new(PLACE_SCHEMA, 1);
-    let schema = builtin_schemas().get(&id).ok_or_else(|| {
-        ErrorValue::new(
-            ErrorCode::ProviderSchemaViolation,
-            "the `ono.spatial-place/1` contract is not in this build",
-        )
-    })?;
-    let entry = index.get(place.spatial_id());
-    let capabilities: Vec<Value> = entry
-        .map(|entry| {
-            entry
-                .object()
-                .capabilities()
-                .iter()
-                .map(|capability| Value::string(capability.as_str()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let parent = ono_spatial_query::resolve::parent_of(index, place.spatial_id())
-        .map_or(Value::Null, |parent| Value::string(&parent.to_string()));
-    let tier = place
-        .spatial_id()
-        .tier()
-        .map_or(Value::Null, |tier| Value::string(tier.as_str()));
-
-    let record = RecordValue::builder(schema, Provenance::local(COMPOSER, id))
-        .set("spatial_id", Value::string(&place.spatial_id().to_string()))?
-        .set("name", Value::string(place.name()))?
-        .set("display_name", Value::string(place.name()))?
-        .set("object_type", Value::string(place.schema()))?
-        .set("spatial_type", Value::string(place.object_type().as_str()))?
-        .set("place_path", Value::string(place.place_path()))?
-        .set("scope", Value::string(&place.scope().to_string()))?
-        .set("parent", parent)?
-        .set("freshness", Value::string(place.freshness().as_str()))?
-        .set("observed_at", Value::Timestamp(place.observed_at()))?
-        .set("identity_tier", tier)?
-        .set("capabilities", Value::list(capabilities))?
-        .set("pinned", Value::Bool(place.is_pinned()))?
-        .set(
-            "provenance",
-            ono_command::provenance_value(place.provenance()),
-        )?
-        .build();
-    Ok(Arc::new(record))
 }
 
 /// The scope every local observation belongs to (§3.2, §10.2).
