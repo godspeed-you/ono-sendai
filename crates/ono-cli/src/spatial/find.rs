@@ -1,18 +1,9 @@
-//! The spatial commands the shell dispatches (spec v0.4 §6, §45.6).
+//! `find place` (spec v0.4 §6.8, §9.3, §27.4, §29.4; ADR-0124, ADR-0140, ADR-0141).
 //!
-//! §45.6: "`ono-cli` should parse/dispatch spatial commands and own session current-place state,
-//! but SHOULD NOT implement graph selection, identity reconciliation or map layout directly."
-//! That is exactly the split here. This module reads the arguments, asks the providers for the
-//! objects a query needs and hands the answer on:
-//!
-//! - which record is which place, and whether two records are one — `ono-spatial-index`'s
-//!   provider bridge (§45.2);
-//! - which places answer a search, in which order, and what a search is allowed to cost —
-//!   `ono-spatial-query` (§45.3).
-//!
-//! Nothing here decides either. What it does own is the one thing neither of those crates can
-//! know: which host and which boot the observation belongs to (§10.2), because that is session
-//! state and §46 puts session state in the shell.
+//! The command reads its arguments, plans which provider targets can hold an answer, asks those
+//! and no others (§34), filters the records by the predicate, and hands the survivors to the
+//! provider bridge and the query layer. Nothing about which place is which, or which answers
+//! first, is decided here.
 
 use std::sync::Arc;
 
@@ -41,21 +32,18 @@ const COMPOSER: &str = "ono.spatial";
 #[derive(Debug)]
 pub struct FindPlace {
     id: &'static str,
+    /// Where this session's pins are, or `None` where it has no state directory (§46.1).
+    pins: Option<crate::spatial::PinStore>,
 }
 
 impl FindPlace {
-    /// The implementation registered against `ono.place.find`.
+    /// The implementation registered against `ono.place.find`, reading `pins`.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(pins: Option<crate::spatial::PinStore>) -> Self {
         Self {
             id: "ono.place.find",
+            pins,
         }
-    }
-}
-
-impl Default for FindPlace {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -88,6 +76,7 @@ impl CommandImpl for FindPlace {
             }
             let anchor = arguments.option("near").and_then(text_of);
             let scope = Arc::clone(ctx.scope());
+            let pin_store = self.pins.clone();
 
             let now = Timestamp::now();
             let mut index = SpatialIndex::new(FreshnessPolicy::recommended());
@@ -118,7 +107,21 @@ impl CommandImpl for FindPlace {
                 request = request.near(found.spatial_id().clone());
             }
 
-            let pins = ono_spatial_index::PinRegistry::new();
+            // A pin outranks every heuristic (§26.4), and it survives the session (§46.1), so
+            // the store is read before anything is ranked. A store that cannot be read is
+            // reported rather than treated as "no pins": silently losing what the user chose is
+            // worse than failing the search that would have shown it.
+            let mut pins = pin_store.map_or_else(
+                || Ok(ono_spatial_index::PinRegistry::new()),
+                |store| store.load(),
+            )?;
+            // A pin whose identity is gone but whose selector still finds the place is re-bound
+            // for this answer — that is what the resilient selector of §20.4 is for. The store
+            // is not rewritten: the pin follows its selector when it is read, never behind the
+            // user's back.
+            for (name, id) in crate::spatial::pins::resolved_pins(&pins, &index, now) {
+                pins.rebind(&name, id);
+            }
             let places = ono_spatial_query::find_places(&index, &request, &pins, now);
             let values: Vec<Value> = places
                 .iter()

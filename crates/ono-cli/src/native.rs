@@ -52,7 +52,9 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     // boot the session belongs to, which no library crate can know. Selection, ranking and
     // identity stay in `ono-spatial-query` and `ono-spatial-index`, where §45.2 and §45.3 put
     // them (ADR-0141).
-    built.register(std::sync::Arc::new(crate::spatial::FindPlace::new()));
+    built.register(std::sync::Arc::new(crate::spatial::FindPlace::new(
+        crate::spatial::PinStore::of(session),
+    )));
     Ok(TABLE.get_or_init(|| built))
 }
 
