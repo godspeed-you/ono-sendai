@@ -8,6 +8,7 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::time::{Duration, Instant};
 
 use nix::errno::Errno;
+use nix::fcntl::{FcntlArg, FdFlag, fcntl};
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::pty::openpty;
 use nix::sys::termios::{SetArg, Termios, cfmakeraw, tcgetattr, tcsetattr};
@@ -40,6 +41,14 @@ impl PtySession {
         let winsize = size.to_winsize();
         let pty = openpty(&winsize, None::<&Termios>)
             .map_err(|errno| spawn::system("allocating a pseudoterminal", errno))?;
+        // `openpty` hands back two ordinary descriptors, and an ordinary descriptor survives
+        // `exec`. Without this the program started below inherits the *master* side of the very
+        // terminal it is reading from, so the last reference to that master is held by the
+        // program itself: closing it in the shell can never produce end of file, and a shell
+        // started this way waits for input that nobody can ever send (ADR-0160). The slave is
+        // closed for the same reason — the child gets its own duplicates on 0, 1 and 2.
+        close_on_exec(&pty.master, "the terminal")?;
+        close_on_exec(&pty.slave, "the terminal")?;
 
         let env = command.resolved_env();
         let path = resolve::effective_path(env.as_deref(), command.clears_env());
@@ -360,6 +369,13 @@ impl PtySession {
             _ => {}
         }
     }
+}
+
+/// Marks `fd` close-on-exec, so no program the shell starts inherits it.
+fn close_on_exec(fd: &impl AsFd, what: &str) -> Result<()> {
+    fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))
+        .map(|_| ())
+        .map_err(|errno| spawn::system(&format!("closing {what} on exec"), errno))
 }
 
 /// Waits until `fd` has something to read, or `timeout` passes.
