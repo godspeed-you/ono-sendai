@@ -253,3 +253,25 @@ fn should_read_any_byte_sequence_as_bytes() {
         Value::Bytes(Bytes::from_static(&[0xff, 0xfe]))
     );
 }
+
+#[test]
+fn should_write_the_only_field_of_a_one_field_record() {
+    // `select path` leaves a record of exactly one field, and one field is one line: the
+    // projection `--field` would ask for is already unambiguous (spec §29.1).
+    let projected = RecordValue::builder(
+        Arc::new(
+            Schema::builder(SchemaId::new("ono.demo-one", 1), "One")
+                .field(FieldDef::new("path", FieldType::Path).required())
+                .identity(["path"])
+                .build()
+                .unwrap(),
+        ),
+        Provenance::local("demo", SchemaId::new("ono.demo-one", 1)),
+    )
+    .set("path", Value::Path(Arc::from(Path::new("/etc/passwd"))))
+    .unwrap()
+    .build()
+    .into_value();
+
+    assert_eq!(to_text(&[projected], None).unwrap(), "/etc/passwd\n");
+}

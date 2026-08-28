@@ -610,7 +610,7 @@ Serialize a value or stream into text or bytes.
 |---|---|---|
 | `--pretty` | `bool` | Indent the output for a human reader (spec §33.5). |
 | `--human` | `bool` | Emit display forms such as `1.2 GiB` instead of canonical values. Off by default: §33.5 requires canonical values unless a human format is explicitly requested. |
-| `--field` | `string` | For `text`, emit this one field per line — the bridge spec §29.1 writes for feeding an ordinary Unix tool. |
+| `--field` | `string` | For `text`, emit this one field per line — the bridge spec §29.1 writes for feeding an ordinary Unix tool. Unnecessary once `select` has left exactly one field: a one-field record is already one line. |
 
 **Examples**
 
@@ -618,6 +618,7 @@ Serialize a value or stream into text or bytes.
 get process | to json
 get process | to json --pretty
 get process | to json > out.json
+get mount | select target | to text
 ```
 
 ### `from`
