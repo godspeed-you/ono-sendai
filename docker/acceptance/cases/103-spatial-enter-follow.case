@@ -1,0 +1,173 @@
+# v0.4 §50 Phase S4's second half — `enter` on any place, and `follow` along a real edge.
+# §6.3 (`enter`), §6.4 (`follow`), §11.1/§11.2 (hierarchy is not the graph), §12 (a process
+# place's exits), §27.1 (selector resolution), §28.2 (a pipeline result is enterable), §29.3
+# (a script is refused, never offered a picker), §30 (`cd` and the place are two things), §35.2
+# (a denied group is a state) and §40 (the structured refusals).
+#
+# The scenario is the walk §44.4 describes, done by a user who names nothing the shell has not
+# shown them first: from the root down the hierarchy to a process, along an edge to the file it
+# holds open, and back out to what the hierarchy says about where that file lives.
+#
+# The container is unprivileged and runs no service manager, so the run also proves the halves
+# §35.2 cares about: a group the kernel refuses says so, and a relation nothing serves is
+# `unsupported` rather than empty.
+case: a place is entered by name, by id and from a pipeline, and an edge is followed along
+timeout: 90
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  # A process this case owns, holding a file this case created: both ends of the §44.4 walk are
+  # facts of the run rather than of the image.
+  mkdir -p /tmp/s4b
+  printf 'listen 8080;\n' > /tmp/s4b/held.conf
+  sh -c 'exec 3< /tmp/s4b/held.conf; sleep 60' &
+  holder=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -e "/proc/$holder/fd/3" ] && break
+    sleep 0.2
+  done
+
+  echo "== the hierarchy is walked by the words the place printed (§6.3, §7.2, §27.1) =="
+  prove s4b-a "\`enter\` reaches a collection under a domain" \
+    'ono -c "home; enter compute; enter processes; look --json" | grep -qF "\"label\":\"processes\""'
+  prove s4b-b "\`<type>/<key>\` reaches the process from anywhere (§11.2, §27.1)" \
+    "ono -c 'enter process/$holder; look --json' | grep -qF '\"pid\":$holder'"
+  prove s4b-c "the place is typed as the v0.2 object it stands for (§3.1, §37.1)" \
+    "ono -c 'enter process/$holder; look --json' | grep -qF '\"object_type\":\"ono.process/1\"'"
+  prove s4b-d "a bare key reaches the one place it names (§27.1)" \
+    'ono -c "enter process/1; look --json" | grep -qF "\"pid\":1"'
+  # §27.2 and §29.3: two places answering to one name is an error with the candidates listed,
+  # never a picker and never a guess. The twins are this case's own, so the ambiguity is a fact
+  # of the run.
+  cp /bin/sleep /tmp/s4b/ono-twin
+  /tmp/s4b/ono-twin 60 & twin_a=$!
+  /tmp/s4b/ono-twin 60 & twin_b=$!
+  sleep 1
+  prove s4b-b2 "two places answering to one name are refused as ambiguous (§27.2, §29.3)" \
+    "ono -c 'enter ono-twin' 2>&1 | grep -qF 'spatial.ambiguous_selector'"
+  prove s4b-b3 "the refusal shows the disambiguating context §27.2 requires" \
+    "ono -c 'enter ono-twin' 2>&1 | grep -qF 'local/compute/processes'"
+  prove s4b-b4 "a script gets the error on stderr and nothing on stdout (§29.3)" \
+    "test -z \"\$(ono -c 'enter ono-twin' 2>/dev/null)\""
+  kill "$twin_a" "$twin_b" 2>/dev/null || true
+
+  echo "== an exact spatial id resolves what a name cannot (§29.3, §3.1) =="
+  id=$(ono -c "enter process/$holder; look --json | from json | select place.spatial_id | to text --field spatial_id")
+  prove s4b-e "the place carries an opaque, non-empty spatial id" \
+    'test -n "$id"'
+  prove s4b-f "a second session that never saw the name enters by the id alone" \
+    "ono -c 'enter \"$id\"; look --json' | grep -qF '\"pid\":$holder'"
+
+  echo "== a pipeline result is a place (§28.2, §29.4) =="
+  prove s4b-g "\`find place … | take 1 | enter\` resolves the ambiguity a name leaves" \
+    'ono -c "find place --type process | take 1 | enter; look --json" | grep -qF "\"object_type\":\"ono.process/1\""'
+  prove s4b-h "\`enter @-1\` enters the previous result (v0.2 §20.2)" \
+    "ono -c 'find place --type process --where pid == $holder | take 1; enter @-1; look --json' | grep -qF '\"pid\":$holder'"
+
+  echo "== the §44.4 walk: a process, the file it holds, the processes that hold it =="
+  prove s4b-i "the process place offers every exit §12 names" \
+    "ono -c 'enter process/$holder; look --json' > /tmp/s4b/place.json && for exit in parent children files sockets namespaces cgroup user service; do grep -qF \"\\\"label\\\":\\\"\$exit\\\"\" /tmp/s4b/place.json || false; done"
+  prove s4b-j "\`follow file <path>\` traverses the edge the kernel reports" \
+    "ono -c 'enter process/$holder; follow file /tmp/s4b/held.conf; look --json' | grep -qF '\"display_name\":\"/tmp/s4b/held.conf\"'"
+  prove s4b-k "the file place is a file place (§15.5)" \
+    "ono -c 'enter process/$holder; follow file /tmp/s4b/held.conf; look --json' | grep -qF '\"object_type\":\"ono.file/1\"'"
+  prove s4b-l "the relationship reads the same in both directions (§44.4)" \
+    "ono -c 'enter file /tmp/s4b/held.conf; near --type process --all | to text --field name' | grep -q ."
+
+  echo "== the neighbour names the provider and the relation \`trace\` names (§2.16, §31.3) =="
+  prove s4b-m "the open-file neighbour carries the v0.2 provider that observed it" \
+    "ono -c 'enter process/$holder; near --all | to json' | grep -qF '\"provider\":\"linux.open-files\"'"
+  prove s4b-n "and the relation word that provider uses" \
+    "ono -c 'enter process/$holder; near --all | to json' | grep -qE '\"provider_relation\":\"(reads|writes|opens)\"'"
+  prove s4b-o "every edge carries the eight fields §11.4 requires" \
+    "ono -c 'enter process/$holder; near | to json' | grep -qF '\"confidence\":\"exact\"'"
+
+  echo "== hierarchy and graph are different movements (§6.4, §11.1) =="
+  prove s4b-p "\`follow\` refuses a canonical child with spatial.no_relation" \
+    'ono -c "home; follow compute" 2>&1 | grep -qF "spatial.no_relation"'
+  prove s4b-q "and the same word is a place \`enter\` reaches" \
+    'ono -c "home; enter compute; look --json" | grep -qiF "\"type\":\"compute\""'
+  prove s4b-r "a relation this place has no edge along is spatial.no_relation" \
+    "ono -c 'enter process/$holder; follow socket' 2>&1 | grep -qF 'spatial.no_relation'"
+  prove s4b-s "a word that names nothing at all is spatial.not_found" \
+    'ono -c "follow ono-nothing-of-this-name" 2>&1 | grep -qF "spatial.not_found"'
+  prove s4b-t "a refused movement exits non-zero (§40)" \
+    'ono -c "home; follow compute" > /dev/null 2>&1; test $? -ne 0'
+
+  echo "== a denied group is a state, never a count (§35.2, §42.4, §44.8) =="
+  prove s4b-u "pid 1 belongs to another user, and its files say so rather than reporting zero" \
+    'test "$(ono -c "enter process/1; look --json | from json | select exits.files.state | to text --field state")" != "empty"'
+  prove s4b-v "a relation nothing in this build serves is unsupported, not empty" \
+    'test "$(ono -c "enter process/1; look --json | from json | select exits.endpoints.state | to text --field state")" = "unsupported"'
+  prove s4b-w "this user's own process has readable descriptors, so the group is available" \
+    "test \"\$(ono -c 'enter process/$holder; look --json | from json | select exits.files.state | to text --field state')\" = 'available'"
+
+  echo "== the working directory and the place are two things (§30) =="
+  mkdir -p /tmp/s4b/logs
+  prove s4b-x "entering a directory moves both the place and the working directory (§30.2)" \
+    'test "$(cd /tmp/s4b && ono -c "enter /tmp/s4b/logs; pwd")" = "/tmp/s4b/logs"'
+  prove s4b-y "entering a process leaves the working directory where it was (§30.2, §53)" \
+    "test \"\$(cd /tmp/s4b && ono -c 'enter process $holder; pwd')\" = \"/tmp/s4b\""
+  prove s4b-z "entering a file is not entering a directory (§53, §15.5)" \
+    'test "$(cd /tmp/s4b && ono -c "enter file /tmp/s4b/held.conf; pwd")" = "/tmp/s4b"'
+  prove s4b-aa "\`cd\` inside the storage family moves the place with it (§30.3)" \
+    'ono -c "enter /tmp/s4b; cd /tmp/s4b/logs; look --json" | grep -qF "\"display_name\":\"/tmp/s4b/logs\""'
+  prove s4b-ab "\`cd\` does not end a process investigation (§30.3)" \
+    "ono -c 'enter process $holder; cd /tmp; look --json' | grep -qF '\"pid\":$holder'"
+  prove s4b-ac "the place is never encoded into PWD (§30.4)" \
+    "test \"\$(cd /tmp/s4b && ono -c 'enter process $holder; echo \$PWD')\" = \"/tmp/s4b\""
+  prove s4b-ad "a path that does not exist is refused, and nothing moves (§40)" \
+    'ono -c "enter /tmp/s4b/no-such-place" 2>&1 | grep -qF "spatial.not_found"'
+
+  echo "== Unix survives the move (§2 invariant 15, §44.10) =="
+  prove s4b-ae "an external command still runs after following an edge" \
+    "test \"\$(ono -c \"enter process/$holder; follow file /tmp/s4b/held.conf; exec:printf still-unix\")\" = 'still-unix'"
+
+  kill "$holder" 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: done=ok
+stdout-contains: PROVED s4b-a
+stdout-contains: PROVED s4b-b
+stdout-contains: PROVED s4b-b2
+stdout-contains: PROVED s4b-b3
+stdout-contains: PROVED s4b-b4
+stdout-contains: PROVED s4b-c
+stdout-contains: PROVED s4b-d
+stdout-contains: PROVED s4b-e
+stdout-contains: PROVED s4b-f
+stdout-contains: PROVED s4b-g
+stdout-contains: PROVED s4b-h
+stdout-contains: PROVED s4b-i
+stdout-contains: PROVED s4b-j
+stdout-contains: PROVED s4b-k
+stdout-contains: PROVED s4b-l
+stdout-contains: PROVED s4b-m
+stdout-contains: PROVED s4b-n
+stdout-contains: PROVED s4b-o
+stdout-contains: PROVED s4b-p
+stdout-contains: PROVED s4b-q
+stdout-contains: PROVED s4b-r
+stdout-contains: PROVED s4b-s
+stdout-contains: PROVED s4b-t
+stdout-contains: PROVED s4b-u
+stdout-contains: PROVED s4b-v
+stdout-contains: PROVED s4b-w
+stdout-contains: PROVED s4b-x
+stdout-contains: PROVED s4b-y
+stdout-contains: PROVED s4b-z
+stdout-contains: PROVED s4b-aa
+stdout-contains: PROVED s4b-ab
+stdout-contains: PROVED s4b-ac
+stdout-contains: PROVED s4b-ad
+stdout-contains: PROVED s4b-ae
+stdout-not-contains: FAILED
