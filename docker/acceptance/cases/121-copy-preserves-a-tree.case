@@ -1,0 +1,40 @@
+# `copy file --recursive --preserve`: file.yaml promises `--preserve` keeps "the mode, the
+# timestamps and — where permitted — the ownership of every copied entry", and a directory is one
+# of those entries. ADR-0234 replaced the writable-handle route with `utimensat(2)`, which is the
+# only one that reaches a directory or a file this user may not write. What is proven here is the
+# whole tree: the copy of a 2020 archive is still a 2020 archive.
+case: a preserved copy of a tree keeps every entry's timestamps, directories included
+timeout: 60
+run: |
+  mkdir -p archive/inner
+  echo deep > archive/inner/deep.txt
+  echo readonly > archive/inner/locked.txt
+  chmod 0444 archive/inner/locked.txt
+  touch -d '2020-01-01T00:00:00Z' archive/inner/deep.txt archive/inner/locked.txt archive/inner archive
+
+  ono -c 'copy file archive copied --recursive --preserve'
+  for entry in copied copied/inner copied/inner/deep.txt copied/inner/locked.txt; do
+    stamp=$(date -u -r "$entry" '+%Y-%m-%d')
+    if [ "$stamp" = "2020-01-01" ]; then
+      echo "preserved:$entry"
+    else
+      echo "WRONG $entry is $stamp"
+    fi
+  done
+
+  # The mode travelled with them, as it always did.
+  mode=$(stat -c '%a' copied/inner/locked.txt)
+  if [ "$mode" = "444" ]; then echo "mode-preserved"; else echo "WRONG mode $mode"; fi
+
+  # Without `--preserve` the copy is a new tree and says so.
+  ono -c 'copy file archive fresh --recursive'
+  stamp=$(date -u -r fresh '+%Y')
+  if [ "$stamp" != "2020" ]; then echo "unpreserved-copy-is-new"; else echo "WRONG a plain copy kept the old time"; fi
+exit: 0
+stdout-contains: preserved:copied
+stdout-contains: preserved:copied/inner
+stdout-contains: preserved:copied/inner/deep.txt
+stdout-contains: preserved:copied/inner/locked.txt
+stdout-contains: mode-preserved
+stdout-contains: unpreserved-copy-is-new
+stdout-not-contains: WRONG

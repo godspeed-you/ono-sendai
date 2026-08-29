@@ -340,6 +340,43 @@ fn should_preserve_the_mode_when_preserve_is_given() {
 }
 
 #[test]
+fn should_preserve_the_timestamps_of_a_copied_tree_when_preserve_is_given() {
+    // file.yaml: `--preserve` keeps "the mode, the timestamps and — where permitted — the
+    // ownership of every copied entry". A directory has timestamps like any other entry, and
+    // copying a tree without them turns an archive into something that all happened today
+    // (ADR-0234).
+    let directory = scratch();
+    directory.write("src/inner/deep.txt", "deep");
+    let then = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800);
+    let times = std::fs::FileTimes::new()
+        .set_accessed(then)
+        .set_modified(then);
+    for entry in ["src/inner/deep.txt", "src/inner", "src"] {
+        let path = directory.path().join(entry);
+        let handle = std::fs::File::options()
+            .read(true)
+            .open(&path)
+            .expect("the scratch entry");
+        handle.set_times(times).expect("the fixture timestamps");
+    }
+
+    let run = ono_in(&directory, "copy file src dst --recursive --preserve");
+    run.assert_success();
+
+    for entry in ["dst", "dst/inner", "dst/inner/deep.txt"] {
+        let modified = std::fs::symlink_metadata(directory.path().join(entry))
+            .and_then(|metadata| metadata.modified())
+            .expect("the copied entry");
+        assert_eq!(
+            modified, then,
+            "`--preserve` keeps the modification time of every copied entry, and `{entry}` is \
+             one: a directory is not exempt because its timestamps need a syscall that does not \
+             open it for writing"
+        );
+    }
+}
+
+#[test]
 fn should_refuse_to_copy_over_an_existing_destination_without_overwrite() {
     let directory = scratch();
     directory.write("a.txt", "new");
