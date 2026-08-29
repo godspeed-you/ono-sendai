@@ -329,3 +329,46 @@ fn should_fail_the_run_when_a_serialised_stream_carried_nothing_but_failures() {
     empty.assert_success();
     assert_eq!(empty.stdout().trim(), "[]");
 }
+
+// --- the byte boundary of spec §12.2 and §12.3, both ways (B-split-B8) --------------------------
+
+#[test]
+fn should_refuse_to_hand_objects_to_a_program_and_say_which_representation_to_choose() {
+    // Spec §12.3: "An object pipeline cannot be silently sent to an arbitrary process." The
+    // refusal is only useful if it carries the fix, so the message names a representation the
+    // user can actually write. Case `040-object-pipeline` proves this against the real system;
+    // nothing in the workspace did, and the workspace is where a regression is caught first.
+    let run = ono("get process | grep x");
+    assert!(
+        !run.status().is_success(),
+        "objects aimed at a program that reads bytes must not run, got {:?}",
+        run.output()
+    );
+    let complaint = run.stderr().to_owned();
+    assert!(
+        complaint.contains("Ono-Sendai-E0201"),
+        "spec §43: the refusal is `type.mismatch`, got {complaint:?}"
+    );
+    assert!(
+        complaint.contains("to json"),
+        "spec §12.3: the error suggests the serialization to choose, got {complaint:?}"
+    );
+}
+
+#[test]
+fn should_carry_undecodable_bytes_from_a_child_process_into_a_value_without_losing_them() {
+    // Spec §12.2: external stdout enters the value system as bytes, and undecodable bytes are
+    // never lost. `0xFF` is not valid UTF-8 anywhere, so a shell that decoded lossily would put
+    // U+FFFD (`efbfbd`) where the byte was, and one that decoded strictly would drop the value
+    // entirely. Bytes serialise as hex (spec §33.5), so the whole sequence is readable back.
+    let run = ono(r"printf 'a\xffb' | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        r#"["61ff62"]"#,
+        "spec §12.2: the child's three bytes arrive as three bytes — a lossy decode would show \
+         `61efbfbd62`, got {:?}",
+        run.stdout()
+    );
+}
+
