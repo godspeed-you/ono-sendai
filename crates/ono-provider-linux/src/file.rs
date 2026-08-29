@@ -673,11 +673,23 @@ async fn tail_lines(path: PathBuf, lines: usize, follow: bool, sink: StreamSink)
         return;
     }
 
-    let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // The kernel says when the file moved; the sweep is the fallback for a filesystem inotify
+    // cannot watch, and the bound on how long a rotation can go unnoticed on a silent one
+    // (ADR-0241).
+    let mut changed = crate::file_watch::changes(&path);
+    let sweep = if changed.is_some() {
+        std::time::Duration::from_secs(1)
+    } else {
+        std::time::Duration::from_millis(100)
+    };
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
-        tick.tick().await;
+        match &mut changed {
+            Some(signal) => {
+                let _ = tokio::time::timeout(sweep, signal.recv()).await;
+            }
+            None => tokio::time::sleep(sweep).await,
+        }
         if sink.is_cancelled() {
             return;
         }

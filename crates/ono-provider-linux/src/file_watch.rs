@@ -211,6 +211,68 @@ async fn prime(
     }
 }
 
+/// The events worth waking a `tail` for.
+///
+/// `IN_MODIFY` rather than `IN_CLOSE_WRITE`: an appender holds the log open for the whole run,
+/// so there is no close to wait for. The move and create events are how a rotation announces
+/// itself — the follower re-opens by name, and this is what tells it when (ADR-0241).
+fn tail_flags() -> AddWatchFlags {
+    AddWatchFlags::IN_MODIFY
+        | AddWatchFlags::IN_CREATE
+        | AddWatchFlags::IN_MOVED_TO
+        | AddWatchFlags::IN_MOVED_FROM
+        | AddWatchFlags::IN_DELETE
+}
+
+/// A signal that arrives whenever the kernel says `path` changed, or `None` where it will not
+/// say (ADR-0241).
+///
+/// The follower's loop is unchanged: it still re-reads by name, still notices rotation by inode,
+/// still bounds what it reads. This only replaces the clock it waits on, so a line appears when
+/// it is written rather than at the next tick, and an idle `tail` stops asking the kernel about
+/// a file that is not moving.
+pub(crate) fn changes(path: &Path) -> Option<tokio::sync::mpsc::Receiver<()>> {
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let name = path.file_name()?.to_os_string();
+    let inotify = Inotify::init(InitFlags::IN_NONBLOCK | InitFlags::IN_CLOEXEC).ok()?;
+    inotify.add_watch(&directory, tail_flags()).ok()?;
+
+    let (sender, receiver) = tokio::sync::mpsc::channel::<()>(1);
+    std::thread::spawn(move || {
+        use nix::poll::{PollFd, PollFlags, PollTimeout};
+        use std::os::fd::AsFd;
+
+        loop {
+            if sender.is_closed() {
+                return;
+            }
+            let mut fds = [PollFd::new(inotify.as_fd(), PollFlags::POLLIN)];
+            match nix::poll::poll(&mut fds, PollTimeout::from(REAP)) {
+                Ok(0) => continue,
+                Ok(_) => {}
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(_) => return,
+            }
+            let Ok(events) = inotify.read_events() else {
+                continue;
+            };
+            // One wake for a batch: the follower re-reads from its offset, so ten writes and one
+            // wake produce the same lines as ten wakes would.
+            if events
+                .iter()
+                .any(|event| event.name.as_ref().is_none_or(|seen| *seen == name))
+                && sender.blocking_send(()).is_err()
+            {
+                return;
+            }
+        }
+    });
+    Some(receiver)
+}
+
 /// Adds one directory to the watch, recording which descriptor stands for it.
 fn add_watch(
     inotify: &Inotify,
