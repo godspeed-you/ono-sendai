@@ -1678,6 +1678,23 @@ thirty-seven are under *Done, reconciled*.
   `services_logs_missing.rs` is 20/20 green with `--test-threads=1` and fails two tests when they
   run in parallel — both invoke that same command. Exit test: the file green under the default
   test parallelism, by making the enumeration cheaper rather than by raising a bound.
+- [ ] **§34's socket budget is missed by ~20 %, measured.** Acceptance case `152` ran for the
+  first time on 2026-08-29 and fails honestly:
+
+  ```text
+  ordinary host (2 sockets)      first socket row      46 ms   (§34 budget 50 ms) within
+  5002 listening unix sockets    first socket row      60 ms                      OVER
+  5002 listening unix sockets    first connection row  61 ms                      OVER
+  5002 listening unix sockets    whole socket table    67 ms   (budget 5000 ms)   within
+  5002 listening unix sockets    cold start            21 ms   (budget 100 ms)    within
+  ```
+
+  Both figures are the median of 20 runs of `get socket | take 1` / `get connection | take 1`.
+  The shape says what is wrong: the whole table costs 67 ms and the *first row* costs 60 ms, so
+  `take 1` pays for the enumeration of all 5002 before it answers — the provider reads the table
+  and then yields, where §34's per-row budget assumes it streams. The case is **not** relaxed and
+  stays red until the provider answers the first row without reading the last. Exit test: case
+  `152` green with the fixture at 5000.
 - [ ] **`ono.socket/1` identifies a socket by `inode` alone, and `TIME_WAIT` has none.**
   3 of 16 connections in a live snapshot carried a wholly-null identity. The user-visible
   consequence was found and its symptom fixed (`8db67f2`: `trace` now roots at the first record it
