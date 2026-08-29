@@ -14,10 +14,12 @@ fields:
   level:
     type: enum
     nullable: true
-    values: [emerg, alert, crit, error, warning, notice, info, debug]
+    values: [debug, info, notice, warning, error, crit, alert, emerg]
     doc: >-
-      The severity name of `priority`: emerg, alert, crit, error, warning, notice, info, debug.
-      Null when the journal reported no priority.
+      The severity name of `priority`, written from least to greatest so that `where level >=
+      error` orders by severity (spec §41.4, ADR-0222): debug, info, notice, warning, error,
+      crit, alert, emerg. That is the reverse of the syslog `priority` number, where 0 is the
+      most severe. Null when the journal reported no priority.
   priority:
     type: int
     required: true

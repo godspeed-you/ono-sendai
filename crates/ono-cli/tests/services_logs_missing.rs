@@ -365,6 +365,36 @@ fn should_run_the_failed_service_example_when_a_level_threshold_composes() {
 }
 
 #[test]
+fn should_order_the_level_by_severity_rather_than_by_spelling() {
+    // Spec §41.4's own example is `where level >= error`. As text, `warning` is greater than
+    // `error` and `crit` is less than it, so the threshold kept exactly the records it was meant
+    // to drop (ADR-0222).
+    let run = ono("get log | take 400 | where level >= warning | select level | to json");
+    let Some(rows) = records_or_unavailable(&run, "`where level >= warning`") else {
+        return;
+    };
+    for row in &rows {
+        let level = string_field(row, "level");
+        assert!(
+            matches!(level, "warning" | "error" | "crit" | "alert" | "emerg"),
+            "`level >= warning` keeps only what is at least a warning, got {level:?}"
+        );
+    }
+
+    let below = ono("get log | take 400 | where level < warning | select level | to json");
+    let Some(rows) = records_or_unavailable(&below, "`where level < warning`") else {
+        return;
+    };
+    for row in &rows {
+        let level = string_field(row, "level");
+        assert!(
+            matches!(level, "debug" | "info" | "notice"),
+            "`level < warning` keeps only what is milder, got {level:?}"
+        );
+    }
+}
+
+#[test]
 fn should_restrict_log_records_by_minimum_severity_when_level_is_given() {
     let run = ono("get log --level error | take 3 | to json");
     let Some(rows) = records_or_unavailable(&run, "`get log --level error`") else {

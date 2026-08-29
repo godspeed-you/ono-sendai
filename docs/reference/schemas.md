@@ -840,7 +840,7 @@ Default view: `timestamp`, `level`, `unit`, `message`
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `timestamp` | `timestamp` | — | required | When the record was received by the journal (the realtime clock). |
-| `level` | `enum` | — | nullable | The severity name of `priority`: emerg, alert, crit, error, warning, notice, info, debug. Null when the journal reported no priority. |
+| `level` | `enum` | — | nullable | The severity name of `priority`, written from least to greatest so that `where level >= error` orders by severity (spec §41.4, ADR-0222): debug, info, notice, warning, error, crit, alert, emerg. That is the reverse of the syslog `priority` number, where 0 is the most severe. Null when the journal reported no priority. |
 | `priority` | `int` | — | required | The syslog priority, 0 (emergency) to 7 (debug). |
 | `message` | `string` | — | required | The record's message. |
 | `identifier` | `string` | — | nullable | The syslog identifier — the program name as the record names itself. |
