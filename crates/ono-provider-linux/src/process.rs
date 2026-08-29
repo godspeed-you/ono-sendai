@@ -173,6 +173,10 @@ struct Reader {
     accounts: Arc<dyn Accounts>,
     clock: Arc<dyn Clock>,
     boot_seconds: Option<i64>,
+    /// How long the machine had been up when this reader was made, from `/proc/uptime`. It is
+    /// read once per query rather than once per process: every process of one snapshot is
+    /// measured against the same instant (ADR-0232).
+    uptime_seconds: Option<f64>,
     clock_ticks: u64,
     page_size: u128,
     samples: Arc<Mutex<HashMap<(i64, u64), Sample>>>,
@@ -219,6 +223,7 @@ impl ProcessProvider {
         Self {
             reader: Reader {
                 boot_seconds: procfs::boot_time_seconds(&proc_root),
+                uptime_seconds: procfs::uptime_seconds(&proc_root),
                 proc_root,
                 accounts: Arc::new(NssAccounts::new()),
                 clock: Arc::new(SystemClock::new()),
@@ -347,6 +352,14 @@ impl ProcessProvider {
 }
 
 impl Reader {
+    /// The same reader, with the machine's uptime read again — once per query, so every process
+    /// of one answer is measured over a window ending at the same instant (ADR-0232).
+    fn refreshed(&self) -> Self {
+        let mut reader = self.clone();
+        reader.uptime_seconds = procfs::uptime_seconds(&self.proc_root);
+        reader
+    }
+
     /// The process ids `/proc` currently holds, in ascending order.
     fn pids(&self) -> Result<Vec<i64>, ErrorValue> {
         let entries = fs::read_dir(&self.proc_root).map_err(|error| {
@@ -372,8 +385,17 @@ impl Reader {
         timestamp(boot.checked_add(seconds)?, nanoseconds)
     }
 
-    /// The share of one logical CPU used since the previous observation of the same process.
-    fn cpu(&self, pid: i64, stat: &procfs::ProcStat) -> Option<f64> {
+    /// The share of one logical CPU the process used, and the window it is the share over.
+    ///
+    /// A share is a rate, and a rate needs two readings. Where an earlier observation of the same
+    /// process exists — a second `get process` in a session, a `watch`, or the extra reading
+    /// `--sample` paid for — the window is the interval between them, and the answer is what the
+    /// process is doing now. Where none does, the window is the process's own lifetime, which the
+    /// kernel states in full: `starttime` against `/proc/uptime`. Both are shares of one logical
+    /// CPU; `cpu_window` is what tells them apart (ADR-0232).
+    ///
+    /// `None` only when the kernel gave neither — no `/proc/uptime` and no earlier reading.
+    fn cpu(&self, pid: i64, stat: &procfs::ProcStat) -> Option<(f64, ono_value::Duration)> {
         let now = self.clock.now_nanos();
         let sample = Sample {
             ticks: stat.cpu_ticks(),
@@ -383,14 +405,61 @@ impl Reader {
             .samples
             .lock()
             .ok()
-            .and_then(|mut samples| samples.insert((pid, stat.starttime), sample))?;
-        let elapsed = now.checked_sub(previous.at_nanos)?;
-        if elapsed == 0 {
+            .and_then(|mut samples| samples.insert((pid, stat.starttime), sample));
+        if let Some(previous) = previous
+            && let Some(elapsed) = now.checked_sub(previous.at_nanos)
+            && elapsed > 0
+            && let Some(ticks) = stat.cpu_ticks().checked_sub(previous.ticks)
+        {
+            let seconds = elapsed as f64 / 1e9;
+            let window = i128::try_from(elapsed).ok()?;
+            return Some((
+                ticks as f64 / self.clock_ticks as f64 / seconds * 100.0,
+                ono_value::Duration::from_nanoseconds(window),
+            ));
+        }
+        self.lifetime_share(stat)
+    }
+
+    /// The share of one logical CPU the process has used since it started.
+    ///
+    /// The window is `uptime - starttime`, both measured from the same boot, so it needs no wall
+    /// clock and no second reading. This is the `%CPU` of `ps(1)`.
+    fn lifetime_share(&self, stat: &procfs::ProcStat) -> Option<(f64, ono_value::Duration)> {
+        let uptime = self.uptime_seconds?;
+        let started = stat.starttime as f64 / self.clock_ticks as f64;
+        let lifetime = uptime - started;
+        if lifetime <= 0.0 || !lifetime.is_finite() {
             return None;
         }
-        let ticks = stat.cpu_ticks().checked_sub(previous.ticks)?;
-        let seconds = elapsed as f64 / 1e9;
-        Some(ticks as f64 / self.clock_ticks as f64 / seconds * 100.0)
+        let used = stat.cpu_ticks() as f64 / self.clock_ticks as f64;
+        let window = ono_value::Duration::from_nanoseconds((lifetime * 1e9).round() as i128);
+        Some((used / lifetime * 100.0, window))
+    }
+
+    /// Records the CPU counters of `pids` so the reads that follow can be rates against them
+    /// (`--sample`, ADR-0232).
+    fn sample_now(&self, pids: &[i64]) {
+        let now = self.clock.now_nanos();
+        let Ok(mut samples) = self.samples.lock() else {
+            return;
+        };
+        for pid in pids {
+            let path = self.proc_root.join(pid.to_string()).join("stat");
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Some(stat) = procfs::parse_stat(&text) else {
+                continue;
+            };
+            samples.insert(
+                (*pid, stat.starttime),
+                Sample {
+                    ticks: stat.cpu_ticks(),
+                    at_nanos: now,
+                },
+            );
+        }
     }
 
     /// Reads one process, or reports why it could not be read.
@@ -406,6 +475,7 @@ impl Reader {
 
         let mut sources = vec![stat_path.display().to_string()];
         let started = self.started(&stat);
+        let share = self.cpu(pid, &stat);
         let identity = self.identity_fields(&dir, &mut sources).await;
         let command = self.command(&dir, &mut sources);
         let executable = link(&dir.join("exe"), &mut sources);
@@ -430,7 +500,11 @@ impl Reader {
         .set("state", Value::string(procfs::state_name(stat.state)))?
         .set(
             "cpu",
-            self.cpu(pid, &stat).map_or(Value::Null, Value::Float),
+            share.map_or(Value::Null, |(share, _)| Value::Float(share)),
+        )?
+        .set(
+            "cpu_window",
+            share.map_or(Value::Null, |(_, window)| Value::Duration(window)),
         )?
         .set("memory", memory)?
         .set(
@@ -844,7 +918,7 @@ impl Provider for ProcessProvider {
             .flag("detail")
             .then(|| schemas::require(&schemas::process_detail_id()))
             .transpose()?;
-        let reader = self.reader.clone();
+        let reader = self.reader.refreshed();
         let pinned = Self::pinned_pid(query);
         let pids = match pinned {
             Some(pid) => vec![pid],
@@ -853,11 +927,37 @@ impl Provider for ProcessProvider {
         let enumerating = pinned.is_none();
         let limit = query.max().unwrap_or(usize::MAX);
         let tree = query.flag("tree");
+        // `--sample <duration>`: buy a rate over an interval the caller chose, by reading the CPU
+        // counters now and answering against them after the interval (ADR-0232).
+        let sample = match query.option_value("sample") {
+            Some(Value::Duration(interval)) if !interval.is_negative() => {
+                Some(std::time::Duration::from_nanos(
+                    u64::try_from(interval.nanoseconds()).unwrap_or(u64::MAX),
+                ))
+            }
+            Some(Value::Duration(interval)) => {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`--sample` is an interval to wait, and {interval} runs backwards"),
+                ));
+            }
+            Some(other) => {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`--sample` is a duration, not {}", other.type_name()),
+                ));
+            }
+            None => None,
+        };
         let query = query.clone();
         Ok(ValueStream::spawn(
             PipelineConfig::new(),
             Boundedness::Bounded,
             move |sink| async move {
+                if let Some(interval) = sample {
+                    reader.sample_now(&pids);
+                    tokio::time::sleep(interval).await;
+                }
                 if tree {
                     // `--tree` needs the whole table before the first root can be emitted: a
                     // root is a process whose parent is not in the stream (ADR-0091 §3).
@@ -924,14 +1024,15 @@ impl Provider for ProcessProvider {
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
         let schema = schemas::require(&schemas::process_id())?;
+        let reader = self.reader.refreshed();
         let pids =
             match ProcessProvider::pinned_pid(&Query::target("process").with(selector.clone())) {
                 Some(pid) => vec![pid],
-                None => self.reader.pids()?,
+                None => reader.pids()?,
             };
         let mut found = Vec::new();
         for pid in pids {
-            if let Ok(record) = self.reader.read(pid, &schema).await
+            if let Ok(record) = reader.read(pid, &schema).await
                 && selector.matches(&record)
                 && let Some(reference) = ObjectRef::of(&record)
             {

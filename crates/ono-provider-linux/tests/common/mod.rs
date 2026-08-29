@@ -33,6 +33,9 @@ pub const FIXTURE_BOOT_TIME: i64 = 1_700_000_000;
 /// fixtures' expected start times are computed against it.
 pub const USER_HZ: u64 = 100;
 
+/// The uptime every `/proc` fixture declares, so a process's lifetime is an exact expectation.
+pub const FIXTURE_UPTIME_SECONDS: u64 = 12_845;
+
 /// Everything a bounded stream produced, with a deadline so a hung provider fails the test
 /// instead of hanging the suite.
 pub async fn drain(stream: ValueStream) -> Collected {
@@ -83,6 +86,11 @@ impl ProcFixture {
             format!("cpu  1 2 3\nbtime {FIXTURE_BOOT_TIME}\nprocesses 12345\n"),
         )
         .expect("the proc/stat file");
+        fs::write(
+            proc.join("uptime"),
+            format!("{FIXTURE_UPTIME_SECONDS}.00 0.00\n"),
+        )
+        .expect("the proc/uptime file");
         Self { root }
     }
 

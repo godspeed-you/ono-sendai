@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    FakeAccounts, ProcFixture, RecordingSignals, StatFields, TestClock, USER_HZ, drain,
-    expected_start, find, records,
+    FIXTURE_UPTIME_SECONDS, FakeAccounts, ProcFixture, RecordingSignals, StatFields, TestClock,
+    USER_HZ, drain, expected_start, find, records,
 };
 use ono_core::ErrorCode;
 use ono_provider_api::{Action, ObjectId, Provider, Query, Selector};
@@ -107,10 +107,15 @@ async fn should_report_every_declared_field_when_the_process_is_fully_readable()
         matches!(process.get("memory"), Some(Value::ByteSize(size)) if size.bytes() > 0),
         "the resident set is the page count times the page size, not the page count"
     );
-    assert_eq!(
-        process.access("cpu"),
-        FieldAccess::Unknown,
-        "one procfs read cannot answer a rate, and null is the only honest answer"
+    let cpu = process
+        .get("cpu")
+        .and_then(|value| value.as_float().ok())
+        .expect("the share of a CPU over the process's life");
+    assert!(
+        (cpu - 0.084).abs() < 1e-9,
+        "one procfs read cannot answer a rate over the last interval, but it answers one over \
+         the process's whole life: 42 ticks in the 500 seconds since it started, which is \
+         0.084% of one CPU (ADR-0232). Got {cpu}"
     );
     assert_eq!(
         process.access("container"),
@@ -143,7 +148,7 @@ async fn should_report_every_declared_field_when_the_process_is_fully_readable()
 }
 
 #[tokio::test]
-async fn should_report_a_rate_on_the_second_observation_after_null_on_the_first() {
+async fn should_report_the_rate_since_the_previous_observation_once_there_is_one() {
     let fixture = ProcFixture::new();
     let clock = TestClock::new();
     let provider = ProcessProvider::rooted(fixture.root())
@@ -165,9 +170,10 @@ async fn should_report_a_rate_on_the_second_observation_after_null_on_the_first(
     )
     .await;
     assert_eq!(
-        records(&first)[0].access("cpu"),
-        FieldAccess::Unknown,
-        "the first observation has nothing to divide by"
+        records(&first)[0].get("cpu"),
+        Some(&Value::Float(0.0)),
+        "the first observation has no earlier one to divide by, so it answers over the process's \
+         lifetime instead — during which this process used no CPU at all (ADR-0232)"
     );
 
     // Half a second of wall clock, during which the process used a quarter of a second of CPU.
@@ -764,5 +770,99 @@ async fn should_carry_the_pid_namespace_into_the_detail_record_as_well() {
     assert_eq!(
         detail.get("pid_namespace"),
         Some(&Value::Int(4_026_533_331))
+    );
+}
+
+// --- what `cpu` is measured over (ADR-0232) ---------------------------------------------------
+
+/// The `cpu` and `cpu_window` of the one process a snapshot answered.
+fn share(collected: &ono_pipeline::Collected) -> (f64, ono_value::Duration) {
+    let record = records(collected)
+        .first()
+        .cloned()
+        .expect("the fixture holds one process");
+    let cpu = record
+        .get("cpu")
+        .and_then(|value| value.as_float().ok())
+        .expect("the share of a CPU");
+    let window = match record.get("cpu_window") {
+        Some(Value::Duration(window)) => *window,
+        other => panic!("`cpu_window` says what `cpu` was measured over, got {other:?}"),
+    };
+    (cpu, window)
+}
+
+#[tokio::test]
+async fn should_report_the_share_over_the_process_lifetime_when_nothing_earlier_was_observed() {
+    // A single procfs read cannot answer a rate over the last interval, but it can answer one:
+    // the kernel states how much CPU the process has used and when it started, and the quotient
+    // of the two is a share of one logical CPU over a window the record names. Silence would be
+    // the wrong answer — spec §28.1's own example is `get process | where cpu > 20`, a question
+    // one invocation must be able to ask.
+    let fixture = ProcFixture::new();
+    fixture.process(4419).stat(
+        "nginx",
+        StatFields {
+            utime: 30,
+            stime: 12,
+            starttime: 12_345 * USER_HZ,
+            ..StatFields::default()
+        },
+    );
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process"))
+            .expect("a snapshot"),
+    )
+    .await;
+
+    let (cpu, window) = share(&collected);
+    let lifetime = FIXTURE_UPTIME_SECONDS - 12_345;
+    assert_eq!(
+        window,
+        ono_value::Duration::from_nanoseconds(i128::from(lifetime) * 1_000_000_000),
+        "the window is the process's lifetime: uptime minus its start"
+    );
+    assert!(
+        (cpu - 0.084).abs() < 1e-9,
+        "42 ticks of 100 per second over {lifetime} seconds is 0.084% of one CPU: got {cpu}"
+    );
+}
+
+#[tokio::test]
+async fn should_measure_the_share_over_the_interval_the_caller_asked_to_sample() {
+    // `--sample` buys the rate the lifetime average cannot give: what the process is doing now,
+    // over a window the caller chose and paid for.
+    let fixture = ProcFixture::new();
+    fixture.process(7).stat(
+        "busy",
+        StatFields {
+            utime: 30,
+            stime: 12,
+            starttime: 100 * USER_HZ,
+            ..StatFields::default()
+        },
+    );
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process").option(
+                "sample",
+                Value::Duration(ono_value::Duration::from_nanoseconds(50_000_000)),
+            ))
+            .expect("a snapshot"),
+    )
+    .await;
+
+    let (cpu, window) = share(&collected);
+    assert!(
+        window.as_seconds_f64() >= 0.05 && window.as_seconds_f64() < 5.0,
+        "the window is the interval that was sampled, not the process's lifetime: got {window}"
+    );
+    assert!(
+        (cpu - 0.0).abs() < 1e-9,
+        "the fixture's counters did not move during the interval, so the share over it is zero \
+         — not the 0.033% its lifetime average would have shown: got {cpu}"
     );
 }

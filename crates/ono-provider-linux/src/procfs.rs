@@ -124,6 +124,16 @@ pub(crate) fn boot_time_seconds(proc_root: &Path) -> Option<i64> {
         .ok()
 }
 
+/// How long the machine has been up, in seconds, from `/proc/uptime`.
+///
+/// It is what turns a process's `starttime` — a tick count measured from the same boot — into a
+/// lifetime, which is the longest window a single observation can measure a CPU share over
+/// (ADR-0232).
+pub(crate) fn uptime_seconds(proc_root: &Path) -> Option<f64> {
+    let text = fs::read_to_string(proc_root.join("uptime")).ok()?;
+    text.split_whitespace().next()?.parse().ok()
+}
+
 /// The frequency of the statistics clock, in ticks per second.
 pub(crate) fn clock_ticks() -> u64 {
     sysconf(SysconfVar::CLK_TCK)

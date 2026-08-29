@@ -1,0 +1,52 @@
+# `cpu` in one invocation: spec §28.1 documents `cpu` as a percent of one logical CPU and its own
+# example is `get process | where cpu > 20`, which a script must be able to ask. ADR-0232 makes a
+# single read answer the share over the process's lifetime and `--sample` buy the share over an
+# interval the caller chose, with `cpu_window` saying which of the two a row carries. What is
+# proven here is that a non-interactive `ono -c` finds a busy process by asking about CPU, and
+# that the two windows are told apart.
+case: one invocation can ask what is busy, and says over which window it measured
+timeout: 120
+run: |
+  # A process that is genuinely busy for the whole of this case.
+  sh -c 'while :; do :; done' &
+  busy=$!
+  trap 'kill "$busy" 2>/dev/null' EXIT
+  sleep 2
+
+  # A plain `get process` answers a share for the processes it can read: silence is what this
+  # used to be, and silence is what a script cannot work with.
+  n=$(ono -c 'get process | where cpu > 0 | count | to json' | tr -d '[]')
+  if [ "$n" -gt 0 ]; then echo "lifetime-share-answers"; else echo "WRONG: no process has used any CPU"; fi
+
+  # Every row that carries a share also says what it is a share over, and the two are null
+  # together (ADR-0232).
+  ono -c 'get process | where cpu > 0 | take 1 | select cpu cpu_window | to json' | grep -q '"cpu_window"' \
+    && echo "share-names-its-window"
+  ono -c 'get process | where cpu != null and cpu_window == null | count | to json' | grep -qx '\[0\]' \
+    && echo "never-a-share-without-a-window"
+
+  # `--sample` measures over the interval that was asked for: the busy child is found near a
+  # whole CPU, which its lifetime average could never show for a process this young.
+  ono -c "get process --sample 700ms | where pid == $busy | select cpu cpu_window | to json"
+  found=$(ono -c "get process --sample 700ms | where pid == $busy and cpu > 50 | count | to json" | tr -d '[]')
+  if [ "$found" = "1" ]; then echo "sampled-window-finds-the-busy-one"; else echo "WRONG: the busy child was not busy, got $found"; fi
+
+  # And the window it reports is that interval, not the process's life: durations render in
+  # nanoseconds, so a sampled window is under two seconds where a lifetime is not.
+  window=$(ono -c "get process --sample 700ms | where pid == $busy | select cpu_window | to json" | tr -dc '0-9')
+  if [ -n "$window" ] && [ "$window" -lt 2000000000 ]; then
+    echo "sampled-window-is-the-one-asked-for"
+  else
+    echo "WRONG: the sampled window is $window ns"
+  fi
+
+  # `--sample` is a declared option and a value it cannot use is refused, not ignored.
+  ono -c 'get process --sample nonsense | count' 2>&1 | grep -q 'Ono-Sendai-E0203' && echo "bad-sample-refused"
+exit: 0
+stdout-contains: lifetime-share-answers
+stdout-contains: share-names-its-window
+stdout-contains: never-a-share-without-a-window
+stdout-contains: sampled-window-finds-the-busy-one
+stdout-contains: sampled-window-is-the-one-asked-for
+stdout-contains: bad-sample-refused
+stdout-not-contains: WRONG

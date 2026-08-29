@@ -75,6 +75,9 @@ fn should_define_the_process_schema_exactly_as_the_spec_does() {
             ("group", true),
             ("state", false),
             ("cpu", true),
+            // ADR-0232: a share of a CPU means nothing without the window it is a share over,
+            // so `ono.process/1` states the window beside the number.
+            ("cpu_window", true),
             ("memory", true),
             ("virtual_mem", true),
             ("threads", true),

@@ -82,6 +82,7 @@ fn should_declare_the_process_contract_exactly_as_the_registry_fixes_it() {
                 false,
             ),
             ("cpu", "float", false, true),
+            ("cpu_window", "duration", false, true),
             ("memory", "bytesize", false, true),
             ("virtual_mem", "bytesize", false, true),
             ("threads", "int", false, true),
@@ -104,8 +105,16 @@ fn should_declare_the_cpu_field_as_a_percentage() {
         "the unit is part of the contract: changing it changes the meaning (spec §10.4)"
     );
     assert!(
-        cpu.doc().is_some_and(|doc| doc.contains("second sample")),
-        "the field documents that it is a rate and that the first observation has none"
+        cpu.doc().is_some_and(|doc| doc.contains("cpu_window")),
+        "the field documents that it is a share over a window, and which field names that \
+         window: the same number means one thing over half a second and another over a week \
+         (ADR-0232)"
+    );
+    let window = schema.field("cpu_window").expect("the cpu_window field");
+    assert_eq!(
+        window.ty().name(),
+        "duration",
+        "the window `cpu` is measured over is a duration, so a reader can compare two of them"
     );
 }
 

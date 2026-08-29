@@ -46,7 +46,11 @@ fields:
     type: float
     unit: percent
     nullable: true
-    doc: Share of one logical CPU since the previous observation; null until a second sample exists.
+    doc: Share of one logical CPU over the window `cpu_window` names (ADR-0232).
+  cpu_window:
+    type: duration
+    nullable: true
+    doc: The window `cpu` is the share over. Null exactly when `cpu` is (ADR-0232).
   memory:
     type: bytesize
     nullable: true

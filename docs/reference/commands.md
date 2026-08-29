@@ -3681,6 +3681,7 @@ Enumerate or resolve processes.
 | `--user` | `ref<ono.user/1>` | Restrict to processes of one user. |
 | `--group` | `ref<ono.group/1>` | Restrict to processes whose effective group is this one. |
 | `--tree` | `bool` | Emit the parent/child structure rather than a flat stream. |
+| `--sample` | `duration` | Measure `cpu` over this interval instead of over each process's lifetime: the provider reads the CPU counters, waits, and answers the rate over exactly that window (ADR-0232). The invocation takes at least this long. |
 
 **Examples**
 
@@ -3688,6 +3689,7 @@ Enumerate or resolve processes.
 get process
 get process 4419
 get process | where cpu > 20
+get process --sample 500ms | where cpu > 20
 ```
 
 ### `inspect process`

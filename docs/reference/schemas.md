@@ -1331,7 +1331,8 @@ Default view: `pid`, `name`, `parent`, `user`, `cpu`, `memory`, `started`, `serv
 | `user` | `ref<ono.user/1>` | — | nullable | The effective user; carries the numeric uid even when the name cannot be resolved. |
 | `group` | `ref<ono.group/1>` | — | nullable | The effective group; carries the numeric gid even when the name cannot be resolved. |
 | `state` | `enum` | — | required | The kernel scheduling state. `unknown` when the provider read a state it does not model. |
-| `cpu` | `float` | percent | nullable | Share of one logical CPU since the previous observation; null until a second sample exists. |
+| `cpu` | `float` | percent | nullable | Share of one logical CPU over the window `cpu_window` names (ADR-0232). |
+| `cpu_window` | `duration` | — | nullable | The window `cpu` is the share over. Null exactly when `cpu` is (ADR-0232). |
 | `memory` | `bytesize` | — | nullable | Resident set size. |
 | `virtual_mem` | `bytesize` | — | nullable | Virtual memory size. |
 | `threads` | `int` | — | nullable | Number of threads in the process. |
@@ -1378,7 +1379,8 @@ Default view: `pid`, `name`, `cpu`, `memory`, `user`
 | `user` | `ref<ono.user/1>` | — | nullable | The effective user; carries the numeric uid even when the name cannot be resolved. |
 | `group` | `ref<ono.group/1>` | — | nullable | The effective group; carries the numeric gid even when the name cannot be resolved. |
 | `state` | `enum` | — | required | The kernel scheduling state. `unknown` when the provider read a state it does not model. |
-| `cpu` | `float` | percent | nullable | Share of one logical CPU, as spec §28.1 documents it. Null until a second sample exists, because a single procfs read cannot answer it. |
+| `cpu` | `float` | percent | nullable | Share of one logical CPU, as spec §28.1 documents it, measured over the window `cpu_window` names: the interval since the previous observation of this process where there was one, the interval `--sample` asked for where the caller asked, and the process's lifetime otherwise. Null only when the kernel gave neither (ADR-0232). |
+| `cpu_window` | `duration` | — | nullable | The window `cpu` is the share over. A short window is what the process is doing now; a window as long as the process's life is its average since it started. Null exactly when `cpu` is (ADR-0232). |
 | `memory` | `bytesize` | — | nullable | Resident set size. |
 | `virtual_mem` | `bytesize` | — | nullable | Virtual memory size. |
 | `threads` | `int` | — | nullable | Number of threads in the process. |

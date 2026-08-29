@@ -44,8 +44,17 @@ fields:
     unit: percent
     nullable: true
     doc: >-
-      Share of one logical CPU, as spec §28.1 documents it. Null until a second sample exists,
-      because a single procfs read cannot answer it.
+      Share of one logical CPU, as spec §28.1 documents it, measured over the window
+      `cpu_window` names: the interval since the previous observation of this process where
+      there was one, the interval `--sample` asked for where the caller asked, and the
+      process's lifetime otherwise. Null only when the kernel gave neither (ADR-0232).
+  cpu_window:
+    type: duration
+    nullable: true
+    doc: >-
+      The window `cpu` is the share over. A short window is what the process is doing now; a
+      window as long as the process's life is its average since it started. Null exactly when
+      `cpu` is (ADR-0232).
   memory:
     type: bytesize
     nullable: true
