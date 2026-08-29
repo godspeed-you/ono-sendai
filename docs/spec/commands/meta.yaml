@@ -168,12 +168,12 @@ commands:
     stability: stable                     # spec §30: "A `get config` command SHOULD return structured configuration with source/provenance"
     argument_mode: words
     input: "null"
-    output: stream<ono.config-setting/1>
+    output: stream<ono.config-setting/1> | stream<ono.error/1>
     provider_capability: config.read
     selectors:
       - {name: key, type: string, doc: "Resolve one setting, or a dotted prefix such as `safety.`."}
     options:
-      - {name: problems, type: bool, doc: "Return the diagnostics from loading the config layers instead of the settings. A bad setting never stops the shell from starting (ADR-0010), so the diagnostics stay available as values."}
+      - {name: problems, type: bool, doc: "Return the diagnostics from loading the config layers instead of the settings, as `ono.error/1` values (ADR-0218). A bad setting never stops the shell from starting (ADR-0010), so the diagnostics stay available as values."}
       - {name: overridden, type: bool, doc: "Include the values of the layers each setting overrides."}
     privilege: none
     streaming: true

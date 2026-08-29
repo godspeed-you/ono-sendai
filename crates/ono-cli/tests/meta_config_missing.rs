@@ -522,6 +522,41 @@ fn should_start_anyway_and_expose_the_problem_when_a_config_file_sets_an_unknown
         "the problem names the offending key: {}",
         run.stdout()
     );
+
+    // A problem is an `ono.error/1`, so its own fields are readable — and the pre-flight check
+    // of spec §11.3 must admit them, because the contract says the stage can produce them
+    // (ADR-0218).
+    let selected = isolated(&dir)
+        .args(["-c", "get config --problems | select code name | to json"])
+        .run();
+    selected.assert_success();
+    let problems = rows(&selected);
+    let first = problems.first().expect("one problem at least");
+    assert!(
+        text(first, "code").starts_with("Ono-Sendai-E"),
+        "spec §43: a problem carries the stable code, got {first:?}"
+    );
+    assert!(
+        text(first, "name").contains('.'),
+        "spec §16.1: a problem carries the dotted selector, got {first:?}"
+    );
+}
+
+#[test]
+fn should_still_refuse_a_field_neither_side_of_the_declared_union_has() {
+    // The union widens what the check admits; it does not switch the check off. `get config`
+    // streams settings or problems, and `nosuchfield` is a field of neither.
+    let run = ono("get config | select nosuchfield");
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0202"),
+        "spec §11.3: the typo is caught before the stage runs, got: {}",
+        run.stderr()
+    );
+    assert!(
+        run.stderr().contains("ConfigSetting"),
+        "the refusal still names a schema the stage declares, got: {}",
+        run.stderr()
+    );
 }
 
 #[test]

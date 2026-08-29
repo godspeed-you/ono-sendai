@@ -2615,7 +2615,7 @@ Return resolved configuration settings with the layer and file that set each one
 | stability | stable |
 | phase | A |
 | input | `null` |
-| output | `stream<ono.config-setting/1>` |
+| output | `stream<ono.config-setting/1> | stream<ono.error/1>` |
 | provider capability | `config.read` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
@@ -2630,7 +2630,7 @@ Return resolved configuration settings with the layer and file that set each one
 
 | name | type | meaning |
 |---|---|---|
-| `--problems` | `bool` | Return the diagnostics from loading the config layers instead of the settings. A bad setting never stops the shell from starting (ADR-0010), so the diagnostics stay available as values. |
+| `--problems` | `bool` | Return the diagnostics from loading the config layers instead of the settings, as `ono.error/1` values (ADR-0218). A bad setting never stops the shell from starting (ADR-0010), so the diagnostics stay available as values. |
 | `--overridden` | `bool` | Include the values of the layers each setting overrides. |
 
 **Examples**
