@@ -706,6 +706,19 @@ impl Session {
         }
         let dropped = values.len().saturating_sub(RETAINED_VALUES);
         values.truncate(RETAINED_VALUES);
+        // Spec §20.2: "Retention policy must protect secrets". The policy that keeps a secret
+        // out of history is the one that keeps it out of what `@-1` replays, or the shell would
+        // redact the command that read a token and keep the token (spec §17.5, ADR-0262).
+        let policy = redaction_policy();
+        values = values
+            .into_iter()
+            .map(|value| {
+                value.map_text(&|text| {
+                    let redacted = policy.redact(text);
+                    (redacted != text).then(|| std::sync::Arc::from(redacted.as_str()))
+                })
+            })
+            .collect();
         if self.results.len() == RETAINED_RESULTS {
             self.results.pop_front();
         }
@@ -1143,4 +1156,13 @@ pub fn probe_version(executable: &std::path::Path, argv: &[String]) -> Option<St
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     Some(text)
+}
+
+/// The redaction policy the retention of spec §20.2 applies, which is history's own (§17.5).
+///
+/// One policy, built once: the patterns are the same ones `history` redacts by, so a secret
+/// cannot be kept in one place because it was removed from the other (ADR-0262).
+fn redaction_policy() -> &'static ono_history::Policy {
+    static POLICY: std::sync::OnceLock<ono_history::Policy> = std::sync::OnceLock::new();
+    POLICY.get_or_init(ono_history::Policy::default)
 }

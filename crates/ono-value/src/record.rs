@@ -239,6 +239,28 @@ impl RecordValue {
             && self.extra == other.extra
     }
 
+    /// This record with every text leaf rewritten by `rewrite`, wherever it appears.
+    ///
+    /// `rewrite` answers `None` for text it leaves alone. Schema, provenance and field positions
+    /// are unchanged: only the text moves, which is what a redaction is (spec §17.5, ADR-0262).
+    #[must_use]
+    pub fn map_text(&self, rewrite: &dyn Fn(&str) -> Option<Arc<str>>) -> Self {
+        Self {
+            schema: Arc::clone(&self.schema),
+            fields: self
+                .fields
+                .iter()
+                .map(|value| value.map_text(rewrite))
+                .collect(),
+            extra: self
+                .extra
+                .iter()
+                .map(|(key, value)| (Arc::from(key), value.map_text(rewrite)))
+                .collect(),
+            provenance: self.provenance.clone(),
+        }
+    }
+
     /// The identity fields and their values (spec §27.3).
     #[must_use]
     pub fn identity(&self) -> MapValue {

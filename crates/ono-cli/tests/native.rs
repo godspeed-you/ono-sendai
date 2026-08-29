@@ -162,6 +162,58 @@ fn should_pick_one_item_of_the_current_result_by_position() {
 }
 
 #[test]
+fn should_keep_a_secret_out_of_the_retained_result_as_well_as_out_of_history() {
+    // Spec §20.2: "Retention policy must protect secrets"; §17.5: a secret must not reach
+    // history through renderer output. The retention applies the same policy history does, so
+    // the shell cannot redact the command that read a token and keep the token (ADR-0262).
+    let run = Shell::new()
+        .args(["-c", "from json; @-1 | to json"])
+        .stdin("[{\"cmd\":\"psql --password=hunter2\"}]")
+        .run();
+    run.assert_success();
+    let replayed = run.stdout().lines().last().unwrap_or_default().to_owned();
+    assert!(
+        !replayed.contains("hunter2"),
+        "the secret is not replayed by `@-1`: {replayed}"
+    );
+    assert!(
+        replayed.contains("--password=<redacted>"),
+        "the command stays readable and only the value is gone: {replayed}"
+    );
+}
+
+#[test]
+fn should_keep_an_assignment_s_value_out_of_the_retained_result() {
+    let run = Shell::new()
+        .args(["-c", "from json; @-1 | to json"])
+        .stdin("[{\"line\":\"AWS_SECRET_ACCESS_KEY=abc123\"}]")
+        .run();
+    run.assert_success();
+    let replayed = run.stdout().lines().last().unwrap_or_default().to_owned();
+    assert!(
+        !replayed.contains("abc123") && replayed.contains("<redacted>"),
+        "an assignment's value is a secret wherever it is kept: {replayed}"
+    );
+}
+
+#[test]
+fn should_leave_ordinary_text_in_a_retained_result_alone() {
+    // A redaction that fires on ordinary text teaches people to turn it off (ADR-0033's own
+    // reasoning, carried over from history).
+    let run = Shell::new()
+        .args(["-c", "from json; @-1 | to json"])
+        .stdin("[{\"a\":\"hello world\"}]")
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().lines().last(),
+        Some("[{\"a\":\"hello world\"}]"),
+        "nothing about this is a secret: {:?}",
+        run.output()
+    );
+}
+
+#[test]
 fn should_say_there_is_nothing_to_reuse_when_no_result_was_retained() {
     let run = ono("@-1 | count");
     assert!(!run.status().is_success());
