@@ -8,6 +8,8 @@ providers:
     targets: [service]
     capabilities: [service.list, service.manage]
     schemas: [ono.service/1]
+    conformance:
+      service: enumerable
     spatial:
       # §13: "A service place represents the stable service-manager concept rather than a
       # single process lifetime." The unit name is that concept, and it survives every
@@ -31,6 +33,9 @@ providers:
     targets: [journal, log]
     capabilities: [log.read]
     schemas: [ono.journal-event/1, ono.log-record/1]
+    conformance:
+      journal: unbounded
+      log: unbounded
 
   - id: systemd-logind
     doc: >-
@@ -39,6 +44,8 @@ providers:
     targets: [session]
     capabilities: [session.list]
     schemas: [ono.session/1]
+    conformance:
+      session: enumerable
     spatial:
       identity_strategy: lifetime
       canonical_parent:

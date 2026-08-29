@@ -1,6 +1,6 @@
 # ADR-0248: A checklist may not claim a generation the tree does not perform
 
-- Status: accepted
+- Status: superseded by ADR-0331 (in part: the decision not to build the generator)
 - Date: 2026-08-29
 - Spec refs: §36.2 (documentation derived from the registries), §47; `docs/ACCEPTANCE.md` §3,
   §4.1 D, §4.5, §4.7.4; ADR-0018, ADR-0137

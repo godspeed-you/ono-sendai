@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use xtask::{bindings, contracts, narrative, reference, scan};
+use xtask::{bindings, conformance, contracts, narrative, reference, scan};
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -17,6 +17,7 @@ fn main() -> ExitCode {
         Some("acceptance") => run_script("acceptance.sh", &rest),
         Some("spec-check") => spec_check(),
         Some("docs") => generate_docs(),
+        Some("conformance") => generate_conformance(),
         Some("release-check") => run_script("release-check.sh", &rest),
         Some(other) => {
             eprintln!("xtask: unknown task `{other}`");
@@ -37,6 +38,9 @@ fn usage() {
     eprintln!("  gate           format, lint, test, contract check, docs (AGENTS.md section 10)");
     eprintln!("  spec-check     contract drift between docs/spec and the implementation");
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
+    eprintln!(
+        "  conformance    regenerate the provider conformance suite from docs/spec (spec section 35.3)"
+    );
     eprintln!("  acceptance     build the container and run the acceptance suite");
     eprintln!("  release-check  the full release gate of docs/ACCEPTANCE.md");
 }
@@ -75,6 +79,22 @@ fn generate_docs() -> ExitCode {
         }
         Err(error) => {
             eprintln!("docs: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Regenerates the provider conformance suite from the registries (spec section 35.3).
+fn generate_conformance() -> ExitCode {
+    match conformance::write(&repo_root()) {
+        Ok(written) => {
+            for path in written {
+                println!("conformance: wrote {path}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("conformance: {error}");
             ExitCode::FAILURE
         }
     }
@@ -124,6 +144,7 @@ fn spec_check() -> ExitCode {
                 .into_iter()
                 .chain(contracts::check_examples(&root))
                 .chain(reference::check_committed(&root))
+                .chain(conformance::check_committed(&root))
                 .map(|problem| format!("{} — {}", problem.location, problem.detail)),
         );
     } else {
@@ -149,9 +170,14 @@ fn check_generation_claims(root: &Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(root.join("docs").join("ACCEPTANCE.md")) else {
         return vec!["docs/ACCEPTANCE.md is missing; it is the definition of done".to_owned()];
     };
-    let generated: Vec<String> = reference::generate(root)
+    let mut generated: Vec<String> = reference::generate(root)
         .map(|pages| pages.into_iter().map(|page| page.path).collect())
         .unwrap_or_default();
+    generated.extend(
+        conformance::generate(root)
+            .map(|pages| pages.into_iter().map(|page| page.path).collect::<Vec<_>>())
+            .unwrap_or_default(),
+    );
     reference::check_generation_claims(&text, &generated)
         .into_iter()
         .map(|problem| format!("{} — {}", problem.location, problem.detail))

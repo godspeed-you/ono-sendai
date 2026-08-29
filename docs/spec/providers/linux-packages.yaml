@@ -12,3 +12,5 @@ providers:
     targets: [package]
     capabilities: [package.list, package.search, package.manage]
     schemas: [ono.package/1]
+    conformance:
+      package: enumerable

@@ -72,12 +72,16 @@ Each phase's success criterion from spec section 37, each proven by a named acce
       `mount`/`filesystem`, `interface`/`route`/`neighbor`, `socket`/`connection` and
       `service` are answered from the kernel and systemd, not from parsed text.
       Proven by `042-inspection-without-text-parsing` (a typed field selected from each), with
-      `docs/spec/providers/*.yaml` and `ono-cli/tests/providers.rs` pinning what each provider
-      advertises.
+      `crates/ono-cli/tests/provider_conformance.rs` — generated from `docs/spec/providers/*.yaml`
+      — pinning what each provider advertises.
 - [x] **D — Consistency and discoverability.** Command, verb and schema registries exist under
       `docs/spec/`; `help`, completion, `type`, `inspect` and `explain` are driven by them;
-      `docs/reference/` is generated from them, and what every provider advertises is checked
-      against them by `spec-check` rather than trusted.
+      `docs/reference/` is generated from them, and so is the provider conformance suite of spec
+      §35.3: `crates/ono-cli/tests/provider_conformance.rs` is generated from
+      `docs/spec/providers/*.yaml` and `docs/spec/schemas/*.v1.yaml` by `cargo xtask
+      conformance`, so nothing a provider advertises — a target, a schema, a capability, an
+      identity strategy — can go unexercised, and `spec-check` fails when the committed suite is
+      not what the registries produce (ADR-0331).
       Proven by `043-discoverable-from-the-shell` (help, type, inspect, explain from the
       registries; explain never executes) and `044-semantic-completion` (a declared target
       completed on a real terminal), with `docs/reference/` staleness and provider drift both
