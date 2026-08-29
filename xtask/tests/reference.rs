@@ -281,9 +281,13 @@ fn should_publish_no_adapter_pages_when_no_pack_is_declared() {
 // --- the checklist's own generation claims (B-harn-4) -------------------------------------------
 
 fn generated_pages() -> Vec<String> {
+    // Everything this repository generates from its contracts, not only the reference pages:
+    // the provider conformance suite is written by `cargo xtask conformance` and drift-checked
+    // by `spec-check` exactly as `docs/reference/` is, so a box may name it (ADR-0331).
     xtask::reference::generate(&repo())
         .expect("the registries generate")
         .into_iter()
+        .chain(xtask::conformance::generate(&repo()).expect("the declarations generate"))
         .map(|page| page.path)
         .collect()
 }
