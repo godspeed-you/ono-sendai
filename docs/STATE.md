@@ -1654,13 +1654,30 @@ thirty-seven are under *Done, reconciled*.
 
 #### Found by the class-C tranches (2026-08-29), each its own increment
 
-- [ ] **A failed `enter` costs about 12 s of CPU, against a 50 ms budget.**
-  `ono -c 'enter no-such-place-anywhere'` takes 17.7 s wall on a quiet machine and 23.8 s at load
-  26 — so it crosses the testkit's 20 s timeout under any load, which is why
-  `spatial_contracts_missing.rs` shows 2–3 timeouts in a loaded gate run and is 27/27 green when
-  run alone. §34 budgets a failed navigation at 50 ms. This is a §34 finding, not a flaky test:
-  find what a miss walks that a hit does not. Exit test: the refusal inside its budget, measured
-  in the container.
+- [x] **A failed `enter` cost 23.9 s** — fixed 2026-08-29, `c46d524`, ADR-0416. The cause was
+  `SpatialIndex::record_edge` recognising an edge by recomputing `edge_id()` — a SHA-256 — on both
+  sides of a linear scan, so recording one edge cost two hashes per neighbour the place already
+  had. Measured: `find place --type process | count` 6.16 s → 0.59 s, a failing `enter` 23.93 s →
+  4.76 s (debug), 1.40 s in release with 0.27 s of that CPU;
+  `spatial_contracts_missing.rs` 2 timeouts → 27/27 green. **The earlier entry mis-stated the
+  budget**, and the correction matters: §34's 50 ms figures are for `look` and `near` *cached*
+  (0.10 s and below here), and §34 says in as many words that "Cold provider discovery MAY exceed
+  these targets". A one-shot `ono -c` is cold discovery.
+- [ ] **A miss sweeps everything a hit never touches.** What remains after ADR-0416: a selector
+  that resolves stops at the first step of §27.1, and one that does not runs to the last, which
+  consults the whole index and so projects all six domains. 1.40 s in release, of which only
+  0.27 s is CPU — the rest is reading 920 processes and their sockets, files and mounts. Allowed
+  by §34, but it is the reason a miss is ten times a hit. A design question, not a defect: a
+  persistent index across processes, or a bounded last step. §34's real obligation here is the
+  other sentence — the shell MUST stay interactive and update progressively — and that belongs to
+  the interactive path, which a one-shot `ono -c` never exercised. Measure it there.
+- [ ] **`get service` costs 3.0 s to enumerate, and two tests that call it concurrently exceed the
+  testkit's 10 s bound.** `get service | count` 3.01 s vs `get service <unit> | to json` 0.15 s and
+  `get process | count` 0.40 s (debug, 920 processes), so the cost is in enumerating all units, not
+  in any one of them. `trace service systemd-journald.service` is 4.49 s debug / 1.42 s release.
+  `services_logs_missing.rs` is 20/20 green with `--test-threads=1` and fails two tests when they
+  run in parallel — both invoke that same command. Exit test: the file green under the default
+  test parallelism, by making the enumeration cheaper rather than by raising a bound.
 - [ ] **`ono.socket/1` identifies a socket by `inode` alone, and `TIME_WAIT` has none.**
   3 of 16 connections in a live snapshot carried a wholly-null identity. The user-visible
   consequence was found and its symptom fixed (`8db67f2`: `trace` now roots at the first record it
