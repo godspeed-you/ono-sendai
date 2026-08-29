@@ -409,6 +409,18 @@ impl Host {
             .map(|dir| dir.join("kuang").join(id).join("management.json"))
     }
 
+    /// The package's own directory under the host's state root (spec §31.31).
+    ///
+    /// `~/.local/state/ono/kuang/<package-id>/` — the one place on the machine that belongs to
+    /// this package: its private working directory is made inside it, and its persistent state
+    /// lives beside that. `None` when the session has no state root at all.
+    #[must_use]
+    pub fn private_dir(&self, id: &str) -> Option<PathBuf> {
+        self.state_dir
+            .as_ref()
+            .map(|dir| dir.join("kuang").join(id))
+    }
+
     /// The loaded instance of `id`.
     #[must_use]
     pub fn instance(&self, id: &str) -> Option<&Instance> {
@@ -1508,6 +1520,37 @@ pub async fn discover(package: &Installed) -> Result<Contributions, ErrorValue> 
     Ok(contributions)
 }
 
+/// What an instance is actually confined by, as the contract record shows it (spec §31.10).
+///
+/// Every field is something the host applied, not something the manifest asked for, and the two
+/// `confinement` fields say in spec §31.16's own vocabulary how far each one reaches: a scope the
+/// host can only check when the package asks it is `broker`, never presented as a boundary.
+fn sandbox_of(instance: &Instance) -> Value {
+    let sandbox = instance.plugin.sandbox();
+    let bytes = |value: u64| Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(value)));
+    map([
+        ("memory_max", bytes(sandbox.memory_max)),
+        (
+            "memory_peak",
+            instance.plugin.peak_memory().map_or(Value::Null, bytes),
+        ),
+        ("cpu_class", kebab(&sandbox.cpu_class)),
+        ("nice", Value::Int(i128::from(sandbox.nice))),
+        ("open_files", Value::Int(i128::from(sandbox.open_files))),
+        ("file_size", bytes(sandbox.file_size)),
+        (
+            "working_directory",
+            Value::Path(sandbox.working_directory.clone().into()),
+        ),
+        (
+            "environment",
+            Value::list(sandbox.environment.iter().map(|name| Value::string(name))),
+        ),
+        ("filesystem", Value::string(sandbox.filesystem.as_str())),
+        ("network", Value::string(sandbox.network.as_str())),
+    ])
+}
+
 /// The `ono.plugin-runtime/1` record of a loaded instance — the negotiated contract (spec §31.63).
 ///
 /// # Errors
@@ -1579,6 +1622,7 @@ pub fn runtime_record(package: &Installed, instance: &Instance) -> Result<Record
                 ]),
             )?
             .set("overflow", kebab(&contract.overflow))?
+            .set("sandbox", sandbox_of(instance))?
             .set("network", network_of(manifest))?
             .set("degraded", Value::Bool(contract.degraded))?
             .set("started_at", instance.loaded_at.clone())?
@@ -1640,15 +1684,36 @@ pub fn inspection_record(
             .set("capability_requests", capability_requests(manifest, plugin))?
             .set("verification", verification.record.into_value())?
             .set("runtime", runtime)?
-            .set("memory_current", Value::Null)?
+            // Spec §31.33's health block. The figures come from the kernel's own accounting of
+            // the instance, sampled while it runs; `null` until the host has taken a sample, and
+            // `null` for an unloaded package, because an unmeasured figure is not a zero
+            // (spec §35.3).
+            .set(
+                "memory_current",
+                plugin
+                    .and_then(LoadedPlugin::current_memory)
+                    .map_or(Value::Null, bytes),
+            )?
             .set(
                 "memory_limit",
-                manifest
-                    .runtime
-                    .as_ref()
-                    .map_or(Value::Null, |runtime| bytes(runtime.memory_max)),
+                plugin.map_or_else(
+                    || {
+                        manifest
+                            .runtime
+                            .as_ref()
+                            .map_or(Value::Null, |runtime| bytes(runtime.memory_max))
+                    },
+                    |plugin| bytes(plugin.sandbox().memory_max),
+                ),
             )?
-            .set("cpu_time", Value::Null)?
+            .set(
+                "cpu_time",
+                plugin
+                    .and_then(LoadedPlugin::cpu_time)
+                    .map_or(Value::Null, |nanoseconds| {
+                        Value::Duration(ono_value::Duration::from_nanoseconds(nanoseconds))
+                    }),
+            )?
             .set("host_calls", Value::Int(0))?
             .set("open_streams", Value::Int(0))?
             .set("queued_events", Value::Int(0))?

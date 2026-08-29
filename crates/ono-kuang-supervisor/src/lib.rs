@@ -26,6 +26,7 @@
 mod adapters;
 mod negotiate;
 mod policy;
+mod sandbox;
 mod state;
 mod supervisor;
 mod trail;
@@ -33,6 +34,10 @@ mod trail;
 pub use adapters::{AdapterPackageError, declared_executables, validate_package};
 pub use negotiate::{HostLimits, negotiate};
 pub use policy::{DenialSource, Evaluation, Grant, Policy, ScopeUse, denial_error};
+pub use sandbox::{
+    Confinement, Sandbox, allocated_bytes, cpu_nanoseconds, native_process, nice_of,
+    working_directory,
+};
 pub use state::StateStore;
 pub use supervisor::{
     LoadConfig, LoadedPlugin, RegisteredCommand, RegisteredTarget, RunningInvocation, StreamEvent,

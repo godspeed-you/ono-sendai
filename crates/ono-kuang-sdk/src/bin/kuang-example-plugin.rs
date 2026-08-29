@@ -181,6 +181,18 @@ fn honest() -> Plugin {
             "stream<string>",
             &[],
         ))
+        .contribute_command(command(
+            "hog",
+            "Allocate far beyond the declared memory ceiling (a defect, on purpose).",
+            "stream<int>",
+            &[],
+        ))
+        .contribute_command(command(
+            "environment",
+            "Report the environment the host started this instance with.",
+            "stream<string>",
+            &[],
+        ))
         .contribute_command(CommandContribution {
             id: format!("{PACKAGE}.command.relations"),
             verb: "get".to_owned(),
@@ -196,6 +208,40 @@ fn honest() -> Plugin {
             examples: vec!["map --relations dev.example.echo".to_owned()],
         })
         .optional_feature("tell-time", "clock.read")
+        .command(&format!("{PACKAGE}.command.hog"), |ctx| {
+            // Spec §31.15 requires a per-plugin memory ceiling and §31.34 requires that reaching
+            // it degrades the plugin rather than the shell. This is the package that reaches it:
+            // it allocates in steps and touches every page, so the kernel really has to give it
+            // the memory rather than promising it.
+            let mib = int_argument(ctx, "mib", 512).clamp(1, 8192) as usize;
+            let mut held: Vec<Vec<u8>> = Vec::new();
+            for step in 0..mib {
+                let mut block = vec![0u8; 1024 * 1024];
+                for page in block.chunks_mut(4096) {
+                    page[0] = 1;
+                }
+                held.push(block);
+                if step % 16 == 0 && ctx.emit(&Value::Int(step as i128)).is_err() {
+                    return Outcome::Cancelled;
+                }
+            }
+            Outcome::Completed
+        })
+        .command(&format!("{PACKAGE}.command.environment"), |ctx| {
+            // The instance must see the environment the host built for it and nothing the shell
+            // happened to be holding (spec §31.80). Emitting the names is what makes that
+            // checkable from outside.
+            let mut names: Vec<String> = std::env::vars_os()
+                .map(|(name, _)| name.to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            for name in names {
+                if ctx.emit(&Value::String(name.into())).is_err() {
+                    return Outcome::Cancelled;
+                }
+            }
+            Outcome::Completed
+        })
         .command(&format!("{PACKAGE}.command.relations"), |ctx| {
             // The fixture asserts the one relation its manifest declares — `process->process` —
             // between the two processes it can honestly name: itself and the shell that started

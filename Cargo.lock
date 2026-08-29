@@ -785,6 +785,7 @@ version = "0.3.0"
 dependencies = [
  "globset",
  "jiff",
+ "libc",
  "ono-adapter",
  "ono-core",
  "ono-kuang-protocol",

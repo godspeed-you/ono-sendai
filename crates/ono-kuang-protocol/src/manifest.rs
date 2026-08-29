@@ -54,7 +54,7 @@ pub enum RuntimeKind {
 }
 
 /// The scheduling class the supervisor applies (spec §31.15, §31.67).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CpuBudget {
     /// Must never block terminal input.

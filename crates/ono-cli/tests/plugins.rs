@@ -402,3 +402,125 @@ commands:
         reported.stderr()
     );
 }
+
+// --- runtime isolation (spec §31.10, §31.15, §31.34, ADR-0283) --------------------------------
+
+/// The shell with a plugin home *and* a state root, so an instance gets the private directory
+/// spec §31.31 names.
+fn ono_with_state(
+    home: &ono_testkit::Scratch,
+    state: &ono_testkit::Scratch,
+    script: &str,
+) -> ono_testkit::Run {
+    Shell::new()
+        .args(["-c", script])
+        .env("ONO_PLUGIN_PATH", home.path().display().to_string())
+        .env("XDG_STATE_HOME", state.path().display().to_string())
+        .env("ONO_TEST_SECRET", "hunter2")
+        .run()
+}
+
+#[test]
+fn should_end_the_instance_and_not_the_shell_when_a_package_exceeds_its_memory_ceiling() {
+    let home = plugin_home();
+    let state = ono_testkit::scratch();
+    // The manifest declares 64 MiB; the package asks for 512 MiB and touches every page of it.
+    let run = ono_with_state(
+        &home,
+        &state,
+        "load plugin dev.example.echo; \
+         try { echo:hog --mib 512 | count } catch e { $e.code | to json }; \
+         get plugin | select state | to json",
+    );
+
+    run.assert_success();
+    assert!(
+        run.stdout().contains("Ono-Sendai-K11203"),
+        "spec §31.34: reaching the declared ceiling is a resource-limit failure with its own \
+         code, not an anonymous crash: {:?}",
+        run.stdout()
+    );
+    assert!(
+        run.stdout().contains(r#"{"state":"enabled"}"#),
+        "spec §31.34: the failure degrades the plugin — the instance is gone and the package is \
+         back to enabled — and the shell went on to answer the next stage: {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_start_a_package_with_an_environment_it_did_not_inherit() {
+    let home = plugin_home();
+    let state = ono_testkit::scratch();
+    let run = ono_with_state(
+        &home,
+        &state,
+        "load plugin dev.example.echo; echo:environment | to json",
+    );
+
+    run.assert_success();
+    let seen = run.stdout();
+    assert!(
+        !seen.contains("ONO_TEST_SECRET"),
+        "spec §31.80: the shell's environment is not a side channel into a package: {seen:?}"
+    );
+    assert!(
+        !seen.contains("ONO_PLUGIN_PATH"),
+        "not even the shell's own configuration crosses the boundary: {seen:?}"
+    );
+    assert!(
+        seen.contains("PATH") && seen.contains("HOME") && seen.contains("LC_ALL"),
+        "the instance receives the environment the host built for it: {seen:?}"
+    );
+}
+
+#[test]
+fn should_run_a_package_in_a_private_directory_rather_than_the_users() {
+    let home = plugin_home();
+    let state = ono_testkit::scratch();
+    let run = ono_with_state(
+        &home,
+        &state,
+        "load plugin dev.example.echo; \
+         inspect plugin dev.example.echo | select runtime | to json",
+    );
+
+    run.assert_success();
+    assert!(
+        run.stdout().contains("kuang/dev.example.echo/work"),
+        "spec §31.10, §31.31: the instance starts in its own directory under the state root, \
+         not in whatever directory the user happened to be in: {:?}",
+        run.stdout()
+    );
+    assert!(
+        run.stdout().contains(r#""filesystem":"broker""#),
+        "spec §31.16: a scope the host can only check when the package asks it is reported as \
+         the broker's, never as a kernel boundary: {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_report_what_a_running_instance_has_allocated_and_used() {
+    let home = plugin_home();
+    let state = ono_testkit::scratch();
+    let run = ono_with_state(
+        &home,
+        &state,
+        "load plugin dev.example.echo; echo:emit --count 3 | count; \
+         inspect plugin dev.example.echo | select memory_current memory_limit | to json",
+    );
+
+    run.assert_success();
+    assert!(
+        run.stdout().contains(r#""memory_limit":67108864"#),
+        "spec §31.33: `inspect plugin` shows the ceiling the instance is actually under: {:?}",
+        run.stdout()
+    );
+    assert!(
+        !run.stdout().contains(r#""memory_current":null"#),
+        "spec §31.33: an instance that has run has a measured memory figure, from the kernel's \
+         own accounting: {:?}",
+        run.stdout()
+    );
+}
