@@ -372,3 +372,80 @@ fn should_carry_undecodable_bytes_from_a_child_process_into_a_value_without_losi
     );
 }
 
+// --- the *bounded* half of §20.2's bounded retention (B-split-E5) --------------------------------
+
+#[test]
+fn should_evict_the_oldest_retained_result_when_the_seventeenth_arrives() {
+    // Spec §20.2: retention is bounded, and a bound nobody drives is a number nobody has
+    // checked. Seventeen results are retained in one run; the sixteen most recent answer, and
+    // the seventeenth back — the first — is gone with the structured refusal, not with an empty
+    // list that a script would read as "no rows".
+    let mut script = String::new();
+    for n in 1..=17 {
+        script.push_str(&format!("let v{n} = [{n}]; $v{n} | take 1; "));
+    }
+
+    let newest = ono(&format!("{script} @-1 | to json"));
+    newest.assert_success();
+    assert_eq!(
+        newest.stdout().lines().last().unwrap_or_default(),
+        "[17]",
+        "`@-1` is the most recent result"
+    );
+
+    let oldest_kept = ono(&format!("{script} @-16 | to json"));
+    oldest_kept.assert_success();
+    assert_eq!(
+        oldest_kept.stdout().lines().last().unwrap_or_default(),
+        "[2]",
+        "sixteen results are kept, so the oldest reachable one is the second that ran — the \
+         first was evicted"
+    );
+
+    let evicted = ono(&format!("{script} @-17 | to json"));
+    assert!(
+        !evicted.status().is_success(),
+        "the seventeenth result back was evicted, got {:?}",
+        evicted.output()
+    );
+    assert!(
+        evicted.stderr().contains("Ono-Sendai-E0102"),
+        "spec §43: a result that is no longer retained is a structured refusal, got {:?}",
+        evicted.stderr()
+    );
+}
+
+#[test]
+fn should_say_so_when_a_result_is_too_large_to_retain_whole() {
+    // Spec §20.2 bounds a result's values as well as the number of results. Truncating in
+    // silence is the failure mode this pins: `@-1` would come up short of what the screen just
+    // showed and nothing would connect the two. The notice goes to stderr, so stdout is still
+    // only the answer (spec §33.2).
+    let directory = ono_testkit::scratch();
+    let document: String = (0..10_005)
+        .map(|n| format!("{{\"n\":{n}}}"))
+        .collect::<Vec<String>>()
+        .join(",");
+    directory.write("big.json", format!("[{document}]"));
+
+    let run = Shell::new()
+        .cwd(directory.path())
+        .args([
+            "-c",
+            "read file big.json --encoding utf-8 | from json | take 10005; @-1 | count | to json",
+        ])
+        .run();
+    run.assert_success();
+
+    assert!(
+        run.stderr()
+            .contains("retained the first 10000 of 10005 values"),
+        "spec §20.2: a truncated retention says so, got stderr {:?}",
+        run.stderr()
+    );
+    assert_eq!(
+        run.stdout().lines().last().unwrap_or_default(),
+        "[10000]",
+        "what `@-1` reuses is what was retained, and the notice said how much that is"
+    );
+}

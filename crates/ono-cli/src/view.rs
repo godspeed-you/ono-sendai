@@ -58,7 +58,9 @@ pub fn run(session: &mut Session, name: &str, values: Vec<Value>) -> Eval<ExitSt
             crate::sink::Sink::for_stdout(&borrowed)
         };
         sink.write(&values);
-        session.retain_result(values);
+        let total = values.len();
+        let dropped = session.retain_result(values);
+        crate::report::retention_notice(dropped, total);
         return Ok(ExitStatus::SUCCESS);
     }
 
@@ -74,7 +76,9 @@ pub fn run(session: &mut Session, name: &str, values: Vec<Value>) -> Eval<ExitSt
     if let Some(value) = selected {
         session.select(value);
     }
-    session.retain_result(values);
+    let total = values.len();
+    let dropped = session.retain_result(values);
+    crate::report::retention_notice(dropped, total);
     Ok(ExitStatus::SUCCESS)
 }
 

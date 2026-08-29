@@ -1698,7 +1698,7 @@ fn stage_scope(
     // writes one — v0.4 §28.2's `enter @-1` — reads the same values the pipeline head does, or
     // the reference would mean two different things in two positions of one language.
     let mut previous: Vec<Value> = Vec::new();
-    for back in 1..=16u32 {
+    for back in 1..=crate::session::RETAINED_RESULTS as u32 {
         match session.previous_result(back) {
             Some(values) => previous.push(Value::list(values.to_vec())),
             None => break,
@@ -1797,7 +1797,8 @@ fn write_result(
     // not retained: its values are one rendered document, and reusing the objects it was made
     // from is what the retention of the *previous* result is for.
     if !serialised {
-        session.retain_result(values.to_vec());
+        let dropped = session.retain_result(values.to_vec());
+        crate::report::retention_notice(dropped, values.len());
     }
     match destination {
         Some(mut file) => {

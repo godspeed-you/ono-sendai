@@ -70,6 +70,18 @@ impl Reporter {
         }
     }
 
+    /// Reports something the shell did, rather than something that went wrong.
+    ///
+    /// Dim, prefixed like every other line the shell writes about itself, and sanitised for the
+    /// same reason an error message is (ADR-0015 T1).
+    pub fn notice(&self, text: &str) {
+        let mut out = std::io::stderr().lock();
+        let body = self
+            .theme
+            .paint(&ono_render::sanitise(text), Token::Dim, self.presentation);
+        let _ = writeln!(out, "{}: {body}", ono_core::SHORT_NAME);
+    }
+
     /// Reports a parse diagnostic, showing the line and marking the span (spec §16.3).
     pub fn diagnostic(&self, source: &str, diagnostic: &Diagnostic) {
         let mut out = std::io::stderr().lock();
@@ -185,4 +197,30 @@ fn marker(shown: &str, column: u32, width: u32) -> String {
         .count()
         .max(1);
     format!("{}{}", " ".repeat(start), "^".repeat(width))
+}
+
+/// A note about what the shell did with an answer, on standard error and out of the data.
+///
+/// Spec §33.2 keeps stdout for the answer, so anything the shell says *about* the answer goes to
+/// stderr, where a redirected run does not see it and a person does.
+pub fn notice(text: &str) {
+    let reporter = Reporter::new(Presentation::choose(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        &[],
+    ));
+    reporter.notice(text);
+}
+
+/// Says that a result was retained truncated, and to what (spec §20.2, ADR-0249).
+///
+/// Silence here is the failure mode: `@-1` would come up short of what the screen held, and
+/// nothing would connect the two.
+pub fn retention_notice(dropped: usize, total: usize) {
+    if dropped == 0 {
+        return;
+    }
+    let kept = total.saturating_sub(dropped);
+    notice(&format!(
+        "retained the first {kept} of {total} values for reuse; `@-1` sees {kept} (spec §20.2)"
+    ));
 }

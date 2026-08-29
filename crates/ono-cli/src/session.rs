@@ -58,6 +58,19 @@ pub enum Definition {
 /// for it forever.
 pub(crate) const AGENT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// How many recent results `@-1` … `@-N` can reach (spec §20.2: retention is *bounded*).
+///
+/// Sixteen is deep enough that a session's working set of answers survives a few detours, and
+/// shallow enough that nothing accumulates: the seventeenth result evicts the first.
+pub const RETAINED_RESULTS: usize = 16;
+
+/// How many values of one result are retained for reuse (spec §20.2).
+///
+/// Ten thousand is well past what any screen showed and well short of what a `get file /` can
+/// produce. A result larger than this is kept truncated, and the shell says so at the moment it
+/// happens rather than letting a later `@-1` come up short in silence (ADR-0249).
+pub const RETAINED_VALUES: usize = 10_000;
+
 /// Everything a running shell knows.
 pub struct Session {
     cwd: PathBuf,
@@ -679,23 +692,25 @@ impl Session {
             .publish_jobs(rows);
     }
 
-    /// Retains a finished pipeline's values for `@-1` and `@N` (spec §6.4, §20.2).
+    /// Retains a finished pipeline's values for `@-1` and `@N` (spec §6.4, §20.2), and answers
+    /// how many values it could not keep.
     ///
-    /// Retention is bounded twice: by result count, and by values per result — a `get file /`
-    /// that printed a million rows does not pin a million values in memory forever. A truncated
-    /// retention is honest about being one: reusing it yields the rows that were kept, exactly
-    /// as the screen showed only the rows that fit.
-    pub fn retain_result(&mut self, mut values: Vec<Value>) {
-        const KEEP_RESULTS: usize = 16;
-        const KEEP_VALUES: usize = 10_000;
+    /// Retention is bounded twice — by [`RETAINED_RESULTS`] and by [`RETAINED_VALUES`] — because
+    /// spec §20.2 asks for *bounded* recent results and a `get file /` that printed a million
+    /// rows must not pin a million values in memory for the rest of the session. The count of
+    /// what was dropped is returned rather than swallowed: a caller shows it, so a later `@-1`
+    /// that is short of what the screen held is never a surprise (ADR-0249).
+    pub fn retain_result(&mut self, mut values: Vec<Value>) -> usize {
         if values.is_empty() {
-            return;
+            return 0;
         }
-        values.truncate(KEEP_VALUES);
-        if self.results.len() == KEEP_RESULTS {
+        let dropped = values.len().saturating_sub(RETAINED_VALUES);
+        values.truncate(RETAINED_VALUES);
+        if self.results.len() == RETAINED_RESULTS {
             self.results.pop_front();
         }
         self.results.push_back(values);
+        dropped
     }
 
     /// The `n`th previous result, `1` for the most recent (spec §6.4 `@-1`).
