@@ -503,3 +503,72 @@ fn should_refuse_set_service_without_a_property_when_nothing_is_asked_to_change(
         run.stderr()
     );
 }
+
+// --- trace service (spec §22.3, §41.6; `ono.service.trace`) -----------------------------------
+
+#[test]
+fn should_trace_a_service_to_the_processes_it_owns() {
+    // service.yaml `ono.service.trace`: "Show a service's processes, sockets, dependencies and
+    // recent journal context" as one `ono.graph/1`. `systemd-journald.service` runs on every
+    // systemd system and owns at least the journal daemon, so the graph's root is the unit and
+    // the processes it claims are nodes beneath it.
+    let run = ono(&format!("trace service {JOURNALD} | to json"));
+    let Some(graphs) = records_or_unavailable(&run, "trace service") else {
+        return;
+    };
+    assert_eq!(
+        graphs.len(),
+        1,
+        "`trace` yields one Graph (spec §9.1), got {graphs:?}"
+    );
+    let graph = &graphs[0];
+    assert_eq!(
+        graph["root"]["schema"].as_str(),
+        Some("ono.service/1"),
+        "graph.v1.yaml `root`: the traced service is the root, got {:?}",
+        graph["root"]
+    );
+    assert!(
+        graph["root"]["identity"]
+            .get("name")
+            .and_then(serde_yaml_ng::Value::as_str)
+            == Some(JOURNALD),
+        "the root's identity names the unit that was traced, got {:?}",
+        graph["root"]
+    );
+    let nodes = graph["nodes"]
+        .as_sequence()
+        .cloned()
+        .unwrap_or_else(|| panic!("graph.v1.yaml `nodes` is a list, got {:?}", graph["nodes"]));
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["kind"].as_str() == Some("ono.process/1")),
+        "spec §41.6: a running unit's processes are among its nodes, got {} nodes",
+        nodes.len()
+    );
+    assert!(
+        graph["edges"]
+            .as_sequence()
+            .is_some_and(|edges| !edges.is_empty()),
+        "spec §22.1: the relationships are edges, not implied by node order, got {:?}",
+        graph["edges"]
+    );
+}
+
+#[test]
+fn should_refuse_to_trace_a_service_that_does_not_exist() {
+    let run = ono("trace service nothing-answers-to-this.service | to json");
+    assert!(
+        !run.stderr().contains("Ono-Sendai-E0101"),
+        "`trace service` is implemented; a unit that is not there is a resolution failure, not \
+         an unimplemented command. Got {:?}",
+        run.output()
+    );
+    assert!(
+        !run.status().is_success(),
+        "tracing a unit nothing answers to is a failure, not an empty graph (spec §16.5), got \
+         {:?}",
+        run.output()
+    );
+}
