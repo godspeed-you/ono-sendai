@@ -105,6 +105,7 @@ fn spec_check() -> ExitCode {
     problems.extend(
         scan::check_unfinished_work(&root, &state)
             .into_iter()
+            .chain(scan::check_acceptance_case_references(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 

@@ -57,7 +57,7 @@ separate one, and this ADR does not invent it.
 - Encoded by `should_report_the_propagation_peer_group_of_a_shared_mount`,
   `should_link_a_mount_to_the_other_mounts_of_its_propagation_peer_group`,
   `should_relate_a_private_mount_to_no_peer_at_all`, and acceptance case
-  `122-privileged-network-and-mount`, which makes a real shared bind mount under `CAP_SYS_ADMIN`.
+  `122-mount-propagation-peers`, which makes a real shared bind mount under `CAP_SYS_ADMIN`.
 
 ## Alternatives considered
 

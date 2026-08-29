@@ -235,3 +235,171 @@ fn relative(root: &Path, path: &Path) -> String {
         .to_string_lossy()
         .replace('\\', "/")
 }
+
+/// Checks that every acceptance case a document names actually exists (ADR-0401).
+///
+/// `docs/ACCEPTANCE.md` closes a box by naming the case that proves it, and an ADR records the
+/// case that encodes its decision. Both are pointers into `docker/acceptance/cases/`, and a
+/// pointer nobody follows rots the moment a case is renamed: the box stays ticked, the ADR stays
+/// convincing, and the evidence is gone. This is the same class of defect as an unchecked tick,
+/// so the gate resolves the pointers instead of trusting them.
+///
+/// A *reference* is a backticked token of the shape `NNN-kebab-case` — how every document in
+/// this repository writes one — whose number falls inside the range the case suite actually
+/// uses. Both halves matter. Backticks separate a name from prose about it, so a document that
+/// has to record a name as *absent* writes it plain; a name inside a fenced code block is sample
+/// output rather than a claim. The range separates a case number from a number: a `200-column`
+/// terminal and a `512-byte` frame are shaped exactly like case names and are not cases, and no
+/// wording rule could tell them apart.
+///
+/// Two documents are out of scope, for reasons that are not conveniences:
+///
+/// * `docs/STATE.md` — the board's session records deliberately name cases that never existed,
+///   because recording that a name was wrong is how the board was corrected. Its own claims are
+///   checked by `scripts/release-check.sh` (ADR-0402, the next decision in this series), not
+///   here.
+/// * the narrative specifications — immutable under AGENTS.md §5.1, so a dangling name in one
+///   could never be fixed, and demanding it would only make the gate unpassable.
+#[must_use]
+pub fn check_acceptance_case_references(root: &Path) -> Vec<Problem> {
+    let cases = root.join("docker").join("acceptance").join("cases");
+    let Ok(entries) = std::fs::read_dir(&cases) else {
+        return Vec::new();
+    };
+    let existing: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "case"))
+        .filter_map(|entry| {
+            entry
+                .path()
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .collect();
+    // The highest number the suite uses. A token above it is a number in prose, not a case that
+    // went missing, and treating it as one is how a check earns the reputation of crying wolf.
+    let Some(highest) = existing.iter().filter_map(|case| case_number(case)).max() else {
+        return Vec::new();
+    };
+
+    let mut problems = Vec::new();
+    for file in markdown_documents(root) {
+        let location = relative(root, &file);
+        if is_out_of_scope_for_case_references(&location) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let mut fenced = false;
+        for (number, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("```") {
+                fenced = !fenced;
+                continue;
+            }
+            if fenced {
+                continue;
+            }
+            for name in case_references(line) {
+                if existing.contains(&name) || case_number(&name).is_none_or(|n| n > highest) {
+                    continue;
+                }
+                problems.push(Problem::new(
+                    format!("{location}:{}", number + 1),
+                    dangling_case_detail(&name, &existing),
+                ));
+            }
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// Explains a dangling reference, naming the case that carries the number where there is one.
+///
+/// A renamed case is the common cause, and the number survives the rename, so pointing at it
+/// turns "this name is wrong" into "write this name instead".
+fn dangling_case_detail(name: &str, existing: &[String]) -> String {
+    let number = &name[..3];
+    let same_number: Vec<&str> = existing
+        .iter()
+        .filter(|case| case.starts_with(number))
+        .map(String::as_str)
+        .collect();
+    let hint = if same_number.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " The case numbered {number} is `{}`.",
+            same_number.join("`, `")
+        )
+    };
+    format!(
+        "names the acceptance case `{name}`, which does not exist in \
+         `docker/acceptance/cases/`. A claim that points at a case nobody runs proves \
+         nothing (AGENTS.md §15, docs/ACCEPTANCE.md §3).{hint}"
+    )
+}
+
+/// The documents whose case references are not claims about this repository's referee.
+fn is_out_of_scope_for_case_references(relative: &str) -> bool {
+    relative == "docs/STATE.md"
+        || (relative.starts_with("docs/ono_sendai_shell_spec_") && relative.ends_with(".md"))
+}
+
+/// The backticked `NNN-kebab-case` tokens of one line.
+fn case_references(line: &str) -> Vec<String> {
+    line.split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|token| is_case_name(token))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The three-digit number a case-shaped name starts with.
+fn case_number(name: &str) -> Option<u32> {
+    name.get(..3).and_then(|digits| digits.parse().ok())
+}
+
+/// Whether a token has the shape every acceptance case file name has.
+fn is_case_name(token: &str) -> bool {
+    let Some((number, rest)) = token.split_at_checked(3) else {
+        return false;
+    };
+    number.len() == 3
+        && number.chars().all(|c| c.is_ascii_digit())
+        && rest.starts_with('-')
+        && rest.len() > 1
+        && rest[1..]
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !rest.ends_with('-')
+}
+
+/// Every Markdown document in the repository, excluding build output.
+fn markdown_documents(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_markdown(root, &mut files);
+    files.sort();
+    files
+}
+
+fn collect_markdown(dir: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "target" || name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            collect_markdown(&path, files);
+        } else if path.extension().is_some_and(|ext| ext == "md") {
+            files.push(path);
+        }
+    }
+}

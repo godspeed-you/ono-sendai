@@ -133,7 +133,7 @@ becomes a multiplexed protocol stream.
 
 Encoded by: the pipeline tests in `crates/ono-cli`, the external-pipeline tests in
 `crates/ono-process`, and the acceptance cases `023-external-pipelines`, `024-pty-applications`,
-`035-interop-boundary`.
+`040-object-pipeline`.
 
 ## Alternatives considered
 
