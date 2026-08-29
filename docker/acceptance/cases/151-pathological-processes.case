@@ -1,0 +1,70 @@
+# Spec §34: "Performance tests SHOULD include pathological environments: tens of thousands of
+# processes/paths, slow NSS, high-latency links, huge stdout and unbounded streams." Case `060`
+# measures the budgets on an ordinary host and case `100` on a host with twenty thousand paths and
+# two hundred extra processes. This is the first of the four cases that build the rest.
+#
+# Here: tens of thousands of *processes*. The figure the case reaches is printed whether it passes
+# or fails, because a budget that is never printed cannot be compared between two runs
+# (`docs/ACCEPTANCE.md` §4.3).
+case: the budgets of section 34 hold on a host with tens of thousands of processes
+timeout: 600
+env: NO_COLOR=1
+run: |
+  median() { sort -n | awk '{ v[NR] = $1 } END { if (NR == 0) { print -1 } else { print v[int((NR + 1) / 2)] } }'; }
+
+  # The wall time of one whole `ono` run, in milliseconds, as a median of `runs`.
+  measure() {
+    local label="$1" limit_ms="$2" runs="$3" statement="$4" figure
+    ono --no-config -c "$statement" >/dev/null 2>&1
+    figure=$(
+      for _ in $(seq "$runs"); do
+        local start end
+        start=$(date +%s%N)
+        ono --no-config -c "$statement" >/dev/null 2>&1
+        end=$(date +%s%N)
+        echo $(( (end - start) / 1000000 ))
+      done | median
+    )
+    echo "$label: ${figure}ms (§34 budget ${limit_ms}ms, median of $runs runs, $statement)"
+    if [ "$figure" -le "$limit_ms" ]; then
+      echo "$label: within budget"
+    else
+      echo "$label: OVER BUDGET"
+    fi
+  }
+
+  echo "== the ordinary host, for comparison =="
+  echo "processes before: $(ls /proc | grep -c '^[0-9]')"
+  measure baseline-first-process-row 50 20 'get process | take 1'
+
+  echo "== the pathological host =="
+  perl /opt/ono-fixtures/perf/many-processes.pl 10000 /tmp/many-processes.state &
+  for _ in $(seq 600); do [ -s /tmp/many-processes.state ] && break; sleep 0.5; done
+  . /tmp/many-processes.state
+  visible=$(ls /proc | grep -c '^[0-9]')
+  echo "fixture: asked for 10000, forked $FIXTURE_PROCESSES, /proc shows $visible processes"
+  if [ "$visible" -lt 5000 ]; then echo "TOO-FEW-PROCESSES"; else echo "the host is pathological"; fi
+
+  # §34: "native `get process` first rows < 50 ms". Measured as a whole run — start-up, provider,
+  # first record, render and teardown — which is strictly harsher than the budgeted moment.
+  measure first-process-row 50 20 'get process | take 1'
+  # §34.1: expensive discovery must not be paid before the prompt. `true` touches no provider, so
+  # a shell that enumerated the process table at start-up could not hold the start-up budget.
+  measure cold-start-under-load 100 20 'true'
+  # A whole enumeration of the table is not budgeted by §34 by name; it is measured and printed so
+  # the cost of the pathological host is visible, and asserted only against a generous ceiling.
+  measure whole-process-table 5000 5 'get process | count'
+  echo "counted: $(ono --no-config -c 'get process | count')"
+
+  kill %1 2>/dev/null || true
+  wait 2>/dev/null || true
+exit: 0
+stdout-contains: the host is pathological
+stdout-contains: baseline-first-process-row: within budget
+stdout-contains: first-process-row: within budget
+stdout-contains: cold-start-under-load: within budget
+stdout-contains: whole-process-table: within budget
+stdout-not-contains: OVER BUDGET
+stdout-not-contains: TOO-FEW-PROCESSES
+stdout-not-contains: panicked
+stdout-not-contains: Ono-Sendai-E

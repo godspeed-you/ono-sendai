@@ -175,7 +175,10 @@ For **every** advertised command, in the container:
 ### 4.3 Performance (spec section 34)
 
 Measured in the container, on the pathological fixtures of spec section 34 — tens of thousands
-of processes and paths, slow NSS, high-latency links, huge stdout, unbounded streams:
+of processes and paths, slow NSS, high-latency links, huge stdout, unbounded streams. Case `060`
+measures an ordinary container and case `100` a host with twenty thousand paths; cases `151`
+(processes), `152` (sockets), `153` (a deep and wide filesystem) and `154` (a stalled provider,
+huge stdout and an endless stream) build the rest (ADR-0333):
 
 - [x] cold start < 100 ms (target < 50 ms) — `060-performance-budgets`, measured as a median of
       40 runs in the container and asserted against the 50 ms *target*, not the 100 ms cap
@@ -195,6 +198,14 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
 - [x] renderer updates only when state changes — the live model reports an event carrying the
       already-shown state as no change (`ono-cli/src/live.rs` tests), and the frame loop
       repaints only on change (spec §4.4).
+- [x] every pathological environment section 34 names exists and the budgets are measured on it
+      — `151-pathological-processes` (10 000 processes: cold start, first process row),
+      `152-pathological-sockets` (5 000 listening sockets: first socket and connection rows),
+      `153-pathological-filesystem` (50 000 entries in one directory, 200 levels deep, 100 000
+      files over 1 000 directories), `154-pathological-streams-and-providers` (a tool on `PATH`
+      that never answers, 100 MB of stdout, `watch process` under a bound). Each case prints the
+      size it reached and every figure it measured, whether it passed or failed, and fails when
+      the environment it built is not pathological (ADR-0333).
 
 ### 4.4 Interoperability and safety
 

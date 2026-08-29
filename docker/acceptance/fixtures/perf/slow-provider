@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# A provider that does not answer — the "slow NSS / high-latency link" of spec §34's list of
+# pathological environments, in the one shape the acceptance container can build honestly.
+#
+# Installed on PATH under the name of an external tool the v0.3 adapter layer runs
+# (`dpkg-query`, `journalctl`, …). It prints nothing and sleeps, so anything that waits for it
+# waits forever. What is being measured is everything that must *not* wait for it: the shell's
+# start-up, its parser, and every provider that answers from the kernel.
+#
+# `ONO_SLOW_PROVIDER_SECONDS` sets how long it stalls; the default outlasts any budget in §34 by
+# three orders of magnitude.
+exec sleep "${ONO_SLOW_PROVIDER_SECONDS:-3600}"

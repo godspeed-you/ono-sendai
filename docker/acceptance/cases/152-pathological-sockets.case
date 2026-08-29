@@ -1,0 +1,62 @@
+# Spec §34's pathological environments, second of four: a host with thousands of sockets and
+# connections. See case `151` for what this series is and how the figures are taken.
+#
+# Unix domain sockets, because the acceptance container runs with networking disabled; they reach
+# the provider through `sock_diag` exactly as any other listener does.
+case: the budgets of section 34 hold on a host with thousands of sockets
+timeout: 600
+env: NO_COLOR=1
+run: |
+  median() { sort -n | awk '{ v[NR] = $1 } END { if (NR == 0) { print -1 } else { print v[int((NR + 1) / 2)] } }'; }
+
+  measure() {
+    local label="$1" limit_ms="$2" runs="$3" statement="$4" figure
+    ono --no-config -c "$statement" >/dev/null 2>&1
+    figure=$(
+      for _ in $(seq "$runs"); do
+        local start end
+        start=$(date +%s%N)
+        ono --no-config -c "$statement" >/dev/null 2>&1
+        end=$(date +%s%N)
+        echo $(( (end - start) / 1000000 ))
+      done | median
+    )
+    echo "$label: ${figure}ms (§34 budget ${limit_ms}ms, median of $runs runs, $statement)"
+    if [ "$figure" -le "$limit_ms" ]; then
+      echo "$label: within budget"
+    else
+      echo "$label: OVER BUDGET"
+    fi
+  }
+
+  echo "== the ordinary host, for comparison =="
+  echo "sockets before: $(ono --no-config -c 'get socket | count')"
+  measure baseline-first-socket-row 50 20 'get socket | take 1'
+
+  echo "== the pathological host =="
+  perl /opt/ono-fixtures/perf/many-sockets.pl 5000 /tmp/many-sockets /tmp/many-sockets.state &
+  for _ in $(seq 600); do [ -s /tmp/many-sockets.state ] && break; sleep 0.5; done
+  . /tmp/many-sockets.state
+  echo "fixture: asked for 5000, opened $FIXTURE_SOCKETS listening unix sockets"
+  if [ "$FIXTURE_SOCKETS" -lt 2000 ]; then echo "TOO-FEW-SOCKETS"; else echo "the host is pathological"; fi
+  echo "counted: $(ono --no-config -c 'get socket | count')"
+
+  measure first-socket-row 50 20 'get socket | take 1'
+  measure first-connection-row 50 20 'get connection | take 1'
+  measure cold-start-under-load 100 20 'true'
+  measure whole-socket-table 5000 5 'get socket | count'
+
+  kill %1 2>/dev/null || true
+  jobs -p | xargs -r kill 2>/dev/null || true
+  wait 2>/dev/null || true
+exit: 0
+stdout-contains: the host is pathological
+stdout-contains: baseline-first-socket-row: within budget
+stdout-contains: first-socket-row: within budget
+stdout-contains: first-connection-row: within budget
+stdout-contains: cold-start-under-load: within budget
+stdout-contains: whole-socket-table: within budget
+stdout-not-contains: OVER BUDGET
+stdout-not-contains: TOO-FEW-SOCKETS
+stdout-not-contains: panicked
+stdout-not-contains: Ono-Sendai-E
