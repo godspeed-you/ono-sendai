@@ -16,14 +16,27 @@ pub enum Invocation {
     Script(PathBuf, Vec<String>, Options),
     /// Read a script from standard input.
     Stdin(Options),
-    /// Serve this machine's providers over stdin/stdout (spec §21.2): the remote end of a link.
-    Agent(Options),
+    /// Serve this machine's providers (spec §21.2): the remote end of a link, over stdin/stdout
+    /// or over the authenticated transport of §21.5 when `--listen` says where.
+    Agent(Options, AgentOptions),
     /// Print the version and exit.
     Version,
     /// Print usage and exit.
     Help,
     /// The command line could not be understood.
     Usage(String),
+}
+
+/// What `--agent` was asked to serve, and with which identity (spec §21.4, §21.5).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentOptions {
+    /// The address to listen on for Ono's own authenticated transport; `None` serves
+    /// stdin/stdout, which is what an ssh-carried agent reads.
+    pub listen: Option<String>,
+    /// The file the host identity lives in, overriding the configuration directory's.
+    pub host_key: Option<PathBuf>,
+    /// Print this host's key fingerprint and exit — what a person pins the host by.
+    pub print_host_key: bool,
 }
 
 /// Settings taken from the command line rather than from configuration.
@@ -59,7 +72,28 @@ impl Invocation {
                 }
                 "--agent" => {
                     rest.next();
-                    return Self::Agent(options);
+                    let mut agent = AgentOptions::default();
+                    while let Some(argument) = rest.next() {
+                        match argument.as_str() {
+                            "--listen" => match rest.next() {
+                                Some(address) => agent.listen = Some(address),
+                                None => {
+                                    return Self::Usage("--listen needs an address".to_owned());
+                                }
+                            },
+                            "--host-key" => match rest.next() {
+                                Some(path) => agent.host_key = Some(PathBuf::from(path)),
+                                None => return Self::Usage("--host-key needs a path".to_owned()),
+                            },
+                            "--print-host-key" => agent.print_host_key = true,
+                            other => {
+                                return Self::Usage(format!(
+                                    "unrecognised arguments after --agent: {other}"
+                                ));
+                            }
+                        }
+                    }
+                    return Self::Agent(options, agent);
                 }
                 "--no-config" => {
                     rest.next();

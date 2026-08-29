@@ -489,11 +489,29 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             &mut block,
             "mode",
             if link.agentless {
-                "agentless — requested; this build serves it through the agent (spec §21.3)"
+                "agentless — a reduced provider set over standard commands (spec §21.3)"
             } else {
                 "agent"
             },
         );
+        // Spec §21.3: what a reduced link *can* answer is the visible half of what it cannot, so
+        // the plan says it before a command is run rather than after one is refused.
+        if link.agentless {
+            let answered = link
+                .connection
+                .as_ref()
+                .map(crate::session::LinkConnection::targets)
+                .unwrap_or_default();
+            plan_row(
+                &mut block,
+                "answers",
+                &if answered.is_empty() {
+                    "nothing — this link was never established".to_owned()
+                } else {
+                    answered.join(" ")
+                },
+            );
+        }
         plan_row(
             &mut block,
             "identity",
@@ -546,8 +564,17 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             let Some(argv) = crate::native::literal_argv(stage) else {
                 continue;
             };
+            let agentless = session.link(&host).is_some_and(|link| link.agentless);
             let state = crate::native::remote_decision(session, &argv, demand).map_or_else(
-                || "raw (the remote agent cannot negotiate adapters)".to_owned(),
+                || {
+                    if agentless {
+                        "raw (this link is agentless: there is no agent over there to negotiate \
+                         adapters)"
+                            .to_owned()
+                    } else {
+                        "raw (the remote agent cannot negotiate adapters)".to_owned()
+                    }
+                },
                 |decision| decision.state,
             );
             print_safely(&format!("  adaptation on {host}: {state}"));

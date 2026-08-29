@@ -41,6 +41,7 @@ const ALL_TARGETS: &[&str] = &[
     "job",
     "link",
     "host",
+    "host-key",
     "plugin",
     "capability",
     "audit",
@@ -53,7 +54,8 @@ const ALL_TARGETS: &[&str] = &[
 ///
 /// A package loaded on the far side is a fact about the far side and stays remote; the links
 /// this session holds, the jobs it started and the hosts it knows are not.
-const SESSION_TARGETS: &[&str] = &["job", "link", "host"];
+/// The targets the shell answers about itself: session facts, not observations of a machine.
+pub const SESSION_TARGETS: &[&str] = &["job", "link", "host", "host-key"];
 
 /// One job as the session publishes it — the fields of `ono.job/1`, before they are a record.
 #[derive(Debug, Clone, PartialEq)]
@@ -170,6 +172,7 @@ impl SessionProvider {
             "job" => Ok((self.jobs()?, Vec::new())),
             "link" => Ok((self.links()?, Vec::new())),
             "host" => self.hosts(None),
+            "host-key" => Ok((self.host_keys()?, Vec::new())),
             "plugin" => self.lock().kuang.plugin_records(),
             "capability" => Ok((self.lock().kuang.capability_records(None)?, Vec::new())),
             "audit" => Ok((self.lock().kuang.audit_records()?, Vec::new())),
@@ -440,6 +443,15 @@ impl SessionProvider {
             .collect()
     }
 
+    /// The pinned host keys, in the order the trust store's file records them (spec §21.5).
+    fn host_keys(&self) -> Result<Vec<RecordValue>, ErrorValue> {
+        let schema = Self::schema("ono.host-key")?;
+        crate::trust::rows(&self.sources)?
+            .iter()
+            .map(|row| host_key_record(row, &schema))
+            .collect()
+    }
+
     /// The host records: every source's entries, one record per name, in the order the
     /// sources are consulted — the shell's own file, the OpenSSH configuration, the links held.
     /// A source that cannot be read is reported on the stream's failure channel and the other
@@ -629,6 +641,36 @@ pub fn link_value(link: &LinkRow) -> Result<Value, ErrorValue> {
     link_record(link, &schema).map(RecordValue::into_value)
 }
 
+/// One pinned host key as an `ono.host-key/1` record (ADR-0355).
+///
+/// # Errors
+///
+/// `provider.schema_violation` when the contract that defines the schema is missing.
+pub fn host_key_value(row: &crate::trust::KeyRow) -> Result<Value, ErrorValue> {
+    let schema = SessionProvider::schema("ono.host-key")?;
+    host_key_record(row, &schema).map(RecordValue::into_value)
+}
+
+fn host_key_record(
+    row: &crate::trust::KeyRow,
+    schema: &Arc<Schema>,
+) -> Result<RecordValue, ErrorValue> {
+    Ok(RecordValue::builder(
+        Arc::clone(schema),
+        Provenance::local(PROVIDER_ID, schema.id().clone()),
+    )
+    .set("host", Value::string(&row.host))?
+    .set("algorithm", Value::string(&row.algorithm))?
+    .set("fingerprint", Value::string(&row.fingerprint))?
+    .set(
+        "path",
+        row.path
+            .as_ref()
+            .map_or(Value::Null, |path| Value::Path(path.as_path().into())),
+    )?
+    .build())
+}
+
 fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, ErrorValue> {
     let strings = |items: &[String]| Value::list(items.iter().map(|item| Value::string(item)));
     Ok(RecordValue::builder(
@@ -727,7 +769,7 @@ impl Provider for SessionProvider {
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
-        ["ono.job", "ono.link", "ono.host"]
+        ["ono.job", "ono.link", "ono.host", "ono.host-key"]
             .into_iter()
             .filter_map(|name| Self::schema(name).ok())
             .chain(
@@ -752,6 +794,9 @@ impl Provider for SessionProvider {
             Capability::new("job.list", Risk::Read),
             Capability::new("link.list", Risk::Read),
             Capability::new("host.list", Risk::Read),
+            // Reading, recording and forgetting a pin: `get host-key` is a read of session
+            // state, and the three mutations are the shell's own (ADR-0355).
+            Capability::new("host.trust", Risk::Mutate),
             Capability::new("plugin.list", Risk::Read),
             Capability::new("plugin.search", Risk::Read),
             Capability::new("plugin.inspect", Risk::Read),

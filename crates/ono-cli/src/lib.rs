@@ -33,6 +33,7 @@ pub mod settings;
 pub mod sink;
 pub mod spatial;
 pub mod theme;
+pub mod trust;
 pub mod view;
 
 /// The usage text, shown by `--help` and by the `help` builtin.

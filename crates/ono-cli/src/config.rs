@@ -37,6 +37,30 @@ pub fn layers(session: &Session, options: &Options) -> Vec<(Layer, PathBuf)> {
     found
 }
 
+/// The user's configuration directory as an environment describes it, honouring
+/// `ONO_CONFIG_DIR` then XDG (ADR-0010).
+///
+/// The out-of-session form: `ono --agent` has no [`Session`] to read variables from, and the
+/// host-source resolution of ADR-0103 needs the same answer, so there is one definition of the
+/// rule rather than three copies of it.
+#[must_use]
+pub fn config_dir_from_environment<'a>(
+    environment: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Option<PathBuf> {
+    let (mut home, mut xdg, mut explicit) = (None, None, None);
+    for (name, value) in environment {
+        match name {
+            "HOME" => home = Some(PathBuf::from(value)),
+            "XDG_CONFIG_HOME" => xdg = Some(PathBuf::from(value)),
+            "ONO_CONFIG_DIR" => explicit = Some(PathBuf::from(value)),
+            _ => {}
+        }
+    }
+    explicit
+        .or_else(|| xdg.map(|base| base.join(ono_core::SHORT_NAME)))
+        .or_else(|| home.map(|home| home.join(".config").join(ono_core::SHORT_NAME)))
+}
+
 /// The user's configuration directory, honouring `ONO_CONFIG_DIR` then XDG (ADR-0010).
 #[must_use]
 pub fn user_config_dir(session: &Session) -> Option<PathBuf> {

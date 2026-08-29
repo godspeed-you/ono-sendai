@@ -162,30 +162,39 @@ impl SessionLink {
             name: self.name.clone(),
             host: self.host.clone(),
             transport: self.transport.clone(),
-            agentless: self.agentless,
+            // The mode a link *is* in, not the one it was asked for: a link that fell back
+            // reports the fallback, and a definition that was never established reports what it
+            // would be made in (spec §21.3).
+            agentless: connection.map_or(self.agentless, LinkConnection::is_agentless),
             state: if connection.is_some() {
                 "connected"
             } else {
                 "defined"
             },
             targets: connection.map_or_else(Vec::new, LinkConnection::targets),
-            protocol: connection.map(|held| held.link.negotiated().version()),
-            providers: connection.map(|held| {
-                held.link
-                    .negotiated()
-                    .providers()
-                    .iter()
-                    .map(|descriptor| descriptor.id().to_owned())
-                    .collect()
-            }),
+            protocol: connection.and_then(LinkConnection::protocol_version),
+            providers: connection.map(LinkConnection::provider_ids),
         }
     }
 }
 
+/// What answers on the far side of an established link.
+///
+/// Spec §21 has two: the agent of §21.4, which speaks the link protocol, and the agentless
+/// fallback of §21.3, which is a reduced set of providers reading the far side with standard
+/// commands. Everything above the registry is identical for both — that is the point — so the
+/// difference lives here, where the shell describes a link rather than where it uses one.
+pub enum FarEnd {
+    /// The Ono agent of spec §21.4, reached over the link protocol.
+    Agent(ono_remote::RemoteLink),
+    /// The reduced provider set of spec §21.3: no agent on the far side.
+    Agentless(ono_remote::AgentlessLink),
+}
+
 /// An established link: the connection, and the registry its providers are mounted in.
 pub struct LinkConnection {
-    /// The link itself, kept so dropping the session hangs up.
-    pub link: ono_remote::RemoteLink,
+    /// What is answering over there, kept so dropping the session hangs up.
+    pub far_end: FarEnd,
     /// The mounted registry an active link frame answers from (spec §14.4).
     pub registry: std::sync::Arc<ProviderRegistry>,
     /// The process serving this link, where the shell started one: `ono --agent` under the
@@ -196,21 +205,99 @@ pub struct LinkConnection {
 }
 
 impl LinkConnection {
-    /// The targets the remote negotiated, in mount order.
+    /// What the link's context can answer, in mount order.
+    ///
+    /// For an agent link that is what the handshake negotiated (spec §21.2). For a reduced link
+    /// nothing was negotiated, so the honest content of the field is the set of targets the
+    /// fallback can actually read — which is what makes the reduction visible in the table
+    /// itself, beside the targets it refuses (spec §21.3).
     #[must_use]
     pub fn targets(&self) -> Vec<String> {
-        self.registry
-            .providers()
-            .iter()
-            .flat_map(|provider| provider.targets().iter().map(|target| (*target).to_owned()))
-            .collect()
+        match &self.far_end {
+            FarEnd::Agent(_) => self
+                .registry
+                .providers()
+                .iter()
+                .flat_map(|provider| provider.targets().iter().map(|target| (*target).to_owned()))
+                .collect(),
+            FarEnd::Agentless(link) => link.answered_targets(),
+        }
+    }
+
+    /// The agent behind this link, where the far side has one (spec §21.4).
+    ///
+    /// `None` for the agentless fallback of §21.3: there is nobody over there to speak the link
+    /// protocol, which is precisely what makes that link reduced.
+    #[must_use]
+    pub const fn agent_link(&self) -> Option<&ono_remote::RemoteLink> {
+        match &self.far_end {
+            FarEnd::Agent(link) => Some(link),
+            FarEnd::Agentless(_) => None,
+        }
+    }
+
+    /// Whether the far side is the reduced set of spec §21.3 rather than the agent of §21.4.
+    #[must_use]
+    pub const fn is_agentless(&self) -> bool {
+        matches!(self.far_end, FarEnd::Agentless(_))
+    }
+
+    /// The link protocol version the handshake settled on, or `None` when no handshake happened.
+    #[must_use]
+    pub fn protocol_version(&self) -> Option<u16> {
+        match &self.far_end {
+            FarEnd::Agent(link) => Some(link.negotiated().version()),
+            FarEnd::Agentless(_) => None,
+        }
+    }
+
+    /// How the far side named itself: `ono/<version>` for the agent of spec §21.4, and the
+    /// reduced set naming itself and what `uname` said for the fallback of §21.3.
+    #[must_use]
+    pub fn far_end_name(&self) -> String {
+        match &self.far_end {
+            FarEnd::Agent(link) => link.negotiated().peer().agent().to_owned(),
+            FarEnd::Agentless(link) => match link.system() {
+                Some(system) => format!("agentless ({system})"),
+                None => "agentless".to_owned(),
+            },
+        }
+    }
+
+    /// The ids of the providers the far side offers (spec §21.2).
+    #[must_use]
+    pub fn provider_ids(&self) -> Vec<String> {
+        match &self.far_end {
+            FarEnd::Agent(link) => link
+                .negotiated()
+                .providers()
+                .iter()
+                .map(|descriptor| descriptor.id().to_owned())
+                .collect(),
+            FarEnd::Agentless(_) => vec![ono_remote::AGENTLESS_PROVIDER.to_owned()],
+        }
+    }
+
+    /// Says goodbye to the far side, where there is somebody to say it to.
+    pub fn hangup(&self) {
+        match &self.far_end {
+            FarEnd::Agent(link) => link.hangup(),
+            // A reduced link holds nothing open: each query is one command that has already
+            // ended by the time its records arrive.
+            FarEnd::Agentless(_) => {}
+        }
     }
 }
 
 impl std::fmt::Debug for LinkConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let host = match &self.far_end {
+            FarEnd::Agent(link) => link.host(),
+            FarEnd::Agentless(link) => link.host(),
+        };
         f.debug_struct("LinkConnection")
-            .field("host", &self.link.host())
+            .field("host", &host)
+            .field("agentless", &self.is_agentless())
             .finish_non_exhaustive()
     }
 }
@@ -513,7 +600,7 @@ impl Session {
         };
         // The hang-up is said explicitly rather than left to the drop, because a provider of
         // this link may still be mounted somewhere and would hold the connection open.
-        connection.link.hangup();
+        connection.hangup();
         let agent = connection.agent.clone();
         drop(connection);
         let (Some(agent), Some(runtime)) = (agent, self.runtime.as_ref()) else {

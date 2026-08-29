@@ -44,7 +44,7 @@ fields:
   transport:
     type: enum
     nullable: true
-    values: [ssh, local]
+    values: [ssh, local, tcp]
     doc: For a host probe, the transport the link protocol travelled over; null for a port probe.
   protocol_version:
     type: int

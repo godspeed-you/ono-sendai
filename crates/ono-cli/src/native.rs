@@ -206,8 +206,8 @@ pub(crate) fn remote_decision(
         _ => return None,
     };
     let handle = session.runtime()?.handle().clone();
-    let link = session.remote_link()?;
-    let mut stream = link.link.adapt(argv, demand_name, true).ok()?;
+    let link = session.remote_link()?.agent_link()?;
+    let mut stream = link.adapt(argv, demand_name, true).ok()?;
     handle.block_on(async {
         while let Some(message) = stream.recv().await {
             match message {
@@ -1191,9 +1191,16 @@ fn run_remote_adapted(
     // Ask first without running: the remote's own decision is what decides whether the
     // program runs there adapted or here raw.
     let Some(decision) = remote_decision(session, argv, demand) else {
-        return Ok(RemoteRun::NotAdapted(
-            "the remote agent cannot negotiate adapters".to_owned(),
-        ));
+        let reason = if session
+            .remote_link()
+            .is_some_and(crate::session::LinkConnection::is_agentless)
+        {
+            // Spec §21.3: the reduction stays visible wherever it changes what a command means.
+            "this link is agentless: there is no agent over there to negotiate adapters"
+        } else {
+            "the remote agent cannot negotiate adapters"
+        };
+        return Ok(RemoteRun::NotAdapted(reason.to_owned()));
     };
     if !decision.adapted {
         if matches!(demand, OutputDemand::Structured { .. }) {
@@ -1225,17 +1232,17 @@ fn run_remote_adapted(
         )));
     };
     let (sender, receiver) = tokio::sync::mpsc::channel::<StreamEvent>(256);
-    let link = session.remote_link().ok_or_else(|| {
-        Flow::Failed(ErrorValue::new(
-            ErrorCode::ResolveTargetNotFound,
-            "the link is gone",
-        ))
-    })?;
-    let mut stream = link
-        .link
-        .adapt(argv, demand_name, false)
-        .map_err(Flow::Failed)?;
-    let host: std::sync::Arc<str> = std::sync::Arc::from(link.link.host());
+    let link = session
+        .remote_link()
+        .and_then(crate::session::LinkConnection::agent_link)
+        .ok_or_else(|| {
+            Flow::Failed(ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                "the link is gone",
+            ))
+        })?;
+    let mut stream = link.adapt(argv, demand_name, false).map_err(Flow::Failed)?;
+    let host: std::sync::Arc<str> = std::sync::Arc::from(link.host());
     runtime_handle.spawn(async move {
         while let Some(message) = stream.recv().await {
             let event = match message {

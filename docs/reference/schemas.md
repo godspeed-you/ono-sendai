@@ -609,6 +609,21 @@ Default view: `kind`, `at`, `host`, `changed`
 | `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
 | `source` | `enum` | — | required | How the change was observed. `poll` means the runtime re-read the host sources at the configured interval — explicit, as spec §18.2 requires. |
 
+## HostKey — `ono.host-key/1`
+
+One host key this shell has pinned, and the fingerprint it is pinned by.
+
+Identity: `host`
+
+Default view: `host`, `algorithm`, `fingerprint`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `host` | `string` | — | required | The host the key is pinned for, as the link names it. |
+| `algorithm` | `string` | — | required | How the key was proved. `tls-x509` is the peer's end-entity certificate over the authenticated transport of spec §21.5 (ADR-0353); the store keeps whatever name the transport that verified the key gave it. |
+| `fingerprint` | `string` | — | required | The full SHA-256 fingerprint, `sha256:` and 64 hex digits. Never truncated: a shortened fingerprint is one an impersonator can search for a collision against. |
+| `path` | `path` | — | nullable | The trust store file the pin is recorded in; null when the session has no configuration directory and the store therefore lives only for this session. |
+
 ## Host — `ono.host/1`
 
 A known host from a configured source, reachable or not.
@@ -822,7 +837,7 @@ Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 |---|---|---|---|---|
 | `name` | `string` | — | required | The host as the user named it — the prompt's spelling, and `enter link`'s argument. |
 | `host` | `string` | — | required | The host the link points at. `link host prod-db` points at `prod-db` itself; a definition may point elsewhere (`add link prod-db --host 10.4.2.11`), and the table never hides where a link goes. |
-| `transport` | `enum` | — | required | How the bytes travel. `ssh` spawns the remote agent over OpenSSH; `local` spawns `ono --agent` as a child of this shell, which is how a link is exercised without a network. |
+| `transport` | `enum` | — | required | How the bytes travel. `ssh` spawns the remote agent over OpenSSH; `local` spawns `ono --agent` as a child of this shell, which is how a link is exercised without a network; `tcp` is Ono's own authenticated transport of spec §21.5, where the peer proves it holds the key this shell pinned for the host (ADR-0353). |
 | `mode` | `enum` | — | required | Whether the far side is the Ono agent of spec §21.4 or the agentless fallback of §21.3. The fallback MUST be visible because semantics and performance may differ, so the mode is part of the record wherever the link is described. |
 | `state` | `enum` | — | required | Whether the link is usable now: `connected` once the handshake succeeded, `defined` for a definition recorded with `add link` that was never established, `closed` once torn down. |
 | `targets` | `list<string>` | — | required | The targets the remote negotiated (spec §21.2), which is what its context can answer. Empty for a link that was never established: nothing was negotiated. |

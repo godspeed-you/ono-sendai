@@ -150,11 +150,15 @@ pub enum TrustDecision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TrustPolicy {
     /// The transport must authenticate a peer key. An unknown key is recorded and the link
-    /// proceeds; a changed key is refused. This is the default.
-    #[default]
+    /// proceeds; a changed key is refused.
+    ///
+    /// Trust on first use: the first machine to answer for a name becomes that name. It is a
+    /// deliberate choice a caller has to make, never what a caller gets by saying nothing
+    /// (ADR-0354).
     Required,
     /// The key must already be in the store. An unknown key is refused, so a host is trusted
-    /// only by a deliberate act taken beforehand.
+    /// only by a deliberate act taken beforehand. This is the default (ADR-0015 T5, ADR-0354).
+    #[default]
     Pinned,
     /// A transport that authenticates nobody is accepted.
     ///
@@ -313,11 +317,77 @@ impl TrustStore {
         self.write_entry(host, key)
     }
 
+    /// Records `fingerprint` for `host` under `algorithm`, refusing to replace a different key.
+    ///
+    /// This is [`pin`](Self::pin) for a caller that holds a fingerprint rather than a key — a
+    /// person who read one off the host's own console, which is the only channel that makes a
+    /// first pin worth anything. Nothing is weakened by it: the store compares fingerprints, and
+    /// a fingerprint is what it records.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorCode::RemoteHostKeyChanged`] when a different fingerprint is recorded.
+    pub fn pin_fingerprint(
+        &self,
+        host: &str,
+        algorithm: &str,
+        fingerprint: Fingerprint,
+    ) -> Result<(), ErrorValue> {
+        match self.fingerprint(host) {
+            Some(recorded) if recorded == fingerprint => Ok(()),
+            Some(recorded) => Err(host_key_changed(host, recorded, fingerprint)),
+            None => self.record(host, algorithm, fingerprint),
+        }
+    }
+
+    /// Replaces whatever is recorded for `host` with `fingerprint` — the deliberate re-trust.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the store's file cannot be written.
+    pub fn repin_fingerprint(
+        &self,
+        host: &str,
+        algorithm: &str,
+        fingerprint: Fingerprint,
+    ) -> Result<(), ErrorValue> {
+        self.with(|inner| inner.entries.retain(|entry| entry.host != host));
+        self.record(host, algorithm, fingerprint)
+    }
+
+    /// Forgets `host`, so it is trusted again only by a deliberate act.
+    ///
+    /// A host that is not recorded is already forgotten, so this succeeds; the caller decides
+    /// whether asking about an unknown host is worth a refusal of its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the store's file cannot be written.
+    pub fn forget(&self, host: &str) -> Result<(), ErrorValue> {
+        let (path, rendered) = self.with(|inner| {
+            inner.entries.retain(|entry| entry.host != host);
+            (inner.path.clone(), render(&inner.entries))
+        });
+        let Some(path) = path else {
+            return Ok(());
+        };
+        persist(&path, &rendered)
+    }
+
     fn write_entry(&self, host: &str, key: &HostKey) -> Result<(), ErrorValue> {
+        self.record(host, key.algorithm(), key.fingerprint())
+    }
+
+    fn record(
+        &self,
+        host: &str,
+        algorithm: &str,
+        fingerprint: Fingerprint,
+    ) -> Result<(), ErrorValue> {
         let entry = TrustEntry {
             host: host.to_owned(),
-            algorithm: key.algorithm().to_owned(),
-            fingerprint: key.fingerprint(),
+            algorithm: algorithm.to_owned(),
+            fingerprint,
         };
         let (path, rendered) = self.with(|inner| {
             inner.entries.push(entry);
