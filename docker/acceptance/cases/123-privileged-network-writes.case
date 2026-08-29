@@ -7,7 +7,7 @@
 case: the network write paths build requests a live kernel accepts
 capability: NET_ADMIN
 user: root
-timeout: 120
+timeout: 180
 run: |
   echo "== --dry-run changes nothing and says what it would send =="
   ono -c 'add interface onotest0 --kind dummy --dry-run | select status changed | to json'
@@ -48,6 +48,21 @@ run: |
   ono -c 'remove route 10.99.250.0/24 | to json' 2>&1 | grep -o 'Ono-Sendai-E030[0-9]' | head -1
   ono -c 'remove route 10.99.250.0/24' >/dev/null 2>&1; echo "missing-route-status=$?"
 
+  echo "== stop socket: SOCK_DESTROY against a real established connection =="
+  # A listener and a client of it, both inside this container: `git daemon` and `curl` are the
+  # two programs the image already ships that can make one TCP connection between them.
+  mkdir -p /tmp/repo && git -C /tmp/repo init -q
+  git daemon --base-path=/tmp --export-all --listen=127.0.0.1 --port=9418 --detach
+  sleep 1
+  (curl -s --max-time 20 telnet://127.0.0.1:9418 >/dev/null &)
+  sleep 1
+  before=$(ono -c 'get socket | where remote.port == 9418 and state == "established" | count | to json' | tr -d '[]')
+  if [ "$before" = "1" ]; then echo "connection-established"; else echo "WRONG no connection to destroy, got $before"; fi
+  ono -c 'get socket | where remote.port == 9418 and state == "established" | stop socket --confirm | select status changed | to json'
+  sleep 1
+  after=$(ono -c 'get socket | where remote.port == 9418 and state == "established" | count | to json' | tr -d '[]')
+  if [ "$after" = "0" ]; then echo "connection-destroyed"; else echo "WRONG the connection survived, got $after"; fi
+
   echo "== the kernel told the watch, and the watch said so =="
   ono -c 'watch interface | take 1 | select source | to json'
   echo done=ok
@@ -66,6 +81,8 @@ stdout-contains: route-gone
 stdout-contains: address-gone
 stdout-contains: interface-gone
 stdout-contains: missing-route-status=1
+stdout-contains: connection-established
+stdout-contains: connection-destroyed
 stdout-contains: [{"source":"subscription"}]
 stdout-contains: done=ok
 stdout-not-contains: WRONG

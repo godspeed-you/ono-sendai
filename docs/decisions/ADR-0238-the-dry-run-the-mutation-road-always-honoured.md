@@ -52,6 +52,9 @@ may advertise it, and that is one increment per family, not a sweep inside this 
 - `add route 10.99.8.0/24 --gateway 10.99.7.2 --dry-run` answers
   `skipped — would add the route 10.99.8.0/24 via 10.99.7.2`, exit 0, on an unprivileged machine.
   ADR-0088's own example is now something a user can type.
+- All nine write paths meet a kernel in `123-privileged-network-writes`: the eight rtnetlink ones
+  against a dummy interface it creates and removes, and `stop socket` against a real established
+  connection between the `git daemon` and the `curl` the image already ships.
 - Help, completion and `docs/reference/commands.md` describe the option, because they are
   generated from the registry that now declares it.
 - `spec-check`'s option rule (ADR-0233) covers the new options: `"dry-run"` is named in
