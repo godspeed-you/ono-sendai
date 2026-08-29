@@ -15,10 +15,11 @@ ono-provider-api.workspace = true
 ono-value.workspace = true
 async-trait.workspace = true
 jiff.workspace = true
-# `socket` is the only feature this crate needs: netlink sockets, `bind`, `send`, `recv` and
-# `SO_RCVTIMEO`. ADR-0005 already chose `nix` for syscalls, and its wrappers are safe, which is
-# what keeps this crate `forbid(unsafe_code)` while it talks to the kernel.
-nix = { workspace = true, features = ["socket"] }
+# `socket` for netlink sockets, `bind`, `send`, `recv` and `SO_RCVTIMEO`; `poll` so a multicast
+# subscription can wait on the kernel rather than on a clock (ADR-0235). ADR-0005 already chose
+# `nix` for syscalls, and its wrappers are safe, which is what keeps this crate
+# `forbid(unsafe_code)` while it talks to the kernel.
+nix = { workspace = true, features = ["poll", "socket"] }
 tokio.workspace = true
 
 [dev-dependencies]

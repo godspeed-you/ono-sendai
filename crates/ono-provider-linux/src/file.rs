@@ -23,7 +23,8 @@ use nix::sys::stat::{FileStat, Mode, SFlag, fstatat, major, minor};
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
 use ono_provider_api::{
-    Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+    Action, ActionOutcome, Availability, Capability, EventStream, ObjectRef, Provider, Query, Risk,
+    Selector,
 };
 use ono_value::{ByteSize, ErrorValue, RecordValue, Schema, Value};
 
@@ -213,7 +214,7 @@ fn paths_of(value: &Value) -> Vec<PathBuf> {
 
 /// Everything describing one entry needs.
 #[derive(Clone)]
-struct Describer {
+pub(crate) struct Describer {
     schema: Arc<Schema>,
     user_schema: Arc<Schema>,
     group_schema: Arc<Schema>,
@@ -223,7 +224,7 @@ struct Describer {
 impl Describer {
     /// Describes the entry `lookup` names relative to `dirfd`, recorded under the logical
     /// `path` it was reached by.
-    async fn describe<Fd: AsFd>(
+    pub(crate) async fn describe<Fd: AsFd>(
         &self,
         dirfd: Fd,
         lookup: &OsStr,
@@ -817,6 +818,45 @@ impl Provider for FileProvider {
             Boundedness::Bounded,
             move |sink| async move { walk(request, describer, sink).await },
         ))
+    }
+
+    /// `watch file` and `tail file`, through inotify (spec §18.2, ADR-0235).
+    ///
+    /// The kernel says what changed under a path; the provider says what the changed entry now
+    /// is, with the same describer a listing uses. A path this user may not watch — or a kernel
+    /// with no inotify at all — refuses here, and the watch runtime then polls instead: the
+    /// answer is the same either way, and only its latency and its `source` differ.
+    fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {
+        let describer = Describer {
+            schema: schemas::require(&schemas::file_id())?,
+            user_schema: schemas::require(&schemas::user_id())?,
+            group_schema: schemas::require(&schemas::group_id())?,
+            accounts: Arc::clone(&self.accounts),
+        };
+        let request = Request::from(query);
+        let root = request.roots.first().cloned().ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!("{PROVIDER_ID} watches one path at a time"),
+            )
+        })?;
+        // A walk over several roots, a glob or a filtered `find` is not a watch: the kernel
+        // answers about a place, and the runtime's poll is the honest answer for the rest.
+        if request.roots.len() > 1 || request.name.is_some() || request.kind.is_some() {
+            return Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                format!("{PROVIDER_ID} watches one path, not a filtered walk"),
+            ));
+        }
+        crate::file_watch::watch(
+            crate::file_watch::WatchRequest {
+                contents: request.list_contents,
+                recursive: request.recursive,
+                hidden: request.include_hidden,
+                root,
+            },
+            describer,
+        )
     }
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {

@@ -734,6 +734,41 @@ fn should_report_a_created_file_as_an_event_when_watching() {
     );
 }
 
+#[test]
+fn should_report_a_created_file_before_the_next_poll_would_have_come() {
+    // ADR-0034 and ADR-0078: `watch file` polled every two seconds, so nothing it reported could
+    // arrive sooner than the next tick of that grid. The file here is created two and a half
+    // seconds in, between the tick that would have missed it and the tick that would have found
+    // it, and the event must arrive before that later tick (ADR-0235). The event also says where
+    // it came from: §18.2 requires the cost of a watch to be explicit, and `source` is where a
+    // consumer reads whether the shell is being told or is asking.
+    let directory = scratch();
+    let watched = directory.path().join("src");
+    std::fs::create_dir(&watched).expect("the watched directory");
+
+    let script = format!(
+        r#"sh -c "sleep 2.5; touch {dir}/new.txt" &; watch file src | where kind != "snapshot" | take 1 | select kind source | to json"#,
+        dir = watched.display()
+    );
+    let started = std::time::Instant::now();
+    let run = ono_in(&directory, &script);
+    let elapsed = started.elapsed();
+    run.assert_success();
+
+    assert_eq!(
+        run.stdout().trim(),
+        r#"[{"kind":"added","source":"subscription"}]"#,
+        "spec §18.2: the file was created, the kernel said so, and the event says the change \
+         came from a subscription rather than from a poll; got {:?}",
+        run.output()
+    );
+    assert!(
+        elapsed < Duration::from_millis(3_500),
+        "the poll grid would not have looked again until four seconds in; an answer in \
+         {elapsed:?} is the kernel's, not a poll's"
+    );
+}
+
 // --- trace file (spec §22.3) --------------------------------------------------------------------
 
 #[test]

@@ -427,6 +427,36 @@ fn should_carry_the_loopback_interface_in_the_snapshot_when_watching_it() {
 }
 
 #[test]
+fn should_watch_interfaces_through_the_kernel_rather_than_by_asking_it_again() {
+    // ADR-0034 left every watch polling; ADR-0235 binds the rtnetlink multicast groups
+    // `rtnetlink(7)` provides for exactly this, so the kernel says when a link or an address
+    // moved. §18.2 requires the cost of a watch to be explicit, and `source` is where a consumer
+    // reads which of the two it is getting.
+    let run = ono("watch interface | take 1 | select source | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        r#"[{"source":"subscription"}]"#,
+        "the interface watch is driven by RTMGRP_LINK and the address groups, not by a timer; \
+         got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_watch_routes_through_the_kernel_rather_than_by_asking_it_again() {
+    let run = ono("watch route --table local | take 1 | select source | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        r#"[{"source":"subscription"}]"#,
+        "the route watch is driven by the RTMGRP_IPV4_ROUTE and RTMGRP_IPV6_ROUTE groups; got \
+         {:?}",
+        run.output()
+    );
+}
+
+#[test]
 fn should_begin_with_a_snapshot_when_watching_routes() {
     // `--table local` names the one table every Linux machine populates: the loopback routes.
     let run = ono("watch route --table local | take 1 | select kind | to json");

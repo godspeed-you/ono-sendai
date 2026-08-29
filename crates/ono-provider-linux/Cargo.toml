@@ -18,7 +18,7 @@ ono-value.workspace = true
 async-trait.workspace = true
 jiff.workspace = true
 globset.workspace = true
-nix = { workspace = true, features = ["dir", "feature", "fs", "mount", "process", "signal", "user"] }
+nix = { workspace = true, features = ["dir", "feature", "fs", "inotify", "mount", "poll", "process", "signal", "user"] }
 rustix.workspace = true
 tokio.workspace = true
 

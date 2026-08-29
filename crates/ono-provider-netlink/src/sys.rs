@@ -34,6 +34,20 @@ pub(crate) const NLM_F_EXCL: u16 = 0x0200;
 pub(crate) const NLM_F_CREATE: u16 = 0x0400;
 
 // `linux/rtnetlink.h`: the message types this crate asks for.
+/// The rtnetlink multicast groups a subscription binds, as `rtnetlink(7)` numbers them.
+///
+/// They are the legacy bitmask form, which is what `bind(2)` takes; every group below is within
+/// the 32 the mask can name, so no `NETLINK_ADD_MEMBERSHIP` is needed (ADR-0235).
+pub(crate) const RTMGRP_LINK: u32 = 0x0001;
+/// IPv4 address additions and removals.
+pub(crate) const RTMGRP_IPV4_IFADDR: u32 = 0x0010;
+/// IPv4 route additions and removals.
+pub(crate) const RTMGRP_IPV4_ROUTE: u32 = 0x0040;
+/// IPv6 address additions and removals.
+pub(crate) const RTMGRP_IPV6_IFADDR: u32 = 0x0100;
+/// IPv6 route additions and removals.
+pub(crate) const RTMGRP_IPV6_ROUTE: u32 = 0x0400;
+
 pub(crate) const RTM_NEWLINK: u16 = 16;
 pub(crate) const RTM_DELLINK: u16 = 17;
 pub(crate) const RTM_GETLINK: u16 = 18;

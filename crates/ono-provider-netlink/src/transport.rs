@@ -61,7 +61,56 @@ impl NetlinkSocket {
         )
     }
 
+    /// Opens `NETLINK_ROUTE` bound to multicast `groups`, so the kernel reports changes as they
+    /// happen instead of being asked again (spec §18.2, ADR-0235).
+    ///
+    /// The socket answers nothing until something changes; a reader waits on it rather than on a
+    /// clock. `groups` is the legacy bitmask `bind(2)` takes, which covers every group
+    /// `rtnetlink(7)` numbers below 32.
+    ///
+    /// # Errors
+    ///
+    /// `provider.unavailable`, naming what refused, when the family cannot be opened or the
+    /// groups cannot be joined — a sandbox without netlink, or a kernel without the group.
+    pub(crate) fn open_route_multicast(groups: u32) -> Result<Self, ErrorValue> {
+        Self::open_joined(SockProtocol::NetlinkRoute, "NETLINK_ROUTE", groups)
+    }
+
+    /// The socket itself, for a reader that waits on it.
+    pub(crate) fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        std::os::fd::AsFd::as_fd(&self.fd)
+    }
+
+    /// Reads and discards everything the kernel has queued, answering whether there was any.
+    ///
+    /// A multicast reader needs to know *that* something changed, not what: the answer is a
+    /// fresh dump decoded by the same functions a `get` uses, so one code path describes an
+    /// interface however the question was asked (ADR-0235).
+    pub(crate) fn drain(&self) -> bool {
+        let mut buffer = vec![0u8; RECEIVE_BUFFER];
+        let mut seen = false;
+        while let Ok(read) = recv(self.fd.as_raw_fd(), &mut buffer, MsgFlags::MSG_DONTWAIT) {
+            if read == 0 {
+                break;
+            }
+            seen = true;
+        }
+        seen
+    }
+
     fn open(protocol: SockProtocol, family: &'static str) -> Result<Self, ErrorValue> {
+        Self::open_joined(protocol, family, 0)
+    }
+
+    /// Opens and binds one netlink socket, joining `groups` in the same `bind(2)`.
+    ///
+    /// The groups are part of the address, so they are given when the socket is bound and never
+    /// after: a second `bind` on a bound netlink socket is `EINVAL`.
+    fn open_joined(
+        protocol: SockProtocol,
+        family: &'static str,
+        groups: u32,
+    ) -> Result<Self, ErrorValue> {
         let fd = socket(
             AddressFamily::Netlink,
             SockType::Raw,
@@ -80,11 +129,24 @@ impl NetlinkSocket {
         })?;
 
         // Port id zero asks the kernel to allocate one, which is what lets several sockets in one
-        // process talk netlink at the same time.
-        bind(fd.as_raw_fd(), &NetlinkAddr::new(0, 0)).map_err(|errno| {
+        // process talk netlink at the same time. A non-zero `groups` subscribes the socket to
+        // the multicast groups `rtnetlink(7)` numbers, which is how a watch is told rather than
+        // asking (ADR-0235).
+        bind(fd.as_raw_fd(), &NetlinkAddr::new(0, groups)).map_err(|errno| {
             ErrorValue::new(
                 ErrorCode::ProviderUnavailable,
-                format!("a {family} socket could not be bound: {errno}"),
+                if groups == 0 {
+                    format!("a {family} socket could not be bound: {errno}")
+                } else {
+                    format!(
+                        "a {family} socket could not join the multicast groups {groups:#x}: \
+                         {errno}"
+                    )
+                },
+            )
+            .with_help(
+                "without them a watch has to ask the kernel again on a timer; `source` says \
+                 which of the two an event came from",
             )
         })?;
         setsockopt(

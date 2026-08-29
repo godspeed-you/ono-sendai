@@ -52,6 +52,7 @@ mod device;
 mod env;
 mod file;
 mod file_mutations;
+mod file_watch;
 mod identity;
 mod packages;
 mod process;

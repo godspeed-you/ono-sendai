@@ -10,7 +10,8 @@ use std::sync::Arc;
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
 use ono_provider_api::{
-    Action, ActionOutcome, Availability, Capability, ObjectRef, Provider, Query, Risk, Selector,
+    Action, ActionOutcome, Availability, Capability, EventStream, ObjectEvent, ObjectRef, Provider,
+    Query, Risk, Selector,
 };
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 
@@ -109,6 +110,18 @@ impl Provider for InterfaceProvider {
         stream(query.clone(), |_| read_interfaces())
     }
 
+    /// `watch interface`, through the rtnetlink multicast groups (spec §18.2, ADR-0235).
+    ///
+    /// Links and both address families, because an interface record carries its addresses: an
+    /// address that appears is the interface changing.
+    fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {
+        subscribe_table(
+            sys::RTMGRP_LINK | sys::RTMGRP_IPV4_IFADDR | sys::RTMGRP_IPV6_IFADDR,
+            query,
+            read_interfaces,
+        )
+    }
+
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
         references(read_on_a_blocking_thread(read_interfaces).await?, selector)
     }
@@ -148,6 +161,16 @@ impl Provider for RouteProvider {
         stream(query.clone(), |query| {
             read_routes(option_text(query, "family").as_deref())
         })
+    }
+
+    /// `watch route`, through the rtnetlink multicast groups (spec §18.2, ADR-0235).
+    fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {
+        let family = option_text(query, "family");
+        subscribe_table(
+            sys::RTMGRP_IPV4_ROUTE | sys::RTMGRP_IPV6_ROUTE,
+            query,
+            move || read_routes(family.as_deref()),
+        )
     }
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
@@ -437,6 +460,116 @@ fn read_interfaces() -> Result<Decoded, ErrorValue> {
     let links = socket.dump(sys::RTM_GETLINK, &link_request())?;
     let addresses = socket.dump(sys::RTM_GETADDR, &address_request())?;
     Ok(decode_interfaces(&links, &addresses))
+}
+
+/// How long a multicast reader waits for the kernel before coming up for air.
+///
+/// Nothing is re-read when it expires: it is only how often the reader notices that nobody is
+/// listening, so a cancelled watch stops within it.
+const REAP: u16 = 200;
+
+/// Subscribes to `groups` and reports what `read` sees change (spec §18.2, ADR-0235).
+///
+/// The kernel says *that* something changed; the answer to *what* is a fresh dump through the
+/// same decoders a `get` uses, diffed by object identity. That keeps one description of an
+/// interface or a route in the crate rather than two that can drift, and it costs one dump per
+/// change rather than one per tick — on an idle machine, none at all.
+///
+/// # Errors
+///
+/// Whatever opening or binding the multicast socket refused. The watch runtime falls back to
+/// polling on any error, so a refusal costs latency and never the answer.
+fn subscribe_table<F>(groups: u32, query: &Query, read: F) -> Result<EventStream, ErrorValue>
+where
+    F: Fn() -> Result<Decoded, ErrorValue> + Send + Sync + 'static,
+{
+    let socket = NetlinkSocket::open_route_multicast(groups)?;
+    let read = Arc::new(read);
+    // The watch narrows exactly as the listing does: `watch interface lo` is about `lo`, and a
+    // change to another interface is not an answer to it.
+    let query = query.clone();
+    // A dump before the first wake, so the first change is a change against the real table and
+    // not against emptiness.
+    let mut known = table(&read()?, &query);
+
+    Ok(EventStream::spawn(
+        PipelineConfig::new(),
+        move |sink| async move {
+            let (sender, mut receiver) = tokio::sync::mpsc::channel::<()>(8);
+            std::thread::spawn(move || wait_for_changes(&socket, &sender));
+
+            while receiver.recv().await.is_some() {
+                let reader = Arc::clone(&read);
+                let Ok(Ok(fresh)) = tokio::task::spawn_blocking(move || reader()).await else {
+                    // The table could not be read this time; the next change asks again.
+                    continue;
+                };
+                let seen = table(&fresh, &query);
+                for (id, record) in &seen {
+                    let event = match known.get(id) {
+                        None => ObjectEvent::added(record),
+                        Some(previous) if previous == record => continue,
+                        Some(previous) => ObjectEvent::changed(record, moved(previous, record)),
+                    };
+                    if sink.send(event).await.is_err() {
+                        return;
+                    }
+                }
+                for (id, record) in &known {
+                    if !seen.contains_key(id)
+                        && sink.send(ObjectEvent::removed(record)).await.is_err()
+                    {
+                        return;
+                    }
+                }
+                known = seen;
+            }
+        },
+    ))
+}
+
+/// The decoded records the query keeps, by identity — which is what a change is measured against.
+fn table(decoded: &Decoded, query: &Query) -> std::collections::BTreeMap<String, RecordValue> {
+    decoded
+        .records()
+        .iter()
+        .filter(|record| keep(record, query))
+        .filter_map(|record| {
+            ono_provider_api::ObjectId::of(record).map(|id| (id.to_string(), record.clone()))
+        })
+        .collect()
+}
+
+/// The fields whose values moved between two observations of one object.
+fn moved(previous: &RecordValue, current: &RecordValue) -> Vec<String> {
+    current
+        .schema()
+        .fields()
+        .iter()
+        .filter(|field| previous.get(field.name()) != current.get(field.name()))
+        .map(|field| field.name().to_owned())
+        .collect()
+}
+
+/// Waits on the multicast socket and says so, until nobody is listening any more.
+fn wait_for_changes(socket: &NetlinkSocket, sender: &tokio::sync::mpsc::Sender<()>) {
+    use nix::poll::{PollFd, PollFlags, PollTimeout};
+
+    loop {
+        if sender.is_closed() {
+            return;
+        }
+        let mut fds = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
+        match nix::poll::poll(&mut fds, PollTimeout::from(REAP)) {
+            Ok(0) => continue,
+            Ok(_) => {}
+            Err(nix::errno::Errno::EINTR) => continue,
+            Err(_) => return,
+        }
+        if socket.drain() && sender.blocking_send(()).is_err() {
+            return;
+        }
+    }
 }
 
 /// One dump per address family, named through the link dump.
