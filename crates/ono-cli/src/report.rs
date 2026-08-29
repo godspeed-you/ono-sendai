@@ -25,6 +25,19 @@ impl Reporter {
         }
     }
 
+    /// Reports a note: something the run counted that a user would otherwise have to guess at.
+    ///
+    /// Not an error and not part of the answer, so it goes to stderr and never to stdout. The
+    /// text is sanitised for the same reason an error's is (ADR-0015 T1).
+    pub fn note(&self, text: &str) {
+        let mut out = std::io::stderr().lock();
+        let label = self
+            .theme
+            .paint("note", Token::ErrorHint, self.presentation);
+        let _ = writeln!(out, "{label}: {}", ono_render::sanitise(text));
+        let _ = out.flush();
+    }
+
     /// Reports a structured error in its terse form (spec §16.2).
     ///
     /// The message is sanitised, not merely the code and the hint. An error message is where

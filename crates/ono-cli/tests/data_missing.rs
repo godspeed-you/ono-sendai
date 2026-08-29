@@ -525,3 +525,59 @@ fn should_bind_a_caught_error_as_a_value_whose_fields_can_be_read() {
         run.output()
     );
 }
+
+// --- what the pipeline dropped is said, not only counted (ADR-0014, ADR-0261) ----------------
+
+#[test]
+fn should_say_how_many_values_a_condition_could_not_be_decided_on() {
+    // ADR-0014: a row a predicate could not decide is excluded and counted, so "a user who is
+    // surprised by a row count has somewhere to look that is not the source code".
+    let run = Shell::new()
+        .args(["-c", "from json | where a > 1 | count"])
+        .stdin("[{\"a\":1},{\"a\":null},{\"a\":3}]")
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().lines().last().map(str::trim),
+        Some("1"),
+        "the answer is unchanged: {:?}",
+        run.output()
+    );
+    assert!(
+        run.stderr().contains('1') && run.stderr().contains("could not be decided"),
+        "the excluded row is reported: {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_say_how_many_unknown_values_an_aggregate_skipped() {
+    let run = Shell::new()
+        .args([
+            "-c",
+            "from json | measure a | select count skipped | to json",
+        ])
+        .stdin("[{\"a\":1},{\"a\":null},{\"a\":3}]")
+        .run();
+    run.assert_success();
+    assert!(
+        run.stderr().contains("skipped"),
+        "the skipped null is reported: {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_say_nothing_when_the_pipeline_dropped_nothing() {
+    let run = Shell::new()
+        .args(["-c", "from json | where a > 0 | count"])
+        .stdin("[{\"a\":1}]")
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stderr(),
+        "",
+        "a run that dropped nothing says nothing: {:?}",
+        run.stderr()
+    );
+}

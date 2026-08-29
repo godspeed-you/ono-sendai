@@ -1553,6 +1553,12 @@ fn run_native_segment(
 
         let mut values = Vec::new();
         let mut failures = Vec::new();
+        // The counters are shared by every stage of the pipeline (ADR-0014); the handle is taken
+        // before the stream is drained, because the stream is consumed to do it.
+        let counted = stream
+            .as_ref()
+            .map(|stream| stream.diagnostics().clone())
+            .unwrap_or_default();
         if let Some(mut stream) = stream {
             if last && !stream.boundedness().is_bounded() && stage_has_no_redirection {
                 // A live stream at a terminal renders in place (spec §18.3); anywhere else the
@@ -1561,7 +1567,7 @@ fn run_native_segment(
                 if !capturing && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
                     let (width, height) = live_geometry();
                     failures.extend(crate::live::show(stream, width, height).await);
-                    return Ok((Vec::new(), failures, failed_rows));
+                    return Ok((Vec::new(), failures, failed_rows, counted));
                 }
                 return Err(ErrorValue::new(
                     ErrorCode::StreamUnboundedOperation,
@@ -1579,7 +1585,7 @@ fn run_native_segment(
                 }
             }
         }
-        Ok((values, failures, failed_rows))
+        Ok((values, failures, failed_rows, counted))
     };
 
     let collected = runtime.block_on(async {
@@ -1592,7 +1598,7 @@ fn run_native_segment(
         }
     });
 
-    let (values, failures, failed_rows) = collected.map_err(|error| {
+    let (values, failures, failed_rows, counted) = collected.map_err(|error| {
         if error.code() == ErrorCode::StreamCancelled {
             // 128 + SIGINT, the status every shell reports for an interrupted foreground job
             // (ADR-0008); the message would only repeat what the ^C on the terminal already
@@ -1631,6 +1637,14 @@ fn run_native_segment(
         for failure in &failures {
             reporter.error(failure);
         }
+    }
+
+    // ADR-0014 counts what a pipeline dropped so that "a user who is surprised by a row count
+    // has somewhere to look that is not the source code". This is where they look: one note per
+    // run, on stderr, only when something was actually dropped, and only for the pipeline whose
+    // result they are reading (ADR-0261).
+    if last && !capturing {
+        report_counts(&counted);
     }
 
     // A failure of the provider kind — it could not answer, or not as promised — is never a
@@ -1884,6 +1898,43 @@ fn rendered_bytes(values: &[Value], max_rows: Option<usize>) -> Vec<u8> {
         bytes.push(b'\n');
     }
     bytes
+}
+
+/// Says what the pipeline dropped, when it dropped anything.
+///
+/// A predicate that could not be decided excludes a row (ADR-0014, spec §10.5) and an aggregate
+/// skips a null rather than counting it as a zero (spec §35.3). Both are right, and both make a
+/// row count smaller than a user expects for a reason no output shows. One line on stderr, in
+/// the terms the language uses, is that reason (ADR-0261).
+fn report_counts(counted: &ono_pipeline::Diagnostics) {
+    let excluded = counted.excluded_unknown();
+    let skipped = counted.skipped_null();
+    if excluded == 0 && skipped == 0 {
+        return;
+    }
+    let reporter = crate::report::Reporter::new(ono_render::Presentation::choose(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        &[],
+    ));
+    if excluded > 0 {
+        reporter.note(&format!(
+            "{excluded} {} excluded because the condition could not be decided on {} \
+             (spec §10.5)",
+            plural(excluded, "value", "values"),
+            plural(excluded, "it", "them"),
+        ));
+    }
+    if skipped > 0 {
+        reporter.note(&format!(
+            "{skipped} unknown {} skipped, so the result is over the rest (spec §35.3)",
+            plural(skipped, "value was", "values were"),
+        ));
+    }
+}
+
+/// `one` for a count of one, `many` for anything else.
+fn plural(count: u64, one: &'static str, many: &'static str) -> &'static str {
+    if count == 1 { one } else { many }
 }
 
 /// Reports a failed write on the closed taxonomy of spec §43.
