@@ -26,6 +26,7 @@ fields:
   mtu:
     type: int
     required: true
+    unit: bytes
     doc: The maximum transmission unit in bytes.
   addresses:
     type: list<ipnetwork>
@@ -34,10 +35,12 @@ fields:
   rx_bytes:
     type: bytesize
     nullable: true
+    unit: bytes
     doc: Bytes received since the counter was last reset; null when the provider has no counters.
   tx_bytes:
     type: bytesize
     nullable: true
+    unit: bytes
     doc: Bytes transmitted since the counter was last reset.
 default_view:
   columns: [name, state, addresses, mtu, mac]

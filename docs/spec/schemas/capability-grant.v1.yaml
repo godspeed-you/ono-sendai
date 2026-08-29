@@ -20,17 +20,24 @@ fields:
     doc: The grant's own identity, so it can be revoked and cited precisely.
   plugin:
     type: ref<ono.plugin/1>
-    required: true
-    doc: The package the grant is made to. A grant is never to a publisher or to a class of packages.
+    nullable: true
+    doc: >-
+      The package the grant is made to. A grant is never to a publisher or to a class of
+      packages. Null on the rows `get capability` lists before the grants: a capability
+      *definition* the broker knows and no package has asked for yet names no package, and
+      saying so with a null is what spec §35.3 requires instead of inventing one (ADR-0111).
   capability:
     type: string
     required: true
     doc: The capability id, from `kuang_capabilities` in `docs/spec/capabilities.yaml`.
   class:
     type: enum
-    required: true
+    nullable: true
     values: [required, optional, runtime-requested]
-    doc: How the package declared it (spec §31.17). A `required` denial blocks the load; an `optional` denial degrades it.
+    doc: >-
+      How the package declared it (spec §31.17). A `required` denial blocks the load; an
+      `optional` denial degrades it. Null on a definition row, which no package has declared
+      (ADR-0111).
   decision:
     type: enum
     required: true
@@ -59,8 +66,10 @@ fields:
     doc: The durations of spec §31.18. Everything but `always` lives only in the session.
   granted_at:
     type: timestamp
-    required: true
-    doc: When the decision was made.
+    nullable: true
+    doc: >-
+      When the decision was made. Null on a definition row, where no decision has been made
+      yet (ADR-0111).
   expires_at:
     type: timestamp
     nullable: true

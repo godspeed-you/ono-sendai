@@ -133,14 +133,14 @@ Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `id` | `uuid` | — | required | The grant's own identity, so it can be revoked and cited precisely. |
-| `plugin` | `ref<ono.plugin/1>` | — | required | The package the grant is made to. A grant is never to a publisher or to a class of packages. |
+| `plugin` | `ref<ono.plugin/1>` | — | nullable | The package the grant is made to. A grant is never to a publisher or to a class of packages. Null on the rows `get capability` lists before the grants: a capability *definition* the broker knows and no package has asked for yet names no package, and saying so with a null is what spec §35.3 requires instead of inventing one (ADR-0111). |
 | `capability` | `string` | — | required | The capability id, from `kuang_capabilities` in `docs/spec/capabilities.yaml`. |
-| `class` | `enum` | — | required | How the package declared it (spec §31.17). A `required` denial blocks the load; an `optional` denial degrades it. |
+| `class` | `enum` | — | nullable | How the package declared it (spec §31.17). A `required` denial blocks the load; an `optional` denial degrades it. Null on a definition row, which no package has declared (ADR-0111). |
 | `decision` | `enum` | — | required | The standing answer. `ask` is not a grant: it prompts, once, per the requirements of spec §31.18, and resolves to `deny` where no one can be asked. |
 | `scope` | `record` | — | nullable | The scope keys the capability declares, e.g. `{paths: ["/var/log/nginx/**"]}`. Null means unscoped. A key the capability does not declare is invalid, not ignored. |
 | `enforcement` | `enum` | — | required | Whether the scope is checked at every call, merely recorded, or absent because the capability has no scope. Spec §31.16: a scope that cannot be enforced reliably MUST NOT be offered as if it were a security boundary, so this field is shown wherever the scope is. |
 | `duration` | `enum` | — | required | The durations of spec §31.18. Everything but `always` lives only in the session. |
-| `granted_at` | `timestamp` | — | required | When the decision was made. |
+| `granted_at` | `timestamp` | — | nullable | When the decision was made. Null on a definition row, where no decision has been made yet (ADR-0111). |
 | `expires_at` | `timestamp` | — | nullable | When it stops working. Null for a grant with no expiry; a grant with one is a lease (spec §31.49) and every field below applies to it. |
 | `max_uses` | `int` | — | nullable | How many times the lease may be used. Null means unlimited within its window. |
 | `uses` | `int` | — | required | How many times it has been used. A count, never null. |
@@ -713,10 +713,10 @@ Default view: `name`, `state`, `addresses`, `mtu`, `mac`
 | `index` | `int` | — | required | The kernel interface index. |
 | `mac` | `string` | — | nullable | The link-layer address; null for interfaces that have none, such as loopback or tun. |
 | `state` | `enum` | — | required | The operational state as the kernel reports it, not the administrative flag. |
-| `mtu` | `int` | — | required | The maximum transmission unit in bytes. |
+| `mtu` | `int` | bytes | required | The maximum transmission unit in bytes. |
 | `addresses` | `list<ipnetwork>` | — | required | Configured addresses with their prefix lengths; an empty list when none are configured. |
-| `rx_bytes` | `bytesize` | — | nullable | Bytes received since the counter was last reset; null when the provider has no counters. |
-| `tx_bytes` | `bytesize` | — | nullable | Bytes transmitted since the counter was last reset. |
+| `rx_bytes` | `bytesize` | bytes | nullable | Bytes received since the counter was last reset; null when the provider has no counters. |
+| `tx_bytes` | `bytesize` | bytes | nullable | Bytes transmitted since the counter was last reset. |
 
 ## Job — `ono.job/1`
 
