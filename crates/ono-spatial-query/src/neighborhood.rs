@@ -219,9 +219,17 @@ fn keeps_group(group: &NeighborhoodGroup, request: &NeighborhoodRequest) -> bool
         && group.label() != wanted
         && group.relation().is_none_or(|relation| {
             let spec = relation.spec();
-            relation.as_str() != wanted
-                && spec.canonical_label != wanted
-                && spec.inverse_label != wanted
+            // Only the words that name this group's *end* of the relation. `process.parent_of`
+            // is `children`/`child` from the parent and `parent` from the child, and a filter
+            // that took either word from either end answered `near parent` at pid 1 with pid 1's
+            // children (ADR-0275). `relation::resolve_label` has always been direction-aware;
+            // this is the same rule.
+            let words = if group.label() == spec.canonical_group {
+                [spec.canonical_group, spec.canonical_label]
+            } else {
+                [spec.inverse_group, spec.inverse_label]
+            };
+            relation.as_str() != wanted && !words.contains(&wanted.as_str())
         })
     {
         return false;

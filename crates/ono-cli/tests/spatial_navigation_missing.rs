@@ -1192,9 +1192,10 @@ fn should_name_the_positional_spelling_when_a_selector_is_written_as_an_option()
 #[test]
 fn should_refuse_a_relation_the_place_does_not_offer_rather_than_answering_nothing() {
     // §40 and §2.17: "this place has no such exit" and "this exit is empty" are different
-    // answers, and an empty stream with status 0 said both. A process has `sockets`, not
-    // `socket`, and the refusal is what makes the difference visible.
-    let run = ono("enter process 1; near socket");
+    // answers, and an empty stream with status 0 said both. `owner` is what a *socket* place
+    // calls its process; from the process end no exit answers to it, and the refusal is what
+    // makes that visible.
+    let run = ono("enter process 1; near owner");
     assert!(!run.status().is_success());
     let text = run.stderr();
     assert!(
@@ -1204,10 +1205,27 @@ fn should_refuse_a_relation_the_place_does_not_offer_rather_than_answering_nothi
 }
 
 #[test]
+fn should_keep_the_exit_at_this_end_of_a_relation_when_its_two_ends_have_different_words() {
+    // §6.2's `near <relation>` names an exit of *this* place. `process.parent_of` is `children`
+    // from the parent and `parent` from a child; matching either end's word from either end made
+    // `near parent` at pid 1 answer with pid 1's children — the opposite of what was asked.
+    let children = ono("enter process 1; near children | count | to json");
+    children.assert_success();
+    let parent = ono("enter process 1; near parent | count | to json");
+    parent.assert_success();
+    assert_eq!(
+        parent.stdout().lines().rfind(|line| line.starts_with('[')),
+        Some("[0]"),
+        "pid 1 has no parent, and its children are not it; children answered {:?}",
+        children.output()
+    );
+}
+
+#[test]
 fn should_answer_an_empty_stream_for_an_exit_that_exists_and_holds_nothing() {
     // The other half: a relation the place declares and has no neighbour in is an empty answer,
     // not a refusal — the name was understood (§40, the `find` precedent of ADR-0210).
-    let run = ono("enter compute; near cgroups | count | to json");
+    let run = ono("enter compute; near jobs | count | to json");
     run.assert_success();
     assert!(
         run.stdout().lines().any(|line| line.starts_with('[')),

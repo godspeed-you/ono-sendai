@@ -129,8 +129,13 @@ run: |
      grep -qF "near children" /tmp/help-here.txt &&
      ! ono -c "help here" | grep -qE "^ +cgroup"'
   prove s4w "near refuses a relation the place does not offer and names the ones it has (§40)" \
-    'ono -c "enter process 1; near socket" 2>&1 | grep -qF "Ono-Sendai-E1004" &&
-     ono -c "enter process 1; near socket" 2>&1 | grep -qF "sockets"'
+    'ono -c "enter process 1; near owner" 2>&1 | grep -qF "Ono-Sendai-E1004" &&
+     ono -c "enter process 1; near owner" 2>&1 | grep -qF "sockets"'
+  prove s4y "near names an exit at this end of a relation, not the one at the other (§6.2)" \
+    'test "$(ono -c "enter process 1; near parent | count | to json" | tail -1)" = "[0]" &&
+     test "$(ono -c "enter process 1; near children | count | to json" | tail -1)" != "[0]"'
+  prove s4z "an exit that could not be read says so instead of answering empty (§35.2, §42.4)" \
+    'ono -c "enter compute; near cgroups" 2>&1 | grep -qE "Ono-Sendai-E100[89]"'
   prove s4x "an option that names a positional selector says how to spell it (§40)" \
     'ono -c "enter process 1; near --relation process" 2>&1 | grep -qF "near <relation>"'
 
@@ -189,4 +194,6 @@ stdout-contains: PROVED s4u
 stdout-contains: PROVED s4v
 stdout-contains: PROVED s4w
 stdout-contains: PROVED s4x
+stdout-contains: PROVED s4y
+stdout-contains: PROVED s4z
 stdout-not-contains: FAILED

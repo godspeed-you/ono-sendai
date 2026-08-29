@@ -41,6 +41,49 @@ fn process_with_sockets(sockets: usize) -> (SpatialIndex, SpatialId) {
     (index, center)
 }
 
+/// One process with `children` child processes, joined by `process.parent_of` — the relation
+/// whose two ends have different words: `children`/`child` from the parent, `parent` from a
+/// child.
+fn process_with_children(children: usize) -> (SpatialIndex, SpatialId) {
+    let mut index = index();
+    let mut bridge = bridge();
+    let mut records = vec![process(1842, "nginx", "running")];
+    for step in 0..children {
+        let pid = 1900 + i64::try_from(step).expect("a small fixture");
+        records.push(process(pid, &format!("worker-{step}"), "running"));
+    }
+    let absorbed = bridge.absorb(&mut index, &records, NOW);
+    assert!(absorbed.refused().is_empty(), "{:?}", absorbed.refused());
+    let center = index
+        .by_alias("nginx")
+        .first()
+        .expect("the process is indexed")
+        .object()
+        .spatial_id()
+        .clone();
+    for step in 0..children {
+        let child = index
+            .by_alias(&format!("worker-{step}"))
+            .first()
+            .expect("the child is indexed")
+            .object()
+            .spatial_id()
+            .clone();
+        index.record_edge(ono_spatial_core::RelationshipEdge::new(
+            center.clone(),
+            child,
+            ono_spatial_core::RelationType::new("process.parent_of").expect("a declared relation"),
+            ono_spatial_core::Confidence::Exact,
+            ono_value::Provenance::local(
+                "linux.process-tree",
+                ono_value::SchemaId::new("ono.process", 1),
+            ),
+            NOW,
+        ));
+    }
+    (index, center)
+}
+
 fn group<'a>(
     neighborhood: &'a ono_spatial_core::Neighborhood,
     label: &str,
@@ -287,4 +330,43 @@ fn should_drop_a_neighbor_older_than_the_change_window_when_changes_are_asked_fo
         "nothing was observed inside the window"
     );
     assert_eq!(group(&changed, "sockets").total(), Some(0));
+}
+
+#[test]
+fn should_keep_the_exit_at_this_end_of_a_relation_rather_than_the_one_at_the_other() {
+    // §6.2's `near <relation>` names an exit of *this* place. `process.parent_of` is `children`
+    // from the parent and `parent` from the child, and matching either end's word from either
+    // end answered `near parent` at a process with that process's children — the opposite of
+    // what was asked (ADR-0275). `relation::resolve_label` has always resolved by source type;
+    // this is the same rule, applied to the filter.
+    let (index, center) = process_with_children(3);
+    let asked = neighborhood_of(
+        &index,
+        &center,
+        &NeighborhoodRequest::new().along("parent"),
+        &PinRegistry::new(),
+        NOW,
+    );
+    assert_eq!(
+        asked
+            .groups()
+            .iter()
+            .map(ono_spatial_core::NeighborhoodGroup::label)
+            .collect::<Vec<_>>(),
+        vec!["parent"],
+        "the exit named `parent` is the one kept"
+    );
+    assert!(
+        group(&asked, "parent").members().is_empty(),
+        "§2.17: the fixture's centre has no parent, and an empty exit is not the other exit"
+    );
+
+    let children = neighborhood_of(
+        &index,
+        &center,
+        &NeighborhoodRequest::new().along("children"),
+        &PinRegistry::new(),
+        NOW,
+    );
+    assert_eq!(group(&children, "children").members().len(), 3);
 }

@@ -485,6 +485,35 @@ pub async fn observe_adapted(values: &[ono_value::Value]) {
     session.absorb(&records, now);
 }
 
+/// The refusal for an exit that was named and cannot be read (§35.2, §40, ADR-0275).
+///
+/// `None` where the group is genuinely empty or was answered: those are answers, not refusals.
+fn withheld_exit(group: &ono_spatial_core::NeighborhoodGroup) -> Option<ErrorValue> {
+    let (code, why) = match group.state() {
+        ono_spatial_core::PermissionState::PermissionDenied => (
+            ErrorCode::SpatialPermissionDenied,
+            "this user may not read it",
+        ),
+        ono_spatial_core::PermissionState::Unsupported => (
+            ErrorCode::SpatialUnsupported,
+            "no provider in this build answers for it",
+        ),
+        ono_spatial_core::PermissionState::Stale => (
+            ErrorCode::SpatialStale,
+            "the last answer is older than the caller would accept",
+        ),
+        _ => return None,
+    };
+    let error = ErrorValue::new(
+        code,
+        format!("the `{}` of this place could not be read", group.label()),
+    );
+    Some(match group.detail() {
+        Some(detail) => error.with_help(format!("{why}: {detail} (spec v0.4 §35.2)")),
+        None => error.with_help(format!("{why} (spec v0.4 §35.2)")),
+    })
+}
+
 /// The refusal for a relation word the current place does not offer (§40, ADR-0271).
 ///
 /// The exits are the ones this place actually has right now, read from its own neighbourhood
@@ -562,11 +591,22 @@ impl CommandImpl for Near {
             // §40 and §2.17: "this place has no such exit" and "this exit is empty" are
             // different answers, and an empty stream said both. `follow` has always made the
             // distinction; `near <relation>` printed nothing at all with status 0 (ADR-0271).
+            // The query layer decides which exits a named relation keeps (§6.2, direction and
+            // all); an empty answer to that question is the answer that no exit here is called
+            // this. Repeating its rule would give two definitions of one word.
+            // §35.2 and §42.4: a group this user may not read, or that nothing serves, is not an
+            // empty one. `near sockets` on a process whose descriptors are unreadable answered
+            // with an empty stream and status 0, which is the false-empty rendering §42.4
+            // forbids — `look` has always said `permission denied` in the same situation.
+            if named_relation.is_some()
+                && let Some(group) = neighborhood.groups().first()
+                && group.members().is_empty()
+                && let Some(refusal) = withheld_exit(group)
+            {
+                return Err(refusal);
+            }
             if let Some(relation) = &named_relation
-                && !neighborhood
-                    .groups()
-                    .iter()
-                    .any(|group| group.label() == relation)
+                && neighborhood.groups().is_empty()
             {
                 // What this place does offer is asked for only on the way to the refusal: the
                 // answer that was already computed carries only the exit that was asked about.
