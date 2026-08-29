@@ -501,3 +501,74 @@ fn should_say_so_when_a_result_is_too_large_to_retain_whole() {
         "what `@-1` reuses is what was retained, and the notice said how much that is"
     );
 }
+
+// --- the other direction of §12.3: bytes reaching a stage defined over objects (B-data-9) -------
+
+#[test]
+fn should_refuse_a_program_whose_bytes_cannot_become_the_objects_the_next_stage_needs() {
+    // Spec §12.3 makes the boundary explicit in both directions. `count` is declared over a
+    // stream of objects and `ls` writes bytes no adapter decodes, so there is nothing for
+    // `count` to count. Answering `1` — the whole listing wrapped as a single value — is the
+    // silent conversion §12.3 exists to forbid, and it is the wrong number besides.
+    let run = ono("ls /etc | count");
+    assert!(
+        !run.status().is_success(),
+        "bytes no adapter can turn into objects must not reach a stage defined over objects, \
+         got {:?}",
+        run.output()
+    );
+    let complaint = run.stderr().to_owned();
+    assert!(
+        complaint.contains("Ono-Sendai-E0911"),
+        "spec §43: the refusal is `adapter.required_for_structured_pipeline`, got {complaint:?}"
+    );
+    assert!(
+        complaint.contains("count"),
+        "the refusal names the stage that needs objects, got {complaint:?}"
+    );
+    assert!(
+        complaint.contains("raw ls") || complaint.contains("from "),
+        "the refusal carries the routes out — run it raw, or decode it yourself, \
+         got {complaint:?}"
+    );
+}
+
+#[test]
+fn should_answer_at_once_when_an_endless_program_feeds_a_stage_defined_over_objects() {
+    // B-data-9's exit test. `yes` never ends, so a shell that reads its output before deciding
+    // whether the next stage can use it never answers at all. The question — can this program
+    // give `take` the objects it is declared over? — is answerable from the contracts alone,
+    // before anything is spawned, and that is when it is asked.
+    let started = std::time::Instant::now();
+    let run = ono("yes | take 1");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "`yes | take 1` must answer without waiting for a producer that never ends, took {elapsed:?}"
+    );
+    assert!(
+        !run.status().is_success(),
+        "there is nothing for `take` to take from bytes nothing decodes, got {:?}",
+        run.output()
+    );
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0911"),
+        "spec §43: the refusal is `adapter.required_for_structured_pipeline`, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_still_carry_a_whole_document_across_the_boundary_into_a_parser() {
+    // The byte carry ADR-0028 buffers is a *document*, and a document is one value: `from json`
+    // cannot answer half a document, so the buffering is the semantics rather than a shortcut.
+    // Only the stages declared over bytes reach it, which is what the refusals above enforce.
+    let run = ono("printf '[{\"a\":1},{\"a\":2}]' | from json | count | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[2]",
+        "a program's bytes reach the parser declared over them, whole, got {:?}",
+        run.output()
+    );
+}
