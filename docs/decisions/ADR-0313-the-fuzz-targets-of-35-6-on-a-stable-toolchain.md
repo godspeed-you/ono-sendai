@@ -107,7 +107,7 @@ specification requires to be fuzzed must be callable by a fuzzer.
 
 ## What the first campaigns found
 
-Four things, in about 1.5 million executions over five seeds. Recorded here because a fuzz
+Five things, in about two million executions over nine seeds. Recorded here because a fuzz
 harness that reports nothing is indistinguishable from one that finds nothing, and the
 difference is the whole point.
 
@@ -117,6 +117,14 @@ difference is the whole point.
 | 2 | parser | `"- ".repeat(16_000)` — a chain of prefix operators — aborted the process | fixed: `parse_unary` recursed into itself with no guard at all |
 | 3 | serializers | 100 kB of `{e: {e: {…` took seven seconds to be **refused** | fixed: the nesting is counted first, in one linear scan, and the same refusal is now instant. The bound reached `Manifest::parse`, `PackageSignature::parse`, the adapter pack reader and both KUANG/11 stores, which had the same shape |
 | 4 | parser | `words_arguments("[f" + ".5".repeat(16_000))` takes **32 seconds** on 32 kB | **open** |
+| 5 | plugin protocol | `Manifest::parse` on 50 kB of `{` behind an unbalanced quote took **13 seconds** — the depth guard of finding 3 tracked quoting, and a document whose quote never closes read as one long string with no nesting in it at all | fixed: the count ignores quoting, which can only over-count |
+
+Finding 5 is the one worth reading twice. The fix for finding 3 tracked YAML quoting so that a
+`{` inside a string would not be counted, and a fuzz target found the input where that model and
+the parser's disagree — an unbalanced quote — inside a day. Two models of a language's quoting is
+one too many; the count is naive now, which can only over-count, and over-counting refuses a
+document rather than stalling on one. That is the kind of thing a fuzz target is *for*, and a
+property suite with a fixed alphabet would not have produced it.
 
 Findings 1 and 2 are the reason this ADR exists rather than the one that records a substitution.
 Both are stack overflows — not panics, not errors: the process dies, and the parser in question

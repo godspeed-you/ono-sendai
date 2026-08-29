@@ -301,3 +301,29 @@ fn should_refuse_a_view_contribution_this_host_cannot_register() {
         error.message()
     );
 }
+
+#[test]
+fn should_refuse_a_nested_document_before_it_costs_anything_to_refuse_it() {
+    // Found by the §35.6 plugin-protocol fuzz target (ADR-0313). A manifest arrives from a
+    // package, so it is somebody else's document; 50 kB of it took thirteen seconds to be turned
+    // down, because the YAML parser's cost of refusing deep nesting grows with the square of the
+    // depth. The nesting is counted first now, and the count ignores quoting on purpose: the
+    // input that got through the first version was one whose unbalanced quote made a
+    // quote-tracking scan read the whole bomb as a string.
+    for bomb in [
+        "{".repeat(50_000),
+        format!("{{\"a\":{{\"b\":q\":1,\"c\":{}", "{".repeat(50_000)),
+        format!("{}1{}", "{e: ".repeat(50_000), "}".repeat(50_000)),
+    ] {
+        let started = std::time::Instant::now();
+        let error = Manifest::parse(&bomb).expect_err("a bomb is not a manifest");
+        let elapsed = started.elapsed();
+        assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
+        assert!(
+            elapsed.as_millis() < 250,
+            "refusing a {} byte document took {elapsed:?}; the cost of saying no must not grow \
+             with the bomb (spec §49 T7)",
+            bomb.len()
+        );
+    }
+}

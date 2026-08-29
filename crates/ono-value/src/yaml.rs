@@ -82,73 +82,47 @@ pub fn from_yaml(text: &str, schemas: &SchemaRegistry) -> Result<Value, ErrorVal
 /// Counting the nesting first — one linear scan — turns that into the same refusal at the speed
 /// of reading. Found by the §35.6 serializer fuzz target (ADR-0313).
 ///
+/// It is exactly the ceiling `serde_yaml_ng` enforces itself — 128 nests, 129 does not — so no
+/// document that used to decode stops decoding because of this.
+///
 /// Every decoder that reads YAML written by somebody else — a plugin manifest, a package
-/// signature, an adapter pack, an operator's policy or trust store — checks [`yaml_depth`]
-/// against this before parsing. The compiled-in contracts of this build do not: they are not
-/// input.
+/// signature, an adapter pack and its fixtures, an operator's policy or trust store — checks
+/// [`yaml_depth`] against this before parsing. The compiled-in contracts of this build do not:
+/// they are not input.
 pub const MAX_YAML_DEPTH: usize = 128;
 
-/// The deepest `{`/`[` nesting in `text`, skipping quoted scalars and comments.
+/// The deepest `{`/`[` nesting in `text`, counting every one of them.
 ///
-/// It counts only unquoted brackets, so it can under-count — a `{` this reads as being inside a
-/// string is not counted — and never over-count. Under-counting costs nothing: the parser still
-/// refuses what this lets through. Over-counting would refuse a document that is fine, which is
-/// why the quoting is tracked at all.
+/// Quoting is deliberately not tracked. An earlier version of this skipped quoted scalars and
+/// comments so that a `{` inside a string would not count — and a document with an unbalanced
+/// quote then read as one long string, the count came back as nothing, and the bomb went
+/// through: `{"a":{"b":q":1,"c":` followed by fifty thousand `{` took thirteen seconds
+/// (ADR-0313). Two models of YAML quoting that disagree is one model too many, and the one that
+/// matters belongs to the parser.
+///
+/// So this counts naively, which can only *over*-count: what it answers is an upper bound on the
+/// structural nesting, never an under-estimate. The cost is that a document whose *strings*
+/// carry more than [`MAX_YAML_DEPTH`] unmatched brackets is refused although the parser would
+/// have read it. That is a strange document, and refusing it says so.
 ///
 /// ```
 /// use ono_value::{MAX_YAML_DEPTH, yaml_depth};
 /// assert_eq!(yaml_depth("a: [1, [2, [3]]]\n"), 3);
-/// assert_eq!(yaml_depth("a: \"{{{{\"\n"), 0);
 /// assert!(yaml_depth(&"{e: ".repeat(1_000)) > MAX_YAML_DEPTH);
 /// ```
 #[must_use]
 pub fn yaml_depth(text: &str) -> usize {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum State {
-        Plain,
-        Single,
-        Double,
-        Comment,
-    }
-
-    let mut state = State::Plain;
     let mut depth = 0_usize;
     let mut deepest = 0_usize;
-    let mut previous = b' ';
-    let mut bytes = text.as_bytes().iter().copied();
-    while let Some(byte) = bytes.next() {
-        match state {
-            State::Comment => {
-                if byte == b'\n' {
-                    state = State::Plain;
-                }
+    for byte in text.bytes() {
+        match byte {
+            b'{' | b'[' => {
+                depth += 1;
+                deepest = deepest.max(depth);
             }
-            State::Single => {
-                if byte == b'\'' {
-                    state = State::Plain;
-                }
-            }
-            State::Double => match byte {
-                b'\\' => {
-                    let _ = bytes.next();
-                }
-                b'"' => state = State::Plain,
-                _ => {}
-            },
-            State::Plain => match byte {
-                b'\'' => state = State::Single,
-                b'"' => state = State::Double,
-                // A `#` opens a comment only at a word boundary; `a#b` is a plain scalar.
-                b'#' if previous.is_ascii_whitespace() => state = State::Comment,
-                b'{' | b'[' => {
-                    depth += 1;
-                    deepest = deepest.max(depth);
-                }
-                b'}' | b']' => depth = depth.saturating_sub(1),
-                _ => {}
-            },
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
         }
-        previous = byte;
     }
     deepest
 }
