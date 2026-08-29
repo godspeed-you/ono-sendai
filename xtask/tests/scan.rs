@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use ono_testkit::{Scratch, scratch};
-use xtask::scan::check_unfinished_work;
+use xtask::scan::{check_acceptance_case_references, check_release_board, check_unfinished_work};
 
 /// Builds a throwaway repository shaped like this one.
 fn fixture(files: &[(&str, &str)]) -> Scratch {
@@ -196,4 +196,237 @@ fn should_report_a_rust_tree_the_scan_does_not_walk() {
 fn should_not_report_a_directory_that_holds_no_rust() {
     let repo = fixture(&[("dist/ono_0.3.0_amd64.deb", "not rust\n")]);
     assert_eq!(check_unfinished_work(repo.path(), ""), Vec::new());
+}
+
+// --- acceptance-case references (ADR-0401) ------------------------------------------------------
+
+#[test]
+fn should_accept_a_document_that_names_an_acceptance_case_that_exists() {
+    let repo = fixture(&[
+        ("docker/acceptance/cases/040-object-pipeline.case", "run\n"),
+        (
+            "docs/ACCEPTANCE.md",
+            "- [x] objects cross the boundary — `040-object-pipeline`\n",
+        ),
+    ]);
+    assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_reject_a_document_that_names_an_acceptance_case_that_does_not_exist() {
+    let repo = fixture(&[
+        ("docker/acceptance/cases/040-object-pipeline.case", "run\n"),
+        (
+            "docs/ACCEPTANCE.md",
+            "- [x] objects cross the boundary — `035-interop-boundary`\n",
+        ),
+    ]);
+    let problems = check_acceptance_case_references(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert_eq!(problems[0].location, "docs/ACCEPTANCE.md:1");
+    assert!(
+        problems[0].detail.contains("035-interop-boundary"),
+        "the problem names the dangling reference: {}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_name_the_case_that_carries_the_number_when_a_reference_was_renamed_away() {
+    let repo = fixture(&[
+        (
+            "docker/acceptance/cases/122-mount-propagation-peers.case",
+            "run\n",
+        ),
+        (
+            "docs/decisions/ADR-0236-peers.md",
+            "Encoded by case `122-privileged-network-and-mount`.\n",
+        ),
+    ]);
+    let problems = check_acceptance_case_references(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("122-mount-propagation-peers"),
+        "the reader is pointed at the case that carries the number: {}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_ignore_a_case_name_that_is_not_written_as_a_reference() {
+    let repo = fixture(&[
+        ("docker/acceptance/cases/000-binary-runs.case", "run\n"),
+        (
+            "docs/notes.md",
+            "The 035-interop-boundary idea was dropped, and a 200-column terminal is wide.\n",
+        ),
+    ]);
+    assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_ignore_a_case_name_inside_a_fenced_code_block() {
+    let repo = fixture(&[
+        ("docker/acceptance/cases/000-binary-runs.case", "run\n"),
+        (
+            "docs/notes.md",
+            "```text\ncases/`035-interop-boundary`.case\n```\n",
+        ),
+    ]);
+    assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_ignore_the_board_and_the_narrative_specifications_when_scanning_case_references() {
+    // The board records names that never existed on purpose, and the specifications are
+    // immutable (AGENTS.md §5.1), so a name in either is not a claim this check could close.
+    let repo = fixture(&[
+        ("docker/acceptance/cases/000-binary-runs.case", "run\n"),
+        (
+            "docs/STATE.md",
+            "The seven names these boxes carried — `040-process-provider` — never existed.\n",
+        ),
+        (
+            "docs/ono_sendai_shell_spec_v0.2.md",
+            "See `999-imaginary-case`.\n",
+        ),
+    ]);
+    assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_report_this_repository_as_naming_only_acceptance_cases_that_exist() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let problems = check_acceptance_case_references(root);
+    assert!(
+        problems.is_empty(),
+        "documents name acceptance cases that do not exist:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_ignore_a_three_digit_measurement_that_is_shaped_like_a_case_name() {
+    // `200-column` is a terminal width, `512-byte` a frame size. Nothing about the way they are
+    // written distinguishes them from a case; the number does, because the suite has none there.
+    let repo = fixture(&[
+        ("docker/acceptance/cases/040-object-pipeline.case", "run\n"),
+        (
+            "docs/notes.md",
+            "A `200-column` terminal, a `512-byte` frame, a `300-process` host.\n",
+        ),
+    ]);
+    assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
+}
+
+// --- the release board (ADR-0402) ---------------------------------------------------------------
+
+#[test]
+fn should_accept_a_board_whose_in_progress_is_empty_and_whose_deferred_entries_name_an_adr() {
+    let board = "\
+# STATE
+
+## In progress
+
+## Next up (ordered)
+
+- [ ] C-6 — the model broker
+
+## Deferred / blocked
+
+- **`socket.accepts_connection` cannot be observed.** No kernel interface supplies the link
+  (ADR-0135), so the relation is declared and honestly empty.
+";
+    assert_eq!(check_release_board(board), Vec::new());
+}
+
+#[test]
+fn should_refuse_to_call_the_shell_ready_while_an_agent_holds_a_claim() {
+    let board = "\
+# STATE
+
+## In progress
+
+- [agent-7 | 2026-08-29] the model broker — files: crates/ono-model-broker
+
+## Deferred / blocked
+";
+    let problems = check_release_board(board);
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].location.starts_with("docs/STATE.md"));
+    assert!(
+        problems[0].detail.contains("In progress"),
+        "the reason names the section: {}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_refuse_to_call_the_shell_ready_while_a_claim_is_written_as_a_table_row() {
+    let board = "\
+# STATE
+
+## In progress
+
+| Agent | Worktree | Claim |
+|---|---|---|
+| KUANG/11 | `../wt-k11` | the wasm tier |
+
+## Deferred / blocked
+";
+    let problems = check_release_board(board);
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("In progress"));
+}
+
+#[test]
+fn should_refuse_a_deferred_entry_that_explains_itself_with_no_adr() {
+    let board = "\
+# STATE
+
+## In progress
+
+## Deferred / blocked
+
+- **the thing is blocked.** Nobody wrote down why it does not block the release.
+";
+    let problems = check_release_board(board);
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("ADR"),
+        "the reason asks for the ADR: {}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_ignore_an_unticked_box_under_next_up_when_judging_the_board() {
+    // *Next up* is the deliberate post-release backlog (docs/ACCEPTANCE.md §4.5); a shell with an
+    // empty backlog is not what the stopping rule asks for.
+    let board = "\
+# STATE
+
+## In progress
+
+## Next up (ordered)
+
+- [ ] C-2 — the fuzz targets
+- [ ] C-6 — the model broker
+
+## Deferred / blocked
+";
+    assert_eq!(check_release_board(board), Vec::new());
+}
+
+#[test]
+fn should_refuse_a_board_that_has_no_in_progress_section_at_all() {
+    let problems = check_release_board("# STATE\n\n## Next up\n");
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("In progress"));
 }

@@ -267,8 +267,10 @@ huge stdout and an endless stream) build the rest (ADR-0333):
       `xtask/tests/reference.rs` regenerates every page and requires the committed files to be
       identical, and `spec-check` runs the same comparison in the gate (ADR-0018).
 - [x] `docs/STATE.md` has an empty *In progress* section and no unexplained *Deferred* entries —
-      In progress is empty, Deferred is empty, and the Next up list is the deliberate
-      post-release backlog with an exit test named per item.
+      `scripts/release-check.sh` reads the board and refuses the release line while a claim
+      stands under *In progress* or a *Deferred* entry names no ADR (`cargo xtask state-check`,
+      ADR-0402, driven by `xtask/tests/scan.rs`). *Next up* is deliberately outside that rule:
+      §4 is the stopping rule, and *Next up* is the post-release backlog that remains after it.
 - [x] Every `#[ignore]`d test is either removed or justified in *Deferred* with an ADR — the
       workspace holds none at all, which `cargo xtask spec-check`'s unfinished-work scan keeps
       true.
@@ -557,8 +559,13 @@ unsupported-flag case that falls back safely, and `explain` showing the plan (v0
       examples on every gate run.
 - [x] **Delivery.** `docs/STATE.md` has an empty *In progress*, no `#[ignore]`d tests exist
       without a *Deferred* entry, the acceptance suite and CI are green on `implementation`,
-      and this subsection has no unticked box. — `scripts/release-check.sh`; `docs/STATE.md` *In progress* is empty, no
-      `#[ignore]` exists in the tree, CI runs the gate and the acceptance suite on every push.
+      and this subsection has no unticked box. — `scripts/release-check.sh`, which now proves
+      each clause instead of asserting it: `cargo xtask state-check` reads the board and refuses
+      while *In progress* holds a claim (ADR-0402), `spec-check`'s unfinished-work scan refuses
+      an `#[ignore]` the *Deferred* section does not track, the same script runs the gate and the
+      containerised suite, and the unticked-box grep covers this subsection like every other. CI
+      runs the gate and the acceptance suite on every push, which is the one clause no local
+      script can observe.
 
 ### 4.7 The v0.4 tranche — Spatial Systems Interface
 
@@ -801,7 +808,10 @@ layer so that each layer's own checklist is checkable.
 - [x] **No release-blocking known defects remain.** `docs/STATE.md` *In progress* is empty, the
       workspace holds no `#[ignore]`d test (`cargo run -p xtask -- spec-check`'s unfinished-work
       scan), and every *Deferred* entry names an ADR saying why it does not block the release —
-      the same bar §4.5 sets for v0.2 and §4.6.5 for v0.3.
+      the same bar §4.5 sets for v0.2 and §4.6.5 for v0.3, and the same check: `cargo xtask
+      state-check` resolves both halves of this sentence against the board on every
+      `scripts/release-check.sh` run (ADR-0402, `xtask/tests/scan.rs`), so the box cannot stay
+      ticked once a claim or an undefended deferral appears.
 - [x] **Performance targets are measured, and major violations resolved or documented.** Every
       box of §4.7.5 is ticked; any budget that is exceeded is recorded in an ADR naming the
       figure measured, the cause and the decision, and the ADR is cited by the §4.7.5 box that

@@ -16,6 +16,7 @@ fn main() -> ExitCode {
         Some("gate") => run_script("gate.sh", &rest),
         Some("acceptance") => run_script("acceptance.sh", &rest),
         Some("spec-check") => spec_check(),
+        Some("state-check") => state_check(),
         Some("docs") => generate_docs(),
         Some("conformance") => generate_conformance(),
         Some("release-check") => run_script("release-check.sh", &rest),
@@ -37,6 +38,7 @@ fn usage() {
     eprintln!("tasks:");
     eprintln!("  gate           format, lint, test, contract check, docs (AGENTS.md section 10)");
     eprintln!("  spec-check     contract drift between docs/spec and the implementation");
+    eprintln!("  state-check    the claims docs/ACCEPTANCE.md makes about docs/STATE.md");
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!(
         "  conformance    regenerate the provider conformance suite from docs/spec (spec section 35.3)"
@@ -125,6 +127,7 @@ fn spec_check() -> ExitCode {
     problems.extend(
         scan::check_unfinished_work(&root, &state)
             .into_iter()
+            .chain(scan::check_acceptance_case_references(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 
@@ -160,6 +163,31 @@ fn spec_check() -> ExitCode {
         }
         ExitCode::FAILURE
     }
+}
+
+/// Checks the claims `docs/ACCEPTANCE.md` makes about the work board (ADR-0402).
+///
+/// Separate from `spec-check` on purpose: three release boxes assert that nobody is in the middle
+/// of changing the shell, and that is a statement about the moment of release, not about an
+/// increment. A gate that refused a held claim would forbid the working rhythm of AGENTS.md §7,
+/// so `scripts/release-check.sh` runs this and the gate does not.
+fn state_check() -> ExitCode {
+    let root = repo_root();
+    let Ok(state) = std::fs::read_to_string(root.join("docs").join("STATE.md")) else {
+        eprintln!(
+            "state-check: docs/STATE.md is missing; it is the shared work board (AGENTS.md §9)"
+        );
+        return ExitCode::FAILURE;
+    };
+    let problems = scan::check_release_board(&state);
+    if problems.is_empty() {
+        println!("state-check: ok");
+        return ExitCode::SUCCESS;
+    }
+    for problem in &problems {
+        eprintln!("state-check: {} — {}", problem.location, problem.detail);
+    }
+    ExitCode::FAILURE
 }
 
 /// Every "generated from" claim in `docs/ACCEPTANCE.md` names something that is generated.
