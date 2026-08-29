@@ -61,6 +61,13 @@ impl Transform for Count {
                     counted += 1;
                 }
             }
+            // Spec §35.3: what could not be read is not zero. A stream that produced nothing but
+            // a failure has no count, and answering `0` would turn a refusal into data
+            // (ADR-0221). A stream that lost *some* of its objects still counts the rest, which
+            // is spec §16.5's partial failure.
+            if counted == 0 && input.saw_failure() {
+                return;
+            }
             let _ = sink.send(Value::Int(counted)).await;
         })
     }
@@ -157,6 +164,11 @@ impl Transform for Measure {
                 }
             }
 
+            // As `count`: a summary of a stream that could not be read is not a summary of
+            // nothing (spec §35.3, ADR-0221).
+            if samples.is_empty() && skipped == 0 && input.saw_failure() {
+                return;
+            }
             let record = match summarise(&schema, samples, skipped, &self.percentiles, &sink).await
             {
                 Ok(record) => record,
@@ -345,7 +357,9 @@ impl Transform for Reduce {
     fn apply(self: Box<Self>, input: ValueStream) -> ValueStream {
         input.stage(Boundedness::Bounded, move |mut input, sink| async move {
             let mut accumulator = self.initial.clone();
+            let mut folded_nothing = true;
             while let Some(value) = input.next_value(&sink).await {
+                folded_nothing = false;
                 accumulator = Some(match accumulator {
                     None => value,
                     Some(current) => match self.body.fold(&current, &value) {
@@ -358,6 +372,11 @@ impl Transform for Reduce {
                         }
                     },
                 });
+            }
+            // A fold that never ran over a stream that failed has no answer, not the seed
+            // (spec §35.3, ADR-0221).
+            if folded_nothing && input.saw_failure() {
+                return;
             }
             match accumulator {
                 Some(result) => {

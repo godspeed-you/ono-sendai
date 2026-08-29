@@ -277,6 +277,7 @@ pub struct ValueStream {
     errors: mpsc::Receiver<ErrorValue>,
     values_done: bool,
     errors_done: bool,
+    saw_failure: bool,
     capacity: usize,
     boundedness: Boundedness,
     cancel: CancelToken,
@@ -350,9 +351,11 @@ impl ValueStream {
     /// a consumer never has to guess why the values stopped (spec §18.5).
     pub async fn recv(&mut self) -> Option<StreamEvent> {
         if let Some(event) = self.recv_raw().await {
+            self.saw_failure |= matches!(event, StreamEvent::Failure(_));
             return Some(event);
         }
         if self.cancel.claim_report() {
+            self.saw_failure = true;
             return Some(StreamEvent::Failure(cancelled_error()));
         }
         None
@@ -367,9 +370,22 @@ impl ValueStream {
         loop {
             match self.recv_raw().await? {
                 StreamEvent::Value(value) => return Some(value),
-                StreamEvent::Failure(error) => sink.fail(error).await.ok()?,
+                StreamEvent::Failure(error) => {
+                    self.saw_failure = true;
+                    sink.fail(error).await.ok()?;
+                }
             }
         }
+    }
+
+    /// Whether a failure has passed through this stream.
+    ///
+    /// An aggregate asks after it has read to the end: a summary of a stream that could not be
+    /// read is not a summary of nothing, and spec §35.3 forbids answering `0` for what was never
+    /// known (ADR-0221).
+    #[must_use]
+    pub const fn saw_failure(&self) -> bool {
+        self.saw_failure
     }
 
     /// Drains the stream into everything it produced.
@@ -479,6 +495,7 @@ impl ValueStream {
             errors: error_rx,
             values_done: false,
             errors_done: false,
+            saw_failure: false,
             capacity: config.capacity(),
             boundedness,
             cancel: config.cancel_token().clone(),

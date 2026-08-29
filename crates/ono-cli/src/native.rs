@@ -1611,17 +1611,24 @@ fn run_native_segment(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             &[],
         ));
-        for failure in &failures {
-            reporter.error(failure);
-        }
         if values.is_empty() {
-            let first = failures.into_iter().next().unwrap_or_else(|| {
+            // Nothing survived, so the failure is the answer rather than a note beside one. It
+            // travels as the error the run failed with — reported once, by the caller that
+            // reports every failure — and the rest are reported here (ADR-0221).
+            let mut remaining = failures.into_iter();
+            let first = remaining.next().unwrap_or_else(|| {
                 ErrorValue::new(
                     ErrorCode::ProviderUnavailable,
                     "the command produced nothing",
                 )
             });
+            for failure in remaining {
+                reporter.error(&failure);
+            }
             return Err(Flow::Failed(first));
+        }
+        for failure in &failures {
+            reporter.error(failure);
         }
     }
 
