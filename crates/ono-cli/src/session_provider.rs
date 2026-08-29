@@ -25,6 +25,14 @@ use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
 use crate::hosts::{HostEntry, HostSources};
 
+/// The severities `ono.finding/1` carries, weakest first (spec §31.24's closed set).
+const SEVERITIES: &[&str] = &["info", "low", "medium", "high", "critical"];
+
+/// Where `severity` sits in that order, or `None` when it is not one of them.
+fn severity_rank(severity: &str) -> Option<usize> {
+    SEVERITIES.iter().position(|known| *known == severity)
+}
+
 /// The provider's stable id, as it appears in every record's provenance.
 pub const PROVIDER_ID: &str = "ono.shell";
 
@@ -355,7 +363,16 @@ impl SessionProvider {
         }
         self.unload_instance(&id).await;
         let keep_state = action.argument("keep-state") == Some(&Value::Bool(true));
-        self.lock().kuang.remove_package(&package, keep_state)?;
+        let keep_grants = action.argument("keep-grants") == Some(&Value::Bool(true));
+        {
+            let mut tables = self.lock();
+            tables.kuang.remove_package(&package, keep_state)?;
+            if !keep_grants {
+                // The package is gone, so the permissions it held are gone with it: a package
+                // that comes back must ask again (spec §31.18, §31.81, ADR-0233).
+                tables.kuang.revoke_grants_of(&id);
+            }
+        }
         Ok(ActionOutcome::succeeded(action, true))
     }
 
@@ -838,6 +855,25 @@ impl Provider for SessionProvider {
                     .option_value("state")
                     .and_then(|value| value.as_str().ok())
                     .map(str::to_owned);
+                // `get finding --severity high`: a *minimum*, over the closed set of
+                // `ono.finding/1` (spec §31.24). A level outside that set is refused rather than
+                // ignored, because a filter nobody applied answers with everything (ADR-0233).
+                let floor = match query.option_value("severity") {
+                    Some(value) => {
+                        let wanted = value.as_str()?;
+                        Some(severity_rank(wanted).ok_or_else(|| {
+                            ErrorValue::new(
+                                ErrorCode::TypeMismatch,
+                                format!("`{wanted}` is not a severity `ono.finding/1` carries"),
+                            )
+                            .with_help(format!(
+                                "spec §31.24 closes the set at {}",
+                                SEVERITIES.join(", ")
+                            ))
+                        })?)
+                    }
+                    None => None,
+                };
                 let values: Vec<Value> = records
                     .into_iter()
                     .filter(|record| query.matches(record))
@@ -845,6 +881,15 @@ impl Provider for SessionProvider {
                         state.as_deref().is_none_or(|wanted| {
                             record.get("state").and_then(|value| value.as_str().ok())
                                 == Some(wanted)
+                        })
+                    })
+                    .filter(|record| {
+                        floor.is_none_or(|floor| {
+                            record
+                                .get("severity")
+                                .and_then(|value| value.as_str().ok())
+                                .and_then(severity_rank)
+                                .is_some_and(|rank| rank >= floor)
                         })
                     })
                     .take(limit)

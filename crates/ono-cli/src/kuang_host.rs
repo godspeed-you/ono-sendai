@@ -295,6 +295,21 @@ impl Host {
         Some(grant)
     }
 
+    /// Revokes every grant that still stands for `plugin`, answering how many ended.
+    ///
+    /// A grant is made to one package (spec §31.18), so a package that is removed takes the
+    /// permissions it held with it unless `remove plugin --keep-grants` says otherwise
+    /// (spec §31.81, ADR-0233). The grants themselves are retained as revoked rather than
+    /// deleted, so the audit trail still shows what the package was once allowed to do.
+    pub fn revoke_grants_of(&mut self, plugin: &str) -> usize {
+        let standing: Vec<ono_value::Uuid> =
+            self.standing_grants(plugin).map(|grant| grant.id).collect();
+        standing
+            .into_iter()
+            .filter(|id| self.revoke(*id).is_some())
+            .count()
+    }
+
     /// The grants that stand for `plugin`, oldest first.
     pub fn standing_grants(&self, plugin: &str) -> impl Iterator<Item = &Grant> {
         self.grants

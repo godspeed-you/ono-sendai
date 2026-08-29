@@ -905,6 +905,47 @@ fn should_unload_a_loaded_package_before_removing_it() {
     );
 }
 
+/// A session script that grants `clock.read`, removes the package with `flags`, reinstalls it
+/// from `spare` and asks the reinstalled package for the clock.
+fn removal_keeping(spare: &Path, flags: &str) -> String {
+    format!(
+        "load plugin {ECHO} --grant clock.read; remove plugin {ECHO}{flags}; \
+         install plugin path:{spare} --confirm; load plugin {ECHO}; echo:clock | to json",
+        spare = spare.join(ECHO).display()
+    )
+}
+
+#[test]
+fn should_revoke_the_grants_of_a_removed_package_unless_asked_to_keep_them() {
+    // kuang.yaml declares `--keep-grants` on `remove plugin`: "Retain the capability grants made
+    // to it." A grant is made to one package (spec §31.18), so removing the package ends the
+    // permission it held unless the user says otherwise — and a package that comes back must not
+    // silently inherit what an earlier installation was allowed to do (spec §31.81).
+    let spare = ono_testkit::scratch();
+    lay_out_package(spare.path(), ECHO, "echo", "0.1.0", ">=11.1 <12");
+
+    let removed = ono(&plugin_home(), &removal_keeping(spare.path(), ""));
+    assert!(
+        !removed.status().is_success()
+            && (removed.stderr().contains("capability.denied")
+                || removed.stderr().contains("K11301")),
+        "spec §31.81: the package was removed, so the grant it held ended with it and the \
+         reinstalled package is denied the clock; got {:?}",
+        removed.output()
+    );
+
+    let kept = ono(
+        &plugin_home(),
+        &removal_keeping(spare.path(), " --keep-grants"),
+    );
+    assert!(
+        kept.status().is_success() && kept.stdout().contains("20"),
+        "`--keep-grants` retains the grants made to the package, so the clock still answers \
+         after it is reinstalled; got {:?}",
+        kept.output()
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Capabilities — spec §31.16–§31.19, `ono.capability-grant/1`
 // ---------------------------------------------------------------------------------------------
@@ -1223,6 +1264,34 @@ fn should_report_a_structured_not_found_when_asking_an_unknown_assistant() {
 }
 
 #[test]
+fn should_refuse_an_autonomy_level_the_shell_does_not_define() {
+    // Spec §31.48: "Assistant packages SHOULD declare supported autonomy modes, but Ono controls
+    // policy", and there is to be no unrestricted level. The level vocabulary is therefore the
+    // shell's, and a word outside it is refused rather than passed on: a turn must never run
+    // under a policy nothing can enforce.
+    let home = plugin_home();
+    let run = ono(&home, "ask assistant nobody \"hello\" --autonomy L9");
+    assert_refused_with(
+        &run,
+        "Ono-Sendai-E0201",
+        "spec §31.48: `L9` is not one of the autonomy levels Ono defines",
+    );
+    assert!(
+        run.stderr().contains("L4") && run.stderr().contains("L0"),
+        "the refusal names the levels there are, got {:?}",
+        run.stderr()
+    );
+
+    let accepted = ono(&home, "ask assistant nobody \"hello\" --autonomy L2");
+    assert!(
+        accepted.stderr().contains("Ono-Sendai-E0102"),
+        "a level the shell defines is accepted, and what is missing is then the assistant, got \
+         {:?}",
+        accepted.output()
+    );
+}
+
+#[test]
 fn should_report_no_findings_when_nothing_was_analysed() {
     let home = plugin_home();
     let run = ono(
@@ -1240,6 +1309,36 @@ fn should_report_no_findings_when_nothing_was_analysed() {
         vec!["[]", "[]"],
         "spec §31.24: findings are emitted by analyses; none ran, and `severity` is a finding.v1 field so the filter composes, got {:?}",
         run.output()
+    );
+}
+
+#[test]
+fn should_refuse_a_severity_the_finding_schema_does_not_carry() {
+    // kuang.yaml declares `--severity` on `get finding` as a minimum. `ono.finding/1` closes the
+    // set at five levels (spec §31.24) so that findings from unrelated packages sort against each
+    // other honestly; a sixth word is a filter nobody can apply, and a filter nobody applied
+    // answers with everything (ADR-0233).
+    let home = plugin_home();
+    let run = ono(&home, "get finding --severity urgent | count");
+    assert_refused_with(
+        &run,
+        "Ono-Sendai-E0201",
+        "spec §31.24: `urgent` is not one of the five severities",
+    );
+    assert!(
+        run.stderr().contains("critical") && run.stderr().contains("info"),
+        "the refusal names the levels there are, got {:?}",
+        run.stderr()
+    );
+
+    let accepted = ono(&home, "get finding --severity high | count | to json");
+    accepted.assert_success();
+    assert_eq!(
+        last_line(&accepted),
+        "[0]",
+        "a level the schema carries is a filter over the findings, of which there are none, got \
+         {:?}",
+        accepted.output()
     );
 }
 

@@ -409,6 +409,18 @@ pub fn load_piped(session: &mut Session, words: &[String], targets: &[Value]) ->
     Ok(status)
 }
 
+/// The autonomy levels of spec §31.48, as code and name.
+///
+/// The list is deliberately closed and deliberately stops at `L4`: §31.48 rules out an
+/// unrestricted "root autonomous" level in the normal product model.
+const AUTONOMY_LEVELS: &[(&str, &str)] = &[
+    ("L0", "explain-only"),
+    ("L1", "observe"),
+    ("L2", "propose"),
+    ("L3", "act-confirmed"),
+    ("L4", "delegated-scope"),
+];
+
 /// Runs a management command over its words (the target word included).
 ///
 /// # Errors
@@ -433,6 +445,32 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
         // Spec §7.1: the assistant is selected explicitly, and no assistant package is loaded
         // in this build, so whatever was named is not found (ADR-0111 §3).
         Request::AskAssistant => {
+            // Spec §31.48: a package may declare which autonomy modes it supports, but the
+            // levels themselves are Ono's, and there is to be no unrestricted one. A word
+            // outside the vocabulary is refused here rather than carried into a turn, because a
+            // policy nothing can enforce is exactly the invisible unlimited delegation §31.48
+            // rules out (ADR-0233).
+            if let Some(level) = option("--autonomy")
+                && !AUTONOMY_LEVELS
+                    .iter()
+                    .any(|(code, name)| level.eq_ignore_ascii_case(code) || *name == level)
+            {
+                return Err(Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!("`{level}` is not an autonomy level this shell defines"),
+                    )
+                    .with_help(format!(
+                        "spec §31.48 gives {}; Ono controls the policy, whatever a package \
+                         supports",
+                        AUTONOMY_LEVELS
+                            .iter()
+                            .map(|(code, name)| format!("{code} {name}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )),
+                ));
+            }
             let Some(assistant) = arguments.first() else {
                 return Err(Flow::Failed(
                     ErrorValue::new(
