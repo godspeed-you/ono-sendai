@@ -324,6 +324,19 @@ fn number_at(text: &str, number: &str) -> Option<usize> {
         .map(|(index, _)| index)
 }
 
+/// The pid of the place `look --json` describes, as the `PlaceView` of §6.1 writes it.
+///
+/// The document arrives with the terminal's carriage returns in it, which no JSON parser has to
+/// tolerate, so they are dropped before it is read.
+fn place_pid(text: &str) -> Option<String> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    let document = text.get(start..=end)?.replace('\r', "");
+    let view: serde_yaml_ng::Value = serde_yaml_ng::from_str(&document).ok()?;
+    let pid = view.get("place")?.get("pid")?;
+    pid.as_u64().map(|pid| pid.to_string())
+}
+
 /// A scratch home plus an empty working directory, so nothing on this machine leaks in.
 fn workspace() -> (Scratch, PathBuf) {
     let home = scratch();
@@ -604,9 +617,16 @@ fn should_open_a_picker_and_make_the_choice_current_when_a_selector_is_ambiguous
         "§27.2: the picked candidate becomes the current place, prompt unchanged at {root:?}"
     );
 
-    let body = plain(&session.output_of("AM2", "look"));
-    assert!(
-        number_at(&body, &chosen).is_some(),
+    // The two candidates share their name, their kind and their place path, so the *rendered*
+    // view names neither of them uniquely — it only ever showed the pid where a permission error
+    // happened to quote a `/proc/<pid>` path, which is a property of the host the test ran on and
+    // not of the behaviour it states (AGENTS.md section 11). §6.1's `look --json` carries the
+    // identity the provider filed the place under, and §29.4 makes `pid` a field of the place
+    // itself, so the answer to "which of the two am I standing in" is read where it is written.
+    let body = plain(&session.output_of("AM2", "look --json"));
+    assert_eq!(
+        place_pid(&body).as_deref(),
+        Some(chosen.as_str()),
         "§27.2: the second listed candidate ({chosen}) is the place that was entered; saw:\n{body}"
     );
 
