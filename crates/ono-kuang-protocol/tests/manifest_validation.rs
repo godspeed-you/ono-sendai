@@ -244,3 +244,60 @@ contributions:
     let scope = exec.scope.as_ref().expect("scoped");
     assert!(scope.contains_key("executables") && scope.contains_key("argv_policy"));
 }
+
+#[test]
+fn should_refuse_an_annotation_key_outside_the_packages_namespace() {
+    // §31.23: annotation keys are namespaced, and declaring them "is what keeps an annotation
+    // from being an undeclared schema fork". A key outside the package's own namespace is a
+    // claim on someone else's records; `contributions.v1.yaml`'s `id-in-namespace` check makes
+    // it `package.invalid` at install time, which is the whole point of manifest-before-code.
+    let manifest = valid_manifest().replace(
+        "roles: [provider]",
+        "contributions:\n  annotations: [ono.risk.score]\nroles: [provider]",
+    );
+    let error = Manifest::parse(&manifest).unwrap_err();
+    assert_eq!(error.code(), KuangErrorCode::PackageInvalid);
+    assert!(
+        error.message().contains("ono.risk.score"),
+        "the refusal names the key, got {}",
+        error.message()
+    );
+}
+
+#[test]
+fn should_accept_an_annotation_key_inside_the_packages_namespace() {
+    let manifest = valid_manifest().replace(
+        "roles: [provider]",
+        "contributions:\n  annotations: [dev.example.echo.risk.score]\nroles: [provider]",
+    );
+    let manifest = Manifest::parse(&manifest).expect("the key is the package's own");
+    assert_eq!(
+        manifest
+            .contributions
+            .and_then(|paths| paths.annotations)
+            .unwrap_or_default(),
+        vec!["dev.example.echo.risk.score".to_owned()]
+    );
+}
+
+#[test]
+fn should_refuse_a_view_contribution_this_host_cannot_register() {
+    // §31.27 views need `views.open`/`views.submit`/`views.close`, and this host implements no
+    // view protocol at all. Accepting the declaration, listing it in `inspect plugin` and then
+    // registering nothing tells the operator a view exists when none does — §2.17's rule, and
+    // the reason `package.incompatible` names a host feature the system does not provide.
+    let manifest = valid_manifest().replace(
+        "roles: [provider]",
+        "contributions:\n  views: [views/flow.yaml]\nroles: [provider]",
+    );
+    let parsed = Manifest::parse(&manifest).expect("the shape is valid");
+    let error = parsed
+        .check_host(HOST_API, "linux-amd64")
+        .expect_err("a view contribution has nowhere to be registered");
+    assert_eq!(error.code(), KuangErrorCode::PackageIncompatible);
+    assert!(
+        error.message().contains("view"),
+        "the refusal names what is missing, got {}",
+        error.message()
+    );
+}

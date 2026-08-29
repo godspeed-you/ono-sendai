@@ -332,6 +332,27 @@ impl Manifest {
             }
         }
         let network = validate_network(raw.network)?;
+        // §31.23: an annotation key is namespaced, and declaring it "is what keeps an annotation
+        // from being an undeclared schema fork". `contributions.v1.yaml`'s `id-in-namespace`
+        // registration check applies to every contributed id, so a key outside the package's own
+        // namespace — a claim on someone else's records — fails closed here rather than being
+        // listed by `inspect plugin` as if the host had accepted it.
+        let contributions = raw.contributions;
+        if let Some(paths) = &contributions
+            && let Some(keys) = &paths.annotations
+        {
+            let namespace = format!("{}.", raw.package.id);
+            for key in keys {
+                if !key.starts_with(&namespace) {
+                    return Err(invalid(format!(
+                        "the annotation key `{key}` is outside `{}`; a package annotates records \
+                         only inside its own namespace (spec §31.5, §31.23)",
+                        raw.package.id
+                    )));
+                }
+            }
+        }
+
         Ok(Self {
             package: PackageInfo {
                 id: raw.package.id,
@@ -350,7 +371,7 @@ impl Manifest {
             runtime_requested_capabilities: runtime_requested,
             state,
             network,
-            contributions: raw.contributions.map(|raw| ContributionPaths {
+            contributions: contributions.map(|raw| ContributionPaths {
                 commands: raw.commands,
                 schemas: raw.schemas,
                 targets: raw.targets,
@@ -405,6 +426,31 @@ impl Manifest {
                 format!("the package does not support platform `{platform}`"),
             )
             .with_metadata("dimension", Json::String("platforms".into())));
+        }
+        // §31.27's views need `views.open`, `views.submit` and `views.close`, and this host
+        // implements no view protocol at all. Accepting the declaration, listing it in
+        // `inspect plugin` and registering nothing would tell an operator a lens exists where
+        // none does; §31.62 makes the view protocol its own version dimension, and a host that
+        // does not provide it says so (spec §31.7).
+        if let Some(views) = self
+            .contributions
+            .as_ref()
+            .and_then(|paths| paths.views.as_ref())
+            .filter(|views| !views.is_empty())
+        {
+            return Err(KuangError::new(
+                KuangErrorCode::PackageIncompatible,
+                format!(
+                    "the package contributes the view `{}` and this host implements no view \
+                     protocol to register it in",
+                    views.join("`, `")
+                ),
+            )
+            .with_metadata("dimension", Json::String("view_protocol".into()))
+            .with_help(
+                "spec §31.27: a contributed view needs `views.open`/`views.submit`/`views.close`, \
+                 which this build does not serve",
+            ));
         }
         Ok(())
     }
