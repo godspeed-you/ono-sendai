@@ -36,6 +36,25 @@ fn severity_rank(severity: &str) -> Option<usize> {
 /// The provider's stable id, as it appears in every record's provenance.
 pub const PROVIDER_ID: &str = "ono.shell";
 
+/// Everything `ono.shell` answers for on the machine it runs on.
+const ALL_TARGETS: &[&str] = &[
+    "job",
+    "link",
+    "host",
+    "plugin",
+    "capability",
+    "audit",
+    "assistant",
+    "model",
+    "finding",
+];
+
+/// The subset that describes the session rather than the machine (spec §14.4, ADR-0269).
+///
+/// A package loaded on the far side is a fact about the far side and stays remote; the links
+/// this session holds, the jobs it started and the hosts it knows are not.
+const SESSION_TARGETS: &[&str] = &["job", "link", "host"];
+
 /// One job as the session publishes it — the fields of `ono.job/1`, before they are a record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JobRow {
@@ -104,6 +123,8 @@ impl SessionTables {
 pub struct SessionProvider {
     tables: Arc<Mutex<SessionTables>>,
     sources: HostSources,
+    /// Which of `ono.shell`'s targets this instance answers for (spec §14.4, ADR-0269).
+    targets: &'static [&'static str],
 }
 
 impl SessionProvider {
@@ -111,7 +132,26 @@ impl SessionProvider {
     /// sources of `sources`, read when asked.
     #[must_use]
     pub fn new(tables: Arc<Mutex<SessionTables>>, sources: HostSources) -> Self {
-        Self { tables, sources }
+        Self {
+            tables,
+            sources,
+            targets: ALL_TARGETS,
+        }
+    }
+
+    /// The same provider, narrowed to the targets that describe *this session* rather than a
+    /// machine (spec §14.4, ADR-0269).
+    ///
+    /// A link, a job and the context stack are facts about the shell that is running, not
+    /// observations of a host, so they answer here even when a link frame has swapped every
+    /// other provider for the far side's.
+    #[must_use]
+    pub fn session_facts(tables: Arc<Mutex<SessionTables>>, sources: HostSources) -> Self {
+        Self {
+            tables,
+            sources,
+            targets: SESSION_TARGETS,
+        }
     }
 
     fn schema(name: &str) -> Result<Arc<Schema>, ErrorValue> {
@@ -683,17 +723,7 @@ impl Provider for SessionProvider {
     }
 
     fn targets(&self) -> &[&str] {
-        &[
-            "job",
-            "link",
-            "host",
-            "plugin",
-            "capability",
-            "audit",
-            "assistant",
-            "model",
-            "finding",
-        ]
+        self.targets
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {

@@ -741,6 +741,16 @@ pub fn establish(
     };
 
     let mut registry = ono_provider_api::ProviderRegistry::new();
+    // §14.4 hands provider calls to the link frame, and a link, a job and a host are not
+    // observations of a machine — they are facts about this session, which no frame moves.
+    // Registered first, because the registry answers with the first provider claiming a target
+    // (ADR-0269).
+    registry.register(std::sync::Arc::new(
+        crate::session_provider::SessionProvider::session_facts(
+            std::sync::Arc::clone(session.tables()),
+            session.host_sources(),
+        ),
+    ));
     link.register_into(&mut registry);
     Ok(crate::session::LinkConnection {
         link,
