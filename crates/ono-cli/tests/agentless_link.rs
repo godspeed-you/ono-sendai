@@ -199,3 +199,34 @@ fn should_say_which_mode_a_link_was_made_in_when_it_is_made() {
         full.stdout()
     );
 }
+
+#[test]
+fn should_say_what_a_reduced_link_can_answer_before_a_command_runs() {
+    // Spec §42.2 makes the execution context part of the plan, and §21.3 makes the reduction
+    // part of what a user must be able to see. `explain` reads the link that was established,
+    // so it names the mode and the targets the reduced set really answers — before a command is
+    // refused rather than after.
+    let run = ono(&format!(
+        "{AGENTLESS}; enter link testbox; explain get process"
+    ));
+    run.assert_success();
+
+    let shown = run.stdout();
+    assert!(
+        shown.contains("mode") && shown.contains("agentless"),
+        "the plan names the mode the link is in, got {shown:?}"
+    );
+    assert!(
+        shown.contains("answers") && shown.contains("process filesystem"),
+        "the plan names what this link can answer, which is the visible half of what it cannot, \
+         got {shown:?}"
+    );
+
+    let full = ono(&format!("{AGENT}; enter link testbox; explain get process"));
+    full.assert_success();
+    assert!(
+        !full.stdout().contains("agentless"),
+        "an agent link's plan says nothing about a fallback it did not take, got {:?}",
+        full.stdout()
+    );
+}

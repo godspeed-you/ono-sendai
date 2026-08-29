@@ -348,3 +348,86 @@ commands:
     phase: H
     examples:
       - trace link prod-db
+
+  # --- the trust store (spec §21.5, §49; ADR-0015 T5/T6, ADR-0353, ADR-0355) -----------------
+  #
+  # A pinned host key is the whole of "explicit host trust": the authenticated transport proves
+  # which key a peer holds, and these four commands are how a person sees, records, replaces and
+  # forgets what this shell will accept. `add` refuses to overwrite a different key and `set` is
+  # the deliberate re-trust, so re-trusting a host can never be something that merely happened.
+
+  - id: ono.host-key.get
+    verb: get
+    target: host-key
+    summary: List the host keys this shell has pinned.
+    stability: experimental
+    argument_mode: words
+    input: "null"
+    output: stream<ono.host-key/1>
+    provider_capability: host.list
+    selectors:
+      - {name: host, type: string, doc: "Show the pin for one host."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - get host-key
+
+  - id: ono.host-key.add
+    verb: add
+    target: host-key
+    summary: Pin a host key, having checked its fingerprint by some other means.
+    stability: experimental
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: host.trust
+    selectors:
+      - {name: host, type: string, doc: "The host the key belongs to."}
+    options:
+      - {name: fingerprint, type: string, doc: "The full `sha256:` fingerprint to pin."}
+      - {name: algorithm, type: string, doc: "How the key is proved; `tls-x509` by default."}
+    privilege: none
+    streaming: false
+    phase: H
+    examples:
+      - add host-key prod-db --fingerprint sha256:1f0c
+
+  - id: ono.host-key.set
+    verb: set
+    target: host-key
+    summary: Replace a pinned host key — the deliberate re-trust after a key really changed.
+    stability: experimental
+    argument_mode: words
+    input: "null | stream<ono.host-key/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: host.trust
+    selectors:
+      - {name: host, type: string, doc: "The host to re-trust."}
+    options:
+      - {name: fingerprint, type: string, doc: "The new full `sha256:` fingerprint."}
+      - {name: algorithm, type: string, doc: "How the key is proved; `tls-x509` by default."}
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - set host-key prod-db --fingerprint sha256:9ab4
+
+  - id: ono.host-key.remove
+    verb: remove
+    target: host-key
+    summary: Forget a pinned host key, so the host must be trusted again deliberately.
+    stability: experimental
+    argument_mode: words
+    input: "null | stream<ono.host-key/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: host.trust
+    selectors:
+      - {name: host, type: string, doc: "The host to forget."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - remove host-key prod-db

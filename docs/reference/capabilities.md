@@ -67,6 +67,7 @@ Two vocabularies that are not the same thing. A **provider capability** is what 
 | `image.list` | read | conditional | Enumerate container or machine images. |
 | `host.list` | read | none | Enumerate known hosts from configured sources. |
 | `host.probe` | observe | none | Check a host's reachability and advertised capabilities. |
+| `host.trust` | mutate | none | Record, replace or forget a pinned host key (spec §21.5, ADR-0015 T5/T6). |
 | `link.create` | mutate | none | Establish a remote Ono link, performing the handshake of spec §21.2. |
 | `link.list` | read | none | Enumerate active links. |
 | `link.watch` | observe | none | Subscribe to link state and health changes. |

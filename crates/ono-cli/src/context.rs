@@ -706,6 +706,20 @@ fn connect_agentless(
             std::sync::Arc::new(ono_remote::SshFarSide::new(target))
         }
         "local" => std::sync::Arc::new(ono_remote::LocalFarSide),
+        // Spec §21.3's fallback is "SSH and a limited provider set implemented through standard
+        // commands". Ono's own transport carries the agent protocol and nothing else: there is
+        // no command to run over it without an agent, so there is no reduced set to fall back to.
+        "tcp" => {
+            return Err(Flow::Failed(
+                ErrorValue::new(
+                    ErrorCode::ProviderUnavailable,
+                    "the `tcp` transport carries the Ono agent protocol; there is no agentless                      mode over it",
+                )
+                .with_help(
+                    "agentless mode runs standard commands over `ssh` (spec §21.3); install the                      agent on the far side, or link over `ssh`",
+                ),
+            ));
+        }
         other => return Err(Flow::Failed(unknown_transport(other))),
     };
 
@@ -755,7 +769,72 @@ fn unknown_transport(other: &str) -> ErrorValue {
         ErrorCode::ResolveTargetNotFound,
         format!("no transport answers to `{other}`"),
     )
-    .with_help("the transports are `ssh` and `local` (ono.link/1)")
+    .with_help("the transports are `ssh`, `local` and `tcp` (ono.link/1)")
+}
+
+/// Connects to the Ono agent over Ono's own authenticated transport (spec §21.5, ADR-0353).
+///
+/// This is the one path where the trust store of ADR-0015 T5/T6 decides anything: the transport
+/// reports the key the peer proved it holds, and `TrustPolicy::Pinned` — named here, never a
+/// silent default — means an unknown key is refused rather than recorded (ADR-0354). The pin is
+/// kept under the host, not under `host:port`: a port is where a host answers, not who it is.
+fn connect_over_tcp(
+    session: &mut Session,
+    address: &str,
+    timeout: Option<std::time::Duration>,
+) -> Result<crate::session::LinkConnection, AgentFailure> {
+    let failed = |error: ErrorValue| AgentFailure { error, exit: None };
+    let store = crate::trust::open(&session.host_sources()).map_err(failed)?;
+    let (name, _) = ono_remote::split_address(address);
+    let schemas = std::sync::Arc::new(ono_value::builtin_schemas().clone());
+    let config = ono_protocol::ClientConfig::new(&name)
+        .with_schemas(schemas)
+        .with_trust_store(store)
+        .with_trust_policy(ono_protocol::TrustPolicy::Pinned)
+        .with_identity(ono_protocol::Identity::new(whoami()));
+
+    let runtime = session.runtime().ok_or_else(|| AgentFailure {
+        error: ErrorValue::new(
+            ErrorCode::IoPermissionDenied,
+            "the operating system refused to start the runtime",
+        ),
+        exit: None,
+    })?;
+    let address = address.to_owned();
+    let connected = runtime.block_on(async {
+        let connect = async {
+            let transport = ono_remote::tls_connect(&address).await?;
+            ono_remote::RemoteLink::connect(transport, config).await
+        };
+        match timeout {
+            Some(bound) => match tokio::time::timeout(bound, connect).await {
+                Ok(outcome) => outcome,
+                Err(_) => Err(ErrorValue::new(
+                    ErrorCode::RemoteUnreachable,
+                    format!("{address} did not answer the handshake within {bound:?}"),
+                )
+                .with_help("`--timeout` bounds how long a probe waits (spec §21.2)")),
+            },
+            None => connect.await,
+        }
+    });
+    let link = connected.map_err(failed)?;
+
+    let mut registry = ono_provider_api::ProviderRegistry::new();
+    registry.register(std::sync::Arc::new(
+        crate::session_provider::SessionProvider::session_facts(
+            std::sync::Arc::clone(session.tables()),
+            session.host_sources(),
+        ),
+    ));
+    link.register_into(&mut registry);
+    Ok(crate::session::LinkConnection {
+        far_end: crate::session::FarEnd::Agent(link),
+        registry: std::sync::Arc::new(registry),
+        // Nothing was started to serve this link: the agent over there is a process somebody
+        // else runs, and a shell must never end a process it did not start (spec §18.1).
+        agent: None,
+    })
 }
 
 /// Connects to the Ono agent of spec §21.4 over `transport`.
@@ -765,6 +844,9 @@ fn connect_agent(
     transport: &str,
     timeout: Option<std::time::Duration>,
 ) -> Result<crate::session::LinkConnection, AgentFailure> {
+    if transport == "tcp" {
+        return connect_over_tcp(session, host, timeout);
+    }
     let command = match transport {
         // The agent over OpenSSH, which also did the authenticating (ADR-0037).
         "ssh" => {

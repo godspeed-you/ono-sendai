@@ -22,6 +22,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `neighbor` | system | `ono.neighbor/1` | C | An ARP or NDP neighbour entry. |
 | `dns` | system | `—` | C | The name-resolution service, queried explicitly rather than implicitly. |
 | `host` | system | `—` | H | A known host from a configured source, reachable or not. |
+| `host-key` | system | `ono.host-key/1` | H | A host key this shell has pinned, and the fingerprint it was pinned by. |
 | `user` | system | `ono.user/1` | C | A user account, identified by uid, with the numeric identity kept when NSS cannot resolve it. |
 | `group` | system | `ono.group/1` | C | A group account, identified by gid. |
 | `session` | system | `—` | C | A login or seat session. |

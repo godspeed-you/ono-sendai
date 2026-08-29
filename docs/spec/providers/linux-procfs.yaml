@@ -90,12 +90,14 @@ providers:
       The shell's own tables, published by the session before each pipeline runs: the job table
       of spec §18.4, the links of spec §21 with the hosts they reach and the hosts the
       configured sources list (ADR-0090, ADR-0103), and the KUANG/11 packages of spec §31.8 —
-      the plugin home overlaid with the runtime instances this session started (ADR-0107).
-    targets: [job, link, host, plugin, capability, audit, assistant, model, finding]
-    capabilities: [job.list, link.list, host.list, plugin.list, plugin.search, plugin.inspect,
-                   plugin.remove, plugin.unload, plugin.set, capability.list, capability.revoke,
-                   audit.list, assistant.list, model.list, finding.list]
-    schemas: [ono.job/1, ono.link/1, ono.host/1, ono.plugin/1, ono.plugin-package/1,
+      the plugin home overlaid with the runtime instances this session started (ADR-0107) —
+      and the pinned host keys of spec §21.5, which are a decision this shell recorded rather
+      than something a provider found on a machine (ADR-0355).
+    targets: [job, link, host, host-key, plugin, capability, audit, assistant, model, finding]
+    capabilities: [job.list, link.list, host.list, host.trust, plugin.list, plugin.search,
+                   plugin.inspect, plugin.remove, plugin.unload, plugin.set, capability.list,
+                   capability.revoke, audit.list, assistant.list, model.list, finding.list]
+    schemas: [ono.job/1, ono.link/1, ono.host/1, ono.host-key/1, ono.plugin/1, ono.plugin-package/1,
               ono.plugin-inspection/1, ono.capability-grant/1, ono.plugin-audit-event/1,
               ono.assistant/1, ono.model-provider/1, ono.finding/1]
     spatial:

@@ -109,8 +109,12 @@ Each phase's success criterion from spec section 37, each proven by a named acce
       the prompt naming the host, answering with remote provenance, refused when never made) and
       offline by `ono-remote/tests/{agent,provider,trust,subprocess}.rs` — negotiation, mounted
       providers, interleaved cancellable streams, E0603/E0702 refusals, the exact ssh argv
-      (ADR-0036, ADR-0037). Deferred: agentless mode, trust-store UX for a future authenticated
-      transport (the board carries both).
+      (ADR-0036, ADR-0037). The two gaps this box used to defer are closed:
+      `170-agentless-link-is-visibly-reduced` proves §21.3's fallback — a reduced set really
+      reading a far side with standard commands, and refusing by name what it cannot answer
+      (ADR-0351, ADR-0352) — and `171-authenticated-link-refuses-a-changed-key` proves §21.5 on a
+      transport that certifies its peer: an unpinned host refused, a pinned host linked, a changed
+      key refused with `Ono-Sendai-E0603` (ADR-0353, ADR-0354, ADR-0355).
 - [x] **I — KUANG/11 extension runtime.** The production path of spec section 31: manifests,
       capability model, isolation, host API, contribution model, audit trail, SDK, test host and
       conformance suite.

@@ -1,0 +1,59 @@
+# Spec §21.5: "Remote agent mode MUST use authenticated encryption, explicit host trust and least
+# privilege", and §49 lists remote agent impersonation and host key changes among the threats a
+# shell must answer for. ADR-0015 rows T5 and T6 are the mitigations; until ADR-0353 they were
+# proved only at unit level, because both production transports ran behind ssh and could not
+# report a peer key (ADR-0274).
+#
+# This is that proof at the product: a second `ono` really listening on the loopback interface
+# with a key it generated, an unknown host refused, a pinned host linked, and a *different*
+# machine answering for the same host refused with `Ono-Sendai-E0603`. No network is needed — the
+# container runs with networking disabled and this is loopback (ADR-0354, ADR-0355).
+case: a link refuses a host it has not pinned, and a host whose key changed
+timeout: 180
+env: NO_COLOR=1
+run: |
+  export HOME=$(mktemp -d) XDG_CONFIG_HOME=$HOME
+
+  echo "== a host prints the fingerprint a person pins it by =="
+  ono --agent --host-key "$HOME/first.pem" --print-host-key
+  FIRST=$(ono --agent --host-key "$HOME/first.pem" --print-host-key)
+  SECOND=$(ono --agent --host-key "$HOME/second.pem" --print-host-key)
+
+  ono --agent --listen 127.0.0.1:7734 --host-key "$HOME/first.pem" 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/agent.log" && break; sleep 0.2; done
+
+  echo "== nothing is pinned, so the link is refused and nothing is recorded =="
+  ono -c 'try { link host 127.0.0.1:7734 --transport tcp } catch e { $e | select code name | to json }'
+  ono -c 'get host-key | to json'
+
+  echo "== pinned deliberately, the link is made over the authenticated transport =="
+  ono -c "add host-key 127.0.0.1 --fingerprint $FIRST | select status changed | to json"
+  ono -c 'link host 127.0.0.1:7734 --transport tcp; get link | select transport mode state | to json' | tail -1
+
+  echo "== a different machine answering for the same host is refused =="
+  kill "$AGENT" 2>/dev/null || true
+  wait "$AGENT" 2>/dev/null || true
+  ono --agent --listen 127.0.0.1:7734 --host-key "$HOME/second.pem" 2> "$HOME/impostor.log" &
+  IMPOSTOR=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/impostor.log" && break; sleep 0.2; done
+  ono -c 'try { link host 127.0.0.1:7734 --transport tcp } catch e { $e | select code name retryable | to json }'
+
+  echo "== re-trusting is a separate, deliberate act =="
+  ono -c "try { add host-key 127.0.0.1 --fingerprint $SECOND } catch e { \$e | select code | to json }"
+  ono -c "set host-key 127.0.0.1 --fingerprint $SECOND | select changed | to json"
+  ono -c 'link host 127.0.0.1:7734 --transport tcp; get link | select state | to json' | tail -1
+  ono -c 'remove host-key 127.0.0.1 | select status | to json; get host-key | to json'
+  kill "$IMPOSTOR" 2>/dev/null || true
+exit: 0
+stdout-contains: sha256:
+stdout-contains: "code":"Ono-Sendai-E0702"
+stdout-contains: "name":"safety.policy_denied"
+stdout-contains: [{"status":"success","changed":true}]
+stdout-contains: [{"transport":"tcp","mode":"agent","state":"connected"}]
+stdout-contains: "code":"Ono-Sendai-E0603"
+stdout-contains: "name":"remote.host_key_changed"
+stdout-contains: [{"changed":true}]
+stdout-contains: [{"state":"connected"}]
+stdout-not-contains: "retryable":true
+stdout-not-contains: panicked

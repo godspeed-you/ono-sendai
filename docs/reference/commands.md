@@ -4542,6 +4542,128 @@ Show a link's transport, agent, negotiated providers and multiplexed streams.
 trace link prod-db
 ```
 
+### `get host-key`
+
+List the host keys this shell has pinned.
+
+| | |
+|---|---|
+| id | `ono.host-key.get` |
+| stability | experimental |
+| phase | H |
+| input | `null` |
+| output | `stream<ono.host-key/1>` |
+| provider capability | `host.list` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `host` | `string` | Show the pin for one host. |
+
+**Examples**
+
+```text
+get host-key
+```
+
+### `add host-key`
+
+Pin a host key, having checked its fingerprint by some other means.
+
+| | |
+|---|---|
+| id | `ono.host-key.add` |
+| stability | experimental |
+| phase | H |
+| input | `null` |
+| output | `ono.action-result/1` |
+| provider capability | `host.trust` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `host` | `string` | The host the key belongs to. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--fingerprint` | `string` | The full `sha256:` fingerprint to pin. |
+| `--algorithm` | `string` | How the key is proved; `tls-x509` by default. |
+
+**Examples**
+
+```text
+add host-key prod-db --fingerprint sha256:1f0c
+```
+
+### `set host-key`
+
+Replace a pinned host key — the deliberate re-trust after a key really changed.
+
+| | |
+|---|---|
+| id | `ono.host-key.set` |
+| stability | experimental |
+| phase | H |
+| input | `null | stream<ono.host-key/1>` |
+| output | `stream<ono.action-result/1>` |
+| provider capability | `host.trust` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `host` | `string` | The host to re-trust. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--fingerprint` | `string` | The new full `sha256:` fingerprint. |
+| `--algorithm` | `string` | How the key is proved; `tls-x509` by default. |
+
+**Examples**
+
+```text
+set host-key prod-db --fingerprint sha256:9ab4
+```
+
+### `remove host-key`
+
+Forget a pinned host key, so the host must be trusted again deliberately.
+
+| | |
+|---|---|
+| id | `ono.host-key.remove` |
+| stability | experimental |
+| phase | H |
+| input | `null | stream<ono.host-key/1>` |
+| output | `stream<ono.action-result/1>` |
+| provider capability | `host.trust` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `host` | `string` | The host to forget. |
+
+**Examples**
+
+```text
+remove host-key prod-db
+```
+
 ## service
 
 ### `get service`

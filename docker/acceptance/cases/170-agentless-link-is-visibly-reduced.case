@@ -26,6 +26,9 @@ run: |
   ono -c 'link host testbox --transport local; enter link testbox; get env | count | to json' | tail -1
   ono -c 'link host testbox --transport local --agentless; enter link testbox; try { get env } catch e { $e | select name message | to json }' | tail -1
 
+  echo "== and the plan says so before a command runs =="
+  ono -c 'link host testbox --transport local --agentless; enter link testbox; explain get process' | grep -E 'mode|answers'
+
   echo "== test host names the far side for what it is =="
   ono -c 'link host testbox --transport local --agentless; test host testbox | select agent protocol_version providers | to json' | tail -1
 exit: 0
@@ -39,4 +42,5 @@ stdout-contains: "name":"provider.unavailable"
 stdout-contains: needs the Ono agent of spec
 stdout-contains: "protocol_version":null
 stdout-contains: "providers":["remote.agentless"]
+stdout-contains: answers      process filesystem
 stdout-not-contains: panicked
