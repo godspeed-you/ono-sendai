@@ -100,21 +100,30 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-**Four agents are running in parallel worktrees, all branched from `implementation` at
-`b904327`** (2026-08-29). Each holds a class-C tranche and an exclusive file scope; none of their
-results is claimed anywhere on this board, because this board does not know them. When each lands,
-its own commit writes its box back.
+**Three agents are running in parallel worktrees** (2026-08-29). Each holds a tranche and an
+exclusive file scope; none of their results is claimed anywhere on this board, because this board
+does not know them until they report.
 
 | Agent | Worktree | Claim | Box |
 |---|---|---|---|
-| KUANG/11 | `../ono-sendai-wt-k11` | isolation, the wasm tier, the missing host API domains — `crates/ono-kuang-*`, `crates/ono-cli/src/kuang_host.rs` | C-4 (a)(b)(c) |
+| KUANG/11 | `../ono-sendai-wt-k11` | isolation, the wasm tier, the missing host API domains, contributed commands — `crates/ono-kuang-*`, `crates/ono-cli/src/kuang_host.rs` | C-4, B-kuang-3 |
 | security | `../ono-sendai-wt-sec` | the §35.6 fuzz targets and package signature verification — `fuzz/`, `crates/ono-kuang-protocol`, `crates/ono-cli/src/kuang_host.rs` | C-2, C-5 |
-| conformance + presentation | the main tree, `../ono-sendai` | the generated provider conformance suite, the §34 pathological fixtures, the §44 theme system — `xtask/src/`, `crates/ono-render`, `docker/acceptance/` | C-1, C-7 |
-| remote | `../ono-sendai-wt-remote` | agentless mode and an authenticated transport — `crates/ono-remote`, `crates/ono-protocol`, `crates/ono-cli/src/context.rs` | C-3, and what B-remote-2 is blocked on |
+| remote | `../ono-sendai-wt-remote` | agentless mode and an authenticated transport — `crates/ono-remote`, `crates/ono-protocol`, `crates/ono-cli/src/context.rs` | C-3, B-remote-2 |
 
-**`STATE-recon` (2026-08-29) held this file only**, to reconcile it with `b904327`; it wrote no
-code, no ADR and no acceptance case, and its claim is released. The next task for anyone not
-listed above is **C-6**, the one class-C tranche nobody is on, or any of the five class-B lines.
+**Paused, worktree and branch kept, resume where they stopped:**
+
+- `close-honesty` in `../ono-sendai-wt-state` — making three release-checklist claims checkable
+  instead of judged (§4.4's provider justification, and the three boxes that rest on reading a
+  document); ADR-0401 is written. Paused for machine load, not blocked.
+- `close-last` in `../ono-sendai-wt-last` at `37ce5c3` — **B-data-9 is delivered** (below); **C-6
+  is designed, not written**. Its design is the resume point and is recorded under C-6.
+
+**Why two are paused:** six agents compiled and tested at once on eight cores, load average 49 and
+no idle CPU. Under that load the testkit's 20 s timeout fires on healthy code, so agents start
+chasing phantom failures — which costs more load. The four that kept running were capped at
+`-j 2` / `--test-threads=2`, told to pass `--all-features` on *every* cargo command (a bare
+`cargo test` between two gate runs changes the feature set and rebuilds the workspace twice), and
+told never to delete `target/` or the incremental caches to save disk.
 
 ## Session records (2026-08-27 … 2026-08-29)
 
@@ -1499,16 +1508,21 @@ Four of the seven have an agent working them right now (see *In progress*). Thei
 describe the tree at `b904327` — **not** what those agents have reached, which this board does not
 know and must not claim.
 
-- [ ] **C-1 — the generated provider conformance suite (spec §35.3, phase C9).** What exists is a
-  *drift* check, not a generated suite: `ono-cli/tests/providers.rs` reads
-  `docs/spec/providers/*.yaml` at runtime and diffs the declarations against the built registry
-  (`should_advertise_exactly_what_the_declarations_promise`), and each provider crate hand-writes
-  its schema conformance (`ono-provider-linux/tests/schemas.rs`). Still true at `b904327`: the
-  workspace has no `build.rs`, and `xtask/src/` is `bindings.rs contracts.rs lib.rs main.rs
-  narrative.rs reference.rs scan.rs` — the only generator is `reference.rs`, which emits
-  `docs/reference/` Markdown. **Scale:** one new `xtask` generator plus a generated test crate,
-  6 provider YAML files, ~3 increments. The false claim in `docs/ACCEPTANCE.md` that went with it
-  is gone (B-harn-4, ADR-0248): §4.1 D and §4.7.4 now describe the drift check they really have.
+- [x] **C-1 — the generated provider conformance suite (spec §35.3, phase C9)** — done
+  2026-08-29, `33b6e10` + `a595c4f` + `81edc7c`, ADR-0331 (supersedes ADR-0248's decision *not* to
+  build the generator; its "a box claiming a generation must name a generated path" rule stays and
+  now accepts this output). `cargo xtask conformance` generates
+  `crates/ono-cli/tests/provider_conformance.rs` from `docs/spec/providers/*.yaml`,
+  `schemas/*.v1.yaml`, `capabilities.yaml` and `commands/*.yaml`; `spec-check` regenerates and
+  fails on drift. **87 generated tests over 18 provider entries, 30 schemas and 35 targets**,
+  where 4 providers and 2 schemas were covered before. The assertions live beside the generated
+  file in `tests/conformance_harness/mod.rs` — a 1600-line generated file with assertions inside
+  is a file nobody reads. Generation **refuses rather than emitting a hole**: an unexercised
+  target, an unknown exercise word, or a capability reaching neither a snapshot nor a command each
+  stop it. The declarations gained a `conformance:` block, because how a bare snapshot behaves is
+  not derivable from anything else. `docs/ACCEPTANCE.md` §4.1 C and D say "generated from" again,
+  and it is true now. Four contract violations found by the new suite and fixed in `81edc7c`.
+
 - [ ] **C-2 — the §35.6 fuzz targets.** There is still no `fuzz/` directory and no `cargo-fuzz` /
   `libfuzzer` reference in any manifest. Seeded property and robustness suites stand in and are
   what `docs/ACCEPTANCE.md` §4.4 ticks: `ono-parser/tests/robustness.rs`,
@@ -1552,29 +1566,59 @@ know and must not claim.
   parsing, no trust root; the workspace has no crypto dependency beyond `sha2` for the content
   digest. **Scale:** a signature format decision (ADR), a verifier, a trust root,
   `ono-kuang-protocol` + `ono-cli`, ~3 increments.
-- [ ] **C-6 — `ono-model-broker` (spec §31.12, phase I11).** The crate does not exist — `crates/`
-  holds thirty crates and none of them is it. The complete set of references is `manifest.rs`'s
-  `model_broker: Option<String>` (parsed, stored, read by nothing), `Capability::ModelInfer`
-  (declared, checked by nothing, because there is no `models.list`/`models.infer` host call), and
-  ADR-0005 §Phase I planning it. The user-visible surface is honest and empty:
-  `plugins_missing.rs::should_report_no_model_providers_when_none_is_configured` and case `045`'s
-  `Ono-Sendai-E0102` for `ask assistant nobody`. **Scale:** a new crate, the two host calls, the
-  operator-approval path and the "no LLM in a privileged path" guard, ~4 increments — and an ADR
-  first, because §31.12 leaves the approval UX open. **No agent is on this one.**
-- [ ] **C-7 — the §34 pathological fixtures, and the theme system of §44.** Two smaller tranches
-  kept together because each is one fixture away from done. **§34:** every budget is measured and
-  none is violated (`060-performance-budgets.case`, `100-spatial-performance-budgets.case`), but
-  `060` measures the container's ordinary live system; of the five pathological environments spec
-  §34 names, only "tens of thousands of paths" and "200 extra processes" exist, in case `100`.
-  Absent: tens of thousands of *processes*, slow NSS, high-latency links, huge stdout, unbounded
-  streams under a budget. **§44:** the 24 semantic tokens exist with their spec names and are
-  fully tested (`ono-render/tests/presentation.rs`, nine tests incl.
-  `should_name_every_token_as_the_specification_spells_it_when_rendered` and
-  `should_distinguish_danger_from_success_by_more_than_colour_alone`), but **no theme is
-  loadable**: at `b904327` no source file mentions `themes/`, no `docs/spec/*.yaml` declares a
-  `theme` key, every call site constructs `Theme::default()`, there is no reader for
-  `~/.config/ono/themes/*.toml`, no `set theme`, and no second theme. `Token::from_name`'s doc
-  comment documents a consumer that does not exist. **Scale:** ~2 increments each.
+- [ ] **C-6 — `ono-model-broker` (spec §31.12, phase I11).** The crate does not exist. **Designed
+  2026-08-29 by `close-last`; no file written.** The design is the resume point:
+  - **Surface today stays honest.** `session_provider.rs:178` answers `assistant | model | finding`
+    with an empty list; the operator writes the config, and no file means `[]`.
+  - **The contracts are already complete and normative**, which is most of the design:
+    `docs/spec/schemas/model-provider.v1.yaml`, `docs/spec/kuang/assistants.v1.yaml`
+    (`model_broker_protocol: ono-model/1` — *named* and undefined, so defining it is the tranche's),
+    `capabilities.v1.yaml`'s `model.infer` with scope keys `providers` (broker-enforced) and
+    `data_class` (explicitly **advisory** — must be labelled as such everywhere), and `K11601`
+    `model.provider_unavailable` / `K11602` `model.policy_denied` in both error registries.
+  - **Approval composes, no second vocabulary** (this is the ADR §31.12 asks for first): operator
+    approval for inference **is** a `model.infer` grant with `--scope providers=…` and
+    `--duration`, exactly as ADR-0264–0268 built it. §31.82's privacy plan is a *disclosure* shown
+    before the first remote inference, not a second prompt — separating "who approved" (the grant)
+    from "what leaves" (the plan) is what keeps one vocabulary.
+  - **Transport:** a `command` transport only — the operator configures an executable speaking
+    `ono-model/1`, one JSON document in, one out (structured, never scraped, the discipline of the
+    adapters and the remote agent). No HTTP client, so nothing untested ships. A `kind: remote`
+    provider is a local bridge process; `kind` declares *where* inference happens, which is what
+    the data policy hangs on.
+  - **The structural guard for "no LLM in a privileged path":** `ono-model-broker` takes an
+    already-decided `Grant` as a parameter, has no function returning a grant or a decision, and
+    does not depend on the policy crate — so no model output can sit between a check and the
+    operation it guards. Provable by the fixture `assistants.v1.yaml` itself names: an answer whose
+    text demands an escalation changes no grant and is audited.
+  - **Shape, 3 increments:** (1) contracts + crate + `get model` reading a real catalogue at
+    `<config>/kuang/models.yaml`, sibling of ADR-0265's `policy.yaml`; (2) `models.list` /
+    `models.infer` in `ono-kuang-protocol::method` and `supervisor::dispatch_host_call`, gated
+    through the existing `broker_check`, with `kuang-example-plugin` gaining the calls as it
+    already has `read-file` for `filesystem.read`; (3) privacy plan, prompt-injection fixture,
+    acceptance case 190.
+  - Resume in `../ono-sendai-wt-last` on `close-last` at `37ce5c3`; ADRs 0377–0400 and cases 190+
+    are free.
+
+- [x] **C-7 — the §34 pathological fixtures, and the theme system of §44** — done 2026-08-29.
+  **Themes** (`1c4866b`, ADR-0332): `theme.name` joins the ADR-0094 catalogue; resolution is
+  built-in → `/etc/ono/themes/<name>.toml` → `<config dir>/themes/<name>.toml`; two themes ship
+  (`ono`, `neon`); a theme file is TOML (`extends` + `[tokens]`) and is refused rather than
+  half-applied on any unknown token, key or value. The session owns the theme and the sinks,
+  reporter, REPL, live view and job output take it from there — which is what gives the setting an
+  effect. §44's closing rule is mechanical in three parts: a theme is consulted only where there
+  is colour, so every theme prints identical bytes under `NO_COLOR`, a pipe or a dumb terminal;
+  markers carry no control character and at most 4 chars; `ui.danger`/`ui.warning`/`ui.success`
+  keep distinct markers. 19 tests, acceptance case `150`.
+  **§34's environments** (`f349971`, `43f35e8`, ADR-0333): `docker/acceptance/fixtures/perf/` and
+  cases `151`–`154` — 10 000 forked processes; 5 000 listening unix sockets; 50 000 entries in one
+  directory plus 200 levels plus 100 000 files over 1 000 directories; a tool on `PATH` that never
+  answers, 100 MB of stdout, and `watch process`. Each measures §34's own figures, prints them
+  pass or fail, reports the size it actually reached, and **fails if the environment is not
+  pathological**. Two deviations under a `Spec deviation` heading: slow NSS and high-latency links
+  are one environment (the container runs `--network=none`, and never-answering is stricter than
+  slow); sockets reach thousands, not tens of thousands.
+
 
 ---
 
@@ -1585,15 +1629,59 @@ thirty-seven are under *Done, reconciled*.
 
 #### Data and pipeline
 
-- [ ] **B-data-9 — an unbounded external producer never reaches a native stage.** The old entry's
-  own reproduction cannot be run: `from text` does not exist (`ono -c 'seq 3 | from text'` answers
-  `Ono-Sendai-E0201 type.mismatch \`from\` has no \`text\`` — "`from` knows json, yaml, csv"), so
-  the 7.1 s it measured was the walk plus a refusal. The defect is real and sharper than it read:
-  **`ono -c 'yes | take 1'` never returns** (killed at 8 s, 7 s of it system time), because
-  ADR-0028 buffers the whole byte carry across a native/external join before the native stage
-  starts. A bounded producer is fine and a *native* head is fine —
-  `ono -c 'find /usr -type f | take 1'` answers in 0.2 s, but that is `ono.file.find`, not
-  findutils. Exit test: `yes | take 1` answers one value and ends the producer.
+- [x] **B-data-9 — bytes that cannot become objects are refused before the program runs** — done
+  2026-08-29, `37ce5c3` on `close-last`, ADR-0376. It was a defect, and ADR-0028's reasoning held
+  only in part. Three symptoms, one cause: `ls /etc | count` answered **`1`** (wrong, and
+  plausible-looking), `seq 3 | take 1` answered one `VALUE` holding the whole listing as bytes,
+  and `yes | take 1` never returned. The byte carry was wrapped into a single `Value::Bytes` and
+  handed to stages declared over `stream<any>`, which counted the one value they were given; the
+  hang is the same bug seen through an endless producer, because the wrap needs EOF.
+  **Kept (ADR-0028 point 2):** the carry is one *document*, and there is no honest way to cut
+  arbitrary bytes into values — newline-cutting is the implicit text parsing §50 forbids, and
+  read-buffer-cutting makes a value whose content depends on scheduling. So `yes | from json`
+  still runs to EOF, correctly, for the reason `jq` does. Streaming it would have returned a
+  64 KiB slab of `y\n` and called it a stream.
+  **Corrected:** ADR-0028 point 1's own rule ("the transform binds anyway and reports the type
+  error when it runs") — the binding happened, the type error never did. The contract question is
+  now asked at plan time: a consumer declared over objects, fed by an invocation no adapter
+  decodes, is refused with `Ono-Sendai-E0911` **before the program is spawned**, so `yes` is never
+  started and there is nothing to end. Tests in `crates/ono-cli/tests/native.rs`, incl. the exit
+  test `should_answer_at_once_when_an_endless_program_feeds_a_stage_defined_over_objects` with a
+  10 s liveness bound, and `should_still_carry_a_whole_document_across_the_boundary_into_a_parser`
+  holding the buffering decision. **Not yet run in the container** — case `084-adapters-remote`
+  is the one case of the affected shape and its `grep -c 'Ono-Sendai-E0'` still matches, but that
+  is reasoning, not a passing case.
+
+#### Found by the class-C tranches (2026-08-29), each its own increment
+
+- [ ] **A failed `enter` costs about 12 s of CPU, against a 50 ms budget.**
+  `ono -c 'enter no-such-place-anywhere'` takes 17.7 s wall on a quiet machine and 23.8 s at load
+  26 — so it crosses the testkit's 20 s timeout under any load, which is why
+  `spatial_contracts_missing.rs` shows 2–3 timeouts in a loaded gate run and is 27/27 green when
+  run alone. §34 budgets a failed navigation at 50 ms. This is a §34 finding, not a flaky test:
+  find what a miss walks that a hit does not. Exit test: the refusal inside its budget, measured
+  in the container.
+- [ ] **`ono.socket/1` identifies a socket by `inode` alone, and `TIME_WAIT` has none.**
+  3 of 16 connections in a live snapshot carried a wholly-null identity. The user-visible
+  consequence was found and its symptom fixed (`8db67f2`: `trace` now roots at the first record it
+  can relate to, instead of refusing the whole answer with `Ono-Sendai-E0201 this record declares
+  no identity`; it fails at HEAD too, verified by `git stash`, and the fix carries a test that
+  leaves a `TIME_WAIT` connection behind on purpose). What remains is the identity itself: a
+  fallback to `(protocol, local, remote)` — a schema-identity change with its own increment.
+- [ ] **`ono.filesystem/1` identifies by `(uuid, source)`, and two `source: none` pseudo
+  filesystems share one identity.** Needs a device-number field the schema does not have.
+- [ ] **No renderer emits the theme markers.** ADR-0332 requires every theme to carry distinct
+  markers for `ui.danger`/`ui.warning`/`ui.success`, but tables and the error renderer print plain
+  text where colour is off, so the guarantee is enforced on the theme and unused by the output.
+  A rendering change with its own snapshot consequences.
+- [ ] **§34's numbers are unmeasured.** Cases `151`–`154` (and `060`, `100` beside them for
+  comparison) were built but never measured, because the machine ran at load 27–49 throughout and
+  a budget measured under that load is worthless. Needs one quiet container run.
+- [ ] **Five acceptance cases have never run in the container**: `150`–`154`. Case `150`'s script
+  was executed end-to-end outside the container against every assertion, and every command in
+  `151`–`154` plus both Perl fixtures was validated at small size — which is how a `use strict`
+  error that made `many-sockets.pl` open nothing, and an off-by-one `tail -3` in case `150`, were
+  found and fixed (`43f35e8`). They still need the real run.
 
 #### Providers, remote and KUANG/11
 
