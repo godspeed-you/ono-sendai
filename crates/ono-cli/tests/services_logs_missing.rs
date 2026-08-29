@@ -62,6 +62,21 @@ fn string_field<'a>(row: &'a serde_yaml_ng::Value, field: &str) -> &'a str {
         .unwrap_or_else(|| panic!("field `{field}` must be a string in {row:?}"))
 }
 
+/// An RFC 3339 timestamp field, in a form two of them can be ordered by.
+///
+/// Comparing the rendered text is not the same comparison: the journal trims trailing zeros
+/// from the fraction, so `…12.2754Z` and `…12.275498Z` are one microsecond apart and order the
+/// other way round as strings. Everything up to the fraction is fixed-width and orders
+/// correctly as text; the fraction is padded to nanoseconds so that it does too.
+fn instant(row: &serde_yaml_ng::Value, field: &str) -> (String, String) {
+    let text = string_field(row, field).trim_end_matches('Z').to_owned();
+    let (whole, fraction) = match text.split_once('.') {
+        Some((whole, fraction)) => (whole.to_owned(), fraction.to_owned()),
+        None => (text, String::new()),
+    };
+    (whole, format!("{fraction:0<9}"))
+}
+
 fn int_field(row: &serde_yaml_ng::Value, field: &str) -> i64 {
     row.get(field)
         .and_then(serde_yaml_ng::Value::as_i64)
@@ -277,7 +292,7 @@ fn should_emit_existing_records_in_order_before_following_when_lines_is_given() 
         run.stdout()
     );
     assert!(
-        string_field(&rows[0], "timestamp") <= string_field(&rows[1], "timestamp"),
+        instant(&rows[0], "timestamp") <= instant(&rows[1], "timestamp"),
         "the journal is append-ordered: the first emitted record is not newer than the second, \
          got {:?}",
         run.stdout()
