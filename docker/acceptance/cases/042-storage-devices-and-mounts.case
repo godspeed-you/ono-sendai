@@ -21,7 +21,20 @@ run: |
   echo "== umount2(2) on / unprivileged, and on a directory that is no mount point =="
   ono -c 'unmount filesystem / | select operation status error | to json'; echo "unmount-exit-$?"
   ono -c 'unmount filesystem /tmp/mnt-case | select operation status error | to json'
-  ono -c 'get mount / | unmount filesystem | select target | to json'
+  # One label rule (ADR-0224): the same mount renders the same target however it was named. The
+  # label is the mount's source device, which differs from host to host, so the case compares the
+  # two spellings instead of pinning the device.
+  piped=$(ono -c 'get mount / | unmount filesystem | select target | to text --field target')
+  named=$(ono -c 'unmount filesystem / | select target | to text --field target')
+  case "$piped" in
+    "ono.mount/1[/]"*) echo "piped-target-identity=ok" ;;
+    *) echo "piped-target-identity=BAD:$piped" ;;
+  esac
+  if [ "$piped" = "$named" ]; then
+    echo "one-label-rule=ok"
+  else
+    echo "one-label-rule=BAD:$piped|$named"
+  fi
 
   echo "== remount, persistent definitions, mount units =="
   ono -c 'set mount / --read-only | select operation status error | to json'
@@ -40,7 +53,8 @@ stdout-contains: mount-exit-1
 stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0302",.*"operation":"ono\.filesystem\.unmount","status":"failed"\}\]$
 stdout-contains: unmount-exit-1
 stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0301",.*"operation":"ono\.filesystem\.unmount","status":"failed"\}\]$
-stdout-contains: [{"target":"ono.mount/1[/]"}]
+stdout-contains: piped-target-identity=ok
+stdout-contains: one-label-rule=ok
 stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0302",.*"operation":"ono\.mount\.set","status":"failed"\}\]$
 stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0302",.*"operation":"ono\.mount\.add","status":"failed"\}\]$
 stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E030[12]",.*"operation":"ono\.mount\.remove","status":"failed"\}\]$
@@ -48,4 +62,5 @@ stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0(302|401)",.*"operation":"on
 stdout-contains: start-exit-1
 stdout-matches: ^\[\{"error":\{"code":"Ono-Sendai-E0(302|401)",.*"operation":"ono\.mount\.stop","status":"failed"\}\]$
 stdout-not-contains: Ono-Sendai-E0101
+stdout-not-contains: =BAD:
 stdout-contains: [{"target":"/"}]

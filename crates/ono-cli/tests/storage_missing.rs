@@ -352,10 +352,27 @@ fn should_unmount_the_mounts_piped_in_from_get_mount() {
     }
     let run = ono("get mount / | unmount filesystem | to json");
     let row = assert_refused(&run, "ono.filesystem.unmount", &[PERMISSION_DENIED]);
-    assert_eq!(
-        text(&row, "target"),
-        "ono.mount/1[/]",
+    assert!(
+        text(&row, "target").starts_with("ono.mount/1[/]"),
         "the piped `ono.mount/1` record is the target (ADR-0068 §2 form), got {row:?}"
+    );
+}
+
+#[test]
+fn should_label_the_unmounted_mount_the_same_way_whichever_spelling_named_it() {
+    // ADR-0224: one label rule. `unmount filesystem /` and `get mount / | unmount filesystem`
+    // act on the same object and must render the same `target`.
+    if !unprivileged() {
+        return;
+    }
+    let named = ono("unmount filesystem / | to json");
+    let piped = ono("get mount / | unmount filesystem | to json");
+    let named = assert_refused(&named, "ono.filesystem.unmount", &[PERMISSION_DENIED]);
+    let piped = assert_refused(&piped, "ono.filesystem.unmount", &[PERMISSION_DENIED]);
+    assert_eq!(
+        text(&piped, "target"),
+        text(&named, "target"),
+        "the same mount renders the same target however it was named"
     );
 }
 

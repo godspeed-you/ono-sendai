@@ -16,7 +16,7 @@
 
 use ono_core::ErrorCode;
 use ono_pipeline::{StreamEvent, ValueStream};
-use ono_provider_api::{Action, ActionOutcome, ObjectId, Selector};
+use ono_provider_api::{Action, ActionOutcome, ObjectId, ObjectRef, Selector};
 use ono_value::{ErrorValue, SchemaId, Value};
 
 use crate::bind::BoundArguments;
@@ -268,11 +268,15 @@ impl ProviderMutation {
             let mut objects = Vec::new();
             while let Some(event) = input.recv().await {
                 match event {
-                    StreamEvent::Value(Value::Record(record)) => match ObjectId::of(&record) {
-                        Some(id) => objects.push(Target {
-                            id,
+                    // One label rule for an object: `ObjectRef::of` names it by the first
+                    // default-view column outside its identity, which is what a person reads
+                    // beside the identity the row already shows (ADR-0224). A graph node's
+                    // caption stands alone and is `ono_graph::label_of`'s, not this.
+                    StreamEvent::Value(Value::Record(record)) => match ObjectRef::of(&record) {
+                        Some(reference) => objects.push(Target {
+                            id: reference.id().clone(),
                             source: record.provenance().source().map(str::to_owned),
-                            label: Some(ono_graph::label_of(&record)),
+                            label: Some(reference.label().to_owned()),
                             unresolved: None,
                         }),
                         None => {
