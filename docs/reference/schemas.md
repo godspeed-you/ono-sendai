@@ -1497,6 +1497,7 @@ Default view: `name`, `state`, `substate`, `enabled`, `description`
 | `since` | `timestamp` | — | nullable | When the unit entered its current state. |
 | `provider` | `string` | — | required | The service provider that produced this record; part of the identity. |
 | `unit_file` | `path` | — | nullable | The unit file backing the service; null for transient or generated units. |
+| `dependencies` | `list<string>` | — | nullable | The units this one requires, named as the service manager names them. For systemd that is `Requires`, `Requisite`, `BindsTo` and `Wants` merged; ordering (`After`, `Before`) is not among them, because ordering says when and not whether (ADR-0239). Null where the provider has no notion of a dependency at all; an empty list where it has one and there are none. |
 
 ## Session — `ono.session/1`
 

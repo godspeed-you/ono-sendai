@@ -195,6 +195,7 @@ impl SystemdBus for SystemBus {
             tasks_current: number::<u64>(&properties, "TasksCurrent"),
             result: text(&properties, "Result"),
             exec_main_status: number::<i32>(&properties, "ExecMainStatus"),
+            dependencies: dependencies(&properties),
         }))
     }
 
@@ -344,6 +345,26 @@ pub(crate) fn text(properties: &HashMap<String, OwnedValue>, key: &str) -> Optio
         .get(key)
         .and_then(|value| String::try_from(value.clone()).ok())
         .filter(|text| !text.is_empty())
+}
+
+/// The units this one requires, in the four ways systemd calls requiring (ADR-0239).
+///
+/// `Requires`, `Requisite`, `BindsTo` and `Wants` are the requirement dependencies of
+/// `systemd.unit(5)`. `After` and `Before` are not among them: ordering says when, not whether,
+/// and calling an ordering a dependency would claim something the service manager does not
+/// (`docs/spec/spatial/relations.yaml`: "a provider must not claim a dependency it cannot
+/// justify").
+fn dependencies(properties: &HashMap<String, OwnedValue>) -> Vec<String> {
+    let mut units: Vec<String> = ["Requires", "Requisite", "BindsTo", "Wants"]
+        .iter()
+        .filter_map(|key| properties.get(*key))
+        .filter_map(|value| Vec::<String>::try_from(value.clone()).ok())
+        .flatten()
+        .filter(|unit| !unit.is_empty())
+        .collect();
+    units.sort_unstable();
+    units.dedup();
+    units
 }
 
 pub(crate) fn number<T>(properties: &HashMap<String, OwnedValue>, key: &str) -> Option<T>

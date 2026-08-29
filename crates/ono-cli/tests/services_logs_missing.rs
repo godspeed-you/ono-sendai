@@ -572,6 +572,70 @@ fn should_trace_a_service_to_the_processes_it_owns() {
 }
 
 #[test]
+fn should_relate_a_service_to_the_units_it_requires() {
+    // v0.4 §13 lists dependencies among a service place's groups, and
+    // `docs/spec/spatial/relations.yaml` declares `service.depends_on`. Until ADR-0239 nothing
+    // claimed it: `ListUnits` carries no dependency information and the per-unit properties that
+    // do were read and thrown away. `systemd-journald.service` requires its own sockets on every
+    // systemd system, so the trace must relate it to at least one other unit.
+    let run = ono(&format!("trace service {JOURNALD} | to json"));
+    let Some(graphs) = records_or_unavailable(&run, "trace service") else {
+        return;
+    };
+    let edges = graphs[0]["edges"]
+        .as_sequence()
+        .cloned()
+        .unwrap_or_default();
+    let dependencies: Vec<&str> = edges
+        .iter()
+        .filter(|edge| edge["relation"].as_str() == Some("depends-on"))
+        .filter_map(|edge| edge["to"]["label"].as_str())
+        .collect();
+    assert!(
+        !dependencies.is_empty(),
+        "service.yaml `ono.service.trace`: a unit's dependencies are part of what it relates \
+         to, and systemd states them (ADR-0239); got the relations {:?}",
+        edges
+            .iter()
+            .filter_map(|edge| edge["relation"].as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        dependencies.iter().all(|unit| *unit != JOURNALD),
+        "a unit is not its own dependency, got {dependencies:?}"
+    );
+}
+
+#[test]
+fn should_list_the_dependencies_of_a_unit_as_a_field_of_its_record() {
+    // The dependency edge is composed from a fact the record carries, not observed a second
+    // time (spec §2.16): `get service` answers it, so `where` and `select` compose over it.
+    let run = ono(&format!(
+        "get service {JOURNALD} | select name dependencies | to json"
+    ));
+    let Some(rows) = records_or_unavailable(&run, "`get service` with its dependencies") else {
+        return;
+    };
+    let units = rows
+        .first()
+        .and_then(|row| row.get("dependencies"))
+        .and_then(serde_yaml_ng::Value::as_sequence)
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "service.v1.yaml `dependencies` is a list, and systemd has the notion, so it is \
+                 never null here; got {:?}",
+                run.stdout()
+            )
+        });
+    assert!(
+        !units.is_empty(),
+        "`{JOURNALD}` requires its sockets on every systemd system, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
 fn should_refuse_to_trace_a_service_that_does_not_exist() {
     let run = ono("trace service nothing-answers-to-this.service | to json");
     assert!(

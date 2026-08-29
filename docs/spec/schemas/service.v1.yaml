@@ -45,5 +45,13 @@ fields:
     type: path
     nullable: true
     doc: The unit file backing the service; null for transient or generated units.
+  dependencies:
+    type: list<string>
+    nullable: true
+    doc: >-
+      The units this one requires, named as the service manager names them. For systemd that is
+      `Requires`, `Requisite`, `BindsTo` and `Wants` merged; ordering (`After`, `Before`) is not
+      among them, because ordering says when and not whether (ADR-0239). Null where the provider
+      has no notion of a dependency at all; an empty list where it has one and there are none.
 default_view:
   columns: [name, state, substate, enabled, description]

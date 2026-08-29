@@ -270,6 +270,11 @@ pub fn socket(inode: i64, protocol: &str, local: Value, remote: Value, state: &s
 
 /// A service record.
 pub fn service(name: &str, pid: Option<i64>) -> RecordValue {
+    service_requiring(name, pid, &[])
+}
+
+/// A service record that says which units it requires (`service.v1.yaml` `dependencies`).
+pub fn service_requiring(name: &str, pid: Option<i64>, requires: &[&str]) -> RecordValue {
     RecordValue::builder(schema("ono.service"), provenance("ono.service"))
         .set("name", Value::String(name.into()))
         .and_then(|builder| builder.set("state", Value::String("active".into())))
@@ -278,6 +283,12 @@ pub fn service(name: &str, pid: Option<i64>) -> RecordValue {
             builder.set(
                 "pid",
                 pid.map_or(Value::Null, |pid| Value::Int(i128::from(pid))),
+            )
+        })
+        .and_then(|builder| {
+            builder.set(
+                "dependencies",
+                Value::list(requires.iter().map(|unit| Value::String((*unit).into()))),
             )
         })
         .expect("the fixture service record")

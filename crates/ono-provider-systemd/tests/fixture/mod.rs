@@ -254,6 +254,12 @@ pub fn nginx() -> UnitProperties {
         tasks_current: Some(5),
         result: Some("success".to_owned()),
         exec_main_status: Some(0),
+        // `Wants=network-online.target` and `Requires=` a socket: the two ways a unit says it
+        // needs another (ADR-0239).
+        dependencies: vec![
+            "network-online.target".to_owned(),
+            "nginx.socket".to_owned(),
+        ],
     }
 }
 
@@ -274,6 +280,7 @@ pub fn postgresql() -> UnitProperties {
         tasks_current: Some(u64::MAX),
         result: Some("exit-code".to_owned()),
         exec_main_status: Some(1),
+        dependencies: vec!["network-online.target".to_owned()],
     }
 }
 
@@ -293,6 +300,7 @@ pub fn masked() -> UnitProperties {
         tasks_current: None,
         result: None,
         exec_main_status: None,
+        dependencies: Vec::new(),
     }
 }
 
@@ -313,6 +321,7 @@ pub fn timer_without_main_process() -> UnitProperties {
         tasks_current: None,
         result: None,
         exec_main_status: None,
+        dependencies: Vec::new(),
     }
 }
 
@@ -335,6 +344,7 @@ pub fn on_disk_only() -> UnitProperties {
         tasks_current: None,
         result: None,
         exec_main_status: None,
+        dependencies: Vec::new(),
     }
 }
 

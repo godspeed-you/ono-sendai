@@ -161,6 +161,10 @@ fn should_define_the_service_schema_exactly_as_the_spec_does() {
             ("since", true),
             ("provider", false),
             ("unit_file", true),
+            // ADR-0239: the units the service manager says this one requires. v0.4 §13 puts
+            // dependencies among a service place's groups, and nothing could fill them while
+            // the fact lived only on the bus.
+            ("dependencies", true),
         ]
     );
     assert_eq!(names(service.identity()), ["provider", "name"]);
