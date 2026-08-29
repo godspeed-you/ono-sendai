@@ -8,7 +8,7 @@
 
 use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as Json};
 
 use crate::{
@@ -366,7 +366,10 @@ impl Manifest {
                 capabilities: raw.capabilities,
                 optional: raw.optional,
             }),
-            remote: raw.remote,
+            remote: raw
+                .remote
+                .as_ref()
+                .and_then(|remote| serde_json::to_value(remote).ok()),
         })
     }
 
@@ -447,9 +450,42 @@ struct RawManifest {
     #[serde(default)]
     dependencies: Option<RawDependencies>,
     #[serde(default)]
-    remote: Option<Json>,
+    remote: Option<RawRemote>,
     #[serde(default)]
-    assistant: Option<Json>,
+    assistant: Option<RawAssistant>,
+}
+
+/// The `remote` section (spec §31.39), closed but carried as data.
+///
+/// Remote components are a later increment of Phase I; the shape is kept opaque per field so a
+/// local-only supervisor preserves the declaration without pretending to interpret it. What is
+/// not opaque is the set of keys: spec §31.7 makes every section closed, so a typo here fails
+/// closed like any other.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawRemote {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    components: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mode: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    links: Option<Json>,
+}
+
+/// The `assistant` section (spec §31.41–§31.48), closed for the same reason.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawAssistant {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_requirements: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    autonomy: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_policy: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tools: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    memory: Option<Json>,
 }
 
 #[derive(Debug, Deserialize)]

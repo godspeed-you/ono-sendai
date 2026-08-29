@@ -662,3 +662,79 @@ fn should_not_accept_an_option_named_only_by_a_test() {
         problems(&repo)
     );
 }
+
+#[test]
+fn should_match_the_kuang_contracts_against_the_runtime_that_serves_them() {
+    // Spec §36.5's drift rule, for the seven `docs/spec/kuang/` contracts. Every other registry
+    // under `docs/spec/` is held against its implementation; these reached `spec-check` only
+    // through the generic sweep, which proves they are non-empty valid YAML and nothing else.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let found = xtask::contracts::check_kuang_contracts(root);
+    assert!(
+        found.is_empty(),
+        "the KUANG/11 contracts and the runtime disagree:\n{}",
+        found
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_kuang_manifest_field_the_runtime_does_not_implement() {
+    // The exit test of `docs/STATE.md`'s B-kuang-6: a manifest section that declares a field the
+    // package parser would refuse is drift, and drift is what a contract check exists to find.
+    let repo = consistent();
+    copy_kuang_contracts(&repo);
+    let path = repo.path().join("docs/spec/kuang/manifest.v1.yaml");
+    let text = std::fs::read_to_string(&path).expect("the manifest contract");
+    let text = text.replace(
+        "      homepage:\n        type: string",
+        "      hoempage:\n        type: string",
+    );
+    repo.write("docs/spec/kuang/manifest.v1.yaml", &text);
+    let found = xtask::contracts::check_kuang_contracts(repo.path());
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.detail.contains("hoempage")),
+        "a field the runtime does not implement is reported, got {found:?}"
+    );
+}
+
+#[test]
+fn should_report_a_kuang_capability_the_runtime_does_not_know() {
+    let repo = consistent();
+    copy_kuang_contracts(&repo);
+    let path = repo.path().join("docs/spec/kuang/capabilities.v1.yaml");
+    let text = std::fs::read_to_string(&path).expect("the capability contract");
+    let text = text.replace("  - id: object.read", "  - id: object.reed");
+    repo.write("docs/spec/kuang/capabilities.v1.yaml", &text);
+    let found = xtask::contracts::check_kuang_contracts(repo.path());
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.detail.contains("object.reed")),
+        "a capability family outside the runtime's model is reported, got {found:?}"
+    );
+}
+
+/// Copies this repository's KUANG/11 contracts into a fixture, so a test can break exactly one
+/// line of them and see what the check says.
+fn copy_kuang_contracts(repo: &Scratch) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("docs/spec/kuang");
+    for entry in std::fs::read_dir(&root).expect("the kuang contracts") {
+        let path = entry.expect("a directory entry").path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let text = std::fs::read_to_string(&path).expect("a contract");
+        repo.write(format!("docs/spec/kuang/{name}"), &text);
+    }
+}

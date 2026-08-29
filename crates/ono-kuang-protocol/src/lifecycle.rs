@@ -31,6 +31,16 @@ pub enum PluginState {
 }
 
 impl PluginState {
+    /// Every state, in the order `docs/spec/kuang/lifecycle.v1.yaml` declares them.
+    pub const ALL: &'static [PluginState] = &[
+        PluginState::Installed,
+        PluginState::Enabled,
+        PluginState::Loaded,
+        PluginState::Active,
+        PluginState::Degraded,
+        PluginState::Quarantined,
+    ];
+
     /// The state as `get plugin` renders it.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

@@ -95,6 +95,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     problems.extend(check_spatial_registry(root));
     problems.extend(check_spatial_implementation(root));
     problems.extend(check_provider_claims(root));
+    problems.extend(check_kuang_contracts(root));
 
     problems.sort_by(|a, b| (&a.location, &a.detail).cmp(&(&b.location, &b.detail)));
     problems
@@ -2080,4 +2081,365 @@ fn schema_fields(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
             ))
         })
         .collect()
+}
+
+// --- KUANG/11 contracts ↔ the runtime that serves them (spec §36.5, §31.7) ---------------------
+
+/// A minimal `kuang-package/1` manifest, into which one section is probed.
+///
+/// It carries exactly the sections spec §31.7 makes mandatory, so a probe of any other section
+/// fails on the probed key and on nothing else.
+const PROBE_MANIFEST: &str = "\
+format: kuang-package/1
+package:
+  id: dev.example.probe
+  name: probe
+  version: 0.1.0
+  description: A manifest the contract check probes with.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: \">=11.1 <12\"
+  ono_language: \">=0.2\"
+  platforms: [linux-amd64]
+roles: [provider]
+network:
+  outbound: none
+";
+
+/// A name no manifest section declares, used to make the parser list the ones it accepts.
+const PROBE_KEY: &str = "zz-probe-key";
+
+/// Holds `docs/spec/kuang/` against `crates/ono-kuang-*` (spec §36.5).
+///
+/// The seven KUANG/11 contracts are the public surface of the extension runtime, and until this
+/// existed they reached `spec-check` only through the generic sweep — which proves they are
+/// non-empty valid YAML and nothing else. Every other registry under `docs/spec/` is held against
+/// the code that serves it; this is that check for the last one.
+///
+/// Four of the seven can be compared exactly today: the capability families, the error taxonomy,
+/// the lifecycle states and the manifest's closed sections. `contributions.v1.yaml`,
+/// `protocol.v1.yaml` and `assistants.v1.yaml` describe surfaces this build implements in part;
+/// checking them is later work rather than a check that would pass by not looking.
+#[must_use]
+pub fn check_kuang_contracts(root: &Path) -> Vec<Problem> {
+    let directory = root.join("docs").join("spec").join("kuang");
+    if !directory.is_dir() {
+        return Vec::new();
+    }
+    let read = |name: &str| -> Option<(String, Yaml)> {
+        let path = directory.join(name);
+        let text = std::fs::read_to_string(&path).ok()?;
+        let document = serde_yaml_ng::from_str::<Yaml>(&text).ok()?;
+        Some((relative(root, &path), document))
+    };
+    let mut problems = Vec::new();
+    if let Some((location, document)) = read("capabilities.v1.yaml") {
+        problems.extend(check_kuang_capabilities(&location, &document));
+    }
+    if let Some((location, document)) = read("errors.v1.yaml") {
+        problems.extend(check_kuang_errors(&location, &document));
+    }
+    if let Some((location, document)) = read("lifecycle.v1.yaml") {
+        problems.extend(check_kuang_lifecycle(&location, &document));
+    }
+    if let Some((location, document)) = read("manifest.v1.yaml") {
+        problems.extend(check_kuang_manifest(&location, &document));
+    }
+    problems
+}
+
+/// §31.16's families, their risk, elevation and scope keys, against `Capability`.
+fn check_kuang_capabilities(location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_kuang_protocol::Capability;
+
+    let mut problems = Vec::new();
+    let mut declared = BTreeSet::new();
+    for family in sequence(document, "families") {
+        let Some(id) = string_at(family, "id") else {
+            continue;
+        };
+        declared.insert(id.clone());
+        let Some(capability) = Capability::from_id(&id) else {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` is declared as a capability family and `ono_kuang_protocol::Capability` \
+                     has no such variant"
+                ),
+            });
+            continue;
+        };
+        let kebab = |text: &str| text.to_lowercase();
+        if let Some(risk) = string_at(family, "risk")
+            && kebab(&format!("{:?}", capability.risk())) != risk
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` declares risk `{risk}` and the runtime carries `{}`",
+                    kebab(&format!("{:?}", capability.risk()))
+                ),
+            });
+        }
+        if let Some(elevation) = string_at(family, "elevation")
+            && kebab(&format!("{:?}", capability.elevation())) != elevation
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` declares elevation `{elevation}` and the runtime carries `{}`",
+                    kebab(&format!("{:?}", capability.elevation()))
+                ),
+            });
+        }
+        let served: BTreeSet<&str> = capability.scope_keys().iter().map(|key| key.name).collect();
+        let scope = family
+            .get("scope")
+            .and_then(Yaml::as_mapping)
+            .map(|mapping| {
+                mapping
+                    .iter()
+                    .filter_map(|(key, value)| key.as_str().map(|key| (key, value)))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for (key, shape) in &scope {
+            let Some(declared_key) = capability
+                .scope_keys()
+                .iter()
+                .find(|declared| declared.name == *key)
+            else {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!(
+                        "`{id}` declares the scope key `{key}` and the runtime's family has none"
+                    ),
+                });
+                continue;
+            };
+            if let Some(enforcement) = string_at(shape, "enforcement")
+                && format!("{:?}", declared_key.enforcement).to_lowercase() != enforcement
+            {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!(
+                        "`{id}.{key}` declares enforcement `{enforcement}` and the runtime \
+                         enforces it as `{}`",
+                        format!("{:?}", declared_key.enforcement).to_lowercase()
+                    ),
+                });
+            }
+        }
+        for key in served {
+            if !scope.iter().any(|(declared, _)| *declared == key) {
+                problems.push(Problem {
+                    location: location.to_owned(),
+                    detail: format!(
+                        "the runtime scopes `{id}` by `{key}` and the contract declares no such key"
+                    ),
+                });
+            }
+        }
+    }
+    for capability in Capability::ALL {
+        if !declared.contains(capability.id()) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "the runtime carries the capability family `{}` and the contract declares it \
+                     nowhere",
+                    capability.id()
+                ),
+            });
+        }
+    }
+    problems
+}
+
+/// §31.79's taxonomy against `KuangErrorCode`.
+fn check_kuang_errors(location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_kuang_protocol::KuangErrorCode;
+
+    let mut problems = Vec::new();
+    let mut declared = BTreeSet::new();
+    for entry in sequence(document, "errors") {
+        let (Some(code), Some(name)) = (string_at(entry, "code"), string_at(entry, "name")) else {
+            continue;
+        };
+        declared.insert(name.clone());
+        let Some(known) = KuangErrorCode::from_name(&name) else {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!("`{name}` is declared and `KuangErrorCode` has no such condition"),
+            });
+            continue;
+        };
+        if known.code() != code {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{name}` is declared as `{code}` and the runtime renders it `{}`",
+                    known.code()
+                ),
+            });
+        }
+        if let Some(kind) = string_at(entry, "kind")
+            && format!("{:?}", known.kind()).to_lowercase() != kind
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{name}` is declared kind `{kind}` and the runtime classifies it `{}`",
+                    format!("{:?}", known.kind()).to_lowercase()
+                ),
+            });
+        }
+    }
+    for code in KuangErrorCode::ALL {
+        if !declared.contains(code.name()) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "the runtime raises `{}` and the contract declares it nowhere",
+                    code.name()
+                ),
+            });
+        }
+    }
+    problems
+}
+
+/// §31.8's states against `PluginState`.
+fn check_kuang_lifecycle(location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_kuang_protocol::PluginState;
+
+    let mut problems = Vec::new();
+    let mut declared: BTreeSet<String> = BTreeSet::new();
+    for state in sequence(document, "states") {
+        let Some(id) = string_at(state, "id") else {
+            continue;
+        };
+        declared.insert(id.clone());
+        let Some(known) = PluginState::ALL.iter().find(|known| known.as_str() == id) else {
+            continue;
+        };
+        if let Some(Yaml::Bool(ran)) = state.get("code_has_run")
+            && *ran != known.code_has_run()
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` is declared with `code_has_run: {ran}` and the runtime answers `{}` \
+                     (spec §31.8)",
+                    known.code_has_run()
+                ),
+            });
+        }
+    }
+    let served: BTreeSet<String> = PluginState::ALL
+        .iter()
+        .map(|state| state.as_str().to_owned())
+        .collect();
+    for state in declared.difference(&served) {
+        problems.push(Problem {
+            location: location.to_owned(),
+            detail: format!("`{state}` is a declared package state and `PluginState` has none"),
+        });
+    }
+    for state in served.difference(&declared) {
+        problems.push(Problem {
+            location: location.to_owned(),
+            detail: format!("`PluginState` carries `{state}` and the contract declares it nowhere"),
+        });
+    }
+    problems
+}
+
+/// §31.7's closed sections against the fields the package parser accepts.
+///
+/// The parser is the authority on its own field names, and it is asked rather than mirrored: a
+/// section probed with a key nothing declares answers with the list of keys it does accept, so
+/// the comparison needs no second copy of the manifest shape to go stale.
+fn check_kuang_manifest(location: &str, document: &Yaml) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    for section in sequence(document, "sections") {
+        let Some(name) = string_at(section, "name") else {
+            continue;
+        };
+        let declared: BTreeSet<String> = section
+            .get("fields")
+            .and_then(Yaml::as_mapping)
+            .map(|mapping| {
+                mapping
+                    .keys()
+                    .filter_map(|key| key.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if declared.is_empty() {
+            continue;
+        }
+        let Some(accepted) = manifest_section_fields(&name) else {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "the contract declares `{name}` as a closed section and the package parser \
+                     does not model it, so an unknown key in it cannot fail closed (spec §31.7)"
+                ),
+            });
+            continue;
+        };
+        for field in declared.difference(&accepted) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{name}.{field}` is declared and the package parser refuses it as an unknown \
+                     field"
+                ),
+            });
+        }
+        for field in accepted.difference(&declared) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "the package parser accepts `{name}.{field}` and the contract declares it \
+                     nowhere"
+                ),
+            });
+        }
+    }
+    problems
+}
+
+/// Which keys the package parser accepts in `section`, asked of the parser itself.
+///
+/// `None` when the section is not a closed struct — the parser then has no list to give, which
+/// is itself the finding above.
+fn manifest_section_fields(section: &str) -> Option<BTreeSet<String>> {
+    let mut manifest: Yaml = serde_yaml_ng::from_str(PROBE_MANIFEST).ok()?;
+    let mapping = manifest.as_mapping_mut()?;
+    let key = Yaml::String(section.to_owned());
+    let entry = mapping
+        .entry(key)
+        .or_insert_with(|| Yaml::Mapping(serde_yaml_ng::Mapping::new()));
+    if !entry.is_mapping() {
+        *entry = Yaml::Mapping(serde_yaml_ng::Mapping::new());
+    }
+    entry
+        .as_mapping_mut()?
+        .insert(Yaml::String(PROBE_KEY.to_owned()), Yaml::Number(1.into()));
+    let document = serde_yaml_ng::to_string(&manifest).ok()?;
+    let error = ono_kuang_protocol::Manifest::parse(&document).err()?;
+    let message = error.message();
+    // serde writes "expected one of `a`, `b`" for three or more and "expected `a` or `b`" for
+    // two; the backticked names are the same either way.
+    let listed = message.split(", expected ").nth(1)?;
+    let fields: BTreeSet<String> = listed
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    (!fields.is_empty()).then_some(fields)
 }
