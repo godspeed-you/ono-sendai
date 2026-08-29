@@ -172,12 +172,14 @@ impl ProviderMutation {
             return Err(ErrorValue::new(
                 ErrorCode::SafetyConfirmationRequired,
                 format!(
-                    "`{spelling}` would act on {} objects, which is more than the bulk                      threshold of {threshold}",
+                    "`{spelling}` would act on {} objects, which is more than the \
+                     bulk threshold of {threshold}",
                     targets.len(),
                 ),
             )
             .with_help(format!(
-                "nothing was changed. Write `--confirm` to act on all {} (spec §17.4), or                  narrow the selection",
+                "nothing was changed. Write `--confirm` to act on all {} (spec §17.4), \
+                 or narrow the selection",
                 targets.len(),
             )));
         }

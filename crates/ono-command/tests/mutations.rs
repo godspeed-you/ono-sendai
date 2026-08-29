@@ -192,6 +192,31 @@ async fn should_refuse_a_bulk_mutation_over_the_threshold_and_change_nothing() {
 }
 
 #[tokio::test]
+async fn should_write_the_bulk_refusal_as_running_prose_when_the_threshold_is_exceeded() {
+    // The refusal is prose a user reads. A wrapped source literal must not leak its indentation
+    // into the rendered message: no run of two or more spaces survives into message or help.
+    let provider = FixtureProvider::live();
+    let handle = provider.handle();
+    for pid in 100..112 {
+        handle.add(pid, &format!("bulk-{pid}"), Some(64), "root");
+    }
+
+    let error = run("get process | stop process", &providers(provider))
+        .await
+        .expect_err("fifteen objects is over the threshold");
+    assert!(
+        !error.message().contains("  "),
+        "the refusal reads as one sentence: {:?}",
+        error.message()
+    );
+    let help = error.help().expect("the refusal says how to proceed");
+    assert!(
+        !help.contains("  "),
+        "the help reads as one sentence: {help:?}"
+    );
+}
+
+#[tokio::test]
 async fn should_act_on_every_object_when_the_bulk_was_confirmed() {
     let provider = FixtureProvider::live();
     let handle = provider.handle();
