@@ -9,6 +9,7 @@ use ono_pipeline::{Boundedness, PipelineConfig, ValueStream};
 use ono_provider_api::{Availability, Capability, ObjectRef, Provider, Query, Risk, Selector};
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 
+use crate::nameserver;
 use crate::resolver::{RecordType, addresses_of, name_of};
 use crate::schema::{build, dns_record_id, require};
 
@@ -20,12 +21,17 @@ use crate::schema::{build, dns_record_id, require};
 /// thread finishes on its own.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Names and addresses, through `getaddrinfo(3)` and `getnameinfo(3)`.
+/// Where a nameserver listens unless `--port` says otherwise.
+const DNS_PORT: u16 = 53;
+
+/// Names and addresses, through `getaddrinfo(3)` and `getnameinfo(3)` — or through one named
+/// nameserver.
 ///
 /// A query that is an address performs a reverse lookup and answers with a `PTR` record; any
 /// other query answers with the `A` and `AAAA` records the resolver returns. `--type` keeps one
-/// kind. `--server` is refused: the system resolver answers from `resolv.conf` and NSS, and
-/// asking a particular server needs a DNS client this build does not include (ADR-0087).
+/// kind. `--server` asks that nameserver directly instead, over the crate's own DNS client
+/// (ADR-0240): what this host resolves and what a given server says are different questions,
+/// and `getaddrinfo(3)` can only answer the first.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DnsProvider;
 
@@ -43,19 +49,52 @@ struct Lookup {
     query: String,
     address: Option<IpAddr>,
     wanted: Option<RecordType>,
+    /// The nameserver to ask instead of the system resolver (`--server`).
+    server: Option<IpAddr>,
+    /// The port that nameserver listens on (`--port`, 53 unless given).
+    port: u16,
 }
 
 impl Lookup {
     fn from_query(query: &Query) -> Result<Self, ErrorValue> {
-        if query.option_value("server").is_some() {
+        let server = match query.option_value("server") {
+            None | Some(Value::Null) => None,
+            Some(Value::Ip(address)) => Some(*address),
+            Some(Value::String(text)) => Some(text.parse::<IpAddr>().map_err(|_| {
+                ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`--server` names a nameserver by address, and `{text}` is not one"),
+                )
+            })?),
+            Some(other) => {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`--server` is an address, not a {}", other.type_name()),
+                ));
+            }
+        };
+        let port = match query.option_value("port") {
+            None | Some(Value::Null) => DNS_PORT,
+            Some(Value::Port(port)) => *port,
+            Some(Value::Int(port)) => u16::try_from(*port).map_err(|_| {
+                ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`--port` is a port number, and {port} is not one"),
+                )
+            })?,
+            Some(other) => {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`--port` is a port, not a {}", other.type_name()),
+                ));
+            }
+        };
+        if server.is_none() && query.option_value("port").is_some() {
             return Err(ErrorValue::new(
-                ErrorCode::ProviderUnsupported,
-                "`--server` asks a particular nameserver, and the system resolver answers only \
-                 from resolv.conf and NSS",
+                ErrorCode::TypeMismatch,
+                "`--port` says where the nameserver listens, and no nameserver was named",
             )
-            .with_help(
-                "leave `--server` out to ask the resolver every program on this machine uses",
-            ));
+            .with_help("write `--server <address> --port <port>`, or leave both out"));
         }
         let subject = query
             .selectors()
@@ -65,7 +104,10 @@ impl Lookup {
                 _ => None,
             })
             .ok_or_else(missing_query)?;
-        Self::of(subject, query.option_value("type"))
+        let mut lookup = Self::of(subject, query.option_value("type"))?;
+        lookup.server = server;
+        lookup.port = port;
+        Ok(lookup)
     }
 
     fn of(subject: &Value, wanted: Option<&Value>) -> Result<Self, ErrorValue> {
@@ -99,11 +141,65 @@ impl Lookup {
             query,
             address,
             wanted,
+            server: None,
+            port: DNS_PORT,
         })
+    }
+
+    /// The lookup as one named nameserver answers it (ADR-0240).
+    fn ask_server(
+        &self,
+        server: IpAddr,
+        schema: &Arc<Schema>,
+    ) -> Result<Vec<RecordValue>, ErrorValue> {
+        let source = format!("{server}:{}", self.port);
+        let mut records = Vec::new();
+        if let Some(address) = self.address {
+            if self.wanted.is_some_and(|wanted| wanted != RecordType::Ptr) {
+                return Ok(records);
+            }
+            let question = nameserver::reverse_name(address);
+            for answer in nameserver::ask(server, self.port, &question, RecordType::Ptr)? {
+                let Some(name) = answer.target else { continue };
+                records.push(record(schema, &source, &name, RecordType::Ptr, address)?);
+            }
+            return Ok(records);
+        }
+        if self.wanted == Some(RecordType::Ptr) {
+            return Ok(records);
+        }
+        // Without `--type` a name is asked for both address families, as the system resolver
+        // asks for both. One family answering nothing is not a failure while the other does.
+        let kinds: Vec<RecordType> = match self.wanted {
+            Some(kind) => vec![kind],
+            None => vec![RecordType::A, RecordType::Aaaa],
+        };
+        let mut refusal: Option<ErrorValue> = None;
+        for kind in kinds {
+            match nameserver::ask(server, self.port, &self.query, kind) {
+                Ok(answers) => {
+                    for answer in answers {
+                        let Some(address) = answer.address else {
+                            continue;
+                        };
+                        records.push(record(schema, &source, &self.query, kind, address)?);
+                    }
+                }
+                Err(error) => refusal = Some(error),
+            }
+        }
+        match refusal {
+            // Every question this lookup asked was refused, and the refusal is the answer.
+            Some(error) if records.is_empty() => Err(error),
+            _ => Ok(records),
+        }
     }
 
     /// Performs the lookup on the calling thread.
     fn run(&self, schema: &Arc<Schema>) -> Result<Vec<RecordValue>, ErrorValue> {
+        if let Some(server) = self.server {
+            return self.ask_server(server, schema);
+        }
         let mut records = Vec::new();
         if let Some(address) = self.address {
             // An address asks for its name (network.yaml: "An address performs a reverse

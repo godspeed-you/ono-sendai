@@ -1021,3 +1021,129 @@ fn should_still_refuse_the_same_mutation_when_it_is_not_a_dry_run() {
     // unprivileged caller, and the refusal is still the kernel's (ADR-0088).
     assert_refused_by_the_kernel("set interface lo --mtu 9000", "ono.interface.set");
 }
+
+// --- `resolve dns --server` (ADR-0240) ---------------------------------------------------------
+
+/// A nameserver that answers exactly one question, on a port the kernel chooses.
+///
+/// It is the outside world, faked the way AGENTS.md §11 allows the outside world to be faked: a
+/// real UDP socket speaking real DNS, so what is under test is the shell's client and not a
+/// stand-in for it. `answer` is the RDATA to return, and `record_type` the QTYPE it answers.
+fn nameserver_answering(record_type: u16, answer: Vec<u8>) -> (u16, std::thread::JoinHandle<()>) {
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("a fixture nameserver socket");
+    let port = socket.local_addr().expect("the bound port").port();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("a read timeout, so a test never hangs on a question that never comes");
+    let handle = std::thread::spawn(move || {
+        let mut buffer = [0u8; 512];
+        while let Ok((read, from)) = socket.recv_from(&mut buffer) {
+            let request = &buffer[..read];
+            // The question ends at the root label, four bytes of QTYPE and QCLASS later.
+            let Some(root) = request.iter().skip(12).position(|byte| *byte == 0) else {
+                continue;
+            };
+            let question_end = 12 + root + 1 + 4;
+            let asked = u16::from_be_bytes([request[question_end - 4], request[question_end - 3]]);
+            let mut reply = request[..question_end].to_vec();
+            reply[2] = 0x81; // QR=1, RD=1
+            reply[3] = 0x80; // RA=1, RCODE=0
+            let answers = u16::from(asked == record_type);
+            reply[6..8].copy_from_slice(&answers.to_be_bytes());
+            if answers == 1 {
+                reply.extend_from_slice(&[0xc0, 0x0c]); // owner: pointer to the question's name
+                reply.extend_from_slice(&record_type.to_be_bytes());
+                reply.extend_from_slice(&1_u16.to_be_bytes()); // CLASS IN
+                reply.extend_from_slice(&60_u32.to_be_bytes()); // TTL
+                let length = u16::try_from(answer.len()).expect("the fixture RDATA is short");
+                reply.extend_from_slice(&length.to_be_bytes());
+                reply.extend_from_slice(&answer);
+            }
+            if socket.send_to(&reply, from).is_err() {
+                return;
+            }
+            return;
+        }
+    });
+    (port, handle)
+}
+
+#[test]
+fn should_answer_from_the_nameserver_that_was_named_rather_than_from_the_system_resolver() {
+    // ADR-0087 refused `--server` because the system resolver cannot be pointed at a server, and
+    // ADR-0240 gives the crate a DNS client of its own. `fixture.example` exists in no zone
+    // anywhere: an answer for it can only have come from the server the query named.
+    let (port, server) = nameserver_answering(1, vec![203, 0, 113, 7]);
+
+    let run = ono(&format!(
+        "resolve dns fixture.example --server 127.0.0.1 --port {port} --type A | to json"
+    ));
+    run.assert_success();
+    let row = single(&run);
+    assert_eq!(row["name"].as_str(), Some("fixture.example"));
+    assert_eq!(row["type"].as_str(), Some("A"));
+    assert_eq!(
+        row["address"].as_str(),
+        Some("203.0.113.7"),
+        "the address is the one that nameserver answered, got {row:?}"
+    );
+    let _ = server.join();
+}
+
+#[test]
+fn should_answer_a_reverse_question_from_the_named_nameserver() {
+    // An address asks for its name (network.yaml), and over a named server that is a `PTR`
+    // question in the `in-addr.arpa` zone. The RDATA is the encoded name `host.fixture`.
+    let name = vec![
+        4, b'h', b'o', b's', b't', 7, b'f', b'i', b'x', b't', b'u', b'r', b'e', 0,
+    ];
+    let (port, server) = nameserver_answering(12, name);
+
+    let run = ono(&format!(
+        "resolve dns 203.0.113.7 --server 127.0.0.1 --port {port} | to json"
+    ));
+    run.assert_success();
+    let row = single(&run);
+    assert_eq!(row["type"].as_str(), Some("PTR"));
+    assert_eq!(
+        row["name"].as_str(),
+        Some("host.fixture"),
+        "a PTR answers an address with a name, got {row:?}"
+    );
+    assert_eq!(row["address"].as_str(), Some("203.0.113.7"));
+    let _ = server.join();
+}
+
+#[test]
+fn should_report_a_nameserver_that_does_not_answer_as_unavailable_and_retryable() {
+    // A server that is named and does not answer is a failure of that server, not an empty
+    // result: `--server` has no second server to fall back to (spec §16.5, §35.3).
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("a socket nobody reads");
+    let port = socket.local_addr().expect("the bound port").port();
+    drop(socket);
+
+    let run = ono(&format!(
+        "resolve dns fixture.example --server 127.0.0.1 --port {port} --type A | to json"
+    ));
+    assert!(
+        !run.status().is_success(),
+        "a nameserver that says nothing is not an answer of nothing, got {:?}",
+        run.output()
+    );
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0401"),
+        "errors.yaml: an unreachable provider is provider.unavailable, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_refuse_a_port_without_a_server_to_go_with_it() {
+    let run = ono("resolve dns example.com --port 5353 | to json");
+    assert!(
+        !run.status().is_success() && run.stderr().contains("Ono-Sendai-E0201"),
+        "`--port` says where a named nameserver listens; without `--server` it says nothing, \
+         got {:?}",
+        run.output()
+    );
+}

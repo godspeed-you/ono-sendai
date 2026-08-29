@@ -135,13 +135,15 @@ commands:
       - {name: query, type: string, doc: "The name or address to resolve. An address performs a reverse lookup."}
     options:
       - {name: type, type: string, doc: "Restrict to one record type."}
-      - {name: server, type: ip, doc: "Query this resolver instead of the system's."}
+      - {name: server, type: ip, doc: "Query this nameserver instead of the system's resolver. Ono asks it directly, so the answer is that server's and not what NSS, /etc/hosts or mDNS would add (ADR-0240)."}
+      - {name: port, type: port, doc: "Where the nameserver named by `--server` listens. 53 unless given; a local stub resolver often listens elsewhere."}
     privilege: none
     streaming: true
     phase: C
     examples:
       - resolve dns example.com
       - resolve dns 10.4.2.11
+      - resolve dns example.com --server 9.9.9.9
 
   - id: ono.port.test
     verb: test

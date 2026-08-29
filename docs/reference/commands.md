@@ -2900,13 +2900,15 @@ Perform an explicit DNS resolution.
 | name | type | meaning |
 |---|---|---|
 | `--type` | `string` | Restrict to one record type. |
-| `--server` | `ip` | Query this resolver instead of the system's. |
+| `--server` | `ip` | Query this nameserver instead of the system's resolver. Ono asks it directly, so the answer is that server's and not what NSS, /etc/hosts or mDNS would add (ADR-0240). |
+| `--port` | `port` | Where the nameserver named by `--server` listens. 53 unless given; a local stub resolver often listens elsewhere. |
 
 **Examples**
 
 ```text
 resolve dns example.com
 resolve dns 10.4.2.11
+resolve dns example.com --server 9.9.9.9
 ```
 
 ### `test port`

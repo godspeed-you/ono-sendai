@@ -31,6 +31,7 @@
 )]
 
 mod dns;
+mod nameserver;
 mod probe;
 mod resolver;
 mod schema;
