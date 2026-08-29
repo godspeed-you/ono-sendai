@@ -148,6 +148,24 @@ impl SshTarget {
     pub fn host(&self) -> &str {
         &self.host
     }
+
+    /// The user to log in as, where one was given.
+    #[must_use]
+    pub fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+
+    /// The port to connect to, where one was given.
+    #[must_use]
+    pub const fn port(&self) -> Option<u16> {
+        self.port
+    }
+
+    /// The client configuration file to read, where one was given.
+    #[must_use]
+    pub fn config(&self) -> Option<&std::path::Path> {
+        self.config.as_deref()
+    }
 }
 
 /// The one place the real ssh invocation is spelled.

@@ -26,11 +26,15 @@
 #![forbid(unsafe_code)]
 
 mod agent;
+mod agentless;
 mod client;
 mod retag;
 mod transport;
 
 pub use agent::{AgentConfig, agent_main, serve_registry};
+pub use agentless::{
+    AGENTLESS_PROVIDER, AgentlessLink, AgentlessProvider, FarSide, LocalFarSide, SshFarSide,
+};
 pub use client::{RemoteLink, RemoteProvider};
 pub use retag::retag_value;
 pub use transport::{ChildProcess, SshTarget, StdioTransport, SubprocessTransport, ssh_command};
