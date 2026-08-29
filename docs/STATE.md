@@ -100,36 +100,31 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-**Three agents are running in parallel worktrees** (2026-08-29). Each holds a tranche and an
-exclusive file scope; none of their results is claimed anywhere on this board, because this board
-does not know them until they report.
-
-| Agent | Worktree | Claim | Box |
-|---|---|---|---|
-| KUANG/11 | `../ono-sendai-wt-k11` | isolation, the wasm tier, the missing host API domains, contributed commands — `crates/ono-kuang-*`, `crates/ono-cli/src/kuang_host.rs` | C-4, B-kuang-3 |
-| security | `../ono-sendai-wt-sec` | the §35.6 fuzz targets and package signature verification — `fuzz/`, `crates/ono-kuang-protocol`, `crates/ono-cli/src/kuang_host.rs` | C-2, C-5 |
-| remote | `../ono-sendai-wt-remote` | agentless mode and an authenticated transport — `crates/ono-remote`, `crates/ono-protocol`, `crates/ono-cli/src/context.rs` | C-3, B-remote-2 |
-
-**Paused, worktree and branch kept, resume where they stopped:**
-
-- `close-honesty` in `../ono-sendai-wt-state` — making three release-checklist claims checkable
-  instead of judged (§4.4's provider justification, and the three boxes that rest on reading a
-  document); ADR-0401 is written. Paused for machine load, not blocked.
-- `close-last` in `../ono-sendai-wt-last` at `37ce5c3` — **B-data-9 is delivered** (below); **C-6
-  is designed, not written**. Its design is the resume point and is recorded under C-6.
-
-**Why two are paused:** six agents compiled and tested at once on eight cores, load average 49 and
-no idle CPU. Under that load the testkit's 20 s timeout fires on healthy code, so agents start
-chasing phantom failures — which costs more load. The four that kept running were capped at
-`-j 2` / `--test-threads=2`, told to pass `--all-features` on *every* cargo command (a bare
-`cargo test` between two gate runs changes the feature set and rebuilds the workspace twice), and
-told never to delete `target/` or the incremental caches to save disk.
-
 ## Session records (2026-08-27 … 2026-08-29)
 
 Every session below is complete. They are kept because each carries the reasoning behind a
 decision the code no longer shows, and because several open lines under *Next up* were first
 observed here.
+
+**The five parallel tranches have landed (2026-08-29).** The board carried them as claims while
+they ran; every one of their branches is now an ancestor of `implementation`, every worktree is
+clean, and nothing is held. What each of them delivered is recorded under *Done* and in the
+commits their merges carry.
+
+| Tranche | Branch | Merged as | What it delivered |
+|---|---|---|---|
+| KUANG/11 | `close-kuang` | `3fc924a` | isolation, the wasm tier, the missing host API domains, contributed commands (C-4, B-kuang-3) |
+| security | `close-security` | `0b09af9` | the §35.6 fuzz targets and package signature verification (C-2, C-5) |
+| remote | `close-remote` | `045fb0c` | agentless mode and an authenticated transport (C-3, B-remote-2) |
+| honesty | `close-honesty` | `5865421` | three release-checklist claims made checkable rather than judged (ADR-0401, ADR-0402) |
+| last | `close-last` | `c7a63f4` | B-data-9; C-6 stays designed-not-written and is recorded under C-6 |
+
+**What running six agents on eight cores cost, kept because the next parallel run needs it:**
+load average 49 and no idle CPU, under which the testkit's 20 s timeout fires on healthy code and
+agents start chasing phantom failures — which costs more load. The ones that kept running were
+capped at `-j 2` / `--test-threads=2`, told to pass `--all-features` on *every* cargo command (a
+bare `cargo test` between two gate runs changes the feature set and rebuilds the workspace
+twice), and told never to delete `target/` or the incremental caches to save disk.
 
 **S11c — the four defects the v0.4 dogfooding session left open — is complete (2026-08-29,
 agent `S11c`).** Seven commits, gate green on each; the container ran on image
