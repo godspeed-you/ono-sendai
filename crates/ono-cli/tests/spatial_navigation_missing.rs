@@ -1174,3 +1174,44 @@ fn should_keep_running_external_commands_when_spatial_navigation_has_happened() 
         run.stderr()
     );
 }
+
+#[test]
+fn should_name_the_positional_spelling_when_a_selector_is_written_as_an_option() {
+    // `near --relation process` listed the four options `near` takes and never mentioned that a
+    // relation is the positional selector `near <relation>` — true, and no help at all to the
+    // person who typed it (§40's "actionable next steps", ADR-0271).
+    let run = ono("enter process 1; near --relation process");
+    assert!(!run.status().is_success());
+    let text = run.stderr();
+    assert!(
+        text.contains("Ono-Sendai-E0202") && text.contains("near <relation>"),
+        "the refusal names the spelling that works, got {text:?}"
+    );
+}
+
+#[test]
+fn should_refuse_a_relation_the_place_does_not_offer_rather_than_answering_nothing() {
+    // §40 and §2.17: "this place has no such exit" and "this exit is empty" are different
+    // answers, and an empty stream with status 0 said both. A process has `sockets`, not
+    // `socket`, and the refusal is what makes the difference visible.
+    let run = ono("enter process 1; near socket");
+    assert!(!run.status().is_success());
+    let text = run.stderr();
+    assert!(
+        text.contains("Ono-Sendai-E1004") && text.contains("sockets"),
+        "the refusal names the exits this place does have, got {text:?}"
+    );
+}
+
+#[test]
+fn should_answer_an_empty_stream_for_an_exit_that_exists_and_holds_nothing() {
+    // The other half: a relation the place declares and has no neighbour in is an empty answer,
+    // not a refusal — the name was understood (§40, the `find` precedent of ADR-0210).
+    let run = ono("enter compute; near cgroups | count | to json");
+    run.assert_success();
+    assert!(
+        run.stdout().lines().any(|line| line.starts_with('[')),
+        "an exit that exists answers with a stream, got {:?}",
+        run.output()
+    );
+}

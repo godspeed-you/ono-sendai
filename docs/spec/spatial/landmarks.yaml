@@ -121,10 +121,15 @@ landmarks:
       setting: spatial.landmarks.storage_pressure
     severity: attention
     doc: >-
-      §26.2 "filesystem pressure". §26.2 also names read-only transitions, mount failures and
-      new or remounted filesystems; those are changes of state and surface as
-      `recently_changed`, `new_object` or `removed_object` rather than as separate reasons —
-      §3.7's list of reasons is what a Landmark may carry.
+      §26.2 "filesystem pressure". A filesystem the provider reports as `read_only: true` is
+      never promoted whatever its used share: a read-only image is full by construction — a
+      squashfs snap is 100% used the moment it is mounted — so "near capacity" is not a reason
+      to look at it, nothing can fill it and nothing can be freed (ADR-0270). Only an explicit
+      `true` suppresses the rule; `null` is not a claim that the filesystem is read-only
+      (§35.3). §26.2 also names read-only transitions, mount failures and new or remounted
+      filesystems; those are changes of state and surface as `recently_changed`, `new_object`
+      or `removed_object` rather than as separate reasons — §3.7's list of reasons is what a
+      Landmark may carry.
 
   # --- change (§3.7, §25.4) --------------------------------------------------------------------
   - reason: new_object

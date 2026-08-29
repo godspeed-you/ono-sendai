@@ -471,6 +471,29 @@ pub async fn observe_adapted(values: &[ono_value::Value]) {
     session.absorb(&records, now);
 }
 
+/// The refusal for a relation word the current place does not offer (§40, ADR-0271).
+///
+/// The exits are the ones this place actually has right now, read from its own neighbourhood
+/// rather than from the global relation vocabulary: `sockets` is an exit of a process and
+/// `processes` is an exit of COMPUTE, and a user who typed the wrong one needs the list that
+/// applies here.
+fn unknown_exit(exits: &[String], relation: &str) -> ErrorValue {
+    let error = ErrorValue::new(
+        ErrorCode::SpatialNoRelation,
+        format!("this place has no `{relation}` to be near"),
+    );
+    if exits.is_empty() {
+        return error.with_help(
+            "this place offers no relationships at all — `look` shows what it does offer \
+             (spec v0.4 §24.2, §40)",
+        );
+    }
+    error.with_help(format!(
+        "its exits are {} — `near` with no relation lists all of them (spec v0.4 §6.2, §40)",
+        exits.join(", ")
+    ))
+}
+
 /// `near` (spec v0.4 §6.2, §29.4).
 #[derive(Debug)]
 pub struct Near {
@@ -498,7 +521,8 @@ impl CommandImpl for Near {
         Box::pin(async move {
             let arguments = ctx.arguments();
             let mut request = NeighborhoodRequest::new().all(arguments.flag("all"));
-            if let Some(relation) = arguments.selector("relation").and_then(text_of) {
+            let named_relation = arguments.selector("relation").and_then(text_of);
+            if let Some(relation) = named_relation.clone() {
                 request = request.along(relation);
             }
             if let Some(value) = arguments.option("type") {
@@ -520,6 +544,34 @@ impl CommandImpl for Near {
             with_pins(&mut session, self.pins.as_ref(), now).await?;
             let (neighborhood, _, _) =
                 view::neighborhood_here(ctx.providers(), &mut session, &request, now).await?;
+
+            // §40 and §2.17: "this place has no such exit" and "this exit is empty" are
+            // different answers, and an empty stream said both. `follow` has always made the
+            // distinction; `near <relation>` printed nothing at all with status 0 (ADR-0271).
+            if let Some(relation) = &named_relation
+                && !neighborhood
+                    .groups()
+                    .iter()
+                    .any(|group| group.label() == relation)
+            {
+                // What this place does offer is asked for only on the way to the refusal: the
+                // answer that was already computed carries only the exit that was asked about.
+                let (whole, _, _) = view::neighborhood_here(
+                    ctx.providers(),
+                    &mut session,
+                    &NeighborhoodRequest::new().all(true),
+                    now,
+                )
+                .await?;
+                let mut exits: Vec<String> = whole
+                    .groups()
+                    .iter()
+                    .map(|group| group.label().to_owned())
+                    .collect();
+                exits.sort();
+                exits.dedup();
+                return Err(unknown_exit(&exits, relation));
+            }
 
             let here = session.current_place().clone();
             let index = session.index();

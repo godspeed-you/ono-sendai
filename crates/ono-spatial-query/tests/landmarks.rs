@@ -237,3 +237,70 @@ fn should_mark_an_object_from_another_host_as_a_remote_boundary() {
         "spec §26.2/§3.7: an object in another host's scope is a remote boundary, got {reasons:?}"
     );
 }
+
+#[test]
+fn should_not_promote_a_read_only_filesystem_that_is_full_as_storage_pressure() {
+    // §26.2's storage rule is "filesystem near capacity", and §2.11 makes a landmark a reason to
+    // look. A squashfs image is 100% used by construction — that is what a read-only image is —
+    // so promoting one is not a warning, it is twenty of them on an ordinary host with snaps
+    // mounted. Nothing can be written to it, so nothing can fill it.
+    let full = record(
+        "ono.filesystem/1",
+        &[
+            ("source", Value::string("/var/lib/snapd/snaps/core22.snap")),
+            ("type", Value::string("squashfs")),
+            ("target", Value::string("/snap/core22/1")),
+            ("size", Value::Int(77_000_000)),
+            ("used", Value::Int(77_000_000)),
+            ("available", Value::Int(0)),
+            ("read_only", Value::Bool(true)),
+        ],
+    );
+    assert_eq!(
+        reasons_at(&full, LATER),
+        Vec::<LandmarkReason>::new(),
+        "§26.2: a filesystem nothing can write to cannot be under storage pressure"
+    );
+}
+
+#[test]
+fn should_still_promote_a_writable_filesystem_above_the_threshold() {
+    let full = record(
+        "ono.filesystem/1",
+        &[
+            ("source", Value::string("/dev/nvme0n1p2")),
+            ("type", Value::string("ext4")),
+            ("target", Value::string("/")),
+            ("size", Value::Int(100_000_000)),
+            ("used", Value::Int(97_000_000)),
+            ("available", Value::Int(3_000_000)),
+            ("read_only", Value::Bool(false)),
+        ],
+    );
+    assert_eq!(
+        reasons_at(&full, LATER),
+        vec![LandmarkReason::StoragePressure],
+        "§26.2: the rule the read-only guard must not take with it"
+    );
+}
+
+#[test]
+fn should_still_promote_a_full_filesystem_that_does_not_say_whether_it_is_writable() {
+    // §35.3: unknown is null, and null is not a claim that the filesystem is read-only. A
+    // provider that does not answer the question leaves the rule as it was.
+    let full = record(
+        "ono.filesystem/1",
+        &[
+            ("source", Value::string("/dev/sdb1")),
+            ("type", Value::string("ext4")),
+            ("target", Value::string("/data")),
+            ("size", Value::Int(100_000_000)),
+            ("used", Value::Int(99_000_000)),
+            ("available", Value::Int(1_000_000)),
+        ],
+    );
+    assert_eq!(
+        reasons_at(&full, LATER),
+        vec![LandmarkReason::StoragePressure]
+    );
+}

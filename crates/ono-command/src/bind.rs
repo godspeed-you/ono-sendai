@@ -533,6 +533,20 @@ impl CommandContract {
             ErrorCode::TypeUnknownField,
             format!("`{}` has no option `--{name}`", self.spelling()),
         );
+        // A word the command *does* take, written the other way round. Listing the options it
+        // has is true and unhelpful when the answer is that this one is positional: `near
+        // --relation process` and `near process` differ by two characters and by whether the
+        // user is told anything at all (ADR-0271).
+        if self
+            .selectors()
+            .iter()
+            .any(|selector| selector.name() == name)
+        {
+            return error.with_help(format!(
+                "`{name}` is a positional selector: write `{} <{name}>`",
+                self.spelling()
+            ));
+        }
         match closest(name, declared.iter().copied()) {
             Some(near) => error.with_help(format!("did you mean `--{near}`?")),
             None if declared.is_empty() => {

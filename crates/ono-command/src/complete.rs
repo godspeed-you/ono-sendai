@@ -272,6 +272,12 @@ fn gather(
     let Some(command) = command else {
         return Vec::new();
     };
+    // A help topic is a vocabulary of `help` alone: the browsing pages, every verb, every target
+    // and every command spelling. No contract can carry it, because it is the set of things the
+    // help system itself answers for (spec §15.1, v0.4 §38.2).
+    if command.id() == "ono.meta.help" {
+        return help_topics(registry, context.prefix());
+    }
     let selector = next_selector(command, context);
     // Spec §15.1: `get process | where <tab>` shows Process fields. The schema is the one the
     // stages before the pipe hand on, read from the contracts — nothing runs (ADR-0074).
@@ -394,6 +400,26 @@ fn option_values(
             kind: CandidateKind::Value,
             doc: candidate.doc,
         })
+        .collect()
+}
+
+/// Every topic `help` answers for, narrowed to `prefix` (spec §15.1).
+fn help_topics(registry: &CommandRegistry, prefix: &str) -> Vec<Candidate> {
+    let browsing = crate::help::topics()
+        .iter()
+        .map(|(name, doc)| Candidate::value(*name).with_doc(*doc));
+    let verbs = registry
+        .verbs()
+        .iter()
+        .map(|verb| Candidate::verb(verb.verb()).with_doc(verb.semantics()));
+    let commands = registry
+        .commands()
+        .iter()
+        .map(|command| Candidate::value(command.spelling()).with_doc(command.summary()));
+    browsing
+        .chain(verbs)
+        .chain(commands)
+        .filter(|candidate| candidate.text().starts_with(prefix))
         .collect()
 }
 

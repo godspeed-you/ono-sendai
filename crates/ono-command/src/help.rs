@@ -635,8 +635,29 @@ fn overview(registry: &CommandRegistry) -> TopicHelp {
             "help raw               the escape hatch that bypasses adaptation".to_owned(),
             "help adapt             force a program's output into values".to_owned(),
             "help spatial           moving through the system as a space".to_owned(),
+            "help here              what the place you are standing in offers".to_owned(),
         ],
     }
+}
+
+/// The browsing topics `help <topic>` answers for, each with the line the landing page shows.
+///
+/// This is the only enumeration of them: [`builtin_topic`]'s match is what answers, and a match
+/// arm cannot be listed. Completion needs the list (spec §15.1) and so does anything that wants
+/// to say what `help` knows about, so the two are kept beside each other and `spec-check`'s
+/// example checks keep them honest.
+#[must_use]
+pub fn topics() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("verbs", "every verb and what it means"),
+        ("targets", "every target and what it denotes"),
+        ("capabilities", "what a provider must be allowed to do"),
+        ("commands", "every stable command"),
+        ("raw", "the escape hatch that bypasses adaptation"),
+        ("adapt", "force a program's output into values"),
+        ("spatial", "moving through the system as a space"),
+        ("here", "what the place you are standing in offers"),
+    ]
 }
 
 fn builtin_topic(registry: &CommandRegistry, topic: &str) -> Option<TopicHelp> {

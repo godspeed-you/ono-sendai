@@ -135,3 +135,92 @@ pub fn switched_off(command: &str) -> ono_value::ErrorValue {
     )
     .with_help("set `spatial.enabled = true` to navigate again (spec v0.4 §47)")
 }
+
+/// `help here` — what the place the session is standing in offers (spec v0.4 §38.2).
+///
+/// §38.1's overview says what the spatial verbs are; this says what they reach *from here*, which
+/// is the half a general page cannot know. The exits are the ones this place actually has — read
+/// from the live neighbourhood, not from the relation vocabulary — so a process names `children`
+/// and `sockets` and COMPUTE names `processes` and `services`.
+///
+/// # Errors
+///
+/// Whatever the providers refused with while the neighbourhood was being observed.
+pub fn here_help(
+    session: &mut crate::session::Session,
+) -> crate::eval::Eval<ono_command::TopicHelp> {
+    let now = jiff::Timestamp::now();
+    let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
+        crate::eval::Flow::Failed(ono_value::ErrorValue::new(
+            ono_core::ErrorCode::IoPermissionDenied,
+            "the operating system refused to start the runtime",
+        ))
+    })?;
+    let observed = runtime.block_on(async {
+        let mut state = spatial_session().await;
+        let request = ono_spatial_query::NeighborhoodRequest::new().all(true);
+        let neighborhood = view::neighborhood_here(providers, &mut state, &request, now).await?;
+        let path = ono_spatial_query::resolve::concise_path(state.index(), state.current_place());
+        let kind = state
+            .index()
+            .get(state.current_place())
+            .map(|entry| entry.object().object_type().as_str().to_owned());
+        let depth = state.trail().depth();
+        Ok::<_, ono_value::ErrorValue>((path, kind, depth, neighborhood.0))
+    });
+    let (path, kind, depth, neighborhood) = observed.map_err(crate::eval::Flow::Failed)?;
+
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for group in neighborhood.groups() {
+        let label = group.label().to_owned();
+        // §11.1: hierarchy is not the graph. A group reached by a relation is what `follow` and
+        // `near` traverse; a canonical child is what `enter` moves into, and telling a reader to
+        // follow one would be telling them to do something the shell refuses.
+        let how = if group.relation().is_some() {
+            format!("`near {label}`, `follow {label}`")
+        } else {
+            format!("`enter {label}`")
+        };
+        let line = match group.state() {
+            ono_spatial_core::PermissionState::Available => match group.total() {
+                // §2.17: an unknown count is not zero, and neither is worth calling a number.
+                Some(held) => format!("{held} — {how}"),
+                None => how,
+            },
+            ono_spatial_core::PermissionState::Empty => "no neighbour here".to_owned(),
+            state => match group.detail() {
+                Some(detail) => format!("{} — {detail}", state.as_str()),
+                None => state.as_str().to_owned(),
+            },
+        };
+        entries.push((label, line));
+    }
+    let mut see_also = vec![
+        "look                   this place and its exits, in full".to_owned(),
+        "map                    the topology around it".to_owned(),
+    ];
+    if kind.is_some() {
+        see_also.push("up                     the canonical parent of this place".to_owned());
+    }
+    if depth > 0 {
+        see_also.push("back                   the place you came from".to_owned());
+    }
+    see_also.push("pin <name>             keep this place as a landmark of your own".to_owned());
+    see_also.push("help spatial           every spatial verb".to_owned());
+
+    if entries.is_empty() {
+        entries.push((
+            "(none)".to_owned(),
+            "this place offers no relationships — `enter` moves into what it holds".to_owned(),
+        ));
+    }
+    Ok(ono_command::TopicHelp {
+        name: "here".to_owned(),
+        summary: match kind {
+            Some(kind) => format!("{path} — a {kind} place, and what it offers (spec v0.4 §38.2)"),
+            None => format!("{path} — a canonical space, and what it offers (spec v0.4 §38.2)"),
+        },
+        entries,
+        see_also,
+    })
+}

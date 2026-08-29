@@ -135,6 +135,7 @@ pub fn landmarks_of(
     // --- storage (§26.2) -----------------------------------------------------------------------
     if let Some(used) = used_share(record)
         && used >= thresholds.storage_pressure_percent
+        && !is_read_only(record)
     {
         found.push(Landmark::built_in(
             id.clone(),
@@ -237,6 +238,17 @@ fn is_loopback(address: &str) -> bool {
         // A unix socket's "address" is a path: it never leaves the host.
         Err(_) => address.starts_with('/') || address.starts_with('@') || address.is_empty(),
     }
+}
+
+/// Whether the provider says the filesystem cannot be written to (§26.2).
+///
+/// A read-only image is full by construction — a squashfs snap is 100% used the moment it is
+/// mounted — so "near capacity" is not a reason to look at it: nothing can fill it and nothing
+/// can be freed. §35.3 keeps the guard narrow: only an explicit `read_only: true` suppresses the
+/// rule, because a provider that does not answer the question has not said the filesystem is
+/// read-only.
+fn is_read_only(record: &RecordValue) -> bool {
+    matches!(record.get("read_only"), Some(Value::Bool(true)))
 }
 
 /// How full a filesystem is, from the provider's own `used` and `size`.

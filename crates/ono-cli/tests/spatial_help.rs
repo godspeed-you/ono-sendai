@@ -107,3 +107,51 @@ fn should_offer_the_overview_among_the_topics_help_lists() {
         run.stdout()
     );
 }
+
+#[test]
+fn should_name_the_relations_of_the_current_place_when_help_here_runs() {
+    // §38.2: "At any place: `help here` … SHOULD show spatial operations supported by that
+    // place." The other half of §38.1's overview: what applies *here*, which the overview cannot
+    // know. A process place offers `children`, `cgroup` and `user`; the SYSTEM root offers none
+    // of them, and a help page that said the same in both places would be the overview again.
+    let run = ono("enter process 1; help here");
+    run.assert_success();
+    let text = run.stdout();
+    for exit in ["children", "cgroup", "user"] {
+        assert!(
+            text.contains(exit),
+            "§38.2: `help here` names the relations this place offers — `{exit}` is missing \
+             from {text:?}"
+        );
+    }
+    assert!(
+        text.contains("near") && text.contains("follow"),
+        "§38.2: and what to do with them, got {text:?}"
+    );
+}
+
+#[test]
+fn should_say_what_the_root_place_offers_when_help_here_runs_there() {
+    let run = ono("help here");
+    run.assert_success();
+    let text = run.stdout();
+    assert!(
+        text.contains("SYSTEM") || text.contains("local"),
+        "§38.2: the page says which place it is about, got {text:?}"
+    );
+    assert!(
+        !text.contains("cgroup"),
+        "§38.2: it is about *this* place, not about every place, got {text:?}"
+    );
+}
+
+#[test]
+fn should_offer_here_among_the_topics_help_lists() {
+    let run = ono("help");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("help here"),
+        "§38.2: the landing page names the context-sensitive page, got {:?}",
+        run.output()
+    );
+}

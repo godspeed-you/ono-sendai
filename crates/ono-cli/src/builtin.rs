@@ -334,6 +334,14 @@ fn help(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         .collect::<Vec<_>>()
         .join(" ");
 
+    // v0.4 §38.2: "At any place: `help here` … SHOULD show spatial operations supported by that
+    // place." It cannot be a registry topic like the others, because the answer is a fact about
+    // the session's current place and the registry knows nothing about where anybody is standing.
+    if topic == "here" {
+        println!("{}", crate::spatial::here_help(session)?.render());
+        return Ok(ExitStatus::SUCCESS);
+    }
+
     let registry = match ono_command::CommandRegistry::embedded() {
         Ok(registry) => registry,
         Err(error) => return Err(Flow::Failed(error)),
