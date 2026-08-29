@@ -579,6 +579,12 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
         }
     }
 
+    // Spec §4.2's optional `vcs` segment: `git:main` when the working directory is inside a
+    // checkout, and nothing at all when it is not (ADR-0250).
+    if let Some(branch) = vcs_segment(session) {
+        prompt = prompt.segment(format!(" {branch}"), Token::Dim);
+    }
+
     let jobs = session.executor().jobs().len();
     if jobs > 0 {
         prompt = prompt.segment(format!(" +{jobs}"), Token::Accent);
@@ -589,6 +595,65 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
         " > "
     };
     prompt.segment(marker, Token::Dim)
+}
+
+/// The source-control segment of spec §4.2, or nothing when there is none to show.
+///
+/// The segment is read from the repository's own files rather than from `git`: a prompt drawn
+/// before every line must not fork a process, and spec §34 budgets the prompt. The branch is
+/// what `.git/HEAD` says, which is the one fact that is both cheap and always true; the
+/// specification's `*` for a dirty tree is deliberately not shown (ADR-0250). Switched off by
+/// `prompt.vcs`.
+fn vcs_segment(session: &Session) -> Option<String> {
+    if session.settings().flag("prompt.vcs") == Some(false) {
+        return None;
+    }
+    vcs_branch(session.cwd()).map(|branch| format!("git:{branch}"))
+}
+
+/// The branch `directory` is on, looking upwards for the checkout it belongs to.
+fn vcs_branch(directory: &std::path::Path) -> Option<String> {
+    let mut candidate = Some(directory);
+    while let Some(here) = candidate {
+        if let Some(branch) = branch_of(&here.join(".git")) {
+            return Some(branch);
+        }
+        candidate = here.parent();
+    }
+    None
+}
+
+/// The branch named by the `HEAD` of the checkout `git` points at.
+///
+/// `git` is a directory in an ordinary clone and a file holding `gitdir: <path>` in a worktree
+/// or a submodule; both are followed, once, because a chain deeper than that is git's business
+/// and not a prompt's.
+fn branch_of(git: &std::path::Path) -> Option<String> {
+    let metadata = std::fs::metadata(git).ok()?;
+    let directory = if metadata.is_dir() {
+        git.to_path_buf()
+    } else {
+        let pointer = std::fs::read_to_string(git).ok()?;
+        let target = pointer.trim().strip_prefix("gitdir:")?.trim();
+        let target = std::path::Path::new(target);
+        if target.is_absolute() {
+            target.to_path_buf()
+        } else {
+            git.parent()?.join(target)
+        }
+    };
+    let head = std::fs::read_to_string(directory.join("HEAD")).ok()?;
+    let head = head.trim();
+    match head.strip_prefix("ref: refs/heads/") {
+        // A detached HEAD is a commit, and forty hex characters in a prompt is a wall: the
+        // short form is what every other tool shows and what a person can compare.
+        None => head
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+            .then(|| head.chars().take(7).collect::<String>())
+            .filter(|short| short.len() == 7),
+        Some(branch) => (!branch.is_empty()).then(|| branch.to_owned()),
+    }
 }
 
 /// What the current spatial place adds to the link segment already painted (spec v0.4 §21.2).

@@ -158,6 +158,12 @@ pub const CATALOGUE: &[SettingSpec] = &[
         default: DefaultValue::Str("smart"),
     },
     SettingSpec {
+        key: "prompt.vcs",
+        ty: SettingType::Bool,
+        description: "Whether the prompt carries the source-control segment of spec §4.2 — `git:<branch>`, read from the checkout's own files (ADR-0250).",
+        default: DefaultValue::Bool(true),
+    },
+    SettingSpec {
         key: "render.table.max_rows",
         ty: SettingType::Int,
         description: "How many rows a rendered table shows before a visible `... N more` line (spec §13.3); 0 shows every row.",
