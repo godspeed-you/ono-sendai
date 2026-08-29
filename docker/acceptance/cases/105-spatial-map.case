@@ -133,6 +133,16 @@ run: |
     'ono -c "map --json | from json | select completeness | to json" | grep -qE "complete|bounded|partial|unknown"'
   prove s5ad "the same graph is served whatever the terminal is (§6.9, §43.2)" \
     'test "$(COLUMNS=40 ono -c "map --json | from json | select center | to json")" = "$(COLUMNS=200 ono -c "map --json | from json | select center | to json")" && COLUMNS=40 ono -c "map --json | from json | select center | to json" | grep -q "ono:"'
+
+  echo '== an object map names why each neighbour is there (§23.5, §11.4) =='
+  sleep 30 &
+  child=$!
+  prove s5ae "every neighbour of an object map names the relation it stands in" \
+    'ono -c "enter process '"$child"'; map" > /tmp/object-map.txt;
+     sed -n "/also here/,/^ *$/p" /tmp/object-map.txt | tail -n +2 | grep . > /tmp/also-here.txt;
+     test -s /tmp/also-here.txt &&
+     ! grep -qvE "process\.|parent|more in" /tmp/also-here.txt'
+  kill $child 2>/dev/null || true
 stdout-contains: PROVED s5-field-map_id
 stdout-contains: PROVED s5-field-center
 stdout-contains: PROVED s5-field-scope
@@ -188,4 +198,5 @@ stdout-contains: PROVED s5aa
 stdout-contains: PROVED s5ab
 stdout-contains: PROVED s5ac
 stdout-contains: PROVED s5ad
+stdout-contains: PROVED s5ae
 stdout-not-contains: FAILED

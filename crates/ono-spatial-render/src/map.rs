@@ -161,17 +161,18 @@ pub fn map_lines(map: &RecordValue, width: usize, charset: Charset) -> Vec<MapLi
     let labels = labels_of(&nodes, &clusters);
     let children = hierarchy(&edges);
     let center = text(map, "center").unwrap_or_default();
+    let ambiguous = ambiguous(&labels);
     let mut drawn: BTreeSet<String> = BTreeSet::new();
     lines.push(MapLine::plain(String::new()));
     lines.push(MapLine::at(
         fit(
-            &format!("  {}", node_line(&labels, &center, charset)),
+            &format!("  {}", node_line(&labels, &ambiguous, &center, charset)),
             width,
         ),
         &center,
     ));
     lines.extend(branch(
-        &labels, &children, &center, "  ", charset, width, &mut drawn,
+        &labels, &ambiguous, &children, &center, "  ", charset, width, &mut drawn,
     ));
 
     // Anything the hierarchy did not reach is still on the map, and dropping it here would be the
@@ -181,13 +182,24 @@ pub fn map_lines(map: &RecordValue, width: usize, charset: Charset) -> Vec<MapLi
         .filter(|id| **id != center && !drawn.contains(*id))
         .collect();
     if !loose.is_empty() {
+        // §23.5: "Edges MUST show relation labels", and §11.4 makes a relationship explainable.
+        // A neighbour outside the hierarchy is there *because of* an edge, and a row that named
+        // only its display name could not be chosen from — which is what the view is for.
+        let reached = reached_by(&edges, map, &nodes);
         lines.push(MapLine::plain(String::new()));
         lines.push(MapLine::plain("  also here".to_owned()));
         for id in loose {
-            lines.push(MapLine::at(
-                fit(&format!("    {}", node_line(&labels, id, charset)), width),
-                id,
-            ));
+            let drawn_line = node_line(&labels, &ambiguous, id, charset);
+            let line = match reached.get(id) {
+                Some(relation) => format!("    {drawn_line}  {} {relation}", charset.dash()),
+                None => format!("    {drawn_line}"),
+            };
+            match reached.get(id) {
+                Some(relation) => {
+                    lines.push(MapLine::edge(fit(&line, width), id, relation));
+                }
+                None => lines.push(MapLine::at(fit(&line, width), id)),
+            }
         }
     }
 
@@ -255,6 +267,7 @@ fn labels_of(nodes: &[RecordValue], clusters: &[RecordValue]) -> BTreeMap<String
             id,
             Drawn {
                 label: text(node, "label").unwrap_or_default(),
+                identity: identity_of(node),
                 state: text(node, "state"),
                 reasons: node
                     .get("landmark_reasons")
@@ -280,6 +293,7 @@ fn labels_of(nodes: &[RecordValue], clusters: &[RecordValue]) -> BTreeMap<String
             id,
             Drawn {
                 label: text(cluster, "label").unwrap_or_default(),
+                identity: None,
                 state: None,
                 reasons: Vec::new(),
                 members: integer(cluster, "members"),
@@ -292,9 +306,28 @@ fn labels_of(nodes: &[RecordValue], clusters: &[RecordValue]) -> BTreeMap<String
 /// One thing the map draws: a node, or the cluster standing for many.
 struct Drawn {
     label: String,
+    /// What tells this node from another with the same display name, from the node's own
+    /// `object_ref` (§11.4). `pid 4711` for a process, `inode 88213` for a socket.
+    identity: Option<String>,
     state: Option<String>,
     reasons: Vec<String>,
     members: Option<i128>,
+}
+
+/// The first identity field of a node's `object_ref`, as `pid 4711` (`map-node.v1.yaml`).
+///
+/// `object_ref` carries "the schema it is served under and the values of that schema's identity
+/// fields", so the first field after the schema is what the provider identifies the object by —
+/// and therefore what tells two `containerd-shim` rows apart (§11.4). A canonical place is
+/// identified by its `space`, which is already its label, so it has nothing to add.
+fn identity_of(node: &RecordValue) -> Option<String> {
+    let ono_value::Value::Map(reference) = node.get("object_ref")? else {
+        return None;
+    };
+    reference
+        .iter()
+        .find(|(key, _)| &**key != "schema" && &**key != "space")
+        .map(|(key, value)| format!("{key} {value}"))
 }
 
 /// The containment the map's own hierarchy edges declare, child lists in drawing order.
@@ -313,8 +346,13 @@ fn hierarchy(edges: &[RecordValue]) -> BTreeMap<String, Vec<String>> {
 }
 
 /// The subtree below `parent`, indented under `prefix`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one drawing step, and every argument is part of the line it draws"
+)]
 fn branch(
     labels: &BTreeMap<String, Drawn>,
+    ambiguous: &BTreeSet<String>,
     children: &BTreeMap<String, Vec<String>>,
     parent: &str,
     prefix: &str,
@@ -341,7 +379,10 @@ fn branch(
         };
         lines.push(MapLine::at(
             fit(
-                &format!("{prefix}{mark}{}", node_line(labels, child, charset)),
+                &format!(
+                    "{prefix}{mark}{}",
+                    node_line(labels, ambiguous, child, charset)
+                ),
                 width,
             ),
             child,
@@ -352,14 +393,77 @@ fn branch(
             format!("{prefix}{trunk}")
         };
         lines.extend(branch(
-            labels, children, child, &deeper, charset, width, drawn,
+            labels, ambiguous, children, child, &deeper, charset, width, drawn,
         ));
     }
     lines
 }
 
+/// The relation each node outside the hierarchy is reached by, from the map's own edges (§23.5).
+///
+/// Where more than one relation reaches the same node the labels are joined, in the map's own
+/// edge order: "why is this here" has two answers and giving one would be choosing.
+fn reached_by(
+    edges: &[RecordValue],
+    map: &RecordValue,
+    nodes: &[RecordValue],
+) -> BTreeMap<String, String> {
+    let mut reached: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut note = |id: Option<String>, relation: &str| {
+        let Some(id) = id else { return };
+        let labels: &mut Vec<String> = reached.entry(id).or_default();
+        if !labels.iter().any(|held| held == relation) {
+            labels.push(relation.to_owned());
+        }
+    };
+    for edge in edges {
+        let Some(relation) = text(edge, "relation") else {
+            continue;
+        };
+        // Both ends: an edge explains why either of the objects it joins is on this map, and the
+        // parent of a process is reached by the same `process.parent_of` its children are.
+        note(text(edge, "source"), &relation);
+        note(text(edge, "target"), &relation);
+    }
+    // The canonical parent is on the map because it is the parent (§11.3) — `up` reaches it, and
+    // no relationship edge does.
+    if let Some(center) = text(map, "center")
+        && let Some(parent) = nodes
+            .iter()
+            .find(|node| text(node, "id").as_deref() == Some(center.as_str()))
+            .and_then(|node| text(node, "canonical_parent"))
+    {
+        note(Some(parent), "parent");
+    }
+    reached
+        .into_iter()
+        .map(|(id, labels)| (id, labels.join(", ")))
+        .collect()
+}
+
+/// Which display names more than one drawn thing answers to (§11.4).
+fn ambiguous(labels: &BTreeMap<String, Drawn>) -> BTreeSet<String> {
+    let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
+    for drawn in labels.values() {
+        *seen.entry(drawn.label.as_str()).or_default() += 1;
+    }
+    seen.into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(label, _)| label.to_owned())
+        .collect()
+}
+
 /// One drawn thing, on one line: what it is called, what state it is in, and why it was promoted.
-fn node_line(labels: &BTreeMap<String, Drawn>, id: &str, charset: Charset) -> String {
+///
+/// A name two drawn things share carries the identity that tells them apart (§11.4): four
+/// `containerd-shim` rows with nothing between them cannot be chosen from, which is what the
+/// view is for.
+fn node_line(
+    labels: &BTreeMap<String, Drawn>,
+    ambiguous: &BTreeSet<String>,
+    id: &str,
+    charset: Charset,
+) -> String {
     let Some(drawn) = labels.get(id) else {
         return id.to_owned();
     };
@@ -367,6 +471,11 @@ fn node_line(labels: &BTreeMap<String, Drawn>, id: &str, charset: Charset) -> St
         return format!("+ {members} more in {}", drawn.label);
     }
     let mut line = drawn.label.clone();
+    if ambiguous.contains(&drawn.label)
+        && let Some(identity) = &drawn.identity
+    {
+        line.push_str(&format!(" ({identity})"));
+    }
     if let Some(state) = &drawn.state
         && !state.is_empty()
     {
