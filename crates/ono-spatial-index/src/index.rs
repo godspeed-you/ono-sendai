@@ -277,7 +277,7 @@ impl SpatialIndex {
             match entry
                 .edges
                 .iter()
-                .position(|known| known.edge_id() == edge.edge_id())
+                .position(|known| known.same_edge_as(&edge))
             {
                 Some(position) => entry.edges[position] = edge.clone(),
                 None => entry.edges.push(edge.clone()),

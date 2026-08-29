@@ -216,6 +216,25 @@ impl RelationshipEdge {
         self
     }
 
+    /// Whether `other` is the same edge as this one — the same question
+    /// [`RelationshipEdge::edge_id`] answers, asked without computing either id.
+    ///
+    /// An edge is identified by the five fields the id hashes, so two edges share an id exactly
+    /// when those five agree. Attributes, validity and observation time are not part of the
+    /// identity: a re-observation of the same relationship is the same edge carrying newer
+    /// detail (§33.2).
+    ///
+    /// This exists because the index answers it once per edge already held by a place, and
+    /// hashing there made recording an edge cost a SHA-256 per neighbour.
+    #[must_use]
+    pub fn same_edge_as(&self, other: &Self) -> bool {
+        self.source == other.source
+            && self.target == other.target
+            && self.relation == other.relation
+            && self.direction == other.direction
+            && self.confidence == other.confidence
+    }
+
     /// The edge's stable identity.
     #[must_use]
     pub fn edge_id(&self) -> EdgeId {

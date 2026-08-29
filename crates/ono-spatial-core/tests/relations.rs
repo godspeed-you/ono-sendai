@@ -94,6 +94,42 @@ fn should_give_two_assertions_of_one_relationship_the_same_edge_id() {
 }
 
 #[test]
+fn should_answer_the_same_as_the_edge_id_when_asked_whether_two_edges_are_one() {
+    // The index asks this question once per edge a place already holds, so it asks it without
+    // hashing. It must answer exactly what comparing the two ids answers, or a re-observation
+    // would be filed beside the edge it replaces instead of over it.
+    let observed = edge("process.owns_socket");
+    let same = edge("process.owns_socket");
+    let other_relation = edge("process.opened_file");
+    let inferred = RelationshipEdge::new(
+        observed.source().clone(),
+        observed.target().clone(),
+        *observed.relation(),
+        Confidence::Inferred,
+        observed.provenance().clone(),
+        observed.observed_at(),
+    );
+    let detailed = edge("process.owns_socket").with_attribute("fd", Value::from(7_i64));
+
+    for (left, right) in [
+        (&observed, &same),
+        (&observed, &other_relation),
+        (&observed, &inferred),
+        (&observed, &detailed),
+        (&inferred, &other_relation),
+    ] {
+        assert_eq!(
+            left.same_edge_as(right),
+            left.edge_id() == right.edge_id(),
+            "`same_edge_as` and `edge_id` must agree on whether two edges are one edge"
+        );
+    }
+    // And the detail an edge carries is not part of which edge it is: a second observation that
+    // learned the file descriptor is the same edge, now better described (§33.2).
+    assert!(observed.same_edge_as(&detailed));
+}
+
+#[test]
 fn should_give_an_inference_a_different_edge_id_than_an_observation() {
     // An inference is not the same assertion as an observation, so it may not be absorbed into
     // one (spec v0.2 §22.2, carried into v0.4 by §11.5).
