@@ -161,8 +161,10 @@ async fn should_narrow_a_watch_to_the_entered_object_rather_than_the_whole_machi
 #[tokio::test]
 async fn should_refuse_a_watch_the_context_cannot_narrow_rather_than_widening() {
     // Spec §14.3's prohibition applies to `watch` exactly as it does to `get`: the widget schema
-    // carries no `service` field, so a service frame cannot narrow it.
-    let frame = ono_command::ContextFrame::new("service", Value::string("nginx.service"));
+    // carries no `mount` field and `watch process` declares no `mount` parameter, so a mount
+    // frame can narrow it neither way. (A *service* frame can: `ono.process.watch` declares
+    // `--service`, which the procfs provider honours — ADR-0076 §2 and §4.)
+    let frame = ono_command::ContextFrame::new("mount", Value::string("/"));
     let registry = providers(FixtureProvider::new());
     let error = fixture::run_with_context(
         "watch process --every 30ms | take 1",
