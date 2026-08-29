@@ -222,6 +222,10 @@ fn should_define_the_mount_schema_exactly_as_the_spec_does() {
             ("options", false),
             ("read_only", false),
             ("device", true),
+            // ADR-0236: `mountinfo(5)`'s `shared:N`. §28.6 names no propagation field, and
+            // storage.yaml promises `trace mount` shows propagation peers; the group is the
+            // fact both mounts state, so it is the mount's and not the trace's.
+            ("peer_group", true),
         ]
     );
 }

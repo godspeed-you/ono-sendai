@@ -142,6 +142,91 @@ impl RelationshipProvider for MountFilesystems {
     }
 }
 
+/// The propagation peers of a mount: the other mounts in its `shared:N` group.
+///
+/// Two mounts in one peer group propagate to each other — a mount or unmount under one appears
+/// under the other — which is what `mountinfo(5)` states with `shared:N` and what
+/// `docs/spec/commands/storage.yaml` means by "propagation peers". The edge is exact: both
+/// mounts state the same group, and nothing is inferred from paths or names.
+///
+/// ADR-0079 left this out on the grounds that a peer group has no object to stand for it. It
+/// needs none: the relation is between the mounts, and the group is the reason, carried on the
+/// edge (ADR-0236). A mount that is private, or only a slave of another group, has no peer and
+/// contributes no edge — that is absence, not a failed read (spec §10.5).
+#[derive(Debug)]
+pub struct MountPeers {
+    registry: Arc<ProviderRegistry>,
+    snapshots: Arc<SharedSnapshots>,
+}
+
+impl MountPeers {
+    /// A provider reading the mount table through `registry`.
+    #[must_use]
+    pub fn new(registry: Arc<ProviderRegistry>) -> Self {
+        Self {
+            registry,
+            snapshots: Arc::default(),
+        }
+    }
+
+    pub(crate) fn sharing(mut self, snapshots: Arc<SharedSnapshots>) -> Self {
+        self.snapshots = snapshots;
+        self
+    }
+}
+
+#[async_trait::async_trait]
+impl RelationshipProvider for MountPeers {
+    fn id(&self) -> &str {
+        "linux.mount-peers"
+    }
+
+    fn subjects(&self) -> &[&str] {
+        &[MOUNT]
+    }
+
+    fn relations(&self) -> &[&str] {
+        &["peer"]
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![Capability::new("mount.list", Risk::Read)]
+    }
+
+    async fn relationships(&self, subject: &Node) -> Relationships {
+        let Some(target) = subject.field("target").cloned() else {
+            return Relationships::failed(missing_field(subject, "target"));
+        };
+        // A mount in no peer group propagates to nothing. There is no edge to draw and nothing
+        // that failed.
+        let Some(group) = subject.integer("peer_group") else {
+            return Relationships::new();
+        };
+        let (mounts, stream_failures) = match self.snapshots.all(&self.registry, "mount").await {
+            Ok(found) => found,
+            Err(error) => return Relationships::failed(error),
+        };
+        let mut found = Relationships::new();
+        for failure in stream_failures {
+            found.fail(failure);
+        }
+        for record in &mounts {
+            if record.get("peer_group") != Some(&Value::Int(i128::from(group)))
+                || record.get("target") == Some(&target)
+            {
+                continue;
+            }
+            if let Some(node) = Node::of(record) {
+                found.push(
+                    Relationship::exact(subject, node, "peer", self.id())
+                        .with_metadata("peer_group", Value::Int(i128::from(group))),
+                );
+            }
+        }
+        found
+    }
+}
+
 /// The processes using a mount: those whose root or working directory lies on it.
 ///
 /// A path lies on the mount whose target is its longest prefix among all mounts — the same

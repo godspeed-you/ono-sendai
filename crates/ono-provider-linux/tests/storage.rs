@@ -719,3 +719,54 @@ async fn should_report_the_service_manager_s_refusal_as_the_row_s_error() {
     assert_eq!(outcome.status(), ActionStatus::Failed);
     assert_eq!(error_code(&outcome), "Ono-Sendai-E0302", "{outcome:?}");
 }
+
+#[tokio::test]
+async fn should_report_the_propagation_peer_group_of_a_shared_mount() {
+    // `mountinfo(5)`'s optional fields carry the propagation state, and `shared:N` is what makes
+    // two mounts peers: a mount under one appears under the other. Two bind mounts of one shared
+    // mount carry the same group; a private mount carries none, and that is an absence the
+    // kernel states rather than something unknown (ADR-0236, spec §35.3).
+    let fixture = StorageFixture::new("");
+    let one = fixture.mount_point("one");
+    let two = fixture.mount_point("two");
+    let private = fixture.mount_point("private");
+    let lines = format!(
+        "36 35 8:1 / {one} rw shared:7 - ext4 /dev/sdb1 rw\n\
+         37 35 8:1 / {two} rw shared:7 master:3 - ext4 /dev/sdb1 rw\n\
+         38 35 8:2 / {private} rw - ext4 /dev/sdb2 rw\n",
+        one = one.display(),
+        two = two.display(),
+        private = private.display(),
+    );
+    fs::write(fixture.path().join("proc/self/mountinfo"), lines).expect("the mount table");
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("mount"))
+            .expect("a snapshot"),
+    )
+    .await;
+    let records = records(&collected);
+
+    for target in [&one, &two] {
+        let mount = records
+            .iter()
+            .find(|record| record.get("target") == Some(&Value::Path(Arc::from(target.clone()))))
+            .unwrap_or_else(|| panic!("the fixture declares {}", target.display()));
+        assert_eq!(
+            mount.get("peer_group"),
+            Some(&Value::Int(7)),
+            "`shared:7` is the propagation peer group, and both bind mounts are in it"
+        );
+    }
+
+    let solitary = records
+        .iter()
+        .find(|record| record.get("target") == Some(&Value::Path(Arc::from(private.clone()))))
+        .expect("the fixture declares a private mount");
+    assert_eq!(
+        solitary.access("peer_group"),
+        FieldAccess::Unknown,
+        "a private mount propagates nothing, so it is in no peer group"
+    );
+}

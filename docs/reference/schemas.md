@@ -987,6 +987,7 @@ Default view: `target`, `source`, `filesystem`, `read_only`
 | `options` | `list<string>` | — | required | The mount options, one element per option, never a single joined string. |
 | `read_only` | `bool` | — | required | Whether the mount is read-only. Extracted from the options because users filter on it. |
 | `device` | `ref<ono.device/1>` | — | nullable | The backing device; null for pseudo- and network filesystems. |
+| `peer_group` | `int` | — | nullable | The propagation peer group `mountinfo(5)` gives as `shared:N`. Two mounts with the same group are peers: a mount or unmount under one appears under the other. Null when the mount is private, which is a mount that propagates nothing — not an unknown (ADR-0236). |
 
 ## Namespace — `ono.namespace/1`
 

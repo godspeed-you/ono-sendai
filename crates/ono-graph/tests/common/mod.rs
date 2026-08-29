@@ -302,12 +302,23 @@ pub fn file(path: &str, kind: &str, device: i64, inode: i64) -> RecordValue {
 
 /// A mount record.
 pub fn mount(source: &str, target: &str, filesystem: &str) -> RecordValue {
+    mount_in_group(source, target, filesystem, None)
+}
+
+/// A mount in the propagation peer group `mountinfo(5)` spells `shared:N`.
+pub fn mount_in_group(
+    source: &str,
+    target: &str,
+    filesystem: &str,
+    peer_group: Option<i128>,
+) -> RecordValue {
     RecordValue::builder(schema("ono.mount"), provenance("ono.mount"))
         .set("source", Value::String(source.into()))
         .and_then(|builder| builder.set("target", Value::Path(Arc::from(Path::new(target)))))
         .and_then(|builder| builder.set("filesystem", Value::String(filesystem.into())))
         .and_then(|builder| builder.set("options", Value::List(Arc::from([]))))
         .and_then(|builder| builder.set("read_only", Value::Bool(false)))
+        .and_then(|builder| builder.set("peer_group", peer_group.map_or(Value::Null, Value::Int)))
         .expect("the fixture mount record")
         .build()
 }

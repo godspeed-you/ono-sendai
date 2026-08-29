@@ -13,7 +13,7 @@
 //!   [`ono_provider_api::Provider`] so that the KUANG/11 relationship contribution of spec §31.26
 //!   is not a special case of anything.
 //! - [`ProcessTree`], [`OpenFiles`], [`ProcessSockets`], [`SocketOwners`], [`ServiceProcesses`],
-//!   [`FileHolders`], [`MountDevices`], [`MountFilesystems`], [`MountUsers`],
+//!   [`FileHolders`], [`MountDevices`], [`MountFilesystems`], [`MountPeers`], [`MountUsers`],
 //!   [`RouteInterfaces`], [`InterfaceRoutes`], [`InterfaceSockets`], [`UserProcesses`],
 //!   [`UserGroups`], [`ProcessUsers`] — the exact relationships of spec §22.2 and §22.3, each
 //!   read from the kernel or the account database; [`HostLinks`] and [`LinkProviders`] — the
@@ -79,7 +79,7 @@ pub use graph::{
 };
 pub use kernel::{
     ContainerImage, FileHolders, HostLinks, InterfaceRoutes, InterfaceSockets, LinkProviders,
-    MountDevices, MountFilesystems, MountUsers, OpenFiles, ProcessSockets, ProcessTree,
+    MountDevices, MountFilesystems, MountPeers, MountUsers, OpenFiles, ProcessSockets, ProcessTree,
     ProcessUsers, RemoteHosts, Resolver, RouteInterfaces, ServiceProcesses, SocketOwners,
     UserGroups, UserProcesses, kernel_relationships, rooted_relationships,
 };

@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 use common::{
     FixtureProvider, ProcFixture, TableResolver, edges, endpoint, file, filesystem, group,
-    interface, make_readable, mount, neighbor, node, owned_process, process, registry, route,
-    service, socket, trace_with, user,
+    interface, make_readable, mount, mount_in_group, neighbor, node, owned_process, process,
+    registry, route, service, socket, trace_with, user,
 };
 use ono_core::ErrorCode;
 use ono_graph::{
-    Confidence, FileHolders, InterfaceSockets, MountDevices, MountFilesystems, MountUsers,
-    OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, RouteInterfaces,
+    Confidence, FileHolders, InterfaceSockets, MountDevices, MountFilesystems, MountPeers,
+    MountUsers, OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, RouteInterfaces,
     ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
 };
 use ono_provider_api::Provider;
@@ -536,6 +536,73 @@ async fn should_link_a_mount_to_the_filesystem_at_the_same_mount_point() {
         edges(&graph),
         ["filesystem -> filesystem/0f7c2b1e-9a3d-4e55-8c21-1d2e3f4a5b6c"],
         "the filesystem is the one at the mount's own target, not the root's"
+    );
+}
+
+#[tokio::test]
+async fn should_link_a_mount_to_the_other_mounts_of_its_propagation_peer_group() {
+    // storage.yaml: `trace mount` shows "a mount's device, filesystem, propagation peers and the
+    // processes using it". `mountinfo(5)`'s `shared:N` is what makes two mounts peers, and both
+    // state the same number — nothing is inferred from paths (spec §22.4, ADR-0236).
+    let mounts: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.mount",
+        &["mount"],
+        vec![
+            mount_in_group("/dev/sdb1", "/srv/data", "xfs", Some(7)),
+            mount_in_group("/dev/sdb1", "/exports/data", "xfs", Some(7)),
+            mount_in_group("/dev/sdc1", "/elsewhere", "ext4", Some(9)),
+            mount("/dev/sdd1", "/private", "ext4"),
+        ],
+    ))];
+    let registry = registry(mounts);
+    let subject = mount_in_group("/dev/sdb1", "/srv/data", "xfs", Some(7));
+
+    let graph = trace_with(
+        vec![Arc::new(MountPeers::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["peer -> /exports/data"],
+        "the peers are the other mounts of group 7: not the mount itself, not group 9, and not \
+         the private mount that propagates nothing"
+    );
+}
+
+#[tokio::test]
+async fn should_relate_a_private_mount_to_no_peer_at_all() {
+    // A mount in no peer group propagates to nothing. That is an absence the kernel states, and
+    // an empty answer is the honest one — not a failure (spec §10.5).
+    let mounts: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.mount",
+        &["mount"],
+        vec![
+            mount("/dev/sdd1", "/private", "ext4"),
+            mount_in_group("/dev/sdb1", "/srv/data", "xfs", Some(7)),
+        ],
+    ))];
+    let registry = registry(mounts);
+    let subject = mount("/dev/sdd1", "/private", "ext4");
+
+    let graph = trace_with(
+        vec![Arc::new(MountPeers::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert!(
+        edges(&graph).is_empty(),
+        "a private mount has no peers, got {:?}",
+        edges(&graph)
+    );
+    assert!(
+        graph.failures().is_empty(),
+        "having no peers is not a failure to report, got {:?}",
+        graph.failures()
     );
 }
 

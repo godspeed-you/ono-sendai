@@ -23,7 +23,7 @@ pub use container::ContainerImage;
 pub use dns::{RemoteHosts, Resolver};
 pub use file::FileHolders;
 pub use identity::{ProcessUsers, UserGroups, UserProcesses};
-pub use mount::{MountDevices, MountFilesystems, MountUsers};
+pub use mount::{MountDevices, MountFilesystems, MountPeers, MountUsers};
 pub use network::{InterfaceRoutes, InterfaceSockets, RouteInterfaces};
 pub use process::{OpenFiles, ProcessSockets, ProcessTree, SocketOwners};
 pub use remote::{HostLinks, LinkProviders};
@@ -72,6 +72,7 @@ pub fn rooted_relationships(
         ),
         Arc::new(MountDevices::new(Arc::clone(&registry))),
         Arc::new(MountFilesystems::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
+        Arc::new(MountPeers::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
         Arc::new(
             MountUsers::new(Arc::clone(&registry))
                 .rooted(root)

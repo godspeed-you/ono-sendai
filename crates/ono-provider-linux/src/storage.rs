@@ -44,6 +44,8 @@ pub(crate) struct MountInfo {
     pub(crate) filesystem: String,
     pub(crate) options: Vec<String>,
     pub(crate) device: Option<String>,
+    /// The propagation peer group of `mountinfo(5)`'s `shared:N`, where the mount is in one.
+    pub(crate) peer_group: Option<i64>,
 }
 
 impl MountInfo {
@@ -71,6 +73,16 @@ fn parse_mountinfo_line(line: &str) -> Option<MountInfo> {
     let filesystem = fields.get(separator + 1)?;
     let source = unescape(fields.get(separator + 2)?);
     let super_options = fields.get(separator + 3).copied().unwrap_or_default();
+    // The optional fields sit between the options and the `-`, and there may be none: a private
+    // mount says nothing there, which is why the separator has to be found rather than counted
+    // to. `shared:N` is the peer group; a mount that is only a slave (`master:N`) propagates to
+    // nothing and is in no group of its own.
+    let peer_group = fields
+        .get(6..separator)
+        .unwrap_or_default()
+        .iter()
+        .find_map(|field| field.strip_prefix("shared:"))
+        .and_then(|id| id.parse().ok());
 
     // The kernel reports per-mount and per-superblock options separately. A user asking "how is
     // this mounted" means both, so both are in the list, in that order, without duplicates.
@@ -90,6 +102,7 @@ fn parse_mountinfo_line(line: &str) -> Option<MountInfo> {
         target: PathBuf::from(target),
         filesystem: (*filesystem).to_owned(),
         options,
+        peer_group,
         // Major 0 is an anonymous device: tmpfs, procfs, an overlay. There is no block device
         // behind it, and saying `0:42` would suggest there is.
         device: match device.split_once(':') {
@@ -251,6 +264,9 @@ impl StorageProvider {
             Value::Bool(definition.options.iter().any(|option| option == "ro")),
         )?
         .set("device", Value::Null)?
+        // A definition in `/etc/fstab` is not mounted, so it is in no peer group: the kernel
+        // assigns one when the mount happens.
+        .set("peer_group", Value::Null)?
         .build())
     }
 
@@ -321,6 +337,12 @@ impl StorageProvider {
                 .device
                 .as_ref()
                 .map_or(Value::Null, |device| Value::string(device)),
+        )?
+        .set(
+            "peer_group",
+            mount
+                .peer_group
+                .map_or(Value::Null, |group| Value::Int(i128::from(group))),
         )?
         .build())
     }

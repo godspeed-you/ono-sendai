@@ -203,6 +203,8 @@ fn should_declare_the_storage_contracts_exactly_as_the_registry_fixes_them() {
             ("options", "list<string>", true, false),
             ("read_only", "bool", true, false),
             ("device", "ref<ono.device/1>", false, true),
+            // ADR-0236: `mountinfo(5)`'s `shared:N`, which is what makes two mounts peers.
+            ("peer_group", "int", false, true),
         ],
     );
     assert_contract(
