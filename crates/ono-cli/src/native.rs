@@ -1877,6 +1877,13 @@ fn rendered_bytes(values: &[Value], max_rows: Option<usize>) -> Vec<u8> {
 /// reported the way `ono-process` reports it: the operating system refused the operation, with
 /// the real reason in the message.
 fn write_failed(error: std::io::Error) -> Flow {
+    // A reader that closed the pipe is not a failure to report. `… | head` is how a Unix user
+    // asks for the first page, and every other shell stops there in silence; a diagnostic on the
+    // terminal would be the shell complaining about being used correctly. The process stops with
+    // the status a program killed by `SIGPIPE` reports (ADR-0220).
+    if error.kind() == std::io::ErrorKind::BrokenPipe {
+        return Flow::Exit(ExitStatus::from_signal(13));
+    }
     let code = match error.kind() {
         std::io::ErrorKind::NotFound => ErrorCode::IoNotFound,
         std::io::ErrorKind::AlreadyExists => ErrorCode::IoAlreadyExists,

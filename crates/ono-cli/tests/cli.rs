@@ -36,3 +36,27 @@ fn should_fail_with_a_usage_error_when_given_unknown_arguments() {
         .run()
         .assert_status(2);
 }
+
+#[test]
+fn should_stop_quietly_when_the_reader_of_its_output_goes_away() {
+    // `ono -c 'get process | to json' | head -c 200`: the reader closes the pipe after its two
+    // hundred bytes. Every other shell stops there without a word; reporting the closed pipe as
+    // an I/O failure turns an ordinary `| head` into a diagnostic on the user's terminal.
+    let ono = env!("CARGO_BIN_EXE_ono");
+    let scratch = ono_testkit::scratch();
+    let errors = scratch.path().join("stderr.txt");
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "{ono} -c 'get process | to json' 2>{} | head -c 200 >/dev/null",
+            errors.display()
+        ))
+        .status()
+        .expect("the shell runs");
+    assert!(status.success(), "`head` finished normally");
+    let written = std::fs::read_to_string(&errors).expect("the stderr file");
+    assert!(
+        written.trim().is_empty(),
+        "a closed reader is not an error to report: {written:?}"
+    );
+}

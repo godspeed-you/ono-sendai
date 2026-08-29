@@ -32,10 +32,20 @@ run: |
     echo "no-escapes-in-a-file"
   fi
   cat /tmp/to-a-file.txt
+
+  # A reader that closes the pipe early is ordinary Unix, not a failure to report (ADR-0220).
+  ono -c 'get process | to json' 2>/tmp/head-stderr.txt | head -c 200 > /dev/null
+  if [ -s /tmp/head-stderr.txt ]; then
+    echo "COMPLAINED ABOUT HEAD"; cat /tmp/head-stderr.txt
+  else
+    echo "quiet-when-the-reader-leaves"
+  fi
 exit: 0
 stdout-contains: file-and-pipe-agree
 stdout-contains: terminal-agrees
 stdout-contains: no-escapes-in-a-file
+stdout-contains: quiet-when-the-reader-leaves
 stdout-contains: status=3
 stdout-not-contains: DIFFER
 stdout-not-contains: ESCAPES IN A FILE
+stdout-not-contains: COMPLAINED ABOUT HEAD
