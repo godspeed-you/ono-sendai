@@ -125,6 +125,47 @@ impl BoundArguments {
         &self.ambient
     }
 
+    /// These arguments with every expression binding evaluated against `scope`.
+    ///
+    /// A words-mode command's argument may still arrive as an expression — `stop process $p`,
+    /// `each { stop process @.pid }`, `--since (now() - 1h)` — because ADR-0009 keeps the parsed
+    /// form until something knows what it means. A command that reads *values* resolves them
+    /// here, once, before it acts (ADR-0085 §2, ADR-0219). An expression-mode command must not
+    /// call this: its expressions are evaluated per row, against the row.
+    ///
+    /// # Errors
+    ///
+    /// Whatever evaluating an argument raises — an undefined variable, a `@` with no current
+    /// value, a failed field access — naming the parameter it was written for.
+    pub fn evaluated(&self, scope: &crate::Scope) -> Result<Self, ErrorValue> {
+        let resolve =
+            |bindings: &[(String, Binding)]| -> Result<Vec<(String, Binding)>, ErrorValue> {
+                bindings
+                    .iter()
+                    .map(|(name, binding)| {
+                        let Binding::Expressions(expressions) = binding else {
+                            return Ok((name.clone(), binding.clone()));
+                        };
+                        let mut values = Vec::with_capacity(expressions.len());
+                        for expression in expressions {
+                            values.push(crate::expr::evaluate(expression, &Value::Null, scope)?);
+                        }
+                        let value = match values.len() {
+                            1 => values.remove(0),
+                            _ => Value::list(values),
+                        };
+                        Ok((name.clone(), Binding::Value(value)))
+                    })
+                    .collect()
+            };
+        Ok(Self {
+            spelling: self.spelling.clone(),
+            selectors: resolve(&self.selectors)?,
+            options: resolve(&self.options)?,
+            ambient: self.ambient.clone(),
+        })
+    }
+
     /// These arguments with `name` bound to `value` as a selector, unless it is bound already.
     ///
     /// What was typed wins over what a context fills in: a frame supplies the arguments the user

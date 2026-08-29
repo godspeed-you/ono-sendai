@@ -403,6 +403,48 @@ fn should_run_a_command_per_item_when_the_each_block_contains_one() {
     );
 }
 
+#[test]
+fn should_bind_the_iterated_item_for_a_native_stage_inside_an_each_block() {
+    // Spec §19.4 writes `each { restart service @ }`: the block's item is bound for a native
+    // command, not only for `echo` and an external program. A mutation reads values, so the
+    // expression the selector was written as has to be resolved before it acts.
+    let run = Shell::new()
+        .args(["-c", "from json | each { stop process @.pid | to json }"])
+        .stdin("[{\"pid\":999999}]")
+        .run();
+    assert!(
+        !run.output().contains("needs something to act on"),
+        "`@` is bound inside the block (spec §19.4), got {:?}",
+        run.output()
+    );
+    let row = run
+        .stdout()
+        .lines()
+        .find(|line| line.contains("ono.process.stop"))
+        .unwrap_or_else(|| panic!("one ActionResult row, got {:?}", run.output()));
+    assert!(
+        row.contains("\"status\":\"failed\"") && row.contains("999999"),
+        "spec §11.5: one ActionResult per iterated item, naming it: {row}"
+    );
+}
+
+#[test]
+fn should_resolve_a_variable_written_as_a_mutation_s_selector() {
+    // The same seam without a block: a words-mode selector may be written as an expression
+    // (ADR-0009), and a mutation reads its value.
+    let run = ono("let p = 999999; stop process $p | to json");
+    assert!(
+        !run.output().contains("needs something to act on"),
+        "`$p` is the selector's value, got {:?}",
+        run.output()
+    );
+    assert!(
+        run.stdout().contains("999999") && run.stdout().contains("ono.process.stop"),
+        "the mutation acted on the process the variable named: {:?}",
+        run.output()
+    );
+}
+
 // --- string arithmetic (spec §6.3 string operations) ----------------------------------------
 
 #[test]

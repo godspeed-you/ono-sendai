@@ -1706,6 +1706,13 @@ fn stage_scope(
     }
     scope = scope.with_previous(previous);
     for (name, value) in session.bindings() {
+        // `each { … }` binds the item it iterates as `@` (spec §19.4, ADR-0071 §1). Inside the
+        // block that is the current value, not merely a variable spelled `@`, or the
+        // specification's own `each { restart service @ }` would reach a native stage with
+        // nothing bound (ADR-0219).
+        if name == "@" {
+            scope = scope.with_current(value.clone());
+        }
         scope = scope.with_variable(&name, value);
     }
     // The session's effective settings travel as `config.<key>` bindings, so a command that
