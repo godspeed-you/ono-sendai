@@ -217,7 +217,7 @@ impl Supervisor {
             plugin_events: Vec::new(),
             last_failure: None,
         }));
-        let audit = AuditTrail::new();
+        let audit = AuditTrail::for_source(&package_id);
         let (msg_tx, msg_rx) = mpsc::channel(64);
         let actor = Actor {
             child,

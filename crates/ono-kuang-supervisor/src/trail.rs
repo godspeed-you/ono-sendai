@@ -37,13 +37,28 @@ impl HostClock {
 pub struct AuditTrail {
     events: Arc<Mutex<Vec<AuditEvent>>>,
     counter: Arc<Mutex<u64>>,
+    /// Which trail this is, mixed into every identity it mints.
+    ///
+    /// `ono.plugin-audit-event/1` identifies an event by `id`, and a host assembles one stream
+    /// out of its own events and every instance's. Two counters that both start at one would
+    /// mint two events claiming to be the same one, so the source is part of the identity.
+    source: u32,
 }
 
 impl AuditTrail {
-    /// An empty trail.
+    /// An empty trail with no source of its own.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An empty trail whose identities are distinguishable from every other source's.
+    #[must_use]
+    pub fn for_source(source: &str) -> Self {
+        Self {
+            source: fnv(source),
+            ..Self::default()
+        }
     }
 
     /// Appends one record, minting its identity. Attribution and timestamp are the caller's —
@@ -71,9 +86,9 @@ impl AuditTrail {
                 Err(poisoned) => poisoned.into_inner(),
             };
             *counter += 1;
-            // A stable v4-shaped identity derived from the sequence, so the trail is
-            // deterministic under the test host.
-            format!("00000000-0000-4000-8000-{:012x}", *counter)
+            // A stable v4-shaped identity derived from the source and the sequence, so the
+            // trail is deterministic under the test host and still unique across sources.
+            format!("{:08x}-0000-4000-8000-{:012x}", self.source, *counter)
         };
         let event = AuditEvent {
             id,
@@ -105,4 +120,16 @@ impl AuditTrail {
             Err(poisoned) => poisoned.into_inner().clone(),
         }
     }
+}
+
+/// A small stable hash of a trail's source name, for the identity namespace above.
+///
+/// FNV-1a: deterministic across runs and machines, which is what makes an audit id citable.
+fn fnv(text: &str) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in text.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
 }

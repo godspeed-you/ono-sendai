@@ -10,13 +10,16 @@ use globset::{Glob, GlobSetBuilder};
 use ono_kuang_protocol::{Capability, KuangError, KuangErrorCode};
 use serde_json::{Map as JsonMap, Value as Json};
 
-/// One standing grant: a capability, optionally bounded by a scope.
+/// One standing grant: a capability, optionally bounded by a scope and by a window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Grant {
     /// The granted family.
     pub capability: Capability,
     /// The granted scope. `None` grants the capability unscoped.
     pub scope: Option<JsonMap<String, Json>>,
+    /// When the grant stops working. `None` for a grant with no expiry; a grant with one is a
+    /// lease (spec §31.49), and the broker checks the window on every call.
+    pub expires_at: Option<jiff::Timestamp>,
 }
 
 /// The policy the broker evaluates on every call. Deny by default is the floor, not a fallback
@@ -46,6 +49,17 @@ pub enum Evaluation {
     Allowed(Grant),
     /// No grant covers the capability at all.
     Denied(DenialSource),
+    /// A lease covers the capability, and its window has closed (spec §31.49).
+    ///
+    /// This is not the same answer as [`Evaluation::Denied`]: "your window closed" and "you were
+    /// never allowed" are different facts about the same call, and §31.18 promised the operator a
+    /// duration that means something.
+    LeaseExpired {
+        /// The lease whose window has closed.
+        grant: Grant,
+        /// When it closed.
+        expired_at: jiff::Timestamp,
+    },
     /// A grant exists, but the concrete use falls outside its scope.
     ScopeViolation {
         /// The grant whose scope was exceeded.
@@ -109,7 +123,27 @@ impl Policy {
     /// Adds a grant for `capability`, bounded by `scope` (or unscoped for `None`).
     #[must_use]
     pub fn grant(mut self, capability: Capability, scope: Option<JsonMap<String, Json>>) -> Self {
-        self.grants.push(Grant { capability, scope });
+        self.grants.push(Grant {
+            capability,
+            scope,
+            expires_at: None,
+        });
+        self
+    }
+
+    /// Adds a lease: a grant that stops working at `expires_at` (spec §31.49).
+    #[must_use]
+    pub fn lease(
+        mut self,
+        capability: Capability,
+        scope: Option<JsonMap<String, Json>>,
+        expires_at: Option<jiff::Timestamp>,
+    ) -> Self {
+        self.grants.push(Grant {
+            capability,
+            scope,
+            expires_at,
+        });
         self
     }
 
@@ -138,9 +172,24 @@ impl Policy {
                 .any(|grant| grant.capability == capability)
     }
 
-    /// Evaluates one concrete use in precedence order (spec §31.19).
+    /// Evaluates one concrete use in precedence order (spec §31.19), as of now.
     #[must_use]
     pub fn evaluate(&self, capability: Capability, used: &[ScopeUse]) -> Evaluation {
+        self.evaluate_at(capability, used, jiff::Timestamp::now())
+    }
+
+    /// The same, as of `now` — the form a test states its own clock to.
+    ///
+    /// A lease whose window has closed is reported as [`Evaluation::LeaseExpired`] rather than
+    /// skipped, but only when nothing else answers: an expired lease beside a standing grant for
+    /// the same family must not take the standing grant with it (spec §31.19's accumulation).
+    #[must_use]
+    pub fn evaluate_at(
+        &self,
+        capability: Capability,
+        used: &[ScopeUse],
+        now: jiff::Timestamp,
+    ) -> Evaluation {
         if self.system_denies.contains(&capability) {
             return Evaluation::Denied(DenialSource::System);
         }
@@ -148,11 +197,21 @@ impl Policy {
             return Evaluation::Denied(DenialSource::User);
         }
         let mut nearest_violation = None;
+        let mut expired = None;
         for grant in self
             .grants
             .iter()
             .filter(|grant| grant.capability == capability)
         {
+            if let Some(expires_at) = grant.expires_at
+                && expires_at <= now
+            {
+                expired.get_or_insert(Evaluation::LeaseExpired {
+                    grant: grant.clone(),
+                    expired_at: expires_at,
+                });
+                continue;
+            }
             match scope_covers(grant, used) {
                 Ok(()) => return Evaluation::Allowed(grant.clone()),
                 Err(attempted) => {
@@ -163,7 +222,9 @@ impl Policy {
                 }
             }
         }
-        nearest_violation.unwrap_or(Evaluation::Denied(DenialSource::Default))
+        nearest_violation
+            .or(expired)
+            .unwrap_or(Evaluation::Denied(DenialSource::Default))
     }
 }
 
@@ -251,6 +312,16 @@ pub fn denial_error(capability: Capability, evaluation: &Evaluation) -> KuangErr
             )
             .with_help("`get capability --plugin <id>` shows what the package holds")
         }
+        Evaluation::LeaseExpired { grant, expired_at } => KuangError::new(
+            KuangErrorCode::CapabilityLeaseExpired,
+            format!("the lease of `{capability}` expired at {expired_at}"),
+        )
+        .with_metadata("expired_at", Json::String(expired_at.to_string()))
+        .with_metadata(
+            "granted",
+            grant.scope.clone().map_or(Json::Null, Json::Object),
+        )
+        .with_help("`grant capability <id> --plugin <package> --duration <span>` renews it"),
         Evaluation::ScopeViolation { grant, attempted } => KuangError::new(
             KuangErrorCode::CapabilityScopeViolation,
             format!("`{capability}` is granted, but `{attempted}` is outside the granted scope"),
@@ -368,5 +439,51 @@ mod tests {
             }],
         );
         assert!(matches!(refused, Evaluation::ScopeViolation { .. }));
+    }
+
+    #[test]
+    fn should_refuse_a_lease_whose_window_has_closed_rather_than_calling_it_ungranted() {
+        // §31.49 makes a lease a grant with an expiry, and §31.18 requires a grant prompt to
+        // state a duration. A duration nothing checks is the same defect as a scope nothing
+        // checks: `capability.lease_expired` is its own condition (K11303) precisely so an
+        // operator can tell "your window closed" from "you were never allowed".
+        let granted = "2026-08-29T10:00:00Z".parse().expect("a timestamp");
+        let policy = Policy::deny_all().lease(Capability::ClockRead, None, Some(granted));
+        let after = "2026-08-29T10:00:01Z".parse().expect("a timestamp");
+        let evaluation = policy.evaluate_at(Capability::ClockRead, &[], after);
+        assert!(
+            matches!(evaluation, Evaluation::LeaseExpired { .. }),
+            "an expired lease is not an absent grant, got {evaluation:?}"
+        );
+        assert_eq!(
+            denial_error(Capability::ClockRead, &evaluation).code(),
+            KuangErrorCode::CapabilityLeaseExpired
+        );
+    }
+
+    #[test]
+    fn should_allow_a_lease_that_is_still_inside_its_window() {
+        let expiry = "2026-08-29T10:00:00Z".parse().expect("a timestamp");
+        let policy = Policy::deny_all().lease(Capability::ClockRead, None, Some(expiry));
+        let before = "2026-08-29T09:59:59Z".parse().expect("a timestamp");
+        assert!(matches!(
+            policy.evaluate_at(Capability::ClockRead, &[], before),
+            Evaluation::Allowed(_)
+        ));
+    }
+
+    #[test]
+    fn should_keep_a_standing_grant_answering_after_a_lease_for_the_same_family_has_expired() {
+        // §31.19's precedence has grants accumulate, so one expired lease must not take a
+        // standing grant with it.
+        let expiry = "2026-08-29T10:00:00Z".parse().expect("a timestamp");
+        let policy = Policy::deny_all()
+            .lease(Capability::ClockRead, None, Some(expiry))
+            .grant(Capability::ClockRead, None);
+        let after = "2026-08-29T11:00:00Z".parse().expect("a timestamp");
+        assert!(matches!(
+            policy.evaluate_at(Capability::ClockRead, &[], after),
+            Evaluation::Allowed(_)
+        ));
     }
 }

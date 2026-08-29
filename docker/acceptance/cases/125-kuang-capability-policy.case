@@ -1,0 +1,75 @@
+# Phase I (spec §31.16, §31.18, §31.19, §31.33, §31.37, §31.49): the capability broker keeps its
+# decisions. `grant capability` reads the `--scope` and `--duration` it declares; a scope key the
+# capability does not declare is refused rather than ignored; a span makes a lease that carries
+# its own expiry; an `always` grant is written to the operator's policy store and is what the
+# broker enforces in the next session, until it is revoked; and the audit trail outlives the
+# process. ADR-0264, ADR-0265.
+case: a capability grant is scoped, timed, stored and audited across sessions
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - clock.read
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== the scope the operator names is the scope the grant carries (§31.16, §31.19) =="
+  ono -c 'grant capability filesystem.read --plugin dev.example.echo --scope "paths=/var/log/**" | select capability scope | to json'
+
+  echo "== a scope key the capability does not declare is invalid, not ignored (§31.16) =="
+  ono -c 'grant capability filesystem.read --plugin dev.example.echo --scope units=nginx.service' 2>&1 | head -2
+
+  echo "== a span makes a lease with an expiry; an unenforceable word is refused (§31.18, §31.49) =="
+  ono -c 'grant capability clock.read --plugin dev.example.echo --duration 1h | select duration | to json'
+  ono -c 'grant capability clock.read --plugin dev.example.echo --duration 1h | where expires_at != null | count | to json'
+  ono -c 'grant capability clock.read --plugin dev.example.echo --duration fortnight' 2>&1 | head -2
+
+  echo "== an always grant is stored, is what the next session enforces, and is revocable (§31.18, §31.19) =="
+  ono -c 'grant capability clock.read --plugin dev.example.echo --duration always | select duration | to json'
+  test -f "$XDG_CONFIG_HOME/ono/kuang/policy.yaml" && echo "policy store written"
+  ono -c 'get capability --plugin dev.example.echo | where capability == "clock.read" | select decision source | to json'
+  ono -c 'load plugin dev.example.echo; echo:clock | count | to json'
+  ono -c 'revoke capability clock.read --plugin dev.example.echo | select status | to json'
+  ono -c 'load plugin dev.example.echo; echo:clock' 2>&1 | tail -2
+
+  echo "== the audit trail outlives the process (§31.33, §31.37) =="
+  ono -c 'get audit | where action == "capability.grant" | count | to json'
+  ono -c 'get audit | select id | to json' | head -1
+exit: 0
+stdout-contains: {"capability":"filesystem.read","scope":{"paths":["/var/log/**"]}}
+stdout-contains: Ono-Sendai-E0202
+stdout-contains: {"duration":"session"}
+stdout-contains: [1]
+stdout-contains: Ono-Sendai-E0201
+stdout-contains: {"duration":"always"}
+stdout-contains: policy store written
+stdout-contains: {"decision":"allow","source":"user-policy"}
+stdout-contains: Ono-Sendai-K11301
+stdout-not-contains: panicked

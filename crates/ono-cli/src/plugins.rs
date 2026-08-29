@@ -165,7 +165,7 @@ pub fn load_plugin_with(
                 .standing_grants(id)
                 .any(|grant| grant.capability == capability)
             {
-                host.grant(id, capability, scope, class, "session");
+                host.grant(id, capability, scope, class, "session", "session", None);
             }
         }
         host.policy_for(id)
@@ -507,7 +507,16 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
                     .with_help("spec §31.18: never to a publisher or a class of packages"),
                 ));
             };
-            grant_capability(session, capability, plugin)
+            // `--scope` is repeatable: one key per occurrence, so a grant can bound two keys of
+            // the same capability without a nested literal on the command line.
+            let scopes: Vec<&str> = words
+                .iter()
+                .enumerate()
+                .filter(|(_, word)| *word == "--scope")
+                .filter_map(|(index, _)| words.get(index + 1))
+                .map(String::as_str)
+                .collect();
+            grant_capability(session, capability, plugin, &scopes, option("--duration"))
         }
         Request::InstallPlugin => {
             let Some(reference) = arguments.first() else {
@@ -633,7 +642,124 @@ fn install_plugin(session: &mut Session, reference: &str, confirmed: bool) -> Ev
 
 /// Runs `grant capability <capability> --plugin <id>` (spec §31.18): a standing session grant,
 /// in the scope the manifest asked for, effective at the package's next call.
-fn grant_capability(session: &mut Session, capability: &str, plugin: &str) -> Eval<Produced> {
+/// The grant durations this broker can hold itself to (spec §31.18).
+///
+/// §31.18 lists six durations a grant SHOULD support. Three of them — `once`, `this command` and
+/// `this view` — are bounded by an event the broker cannot observe from here: nothing tells the
+/// host that a use, a command or a view has ended, so a grant minted with one of those words
+/// would behave exactly like a session grant while claiming to be narrower. That is the defect
+/// this option exists to remove, so those words are refused by name rather than recorded
+/// (ADR-0264). `link-session` waits on the same thing for a link.
+const ENFORCEABLE_DURATIONS: &[&str] = &["session", "always"];
+
+/// Reads `--duration`: a §31.18 word, or a span that makes the grant a lease (spec §31.49).
+///
+/// Answers the `duration` word the record carries and the instant it stops working.
+fn grant_duration(
+    written: Option<&str>,
+    granted_at: jiff::Timestamp,
+) -> Result<(&'static str, Option<jiff::Timestamp>), ErrorValue> {
+    let Some(written) = written else {
+        return Ok(("session", None));
+    };
+    if let Some(word) = ENFORCEABLE_DURATIONS.iter().find(|word| **word == written) {
+        return Ok((word, None));
+    }
+    let span = ono_value::Duration::parse(written).map_err(|_| unenforceable_duration(written))?;
+    if span.is_negative() || span == ono_value::Duration::ZERO {
+        return Err(ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            format!("`{written}` is not a window a grant can stand in"),
+        )
+        .with_help("a lease expires after its span, so the span must be positive (spec §31.49)"));
+    }
+    let nanos = i64::try_from(span.nanoseconds()).map_err(|_| unenforceable_duration(written))?;
+    let expires_at = granted_at
+        .checked_add(jiff::Span::new().nanoseconds(nanos))
+        .map_err(|_| unenforceable_duration(written))?;
+    // A lease lives inside the session like every duration but `always`, and `expires_at` is
+    // what makes it narrower — the record shows both (`capability-grant.v1`).
+    Ok(("session", Some(expires_at)))
+}
+
+fn unenforceable_duration(written: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::TypeMismatch,
+        format!("`{written}` is not a duration `grant capability` can hold itself to"),
+    )
+    .with_help(format!(
+        "`--duration {}`, or a span such as `1h` for a lease that expires (spec §31.18, §31.49).          `once`, `command`, `view` and `link-session` need a boundary the broker cannot yet          observe and are refused rather than recorded",
+        ENFORCEABLE_DURATIONS.join("`/`")
+    ))
+}
+
+/// Reads the repeated `--scope key=value[,value]` words into the grant's scope (spec §31.16).
+///
+/// A key the capability does not declare is invalid rather than ignored, and a capability that
+/// declares no scope at all cannot be scoped: §31.16 forbids offering a scope that cannot be
+/// enforced as if it were a security boundary.
+fn grant_scope(
+    capability: ono_kuang_protocol::Capability,
+    written: &[&str],
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>, ErrorValue> {
+    if written.is_empty() {
+        return Ok(None);
+    }
+    let declared = capability.scope_keys();
+    if declared.is_empty() {
+        return Err(ErrorValue::new(
+            ErrorCode::TypeUnknownField,
+            format!("`{}` declares no scope keys", capability.id()),
+        )
+        .with_help(
+            "spec §31.16: a scope that cannot be enforced is never offered — grant it unscoped",
+        ));
+    }
+    let mut scope = serde_json::Map::new();
+    for entry in written {
+        let Some((key, values)) = entry.split_once('=') else {
+            return Err(ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("`--scope {entry}` names no key"),
+            )
+            .with_help("`--scope <key>=<value>[,<value>]`, repeated once per key (spec §31.16)"));
+        };
+        if !declared.iter().any(|declared| declared.name == key) {
+            return Err(ErrorValue::new(
+                ErrorCode::TypeUnknownField,
+                format!("`{}` has no scope key `{key}`", capability.id()),
+            )
+            .with_help(format!(
+                "spec §31.16: `{}` declares {}",
+                capability.id(),
+                declared
+                    .iter()
+                    .map(|declared| declared.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        scope.insert(
+            key.to_owned(),
+            serde_json::Value::Array(
+                values
+                    .split(',')
+                    .filter(|value| !value.is_empty())
+                    .map(|value| serde_json::Value::String(value.to_owned()))
+                    .collect(),
+            ),
+        );
+    }
+    Ok(Some(scope))
+}
+
+fn grant_capability(
+    session: &mut Session,
+    capability: &str,
+    plugin: &str,
+    scopes: &[&str],
+    duration: Option<&str>,
+) -> Eval<Produced> {
     let Some(capability) = ono_kuang_protocol::Capability::from_id(capability) else {
         return Err(Flow::Failed(
             ErrorValue::new(
@@ -654,11 +780,25 @@ fn grant_capability(session: &mut Session, capability: &str, plugin: &str) -> Ev
         ));
     };
     let request = declared_request(&package.manifest, capability);
-    let scope = request.and_then(|(request, _)| request.scope.clone());
+    // §31.19's precedence is "system deny > user deny > scoped grant > plugin request": the
+    // operator's scope outranks the manifest's, key by key. Keys the operator did not name keep
+    // whatever the package asked for.
+    let named = grant_scope(capability, scopes).map_err(Flow::Failed)?;
+    let mut scope = request.and_then(|(request, _)| request.scope.clone());
+    if let Some(named) = named {
+        let merged = scope.get_or_insert_with(serde_json::Map::new);
+        for (key, value) in named {
+            merged.insert(key, value);
+        }
+    }
+    let granted_at = jiff::Timestamp::now();
+    let (duration, expires_at) = grant_duration(duration, granted_at).map_err(Flow::Failed)?;
     let purpose = request.and_then(|(request, _)| request.purpose.clone());
     let class = request.map(|(_, class)| class);
     let (grant, value, policy, instance) = session.with_kuang(|host| {
-        let grant = host.grant(plugin, capability, scope, class, "prompt");
+        let grant = host.grant(
+            plugin, capability, scope, class, "prompt", duration, expires_at,
+        );
         let value =
             crate::kuang_host::grant_value(&grant, purpose.as_deref(), host.instance(plugin));
         (grant, value, host.policy_for(plugin), host.plugin(plugin))

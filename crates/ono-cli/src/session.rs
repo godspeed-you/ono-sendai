@@ -421,7 +421,13 @@ impl Session {
     pub fn publish_host(&mut self) {
         let plugin_path = crate::plugins::plugin_path(self);
         let state_dir = crate::config::state_dir(self);
-        self.with_kuang(|host| host.configure(plugin_path, state_dir));
+        let config_dir = crate::config::user_config_dir(self);
+        self.with_kuang(|host| {
+            host.configure(plugin_path, state_dir, config_dir);
+            // Spec §31.37: the trail outlives the process. Appending at the start of every
+            // pipeline keeps a session that is killed from losing everything before it.
+            host.persist_audit();
+        });
     }
 
     /// Keeps a loaded KUANG/11 package on the session (spec §31.10), answering the instance it
@@ -1134,6 +1140,8 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        // Spec §31.37: the last pipeline's audit events are written before the session goes.
+        self.with_kuang(crate::kuang_host::Host::persist_audit);
         // Fields are dropped after this runs, so the runtime is still here to wait on: a link
         // torn down after the runtime has gone could only abandon its agent (ADR-0161).
         self.hang_up_all();

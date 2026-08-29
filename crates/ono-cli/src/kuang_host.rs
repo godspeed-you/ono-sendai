@@ -91,8 +91,21 @@ pub struct Grant {
     pub source: &'static str,
     /// When it was made.
     pub granted_at: Value,
+    /// The §31.18 duration word the record carries.
+    pub duration: &'static str,
+    /// When it stops working. `None` for a grant with no expiry; a grant with one is a lease
+    /// (spec §31.49), and the broker checks the window on every call.
+    pub expires_at: Option<jiff::Timestamp>,
     /// When it was revoked; `None` while it stands.
     pub revoked_at: Option<Value>,
+}
+
+impl Grant {
+    /// Whether the grant still answers as of `now`: not revoked, and inside its window.
+    #[must_use]
+    pub fn stands_at(&self, now: jiff::Timestamp) -> bool {
+        self.revoked_at.is_none() && self.expires_at.is_none_or(|expiry| expiry > now)
+    }
 }
 
 /// The host: where packages are, which of them run, and what they were granted.
@@ -100,20 +113,210 @@ pub struct Grant {
 pub struct Host {
     plugin_path: Vec<PathBuf>,
     state_dir: Option<PathBuf>,
+    /// Where the operator's capability policy is kept — apart from the packages, so a package
+    /// update cannot rewrite it (spec §31.19).
+    config_dir: Option<PathBuf>,
     instances: Vec<Instance>,
     grants: Vec<Grant>,
     minted: u64,
     /// The trails of instances that are gone, and the host's own events: an unload does not
     /// erase what a package did (spec §31.37).
     retained_audit: Vec<AuditEvent>,
+    /// The trail earlier sessions wrote, read back from disk (spec §31.33, §31.37).
+    persisted_audit: Vec<AuditEvent>,
+    /// The ids already on disk, so a flush appends what is new and nothing twice.
+    written_audit: std::collections::BTreeSet<String>,
+    /// Which policy store the grants in memory were read from, so it is read once per session.
+    policy_read: Option<PathBuf>,
+}
+
+/// One package's stored capability decisions (spec §31.19's `policy.yaml`).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct StoredPolicy {
+    #[serde(default)]
+    plugins: std::collections::BTreeMap<String, std::collections::BTreeMap<String, StoredDecision>>,
+}
+
+/// One stored decision: `allow` on its own, or the scope it is bounded by.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct StoredDecision {
+    /// `allow` or `deny`. §31.19's example writes the word alone; this build writes a mapping so
+    /// the scope has somewhere to live, and reads both.
+    #[serde(default = "allow_word")]
+    decision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+fn allow_word() -> String {
+    "allow".to_owned()
 }
 
 impl Host {
     /// Tells the host where the session's plugin home and state directory are. Called before
     /// every pipeline, since both come from the environment and the environment can change.
-    pub fn configure(&mut self, plugin_path: Vec<PathBuf>, state_dir: Option<PathBuf>) {
+    pub fn configure(
+        &mut self,
+        plugin_path: Vec<PathBuf>,
+        state_dir: Option<PathBuf>,
+        config_dir: Option<PathBuf>,
+    ) {
         self.plugin_path = plugin_path;
         self.state_dir = state_dir;
+        self.config_dir = config_dir;
+        self.read_policy();
+        self.read_audit();
+    }
+
+    /// Where the operator's capability policy lives (spec §31.19's suggested location).
+    fn policy_path(&self) -> Option<PathBuf> {
+        self.config_dir
+            .as_ref()
+            .map(|dir| dir.join("kuang").join("policy.yaml"))
+    }
+
+    /// Where the audit trail is appended (spec §31.33, §31.37).
+    fn audit_path(&self) -> Option<PathBuf> {
+        self.state_dir
+            .as_ref()
+            .map(|dir| dir.join("kuang").join("audit.jsonl"))
+    }
+
+    /// Reads the operator's stored grants into this session, once per store (spec §31.19).
+    ///
+    /// A stored grant enters the session as `always`, sourced `user-policy`: §31.19's precedence
+    /// distinguishes the layer a decision came from, and an operator asking why a package they
+    /// never granted anything to holds a capability is asking exactly that question.
+    fn read_policy(&mut self) {
+        let Some(path) = self.policy_path() else {
+            return;
+        };
+        if self.policy_read.as_ref() == Some(&path) {
+            return;
+        }
+        self.policy_read = Some(path.clone());
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let Ok(stored) = serde_yaml_ng::from_str::<StoredPolicy>(&text) else {
+            return;
+        };
+        for (plugin, decisions) in stored.plugins {
+            for (capability, decision) in decisions {
+                let Some(capability) = Capability::from_id(&capability) else {
+                    continue;
+                };
+                if decision.decision != "allow" {
+                    continue;
+                }
+                let id = self.mint();
+                self.grants.push(Grant {
+                    id,
+                    plugin: plugin.clone(),
+                    capability,
+                    scope: decision.scope,
+                    class: None,
+                    source: "user-policy",
+                    granted_at: Value::now(),
+                    duration: "always",
+                    expires_at: None,
+                    revoked_at: None,
+                });
+            }
+        }
+    }
+
+    /// Writes the `always` grants that stand back to the policy store (spec §31.18, §31.19).
+    fn write_policy(&self) {
+        let Some(path) = self.policy_path() else {
+            return;
+        };
+        let mut stored = StoredPolicy::default();
+        for grant in self
+            .grants
+            .iter()
+            .filter(|grant| grant.duration == "always" && grant.revoked_at.is_none())
+        {
+            stored
+                .plugins
+                .entry(grant.plugin.clone())
+                .or_default()
+                .insert(
+                    grant.capability.id().to_owned(),
+                    StoredDecision {
+                        decision: "allow".to_owned(),
+                        scope: grant.scope.clone(),
+                    },
+                );
+        }
+        let Ok(text) = serde_yaml_ng::to_string(&stored) else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, text);
+    }
+
+    /// Reads the trail earlier sessions wrote (spec §31.37).
+    fn read_audit(&mut self) {
+        let Some(path) = self.audit_path() else {
+            return;
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        self.persisted_audit = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<AuditEvent>(line).ok())
+            .collect();
+        self.written_audit = self
+            .persisted_audit
+            .iter()
+            .map(|event| event.id.clone())
+            .collect();
+    }
+
+    /// Appends everything this session has recorded and not yet written (spec §31.33, §31.37).
+    ///
+    /// An audit trail that dies with the process answers "what did that package do?" only for as
+    /// long as nobody has left the shell, so it is appended at the start of every pipeline and
+    /// once more when the session ends.
+    pub fn persist_audit(&mut self) {
+        let Some(path) = self.audit_path() else {
+            return;
+        };
+        let fresh: Vec<AuditEvent> = self
+            .live_audit()
+            .into_iter()
+            .filter(|event| !self.written_audit.contains(&event.id))
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        let mut text = String::new();
+        for event in &fresh {
+            let Ok(line) = serde_json::to_string(event) else {
+                continue;
+            };
+            text.push_str(&line);
+            text.push('\n');
+        }
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let appended = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, text.as_bytes()));
+        if appended.is_ok() {
+            self.written_audit
+                .extend(fresh.iter().map(|event| event.id.clone()));
+            // What is on disk is what `get audit` reads, so an event moves from the live list to
+            // the persisted one in the same step — never into neither.
+            self.persisted_audit.extend(fresh);
+        }
     }
 
     /// The directories packages are installed under, in search order.
@@ -262,6 +465,8 @@ impl Host {
         scope: Option<serde_json::Map<String, serde_json::Value>>,
         class: Option<DeclarationClass>,
         source: &'static str,
+        duration: &'static str,
+        expires_at: Option<jiff::Timestamp>,
     ) -> Grant {
         let grant = Grant {
             id: self.mint(),
@@ -271,10 +476,15 @@ impl Host {
             class,
             source,
             granted_at: Value::now(),
+            duration,
+            expires_at,
             revoked_at: None,
         };
         self.grants.push(grant.clone());
         self.record_host_event(plugin, capability.id(), "capability.grant", true);
+        if duration == "always" {
+            self.write_policy();
+        }
         grant
     }
 
@@ -286,6 +496,9 @@ impl Host {
             .position(|grant| grant.id == id && grant.revoked_at.is_none())?;
         self.grants[index].revoked_at = Some(Value::now());
         let grant = self.grants[index].clone();
+        if grant.duration == "always" {
+            self.write_policy();
+        }
         self.record_host_event(
             &grant.plugin,
             grant.capability.id(),
@@ -311,10 +524,14 @@ impl Host {
     }
 
     /// The grants that stand for `plugin`, oldest first.
+    ///
+    /// A lease whose window has closed does not stand: §31.49 makes the expiry part of the
+    /// grant, so `get capability` must stop calling it an allow the moment it stops being one.
     pub fn standing_grants(&self, plugin: &str) -> impl Iterator<Item = &Grant> {
+        let now = jiff::Timestamp::now();
         self.grants
             .iter()
-            .filter(move |grant| grant.plugin == plugin && grant.revoked_at.is_none())
+            .filter(move |grant| grant.plugin == plugin && grant.stands_at(now))
     }
 
     /// Every grant ever made, revoked ones included: a revoked grant is retained rather than
@@ -329,7 +546,7 @@ impl Host {
     pub fn policy_for(&self, plugin: &str) -> Policy {
         self.standing_grants(plugin)
             .fold(Policy::deny_all(), |policy, grant| {
-                policy.grant(grant.capability, grant.scope.clone())
+                policy.lease(grant.capability, grant.scope.clone(), grant.expires_at)
             })
     }
 
@@ -343,7 +560,10 @@ impl Host {
     pub fn record_host_event(&mut self, plugin: &str, capability: &str, action: &str, ok: bool) {
         let id = self.mint();
         self.retained_audit.push(AuditEvent {
-            id: id.to_string(),
+            // The host is one source among several (`AuditTrail::for_source`); its events carry
+            // the same v4-shaped identity with the host's own namespace, so nothing it records
+            // can collide with a package's trail.
+            id: format!("ffffffff-{}", &id.to_string()[9..]),
             plugin: plugin.to_owned(),
             invocation: "host".to_owned(),
             capability: capability.to_owned(),
@@ -367,6 +587,17 @@ impl Host {
     /// Every audit event the host knows: the retained ones, then each running instance's.
     #[must_use]
     pub fn audit_events(&self) -> Vec<AuditEvent> {
+        let mut events = self.persisted_audit.clone();
+        events.extend(
+            self.live_audit()
+                .into_iter()
+                .filter(|event| !self.written_audit.contains(&event.id)),
+        );
+        events
+    }
+
+    /// What this session has recorded: the retained trails and every running instance's.
+    fn live_audit(&self) -> Vec<AuditEvent> {
         let mut events = self.retained_audit.clone();
         for instance in &self.instances {
             events.extend(instance.plugin.audit());
@@ -1697,7 +1928,7 @@ fn grant_record(
     purpose: Option<&str>,
     instance: Option<&Instance>,
 ) -> Result<RecordValue, ErrorValue> {
-    let standing = grant.filter(|grant| grant.revoked_at.is_none());
+    let standing = grant.filter(|grant| grant.stands_at(jiff::Timestamp::now()));
     let enforcement = instance
         .and_then(|instance| {
             instance
@@ -1727,12 +1958,23 @@ fn grant_record(
             grant.map_or(Value::Null, |grant| json_map(grant.scope.as_ref())),
         )?
         .set("enforcement", enforcement)?
-        .set("duration", Value::string("session"))?
+        .set(
+            "duration",
+            Value::string(grant.map_or("session", |grant| grant.duration)),
+        )?
         .set(
             "granted_at",
             grant.map_or(Value::Null, |grant| grant.granted_at.clone()),
         )?
-        .set("expires_at", Value::Null)?
+        .set(
+            "expires_at",
+            grant
+                .and_then(|grant| grant.expires_at)
+                .map_or(Value::Null, |expiry| {
+                    Value::parse_timestamp(&expiry.to_string())
+                        .unwrap_or_else(|_| Value::string(&expiry.to_string()))
+                }),
+        )?
         .set("max_uses", Value::Null)?
         .set("uses", Value::Int(0))?
         .set("actions", Value::Null)?

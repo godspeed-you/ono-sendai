@@ -44,13 +44,13 @@ ono-spatial-render.workspace = true
 ono-value.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml_ng.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
 ono-testkit.workspace = true
 ono-process.workspace = true
-serde_yaml_ng.workspace = true
 
 [lints]
 workspace = true
