@@ -82,3 +82,52 @@ fn should_leave_every_frame_at_once_when_asked() {
         "leaving all frames restores the ground, got {last:?}"
     );
 }
+
+// --- `explain` prints the spelling a frame narrows to (ADR-0023, ADR-0225) -------------------
+
+#[test]
+fn should_print_the_narrowed_spelling_when_explaining_inside_an_object_frame() {
+    // ADR-0023: "`enter service nginx` then `get process` is exactly `get process --service
+    // nginx`, and `explain` prints the second form when asked about the first."
+    let run = ono("enter process 1; explain get process");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("get process 1"),
+        "spec §14.5: the frame's contribution has a spelling, and the plan shows it: {}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_print_the_option_a_frame_of_another_target_fills_in() {
+    let run = ono("enter user root; explain get process");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("get process --user root"),
+        "a frame of another target contributes the option named after it: {}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_say_nothing_about_narrowing_when_no_frame_is_in_force() {
+    let run = ono("explain get process");
+    run.assert_success();
+    assert!(
+        !run.stdout().contains("narrowed"),
+        "a plan outside a frame has no narrowing to report: {}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_keep_what_was_typed_when_a_frame_would_have_filled_it_in() {
+    // Spec §14.5 / ADR-0076 §2: what was typed wins, so there is nothing to narrow.
+    let run = ono("enter process 1; explain get process 5");
+    run.assert_success();
+    assert!(
+        !run.stdout().contains("narrowed"),
+        "`get process 5` inside `enter process 1` is `get process 5`: {}",
+        run.stdout()
+    );
+}

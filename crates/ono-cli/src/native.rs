@@ -474,6 +474,7 @@ pub fn check(
                 stdout: ono_adapter::Stdout::Stream,
                 adapters: Some(adapters),
                 executables: Some(&executables),
+                context: &[],
             },
         )
         .adapted_schemas()

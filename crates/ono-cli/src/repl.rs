@@ -144,6 +144,7 @@ impl ShellCompleter {
                 stdout: ono_adapter::Stdout::Stream,
                 adapters: self.adapters.as_deref(),
                 executables: Some(&executables),
+                context: &[],
             },
         );
         let stages = plan.stages();

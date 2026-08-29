@@ -445,6 +445,9 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     // Inside a link frame the remote negotiates (spec v0.3 §1.54): the local registry is not
     // consulted for the plan, and the remote's answer is reported per stage below.
     let remote_host = session.link_host();
+    // Everything a frame contributes has an explicit spelling, and `explain` is where it is
+    // written (spec §14.5, ADR-0023, ADR-0225).
+    let frames = session.context();
     let (providers, adapters) = session.registries();
     let adapters = remote_host.is_none().then_some(adapters);
     let plan = ono_command::plan_with(
@@ -456,6 +459,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             stdout,
             adapters,
             executables: Some(&executables),
+            context: &frames,
         },
     );
     // The plan quotes the source it was given and the paths it resolved, both of which are

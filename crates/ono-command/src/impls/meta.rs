@@ -86,6 +86,7 @@ impl CommandImpl for MetaCommand {
                         stdout: ono_adapter::Stdout::Stream,
                         adapters: ctx.adapters(),
                         executables: Some(&executables),
+                        context: ctx.context(),
                     },
                 );
                 Ok(values([plan.to_value()]))
@@ -124,6 +125,7 @@ impl MetaCommand {
                     stdout: ono_adapter::Stdout::Stream,
                     adapters: ctx.adapters(),
                     executables: Some(&executables),
+                    context: ctx.context(),
                 },
             );
             let last = plan
