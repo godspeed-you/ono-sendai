@@ -13,7 +13,7 @@ use std::sync::Arc;
 use ono_core::ErrorCode;
 use ono_kuang_protocol::{
     AuditEvent, Capability, CapabilityRequest, DeclarationClass, HOST_API, Manifest, PluginState,
-    Role, RuntimeKind, ShutdownReason, WireError,
+    Role, RuntimeKind, ShutdownReason, WireError, artifact_files,
 };
 use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Policy, Supervisor};
 use ono_provider_api::{Action, ActionOutcome, ObjectId};
@@ -843,52 +843,22 @@ pub fn source_of(package: &Installed, management: &Management) -> String {
         .unwrap_or_else(|| format!("path:{}", package.directory.display()))
 }
 
-/// The content hash of the package's artifact: its manifest and its runtime entry, in that
-/// order (spec §31.36's "are these the exact bytes referenced?").
+/// The content hash of the package's artifact (spec §31.36's "are these the exact bytes
+/// referenced?").
+///
+/// It covers every file of [`artifact_files`], each under its own path, so moving a byte from
+/// one file to another changes the answer.
 #[must_use]
 pub fn integrity_of(package: &Installed) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
-    for relative in artifact_files(&package.manifest) {
-        if let Ok(bytes) = std::fs::read(package.directory.join(&relative)) {
-            hasher.update(relative.as_bytes());
-            hasher.update(bytes);
-        }
+    for file in artifact_files(&package.directory) {
+        hasher.update(file.path.as_bytes());
+        hasher.update(file.sha256.as_bytes());
     }
     let digest = hasher.finalize();
     let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
     format!("sha256:{hex}")
-}
-
-/// The files that make up a package artifact, relative to its directory.
-#[must_use]
-pub fn artifact_files(manifest: &Manifest) -> Vec<String> {
-    let mut files = vec!["manifest.yaml".to_owned()];
-    if let Some(entry) = manifest
-        .runtime
-        .as_ref()
-        .and_then(|runtime| runtime.entry.clone())
-    {
-        files.push(entry);
-    }
-    if let Some(contributions) = &manifest.contributions {
-        for paths in [
-            &contributions.commands,
-            &contributions.schemas,
-            &contributions.targets,
-            &contributions.views,
-            &contributions.relations,
-            &contributions.annotations,
-            &contributions.tools,
-            &contributions.adapters,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            files.extend(paths.iter().cloned());
-        }
-    }
-    files
 }
 
 /// When the artifact was placed: the manifest's modification time, the closest fact on disk.

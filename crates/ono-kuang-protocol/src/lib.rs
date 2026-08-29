@@ -25,6 +25,7 @@
 //! Values cross the boundary in the tagged, lossless JSON encoding of `ono-value`
 //! (`ono_value::to_json` / `from_json`), so nothing typed is flattened on the way (ADR-0040).
 
+mod artifact;
 mod audit;
 mod capability;
 mod contract;
@@ -36,6 +37,7 @@ mod message;
 mod signature;
 mod version;
 
+pub use artifact::artifact_files;
 pub use audit::{AuditEvent, AuditResult};
 pub use capability::{
     Capability, Decision, DeclarationClass, Elevation, Enforcement, GrantDuration, Lease, Risk,
