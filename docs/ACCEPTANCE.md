@@ -76,7 +76,8 @@ Each phase's success criterion from spec section 37, each proven by a named acce
       advertises.
 - [x] **D — Consistency and discoverability.** Command, verb and schema registries exist under
       `docs/spec/`; `help`, completion, `type`, `inspect` and `explain` are driven by them;
-      docs and provider conformance tests are generated from them.
+      `docs/reference/` is generated from them, and what every provider advertises is checked
+      against them by `spec-check` rather than trusted.
       Proven by `043-discoverable-from-the-shell` (help, type, inspect, explain from the
       registries; explain never executes) and `044-semantic-completion` (a declared target
       completed on a real terminal), with `docs/reference/` staleness and provider drift both
@@ -828,8 +829,8 @@ layer so that each layer's own checklist is checkable.
 - [x] **Provider conformance proves identity and permission semantics** (§42). Every provider
       that feeds the spatial index declares the §42 spatial claims and passes the four §42
       conformance tests — identity stability (§42.1), reuse safety (§42.2), relation integrity
-      (§42.3), permission state (§42.4) — generated from `docs/spec/providers/*.yaml` the way
-      the v0.2 conformance suites are:
+      (§42.3), permission state (§42.4) — declared in `docs/spec/providers/*.yaml` and held
+      against the tree by `spec-check` the way the v0.2 provider claims are:
       `spatial_contracts_missing.rs::should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_index`,
       `::should_resolve_repeated_observations_of_one_object_to_the_same_spatial_id`,
       `::should_report_denied_information_as_denied_rather_than_as_an_empty_collection`, and the

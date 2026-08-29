@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use xtask::{contracts, narrative, reference, scan};
+use xtask::{bindings, contracts, narrative, reference, scan};
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -115,6 +115,9 @@ fn spec_check() -> ExitCode {
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 
+    problems.extend(check_command_bindings());
+    problems.extend(check_generation_claims(&root));
+
     if root.join("docs").join("spec").is_dir() {
         problems.extend(
             contracts::check_contracts(&root)
@@ -136,6 +139,41 @@ fn spec_check() -> ExitCode {
         }
         ExitCode::FAILURE
     }
+}
+
+/// Every "generated from" claim in `docs/ACCEPTANCE.md` names something that is generated.
+///
+/// The checklist is the definition of done; a box describing machinery nobody built is a claim
+/// the reader has no reason to doubt and no way to check.
+fn check_generation_claims(root: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(root.join("docs").join("ACCEPTANCE.md")) else {
+        return vec!["docs/ACCEPTANCE.md is missing; it is the definition of done".to_owned()];
+    };
+    let generated: Vec<String> = reference::generate(root)
+        .map(|pages| pages.into_iter().map(|page| page.path).collect())
+        .unwrap_or_default();
+    reference::check_generation_claims(&text, &generated)
+        .into_iter()
+        .map(|problem| format!("{} — {}", problem.location, problem.detail))
+        .collect()
+}
+
+/// Spec §27.2: every stable command of a delivered phase is bound to an implementation.
+///
+/// The registry is written before the code, so a stable command with nothing behind it is drift
+/// the contract alone cannot show. The list of deliberate exceptions lives beside the check.
+fn check_command_bindings() -> Vec<String> {
+    let Ok(registry) = ono_command::CommandRegistry::embedded() else {
+        return vec![
+            "the embedded command contracts do not parse, so spec §27.2 cannot be checked"
+                .to_owned(),
+        ];
+    };
+    let table = ono_command::builtin_commands(registry);
+    bindings::check_bindings(registry, |id| table.contains(id))
+        .into_iter()
+        .map(|problem| format!("{} — {}", problem.location, problem.detail))
+        .collect()
 }
 
 /// Verifies that the immutable narrative specification has not been modified.

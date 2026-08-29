@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod bindings;
 pub mod contracts;
 pub mod narrative;
 pub mod reference;

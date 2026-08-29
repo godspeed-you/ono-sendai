@@ -1659,6 +1659,7 @@ name = "xtask"
 version = "0.3.0"
 dependencies = [
  "ono-adapter",
+ "ono-command",
  "ono-core",
  "ono-parser",
  "ono-spatial-core",

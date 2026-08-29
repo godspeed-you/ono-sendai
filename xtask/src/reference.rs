@@ -749,3 +749,91 @@ fn mapping_entries<'a>(document: &'a Yaml, key: &str) -> Vec<(String, &'a Yaml)>
         })
         .unwrap_or_default()
 }
+
+// --- the checklist's own generation claims ------------------------------------------------------
+
+/// Checks that every "generated from" claim in `docs/ACCEPTANCE.md` names something that is
+/// actually generated.
+///
+/// `docs/ACCEPTANCE.md` is the definition of done, and a box that describes machinery nobody
+/// built is worse than an open box: it is a claim the reader has no reason to doubt. Two of them
+/// said "generated" of hand-written suites for a whole tranche. The rule that stops it recurring
+/// is mechanical — a bullet that claims generation must name, before the claim, at least one path
+/// `cargo xtask docs` writes.
+///
+/// `generated` is the set of pages the generator produces; `text` is the checklist.
+#[must_use]
+pub fn check_generation_claims(text: &str, generated: &[String]) -> Vec<Problem> {
+    const CLAIM: &str = "generated from";
+    let mut problems = Vec::new();
+
+    for bullet in bullets(text) {
+        let Some(at) = bullet.find(CLAIM) else {
+            continue;
+        };
+        let claimed: Vec<&str> = backticked(&bullet[..at]);
+        if claimed.iter().any(|path| is_generated(path, generated)) {
+            continue;
+        }
+        let headline: String = bullet
+            .split_whitespace()
+            .take(12)
+            .collect::<Vec<_>>()
+            .join(" ");
+        problems.push(Problem {
+            location: "docs/ACCEPTANCE.md".to_owned(),
+            detail: format!(
+                "a box claims something is `{CLAIM} …` without naming anything `cargo xtask \
+                 docs` generates: “{headline}…”. Either generate it, or say what the tree \
+                 actually does — a checklist that describes machinery nobody built cannot be \
+                 checked"
+            ),
+        });
+    }
+
+    problems
+}
+
+/// Whether `path` — as a checklist writes it, possibly a directory — is generated.
+fn is_generated(path: &str, generated: &[String]) -> bool {
+    let path = path.trim_end_matches('/');
+    generated
+        .iter()
+        .any(|page| page == path || page.starts_with(&format!("{path}/")))
+}
+
+/// The checklist's boxes, one string each, from `- [` to the next box or heading.
+fn bullets(text: &str) -> Vec<String> {
+    let mut bullets = Vec::new();
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("- [") {
+            if let Some(bullet) = current.take() {
+                bullets.push(bullet);
+            }
+            current = Some(trimmed.to_owned());
+        } else if trimmed.starts_with('#') {
+            if let Some(bullet) = current.take() {
+                bullets.push(bullet);
+            }
+        } else if let Some(bullet) = current.as_mut() {
+            bullet.push(' ');
+            bullet.push_str(trimmed);
+        }
+    }
+    if let Some(bullet) = current {
+        bullets.push(bullet);
+    }
+    bullets
+}
+
+/// The backticked tokens of `passage` that look like a path.
+fn backticked(passage: &str) -> Vec<&str> {
+    passage
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|token| token.contains('/') && !token.contains(' '))
+        .collect()
+}
