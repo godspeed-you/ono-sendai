@@ -3265,7 +3265,7 @@ Bring an interface up.
 | id | `ono.interface.start` |
 | stability | experimental |
 | phase | C |
-| input | `null` |
+| input | `null | stream<ono.interface/1>` |
 | output | `ono.action-result/1` |
 | provider capability | `interface.set` |
 | privilege | elevated |
@@ -3298,7 +3298,7 @@ Bring an interface down.
 | id | `ono.interface.stop` |
 | stability | experimental |
 | phase | C |
-| input | `null` |
+| input | `null | stream<ono.interface/1>` |
 | output | `ono.action-result/1` |
 | provider capability | `interface.set` |
 | privilege | elevated |
@@ -3366,7 +3366,7 @@ Delete a virtual interface, or remove an address from one.
 | id | `ono.interface.remove` |
 | stability | experimental |
 | phase | C |
-| input | `null` |
+| input | `null | stream<ono.interface/1>` |
 | output | `ono.action-result/1` |
 | provider capability | `interface.set` |
 | privilege | elevated |
@@ -5548,7 +5548,7 @@ Activate a mount definition.
 | id | `ono.mount.start` |
 | stability | experimental |
 | phase | C |
-| input | `null` |
+| input | `null | stream<ono.mount/1>` |
 | output | `ono.action-result/1` |
 | provider capability | `mount.manage` |
 | privilege | elevated |
@@ -5575,7 +5575,7 @@ Deactivate a mount.
 | id | `ono.mount.stop` |
 | stability | experimental |
 | phase | C |
-| input | `null` |
+| input | `null | stream<ono.mount/1>` |
 | output | `ono.action-result/1` |
 | provider capability | `mount.manage` |
 | privilege | elevated |

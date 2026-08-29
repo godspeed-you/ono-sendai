@@ -877,6 +877,35 @@ fn should_report_a_permission_failure_when_stopping_an_interface_unprivileged() 
 }
 
 #[test]
+fn should_act_on_the_piped_interface_when_a_record_arrives_instead_of_a_selector() {
+    // The object-in spelling of spec §11.5 and §14.3: the objects the pipeline carries are the
+    // objects the mutation acts on. `stop interface` refused the record as content it could not
+    // write, because its contract declared no stream input at all.
+    if !unprivileged() {
+        return;
+    }
+    let row =
+        assert_refused_by_the_kernel("get interface lo | stop interface", "ono.interface.stop");
+    assert!(
+        text(&row, "target").contains("lo"),
+        "the piped interface is the target the mutation acted on, got {row:?}"
+    );
+}
+
+#[test]
+fn should_act_on_the_piped_interface_when_a_record_arrives_instead_of_a_selector_for_start() {
+    if !unprivileged() {
+        return;
+    }
+    let row =
+        assert_refused_by_the_kernel("get interface lo | start interface", "ono.interface.start");
+    assert!(
+        text(&row, "target").contains("lo"),
+        "the piped interface is the target the mutation acted on, got {row:?}"
+    );
+}
+
+#[test]
 fn should_report_a_permission_failure_when_adding_an_interface_unprivileged() {
     if !unprivileged() {
         return;

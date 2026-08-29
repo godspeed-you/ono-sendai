@@ -115,8 +115,12 @@ impl ProviderMutation {
 
         // A command whose input is content rather than objects — `write file` takes
         // `bytes | string` — consumes the pipeline as the `content` argument, and its targets
-        // are the selector's (ADR-0082 §3).
+        // are the selector's (ADR-0082 §3). Content is what the contract says it accepts: a
+        // mutation that declares no content input takes the objects arriving on the pipeline as
+        // its targets, which is the object-in spelling of spec §11.5 (ADR-0216).
+        let takes_content = contract.input().admits_bytes() || contract.input().admits_text();
         if ctx.has_input()
+            && takes_content
             && !contract.input().is_stream()
             && let Some(input) = ctx.take_input()
         {

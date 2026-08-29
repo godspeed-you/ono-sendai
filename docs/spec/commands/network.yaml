@@ -373,7 +373,7 @@ commands:
     validation_required: true
     note: Overlaps `set interface --up true`; one spelling should be withdrawn before either is stable.
     argument_mode: words
-    input: "null"
+    input: "null | stream<ono.interface/1>"
     output: ono.action-result/1
     provider_capability: interface.set
     selectors:
@@ -394,7 +394,7 @@ commands:
     validation_required: true
     note: Overlaps `set interface --up false`.
     argument_mode: words
-    input: "null"
+    input: "null | stream<ono.interface/1>"
     output: ono.action-result/1
     provider_capability: interface.set
     selectors:
@@ -436,7 +436,7 @@ commands:
     stability: experimental               # spec §52, interface/remove = "M?"; delivered by ADR-0088
     validation_required: true
     argument_mode: words
-    input: "null"
+    input: "null | stream<ono.interface/1>"
     output: ono.action-result/1
     provider_capability: interface.set
     selectors:
