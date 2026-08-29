@@ -291,7 +291,10 @@ impl Transform for Diff {
                             *slot = true;
                         }
                         let old = self.previous.get(index);
-                        if old == Some(&value) {
+                        // The comparison is about the objects, not about the readings: two
+                        // snapshots of one unchanged object differ in the instant each was
+                        // observed, which is provenance and not state (ADR-0229).
+                        if old.is_some_and(|old| old.same_data(&value)) {
                             continue;
                         }
                         if change(&sink, &schema, "changed", key, Some(value), old.cloned())

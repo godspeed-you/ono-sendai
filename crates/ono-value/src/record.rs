@@ -207,6 +207,38 @@ impl RecordValue {
             .is_some_and(|field| matches!(field.ty(), crate::FieldType::Error))
     }
 
+    /// Whether two records hold the same data, whoever observed them and when.
+    ///
+    /// Ordinary equality compares provenance too, which is right for asking "is this the same
+    /// observation?". It is wrong for asking "did anything change?": two readings of one
+    /// unchanged object differ in the instant each was observed, and that is a fact about the
+    /// reading, not about the object (spec §26, §10.7, ADR-0229). Schema, declared fields and
+    /// provider extensions all take part; nothing else does.
+    ///
+    /// ```
+    /// use ono_value::{Provenance, RecordValue, SchemaId, Value, builtin_schemas};
+    /// use std::sync::Arc;
+    ///
+    /// let schema = builtin_schemas().get(&SchemaId::new("ono.user", 1)).expect("the contract");
+    /// let user = |source: &str| {
+    ///     RecordValue::builder(
+    ///         Arc::clone(&schema),
+    ///         Provenance::local("nss", schema.id().clone()).from_source(source),
+    ///     )
+    ///     .set("uid", Value::Int(0))
+    ///     .expect("uid is a field")
+    ///     .build()
+    /// };
+    /// assert!(user("one reading").same_data(&user("another reading")));
+    /// assert_ne!(user("one reading"), user("another reading"));
+    /// ```
+    #[must_use]
+    pub fn same_data(&self, other: &Self) -> bool {
+        self.schema.id() == other.schema.id()
+            && self.fields == other.fields
+            && self.extra == other.extra
+    }
+
     /// The identity fields and their values (spec §27.3).
     #[must_use]
     pub fn identity(&self) -> MapValue {

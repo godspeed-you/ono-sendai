@@ -430,6 +430,34 @@ impl Value {
         }
     }
 
+    /// Whether two values hold the same data, whoever observed them and when.
+    ///
+    /// Identical to `==` for every value but a record, where it ignores provenance
+    /// ([`RecordValue::same_data`], ADR-0229). Lists and maps compare their elements the same
+    /// way, so a record nested inside one is compared by its data too.
+    #[must_use]
+    pub fn same_data(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Record(left), Value::Record(right)) => left.same_data(right),
+            (Value::List(left), Value::List(right)) => {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .zip(right.iter())
+                        .all(|(left, right)| left.same_data(right))
+            }
+            (Value::Map(left), Value::Map(right)) => {
+                left.len() == right.len()
+                    && left.iter().zip(right.iter()).all(
+                        |((left_key, left), (right_key, right))| {
+                            left_key == right_key && left.same_data(right)
+                        },
+                    )
+            }
+            (left, right) => left == right,
+        }
+    }
+
     /// The value as a structured error.
     ///
     /// # Errors

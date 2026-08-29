@@ -327,6 +327,36 @@ fn should_report_no_rows_when_the_snapshots_are_identical() {
 }
 
 #[test]
+fn should_report_two_fresh_snapshots_of_one_object_as_unchanged() {
+    // `diff` answers what changed about the objects, not when they were read. Two readings of
+    // the same unchanged user differ only in the instant each was observed, which is provenance
+    // (spec §26, §10.7) and not the object's state (ADR-0229).
+    let run = ono("get user root | diff (get user root) | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[]",
+        "nothing about root changed between the two readings: {}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_still_report_a_field_that_moved_between_two_snapshots() {
+    // The comparison ignores provenance, not data: a field that differs is still a change.
+    let run = ono("let before = [{\"pid\":1,\"name\":\"init\"}]; \
+         let now = [{\"pid\":1,\"name\":\"systemd\"}]; \
+         $now | diff $before --identity [pid] | select change | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[{\"change\":\"changed\"}]",
+        "a field that moved is a change: {}",
+        run.output()
+    );
+}
+
+#[test]
 fn should_compare_provider_records_by_their_schema_identity_without_an_override() {
     // `ono.process/1` declares `identity: [pid, started]`, so no `--identity` is needed. The
     // right side is an empty snapshot (no process has that pid), which makes pid 1 `added`.
