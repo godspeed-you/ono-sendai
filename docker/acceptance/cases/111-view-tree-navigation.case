@@ -1,0 +1,34 @@
+# Phase J (spec §37, §13.5, §13.6; ADR-0050): `view` is the interactive browser and `view tree`
+# is the shape a graph takes in it. The tree *rendering* is proven in `crates/ono-render`; what
+# nothing exercised was the navigation — `view tree` appeared in no test and in no case. Here it
+# is driven against the real system: the view opens on a real trace, a key inside it ends the
+# view, and the selection survives it so `@` names what was showing (spec §6.4, ADR-0033).
+# The keystroke this case can send is `q`; the inspect pane, which needs a carriage return the
+# case format cannot carry, is driven byte for byte by
+# `crates/ono-cli/tests/view.rs::should_open_the_tree_view_over_a_graph_and_leave_the_pick_behind`.
+case: the tree view opens over a trace and leaves the pick behind
+pty: true
+columns: 100
+lines: 40
+timeout: 90
+env: NO_COLOR=1
+stdin: |
+  trace process 1 | view tree
+  q
+  @ | count
+  exit
+run: |
+  # A graph never renders as a table (spec §13.6), so the plain fallback is checked first: a
+  # redirected `view tree` writes the same tree the terminal would draw.
+  echo "== redirected, the view falls back to the same tree =="
+  ono -c "trace process 1 | view tree" > /tmp/tree.out; head -1 /tmp/tree.out
+
+  # And at a terminal it is the browser: the footer names the keys, and `q` leaves with the pick.
+  echo "== interactively, the same tree is navigable =="
+  ono
+exit: 0
+stdout-contains: ono.graph/1
+stdout-contains: [up/down] move
+stdout-contains: VALUE
+stdout-not-contains: panicked
+stdout-not-contains: Ono-Sendai-E0101
