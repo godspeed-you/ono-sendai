@@ -33,6 +33,7 @@ mod frame;
 mod lifecycle;
 mod manifest;
 mod message;
+mod signature;
 mod version;
 
 pub use audit::{AuditEvent, AuditResult};
@@ -58,5 +59,9 @@ pub use message::{
     InitResult, InvokeParams, InvokeResult, InvokeStatus, ProbeResult, QueryParams,
     RequestOnceParams, SchemaContribution, SchemaFieldContribution, ShutdownParams, ShutdownReason,
     StateGetResult, StateKeyParams, StateSetParams, TargetContribution, method, parse_type_name,
+};
+pub use signature::{
+    FileDigest, PackageSignature, PublicKey, SIGNATURE_ALGORITHM, SIGNATURE_FILE, SIGNATURE_FORMAT,
+    SecretKey, SignedPackage,
 };
 pub use version::{ApiVersion, HOST_API, PACKAGE_FORMAT, VALUE_PROTOCOL, VersionRange};

@@ -48,6 +48,8 @@ async-trait = "0.1"
 bytes = "1"
 crossterm = "0.29"
 csv = "1"
+# The one asymmetric primitive in the workspace: package signatures (spec §31.36, ADR-0311).
+ed25519-dalek = "3"
 futures = "0.3"
 globset = "0.4"
 jiff = { version = "0.2", features = ["serde"] }
