@@ -46,7 +46,7 @@ run: |
 
   echo "== a theme that cannot be understood is said out loud and costs nobody their shell =="
   write_theme lab '[tokens]' '"ui.dangerous" = { color = 9 }'
-  ono -c 'get process | take 1 | count' 2>&1 | tail -3
+  ono -c 'get process | take 1 | count' 2>&1 | head -4
 
   echo "== section 44: with colour refused, every theme prints the same bytes =="
   write_theme loud '[tokens]' '"ui.fg" = { color = 16 }' '"ui.value.string" = { color = 16 }' \

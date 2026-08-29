@@ -50,10 +50,10 @@ for my $child (1 .. $children) {
             push @held, $socket;
         }
         # Report how many this child actually opened, then wait for the parent to go away.
-        open(my $count, '>', "$directory/.count-$child") and do {
-            print {$count} scalar(@held), "\n";
-            close $count;
-        };
+        if (open(my $report, '>', "$directory/.count-$child")) {
+            print {$report} scalar(@held), "\n";
+            close $report;
+        }
         my $ignored = <$read>;
         POSIX::_exit(0);
     }
