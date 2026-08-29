@@ -145,5 +145,8 @@ fn start(interactive: bool, options: &Options) -> (Session, Reporter) {
     };
     let reporter = Reporter::new(presentation);
     config::load(&mut session, options, &reporter);
+    // The theme is only known once the configuration has been read, and the reporter that read
+    // it had to exist first — so the one the session keeps is themed afterwards (ADR-0332).
+    let reporter = reporter.with_theme(session.theme());
     (session, reporter)
 }

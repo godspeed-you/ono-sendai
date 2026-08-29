@@ -1382,6 +1382,9 @@ fn run_native_segment(
     last: bool,
 ) -> Eval<(Option<Vec<u8>>, ExitStatus)> {
     let table = implementations(session).map_err(Flow::Failed)?;
+    // Taken before the pipeline borrows the session: a live view paints with the session's
+    // theme, not with whatever the default happens to be (spec §44, ADR-0332).
+    let theme = ono_render::Theme::clone(session.theme());
 
     // Everything is bound before anything runs. A pipeline that cannot be built runs no part of
     // itself, so a typo in the third stage never leaves the first two half-done.
@@ -1566,7 +1569,7 @@ fn run_native_segment(
                 // pipe or file is a table that never learns its widths.
                 if !capturing && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
                     let (width, height) = live_geometry();
-                    failures.extend(crate::live::show(stream, width, height).await);
+                    failures.extend(crate::live::show(stream, width, height, &theme).await);
                     return Ok((Vec::new(), failures, failed_rows, counted));
                 }
                 return Err(ErrorValue::new(
@@ -1866,7 +1869,7 @@ fn write_result(
                 .iter()
                 .map(|(name, value)| (name.as_str(), value.as_str()))
                 .collect();
-            let mut sink = Sink::for_stdout(&borrowed);
+            let mut sink = Sink::for_stdout(&borrowed).with_theme(session.theme());
             if let Some(limit) = table_row_limit(session) {
                 sink = sink.with_max_rows(limit);
             }

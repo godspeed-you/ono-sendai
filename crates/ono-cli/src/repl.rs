@@ -318,7 +318,7 @@ fn path_candidates(prefix: &str) -> Vec<String> {
 
 /// Runs the interactive loop until the user leaves.
 pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> ExitStatus {
-    let theme = Theme::default();
+    let theme = Theme::clone(session.theme());
     let presentation =
         Presentation::choose(std::io::stdout().is_terminal(), &environment_pairs(session));
 

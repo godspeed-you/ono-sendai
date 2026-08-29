@@ -125,4 +125,8 @@ pub fn load(session: &mut Session, options: &Options, reporter: &Reporter) {
             .settings_mut()
             .apply_environment(&environment, &mut report);
     }
+
+    // Every layer is in; `theme.name` can now be resolved into the theme the renderers paint
+    // with (spec §44, ADR-0332). A theme that cannot be found never stops the shell.
+    crate::theme::load(session, reporter);
 }

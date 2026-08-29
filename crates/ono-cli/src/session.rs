@@ -129,6 +129,9 @@ pub struct Session {
     expanding: Vec<String>,
     /// The layered configuration of ADR-0010, with the provenance of every value (ADR-0094).
     settings: crate::settings::Settings,
+    /// The theme every renderer paints with, resolved once configuration has been read
+    /// (spec §44, §30; ADR-0332).
+    theme: std::sync::Arc<ono_render::Theme>,
 }
 
 /// One remote link the session knows: a definition, established or not (spec §21.1, ADR-0103).
@@ -315,6 +318,7 @@ impl Session {
             definitions: vec![BTreeMap::new()],
             expanding: Vec::new(),
             settings: crate::settings::Settings::new(),
+            theme: std::sync::Arc::new(ono_render::Theme::default()),
         }
     }
 
@@ -327,6 +331,17 @@ impl Session {
     /// The configuration settings, for a layer that sets one.
     pub fn settings_mut(&mut self) -> &mut crate::settings::Settings {
         &mut self.settings
+    }
+
+    /// The theme every renderer paints with (spec §44).
+    #[must_use]
+    pub fn theme(&self) -> &std::sync::Arc<ono_render::Theme> {
+        &self.theme
+    }
+
+    /// Replaces the theme, which `config::load` does once the settings are in (ADR-0332).
+    pub fn set_theme(&mut self, theme: ono_render::Theme) {
+        self.theme = std::sync::Arc::new(theme);
     }
 
     /// Defines `name` as a function or an alias in the innermost scope (ADR-0070).

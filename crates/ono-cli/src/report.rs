@@ -25,6 +25,13 @@ impl Reporter {
         }
     }
 
+    /// Paints with `theme` rather than the default one (spec §44, ADR-0332).
+    #[must_use]
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.theme = theme.clone();
+        self
+    }
+
     /// Reports a note: something the run counted that a user would otherwise have to guess at.
     ///
     /// Not an error and not part of the answer, so it goes to stderr and never to stdout. The

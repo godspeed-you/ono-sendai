@@ -50,6 +50,13 @@ impl Sink {
         }
     }
 
+    /// Paints with `theme` rather than the default one (spec §44, ADR-0332).
+    #[must_use]
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.theme = theme.clone();
+        self
+    }
+
     /// Renders in a particular view rather than letting the values choose (spec §13.6).
     #[must_use]
     pub fn with_view(mut self, view: View) -> Self {

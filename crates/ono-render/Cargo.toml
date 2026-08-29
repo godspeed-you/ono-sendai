@@ -10,7 +10,9 @@ authors.workspace = true
 
 [dependencies]
 jiff.workspace = true
+ono-core.workspace = true
 ono-value.workspace = true
+toml.workspace = true
 unicode-width.workspace = true
 
 [dev-dependencies]

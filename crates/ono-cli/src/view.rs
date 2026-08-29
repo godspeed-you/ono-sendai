@@ -52,10 +52,11 @@ pub fn run(session: &mut Session, name: &str, values: Vec<Value>) -> Eval<ExitSt
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_str()))
             .collect();
+        let sink = crate::sink::Sink::for_stdout(&borrowed).with_theme(session.theme());
         let sink = if tree {
-            crate::sink::Sink::for_stdout(&borrowed).with_view(View::Tree)
+            sink.with_view(View::Tree)
         } else {
-            crate::sink::Sink::for_stdout(&borrowed)
+            sink
         };
         sink.write(&values);
         let total = values.len();

@@ -47,7 +47,7 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
     if live && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
         let _ = ono_process::take_interrupt();
         let renderer = Renderer::new();
-        let theme = Theme::default();
+        let theme = Theme::clone(session.theme());
         let (width, height) = crate::native::live_geometry();
         let layout = Layout::new(width).max_rows(height.saturating_sub(3).max(4));
         let mut painted = 0usize;
@@ -124,7 +124,9 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_str()))
             .collect();
-        crate::sink::Sink::for_stdout(&borrowed).write(&shown);
+        crate::sink::Sink::for_stdout(&borrowed)
+            .with_theme(session.theme())
+            .write(&shown);
     }
     for failure in job
         .failures

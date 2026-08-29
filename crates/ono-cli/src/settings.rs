@@ -164,6 +164,12 @@ pub const CATALOGUE: &[SettingSpec] = &[
         default: DefaultValue::Bool(true),
     },
     SettingSpec {
+        key: "theme.name",
+        ty: SettingType::String,
+        description: "Which theme paints the semantic tokens of spec §44: a theme this build ships (`ono`, `neon`), or the name of a `themes/<name>.toml` beside the configuration (spec §30, ADR-0332).",
+        default: DefaultValue::Str("ono"),
+    },
+    SettingSpec {
         key: "render.table.max_rows",
         ty: SettingType::Int,
         description: "How many rows a rendered table shows before a visible `... N more` line (spec §13.3); 0 shows every row.",

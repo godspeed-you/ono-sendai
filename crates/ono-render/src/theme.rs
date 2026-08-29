@@ -5,6 +5,10 @@
 //! survives a monochrome terminal, a pipe and a colour-blind reader.
 
 use std::fmt::Write as _;
+use std::sync::Arc;
+
+use ono_core::ErrorCode;
+use ono_value::ErrorValue;
 
 use crate::Presentation;
 
@@ -84,14 +88,14 @@ pub enum Color {
 /// `marker` is what a reader sees when there is no colour at all, which is what keeps the shell
 /// usable in a pipe, on a monochrome terminal and for a reader who cannot distinguish the hues
 /// (spec §44).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Style {
     color: Color,
     bold: bool,
     dim: bool,
     italic: bool,
     underline: bool,
-    marker: Option<&'static str>,
+    marker: Option<Arc<str>>,
 }
 
 impl Style {
@@ -108,49 +112,77 @@ impl Style {
         }
     }
 
+    /// The same style with another colour, as a theme file overriding one key produces.
+    #[must_use]
+    pub fn with_color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// Emphasised, or not, as a theme file says.
+    #[must_use]
+    pub fn with_bold(mut self, bold: bool) -> Self {
+        self.bold = bold;
+        self
+    }
+
+    /// De-emphasised, or not, as a theme file says.
+    #[must_use]
+    pub fn with_dim(mut self, dim: bool) -> Self {
+        self.dim = dim;
+        self
+    }
+
+    /// Underlined, or not, as a theme file says.
+    #[must_use]
+    pub fn with_underline(mut self, underline: bool) -> Self {
+        self.underline = underline;
+        self
+    }
+
     /// Emphasised.
     #[must_use]
-    pub const fn bold(mut self) -> Self {
+    pub fn bold(mut self) -> Self {
         self.bold = true;
         self
     }
 
     /// De-emphasised.
     #[must_use]
-    pub const fn dim(mut self) -> Self {
+    pub fn dim(mut self) -> Self {
         self.dim = true;
         self
     }
 
     /// Underlined.
     #[must_use]
-    pub const fn underline(mut self) -> Self {
+    pub fn underline(mut self) -> Self {
         self.underline = true;
         self
     }
 
     /// Adds a text marker that survives a destination with no colour.
     #[must_use]
-    pub const fn with_marker(mut self, marker: &'static str) -> Self {
-        self.marker = Some(marker);
+    pub fn with_marker(mut self, marker: impl Into<Arc<str>>) -> Self {
+        self.marker = Some(marker.into());
         self
     }
 
     /// The colour this style paints with.
     #[must_use]
-    pub const fn colour(self) -> Color {
+    pub const fn colour(&self) -> Color {
         self.color
     }
 
     /// The text marker that carries this style's meaning without colour, if it has one.
     #[must_use]
-    pub const fn marker(self) -> Option<&'static str> {
-        self.marker
+    pub fn marker(&self) -> Option<&str> {
+        self.marker.as_deref()
     }
 
     /// The ANSI escape sequence that begins this style, or `None` when it paints nothing.
     #[must_use]
-    fn ansi_prefix(self) -> Option<String> {
+    fn ansi_prefix(&self) -> Option<String> {
         let mut codes: Vec<String> = Vec::new();
         if self.bold {
             codes.push("1".to_owned());
@@ -206,7 +238,7 @@ impl Theme {
         self.styles
             .iter()
             .find(|(candidate, _)| *candidate == token)
-            .map_or_else(Style::default, |(_, style)| *style)
+            .map_or_else(Style::default, |(_, style)| style.clone())
     }
 
     /// Overrides one token's style, as a theme file or a user setting does.
@@ -277,6 +309,291 @@ pub fn sanitise(text: &str) -> String {
         }
     }
     safe
+}
+
+/// The names of every theme this build ships.
+const BUILT_IN: [&str; 2] = ["ono", "neon"];
+
+/// The longest a marker may be: it sits in a table cell beside the value it marks.
+const MARKER_LIMIT: usize = 4;
+
+impl Theme {
+    /// The themes this build ships, in the order `get config theme.name` should suggest them.
+    ///
+    /// ```
+    /// assert!(ono_render::Theme::builtin_names().contains(&"ono"));
+    /// ```
+    #[must_use]
+    pub fn builtin_names() -> &'static [&'static str] {
+        &BUILT_IN
+    }
+
+    /// One of the themes this build ships, by name.
+    ///
+    /// ```
+    /// let theme = ono_render::Theme::named("ono").expect("the default theme");
+    /// assert_eq!(theme.name(), "ono");
+    /// ```
+    #[must_use]
+    pub fn named(name: &str) -> Option<Theme> {
+        match name {
+            "ono" => Some(Theme::default()),
+            "neon" => Some(neon()),
+            _ => None,
+        }
+    }
+
+    /// Reads a theme file — the `~/.config/ono/themes/*.toml` of spec §30.
+    ///
+    /// A file names the built-in theme it starts from and overrides the tokens it cares about;
+    /// every token it does not name keeps the base's style, because a theme that silently
+    /// unstyled twenty-three tokens to restyle one would be a theme nobody could write.
+    ///
+    /// ```
+    /// use ono_render::{Theme, Token};
+    /// let theme = Theme::parse("mine", "[tokens]\n\"ui.danger\" = { color = 9 }\n")
+    ///     .expect("a valid theme file");
+    /// assert_eq!(theme.style(Token::Danger).colour(), ono_render::Color::Indexed(9));
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when the file is not valid TOML, names a token spec §44 does
+    /// not define, uses a style key nothing implements, carries a marker that could drive the
+    /// terminal, or would leave a token's meaning readable by colour alone (spec §44).
+    pub fn parse(name: &str, text: &str) -> Result<Theme, ErrorValue> {
+        let document: toml::Table = text.parse().map_err(|error| {
+            mismatch(format!("`{name}` is not a valid theme file: {error}")).with_help(
+                "a theme file is TOML: an optional `extends`, then a `[tokens]` table keyed by \
+                 the token names of spec §44",
+            )
+        })?;
+
+        let base = match document.get("extends") {
+            None => "ono",
+            Some(toml::Value::String(base)) => base.as_str(),
+            Some(_) => {
+                return Err(mismatch(format!(
+                    "`{name}` declares an `extends` that is not a theme name"
+                )));
+            }
+        };
+        let mut theme = Theme::named(base).ok_or_else(|| {
+            unknown(format!(
+                "`{name}` extends `{base}`, which is not a theme this build ships"
+            ))
+            .with_help(format!("the themes it ships are {}", BUILT_IN.join(", ")))
+        })?;
+        theme.name = name.to_owned();
+
+        for key in document.keys() {
+            if key != "extends" && key != "tokens" {
+                return Err(unknown(format!(
+                    "`{name}` declares `{key}`, which a theme file has no such section for"
+                ))
+                .with_help("a theme file has an `extends` and a `[tokens]` table"));
+            }
+        }
+
+        let tokens = match document.get("tokens") {
+            None => return Ok(theme),
+            Some(toml::Value::Table(tokens)) => tokens,
+            Some(_) => {
+                return Err(mismatch(format!(
+                    "`{name}` declares a `tokens` that is not a table"
+                )));
+            }
+        };
+
+        for (token_name, declared) in tokens {
+            let token = Token::from_name(token_name).ok_or_else(|| {
+                unknown(format!(
+                    "`{name}` styles `{token_name}`, which is not a semantic token of spec §44"
+                ))
+                .with_help(format!(
+                    "the tokens are {}",
+                    Token::ALL
+                        .iter()
+                        .map(|token| token.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
+            let style = parse_style(name, token, theme.style(token), declared)?;
+            theme.set(token, style);
+        }
+
+        theme.check_readable_without_colour(name)?;
+        Ok(theme)
+    }
+
+    /// Spec §44: "No functionality may depend on color alone."
+    ///
+    /// With colour disabled every theme paints the same bytes, so a theme cannot make output
+    /// unreadable there — [`Theme::paint`] never consults it. What a theme *can* do is take away
+    /// the mark that tells two opposite meanings apart when the colour is gone, and that is what
+    /// this refuses. The pairs are the ones whose confusion costs something: a destructive
+    /// outcome that reads as a successful one, and a warning that reads as either.
+    fn check_readable_without_colour(&self, name: &str) -> Result<(), ErrorValue> {
+        for (token, other) in [
+            (Token::Danger, Token::Success),
+            (Token::Warning, Token::Success),
+            (Token::Danger, Token::Warning),
+        ] {
+            let mark = self.style(token);
+            let against = self.style(other);
+            if mark.marker().is_none() || mark.marker() == against.marker() {
+                return Err(mismatch(format!(
+                    "`{name}` leaves `{}` indistinguishable from `{}` once colour is gone",
+                    token.name(),
+                    other.name()
+                ))
+                .with_help(
+                    "give the token a `marker` of its own: spec §44 requires that no \
+                     functionality depend on colour alone, and a pipe, a dumb terminal and a \
+                     reader who cannot see the hue all get the marker instead",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One token's style, as a theme file declares it, over the style it is replacing.
+fn parse_style(
+    theme: &str,
+    token: Token,
+    base: Style,
+    declared: &toml::Value,
+) -> Result<Style, ErrorValue> {
+    let Some(table) = declared.as_table() else {
+        return Err(mismatch(format!(
+            "`{theme}` styles `{}` with something that is not a table of style keys",
+            token.name()
+        ))
+        .with_help("a style is `{ color = 203, bold = true, marker = \"!!\" }`"));
+    };
+
+    let mut style = base;
+    for (key, value) in table {
+        match (key.as_str(), value) {
+            ("color", toml::Value::Integer(index)) => {
+                let index = u8::try_from(*index).map_err(|_| {
+                    mismatch(format!(
+                        "`{theme}` paints `{}` with colour {index}, and the palette every \
+                         terminal understands runs from 0 to 255",
+                        token.name()
+                    ))
+                })?;
+                style = style.with_color(Color::Indexed(index));
+            }
+            ("color", toml::Value::String(word)) if word == "default" => {
+                style = style.with_color(Color::Default);
+            }
+            ("bold", toml::Value::Boolean(on)) => style = style.with_bold(*on),
+            ("dim", toml::Value::Boolean(on)) => style = style.with_dim(*on),
+            ("underline", toml::Value::Boolean(on)) => style = style.with_underline(*on),
+            ("marker", toml::Value::String(mark)) => {
+                check_marker(theme, token, mark)?;
+                style = style.with_marker(mark.as_str());
+            }
+            ("color" | "bold" | "dim" | "underline" | "marker", _) => {
+                return Err(mismatch(format!(
+                    "`{theme}` gives `{}` a `{key}` of the wrong kind",
+                    token.name()
+                ))
+                .with_help(
+                    "`color` is 0-255 or \"default\"; `bold`, `dim` and `underline` are true or \
+                     false; `marker` is a short piece of text",
+                ));
+            }
+            _ => {
+                return Err(unknown(format!(
+                    "`{theme}` gives `{}` a `{key}`, which is not a style key this shell \
+                     implements",
+                    token.name()
+                ))
+                .with_help("the style keys are color, bold, dim, underline, marker"));
+            }
+        }
+    }
+    Ok(style)
+}
+
+/// A marker is printed verbatim beside a value, so it is held to what a value is held to.
+fn check_marker(theme: &str, token: Token, mark: &str) -> Result<(), ErrorValue> {
+    if mark.chars().any(char::is_control) {
+        return Err(mismatch(format!(
+            "`{theme}` gives `{}` a marker containing a control character",
+            token.name()
+        ))
+        .with_help(
+            "a marker is printed beside the value it marks; a value may never drive the \
+             terminal, and neither may a theme (spec §49)",
+        ));
+    }
+    if mark.chars().count() > MARKER_LIMIT {
+        return Err(mismatch(format!(
+            "`{theme}` gives `{}` a marker of {} characters, and a marker may be at most \
+             {MARKER_LIMIT}",
+            token.name(),
+            mark.chars().count()
+        ))
+        .with_help(
+            "a marker sits inside a table cell beside its value: it is a mark, not a note",
+        ));
+    }
+    Ok(())
+}
+
+fn mismatch(message: String) -> ErrorValue {
+    ErrorValue::new(ErrorCode::TypeMismatch, message)
+}
+
+fn unknown(message: String) -> ErrorValue {
+    ErrorValue::new(ErrorCode::TypeUnknownField, message)
+}
+
+/// The cyberpunk theme of spec §44: the same semantics, the accent colours used harder.
+///
+/// §44 allows it to "use accent colors more aggressively" and requires that "semantic contrast
+/// and accessibility remain requirements", so every marker of the default theme survives here
+/// unchanged; only the palette is louder.
+fn neon() -> Theme {
+    let mut theme = Theme {
+        name: "neon".to_owned(),
+        ..Theme::default()
+    };
+    for (token, style) in [
+        (Token::Accent, Style::color(Color::Indexed(51)).bold()),
+        (Token::Success, Style::color(Color::Indexed(46)).bold()),
+        (Token::Warning, Style::color(Color::Indexed(226)).bold()),
+        (Token::Danger, Style::color(Color::Indexed(197)).bold()),
+        (
+            Token::Selection,
+            Style::color(Color::Indexed(51)).bold().underline(),
+        ),
+        (Token::PromptLink, Style::color(Color::Indexed(51)).bold()),
+        (Token::PromptContext, Style::color(Color::Indexed(213))),
+        (Token::PromptRoot, Style::color(Color::Indexed(197)).bold()),
+        (Token::TableHeader, Style::color(Color::Indexed(51)).bold()),
+        (Token::ValueNumber, Style::color(Color::Indexed(213))),
+        (Token::ErrorCode, Style::color(Color::Indexed(197)).bold()),
+        (Token::GraphEdge, Style::color(Color::Indexed(51))),
+        (Token::Path, Style::color(Color::Indexed(87))),
+    ] {
+        // The marker is the part a reader without colour depends on, so it is carried over from
+        // the default theme rather than restated: a louder palette may not cost anyone the mark.
+        let marker = theme.style(token).marker().map(str::to_owned);
+        theme.set(
+            token,
+            match marker {
+                Some(mark) => style.with_marker(mark),
+                None => style,
+            },
+        );
+    }
+    theme
 }
 
 impl Default for Theme {

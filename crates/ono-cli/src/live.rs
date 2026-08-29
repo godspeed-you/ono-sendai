@@ -21,14 +21,18 @@ const FRAME: std::time::Duration = std::time::Duration::from_millis(250);
 /// Each event either replaces one row (`snapshot`, `added`, `changed` — by the identity of the
 /// object it carries) or removes one (`removed`). Errors go to stderr as they arrive; they scroll
 /// above the table rather than corrupting it.
-pub async fn show(stream: ValueStream, width: usize, height: usize) -> Vec<ErrorValue> {
+pub async fn show(
+    stream: ValueStream,
+    width: usize,
+    height: usize,
+    theme: &Theme,
+) -> Vec<ErrorValue> {
     let mut stream = stream;
     let mut rows: BTreeMap<String, Value> = BTreeMap::new();
     let mut failures = Vec::new();
     let mut painted = 0usize;
     let mut dirty = false;
     let renderer = Renderer::new();
-    let theme = Theme::default();
     let row_limit = height.saturating_sub(3).max(4);
     let layout = Layout::new(width).max_rows(row_limit);
 
@@ -40,7 +44,7 @@ pub async fn show(stream: ValueStream, width: usize, height: usize) -> Vec<Error
             event = stream.recv() => event,
             () = tokio::time::sleep_until(next_frame) => {
                 if dirty {
-                    painted = repaint(&layout, &renderer, &theme, &rows, painted);
+                    painted = repaint(&layout, &renderer, theme, &rows, painted);
                     dirty = false;
                 }
                 next_frame = tokio::time::Instant::now() + FRAME;
@@ -61,7 +65,7 @@ pub async fn show(stream: ValueStream, width: usize, height: usize) -> Vec<Error
     }
 
     if dirty {
-        repaint(&layout, &renderer, &theme, &rows, painted);
+        repaint(&layout, &renderer, theme, &rows, painted);
     }
     failures
 }
