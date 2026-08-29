@@ -301,3 +301,90 @@ fn should_refuse_to_identify_a_record_whose_schema_declares_no_identity() {
         "a record with no declared identity has no object identity to speak of"
     );
 }
+
+/// A schema whose identity is one nullable field, as `ono.socket/1`'s `inode` is.
+fn remnant_schema() -> Arc<Schema> {
+    Arc::new(
+        Schema::builder(SchemaId::new("ono.remnant", 1), "Remnant")
+            .field(ono_value::FieldDef::new("inode", ono_value::FieldType::Int).nullable())
+            .field(ono_value::FieldDef::new("state", ono_value::FieldType::String).required())
+            .identity(["inode"])
+            .default_view(["inode", "state"])
+            .build()
+            .expect("a valid schema"),
+    )
+}
+
+fn remnant(state: &str) -> RecordValue {
+    let schema = remnant_schema();
+    let id = schema.id().clone();
+    RecordValue::builder(
+        schema,
+        Provenance::local("test.fixture", id).from_source("memory"),
+    )
+    .set("inode", Value::Null)
+    .expect("a valid field")
+    .set("state", Value::String(state.into()))
+    .expect("a valid field")
+    .build()
+}
+
+#[test]
+fn should_refuse_to_identify_a_record_whose_every_identity_component_is_null() {
+    // Spec §2.17 and §35.3: identity is what the identity fields say, and a null is the absence
+    // of a value rather than a value. A record that supplies none of them says nothing about
+    // which object it is.
+    let record = remnant("time-wait");
+
+    assert!(
+        ObjectId::of(&record).is_none(),
+        "every identity component is null, so the record carries no identity: giving it one \
+         would make every such record the same object"
+    );
+    assert!(
+        ono_provider_api::ObjectRef::of(&record).is_none(),
+        "a reference names an object, and there is no object here to name"
+    );
+}
+
+#[test]
+fn should_not_make_two_records_the_same_object_because_both_have_no_identity() {
+    // Two sockets in TIME_WAIT have no inode each. They are two remnants of two connections,
+    // and an identity built from two nulls made them one place on every map (§42.1).
+    let left = remnant("time-wait");
+    let right = remnant("close");
+
+    assert_eq!(ObjectId::of(&left), None);
+    assert_eq!(ObjectId::of(&right), None);
+}
+
+#[test]
+fn should_keep_identifying_a_record_whose_identity_is_only_partly_null() {
+    // `ono.route/1` identifies by (table, family, destination, gateway, interface), and the
+    // default route has no destination. That record is still an object.
+    let schema = Arc::new(
+        Schema::builder(SchemaId::new("ono.partial", 1), "Partial")
+            .field(ono_value::FieldDef::new("table", ono_value::FieldType::String).required())
+            .field(ono_value::FieldDef::new("destination", ono_value::FieldType::String).nullable())
+            .identity(["table", "destination"])
+            .default_view(["table", "destination"])
+            .build()
+            .expect("a valid schema"),
+    );
+    let id = schema.id().clone();
+    let record = RecordValue::builder(
+        schema,
+        Provenance::local("test.fixture", id).from_source("memory"),
+    )
+    .set("table", Value::String("main".into()))
+    .expect("a valid field")
+    .set("destination", Value::Null)
+    .expect("a valid field")
+    .build();
+
+    let identity = ObjectId::of(&record).expect("one identity component is present");
+    assert_eq!(
+        identity.values(),
+        &[Value::String("main".into()), Value::Null]
+    );
+}

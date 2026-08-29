@@ -59,11 +59,18 @@ impl ObjectId {
         }
     }
 
-    /// The identity of `record`, or `None` when its schema declares none.
+    /// The identity of `record`, or `None` when the record states none.
     ///
-    /// A schema with no declared identity is one whose records are values rather than objects —
-    /// a projection, a measurement — and giving those a synthetic identity would let a live view
-    /// claim two unrelated rows were the same row.
+    /// A record states no identity in two ways, and both mean the same thing. Its schema may
+    /// declare none — those records are values rather than objects, a projection or a
+    /// measurement, and giving them a synthetic identity would let a live view claim two
+    /// unrelated rows were the same row. Or it may declare identity fields and the record supply
+    /// **none** of them: a null is the absence of a value, not a value (spec §35.3), so a record
+    /// whose every identity component is null says nothing about which object it is, and two such
+    /// records are not thereby the same object (spec §2.17, ADR-0231).
+    ///
+    /// One present component is enough. `ono.route/1` identifies by five fields and the default
+    /// route has no destination; that route is still an object.
     #[must_use]
     pub fn of(record: &RecordValue) -> Option<Self> {
         let schema = record.schema();
@@ -75,6 +82,9 @@ impl ObjectId {
             .iter()
             .map(|field| record.get(field).cloned().unwrap_or(Value::Null))
             .collect();
+        if values.iter().all(|value| matches!(value, Value::Null)) {
+            return None;
+        }
         let key = identity_key(&values);
         Some(Self {
             schema: schema.id().clone(),
