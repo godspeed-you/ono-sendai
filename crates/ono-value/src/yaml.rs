@@ -55,11 +55,102 @@ pub fn to_yaml(value: &Value) -> Result<String, ErrorValue> {
 /// Returns [`ErrorCode::ParseSyntax`] if the text is not YAML, and whatever [`from_json`]
 /// returns for the document it describes.
 pub fn from_yaml(text: &str, schemas: &SchemaRegistry) -> Result<Value, ErrorValue> {
+    let depth = yaml_depth(text);
+    if depth > MAX_YAML_DEPTH {
+        return Err(ErrorValue::new(
+            ErrorCode::ParseSyntax,
+            format!(
+                "the document nests {depth} collections deep, and {MAX_YAML_DEPTH} is the limit"
+            ),
+        )
+        .with_help(
+            "a document this deep is refused by the YAML parser too; it is refused here so that \
+             saying no costs no more than reading it (spec §49)",
+        ));
+    }
     let json: serde_json::Value = serde_yaml_ng::from_str(text).map_err(|error| {
         ErrorValue::new(ErrorCode::ParseSyntax, "the input is not valid YAML")
             .with_help(error.to_string())
     })?;
     from_json(&json, schemas)
+}
+
+/// The deepest flow-collection nesting any decoder in this workspace hands to the YAML parser.
+///
+/// The parser refuses deeper documents on its own, and the work it does before refusing grows
+/// with the square of the depth: 100 kB of `{e: {e: {…` took seven seconds to be turned down.
+/// Counting the nesting first — one linear scan — turns that into the same refusal at the speed
+/// of reading. Found by the §35.6 serializer fuzz target (ADR-0313).
+///
+/// Every decoder that reads YAML written by somebody else — a plugin manifest, a package
+/// signature, an adapter pack, an operator's policy or trust store — checks [`yaml_depth`]
+/// against this before parsing. The compiled-in contracts of this build do not: they are not
+/// input.
+pub const MAX_YAML_DEPTH: usize = 128;
+
+/// The deepest `{`/`[` nesting in `text`, skipping quoted scalars and comments.
+///
+/// It counts only unquoted brackets, so it can under-count — a `{` this reads as being inside a
+/// string is not counted — and never over-count. Under-counting costs nothing: the parser still
+/// refuses what this lets through. Over-counting would refuse a document that is fine, which is
+/// why the quoting is tracked at all.
+///
+/// ```
+/// use ono_value::{MAX_YAML_DEPTH, yaml_depth};
+/// assert_eq!(yaml_depth("a: [1, [2, [3]]]\n"), 3);
+/// assert_eq!(yaml_depth("a: \"{{{{\"\n"), 0);
+/// assert!(yaml_depth(&"{e: ".repeat(1_000)) > MAX_YAML_DEPTH);
+/// ```
+#[must_use]
+pub fn yaml_depth(text: &str) -> usize {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Plain,
+        Single,
+        Double,
+        Comment,
+    }
+
+    let mut state = State::Plain;
+    let mut depth = 0_usize;
+    let mut deepest = 0_usize;
+    let mut previous = b' ';
+    let mut bytes = text.as_bytes().iter().copied();
+    while let Some(byte) = bytes.next() {
+        match state {
+            State::Comment => {
+                if byte == b'\n' {
+                    state = State::Plain;
+                }
+            }
+            State::Single => {
+                if byte == b'\'' {
+                    state = State::Plain;
+                }
+            }
+            State::Double => match byte {
+                b'\\' => {
+                    let _ = bytes.next();
+                }
+                b'"' => state = State::Plain,
+                _ => {}
+            },
+            State::Plain => match byte {
+                b'\'' => state = State::Single,
+                b'"' => state = State::Double,
+                // A `#` opens a comment only at a word boundary; `a#b` is a plain scalar.
+                b'#' if previous.is_ascii_whitespace() => state = State::Comment,
+                b'{' | b'[' => {
+                    depth += 1;
+                    deepest = deepest.max(depth);
+                }
+                b'}' | b']' => depth = depth.saturating_sub(1),
+                _ => {}
+            },
+        }
+        previous = byte;
+    }
+    deepest
 }
 
 /// Serializes a value as YAML for a reader that knows nothing about Ono (spec §33.5, §12.3).

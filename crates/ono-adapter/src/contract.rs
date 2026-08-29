@@ -391,6 +391,15 @@ impl AdapterPack {
     ///
     /// The YAML error, including an unknown field, as text.
     pub fn parse(yaml: &str) -> Result<Self, String> {
+        // A pack comes from a package, so it is somebody else's document: refused before the
+        // YAML parser sees it if it nests deeper than any real one (ADR-0313, spec §49 T7).
+        let depth = ono_value::yaml_depth(yaml);
+        if depth > ono_value::MAX_YAML_DEPTH {
+            return Err(format!(
+                "the pack nests {depth} collections deep, and {} is the limit",
+                ono_value::MAX_YAML_DEPTH
+            ));
+        }
         let mut pack: Self = serde_yaml_ng::from_str(yaml).map_err(|error| error.to_string())?;
         for adapter in &mut pack.adapters {
             adapter.pack_id.clone_from(&pack.package.id);
@@ -814,6 +823,14 @@ impl Fixture {
     ///
     /// The YAML error as text.
     pub fn parse(yaml: &str) -> Result<Self, String> {
+        // A sidecar ships in a package, so it is somebody else's document too (ADR-0313).
+        let depth = ono_value::yaml_depth(yaml);
+        if depth > ono_value::MAX_YAML_DEPTH {
+            return Err(format!(
+                "the fixture nests {depth} collections deep, and {} is the limit",
+                ono_value::MAX_YAML_DEPTH
+            ));
+        }
         serde_yaml_ng::from_str(yaml).map_err(|error| error.to_string())
     }
 

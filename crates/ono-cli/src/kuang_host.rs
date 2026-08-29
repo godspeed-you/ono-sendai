@@ -239,6 +239,9 @@ impl Host {
         let Ok(text) = std::fs::read_to_string(&path) else {
             return;
         };
+        if ono_value::yaml_depth(&text) > ono_value::MAX_YAML_DEPTH {
+            return;
+        }
         let Ok(stored) = serde_yaml_ng::from_str::<StoredPolicy>(&text) else {
             return;
         };

@@ -348,6 +348,15 @@ impl PackageSignature {
     /// build can check — an unknown format, an algorithm it does not implement, a key or
     /// signature of the wrong shape. A document it cannot read is never treated as absent.
     pub fn parse(text: &str) -> Result<Self, KuangError> {
+        let depth = ono_value::yaml_depth(text);
+        if depth > ono_value::MAX_YAML_DEPTH {
+            // Refused before the YAML parser sees it: the parser turns it down too, in time
+            // quadratic in the depth (ADR-0313, spec §49 T7).
+            return Err(invalid(format!(
+                "the signature document nests {depth} collections deep, and {} is the limit",
+                ono_value::MAX_YAML_DEPTH
+            )));
+        }
         let document: SignatureDocument = serde_yaml_ng::from_str(text).map_err(|error| {
             invalid(format!("the signature document does not parse: {error}")).with_help(
                 "a package signature is a `kuang-signature/1` document beside the manifest \

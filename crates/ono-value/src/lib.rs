@@ -100,4 +100,4 @@ pub use text::{canonical_text, to_text};
 pub use units::{ByteSize, ByteUnit, Duration, DurationUnit, Percent};
 pub use uuid::Uuid;
 pub use value::Value;
-pub use yaml::{from_yaml, to_yaml, to_yaml_data};
+pub use yaml::{MAX_YAML_DEPTH, from_yaml, to_yaml, to_yaml_data, yaml_depth};

@@ -190,6 +190,13 @@ fn read_one(origin: Origin, path: &Path) -> Result<Vec<Entry>, ErrorValue> {
         )
         .with_help("a trust store is a `kuang-trust/1` document (spec §31.36, ADR-0312)")
     };
+    let depth = ono_value::yaml_depth(&text);
+    if depth > ono_value::MAX_YAML_DEPTH {
+        return Err(refuse(format!(
+            "the store nests {depth} collections deep, and {} is the limit",
+            ono_value::MAX_YAML_DEPTH
+        )));
+    }
     let document: Document =
         serde_yaml_ng::from_str(&text).map_err(|error| refuse(format!("{error}")))?;
     if document.format != TRUST_FORMAT {
