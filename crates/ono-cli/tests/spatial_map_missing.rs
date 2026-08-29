@@ -665,8 +665,13 @@ fn should_only_remove_nodes_and_leave_no_dangling_edge_when_a_type_filter_narrow
         "§22",
     );
 
-    let both = maps_at(&here, &["--all", &format!("--all --type {node_type}")]);
-    let (complete, filtered) = (both[0].clone(), both[1].clone());
+    // The filtered map is taken *first* and the complete one second, so a process that starts
+    // between the two invocations lands in the complete map — which the subset assertion below
+    // tolerates. Taken the other way round the same process appears only in the filtered map and
+    // reads as an object filtering invented, which is a test coupled to the moment it ran rather
+    // than to the behaviour it states (AGENTS.md section 11).
+    let both = maps_at(&here, &[&format!("--all --type {node_type}"), "--all"]);
+    let (filtered, complete) = (both[0].clone(), both[1].clone());
 
     let known = ids(nodes(&complete));
     for node in nodes(&filtered) {
