@@ -178,8 +178,8 @@ things on every gate run (ADR-0026):
 The enhancements present, newest first:
 
 - `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — the Spatial Systems
-  Interface. Added 2026-08-27, **not implemented**: it arrived after the v0.3 tranche was
-  complete and is the next body of work, not part of the 0.3.0 release.
+  Interface. Added 2026-08-27, implemented 2026-08-28/29 (ADR-0124 … ADR-0402) and released as
+  0.4.0; `docs/ACCEPTANCE.md` §4.7 holds its checklist.
 - `docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md` — the External Command
   Adaptation Layer. Implemented (ADR-0052 … ADR-0067).
 

@@ -13,10 +13,11 @@ That is the whole idea here, minus the fiction:
 
 The command is `ono`. The deck is real this time.
 
-> **Status: v0.3.0 — release-ready by `scripts/release-check.sh`.** All ten phases of the specification are implemented; every box
-> of `docs/ACCEPTANCE.md` is ticked by a named automated proof; the containerised acceptance
-> suite — 35 cases against the real binary installed as a login shell, network cut — is green,
-> as is CI. Every example below runs.
+> **Status: v0.4.0 — release-ready by `scripts/release-check.sh`.** All ten phases of the specification are implemented, with
+> the External Command Adaptation Layer (v0.3) and the Spatial Systems Interface (v0.4) on top of
+> them; every box of `docs/ACCEPTANCE.md` is ticked by a named automated proof; the containerised
+> acceptance suite — 107 cases against the real binary installed as a login shell, network cut —
+> is green, as is CI. Every example below runs.
 
 ---
 
@@ -177,9 +178,9 @@ command reference under `/usr/share/doc/ono/`, and register the shell in `/etc/s
 
 ```bash
 # Debian, Ubuntu and relatives
-sudo apt install ./ono_0.3.0_amd64.deb          # or ono_0.3.0_arm64.deb
+sudo apt install ./ono_0.4.0_amd64.deb          # or ono_0.4.0_arm64.deb
 # Fedora, RHEL and relatives
-sudo dnf install ./ono-0.3.0-1.x86_64.rpm       # or ono-0.3.0-1.aarch64.rpm
+sudo dnf install ./ono-0.4.0-1.x86_64.rpm       # or ono-0.4.0-1.aarch64.rpm
 
 chsh -s /usr/bin/ono                             # make it your login shell
 ```
