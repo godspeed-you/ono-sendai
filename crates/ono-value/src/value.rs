@@ -464,7 +464,14 @@ fn follow_step(receiver: &Value, step: FieldStep<'_>) -> Result<Value, ErrorValu
             None => absent(receiver, step),
         },
         Value::Null if step.is_optional() => Ok(Value::Null),
-        Value::Error(error) => Err((**error).clone()),
+        // An error in hand is a record of the shape `ono.error/1` declares, so a path descends
+        // into it: `error.name` is the selector, `error.source.message` walks the chain of spec
+        // §16.1 (ADR-0215). A raised failure never reaches here — `access` reports that one
+        // level up, and it still refuses.
+        Value::Error(error) => match error.field(step.name()) {
+            Some(value) => Ok(value),
+            None => absent(receiver, step),
+        },
         other => Err(ErrorValue::new(
             ErrorCode::TypeMismatch,
             format!(

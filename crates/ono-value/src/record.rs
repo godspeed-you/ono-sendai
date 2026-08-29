@@ -184,14 +184,27 @@ impl RecordValue {
     }
 
     /// Reads a field, keeping the three outcomes of spec §10.5 apart.
+    ///
+    /// An error stored in a field the schema declares `error` is that field's *value* — spec
+    /// §11.5 declares `ActionResult.error` exactly so — and is reported `Known`. An error in a
+    /// field of any other type is the failure to read it (ADR-0215).
     #[must_use]
     pub fn access(&self, name: &str) -> FieldAccess {
         match self.get(name) {
             None => FieldAccess::Absent,
             Some(Value::Null) => FieldAccess::Unknown,
-            Some(Value::Error(error)) => FieldAccess::Failed(Arc::clone(error)),
+            Some(Value::Error(error)) if !self.declares_error(name) => {
+                FieldAccess::Failed(Arc::clone(error))
+            }
             Some(value) => FieldAccess::Known(value.clone()),
         }
+    }
+
+    /// Whether the schema declares `name` as holding a structured error.
+    fn declares_error(&self, name: &str) -> bool {
+        self.schema
+            .field(name)
+            .is_some_and(|field| matches!(field.ty(), crate::FieldType::Error))
     }
 
     /// The identity fields and their values (spec §27.3).

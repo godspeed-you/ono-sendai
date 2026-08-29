@@ -424,3 +424,74 @@ fn should_stack_records_instead_of_truncating_a_table_when_the_terminal_is_narro
         output.join("\n")
     );
 }
+
+// --- a declared error field is data a path can descend into (ADR-0215, spec §10.5, §11.5) ----
+
+#[test]
+fn should_project_the_named_field_of_a_result_s_error_when_a_path_descends_into_it() {
+    // Spec §11.5 declares `ActionResult.error` as `ono.error/1`: the error stored there is the
+    // field's value, so `error.name` is the dotted selector `catch` and `where` match on, not
+    // the whole error record.
+    let run = ono("stop process 999999 | select status error.name error.code | to json");
+
+    let rows = rows(&run);
+    assert_eq!(
+        rows.len(),
+        1,
+        "one result per target (spec §16.5): {rows:?}"
+    );
+    let row = &rows[0];
+    assert_eq!(
+        row.get("status").and_then(Value::as_str),
+        Some("failed"),
+        "the mutation could not act on a process that is gone: {row:?}"
+    );
+    assert_eq!(
+        row.get("name").and_then(Value::as_str),
+        Some("io.not_found"),
+        "spec §16.1: `error.name` is the selector, not the record that holds it: {}",
+        text_of(row)
+    );
+    assert_eq!(
+        row.get("code").and_then(Value::as_str),
+        Some("Ono-Sendai-E0301"),
+        "spec §43: `error.code` is the stable code: {}",
+        text_of(row)
+    );
+}
+
+#[test]
+fn should_keep_a_row_whose_error_matches_when_a_predicate_reads_the_error_s_name() {
+    let run = ono("stop process 999999 | where error.name == \"io.not_found\" | count");
+
+    assert_eq!(
+        run.stdout()
+            .lines()
+            .last()
+            .map(str::trim)
+            .unwrap_or_default(),
+        "1",
+        "a predicate over `error.name` selects the failed result: {}",
+        run.output()
+    );
+    assert_ne!(
+        run.status().code(),
+        0,
+        "ADR-0006: a failed ActionResult still decides the aggregate exit status"
+    );
+}
+
+#[test]
+fn should_bind_a_caught_error_as_a_value_whose_fields_can_be_read() {
+    // Spec §16: `catch e` binds the structured error. Reading a field of it must answer the
+    // field, not re-raise the error the block just caught.
+    let run = ono("try { get file /nope/nope/nope } catch e { echo $e.name }");
+
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "io.not_found",
+        "the caught error's `name` is readable: {}",
+        run.output()
+    );
+}

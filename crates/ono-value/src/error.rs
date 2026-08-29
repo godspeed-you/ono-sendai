@@ -198,6 +198,42 @@ impl ErrorValue {
         &self.metadata
     }
 
+    /// One field of `ono.error/1` by name, as spec §16.1 declares it (ADR-0215).
+    ///
+    /// An error reached as a value has the fields its own schema declares, so a path can descend
+    /// into it: `error.name` is the dotted selector, `error.source.message` walks the chain.
+    /// `None` names no field of an error at all, which a path step reports as
+    /// [`ono_core::ErrorCode::TypeUnknownField`] or, written `?.`, as null.
+    ///
+    /// ```
+    /// use ono_core::ErrorCode;
+    /// use ono_value::{ErrorValue, Value};
+    ///
+    /// let error = ErrorValue::new(ErrorCode::IoNotFound, "gone");
+    /// assert_eq!(error.field("name"), Some(Value::string("io.not_found")));
+    /// assert_eq!(error.field("cpy"), None);
+    /// ```
+    #[must_use]
+    pub fn field(&self, name: &str) -> Option<Value> {
+        Some(match name {
+            "code" => Value::string(self.code.code()),
+            "name" => Value::string(self.code.name()),
+            "kind" => Value::string(self.kind().as_str()),
+            "message" => Value::string(&self.message),
+            "target" => self.target.as_ref().map_or(Value::Null, ValueRef::to_value),
+            "source" => self
+                .source
+                .as_ref()
+                .map_or(Value::Null, |source| Value::Error(Arc::clone(source))),
+            "help" => self.help.as_deref().map_or(Value::Null, Value::string),
+            "retryable" => self.retryable.map_or(Value::Null, Value::Bool),
+            // A span belongs to source text, and an error value carries none of its own.
+            "span" => Value::Null,
+            "metadata" => Value::Map(Arc::new(self.metadata.clone())),
+            _ => return None,
+        })
+    }
+
     /// This error and every error it was raised from, outermost first.
     pub fn chain(&self) -> impl Iterator<Item = &ErrorValue> {
         let mut next = Some(self);
