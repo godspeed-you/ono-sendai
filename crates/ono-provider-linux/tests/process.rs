@@ -685,6 +685,57 @@ async fn should_filter_by_any_field_the_schema_declares_rather_than_ignoring_the
 }
 
 #[tokio::test]
+async fn should_filter_by_the_service_option_rather_than_ignoring_it() {
+    // ADR-0076 §4: an option a frame can spell must be honoured, because an option a provider
+    // ignores is a frame that widens silently. `ono.process.watch` declares `--service`, so
+    // inside `enter service nginx.service` a watch is narrowed by it.
+    let fixture = ProcFixture::new();
+    fixture
+        .process(21)
+        .stat("in-service", StatFields::default())
+        .cgroup("0::/system.slice/nginx.service");
+    fixture
+        .process(22)
+        .stat("outside", StatFields::default())
+        .cgroup("0::/user.slice/user-1000.slice/session-2.scope");
+
+    let query = Query::target("process").option("service", Value::string("nginx.service"));
+    let collected = drain(provider(&fixture).snapshot(&query).expect("a snapshot")).await;
+
+    let names: Vec<String> = records(&collected)
+        .iter()
+        .map(|record| {
+            record
+                .get("name")
+                .and_then(|value| value.as_str().ok())
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        names,
+        ["in-service"],
+        "only the process the service claims answers; the option filtered, it was not ignored"
+    );
+}
+
+#[tokio::test]
+async fn should_match_no_process_whose_service_is_unknown_when_the_service_option_is_given() {
+    // ADR-0014: unknown is not equal to anything. A process no unit claims is not "not in
+    // nginx.service"; it is a process whose service could not be determined.
+    let fixture = ProcFixture::new();
+    fixture.process(23).stat("orphan", StatFields::default());
+
+    let query = Query::target("process").option("service", Value::string("nginx.service"));
+    let collected = drain(provider(&fixture).snapshot(&query).expect("a snapshot")).await;
+
+    assert!(
+        records(&collected).is_empty(),
+        "a process with no service matches no service"
+    );
+}
+
+#[tokio::test]
 async fn should_report_the_pid_namespace_the_pid_was_read_in() {
     // v0.4 §10.2: a local process identity is boot identity, pid, start time *and* pid namespace
     // identity. Without the last one a container's pid 1 and the host's pid 1 are the same

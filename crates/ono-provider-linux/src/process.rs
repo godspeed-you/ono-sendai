@@ -1185,6 +1185,23 @@ fn understood_selectors_match(query: &Query, record: &RecordValue) -> bool {
         .all(|selector| selector.matches(record))
         && ownership_matches(query, "user", "uid", record)
         && ownership_matches(query, "group", "gid", record)
+        && service_matches(query, record)
+}
+
+/// Whether the `--service` option, if given, accepts `record`.
+///
+/// `ono.process.watch` declares it, so a service frame narrows a watch through it (ADR-0076 §2),
+/// and ADR-0076 §4 makes an option a frame can spell one the provider must honour: an ignored
+/// option is a frame that widens silently. A process no unit claims has an unknown service, and
+/// unknown equals nothing (ADR-0014).
+fn service_matches(query: &Query, record: &RecordValue) -> bool {
+    let Some(wanted) = query.option_value("service") else {
+        return true;
+    };
+    match record.get("service") {
+        Some(Value::String(unit)) => wanted.as_str().is_ok_and(|name| name == &**unit),
+        _ => false,
+    }
 }
 
 /// Whether the `--user` / `--group` option, if given, accepts `record`.
