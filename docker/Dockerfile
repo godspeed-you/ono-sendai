@@ -31,7 +31,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --release --package ono-cli --package ono-kuang-sdk --locked \
       || cargo build --release --package ono-cli --package ono-kuang-sdk \
     && install -m 0755 target/release/ono /usr/local/bin/ono \
-    && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin
+    && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin \
+    && install -m 0755 target/release/kuang-sign /usr/local/bin/kuang-sign
 
 FROM debian:bookworm-slim AS runtime
 
@@ -46,6 +47,8 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
 
 COPY --from=builder /usr/local/bin/ono /usr/local/bin/ono
 COPY --from=builder /usr/local/bin/kuang-example-plugin /usr/local/bin/kuang-example-plugin
+# The signing tool the SDK ships, so a case can be a package author (spec §31.36, ADR-0311).
+COPY --from=builder /usr/local/bin/kuang-sign /usr/local/bin/kuang-sign
 
 # A non-root user, so privilege boundaries are exercised the way real users meet them.
 RUN useradd --create-home --shell /usr/local/bin/ono case

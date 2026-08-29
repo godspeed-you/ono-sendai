@@ -197,7 +197,7 @@ impl SessionProvider {
                 _ => None,
             })
             .map(str::to_owned);
-        let (package, management, instance) = {
+        let (package, management, instance, trust) = {
             let tables = self.lock();
             let Some(package) = id
                 .as_deref()
@@ -214,7 +214,8 @@ impl SessionProvider {
                     plugin: Arc::clone(&instance.plugin),
                     loaded_at: instance.loaded_at.clone(),
                 });
-            (package, management, instance)
+            let trust = tables.kuang.trust().clone();
+            (package, management, instance, trust)
         };
         Ok(ValueStream::spawn(
             ono_pipeline::PipelineConfig::new(),
@@ -236,6 +237,7 @@ impl SessionProvider {
                     instance.as_ref(),
                     &contributions,
                     failure,
+                    &trust,
                 );
                 match record {
                     Ok(record) => {

@@ -1,0 +1,113 @@
+# Spec §31.9, §31.36 (ADR-0311, ADR-0312): a package carries an Ed25519 signature over every
+# file it is made of; `verify plugin` answers integrity, signature, publisher trust and
+# isolation as four separate questions; a signature that is claimed and does not hold refuses
+# the install and refuses the load with `Ono-Sendai-K11004`; a revoked key refuses it with
+# `Ono-Sendai-K11005`; and an unsigned local development package still installs and loads,
+# visibly untrusted. The author's side is `kuang-sign`, the tool the SDK ships.
+case: a signed package is verified, trusted, tampered with and refused, all as records
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export ONO_CONFIG_DIR="$home/config/ono"
+  export ONO_KUANG_SYSTEM_TRUST="$home/etc/trust.yaml"
+  mkdir -p "$home/plugins" "$home/etc" "$home/config/ono/kuang"
+
+  lay_out() {
+    mkdir -p "$1/$2/fixtures"
+    cat > "$1/$2/manifest.yaml" <<MANIFEST
+  format: kuang-package/1
+  package:
+    id: $2
+    name: signed
+    version: 0.1.0
+    description: A package that carries a signature.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  roles: [adapter]
+  network:
+    outbound: none
+  contributions:
+    adapters: [adapters.yaml]
+  MANIFEST
+    printf 'format: ono-adapter-pack/1\nadapters: []\n' > "$1/$2/adapters.yaml"
+    printf 'rows:\n  - one\n' > "$1/$2/fixtures/rows.yaml"
+  }
+
+  echo "== the author signs, and the key is printed for a trust store =="
+  lay_out "$home/source" dev.example.signed
+  key=$(kuang-sign keygen --out "$home/signing.key" | tail -1)
+  kuang-sign sign "$home/source/dev.example.signed" --key "$home/signing.key" > /dev/null
+  kuang-sign verify "$home/source/dev.example.signed" > /dev/null && echo "author-verify=ok"
+  test -f "$home/source/dev.example.signed/signature.yaml" && echo "signature-file=ok"
+
+  echo "== the plan names the signature and its publisher, before anything is written =="
+  ono -c "try { install plugin path:$home/source/dev.example.signed } catch e { \$e | to json }" \
+    | grep -q 'valid / dev.example' && echo "plan-signature=ok" || echo "plan-signature=missing"
+  ono -c "install plugin path:$home/source/dev.example.signed --confirm | select status | to json"
+
+  echo "== four questions, four answers; an unknown key is not a trusted one =="
+  ono -c 'verify plugin dev.example.signed | select integrity signature trust transparency | to json'
+  ono -c 'get plugin dev.example.signed | select trust isolation | to json'
+
+  echo "== the operator enrols the key: user-trusted, and the package is verified =="
+  printf 'format: kuang-trust/1\nkeys:\n  - publisher: dev.example\n    key: %s\n    trust: trusted\n' "$key" > "$home/config/ono/kuang/trust.yaml"
+  ono -c 'verify plugin dev.example.signed | select signature trust publisher | to json'
+  ono -c 'get plugin dev.example.signed | select trust | to json'
+
+  echo "== the machine enrols it instead: system-trusted outranks the operator's silence =="
+  rm "$home/config/ono/kuang/trust.yaml"
+  printf 'format: kuang-trust/1\nkeys:\n  - publisher: dev.example\n    key: %s\n    trust: trusted\n' "$key" > "$home/etc/trust.yaml"
+  ono -c 'verify plugin dev.example.signed | select trust | to json'
+
+  echo "== a revoked key blocks the load, and the signature still verifies =="
+  printf 'format: kuang-trust/1\nkeys:\n  - publisher: dev.example\n    key: %s\n    trust: revoked\n' "$key" > "$home/etc/trust.yaml"
+  ono -c 'verify plugin dev.example.signed | select signature trust | to json' 2>/dev/null
+  ono -c 'load plugin dev.example.signed' 2>&1 | head -1
+  rm "$home/etc/trust.yaml"
+
+  echo "== a file changed after installing breaks both integrity and the signature =="
+  printf 'rows:\n  - tampered\n' > "$home/plugins/dev.example.signed/fixtures/rows.yaml"
+  ono -c 'verify plugin dev.example.signed | select integrity signature | to json' 2>/dev/null
+  ono -c 'load plugin dev.example.signed' 2>&1 | head -1
+
+  echo "== a package signed and then edited is never installed at all =="
+  lay_out "$home/source" dev.example.broken
+  kuang-sign sign "$home/source/dev.example.broken" --key "$home/signing.key" > /dev/null
+  printf 'rows:\n  - edited after signing\n' > "$home/source/dev.example.broken/fixtures/rows.yaml"
+  ono -c "install plugin path:$home/source/dev.example.broken --confirm" 2>&1 | head -1
+  test -d "$home/plugins/dev.example.broken" && echo "installed-anyway=yes" || echo "nothing-written=ok"
+
+  echo "== an unsigned local development package installs and loads, visibly untrusted =="
+  lay_out "$home/source" dev.example.plain
+  ono -c "install plugin path:$home/source/dev.example.plain --confirm | select status | to json"
+  ono -c 'verify plugin dev.example.plain | select signature trust | to json'
+  ono -c 'get plugin dev.example.plain | select trust | to json'
+  ono -c 'verify plugin dev.example.plain | select blocking_failures | to json'
+  echo done=ok
+exit: 0
+stdout-contains: author-verify=ok
+stdout-contains: signature-file=ok
+stdout-contains: plan-signature=ok
+stdout-contains: {"status":"success"}
+stdout-contains: {"integrity":"valid","signature":"valid","trust":"unknown","transparency":"unknown"}
+stdout-contains: {"trust":"signed","isolation":"core-built-in"}
+stdout-contains: {"signature":"valid","trust":"user-trusted","publisher":"dev.example"}
+stdout-contains: {"trust":"verified"}
+stdout-contains: {"trust":"system-trusted"}
+stdout-contains: {"signature":"valid","trust":"untrusted"}
+stdout-contains: Ono-Sendai-K11005
+stdout-contains: {"integrity":"invalid","signature":"invalid"}
+stdout-contains: Ono-Sendai-K11004
+stdout-contains: nothing-written=ok
+stdout-contains: {"signature":"absent","trust":"unknown"}
+stdout-contains: {"trust":"local"}
+stdout-contains: {"blocking_failures":[]}
+stdout-contains: done=ok
+stdout-not-contains: panicked

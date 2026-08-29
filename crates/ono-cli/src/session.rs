@@ -422,8 +422,11 @@ impl Session {
         let plugin_path = crate::plugins::plugin_path(self);
         let state_dir = crate::config::state_dir(self);
         let config_dir = crate::config::user_config_dir(self);
+        // The machine-wide trust store is the administrator's, so it comes from the environment
+        // and not from the user's configuration directory (ADR-0312).
+        let system_trust = crate::kuang_trust::system_path(self.env_var("ONO_KUANG_SYSTEM_TRUST"));
         self.with_kuang(|host| {
-            host.configure(plugin_path, state_dir, config_dir);
+            host.configure(plugin_path, state_dir, config_dir, system_trust);
             // Spec §31.37: the trail outlives the process. Appending at the start of every
             // pipeline keeps a session that is killed from losing everything before it.
             host.persist_audit();

@@ -12,11 +12,14 @@ use std::sync::Arc;
 
 use ono_core::ErrorCode;
 use ono_kuang_protocol::{
-    AuditEvent, Capability, CapabilityRequest, DeclarationClass, HOST_API, Manifest, PluginState,
-    Role, RuntimeKind, ShutdownReason, WireError, artifact_files,
+    AuditEvent, Capability, CapabilityRequest, DeclarationClass, HOST_API, Manifest,
+    PackageSignature, PluginState, Role, RuntimeKind, SIGNATURE_FILE, ShutdownReason, WireError,
+    artifact_files,
 };
 use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Policy, Supervisor};
 use ono_provider_api::{Action, ActionOutcome, ObjectId};
+
+use crate::kuang_trust::{Trust, TrustStore};
 use ono_value::{ErrorValue, MapValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
 /// One discovered package: its directory and its parsed manifest.
@@ -128,6 +131,24 @@ pub struct Host {
     written_audit: std::collections::BTreeSet<String>,
     /// Which policy store the grants in memory were read from, so it is read once per session.
     policy_read: Option<PathBuf>,
+    /// Whose keys this machine accepts, and the stores that exist and could not be read
+    /// (spec §31.36, ADR-0312).
+    trust: TrustContext,
+    /// Which stores the trust in memory was read from, so they are read once per session.
+    trust_read: Option<(PathBuf, Option<PathBuf>)>,
+}
+
+/// What the operator's trust stores say, as a verification needs it.
+///
+/// Carried rather than looked up, because a verification runs inside a stream the host does not
+/// outlive: `inspect plugin` builds its record after the pipeline has been handed off.
+#[derive(Debug, Clone, Default)]
+pub struct TrustContext {
+    /// The enrolled keys, system store and user store together.
+    pub store: TrustStore,
+    /// A store that exists and does not read as one. Fail closed: an unreadable store is not an
+    /// empty store, because it may be the one holding the revocation.
+    pub problems: Vec<ErrorValue>,
 }
 
 /// One package's stored capability decisions (spec §31.19's `policy.yaml`).
@@ -160,12 +181,32 @@ impl Host {
         plugin_path: Vec<PathBuf>,
         state_dir: Option<PathBuf>,
         config_dir: Option<PathBuf>,
+        system_trust: PathBuf,
     ) {
         self.plugin_path = plugin_path;
         self.state_dir = state_dir;
         self.config_dir = config_dir;
         self.read_policy();
+        self.read_trust(system_trust);
         self.read_audit();
+    }
+
+    /// Reads both trust stores into this session, once per pair of paths (spec §31.36).
+    fn read_trust(&mut self, system: PathBuf) {
+        let user = crate::kuang_trust::user_path(self.config_dir.as_deref());
+        let paths = (system, user);
+        if self.trust_read.as_ref() == Some(&paths) {
+            return;
+        }
+        let (store, problems) = TrustStore::read(Some(&paths.0), paths.1.as_deref());
+        self.trust = TrustContext { store, problems };
+        self.trust_read = Some(paths);
+    }
+
+    /// Whose keys this machine accepts.
+    #[must_use]
+    pub fn trust(&self) -> &TrustContext {
+        &self.trust
     }
 
     /// Where the operator's capability policy lives (spec §31.19's suggested location).
@@ -715,6 +756,7 @@ impl Host {
                 package,
                 &management,
                 self.instance(&package.manifest.package.id),
+                &self.trust,
             )?);
         }
         Ok((records, failures))
@@ -861,6 +903,64 @@ pub fn integrity_of(package: &Installed) -> String {
     format!("sha256:{hex}")
 }
 
+/// What the package's signature says (spec §31.36's "did a key sign these bytes?").
+#[derive(Debug, Clone)]
+pub struct SignatureCheck {
+    /// `valid`, `invalid` or `absent`, as `ono.verification-result/1` spells them.
+    pub state: &'static str,
+    /// The document, when the package carries one that reads as a signature. Present even when
+    /// the signature does not verify: what it claims is still what it claims.
+    pub document: Option<PackageSignature>,
+    /// Why the signature does not belong to this artifact. `None` when it does, and when there
+    /// is none — `absent` is not a failure (spec §31.36).
+    pub failure: Option<ErrorValue>,
+}
+
+/// Checks the signature the package carries, if it carries one.
+///
+/// A document that is there and cannot be read is `invalid`, never `absent`: a signature the
+/// host cannot check is a claim it must not pass over.
+#[must_use]
+pub fn signature_of(package: &Installed) -> SignatureCheck {
+    let Ok(text) = std::fs::read_to_string(package.directory.join(SIGNATURE_FILE)) else {
+        return SignatureCheck {
+            state: "absent",
+            document: None,
+            failure: None,
+        };
+    };
+    let refused = |document, error: &ono_kuang_protocol::KuangError| SignatureCheck {
+        state: "invalid",
+        document,
+        failure: Some(crate::plugins::error_value(error)),
+    };
+    match PackageSignature::parse(&text) {
+        Err(error) => refused(None, &error),
+        Ok(document) => {
+            match document.check(&package.manifest, &artifact_files(&package.directory)) {
+                Ok(()) => SignatureCheck {
+                    state: "valid",
+                    document: Some(document),
+                    failure: None,
+                },
+                Err(error) => refused(Some(document), &error),
+            }
+        }
+    }
+}
+
+/// The word `ono.plugin/1.trust` and `ono.plugin-package/1.trust` carry for one package
+/// (ADR-0312's table).
+#[must_use]
+pub fn trust_word(check: &SignatureCheck, standing: Trust) -> &'static str {
+    match (check.state, standing) {
+        ("absent", _) => "local",
+        ("invalid", _) | (_, Trust::Untrusted) => "untrusted",
+        (_, Trust::SystemTrusted | Trust::UserTrusted) => "verified",
+        _ => "signed",
+    }
+}
+
 /// When the artifact was placed: the manifest's modification time, the closest fact on disk.
 #[must_use]
 pub fn installed_at(package: &Installed) -> Value {
@@ -893,6 +993,7 @@ pub fn plugin_record(
     package: &Installed,
     management: &Management,
     instance: Option<&Instance>,
+    trust: &TrustContext,
 ) -> Result<RecordValue, ErrorValue> {
     let manifest = &package.manifest;
     let plugin = instance.map(|instance| &*instance.plugin);
@@ -904,15 +1005,27 @@ pub fn plugin_record(
             .map(|role| Value::string(role_name(*role))),
     );
     let text_or_null = |text: Option<String>| text.map_or(Value::Null, |text| Value::string(&text));
+    let signature = signature_of(package);
+    let standing = signature
+        .document
+        .as_ref()
+        .map_or(Trust::Unknown, |document| {
+            if signature.failure.is_none() {
+                trust.store.judge(document.publisher(), document.key())
+            } else {
+                Trust::Unknown
+            }
+        });
+    let package_trust = trust_word(&signature, standing);
     Ok(RecordValue::builder(Arc::clone(schema), provenance(schema))
         .set("id", Value::string(&manifest.package.id))?
         .set("name", Value::string(&manifest.package.name))?
         .set("version", Value::string(&manifest.package.version))?
         .set("publisher", Value::string(&manifest.package.publisher))?
         .set("state", Value::string(state.as_str()))?
-        // An unsigned package placed on this machine is a local development package — visibly
-        // untrusted, and capability-limited exactly like every other (spec §31.36).
-        .set("trust", Value::string("local"))?
+        // Spec §31.36's four questions stay four answers: this one is about who produced the
+        // artifact, and `local` is what an unsigned development package says.
+        .set("trust", Value::string(package_trust))?
         .set("isolation", Value::string(isolation(manifest)))?
         .set("roles", roles)?
         .set("enabled", Value::Bool(management.enabled))?
@@ -1049,7 +1162,7 @@ impl Host {
             .as_ref()
             .map(|package| self.management(&package.manifest.package.id))
             .unwrap_or_default();
-        verification(resolved, &management)
+        verification(resolved, &management, &self.trust)
     }
 
     /// The `ono.plugin-package/1` records of the packages matching `term` in the configured
@@ -1116,7 +1229,13 @@ impl Host {
             let already = installed.iter().any(|held| {
                 held.manifest.package.id == info.id && held.manifest.package.version == info.version
             });
-            records.push(package_record(&schema, &package, &reference, already)?);
+            records.push(package_record(
+                &schema,
+                &package,
+                &reference,
+                already,
+                &self.trust,
+            )?);
         }
         Ok((records, failures))
     }
@@ -1130,15 +1249,71 @@ impl Host {
 pub fn verification(
     resolved: &Resolved,
     management: &Management,
+    trust: &TrustContext,
 ) -> Result<Verification, ErrorValue> {
     let schema = schema("ono.verification-result")?;
     let mut blocking = Vec::new();
-    let mut warnings = vec![
-        "signature: absent".to_owned(),
-        "transparency: unknown".to_owned(),
-    ];
+    let mut warnings = vec!["transparency: unknown".to_owned()];
+    let mut signature = "unknown";
+    let mut publisher = Value::Null;
+    let mut key = Value::Null;
+    let mut standing = Trust::Unknown;
+    // A store that exists and cannot be read is blocking, because it may be the one holding the
+    // revocation: an unreadable trust store is not an empty one (ADR-0312).
+    for problem in &trust.problems {
+        blocking.push(
+            problem
+                .clone()
+                .with_metadata("check", Value::string("publisher")),
+        );
+    }
     let (package_name, integrity, compatibility, manifest, runtime) = match &resolved.package {
         Ok(package) => {
+            let check = signature_of(package);
+            signature = check.state;
+            if let Some(document) = &check.document {
+                // The key is reported whenever a document names one, valid or not: an operator
+                // asking why a signature failed is asking whose key it claimed to be. The
+                // publisher is reported only when the signature holds, because a publisher is
+                // what a valid signature *attests to* and an invalid one attests to nothing
+                // (`ono.verification-result/1`).
+                key = Value::string(&document.key().to_string());
+                if check.failure.is_none() {
+                    publisher = Value::string(document.publisher());
+                }
+            }
+            if let Some(failure) = &check.failure {
+                blocking.push(
+                    failure
+                        .clone()
+                        .with_metadata("check", Value::string("signature")),
+                );
+            }
+            match (&check.document, check.failure.is_none()) {
+                (Some(document), true) => {
+                    standing = trust.store.judge(document.publisher(), document.key());
+                    if standing == Trust::Unknown {
+                        warnings.push(
+                            "trust: unknown, no trust store enrols this key for this publisher"
+                                .to_owned(),
+                        );
+                    }
+                }
+                _ => warnings.push(format!("signature: {signature}")),
+            }
+            if standing.blocks() {
+                blocking.push(
+                    ErrorValue::new(
+                        ErrorCode::KuangPublisherUntrusted,
+                        format!(
+                            "the key that signed `{}` is revoked in a trust store",
+                            package.manifest.package.id
+                        ),
+                    )
+                    .with_help("`verify plugin` names the key; remove its `revoked` entry to accept it again (spec §31.36)")
+                    .with_metadata("check", Value::string("publisher")),
+                );
+            }
             let integrity = match &management.integrity {
                 Some(recorded) if *recorded == integrity_of(package) => "valid",
                 Some(_) => {
@@ -1200,10 +1375,10 @@ pub fn verification(
         .set("package", Value::string(&package_name))?
         .set("source", Value::string(&resolved.source))?
         .set("integrity", Value::string(integrity))?
-        .set("signature", Value::string("absent"))?
-        .set("publisher", Value::Null)?
-        .set("key", Value::Null)?
-        .set("trust", Value::string("unknown"))?
+        .set("signature", Value::string(signature))?
+        .set("publisher", publisher)?
+        .set("key", key)?
+        .set("trust", Value::string(standing.name()))?
         .set("transparency", Value::string("unknown"))?
         .set("compatibility", Value::string(compatibility))?
         .set("manifest", Value::string(manifest))?
@@ -1364,8 +1539,20 @@ pub fn package_record(
     package: &Installed,
     source: &str,
     installed: bool,
+    trust: &TrustContext,
 ) -> Result<RecordValue, ErrorValue> {
     let manifest = &package.manifest;
+    let signature = signature_of(package);
+    let standing = signature
+        .document
+        .as_ref()
+        .map_or(Trust::Unknown, |document| {
+            if signature.failure.is_none() {
+                trust.store.judge(document.publisher(), document.key())
+            } else {
+                Trust::Unknown
+            }
+        });
     Ok(RecordValue::builder(Arc::clone(schema), provenance(schema))
         .set("id", Value::string(&manifest.package.id))?
         .set("name", Value::string(&manifest.package.name))?
@@ -1395,8 +1582,8 @@ pub fn package_record(
         )?
         .set("network", network_of(manifest))?
         .set("integrity", Value::Null)?
-        .set("signature", Value::string("absent"))?
-        .set("trust", Value::string("local"))?
+        .set("signature", Value::string(signature.state))?
+        .set("trust", Value::string(trust_word(&signature, standing)))?
         .set("installed", Value::Bool(installed))?
         .set("size", Value::Null)?
         .set("published_at", Value::Null)?
@@ -1577,6 +1764,7 @@ pub fn inspection_record(
     instance: Option<&Instance>,
     contributions: &Contributions,
     last_error: Option<ErrorValue>,
+    trust: &TrustContext,
 ) -> Result<RecordValue, ErrorValue> {
     let schema = schema("ono.plugin-inspection")?;
     let manifest = &package.manifest;
@@ -1589,7 +1777,7 @@ pub fn inspection_record(
         source: source_of(package, management),
         package: Ok(package.clone()),
     };
-    let verification = verification(&resolved, management)?;
+    let verification = verification(&resolved, management, trust)?;
     let runtime = instance
         .map(|instance| runtime_record(package, instance))
         .transpose()?
@@ -1650,6 +1838,16 @@ pub fn inspection_record(
 #[must_use]
 pub fn install_plan(package: &Installed, source: &str, destination: &Path) -> Value {
     let manifest = &package.manifest;
+    // Spec §31.9's plan prints `signature      valid / dev.ono-labs`; a package that carries no
+    // signature says `unsigned`, which is a stated answer and not a blank.
+    let signature = signature_of(package);
+    let signature = match &signature.document {
+        Some(document) if signature.failure.is_none() => {
+            format!("valid / {}", document.publisher())
+        }
+        Some(_) | None if signature.state == "absent" => "unsigned".to_owned(),
+        _ => "invalid".to_owned(),
+    };
     map([
         (
             "package",
@@ -1660,7 +1858,7 @@ pub fn install_plan(package: &Installed, source: &str, destination: &Path) -> Va
         ),
         ("source", Value::string(source)),
         ("integrity", Value::string(&integrity_of(package))),
-        ("signature", Value::string("unsigned")),
+        ("signature", Value::string(&signature)),
         ("contributions", declared_contributions(manifest)),
         ("capabilities", capability_requests(manifest, None)),
         (
