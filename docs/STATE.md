@@ -105,7 +105,7 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 results is claimed anywhere on this board, because this board does not know them. When each lands,
 its own commit writes its box back.
 
-| Agent | Worktree / branch | Claim | Box |
+| Agent | Worktree | Claim | Box |
 |---|---|---|---|
 | KUANG/11 | `../ono-sendai-wt-k11` | isolation, the wasm tier, the missing host API domains — `crates/ono-kuang-*`, `crates/ono-cli/src/kuang_host.rs` | C-4 (a)(b)(c) |
 | security | `../ono-sendai-wt-sec` | the §35.6 fuzz targets and package signature verification — `fuzz/`, `crates/ono-kuang-protocol`, `crates/ono-cli/src/kuang_host.rs` | C-2, C-5 |
