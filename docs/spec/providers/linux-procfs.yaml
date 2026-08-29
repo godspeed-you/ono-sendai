@@ -127,6 +127,7 @@ providers:
       job: enumerable
       link: enumerable
       host: enumerable
+      host-key: enumerable
       plugin: enumerable
       capability: enumerable
       audit: enumerable
