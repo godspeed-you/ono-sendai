@@ -212,6 +212,9 @@ pub fn describe(session: &Session, namespace: Namespace, name: &str) -> Result<V
     let record = RecordValue::builder(schema, provenance)
         .set("spelling", Value::string(name))?
         .set("kind", Value::string(kind))?
+        // `resolve command` answers for a head word, and the resolution order that answers it is
+        // the shell's own (spec §6.5, ADR-0011) — never a package's (spec §31.64).
+        .set("origin", Value::string("core"))?
         .set("verb", verb.unwrap_or(Value::Null))?
         .set("summary", Value::string(&summary))?
         .set(

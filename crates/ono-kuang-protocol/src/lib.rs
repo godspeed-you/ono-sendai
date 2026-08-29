@@ -56,9 +56,9 @@ pub use manifest::{
 };
 pub use message::{
     AuditLogParams, CancelParams, CancelReason, CheckAnswer, CheckParams, ClockNowResult,
-    CloseParams, CommandContribution, ContributionSet, DemandParams, EmitParams, EmitResult,
-    Envelope, FilesystemReadParams, FilesystemReadResult, HealthState, Hello, InitParams,
-    InitResult, InvokeParams, InvokeResult, InvokeStatus, ProbeResult, QueryParams,
+    CloseParams, CommandContribution, CommandDocument, ContributionSet, DemandParams, EmitParams,
+    EmitResult, Envelope, FilesystemReadParams, FilesystemReadResult, HealthState, Hello,
+    InitParams, InitResult, InvokeParams, InvokeResult, InvokeStatus, ProbeResult, QueryParams,
     RequestOnceParams, SchemaContribution, SchemaFieldContribution, ShutdownParams, ShutdownReason,
     StateGetResult, StateKeyParams, StateSetParams, TargetContribution, method, parse_type_name,
 };

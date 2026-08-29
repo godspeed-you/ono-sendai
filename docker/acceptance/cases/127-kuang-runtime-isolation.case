@@ -1,0 +1,66 @@
+# Phase I (spec §31.10, §31.15, §31.33, §31.34, §31.80): a package runs inside the ceilings its
+# manifest declared, in a directory and an environment it did not choose, and reaching a ceiling
+# ends the instance rather than the shell. ADR-0283.
+case: a package runs inside its declared limits and its failure stays its own
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export ACCEPTANCE_SECRET=hunter2
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: background
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  MANIFEST
+
+  cd /tmp
+  echo "== the instance runs in its own directory, not the one the operator is in (§31.10, §31.31) =="
+  ono -c 'load plugin dev.example.echo; inspect plugin dev.example.echo | select runtime | to json' \
+    | grep -o '"working_directory":"[^"]*"'
+
+  echo "== the shell's environment is not a side channel into a package (§31.80) =="
+  ono -c 'load plugin dev.example.echo; echo:environment | to json'
+
+  echo "== the declared scheduling class is applied, and the ceilings are the host's (§31.15) =="
+  ono -c 'load plugin dev.example.echo; inspect plugin dev.example.echo | select runtime | to json' \
+    | grep -o '"cpu_class":"[^"]*","nice":[0-9-]*'
+  ono -c 'load plugin dev.example.echo; inspect plugin dev.example.echo | select runtime | to json' \
+    | grep -o '"filesystem":"[^"]*","network":"[^"]*"'
+
+  echo "== reaching the declared ceiling ends the instance, not the shell (§31.34) =="
+  ono -c 'load plugin dev.example.echo; try { echo:hog --mib 512 | count } catch e { $e.code | to json }; get plugin | select state | to json'
+
+  echo "== and the health figures come from the kernel, not from a guess (§31.33) =="
+  ono -c 'load plugin dev.example.echo; echo:emit --count 3 | count; inspect plugin dev.example.echo | select memory_limit | to json'
+exit: 0
+stdout-contains: kuang/dev.example.echo/work
+stdout-contains: ["HOME","LC_ALL","PATH","TZ"]
+stdout-contains: "cpu_class":"background","nice":10
+stdout-contains: "filesystem":"broker","network":"broker"
+stdout-contains: Ono-Sendai-K11203
+stdout-contains: {"state":"enabled"}
+stdout-contains: {"memory_limit":67108864}
+stdout-not-contains: ACCEPTANCE_SECRET
+stdout-not-contains: panicked

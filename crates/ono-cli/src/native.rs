@@ -34,7 +34,7 @@ use crate::sink::Sink;
 /// build-time mistake rather than a user's, but it is reported rather than panicked over: a shell
 /// that aborts on startup teaches nobody anything.
 pub fn registry() -> Result<&'static CommandRegistry, ErrorValue> {
-    CommandRegistry::embedded()
+    crate::plugin_registry::registry()
 }
 
 /// The native implementations, built once against the registry and the shell's own providers.

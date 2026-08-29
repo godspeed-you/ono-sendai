@@ -25,8 +25,31 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::negotiate::{HostLimits, negotiate};
 use crate::policy::{Evaluation, Policy, ScopeUse, denial_error};
+use crate::sandbox::Sandbox;
 use crate::state::StateStore;
 use crate::trail::{AuditTrail, HostClock};
+
+/// Whether an instance was at its memory ceiling when the host last looked (spec §31.34).
+///
+/// It is never *at or above* it: `RLIMIT_DATA` refuses the allocation that would cross the
+/// ceiling, so an instance that ran out of room sits just below it and then fails on its next
+/// request. The host therefore reads "at its ceiling" as *within a sixteenth of it*, which is the
+/// span between the last observation and the refusal.
+///
+/// This is an inference from an observation, and it is stated as one rather than hidden: the
+/// failure message carries the ceiling and the observed figure either way, so an operator can see
+/// what the host saw. Making it exact instead of inferred needs the kernel to report the refusal,
+/// which on Linux means a cgroup v2 `memory.events` counter, which needs a delegated cgroup the
+/// shell does not have as an unprivileged user (ADR-0283).
+fn at_memory_ceiling(peak: u64, ceiling: u64) -> bool {
+    ceiling > 0 && peak.saturating_mul(16) >= ceiling.saturating_mul(15)
+}
+
+/// How often the host reads an instance's allocated memory (spec §31.33).
+///
+/// Frequent enough that a package that runs for a second is measured, cheap enough that the cost
+/// is one small `/proc` read per instance per interval.
+const MEMORY_SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
 /// The platform tuple of the running host, in the manifest's vocabulary (`linux-amd64`).
 #[must_use]
@@ -57,6 +80,11 @@ pub struct LoadConfig {
     pub clock: HostClock,
     /// The platform tuple checked against `compatibility.platforms`.
     pub platform: String,
+    /// The package's own directory under the host's state root — spec §31.31's
+    /// `~/.local/state/ono/kuang/<package-id>/`. It is where the instance's private working
+    /// directory is made. `None` when the host has no state root, and then the artifact's own
+    /// directory serves (spec §31.10, ADR-0283).
+    pub private_dir: Option<PathBuf>,
 }
 
 impl LoadConfig {
@@ -71,6 +99,7 @@ impl LoadConfig {
             limits: HostLimits::default(),
             clock: HostClock::System,
             platform: host_platform(),
+            private_dir: None,
         }
     }
 }
@@ -131,6 +160,7 @@ impl Supervisor {
             limits,
             clock,
             platform,
+            private_dir,
         } = config;
         manifest.check_host(HOST_API, &platform)?;
         // Negotiation before code: a denied required capability means nothing is spawned.
@@ -138,19 +168,34 @@ impl Supervisor {
         let frame_limits = FrameLimits {
             max_frame: contract.limits.max_frame,
         };
-        let mut child = Command::new(&program)
+        // Spec §31.10, §31.15: the artifact runs inside the ceilings the manifest declared and
+        // the host capped, in a directory and an environment it did not choose, in its own
+        // session. All of it is set between fork and exec, so no package instruction ever runs
+        // outside it (ADR-0283).
+        let sandbox = crate::sandbox::native_process(
+            contract.limits.memory_max.unwrap_or(limits.memory_max),
+            manifest
+                .runtime
+                .as_ref()
+                .map_or(ono_kuang_protocol::CpuBudget::Interactive, |runtime| {
+                    runtime.cpu_budget
+                }),
+            crate::sandbox::working_directory(private_dir.as_deref(), &program),
+        );
+        let mut command = Command::new(&program);
+        command
             .args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|error| {
-                KuangError::new(
-                    KuangErrorCode::LoadRuntimeUnavailable,
-                    format!("cannot start `{}`: {error}", program.display()),
-                )
-            })?;
+            .kill_on_drop(true);
+        crate::sandbox::apply(&mut command, &sandbox);
+        let mut child = command.spawn().map_err(|error| {
+            KuangError::new(
+                KuangErrorCode::LoadRuntimeUnavailable,
+                format!("cannot start `{}`: {error}", program.display()),
+            )
+        })?;
         let stdin = child.stdin.take().ok_or_else(broken_pipes)?;
         let stdout = child.stdout.take().ok_or_else(broken_pipes)?;
         let (frame_tx, frame_rx) = mpsc::channel(64);
@@ -217,6 +262,9 @@ impl Supervisor {
             logs: Vec::new(),
             plugin_events: Vec::new(),
             last_failure: None,
+            peak_memory: None,
+            current_memory: None,
+            cpu_time: None,
         }));
         let audit = AuditTrail::for_source(&package_id);
         let (msg_tx, msg_rx) = mpsc::channel(64);
@@ -244,11 +292,13 @@ impl Supervisor {
             shutting_down: false,
             schemas,
             msg_sender: msg_tx.clone(),
+            sandbox: sandbox.clone(),
         };
         tokio::spawn(actor.run());
         Ok(LoadedPlugin {
             package_id,
             shared,
+            sandbox,
             contract,
             disabled_features: init.disabled_features,
             commands,
@@ -487,6 +537,14 @@ struct Shared {
     logs: Vec<AuditLogParams>,
     plugin_events: Vec<Json>,
     last_failure: Option<KuangError>,
+    /// The most memory the instance has been observed to have allocated, in bytes — spec
+    /// §31.33's `memory/current`, and the evidence behind a resource-limit failure (§31.34).
+    /// `None` until the first sample, because an unobserved figure is not a zero (spec §35.3).
+    peak_memory: Option<u64>,
+    /// The instance's allocated memory at the last sample, in bytes (spec §31.33's `memory`).
+    current_memory: Option<u64>,
+    /// The CPU time the instance has used, in nanoseconds (spec §31.33's `cpu time`).
+    cpu_time: Option<i128>,
 }
 
 fn lock<'a, T>(mutex: &'a Mutex<T>) -> std::sync::MutexGuard<'a, T> {
@@ -502,6 +560,7 @@ fn lock<'a, T>(mutex: &'a Mutex<T>) -> std::sync::MutexGuard<'a, T> {
 pub struct LoadedPlugin {
     package_id: String,
     shared: Arc<Mutex<Shared>>,
+    sandbox: Sandbox,
     contract: PluginContract,
     disabled_features: Vec<String>,
     commands: Vec<RegisteredCommand>,
@@ -515,6 +574,31 @@ impl LoadedPlugin {
     #[must_use]
     pub fn package_id(&self) -> &str {
         &self.package_id
+    }
+
+    /// What the instance was started inside (spec §31.10).
+    #[must_use]
+    pub fn sandbox(&self) -> &Sandbox {
+        &self.sandbox
+    }
+
+    /// The most memory the instance has been observed to have allocated, in bytes
+    /// (spec §31.33). `None` until the host has taken a sample.
+    #[must_use]
+    pub fn peak_memory(&self) -> Option<u64> {
+        lock(&self.shared).peak_memory
+    }
+
+    /// The instance's allocated memory at the last sample, in bytes (spec §31.33).
+    #[must_use]
+    pub fn current_memory(&self) -> Option<u64> {
+        lock(&self.shared).current_memory
+    }
+
+    /// The CPU time the instance has used, in nanoseconds (spec §31.33).
+    #[must_use]
+    pub fn cpu_time(&self) -> Option<i128> {
+        lock(&self.shared).cpu_time
     }
 
     /// The flat lifecycle state `get plugin` shows (spec §31.8).
@@ -821,6 +905,9 @@ struct Actor {
     shutting_down: bool,
     schemas: SchemaRegistry,
     msg_sender: mpsc::Sender<ActorMsg>,
+    /// What the instance was started inside, so a death can be checked against its ceilings
+    /// (spec §31.34).
+    sandbox: Sandbox,
 }
 
 enum LoopStep {
@@ -830,28 +917,41 @@ enum LoopStep {
 
 impl Actor {
     async fn run(mut self) {
+        // Spec §31.33 asks `inspect plugin` for `memory/current/limit`, and spec §31.34 makes
+        // "resource limit" a failure class of its own. Both need the same number, and the kernel
+        // already keeps it: sampling `VmData` — the figure `RLIMIT_DATA` bounds — turns a
+        // ceiling nobody could observe into a health field and into evidence for why an
+        // instance died.
+        let mut sample = tokio::time::interval(MEMORY_SAMPLE_INTERVAL);
+        sample.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
+                _ = sample.tick() => {
+                    self.sample_memory();
+                }
                 frame = self.frames.recv() => match frame {
-                    Some(Ok(envelope)) => match self.handle_envelope(envelope).await {
-                        Ok(LoopStep::Continue) => {}
-                        Ok(LoopStep::Stop) => break,
-                        Err(violation) => {
-                            self.quarantine(violation).await;
-                            break;
+                    Some(Ok(envelope)) => {
+                        // The actor is awake anyway, so this costs one small `/proc` read and
+                        // makes the health figures follow the instance's real activity rather
+                        // than only the tick (spec §31.33).
+                        self.sample_memory();
+                        match self.handle_envelope(envelope).await {
+                            Ok(LoopStep::Continue) => {}
+                            Ok(LoopStep::Stop) => break,
+                            Err(violation) => {
+                                self.quarantine(violation).await;
+                                break;
+                            }
                         }
-                    },
+                    }
                     Some(Err(frame_error)) => {
                         self.quarantine(protocol_violation(frame_error)).await;
                         break;
                     }
                     None => {
                         if !self.shutting_down {
-                            self.fail_instance(KuangError::new(
-                                KuangErrorCode::RuntimeTrap,
-                                "the plugin instance exited unexpectedly",
-                            ))
-                            .await;
+                            let failure = self.death().await;
+                            self.fail_instance(failure).await;
                         }
                         break;
                     }
@@ -909,6 +1009,116 @@ impl Actor {
             error: Some(error),
         };
         let _ = self.send(&envelope).await;
+    }
+
+    /// Reads the instance's health from the kernel: what it has allocated, its high-water mark,
+    /// and the CPU time it has used (spec §31.33).
+    fn sample_memory(&mut self) {
+        let Some(pid) = self.child.id() else {
+            return;
+        };
+        let allocated = crate::sandbox::allocated_bytes(pid);
+        let cpu = crate::sandbox::cpu_nanoseconds(pid);
+        let mut shared = lock(&self.shared);
+        if let Some(allocated) = allocated {
+            shared.current_memory = Some(allocated);
+            shared.peak_memory = Some(
+                shared
+                    .peak_memory
+                    .map_or(allocated, |peak| peak.max(allocated)),
+            );
+        }
+        if cpu.is_some() {
+            shared.cpu_time = cpu;
+        }
+    }
+
+    /// Why the instance is gone, from what the kernel says about how it ended (spec §31.34).
+    ///
+    /// The classification is evidence, never a guess. A signal the kernel raises for a resource
+    /// limit names that limit exactly. Memory is the case with no signal of its own:
+    /// `RLIMIT_DATA` makes an over-large allocation *fail*, and what the package does then is the
+    /// package's business — a Rust artifact aborts, a C one may carry on. So the host reports
+    /// `runtime.memory_limit` when it observed the instance at its ceiling, and otherwise names
+    /// the signal, the ceiling that was in force and the high-water mark it did observe, so the
+    /// operator sees the relationship between them instead of being told a story about it.
+    async fn death(&mut self) -> KuangError {
+        let status = self.child.wait().await.ok();
+        let peak = lock(&self.shared).peak_memory;
+        let signal = status.and_then(|status| {
+            #[cfg(unix)]
+            {
+                std::os::unix::process::ExitStatusExt::signal(&status)
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = status;
+                None
+            }
+        });
+        let at_ceiling = peak.is_some_and(|peak| at_memory_ceiling(peak, self.sandbox.memory_max));
+        match signal {
+            // The kernel's own resource signals, which name their limit exactly.
+            Some(libc::SIGXCPU) => KuangError::new(
+                KuangErrorCode::RuntimeTimeout,
+                "the plugin instance exhausted its CPU limit and was stopped",
+            ),
+            Some(libc::SIGXFSZ) => KuangError::new(
+                KuangErrorCode::RuntimeTrap,
+                format!(
+                    "the plugin instance tried to write beyond its file-size limit of {} bytes",
+                    self.sandbox.file_size
+                ),
+            ),
+            _ if at_ceiling => KuangError::new(
+                KuangErrorCode::RuntimeMemoryLimit,
+                format!(
+                    "the plugin instance reached its memory ceiling of {} bytes and ended",
+                    self.sandbox.memory_max
+                ),
+            )
+            .with_help(
+                "`runtime.memory_max` in the package's manifest declares the ceiling; the host \
+                 caps it and never raises it",
+            ),
+            Some(number) => KuangError::new(
+                KuangErrorCode::RuntimeTrap,
+                format!(
+                    "the plugin instance was killed by signal {number}; {}",
+                    self.memory_account(peak)
+                ),
+            ),
+            None => match status.and_then(|status| status.code()) {
+                Some(code) => KuangError::new(
+                    KuangErrorCode::RuntimeTrap,
+                    format!(
+                        "the plugin instance exited with status {code}; {}",
+                        self.memory_account(peak)
+                    ),
+                ),
+                None => KuangError::new(
+                    KuangErrorCode::RuntimeTrap,
+                    "the plugin instance exited unexpectedly",
+                ),
+            },
+        }
+    }
+
+    /// What the host saw of the instance's memory, against the ceiling it was under.
+    ///
+    /// Part of every abnormal-death message, because "killed by signal 6" on its own leaves the
+    /// operator to guess whether the package crashed or ran out of the room it declared.
+    fn memory_account(&self, peak: Option<u64>) -> String {
+        match peak {
+            Some(peak) => format!(
+                "it had allocated {peak} bytes of its {} byte ceiling when last observed",
+                self.sandbox.memory_max
+            ),
+            None => format!(
+                "its memory ceiling was {} bytes and the host observed no sample",
+                self.sandbox.memory_max
+            ),
+        }
     }
 
     /// Ends the instance for a protocol violation: kill, quarantine, close every stream with
@@ -1939,4 +2149,29 @@ fn coalescing_identity(value: &Json) -> Option<String> {
     let schema = object.get("schema")?.as_str()?;
     let identity = object.get("identity")?.as_object()?;
     Some(format!("{schema}:{identity:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::at_memory_ceiling;
+
+    #[test]
+    fn should_read_an_instance_just_under_its_ceiling_as_having_reached_it() {
+        // The figures the host actually observed of a package that allocated until it could not:
+        // 66_568_192 bytes against a declared 64 MiB. The kernel refused the request that would
+        // have crossed the line, so the last observation is below it and never above it.
+        assert!(at_memory_ceiling(66_568_192, 67_108_864));
+    }
+
+    #[test]
+    fn should_not_read_an_ordinary_crash_as_a_memory_limit() {
+        // A package using an eighth of its room and then trapping did not run out of room, and
+        // saying it did would be a story rather than a report (spec §35.3).
+        assert!(!at_memory_ceiling(8 * 1024 * 1024, 67_108_864));
+    }
+
+    #[test]
+    fn should_not_claim_a_ceiling_that_does_not_exist() {
+        assert!(!at_memory_ceiling(0, 0));
+    }
 }

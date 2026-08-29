@@ -173,7 +173,13 @@ impl SessionProvider {
             "link" => Ok((self.links()?, Vec::new())),
             "host" => self.hosts(None),
             "host-key" => Ok((self.host_keys()?, Vec::new())),
-            "plugin" => self.lock().kuang.plugin_records(),
+            "plugin" => {
+                let (records, mut failures) = self.lock().kuang.plugin_records()?;
+                // A declaration the shell refused to register must not be a command that is
+                // quietly missing from `get command` (spec §31.65, ADR-0282).
+                failures.extend(crate::plugin_registry::refusals());
+                Ok((records, failures))
+            }
             "capability" => Ok((self.lock().kuang.capability_records(None)?, Vec::new())),
             "audit" => Ok((self.lock().kuang.audit_records()?, Vec::new())),
             // No assistant package is loaded, no model provider is configured, no analysis has

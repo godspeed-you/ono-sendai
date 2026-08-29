@@ -25,6 +25,15 @@ fields:
     type: string
     nullable: true
     doc: The stable command id, e.g. `ono.process.get`; null for anything that is not a registry entry.
+  origin:
+    type: string
+    required: true
+    doc: >-
+      Where the entry came from (spec §31.64): `core` for a command Ono ships, and
+      `plugin(<package-id>, <version>)` for one a KUANG/11 package contributes. The host sets it
+      at registration; a package cannot declare itself core. `resolve command` answers for a head
+      word rather than for a registry entry, and a head word is resolved by the shell's own
+      resolution order, so that answer is always `core`.
   verb:
     type: string
     nullable: true

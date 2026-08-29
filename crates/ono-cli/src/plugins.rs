@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use ono_command::CommandContract;
 use ono_core::{ErrorCode, ExitStatus};
 use ono_kuang_protocol::KuangError;
 use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Supervisor};
@@ -73,6 +74,10 @@ pub struct LoadOptions {
     /// Whether an experimental adapter pack may influence structured output
     /// (spec v0.3 §1.56), `--allow-experimental`.
     pub allow_experimental: bool,
+    /// Whether the load reports itself. `load plugin` is an operator asking for a load and is
+    /// told what it got; the lazy load behind a contributed command (spec §31.68) is not, because
+    /// the operator asked for the command and its answer is the only thing on stdout.
+    pub silent: bool,
 }
 
 impl LoadOptions {
@@ -235,10 +240,14 @@ pub fn load_plugin_with(
             }
         }
         if package.manifest.runtime.is_none() {
-            println!("loaded {id} (adapters): {}", listed.join("; "));
+            if !options.silent {
+                println!("loaded {id} (adapters): {}", listed.join("; "));
+            }
             return Ok(ExitStatus::SUCCESS);
         }
-        println!("adapters of {id}: {}", listed.join("; "));
+        if !options.silent {
+            println!("adapters of {id}: {}", listed.join("; "));
+        }
     }
 
     let entry = package
@@ -264,6 +273,9 @@ pub fn load_plugin_with(
         .unwrap_or_default();
     let mut config = LoadConfig::new(entry, package.manifest);
     config.policy = policy;
+    // The instance runs in its own directory under the state root, not in the user's (spec
+    // §31.10, §31.31, ADR-0283).
+    config.private_dir = session.with_kuang(|host| host.private_dir(id));
     let (runtime, _) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -274,20 +286,22 @@ pub fn load_plugin_with(
         .block_on(Supervisor::load(config))
         .map_err(|error| Flow::Failed(error_value(&error)))?;
 
-    println!(
-        "loaded {id} ({}): {}",
-        loaded.state().as_str(),
-        if loaded.commands().is_empty() {
-            "no commands contributed".to_owned()
-        } else {
-            loaded
-                .commands()
-                .iter()
-                .map(|command| command.contribution.id.clone())
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
-    );
+    if !options.silent {
+        println!(
+            "loaded {id} ({}): {}",
+            loaded.state().as_str(),
+            if loaded.commands().is_empty() {
+                "no commands contributed".to_owned()
+            } else {
+                loaded
+                    .commands()
+                    .iter()
+                    .map(|command| command.contribution.id.clone())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }
+        );
+    }
     session.with_kuang(|host| host.record_host_event(id, "plugin.load", "lifecycle.load", true));
     // Re-loading replaces (spec §31.72, ADR-0110 §3): the instance that was running is shut
     // down once the new one is kept, so a reload is never a moment without the package.
@@ -996,4 +1010,82 @@ fn json_word(text: &str) -> serde_json::Value {
         return serde_json::Value::Bool(flag);
     }
     serde_json::Value::String(text.to_owned())
+}
+
+// --- lazy invocation of a declared contribution (spec §31.68, ADR-0282) -----------------------
+
+/// The registry entry a bare stage head names, when it names a contributed command.
+///
+/// `None` for every core command and for a head that is not a registry entry at all, so the
+/// evaluator's ordinary path is unchanged for everything Ono ships.
+#[must_use]
+pub fn contributed_command(stage: &ono_parser::Stage) -> Option<&'static CommandContract> {
+    let ono_parser::StageHead::Command(name) = &stage.head else {
+        return None;
+    };
+    if name.namespace.is_some() {
+        return None;
+    }
+    let registry = crate::native::registry().ok()?;
+    let target = stage
+        .arguments
+        .first()
+        .and_then(ono_parser::Argument::as_word);
+    let contract = registry
+        .find(&name.name, target)
+        .or_else(|| registry.find(&name.name, None))?;
+    (!contract.origin().is_core()).then_some(contract)
+}
+
+/// The registry entry `<package>:<command>` names, when the package declared it (spec §31.66).
+#[must_use]
+pub fn contributed_by_namespace(
+    namespace: &str,
+    command: &str,
+) -> Option<&'static CommandContract> {
+    let registry = crate::native::registry().ok()?;
+    registry.commands().iter().find(|contract| {
+        let Some(package) = contract.origin().package() else {
+            return false;
+        };
+        let matches_package = package == namespace || package.rsplit('.').next() == Some(namespace);
+        let short = contract.id().rsplit('.').next().unwrap_or_default();
+        matches_package && (short == command || contract.id() == command)
+    })
+}
+
+/// Runs a contributed command by its registry entry, loading its package first if the shell has
+/// not loaded it yet (spec §31.68).
+///
+/// The declaration in the manifest is what let the command be resolved without any of the
+/// package's code running; invoking it is the moment that changes, and it changes with the same
+/// policy negotiation `load plugin` performs.
+///
+/// # Errors
+///
+/// The load's own refusal — a denied required capability, a disabled package, a runtime that
+/// will not start — or the package's refusal of the invocation.
+pub fn invoke_contributed(
+    session: &mut Session,
+    contract: &CommandContract,
+    words: &[std::ffi::OsString],
+) -> Eval<Vec<Value>> {
+    let package = contract.origin().package().ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::ResolveCommandNotFound,
+            format!("`{}` names no package to run it", contract.spelling()),
+        ))
+    })?;
+    if loaded_package(session, package).is_none() {
+        load_plugin_with(
+            session,
+            package,
+            &LoadOptions {
+                silent: true,
+                ..LoadOptions::default()
+            },
+        )?;
+    }
+    let command = contract.id().rsplit('.').next().unwrap_or(contract.id());
+    invoke(session, package, command, words)
 }

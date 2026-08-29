@@ -70,6 +70,18 @@ fields:
     doc: >-
       The effective default overflow policy for this instance's streams. The manifest may
       declare a preference; host policy decides (spec §31.15).
+  sandbox:
+    type: record
+    required: true
+    doc: >-
+      What the host actually confined this instance with before its first instruction ran
+      (spec §31.10, §31.15): `memory_max` and the observed `memory_peak`, the `cpu_class` and the
+      `nice` it became, the `open_files` and `file_size` ceilings, the private
+      `working_directory` it was given, the `environment` names it received — and nothing else —
+      and how far the `filesystem` and `network` scopes reach. The last two are `kernel` when the
+      kernel refuses what the scope does not allow and `broker` when the host can only refuse a
+      call the package makes *to the host*; spec §31.16 forbids presenting the second as if it
+      were the first.
   network:
     type: record
     required: true
