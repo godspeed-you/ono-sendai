@@ -342,7 +342,7 @@ fn help(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         return Ok(ExitStatus::SUCCESS);
     }
 
-    let registry = match ono_command::CommandRegistry::embedded() {
+    let registry = match crate::native::registry() {
         Ok(registry) => registry,
         Err(error) => return Err(Flow::Failed(error)),
     };
@@ -428,7 +428,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         )));
     };
 
-    let registry = ono_command::CommandRegistry::embedded().map_err(Flow::Failed)?;
+    let registry = crate::native::registry().map_err(Flow::Failed)?;
     // The last stage's consumer is whatever the shell's stdout is, and a plan that assumed a
     // terminal would promise interactive rendering to a script (spec v0.3 §1.4).
     let stdout = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {

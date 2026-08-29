@@ -659,6 +659,7 @@ pub struct CommandContract {
     phase: Phase,
     examples: Vec<String>,
     origin: Origin,
+    required_capabilities: Vec<String>,
 }
 
 impl CommandContract {
@@ -804,6 +805,15 @@ impl CommandContract {
     #[must_use]
     pub fn phase(&self) -> Phase {
         self.phase
+    }
+
+    /// The KUANG/11 capabilities a contributed command needs before it runs (spec §31.22).
+    ///
+    /// Empty for a core command, whose authority is the provider capability of
+    /// [`CommandContract::provider_capability`] instead.
+    #[must_use]
+    pub fn required_capabilities(&self) -> &[String] {
+        &self.required_capabilities
     }
 
     /// The examples the registry documents, every one of which must parse and run (spec §50).
@@ -1003,8 +1013,136 @@ impl RawCommand {
             // package's contribution is re-attributed by the host at registration, never by the
             // document it was read from (spec §31.64).
             origin: Origin::Core,
+            required_capabilities: Vec::new(),
         })
     }
+}
+
+/// What a KUANG/11 package declares about one command it contributes (spec §31.22,
+/// `docs/spec/kuang/contributions.v1.yaml`).
+///
+/// The declaration crosses two boundaries with the same fields: the handshake, where the host
+/// receives it from a running instance, and the package's own `contributions.commands`
+/// documents, which the host reads without starting anything (spec §31.68). Both arrive here.
+///
+/// `origin` is not part of the declaration a package writes; the host sets it at registration
+/// (ADR-0281).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContributedCommand {
+    /// `<package.id>.command.<kebab-name>`.
+    pub id: String,
+    /// The verb the user types.
+    pub verb: String,
+    /// The target word after the verb.
+    pub target: String,
+    /// One line, for `help` and completion.
+    pub summary: String,
+    /// The declared input type, `None` for a command taking nothing through the pipeline.
+    pub input: Option<String>,
+    /// The declared output type.
+    pub output: String,
+    /// The KUANG/11 capabilities the command needs (spec §31.22).
+    pub capabilities: Vec<String>,
+    /// The argument mode from ADR-0009's table.
+    pub argument_mode: String,
+    /// Documented examples.
+    pub examples: Vec<String>,
+    /// The package that contributed it, as the host attributes it.
+    pub origin: Origin,
+}
+
+impl ContributedCommand {
+    /// The registry entry the declaration becomes.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` when a declared word is not one the registry's vocabulary carries — an
+    /// unknown argument mode, or an id outside the package's own namespace. The refusal names
+    /// the command, because a package that declares nonsense must be told which line is wrong
+    /// (`docs/spec/kuang/contributions.v1.yaml` → `registration_checks`).
+    pub fn into_contract(self) -> Result<CommandContract, ErrorValue> {
+        let Origin::Plugin { package, .. } = &self.origin else {
+            return Err(contributed_error(
+                &self.id,
+                "a contributed command is attributed to the package that contributed it; the \
+                 core never contributes one",
+            ));
+        };
+        let namespace = format!("{package}.command.");
+        if !self.id.starts_with(&namespace) {
+            return Err(contributed_error(
+                &self.id,
+                format!("the id is not `{namespace}<kebab-name>` (spec §31.5, §31.22)"),
+            ));
+        }
+        let argument_mode = match self.argument_mode.as_str() {
+            "words" => ArgumentMode::Words,
+            "expression" => ArgumentMode::Expression,
+            other => {
+                return Err(contributed_error(
+                    &self.id,
+                    format!("unknown argument mode `{other}`"),
+                ));
+            }
+        };
+        if self.verb.is_empty() || self.target.is_empty() || self.summary.is_empty() {
+            return Err(contributed_error(
+                &self.id,
+                "a contribution declares a verb, a target and a summary",
+            ));
+        }
+        let output = IoType { text: self.output };
+        Ok(CommandContract {
+            id: self.id,
+            // The registry's `family` is the file a command was declared in; for a contribution
+            // that is the package itself.
+            family: package.clone(),
+            verb: self.verb,
+            target: Some(self.target),
+            summary: self.summary,
+            note: None,
+            // A contributed command is not named by a normative section of the specification, so
+            // it is not a compatibility promise of Ono's (spec §36.3). Its own package decides
+            // what it promises, and says so in its version.
+            stability: Stability::Experimental,
+            validation_required: false,
+            confirmation: Confirmation::Bulk,
+            argument_mode,
+            input: IoType {
+                text: self.input.unwrap_or_else(|| "null".to_owned()),
+            },
+            // Whether the command emits incrementally is not a separate claim: it is what the
+            // declared output type says.
+            streaming: output.text.starts_with("stream<") || output.text.starts_with("stream "),
+            output,
+            // `provider_capability` names an entry of `docs/spec/capabilities.yaml`, which is the
+            // core's provider vocabulary. A package's authority is its KUANG/11 capabilities,
+            // which are a different register and are carried separately.
+            provider_capability: None,
+            required_capabilities: self.capabilities,
+            // A contribution declares no selectors or options: the wire contribution of
+            // `docs/spec/kuang/protocol.v1.yaml` has no field for them, and the arguments a
+            // contributed command receives are the words the user typed (spec §31.22). The
+            // registry does not invent parameters nobody declared.
+            selectors: Vec::new(),
+            options: Vec::new(),
+            // The shell cannot know whether the code inside a package needs privilege; the
+            // capabilities it asked for say what it may do, and `conditional` is the honest
+            // answer to a question the host cannot decide (spec §17).
+            privilege: Privilege::Conditional,
+            // Phase I is what delivers a contributed command: the extension runtime (spec §37).
+            phase: Phase::Delivered('I'),
+            examples: self.examples,
+            origin: self.origin,
+        })
+    }
+}
+
+fn contributed_error(id: &str, detail: impl fmt::Display) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::KuangPackageInvalid,
+        format!("the contributed command `{id}` is invalid: {detail}"),
+    )
 }
 
 fn parameters(id: &str, raw: Vec<RawParameter>) -> Result<Vec<ParameterSpec>, ErrorValue> {

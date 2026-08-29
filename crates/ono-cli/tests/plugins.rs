@@ -221,3 +221,184 @@ fn should_keep_an_experimental_pack_out_of_structured_output_unless_allowed() {
     allowed.assert_success();
     assert_eq!(allowed.stdout().lines().last().unwrap_or(""), "1");
 }
+
+// --- lazy registry placeholders (spec §31.64, §31.68, ADR-0282) -------------------------------
+
+/// The same package, declaring its commands in the manifest so the shell can register
+/// placeholders for them without starting anything (spec §31.68).
+fn declaring_plugin_home() -> ono_testkit::Scratch {
+    let scratch = ono_testkit::scratch();
+    let manifest = r#"
+format: kuang-package/1
+package:
+  id: dev.example.echo
+  name: echo
+  version: 0.1.0
+  description: Emits what it is asked to emit.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.1 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64, linux-arm64]
+runtime:
+  kind: native-process
+  entry: runtime/echo
+  memory_max: 64MiB
+  cpu_budget: interactive
+  startup: lazy
+roles: [provider]
+capabilities:
+  optional:
+    - clock.read
+network:
+  outbound: none
+contributions:
+  commands: [contributions/commands.yaml]
+"#;
+    scratch.write("dev.example.echo/manifest.yaml", manifest);
+    scratch.write(
+        "dev.example.echo/contributions/commands.yaml",
+        r#"
+commands:
+  - id: dev.example.echo.command.emit
+    verb: get
+    target: echo-item
+    summary: Emit a counted stream of integers.
+    output: stream<int>
+    argument_mode: expression
+    capabilities: []
+    examples:
+      - get echo-item --count 3
+"#,
+    );
+    let binary = ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join("kuang-example-plugin");
+    let entry = scratch.path().join("dev.example.echo/runtime/echo");
+    std::fs::create_dir_all(entry.parent().expect("a parent")).expect("the runtime directory");
+    std::fs::copy(&binary, &entry).expect("the example plugin binary is built");
+    scratch
+}
+
+#[test]
+fn should_answer_get_command_for_a_contributed_command_before_its_package_is_loaded() {
+    let home = declaring_plugin_home();
+    let run = ono(
+        &home,
+        r#"get command | where id == "dev.example.echo.command.emit" | select spelling origin | to json"#,
+    );
+    run.assert_success();
+    assert!(
+        run.stdout().contains(r#""spelling":"get echo-item""#)
+            && run
+                .stdout()
+                .contains(r#""origin":"plugin(dev.example.echo, 0.1.0)""#),
+        "spec §31.64, §31.68: the manifest's declaration is a registry placeholder, and it names \
+         the package it came from: {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_show_a_contributed_commands_package_in_its_help_page() {
+    let home = declaring_plugin_home();
+    let run = ono(&home, "help get echo-item");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("plugin(dev.example.echo, 0.1.0)"),
+        "spec §31.64: help says who told the shell about the command: {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_name_the_contributing_package_when_a_contributed_stage_is_explained() {
+    let home = declaring_plugin_home();
+    let run = ono(&home, "explain \"get echo-item\"");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("plugin(dev.example.echo, 0.1.0)"),
+        "spec §31.64: `explain` exposes origin: {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_load_the_package_when_a_declared_contribution_is_first_invoked() {
+    let home = declaring_plugin_home();
+    let run = ono(&home, "get echo-item --count 3 | to json");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("[1,2,3]"),
+        "spec §31.68: invoking the command triggers the load that answers it: {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_refuse_a_contribution_that_would_shadow_a_core_command() {
+    let scratch = ono_testkit::scratch();
+    scratch.write(
+        "dev.example.thief/manifest.yaml",
+        r#"
+format: kuang-package/1
+package:
+  id: dev.example.thief
+  name: thief
+  version: 0.1.0
+  description: Tries to answer for a name Ono already answers to.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.1 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64, linux-arm64]
+runtime:
+  kind: native-process
+  entry: runtime/thief
+  memory_max: 8MiB
+  cpu_budget: interactive
+  startup: lazy
+roles: [provider]
+network:
+  outbound: none
+contributions:
+  commands: [contributions/commands.yaml]
+"#,
+    );
+    scratch.write(
+        "dev.example.thief/contributions/commands.yaml",
+        r#"
+commands:
+  - id: dev.example.thief.command.process
+    verb: get
+    target: process
+    summary: Answer for processes instead of Ono.
+    output: stream<int>
+    argument_mode: expression
+    capabilities: []
+    examples: []
+"#,
+    );
+
+    let run = ono(
+        &scratch,
+        r#"get command --verb get --target process | select id origin | to json"#,
+    );
+    run.assert_success();
+    assert!(
+        run.stdout().contains(r#""id":"ono.process.get""#)
+            && !run.stdout().contains("dev.example.thief"),
+        "spec §31.65: a contribution never replaces a name the shell already answers to: {:?}",
+        run.stdout()
+    );
+
+    let reported = ono(&scratch, "get plugin");
+    assert!(
+        reported.stderr().contains("shadow"),
+        "the refusal is reported rather than silently dropped: {:?}",
+        reported.stderr()
+    );
+}

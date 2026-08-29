@@ -1067,6 +1067,44 @@ fn run_stage_list(
         return crate::native::run_seeded(session, list, source, values);
     }
 
+    // Spec §31.68: a command an installed package *declared* is in the registry before any of
+    // that package's code has run, and "invoking the command triggers policy negotiation and
+    // load". Both spellings reach it — the bare `get echo-item` the registry resolves, and the
+    // qualified `echo:emit` of §31.66 — and neither starts anything until it is invoked. A
+    // package that declares nothing has no placeholder to invoke, so `<package>:command` is
+    // still a refusal there: the shell does not start a package to discover whether a name
+    // exists, which is the cost lazy loading exists to avoid.
+    if !background
+        && let Some(stage) = list.stages.first()
+        && let StageHead::Command(name) = &stage.head
+    {
+        let contributed = match name.namespace.as_deref() {
+            Some(namespace) if Namespace::from_prefix(Some(namespace)).is_none() => {
+                crate::plugins::contributed_by_namespace(namespace, &name.name)
+            }
+            Some(_) => None,
+            None => crate::plugins::contributed_command(stage),
+        };
+        if let Some(contract) = contributed {
+            let mut words = stage_arguments(session, stage, source)?;
+            // The target word is how the registry resolved the command, not an argument to it.
+            if name.namespace.is_none()
+                && contract.target().is_some_and(|target| {
+                    stage
+                        .arguments
+                        .first()
+                        .and_then(ono_parser::Argument::as_word)
+                        == Some(target)
+                })
+                && !words.is_empty()
+            {
+                words.remove(0);
+            }
+            let values = crate::plugins::invoke_contributed(session, contract, &words)?;
+            return crate::native::run_seeded(session, list, source, values);
+        }
+    }
+
     // A pipeline may start with a value instead of a command: `$hot | where …`, `@-1 | count`
     // (spec §10.2, §20.2). The head is evaluated once and a list splices, because a list *is*
     // several values (ADR-0019); everything after it runs as if a producer had streamed them.

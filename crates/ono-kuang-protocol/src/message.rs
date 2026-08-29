@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as Json};
 
-use crate::{PluginContract, WireError};
+use crate::{KuangError, KuangErrorCode, PluginContract, WireError};
 
 /// The call ids of `docs/spec/kuang/protocol.v1.yaml`, as they appear in `Request::method`.
 pub mod method {
@@ -148,6 +148,40 @@ pub struct CommandContribution {
     /// Documented examples. Each must parse and run under the test host (spec §31.22, §50).
     #[serde(default)]
     pub examples: Vec<String>,
+}
+
+/// The document a `contributions.commands` path names (spec §31.22, §31.68).
+///
+/// A package declares its commands twice over, in the same shape: once in a document beside its
+/// manifest, so the host can register a registry placeholder without starting anything, and once
+/// across the handshake, when the instance actually loads. One shape means the two cannot
+/// disagree about what the package contributes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandDocument {
+    /// The commands the document declares.
+    pub commands: Vec<CommandContribution>,
+}
+
+impl CommandDocument {
+    /// Reads a declaration document.
+    ///
+    /// # Errors
+    ///
+    /// `package.invalid` when the document is not the shape
+    /// `docs/spec/kuang/contributions.v1.yaml` describes.
+    pub fn parse(text: &str) -> Result<Self, KuangError> {
+        serde_yaml_ng::from_str(text).map_err(|error| {
+            KuangError::new(
+                KuangErrorCode::PackageInvalid,
+                format!("a contributed command document does not read: {error}"),
+            )
+            .with_help(
+                "the document is a `commands:` list of the contribution shape of \
+                 `docs/spec/kuang/contributions.v1.yaml`",
+            )
+        })
+    }
 }
 
 /// A contributed target (spec §31.23).

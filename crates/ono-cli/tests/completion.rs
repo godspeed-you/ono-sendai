@@ -97,3 +97,86 @@ fn should_answer_a_completion_that_no_provider_can_serve_without_waiting_for_one
     shell.write_all(b"exit\n").expect("input");
     let _ = shell.wait();
 }
+
+// --- a contributed command completes before its package is loaded (spec §31.68) ---------------
+
+/// An installed package that declares one command and has never been started.
+fn declaring_package(directory: &Scratch) {
+    directory.write(
+        "plugins/dev.example.echo/manifest.yaml",
+        r#"
+format: kuang-package/1
+package:
+  id: dev.example.echo
+  name: echo
+  version: 0.1.0
+  description: Emits what it is asked to emit.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.1 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64, linux-arm64]
+runtime:
+  kind: native-process
+  entry: runtime/echo
+  memory_max: 64MiB
+  cpu_budget: interactive
+  startup: lazy
+roles: [provider]
+network:
+  outbound: none
+contributions:
+  commands: [contributions/commands.yaml]
+"#,
+    );
+    directory.write(
+        "plugins/dev.example.echo/contributions/commands.yaml",
+        r#"
+commands:
+  - id: dev.example.echo.command.emit
+    verb: get
+    target: echo-item
+    summary: Emit a counted stream of integers.
+    output: stream<int>
+    argument_mode: expression
+    capabilities: []
+    examples:
+      - get echo-item --count 3
+"#,
+    );
+}
+
+#[test]
+fn should_complete_a_contributed_target_before_its_package_is_loaded() {
+    // Spec §31.68: `installed manifest -> registry placeholders`. The package's runtime is not
+    // even copied into the fixture — nothing about it may have to run for the shell to know the
+    // command exists.
+    let directory = scratch();
+    declaring_package(&directory);
+    let mut executor = Executor::detached();
+    let command = Command::new(ono_testkit::ono_binary())
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
+        .env("HOME", directory.path().display().to_string())
+        .env(
+            "ONO_PLUGIN_PATH",
+            directory.path().join("plugins").display().to_string(),
+        )
+        .current_dir(directory.path());
+    let mut shell = executor
+        .run_pty(&command, WindowSize::new(24, 100))
+        .expect("a pseudo-terminal must be available");
+    let _ = read_until(&mut shell, "> ", Duration::from_secs(10));
+
+    shell.write_all(b"get echo-i\t").expect("input");
+    let seen = read_until(&mut shell, "get echo-item", Duration::from_secs(10));
+    assert!(
+        seen.contains("get echo-item"),
+        "spec §31.68: a declared contribution completes like any other command; saw:\n{seen}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}

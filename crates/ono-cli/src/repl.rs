@@ -118,7 +118,7 @@ impl ShellCompleter {
         if upstream.is_empty() || upstream.ends_with([';', '&']) {
             return Vec::new();
         }
-        let Ok(registry) = ono_command::CommandRegistry::embedded() else {
+        let Ok(registry) = crate::native::registry() else {
             return Vec::new();
         };
         // Planned with a structured consumer after it, because that is what the stage under
@@ -202,7 +202,7 @@ impl Completer for ShellCompleter {
 
         let mut candidates: Vec<String> = Vec::new();
 
-        if let Ok(registry) = ono_command::CommandRegistry::embedded() {
+        if let Ok(registry) = crate::native::registry() {
             let context = ono_command::StageContext::from_line(line, cursor);
             let fields = SelectorCompleter {
                 fields: if is_head {
