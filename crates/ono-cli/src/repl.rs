@@ -62,6 +62,9 @@ fn token_colour(kind: ono_parser::TokenKind) -> Token {
 /// budgets 50 ms for the first results from local metadata — which is a lookup, not a search.
 struct ShellCompleter {
     commands: Vec<String>,
+    /// What only a provider can complete: the users on this machine, the services of this host
+    /// (spec §15.1, ADR-0252). `None` where no provider should be asked at all.
+    values: Option<crate::complete::ProviderValues>,
     /// The adapter registry, so completion after an adapted program knows the schema its
     /// records have, and before the pipe offers only the flags the adapter declares (spec v0.3
     /// §1.59): what the contracts say, and nothing invented.
@@ -69,24 +72,36 @@ struct ShellCompleter {
     resolver: Option<ono_command::Resolver>,
 }
 
-/// Completes an expression-mode selector — `where <field>`, `select <field>` — with the fields
-/// of the schema flowing into the stage.
-struct FieldCompleter {
+/// Completes a selector from whichever source can answer it.
+///
+/// An expression-mode selector — `where <field>`, `select <field>` — names a field of the schema
+/// flowing into the stage, which only the contracts know. A words-mode selector names an object,
+/// which only a provider knows (spec §15.1). One hook, two questions, and the command's own
+/// argument mode says which is being asked.
+struct SelectorCompleter {
     fields: Vec<String>,
+    values: Option<crate::complete::ProviderValues>,
 }
 
-impl ono_command::ValueCompleter for FieldCompleter {
+impl ono_command::ValueCompleter for SelectorCompleter {
     fn complete(
         &self,
-        _command: &ono_command::CommandContract,
-        _parameter: &ono_command::ParameterSpec,
+        command: &ono_command::CommandContract,
+        parameter: &ono_command::ParameterSpec,
         prefix: &str,
     ) -> Vec<ono_command::Candidate> {
-        self.fields
-            .iter()
-            .filter(|field| field.starts_with(prefix))
-            .map(ono_command::Candidate::value)
-            .collect()
+        if command.argument_mode() == ono_command::ArgumentMode::Expression {
+            return self
+                .fields
+                .iter()
+                .filter(|field| field.starts_with(prefix))
+                .map(ono_command::Candidate::value)
+                .collect();
+        }
+        self.values
+            .as_ref()
+            .map(|values| ono_command::ValueCompleter::complete(values, command, parameter, prefix))
+            .unwrap_or_default()
     }
 }
 
@@ -188,12 +203,13 @@ impl Completer for ShellCompleter {
 
         if let Ok(registry) = ono_command::CommandRegistry::embedded() {
             let context = ono_command::StageContext::from_line(line, cursor);
-            let fields = FieldCompleter {
+            let fields = SelectorCompleter {
                 fields: if is_head {
                     Vec::new()
                 } else {
                     self.upstream_fields(line, cursor)
                 },
+                values: if is_head { None } else { self.values.clone() },
             };
             candidates.extend(
                 ono_command::complete(registry, &context, Some(&fields))
@@ -310,6 +326,18 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
         .with_highlighter(ParserHighlighter)
         .with_completer(ShellCompleter {
             commands: resolve::candidates(session, ""),
+            values: Some(crate::complete::ProviderValues::new(
+                session
+                    .env()
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.to_string_lossy().into_owned(),
+                            value.to_string_lossy().into_owned(),
+                        )
+                    })
+                    .collect(),
+            )),
             adapters: Some(session.shared_adapters()),
             resolver: Some(resolve::resolver(session)),
         });
@@ -765,6 +793,9 @@ mod tests {
     fn completer() -> ShellCompleter {
         ShellCompleter {
             commands: vec!["cd".to_owned(), "git".to_owned()],
+            // These tests are about the parts of a line the contracts and the filesystem
+            // answer; a provider that would read the real machine has no place in them.
+            values: None,
             adapters: None,
             resolver: None,
         }
