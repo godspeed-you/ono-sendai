@@ -1481,6 +1481,16 @@ fn builtin_name(session: &Session, stage: &Stage) -> Option<&'static str> {
 }
 
 /// The literal word after the head, which decides whether `set`/`remove` are the shell's.
+/// The registry's refusal when `head` is a verb it knows and only the target word is wrong.
+///
+/// `None` when the registry does not know the verb at all, or when it would answer something
+/// else: nothing here invents a reason the registry did not give (ADR-0217).
+fn registry_target_refusal(head: &str, arguments: &[Argument]) -> Option<ErrorValue> {
+    let registry = crate::native::registry().ok()?;
+    let error = registry.resolve(head, arguments).err()?;
+    (error.code() == ErrorCode::ResolveTargetNotFound).then_some(error)
+}
+
 fn first_word(stage: &Stage) -> Option<&str> {
     stage
         .arguments
@@ -1573,6 +1583,14 @@ fn build_command(session: &mut Session, stage: &Stage, source: &str) -> Eval<Com
     };
 
     let resolution = resolve::resolve(session, namespace, &name.name).map_err(|error| {
+        // A head word the registry knows as a verb was refused for its target word, not for
+        // itself: `trace group root` is `trace` with a target it has no command for. Reporting
+        // the verb as missing after the search reached `PATH` hides what was wrong, so the
+        // registry's own refusal — which names the target and its near misses — is the answer
+        // (spec §15.4, ADR-0217).
+        if let Some(refusal) = registry_target_refusal(&name.name, &stage.arguments) {
+            return Flow::Failed(refusal);
+        }
         let suggestions = resolve::suggestions(session, &name.name);
         let error = if suggestions.is_empty() {
             error

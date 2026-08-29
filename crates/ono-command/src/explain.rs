@@ -799,7 +799,14 @@ fn plan_stage(
         };
     }
 
-    let Ok(resolved) = registry.resolve(head, &stage.arguments) else {
+    let resolution = registry.resolve(head, &stage.arguments);
+    let Ok(resolved) = resolution else {
+        // A verb the registry knows, refused only for its target word, is reported as that
+        // refusal: `trace group root` is `trace` with a target it has no command for, and the
+        // executor answers `resolve.target_not_found` rather than searching `PATH` (ADR-0217).
+        let refusal = resolution
+            .err()
+            .filter(|error| error.code() == ono_core::ErrorCode::ResolveTargetNotFound);
         return StagePlan {
             ordinal,
             source: text,
@@ -815,11 +822,12 @@ fn plan_stage(
             privilege: None,
             risk: None,
             fields,
-            notes: vec![
-                "resolved after the registry: a user function, an alias, or an executable on PATH \
-                 (ADR-0011)"
+            notes: vec![match &refusal {
+                Some(error) => error.message().to_owned(),
+                None => "resolved after the registry: a user function, an alias, or an \
+                         executable on PATH (ADR-0011)"
                     .to_owned(),
-            ],
+            }],
             demand: None,
             declared_input: None,
             raw: false,
