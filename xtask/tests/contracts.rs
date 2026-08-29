@@ -581,3 +581,84 @@ fn should_reject_a_command_that_declares_no_argument_mode() {
         "a command with no argument mode must be reported, got {found:?}"
     );
 }
+
+// --- declared options must be honoured (ADR-0233) ---------------------------------------------
+
+/// The fixture registry's `get process`, with `options` spliced in.
+fn with_options(repo: &Scratch, options: &str) {
+    repo.write(
+        "docs/spec/commands/process.yaml",
+        format!(
+            "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    \
+             target: process\n    summary: Enumerate processes.\n    stability: stable\n    \
+             argument_mode: words\n    input: \"null\"\n    output: stream<ono.process/1>\n    \
+             provider_capability: process.list\n    options:\n{options}    privilege: none\n    \
+             streaming: true\n    phase: C\n    examples: [\"get process\"]\n"
+        ),
+    );
+}
+
+#[test]
+fn should_report_a_declared_option_no_implementation_names() {
+    // An option a command advertises and no code ever names cannot be honoured: it is help text
+    // for behaviour that does not exist, and the user finds out by the answer being wrong rather
+    // than by being refused (ADR-0233).
+    let repo = consistent();
+    with_options(
+        &repo,
+        "      - {name: tree, type: bool, doc: \"The structure.\"}\n",
+    );
+    repo.write("crates/ono-demo/src/lib.rs", "pub fn nothing() {}\n");
+
+    assert!(
+        problems(&repo)
+            .iter()
+            .any(|problem| problem.contains("--tree") && problem.contains("ono.process.get")),
+        "a declared option no source names must be reported, got {:?}",
+        problems(&repo)
+    );
+}
+
+#[test]
+fn should_accept_a_declared_option_an_implementation_names() {
+    let repo = consistent();
+    with_options(
+        &repo,
+        "      - {name: tree, type: bool, doc: \"The structure.\"}\n",
+    );
+    repo.write(
+        "crates/ono-demo/src/lib.rs",
+        "pub fn nest(query: &str) -> bool { query == \"tree\" }\n",
+    );
+
+    assert!(
+        !problems(&repo)
+            .iter()
+            .any(|problem| problem.contains("--tree")),
+        "an option the sources name is honoured as far as a static check can tell, got {:?}",
+        problems(&repo)
+    );
+}
+
+#[test]
+fn should_not_accept_an_option_named_only_by_a_test() {
+    // A test naming an option proves the test knows about it, not that the shell does.
+    let repo = consistent();
+    with_options(
+        &repo,
+        "      - {name: tree, type: bool, doc: \"The structure.\"}\n",
+    );
+    repo.write("crates/ono-demo/src/lib.rs", "pub fn nothing() {}\n");
+    repo.write(
+        "crates/ono-demo/tests/demo.rs",
+        "#[test]\nfn t() { assert_eq!(\"tree\", \"tree\"); }\n",
+    );
+
+    assert!(
+        problems(&repo)
+            .iter()
+            .any(|problem| problem.contains("--tree")),
+        "an option only a test names is still unhonoured, got {:?}",
+        problems(&repo)
+    );
+}

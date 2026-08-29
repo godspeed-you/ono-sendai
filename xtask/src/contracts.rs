@@ -89,6 +89,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
         &mut problems,
     );
     problems.extend(check_expression_options(root, &documents, &spec));
+    problems.extend(check_declared_options(root, &documents));
     problems.extend(check_error_registry(root));
     problems.extend(check_adapter_packs(root));
     problems.extend(check_spatial_registry(root));
@@ -97,6 +98,87 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
 
     problems.sort_by(|a, b| (&a.location, &a.detail).cmp(&(&b.location, &b.detail)));
     problems
+}
+
+/// Checks that every option a command declares is named somewhere the shell can read it
+/// (ADR-0233).
+///
+/// A capability a provider does not declare cannot be used, and `check_commands` has always said
+/// so. The opposite direction had no referee: a command could advertise `--keep-grants` in its
+/// help, its completion and its reference page while no code ever looked at the word, and the
+/// user found out by the answer being wrong rather than by being refused.
+///
+/// What a static check can prove is the necessary condition: an option no implementation *names*
+/// cannot be honoured. Only the crate sources count — `crates/*/src` and `xtask/src` — because a
+/// test naming an option proves the test knows about it, not the shell. Both spellings count,
+/// bare (`"tree"`, as a provider query reads it) and with dashes (`"--problems"`, as a builtin
+/// reads its words).
+fn check_declared_options(root: &Path, documents: &BTreeMap<PathBuf, Yaml>) -> Vec<Problem> {
+    let mut sources = String::new();
+    for crate_root in [root.join("crates"), root.join("xtask")] {
+        collect_rust_sources(&crate_root, &mut sources);
+    }
+
+    let mut problems = Vec::new();
+    for (path, document) in documents {
+        if !path
+            .parent()
+            .is_some_and(|parent| parent.ends_with("commands"))
+        {
+            continue;
+        }
+        let location = relative(root, path);
+        for command in sequence(document, "commands") {
+            let stability = string_at(command, "stability").unwrap_or_default();
+            if stability == "planned"
+                || string_at(command, "phase").is_some_and(|phase| phase == "planned")
+            {
+                continue;
+            }
+            let id = string_at(command, "id").unwrap_or_default();
+            for option in sequence(command, "options") {
+                let Some(name) = string_at(option, "name") else {
+                    continue;
+                };
+                if sources.contains(&format!("\"{name}\""))
+                    || sources.contains(&format!("\"--{name}\""))
+                {
+                    continue;
+                }
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "`{id}` declares the option `--{name}`, and no crate source names it. An                          option nothing reads is help text for behaviour that does not exist:                          implement it, or take it out of the contract (ADR-0233)"
+                    ),
+                });
+            }
+        }
+    }
+    problems
+}
+
+/// Appends the text of every `src/` Rust file under `directory` to `into`.
+fn collect_rust_sources(directory: &Path, into: &mut String) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == "target") {
+                continue;
+            }
+            collect_rust_sources(&path, into);
+        } else if path.extension().is_some_and(|extension| extension == "rs")
+            && path
+                .components()
+                .any(|component| component.as_os_str() == "src")
+            && let Ok(text) = std::fs::read_to_string(&path)
+        {
+            into.push_str(&text);
+            into.push('\n');
+        }
+    }
 }
 
 /// Checks that the predicate options of `language.yaml` are exactly the ones the parser reads
