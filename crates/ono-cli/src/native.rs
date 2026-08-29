@@ -1775,7 +1775,14 @@ fn bytes_of(values: &[Value]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for value in values {
         match value {
-            Value::Bytes(raw) => bytes.extend_from_slice(raw),
+            // Raw bytes are written byte for byte. A document `to json` or `to text` wrote is
+            // line-oriented and ends with a newline where it has none; `to bytes` is the escape
+            // hatch of spec §12.2, and a byte the shell added would be a byte the file did not
+            // have (ADR-0223).
+            Value::Bytes(raw) => {
+                bytes.extend_from_slice(raw);
+                continue;
+            }
             Value::String(text) => bytes.extend_from_slice(text.as_bytes()),
             other => bytes.extend_from_slice(other.to_string().as_bytes()),
         }

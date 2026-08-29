@@ -275,3 +275,48 @@ fn should_write_the_only_field_of_a_one_field_record() {
 
     assert_eq!(to_text(&[projected], None).unwrap(), "/etc/passwd\n");
 }
+
+// --- `to bytes --field` writes one field verbatim (ADR-0223) ---------------------------------
+
+#[test]
+fn should_write_the_named_field_of_each_record_as_raw_bytes() {
+    // `adapt curl url | to bytes --field body > page.html`: a record has no byte form, but the
+    // one field that is bytes does, and naming it writes exactly those bytes.
+    let schema = Arc::new(
+        Schema::builder(SchemaId::new("ono.demo-response", 1), "Response")
+            .field(FieldDef::new("status", FieldType::Int).required())
+            .field(FieldDef::new("body", FieldType::Bytes).required())
+            .identity(["status"])
+            .build()
+            .expect("the response schema is valid"),
+    );
+    let response = |body: &[u8]| {
+        RecordValue::builder(
+            Arc::clone(&schema),
+            Provenance::local("test", schema.id().clone()),
+        )
+        .set("status", Value::Int(200))
+        .and_then(|record| record.set("body", Value::Bytes(Bytes::copy_from_slice(body))))
+        .expect("the response record is valid")
+        .build()
+        .into_value()
+    };
+
+    let values = [response(&[0xff, 0x00]), response(b"<html>")];
+    assert_eq!(
+        ono_value::to_bytes_of(&values, Some("body")).unwrap(),
+        Bytes::from_static(&[0xff, 0x00, b'<', b'h', b't', b'm', b'l', b'>']),
+        "the fields are written byte for byte, in order, with nothing between them"
+    );
+}
+
+#[test]
+fn should_name_the_field_option_when_a_record_has_no_byte_form_of_its_own() {
+    let error = ono_value::to_bytes_of(&[Value::Map(Arc::new(ono_value::MapValue::new()))], None)
+        .expect_err("a map has no raw byte form");
+    assert_eq!(error.code(), ErrorCode::TypeMismatch);
+    assert!(
+        error.help().unwrap_or_default().contains("--field"),
+        "the refusal names the way to write one field's bytes, got {error}"
+    );
+}

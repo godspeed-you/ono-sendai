@@ -817,3 +817,28 @@ fn should_explain_the_adaptation_behind_the_adapt_keyword() {
         explained.stdout()
     );
 }
+
+#[test]
+fn should_write_one_field_s_bytes_verbatim_when_to_bytes_names_it() {
+    // Spec §12.2's escape hatch, applied to one field: `adapt curl url | to bytes --field body`
+    // writes the body and nothing else — no envelope, no added newline (ADR-0223).
+    let dir = ono_testkit::scratch();
+    let out = dir.path().join("page.html");
+    let run = ono_testkit::Shell::new()
+        .args([
+            "-c",
+            &format!(
+                "from json | to bytes --field body > {}",
+                out.to_string_lossy()
+            ),
+        ])
+        .stdin("[{\"body\":\"<html>\"}]")
+        .run();
+    run.assert_success();
+    assert_eq!(
+        std::fs::read(&out).expect("the written file"),
+        b"<html>",
+        "the field's bytes reach the file verbatim: {:?}",
+        run.output()
+    );
+}

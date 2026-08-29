@@ -225,7 +225,7 @@ commands:
     options:
       - {name: pretty, type: bool, doc: "Indent the output for a human reader (spec §33.5)."}
       - {name: human, type: bool, doc: "Emit display forms such as `1.2 GiB` instead of canonical values. Off by default: §33.5 requires canonical values unless a human format is explicitly requested."}
-      - {name: field, type: string, doc: "For `text`, emit this one field per line — the bridge spec §29.1 writes for feeding an ordinary Unix tool. Unnecessary once `select` has left exactly one field: a one-field record is already one line."}
+      - {name: field, type: string, doc: "For `text`, emit this one field per line — the bridge spec §29.1 writes for feeding an ordinary Unix tool. Unnecessary once `select` has left exactly one field: a one-field record is already one line. For `bytes`, write this one field's bytes verbatim, which is how an adapted program's body reaches a file (`adapt curl url | to bytes --field body > page.html`, ADR-0223)."}
     privilege: none
     streaming: true
     phase: B
