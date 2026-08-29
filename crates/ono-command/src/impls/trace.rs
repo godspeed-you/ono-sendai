@@ -43,8 +43,8 @@ impl CommandImpl for TraceCommand {
             // The subject comes through the pipeline or resolves from the selectors; either
             // way it must exist before anything is traced.
             let subject = match ctx.take_input() {
-                Some(stream) => first_record(stream).await,
-                None => first_record(ctx.providers().snapshot(&query)?).await,
+                Some(stream) => first_traceable_record(stream).await,
+                None => first_traceable_record(ctx.providers().snapshot(&query)?).await,
             }
             .ok_or_else(|| {
                 ErrorValue::new(
@@ -113,13 +113,24 @@ impl CommandImpl for TraceCommand {
 }
 
 /// The first record a stream yields, if any.
-async fn first_record(stream: ValueStream) -> Option<std::sync::Arc<ono_value::RecordValue>> {
+/// The first record of `stream` that can be the root of a graph.
+///
+/// Not simply the first record: a schema may identify an object by a field the provider is
+/// allowed to leave null — a socket by its inode, which the kernel does not report for a
+/// `TIME_WAIT` connection — and a record with no identity is a record nothing can relate to
+/// (spec §22.1). Which record a selector that matched several yields first is already the
+/// provider's business, so answering about one that can be traced is strictly better than
+/// refusing the whole graph because of the order they arrived in (spec §16.5).
+async fn first_traceable_record(
+    stream: ValueStream,
+) -> Option<std::sync::Arc<ono_value::RecordValue>> {
     let collected = stream.collect().await;
     collected
         .into_values()
         .into_iter()
-        .find_map(|value| match value {
+        .filter_map(|value| match value {
             Value::Record(record) => Some(record),
             _ => None,
         })
+        .find(|record| ono_provider_api::ObjectId::of(record).is_some())
 }

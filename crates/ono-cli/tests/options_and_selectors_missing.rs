@@ -551,6 +551,46 @@ fn should_leave_out_the_processes_the_named_user_does_not_own() {
 }
 
 #[test]
+fn should_trace_a_connection_even_when_another_one_carries_no_identity() {
+    // The kernel reports no socket inode for a `TIME_WAIT` connection, and `ono.socket/1`
+    // identifies a socket by its inode — so such a row has no identity at all. Whichever
+    // connection the provider happens to yield first, `trace` has to answer about one it *can*
+    // relate to; refusing the whole graph because the first row of the match is unidentifiable
+    // is a failure the user cannot act on (spec §16.5, §22.1).
+    //
+    // The `TIME_WAIT` row is created here rather than waited for: closing the initiating side of
+    // a loopback connection leaves one behind for a minute, which is exactly the state that made
+    // this fail on a machine that had been running the suite.
+    {
+        let (listener, port) = listener();
+        let client =
+            std::net::TcpStream::connect(("127.0.0.1", port)).expect("a loopback connection opens");
+        let accepted = listener.accept().expect("the listener accepts it");
+        drop(accepted);
+        drop(client);
+        drop(listener);
+    }
+
+    let (listener, port) = listener();
+    let client =
+        std::net::TcpStream::connect(("127.0.0.1", port)).expect("a loopback connection opens");
+    let accepted = listener.accept().expect("the listener accepts it");
+
+    let run = ono("trace connection --remote 127.0.0.1 | to json");
+    run.assert_success();
+    assert!(
+        !rows(&run).is_empty(),
+        "a connection to 127.0.0.1 is open, so the trace has something to answer with, got {:?};          stderr: {}",
+        run.stdout(),
+        run.stderr()
+    );
+
+    drop(accepted);
+    drop(client);
+    drop(listener);
+}
+
+#[test]
 fn should_trace_the_connection_that_does_have_the_requested_remote() {
     // The sibling test covers the peer nobody is talking to. This is the answer itself: with a
     // loopback connection open, `trace connection --remote 127.0.0.1` returns a graph, and every
