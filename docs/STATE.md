@@ -27,12 +27,14 @@ git push origin implementation && git push origin --tags
 ```
 
 **`release-check: the shell is release-ready` — printed 2026-08-26 by `scripts/release-check.sh`
-at commit 21b37d9.** All ten phases of spec §37 are complete, proven and tagged; every box in
-docs/ACCEPTANCE.md §4 is ticked by a named automated proof; the containerised suite stands at
-35 cases green and the workspace at ~1 400 outcome tests across 21 crates. What remains under
-Next up is post-release deepening — every item deliberate, none blocking the deliverable.
-Promoting `implementation` to `main` is the user's decision and the user's action
-(AGENTS.md §12.1).
+at commit 21b37d9, and again on 2026-08-29 by agent `S11c` at the end of the v0.4 tranche.** All
+ten phases of spec §37 are complete, proven and tagged; all 143 boxes in docs/ACCEPTANCE.md §4 are
+ticked by a named automated proof, and the 2026-08-29 reconciliation traced every one of the 168
+test names and every acceptance case they cite to something that exists and runs in the gate. The
+containerised suite stands at **96 cases** in `docker/acceptance/cases/` and the workspace at
+~2 600 outcome tests across **30 crates**. What remains under Next up is post-release deepening —
+every item deliberate, none blocking the deliverable. Promoting `implementation` to `main` is the
+user's decision and the user's action (AGENTS.md §12.1).
 
 Phases A–D are complete and tagged. B/C/D landed as: native commands wired into the evaluator
 (ADR-0028), partial failure semantics (ADR-0029), the §33.5 interop serialisation (ADR-0030),
@@ -49,7 +51,12 @@ is an **enhancement layered on it** — the External Command Adaptation Layer �
 immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a checksum line in
 `docs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
-**The v0.3 tranche is in progress (started 2026-08-27).** v0.2 was released as `v0.2.0` from
+**The v0.3 tranche is complete** (started 2026-08-27, delivered by ADR-0052 … ADR-0067; all 39
+boxes of `docs/ACCEPTANCE.md` §4.6 are ticked, cases `070`–`089`). **The v0.4 tranche is complete**
+(delivered 2026-08-28/29, ADR-0124 … ADR-0212 and the S11c session below; §4.7's boxes are ticked,
+cases `090`–`110`). What follows is the paragraph as it stood while v0.3 was running; it is kept
+because ADR-0027's analysis and the build order below are still the map of that layer.
+v0.2 was released as `v0.2.0` from
 `main` at `273d3cd`; the External Command Adaptation Layer is implemented on `implementation`
 in the same loop, against the same referee. Its definition of done is `docs/ACCEPTANCE.md`
 §4.6 — 39 boxes derived from v0.3 §2.1–§2.6, §1.67 and §1.68 — and `scripts/release-check.sh`
@@ -93,9 +100,21 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-**Nothing.** No agent holds a claim. The next task is the first unticked box under *Next up* —
-the class-C tranches are ordered by what unblocks the most, and the class-B lines can be handed
-out as area batches.
+**Four agents are running in parallel worktrees, all branched from `implementation` at
+`b904327`** (2026-08-29). Each holds a class-C tranche and an exclusive file scope; none of their
+results is claimed anywhere on this board, because this board does not know them. When each lands,
+its own commit writes its box back.
+
+| Agent | Worktree / branch | Claim | Box |
+|---|---|---|---|
+| KUANG/11 | `../ono-sendai-wt-k11` | isolation, the wasm tier, the missing host API domains — `crates/ono-kuang-*`, `crates/ono-cli/src/kuang_host.rs` | C-4 (a)(b)(c) |
+| security | `../ono-sendai-wt-sec` | the §35.6 fuzz targets and package signature verification — `fuzz/`, `crates/ono-kuang-protocol`, `crates/ono-cli/src/kuang_host.rs` | C-2, C-5 |
+| conformance + presentation | the main tree, `../ono-sendai` | the generated provider conformance suite, the §34 pathological fixtures, the §44 theme system — `xtask/src/`, `crates/ono-render`, `docker/acceptance/` | C-1, C-7 |
+| remote | `../ono-sendai-wt-remote` | agentless mode and an authenticated transport — `crates/ono-remote`, `crates/ono-protocol`, `crates/ono-cli/src/context.rs` | C-3, and what B-remote-2 is blocked on |
+
+**`STATE-recon` (2026-08-29) held this file only**, to reconcile it with `b904327`; it wrote no
+code, no ADR and no acceptance case, and its claim is released. The next task for anyone not
+listed above is **C-6**, the one class-C tranche nobody is on, or any of the five class-B lines.
 
 ## Session records (2026-08-27 … 2026-08-29)
 
@@ -124,8 +143,10 @@ first drafts, both now covered by a workspace test as well: an exit is keyed by 
 schemas, so the *record* decides whether a predicate can be asked of it. Cases `091`/`094`
 (`44.2m`, `44.5g`) and `092` (`44.3c`) are the assertions that found them.
 
-**One flake seen twice and not fixed**, because it is a premise about the host rather than a
-claim about the shell and its fix is not this session's work:
+**One flake seen twice and not fixed by that session — fixed since, by `4e53ee4` (ADR-0230):**
+`ESRCH` from a `/proc/<pid>/stat` read had no `std::io::ErrorKind` name and was classified
+`provider.unavailable`, so a vanished row became a partial failure instead of being omitted. The
+shell was wrong and the three tests were right; none of them changed. What that session recorded:
 `spatial_topology_missing.rs::should_bound_the_root_horizon_instead_of_listing_every_known_object`
 runs `get process | count`, and on a busy machine a process listed by the enumerator exits before
 its `/proc/<pid>/stat` can be read, so v0.2 §9's partial-failure semantics give the run exit 1 —
@@ -138,9 +159,12 @@ The four findings, and the one that was offered as a bonus:
 - [x] finding 3 — `find place --where` swallows unknown fields and evaluation errors (ADR-0210)
 - [x] finding 4 — a multi-line diagnostic prints `\u{a}` instead of its line breaks (ADR-0211)
 - [x] finding 1 — `look`'s hidden count does not describe the list above it (ADR-0212)
-- [ ] `help here` (§38.2, a SHOULD) stays filed under *Next up*: it is a new user-visible
-  capability needing help metadata, completion and an acceptance case, and none of the four fixes
-  above went near the help code, so it was not the cheap addition it would have been for S11b.
+- [x] `help here` (§38.2, a SHOULD) — filed under *Next up* by S11c and **delivered on the same
+  day by `13b6157` (ADR-0271)**, with the help metadata, the completion and the acceptance case it
+  needed: `enter process 1; help here` names every exit with what is behind it and the spelling
+  that traverses it, and says `permission_denied` where the provider gave one rather than a count
+  it does not have. `ono-cli/tests/spatial_help.rs` (three cases), `ono-command/tests/completion.rs`
+  (two topic cases), case `102` s4x.
 
 **S6 + S7 + S8 + the map correction are integrated on one branch (2026-08-28, agent `integrate-1`).**
 Three merges, in that order, on top of `implementation` at `cbbcd2c`; gate green, acceptance 75/75.
@@ -179,7 +203,9 @@ Two tests are environment-dependent on a developer machine and green in the cont
 a merge regression:
 
 - `spatial_relationships_missing::should_show_the_connection_edge_appear_and_vanish…` — **the
-  TIME_WAIT identity collapse S7 recorded**, now diagnosed exactly. `ono.socket/1` declares
+  TIME_WAIT identity collapse S7 recorded**, diagnosed exactly here and **fixed since by
+  `79d6a9c` (ADR-0231)**: a record supplying none of its identity components states no identity,
+  so two TIME_WAIT sockets are two objects. Was: `ono.socket/1` declares
   `identity: [inode]` and a socket in TIME_WAIT has no inode, so *every* TIME_WAIT socket on the
   host projects to the same `SpatialId`. The test's own closing connection is then merged with
   whatever else on the machine happens to be in TIME_WAIT, and the third live value describes a
@@ -1433,102 +1459,108 @@ it is 60 s now.
 
 ## Next up (ordered)
 
-**This section was rebuilt from evidence on 2026-08-29 (agent `triage`).** Every box that stood
-here was decided by running something — a named test, a containerised case assertion, or a
-reproduction against the built binary — never by reading source. The §37 phase checklist below
-had been carried unticked since the phases were tagged; `git tag -n99 phase-a … phase-j` and the
-143 ticked boxes of `docs/ACCEPTANCE.md` are the older record, and this board had simply not been
-reconciled with them.
+**Rebuilt from evidence on 2026-08-29 (agent `triage`), and reconciled with the tree at
+`b904327` on 2026-08-29 (agent `STATE-recon`).** The triage pass was written against `ed923ee`.
+The fifty-nine commits between `ed923ee` and `b904327` closed **fifty-five** of its boxes and were
+never written back, because the agents that produced them were deliberately kept out of this file
+so they would not collide in it. Everything they closed now stands under *Done, reconciled* below
+with the commit and the proof; what stands here is what a reproduction against the built binary,
+or a check of the named evidence, still finds open at `b904327`.
 
-Baseline for every claim below: workspace suite at `ed923ee` — **2 572 passed, 1 failed, 0
-ignored** (the one failure is B-prov-1, a premise about the host); 88 containerised cases green;
-`release-check: the shell is release-ready`.
+Method of the reconciliation, per box: find the evidence the entry names, check it exists at HEAD
+and says what the entry claims, and — wherever the behaviour is observable from the command line —
+run it against `target/debug/ono` and read the real answer. Nothing below was decided by reading
+source alone. Two by-products of the sweep, both reported rather than fixed here:
+
+- **Every test function named anywhere in this file exists in the tree** — 273 distinct names,
+  cross-checked against the 2 607 `fn should_*` in `crates/` and `xtask/`. So does every test and
+  every acceptance case named in `docs/ACCEPTANCE.md` (168 names, 143 ticked boxes, no dangling
+  reference).
+- **Eight acceptance cases named by ticked boxes in the §37 phase lists did not exist**, and never
+  did: they are the pre-implementation planning names. `028-prompt-shows-context` is really `029`,
+  and C2–C8's seven `0NN-<target>-provider` cases are really `037`–`046` under other names. The
+  capabilities are all covered; the boxes now name the case that covers them.
+
+Baseline: workspace suite at `ed923ee` — 2 572 passed, 1 failed, 0 ignored (that one failure is
+B-prov-1, closed since by `4e53ee4`); 96 containerised cases in `docker/acceptance/cases/`;
+`release-check: the shell is release-ready` last printed at `21b37d9`.
 
 | Class | Meaning | Boxes |
 |---|---|---:|
-| **A — already delivered** | proven by a named test or case; ticked in the phase lists below, the most consequential named under *Done, verified today* | **50** |
-| **B — open, small** | a concrete defect with a reproduction and an exit test, grouped by area | **31** |
-| **C — open, large** | a spec requirement that is its own tranche; each names its scale | **7** |
-| **D — obsolete** | deleted; the commit body says why | **4** |
-
-50 + 31 + 7 + 4 = the 92 unticked boxes this section carried. Two further counts matter, because
-the boxes and the work were not the same thing:
-
-- **Sixteen of the 50 class-A boxes were only *partly* delivered and were split** rather than
-  ticked whole (B8, D2, D4, E3, E5, G3, H5, I1, I3, I4, I5, I6, I7, I8, J1, J5, and the §34
-  budgets). The proven half is ticked in the phase list with its test named; the remainder is a
-  numbered line below.
-- **The 31 open boxes are written out as 42 numbered lines**, because several of them bundled
-  four to eight separate defects behind one bullet — the entry beginning "Found by the wiki
-  verification pass" alone held eight. **Seventeen further lines are new**, found by this audit or
-  lifted out of a session log where they were recorded and never filed: B-prov-3, B-prov-4,
-  B-prov-5, B-spat-6, B-kuang-4, B-kuang-5, B-remote-2, B-harn-4 … B-harn-7 and the six
-  `B-split-*` remainders. Fifty-nine lines in total.
+| **C — open, large** | a spec requirement that is its own tranche; four have an agent on them now | **7** |
+| **B — open, small** | a concrete defect with a reproduction and an exit test | **5** |
+| **closed since `ed923ee`** | listed under *Done, reconciled* with the commit that closed it | **55** |
 
 ---
 
 ### Class C — open and large (one tranche each)
 
+Four of the seven have an agent working them right now (see *In progress*). Their entries below
+describe the tree at `b904327` — **not** what those agents have reached, which this board does not
+know and must not claim.
+
 - [ ] **C-1 — the generated provider conformance suite (spec §35.3, phase C9).** What exists is a
   *drift* check, not a generated suite: `ono-cli/tests/providers.rs` reads
   `docs/spec/providers/*.yaml` at runtime and diffs the declarations against the built registry
   (`should_advertise_exactly_what_the_declarations_promise`), and each provider crate hand-writes
-  its schema conformance (`ono-provider-linux/tests/schemas.rs`). No generator exists anywhere:
-  the workspace has no `build.rs`, and `xtask`'s only generator is `reference.rs`, which emits
+  its schema conformance (`ono-provider-linux/tests/schemas.rs`). Still true at `b904327`: the
+  workspace has no `build.rs`, and `xtask/src/` is `bindings.rs contracts.rs lib.rs main.rs
+  narrative.rs reference.rs scan.rs` — the only generator is `reference.rs`, which emits
   `docs/reference/` Markdown. **Scale:** one new `xtask` generator plus a generated test crate,
-  6 provider YAML files, ~3 increments. Note that `docs/ACCEPTANCE.md` §4.1 D and its §4.7.4
-  line both say "generated from `docs/spec/providers/*.yaml`", which is not true today — see
-  B-harn-4.
-- [ ] **C-2 — the §35.6 fuzz targets.** There is no `fuzz/` directory and no `cargo-fuzz` /
-  `libfuzzer` reference in the tree. Seeded property and robustness suites stand in and are what
-  `docs/ACCEPTANCE.md` §4.4 ticks: `ono-parser/tests/robustness.rs`,
+  6 provider YAML files, ~3 increments. The false claim in `docs/ACCEPTANCE.md` that went with it
+  is gone (B-harn-4, ADR-0248): §4.1 D and §4.7.4 now describe the drift check they really have.
+- [ ] **C-2 — the §35.6 fuzz targets.** There is still no `fuzz/` directory and no `cargo-fuzz` /
+  `libfuzzer` reference in any manifest. Seeded property and robustness suites stand in and are
+  what `docs/ACCEPTANCE.md` §4.4 ticks: `ono-parser/tests/robustness.rs`,
   `ono-value/tests/{codec_fuzzing,codec_properties}.rs`,
   `ono-protocol/tests/{fuzz_protocol,framing}.rs`,
   `ono-provider-netlink/tests/malformed_messages.rs`, the kuang garbage/oversize/misframe cases,
   and the seeded generator `ono-testkit/tests/fuzz_support.rs`. **No ADR records the
-  substitution, and ADR-0015 standing rule 3 says the opposite** ("A decoder without a fuzz
+  substitution, and ADR-0245 standing rule 3 says the opposite** ("A decoder without a fuzz
   target is not finished"), so this is an undocumented deviation. **Scale:** either an ADR
   recording the substitution (1 increment) or five `cargo-fuzz` targets, a corpus, and a CI
-  budget — `xtask::scan::rust_sources` already walks a top-level `fuzz/`; ~4 increments.
+  budget; `xtask::scan::rust_sources` walks a top-level `fuzz/` and, since `80c8cb7`, is pinned by
+  a fixture that proves it would — ~4 increments.
 - [ ] **C-3 — agentless mode (spec §21.3, phase H3).** `--agentless` is parsed and *visible*
   (`remote_missing.rs::should_keep_the_agentless_mode_visible_in_the_link_table`, case `044`'s
-  `[{"mode":"agentless"}]`), but `crates/ono-cli/src/context.rs:615` says it plainly: "this build
-  has no agentless provider — served by the agent until the fallback exists", and `establish()`
-  has two transports, both spawning `ono --agent`. ADR-0037 §6 states "This is not spec §21.3
-  agentless mode". **What it takes:** a probe in `establish()` that falls back rather than
-  failing; a reduced provider set answering plain POSIX over `ssh <host> <cmd>` decoded by the
+  `[{"mode":"agentless"}]`), but `crates/ono-cli/src/context.rs:615` still says it plainly: "this
+  build has no agentless provider — served by the agent until the fallback exists", and
+  `establish()` has two transports, both spawning `ono --agent`. ADR-0037 §6 states "This is not
+  spec §21.3 agentless mode". **What it takes:** a probe in `establish()` that falls back rather
+  than failing; a reduced provider set answering plain POSIX over `ssh <host> <cmd>` decoded by the
   v0.3 adapter layer; `Availability::Unavailable(reason)` per target the reduced set cannot
   answer, so "visibly reduced" is structural and not a string; `explain` and `get link` reading
   the real reduced set; an acceptance assertion that a target available under the agent is
   honestly refused under agentless. **Scale:** `ono-remote` + `ono-cli` + `ono-adapter`,
   ~5 increments.
-- [ ] **C-4 — the rest of KUANG/11 (spec §31, ADR-0040).** Four things, all deliberately
-  deferred and each real: (a) **isolation** — `ono-kuang-supervisor/src/supervisor.rs:140` is a
-  bare `Command` with piped stdio; no `setrlimit`, namespace, cgroup or seccomp, and the
-  manifest's `memory_max`/`cpu_budget` are parsed and never enforced. (b) **the
-  wasm-component tier** — `RuntimeKind::WasmComponent` exists in the manifest and is never
+- [ ] **C-4 — the rest of KUANG/11 (spec §31, ADR-0040).** Three things, down from four:
+  (a) **isolation** — `ono-kuang-supervisor/src/supervisor.rs:140` is a bare `Command` with piped
+  stdio; a grep of the crate for `setrlimit`, `seccomp`, `cgroup` and `unshare` finds nothing, and
+  the manifest's `memory_max`/`cpu_budget` are parsed and never enforced. (b) **the
+  wasm-component tier** — `RuntimeKind::WasmComponent` exists in `manifest.rs:47` and is never
   spawned; `native-process` is the only tier. (c) **ten of the sixteen host API domains of
   §31.12** — objects, schemas, commands, relations (as host calls), views, context, history,
-  network, process, secrets, models are entirely absent, and streams/filesystem/state/clock are
-  partial; the negotiated surface is exactly what `supervisor.rs:1337-1358` matches, everything
-  else is `runtime.protocol_violation`. (d) **on-disk state and grant persistence** — only
-  enablement reaches disk (`kuang_host.rs::write_management`); grants, leases and the audit trail
-  are in-process. **Scale:** the largest remaining tranche; ~4 crates, 10+ increments, and it is
-  what §31.74's conformance suite would have to grow to cover.
-- [ ] **C-5 — package signature verification (spec §31.9, §31.36).** `verify plugin` always
-  answers `signature: absent` (`kuang_host.rs:921,987,1182,1447`) and case `045` asserts exactly
-  that. `KuangErrorCode::PackageSignatureInvalid` (K11004) is defined and **constructed nowhere**.
-  There is no signing key handling, no detached-signature parsing, no trust root; the workspace
-  has no crypto dependency beyond `sha2` for the content digest. **Scale:** a signature format
-  decision (ADR), a verifier, a trust root, `ono-kuang-protocol` + `ono-cli`, ~3 increments.
-- [ ] **C-6 — `ono-model-broker` (spec §31.12, phase I11).** The crate does not exist. The
-  complete set of references is `manifest.rs`'s `model_broker: Option<String>` (parsed, stored,
-  read by nothing), `Capability::ModelInfer` (declared, checked by nothing, because there is no
-  `models.list`/`models.infer` host call), and ADR-0005 §Phase I planning it. The user-visible
-  surface today is honest and empty: `plugins_missing.rs::should_report_no_model_providers_when_none_is_configured`
-  and case `045`'s `Ono-Sendai-E0102` for `ask assistant nobody`. **Scale:** a new crate, the two
-  host calls, the operator-approval path and the "no LLM in a privileged path" guard, ~4
-  increments — and an ADR first, because §31.12 leaves the approval UX open.
+  network, process, secrets, models are absent, and streams/filesystem/state/clock are partial.
+  **(d) is closed:** grants, leases and the audit trail now survive a session
+  (`a5be21b`, ADR-0264/0265 — `<config>/kuang/policy.yaml`, `<state>/kuang/audit.jsonl`).
+  **Scale:** still the largest remaining tranche; ~3 crates, 8+ increments, and it is what
+  §31.74's conformance suite would have to grow to cover.
+- [ ] **C-5 — package signature verification (spec §31.9, §31.36).** `verify plugin` still always
+  answers `signature: absent` (`kuang_host.rs:1167`) and case `045` asserts exactly that.
+  `KuangErrorCode::PackageSignatureInvalid` (K11004, `ono-kuang-protocol/src/error.rs:68`) is
+  defined and **constructed nowhere**. There is no signing key handling, no detached-signature
+  parsing, no trust root; the workspace has no crypto dependency beyond `sha2` for the content
+  digest. **Scale:** a signature format decision (ADR), a verifier, a trust root,
+  `ono-kuang-protocol` + `ono-cli`, ~3 increments.
+- [ ] **C-6 — `ono-model-broker` (spec §31.12, phase I11).** The crate does not exist — `crates/`
+  holds thirty crates and none of them is it. The complete set of references is `manifest.rs`'s
+  `model_broker: Option<String>` (parsed, stored, read by nothing), `Capability::ModelInfer`
+  (declared, checked by nothing, because there is no `models.list`/`models.infer` host call), and
+  ADR-0005 §Phase I planning it. The user-visible surface is honest and empty:
+  `plugins_missing.rs::should_report_no_model_providers_when_none_is_configured` and case `045`'s
+  `Ono-Sendai-E0102` for `ask assistant nobody`. **Scale:** a new crate, the two host calls, the
+  operator-approval path and the "no LLM in a privileged path" guard, ~4 increments — and an ADR
+  first, because §31.12 leaves the approval UX open. **No agent is on this one.**
 - [ ] **C-7 — the §34 pathological fixtures, and the theme system of §44.** Two smaller tranches
   kept together because each is one fixture away from done. **§34:** every budget is measured and
   none is violated (`060-performance-budgets.case`, `100-spatial-performance-budgets.case`), but
@@ -1539,362 +1571,164 @@ the boxes and the work were not the same thing:
   fully tested (`ono-render/tests/presentation.rs`, nine tests incl.
   `should_name_every_token_as_the_specification_spells_it_when_rendered` and
   `should_distinguish_danger_from_success_by_more_than_colour_alone`), but **no theme is
-  loadable**: every call site constructs `Theme::default()`, there is no reader for
-  `~/.config/ono/themes/*.toml`, no `theme` configuration domain (`get config` lists 24 keys, none
-  of them `theme.*`), no `set theme`, and no second theme. `Token::from_name`'s doc comment
-  documents a consumer that does not exist. **Scale:** ~2 increments each.
+  loadable**: at `b904327` no source file mentions `themes/`, no `docs/spec/*.yaml` declares a
+  `theme` key, every call site constructs `Theme::default()`, there is no reader for
+  `~/.config/ono/themes/*.toml`, no `set theme`, and no second theme. `Token::from_name`'s doc
+  comment documents a consumer that does not exist. **Scale:** ~2 increments each.
 
 ---
 
-### Class B — open and small, grouped by area
+### Class B — open and small
 
-Each line says what is wrong, how to reproduce it, and what closes it.
+Each line says what is wrong, how to reproduce it, and what closes it. Five remain; the other
+thirty-seven are under *Done, reconciled*.
 
 #### Data and pipeline
 
-- [ ] **B-data-1 — a dotted path into an error value yields the error, not the field.**
-  `ono -c 'unmount filesystem / | select error.name | to json'` answers
-  `[{"name":{"code":"Ono-Sendai-E0302", …the whole ono.error/1…}}]`; `select error.code` does the
-  same. `FieldAccess::Failed` returns the error rather than descending. Spec §10.5 keeps "could
-  not read" apart from data, but the row's `error` *is* data — decide which, then implement.
-  Exit test: a `data_missing`-style outcome test on the projection.
-- [ ] **B-data-2 — `diff` reports `changed` for two byte-identical records.**
-  `ono -c 'get user root | diff (get user root) | to json'` answers `"change":"changed"` with
-  `left` and `right` serialising to the same bytes. This is sharper than the board's old wording
-  ("volatile fields need excluding"): nothing volatile is visible in the output, so the
-  comparison is looking at something the serialisation does not show — provenance, most likely.
-  Exit test: a data case diffing two fresh snapshots of the same object and asserting `unchanged`.
-- [ ] **B-data-3 — `@` is null inside an `each` block whose body is a native command.**
-  `ono -c 'get process | where pid == 1 | each { echo @.pid }'` answers `1` (green:
-  `language_missing.rs::should_run_a_command_per_item_when_the_each_block_contains_one`), but
-  `each { get process @.pid | count }` answers `type.mismatch cannot read field 'pid' on a value
-  of type null`, and `each { stop process @.pid }` answers "`stop process` needs something to act
-  on". So `@` binds for expressions and external commands and not for a native stage — which is
-  exactly spec §19.4's own example `each { restart service @ }`. Exit test: a case asserting the
-  ActionResult rows of `each { stop process @.pid }`.
-- [ ] **B-data-4 — `to bytes --field <name>` refuses a record.** `--field` names the one bytes
-  field to emit, and the command answers `type.mismatch a record has no raw byte form`. This is
-  the natural way to write an adapted `curl` body to a file
-  (`adapt curl url | to bytes --field body > page.html`). Exit test: a data_codecs case emitting
-  one bytes field verbatim.
-- [ ] **B-data-5 — a `SIGPIPE`d stdout is reported as an I/O failure.**
-  `ono -c 'get process | to json' | head -c 100` writes
-  `Ono-Sendai-E0302 io.permission_denied the output could not be written: Broken pipe` to stderr
-  where every other shell exits quietly. Exit test: a cli case piping into `head` and asserting a
-  clean stderr.
-- [ ] **B-data-6 — JSON object key order is alphabetical, not schema order.**
-  `echo '{"zebra":1,"alpha":2}' | ono -c 'from json | to json'` answers `[{"alpha":2,"zebra":1}]`
-  (ADR-0030). Enabling serde_json's `preserve_order` reorders the protocol too; decide and pin.
-  Exit test: a data_codecs case asserting §33.5 field order.
-- [ ] **B-data-7 — `--name=value` is a parse error in expression mode.**
-  `from json | reduce $acc + @ --initial=10` answers `E0001 expected a value, found '='`.
-  ADR-0032 pairs an option with the *following* expression and left the `=` spelling out. Exit
-  test: a parse_expressions case for `reduce $acc + @ --initial=10`.
-- [ ] **B-data-8 — the pipeline's `Diagnostics` counters never reach the user.**
-  `excluded_unknown` and `skipped_null` are recorded (`ono-pipeline/src/diagnostics.rs`, pinned in
-  `streaming_transforms.rs` and `blocking_transforms.rs`) and no CLI path reads them: filtering
-  two records where one field is `null` says nothing about the exclusion. ADR-0029 chose silence
-  over an unread field. Exit test: a case showing the count.
-- [ ] **B-data-9 — the byte carry across a native/external join is buffered, not streamed.**
-  `ono -c 'find / -type f | from text | take 1 | to json'` takes 7.1 s on this host — the whole
-  walk — and ADR-0028 records the buffering. Exit test: that command answers before the walk
-  finishes.
-- [ ] **B-data-10 — `sort` after an external head cannot reach GNU sort's flags.**
-  `printf "b\na\nc\n" | sort -r` inside `ono` answers `type.mismatch cannot subtract int and
-  null`, because both `explain` and the executor now resolve the stage to `ono.data.sort` and
-  read `-r` as a field name. (The old entry claimed explain and the executor *disagreed*; they
-  agree now — `explain printf x | sort -r` shows `command ono.data.sort` / `field r`, which is
-  what runs. The disagreement is gone; this is what is left.) Decide whether a demand-driven
-  native `sort` should carry the flag vocabulary or hand the stage back to the adapter layer, then
-  implement. Exit test: a builtins case for `printf … | sort -r`.
-- [ ] **B-data-11 — `get log`'s `level` compares alphabetically, not by severity.**
-  `echo '[{"level":"warning"},{"level":"error"},{"level":"debug"}]' | ono -c 'from json | where
-  level >= "error" | to json'` keeps `warning`, because `"warning" > "error"` as strings. `get
-  log`'s own documented example is `where level >= error`. Exit test: a data case where
-  `>= error` keeps `error` and `critical` and drops `warning`.
-- [ ] **B-data-12 — `get process <gone-pid> | count` prints an error and a value and exits 0.**
-  `ono -c 'get process 999999 | count'` writes `Ono-Sendai-E0301 io.not_found` to stderr, then
-  `VALUE 0` to stdout, with status 0. Decide whether a selector that resolves to nothing is a
-  refusal or an empty stream, then make the status agree with it. Exit test: a processes case.
-- [ ] **B-data-13 — the E0701 bulk-guard message carries runs of spaces.**
-  `ono -c 'get process | stop process'` prints `…more than the bulk` + 22 spaces +
-  `threshold of 100`, and the help line has a similar run. A wrapped literal reaching the
-  renderer unjoined. Exit test: a mutations case asserting the message has no double space.
-- [ ] **B-data-14 — one label rule for an object.** `ObjectRef::of` uses the first default-view
-  column outside the identity and `ono_graph::label_of` uses a per-schema form, so
-  `ono -c 'unmount filesystem /'` renders the target as `ono.mount/1[/] /dev/sda2` while
-  `ono -c 'get mount / | unmount filesystem'` renders `ono.mount/1[/]` for the same object
-  (ADR-0088 §4, ADR-0116). Exit test: those two spellings render the same `target`.
-- [ ] **B-data-15 — `get config --problems | select code` fails.** It answers
-  `E0202 type.unknown_field unknown field 'code' on ConfigSetting`, i.e. `--problems` returns
-  settings rather than problems. Exit test: a meta_config case selecting a problem's code.
-- [ ] **B-data-16 — `trace group root` reports "command not found: trace".** `trace` exists;
-  `group` is not a traceable target, and resolution falls all the way through to `PATH` and
-  reports the *verb* as missing rather than the target. Cosmetic, and misleading. Exit test: an
-  unsupported trace target names the target.
-- [ ] **B-data-17 — `get interface lo | stop interface` refuses the piped record.** It answers
-  `type.mismatch 'stop interface' writes bytes or text, and a record is neither`, so the
-  object-in spelling that works for every other mutation does not work here. Exit test: a network
-  case piping an interface into `stop interface`.
-- [ ] **B-data-18 — `explain` inside a frame does not print the narrowed spelling.**
-  `ono -c 'enter process 1; explain get process'` plans `1. get process`, not `get process 1`.
-  ADR-0023 promised the narrowed spelling and ADR-0076 made the arguments available. Exit test: a
-  context.rs case explaining inside `enter process 1`.
-- [ ] **B-data-19 — `watch` narrows at the query level rather than on the argument seam.** It
-  composes `producer::ambient_selector` into its query on top of the narrowed arguments of
-  ADR-0076 §5; moving it onto the argument seam and deleting the query-level form is one
-  `refactor` with no behaviour change. Exit test: the existing watch.rs case inside
-  `enter process 1` stays green with the query-level form removed.
-- [ ] **B-data-20 — the §17.5 redaction policy does not reach §20.2's retention.** History
-  redaction is proven (`ono-history/tests/history.rs`, default and configured patterns) and
-  nothing applies it to the retained structured results ADR-0033 keeps for `@`, `@-1` and `@N`.
-  Exit test: a redacted field stays redacted in `@-1`.
+- [ ] **B-data-9 — an unbounded external producer never reaches a native stage.** The old entry's
+  own reproduction cannot be run: `from text` does not exist (`ono -c 'seq 3 | from text'` answers
+  `Ono-Sendai-E0201 type.mismatch \`from\` has no \`text\`` — "`from` knows json, yaml, csv"), so
+  the 7.1 s it measured was the walk plus a refusal. The defect is real and sharper than it read:
+  **`ono -c 'yes | take 1'` never returns** (killed at 8 s, 7 s of it system time), because
+  ADR-0028 buffers the whole byte carry across a native/external join before the native stage
+  starts. A bounded producer is fine and a *native* head is fine —
+  `ono -c 'find /usr -type f | take 1'` answers in 0.2 s, but that is `ono.file.find`, not
+  findutils. Exit test: `yes | take 1` answers one value and ends the producer.
 
-#### Providers
+#### Providers, remote and KUANG/11
 
-- [ ] **B-prov-1 — `get process | count` exits 1 on a churning host, and three test premises
-  depend on it not to.** A process the enumerator listed exits before its `/proc/<pid>/stat` can
-  be read, so v0.2 §9's partial-failure semantics give `Ono-Sendai-E0401 provider.unavailable`
-  and exit 1. The *shell* is right. What is wrong are three tests that assert a successful run of
-  a command enumerating every process:
-  `options_and_selectors_missing.rs::should_nest_children_under_their_parents_when_tree_is_requested`
-  (which is the failure in today's baseline run),
-  `spatial_topology_missing.rs::should_bound_the_root_horizon_instead_of_listing_every_known_object`
-  and `remote_missing.rs::should_answer_again_from_a_detached_link_when_it_is_entered_again`.
-  Exit test: those three are green on a host that is churning processes — by asking a bounded
-  question, or by asserting the answer rather than the exit status.
-- [ ] **B-prov-2 — `cpu` is `null` in every one-shot run.** CPU is a rate and
-  `ono-provider-linux` has nothing to subtract from on a first observation, so
-  `ono -c 'get process | where cpu > 0 | count'` answers `0` on a busy host and
-  `find place --where cpu > 5` is silence; a second `get process` in the same session does
-  produce values. Honest, and it means "what is busy?" cannot be asked non-interactively. Exit
-  test: that one-shot count answers more than zero on a busy host, by whatever route — a second
-  sample after a short interval, or a separate lifetime-average field.
-- [ ] **B-prov-3 — two TIME_WAIT sockets are one place.** `ono.socket/1` declares
-  `identity: [inode]` and a socket in TIME_WAIT has no inode, so every TIME_WAIT socket on the
-  host projects to the same `SpatialId` and merges. This is why
-  `spatial_relationships_missing::should_show_the_connection_edge_appear_and_vanish…` is green in
-  the container (no other TIME_WAIT sockets) and red on a developer machine. The fix belongs to
-  the v0.2 identity contract — a record whose identity components are all null has no identity and
-  must not merge (§2.17, §35.3). Exit test: two TIME_WAIT sockets are two places.
-- [ ] **B-prov-4 — `trace service` is registered and never executed by anything.**
-  `ono.service.trace` is in the registry, `service.trace` is a declared capability, and the
-  relationship provider is unit-tested — but no test function and no `.case` ever runs
-  `trace service <unit>`, while `trace mount`, `trace file`, `trace user` and `trace socket` each
-  have one. Phase G3's stated targets are process, service and socket. Exit test: one CLI or
-  acceptance assertion driving `trace service`.
-- [ ] **B-prov-5 — `service.depends_on` has no provider evidence.** Declared in
-  `docs/spec/spatial/relations.yaml`, claimed by no provider, produces no edges (ADR-0135).
-  `ono-provider-systemd` reads `ListUnits`, which carries no dependency information;
-  `Requires`/`Wants`/`After` need a `Get` per unit over D-Bus, which is its own cost class and its
-  own `ono.service/1` surface. v0.4 §13 lists dependencies and dependents among a service place's
-  groups. Exit test: a service place whose `dependency` exit names `network-online.target` on the
-  container fixture. (Moved here from *Deferred*: this is work, not a block.)
-- [ ] **B-prov-6 — `trace mount` has no propagation peers.** `docs/spec/providers/storage.yaml`
-  promises them; ADR-0079 left them out until a peer group has an object to stand for it.
-  `ono -c 'trace mount /'` draws `backed-by`, `filesystem` and `root` and no peer. Exit test: a
-  storage case over a bind mount with `shared:` in `mountinfo`.
-- [ ] **B-prov-7 — `watch file` polls instead of using inotify, and `watch interface|route` poll
-  instead of the rtnetlink multicast groups** (ADR-0078, ADR-0080). `source` stays `poll` where
-  it should become `subscription`. Same family: `tail file` uses a 100 ms poll (ADR-0083 §3).
-  Exit test: a file created between two polls arrives before the next poll would; and the existing
-  follow test passes with the poll interval removed.
-- [ ] **B-prov-8 — provider-native subscriptions (netlink, D-Bus signals) do not exist**
-  (ADR-0034), so no `watch` anywhere reports `source: subscription`. Exit test: a watch.rs case
-  against a subscribing fixture.
-- [ ] **B-prov-9 — `--preserve` does not restore timestamps on a copied directory.**
-  `ono -c 'copy file src dst --recursive --preserve'` leaves `dst` and `dst/inner` at the current
-  time while `src` keeps its 2020 mtime; `set_times` needs a writable handle and directories are
-  skipped (ADR-0082 §6). Exit test: a files case comparing `modified` of the copied tree.
-- [ ] **B-prov-10 — declared options are honoured, but nothing makes ignoring one impossible.**
-  The old entry's own example is fixed: `get process --user root` answers 174 of 528 processes on
-  this host, and `get socket --listening` answers 91. What is still missing is the *mechanism* —
-  `xtask::contracts::check_commands` cross-checks verbs, targets and capabilities but nothing
-  holds a declared option against what the provider does with it, the way a selector now cannot be
-  ignored. Exit test: a fixture command declaring an option no implementation reads is reported by
-  `spec-check`.
-- [ ] **B-prov-11 — network write paths have no privileged conformance.** ADR-0088 delivers the
-  nine mutations and proves only the unprivileged refusal. A root run in the container
-  (`add route … --dry-run`, then a real add/remove on a dummy interface and its removal) would
-  prove the request layouts against a live kernel. Exit test: a new case under
-  `docker/acceptance/cases/` run with `CAP_NET_ADMIN`.
-- [ ] **B-prov-12 — `resolve dns --server <ip>` is refused as `provider.unsupported`**
-  (ADR-0087 §1). It needs a DNS client of its own — a UDP/TCP query builder and parser — beside
-  the system resolver. Exit test: a network case resolving through a named server.
-
-#### Remote
-
-- [ ] **B-remote-1 — inside a link frame, `get link` is sent to the other side.**
-  `ono -c 'link host testbox --transport local; enter link testbox; get link | count | to json'`
-  answers `[0]`: the remote agent's empty link table, so `get link | detach link` cannot be
-  spelled from inside the link it would detach. Decide whether `get link`, `get job` and
-  `get context` always describe *this* session (spec §14.4). Exit test: that command answers `1`.
 - [ ] **B-remote-2 — host-key pinning is dead code on the only production transport.** The trust
-  store is fully proven at unit level (`ono-protocol/tests/trust.rs`, five tests;
-  `ono-remote/tests/trust.rs::should_refuse_a_changed_host_key_with_the_stable_safety_code`
-  asserting E0603), but ADR-0037 §4 has ssh links use `TrustPolicy::Unauthenticated`, so the pin
-  store is never consulted in production, no acceptance case asserts E0603, and there is no
-  trust-store UX (get/set/forget a pinned key). This subsumes **F12**: the default policy is
-  trust-on-first-use where ADR-0015 T5 wants refusal, and that contradiction cannot be settled
-  until an authenticated transport exists. Exit test: an acceptance case in which a changed key
-  refuses with E0603, over a transport that authenticates.
-
-#### KUANG/11
-
-- [ ] **B-kuang-1 — `grant capability --scope` and `--duration` are declared and ignored.**
-  `docs/spec/commands/kuang.yaml` declares both and `ono -c 'help grant capability'` prints them
-  in the synopsis, but `crates/ono-cli/src/plugins.rs:463-471` reads only the capability word and
-  `--plugin <id>`; the scope is taken verbatim from the manifest and the emitted
-  `ono.capability-grant/1` hard-codes `duration: "session"` with `expires_at`, `max_uses`,
-  `actions`, `selector` and `condition` all null. A declared safety control that does nothing is
-  the same defect class as the F13 bulk guard. Exit test: a plugins case granting with a scope and
-  a duration and reading both back off the grant record.
-- [ ] **B-kuang-2 — grants, leases and the audit trail do not survive a session.** `Host.grants`
-  and `retained_audit` (`kuang_host.rs:104,110`) are in-process; only enablement reaches disk
-  (`write_management`). Spec §31.19 wants a policy store. `KuangErrorCode::CapabilityLeaseExpired`
-  (K11303) is never raised, and the supervisor's five-minute lease
-  (`supervisor.rs:1571`, `lease_expiry` at :1841) never reaches the CLI's grant UX. Exit test: a
-  plugins case granting in one session and reading the grant back in a second.
+  store is complete and proven at unit level (`ono-protocol/tests/trust.rs` and
+  `ono-remote/tests/trust.rs::should_refuse_a_changed_host_key_with_the_stable_safety_code`,
+  thirteen tests including the E0603 refusal), but ADR-0037 §4 has ssh links use
+  `TrustPolicy::Unauthenticated`, so the pin store is never consulted in production and no
+  acceptance case asserts E0603. **ADR-0274 (`593baee`) now records why the exit test cannot be
+  written yet**: both `ssh` and `local` go through `SubprocessTransport`, whose `peer_key` is
+  truthfully `None`, because OpenSSH authenticates the host in its own `known_hosts` and offers
+  the parent no way to learn which key it accepted. What must exist first is a transport that
+  certifies its peer to this process — an Ono-native authenticated TCP transport (TLS or Noise,
+  where the peer's key *is* the `HostKey`), or an ssh implementation inside Ono. Two things are
+  ruled out in the meantime: copying `known_hosts` into the store, and adding a trust-store
+  command surface while nothing writes to the store on any production path. This subsumes **F12**.
+  Exit test: an acceptance case in which a changed key refuses with E0603, over a transport that
+  authenticates.
 - [ ] **B-kuang-3 — a lazily loaded package's contributions have no registry origin.** §31.64
   wants `get command` to answer for a contributed command with origin `plugin(id, version)`;
-  nothing in the command schema or `ono-command` carries an origin. Exit test: `get command` names
-  the package a contributed command came from, before that package is loaded.
-- [ ] **B-kuang-4 — the negotiated `OverflowPolicy` is never enforced.** Five variants exist
-  (`ono-kuang-protocol/src/contract.rs:13`) and appear in exactly one non-declarative place,
-  `negotiate.rs:126-136`, which clamps the manifest's *preference*. Nothing in the supervisor or
-  the SDK reads `contract.overflow`, and no conformance test names `overflow` (spec §31.15). Exit
-  test: a conformance case in which a plugin's declared overflow policy decides what happens when
-  its stream overruns.
-- [ ] **B-kuang-5 — `contributions.views` and `contributions.annotations` are listed and never
-  loaded.** Both paths are reported by `inspect plugin` and included in the artifact digest
-  (`kuang_host.rs:633,635,1133-1135`) and nothing validates or registers them; there is no
-  `views.open`/`views.submit`/`views.close` and no `output.annotate` (§31.22–§31.27, §31.53).
-  Exit test: a package declaring a view registers it into `view`, or the manifest field is
-  refused as unsupported rather than silently accepted.
-- [ ] **B-kuang-6 — the seven `docs/spec/kuang/*.v1.yaml` contracts have no drift check.**
-  `grep -rn kuang xtask/src/` finds one hit, a doc heading in `reference.rs`. They reach
-  `spec-check` only through the generic sweep, which proves they are non-empty valid YAML and
-  nothing else; nothing holds them against `crates/ono-kuang-*` the way `check_provider_claims`
-  holds the providers. Exit test: a KUANG manifest field the SDK does not implement is reported.
+  nothing in the command schema or `ono-command` carries an origin — a grep of
+  `ono-command/src/{registry,invoke}.rs` for `origin` finds nothing, and `plugin(id` appears
+  nowhere in `crates/` or `docs/decisions/`. Exit test: `get command` names the package a
+  contributed command came from, before that package is loaded.
 
 #### Spatial
 
-- [ ] **B-spat-1 — every read-only mount at 100 % is a "storage pressure" landmark**
-  (v0.4 §26.2, §2.11). `ono -c 'enter storage; look'` on this host lists twenty snaps at
-  `100% used`; a squashfs image is full by definition. Exit test: a read-only filesystem at 100 %
-  is not a storage-pressure landmark, and a writable one above the threshold still is.
-- [ ] **B-spat-2 — a map of an object is a flat list with unusable rows** (v0.4 §23.5, §11.4).
-  `ono -c 'enter process 1; map'` draws `also here` with eighteen rows, none of which names the
-  relation it stands in, and several of which share a display name (`containerd-shim` four times)
-  with nothing to tell them apart — so the view cannot be used to choose a neighbour. The root map
-  is unaffected and is excellent. Exit test: every row of an object map names its relation, and
-  two neighbours sharing a display name are distinguishable.
-- [ ] **B-spat-3 — `help here` does not exist** (v0.4 §38.2, a SHOULD). `ono -c 'help here'`
-  answers `E0101 resolve.command_not_found … did you mean 'where'?`. `help spatial` (§38.1, a
-  MUST) was delivered by S11b; this is its other half, and it needs help metadata, completion and
-  an acceptance case of its own. Exit test: `help here` at a process place names the relations
-  that place actually offers.
-- [ ] **B-spat-4 — two small ones from the same dogfooding session.** `near --relation process`
-  answers `E0202 'near' has no option '--relation'` and lists the four options it does take,
-  without ever mentioning that a relation is a *positional* selector (`near process`), which is
-  the spelling that works. And `ono -c 'enter process 1; near socket'` prints nothing at all with
-  status 0, so "no such neighbour" and "the command did nothing" look identical. Exit test: the
-  refusal names the positional spelling, and an empty neighbourhood says so.
-- [ ] **B-spat-5 — a tombstone never names its replacement candidate** (v0.4 §10.3, §40).
-  `tombstone.replacement` and `tombstone.replacement_via` are on the place record and always
-  `null`; `Tombstone::replaced_by` exists and is called from nowhere. It cannot be answered when
-  the old place ends — the source of the relation that reached it has not been observed again — so
-  the two honest routes are to re-observe that one source when a tombstone is rendered (a targeted
-  query, never an enumeration), or to fill the tombstone lazily when a later observation records
-  an edge from the same source by the same relation to a live object of the same kind. Offer a
-  candidate only when that source reaches **exactly one** such object; a choice among several is a
-  guess, not a candidate (§2.17, §53). Exit test: after the §44.7 restart, `look --json` at the
-  tombstone carries `tombstone.replacement` equal to the new process's `spatial_id` and
-  `replacement_via` naming `service.controls_process`; case `096`'s `44.7e` then asserts that
-  instead of what it asserts now. `docs/ACCEPTANCE.md` §4.7.3's §44.7 box names the gap.
 - [ ] **B-spat-6 — a full-screen map of COMPUTE is unresponsive while one projection is in
   flight.** Measured by S11c on a 500-process host; §34.2's view budget will eventually have to
-  answer for it. Exit test: opening a full-screen map of COMPUTE on a 500-process host repaints
+  answer for it. `98fa9ce` (ADR-0263) fixed the *neighbouring* defect — the index grew by one
+  population per observation, so the view got monotonically slower for as long as it stayed open —
+  and did not make the first projection concurrent with the repaint, which is what this asks for.
+  No ADR covers it. Exit test: opening a full-screen map of COMPUTE on a 500-process host repaints
   within the §34.2 frame budget throughout, not only once the projection lands.
 
 #### Harness and bookkeeping
 
-- [ ] **B-harn-1 — `xtask::contracts::check_commands` skips its cross-checks for any command that
-  omits the field** (`!verb.is_empty() && …`). No command omits one today, so nothing is dead yet
-  — but a command written without a `verb` would be checked against nothing and pass. Making the
-  field required is a new contract rule, and it must be decided together with the bare-name
-  spatial commands of ADR-0124. Exit test: a fixture command with no `verb` is reported.
-- [ ] **B-harn-2 — `xtask::scan::is_scanner_source` excludes all of `xtask/tests/`** from the
-  unfinished-work scan, not only the file that necessarily names the markers, so a `todo!()` in an
-  xtask test is invisible to the gate. Narrowing it to `xtask/tests/scan.rs` is a `fix` of its
-  own.
-- [ ] **B-harn-3 — `xtask::scan::rust_sources` walks `tests/`, `fuzz/` and `examples/` at the top
-  level**, and `tests/` and `fuzz/` do not exist, so those walks find nothing. Harmless today (the
-  suites live under `crates/*/tests/`) and it becomes real the moment AGENTS.md §2's `tests/` or
-  C-2's `fuzz/` targets are created.
-- [ ] **B-harn-4 — `docs/ACCEPTANCE.md` claims a generation that does not exist.** §4.1 D says
-  "docs and provider conformance tests are generated from them" and §4.7.4 says the spatial
-  conformance suite is "generated from `docs/spec/providers/*.yaml` the way the v0.2 conformance
-  suites are". Only `docs/reference/` is generated (`xtask/src/reference.rs`);
-  `ono-spatial-index/tests/conformance.rs` reads no YAML at all. Either C-1 makes the claim true or
-  the two lines are reworded — and the box stays ticked either way, because the *drift* check they
-  really describe is real and green. Exit test: `xtask spec-check` fails if the claim and the tree
-  disagree.
-- [ ] **B-harn-5 — ADR-0015's threat-model table names test *intentions*, not tests.** Its own
-  Consequences call this "a standing debt tracked in `docs/STATE.md`", and this is that entry.
-  Every T1–T15 risk does have a passing test, but the mapping lives only in `docs/ACCEPTANCE.md`
-  §4.4's final bullet; three rows of the ADR name a file and none names a function. ADR-0203 did
-  this correctly for its seven new spatial rows. Exit test: every row of ADR-0015's table names a
-  test function that exists.
-- [ ] **B-harn-6 — five behaviours verified today by running the shell have no regression test.**
-  Each is delivered and each is unpinned, so each can silently regress: `read file` on a 20 MB
-  file yields one value (`| count` → 1); `get process --user root` narrows to 174 of 528;
-  `explain remove file '*.txt'` expands the glob into the plan line; `unmount filesystem /etc`
-  reaches the provider's own "nothing is mounted at /etc"; `trace connection --remote <ip>`
-  answers. Exit test: one outcome test each, in the suite that owns the command.
-- [ ] **B-harn-7 — spec §27.2's "every stable command is bound to an implementation" is never
-  actually run.** `ono_command::unbound_stable_commands` (`invoke.rs:537`) is exercised only by
-  `implementations.rs::should_report_every_stable_command_that_has_no_implementation`, which
-  builds a *synthetic* table holding one command; a repo-wide grep finds no call in
-  `crates/ono-cli/`, `xtask/` or `scripts/`. So the check exists as an API with a unit test and
-  nothing verifies the real command table. Exit test: `xtask spec-check` fails when a stable
-  command in the real registry has no implementation.
-
-#### Small remainders of a delivered phase box
-
-These are the precise leftovers of the sixteen phase boxes that were split rather than ticked
-whole. Each is a single assertion or a single small feature.
-
-- [ ] **B-split-B8** — the §12.3 object→external refusal is proven only in the container
-  (`040-object-pipeline.case`, `boundary-refused`); no workspace test asserts it, and nothing
-  anywhere asserts that a *child process's* stdout containing invalid UTF-8 reaches a pipeline
-  value losslessly (§12.2). Exit test: one native.rs case each way.
-- [ ] **B-split-D4** — completion answers only static registry metadata. The `ValueCompleter` hook
-  exists (`ono-command/src/complete.rs:186`, "the users on this machine, the services of this
-  host") and the shell never installs one: `repl.rs:78`'s `FieldCompleter` completes schema field
-  names, still from metadata. And the < 50 ms first-result budget is asserted as a
-  1 000-iteration in-process proxy (`completion.rs::should_stay_far_inside_the_first_completion_budget`,
-  whose own comment says a wall-clock assertion "is flaky on shared hardware"), never measured in
-  the container. Exit test: `get user <TAB>` offers this machine's users, and `060` measures the
-  first completion.
-- [ ] **B-split-E3** — the prompt HUD has no `vcs` segment (spec §4.2 lists it as an optional
-  SHOULD; the string `vcs` appears nowhere in `crates/`), and the object-context segment
-  (`local://service/nginx`, §14.3) is implemented and asserted by nothing — every PTY case that
-  reads the prompt uses `cd` or a link, never `enter service`. Exit test: one case each.
-- [ ] **B-split-E5** — the *bounded* half of §20.2's bounded structured retention is untested.
-  `session.rs::retain_result` hard-codes `KEEP_RESULTS = 16` and `KEEP_VALUES = 10_000` and no
-  test drives either bound. Exit test: the seventeenth result evicts the first, and a result over
-  10 000 values is retained truncated and says so.
-- [ ] **B-split-J1** — `view tree` is implemented (`ono-cli/src/view.rs:25-34`) and exercised by
-  nothing: `view.rs`'s two tests both write `view table`, and `view tree` appears in no test and
-  no case. The tree *rendering* is proven; the *navigation* over it is not. Exit test: a PTY case
-  opening `trace process 1 | view tree` and navigating it.
-- [ ] **B-split-J5** — the remote-link overview is `get link | view table` (ADR-0050), and both
-  halves are proven separately while the composition is proven by nothing. Exit test: one case
-  running the composition.
+- [ ] **B-split-D4 — the first-completion budget is still measured by a proxy.** The other half of
+  this box is closed: `4a91ec8` (ADR-0252) installs `ono_cli::complete::ProviderValues` in the
+  `ValueCompleter` seam, so `get user <TAB>` offers this machine's accounts, bounded by a 40 ms
+  deadline on its own thread, a five-second cache and the synchronous registry only
+  (`completion.rs::should_offer_this_machines_users_when_completing_a_user_selector`, case `044`).
+  What remains is spec §34's < 50 ms first-result budget, asserted as a 1 000-iteration in-process
+  proxy (`completion.rs::should_stay_far_inside_the_first_completion_budget`, whose own comment
+  says a wall-clock assertion "is flaky on shared hardware") and never measured in the container.
+  ADR-0252 records why: it needs a completion the container can invoke without a terminal, which
+  is new public surface. Exit test: case `060` measures the first completion.
 
 ---
 
+### Done, reconciled with the tree at `b904327` (2026-08-29, agent `STATE-recon`)
+
+**Fifty-five boxes closed.** Every line names the commit that closed it and the evidence that
+proves it; where the behaviour is observable from the command line, the answer quoted is the one
+`target/debug/ono` gave during this reconciliation. `[run]` marks a line settled by running the
+shell, `[test]` one settled by reading the named proof at HEAD.
+
+Nothing in this section was fixed by this agent. It writes back what fifty-nine commits between
+`ed923ee` and `b904327` had already delivered, and which no board update had recorded.
+
+#### Data and pipeline — nineteen of twenty
+
+| Was | Closed by | Proof |
+|---|---|---|
+| **B-data-1** a dotted path into an error value yielded the error, not the field | `c354dd2` (ADR-0215) | `[run]` `unmount filesystem / \| select error.name \| to json` → `[{"name":"io.permission_denied"}]` |
+| **B-data-2** `diff` reported `changed` for two byte-identical records — provenance carried the instant of observation | `79f58df` (ADR-0229) | `[run]` `get user root \| diff (get user root) \| to json` → `[]`; `data_missing.rs::should_report_two_fresh_snapshots_of_one_object_as_unchanged` |
+| **B-data-3** `@` was null inside an `each` block whose body was a native command | `0820686` (ADR-0219) | `[run]` `get process \| where pid == 1 \| each { get process @.pid \| count }` → `1`; `language_missing.rs::should_bind_the_iterated_item_for_a_native_stage_inside_an_each_block` |
+| **B-data-4** `to bytes --field <name>` refused a record | `df54ffc` (ADR-0223) | `[test]` `ono-value/tests/text_and_bytes_codecs.rs::should_write_the_named_field_of_each_record_as_raw_bytes`, `adapters.rs::should_write_one_field_s_bytes_verbatim_when_to_bytes_names_it` |
+| **B-data-5** a `SIGPIPE`d stdout was reported as `io.permission_denied` | `85d2983` (ADR-0220) | `[run]` `get process \| to json` into a closed reader → stderr empty; `cli.rs::should_stop_quietly_when_the_reader_of_its_output_goes_away`, case `034` |
+| **B-data-6** JSON object key order was alphabetical, not schema order | `320387a` (ADR-0228) | `[run]` `echo '{"zebra":1,"alpha":2}' \| ono -c 'from json \| to json'` → `[{"zebra":1,"alpha":2}]` |
+| **B-data-7** `--name=value` was a parse error in expression mode | `1b4f16d` (ADR-0227) | `[run]` `from json \| reduce $acc + @ --initial=10` over `[1,2,3]` → `16`; `parse_expressions.rs::should_read_the_equals_spelling_of_a_long_option_when_the_mode_is_expression` |
+| **B-data-8** the pipeline's `Diagnostics` counters never reached the user | `3221510` (ADR-0261) | `[test]` `data_missing.rs::should_say_how_many_values_a_condition_could_not_be_decided_on`, `::should_say_how_many_unknown_values_an_aggregate_skipped`, `::should_say_nothing_when_the_pipeline_dropped_nothing` |
+| **B-data-10** `sort` after an external head could not reach GNU sort's flags | `78f5935` (ADR-0260) | `[run]` `printf 'b\na\nc\n' \| ono -c 'sort -r'` → `c b a`; `builtins.rs::should_run_the_program_with_its_flags_when_a_native_head_is_reached_by_bytes`. Residue on record in ADR-0260: `sort -k1,2` is still a parse error, `sort '-k1,2'` works |
+| **B-data-11** `get log`'s `level` compared alphabetically, not by severity | `ae60d8c` (ADR-0222) | `[test]` `expressions.rs::should_order_an_enum_field_by_its_declared_values_when_compared`, `services_logs_missing.rs::should_order_the_level_by_severity_rather_than_by_spelling`. **The old entry's reproduction is obsolete**: `from json \| where level >= "error"` still keeps `warning`, and that is now correct — the decision orders a field the *schema* declares an enum, and a schemaless string field still compares as text (ADR-0222, deliberately) |
+| **B-data-12** `get process <gone-pid> \| count` printed an error and a value and exited 0 | `ca0efde` (ADR-0221) | `[run]` `get process 999999 \| count` → the `io.not_found` refusal, no `VALUE 0`, **status 1**; `processes_missing.rs::should_fail_the_run_when_a_named_process_is_not_there_and_a_count_follows` |
+| **B-data-13** the E0701 bulk-guard message carried runs of spaces | `f784422` | `[run]` `get process \| stop process` → one clean line, "…more than the bulk threshold of 100" |
+| **B-data-14** two label rules for one object | `733af7b` (ADR-0224) then `9130d29` (ADR-0226, superseding it) | `[run]` `unmount filesystem /` and `get mount / \| unmount filesystem` both render `ono.mount/1[/]`; `storage_missing.rs::should_label_the_unmounted_mount_the_same_way_whichever_spelling_named_it` |
+| **B-data-15** `get config --problems \| select code` failed the pre-flight check | `5708edb` (ADR-0218) | `[run]` no E0202; `meta_config_missing.rs` (the `--problems \| select code name` assertion) and `::should_still_refuse_a_field_neither_side_of_the_declared_union_has` |
+| **B-data-16** `trace group root` reported "command not found: trace" | `83dedd1` (ADR-0217) | `[run]` → `Ono-Sendai-E0102 resolve.target_not_found \`trace\` has no target \`group\``; `meta_config_missing.rs::should_name_the_target_when_a_known_verb_was_given_one_it_does_not_have` |
+| **B-data-17** `get interface lo \| stop interface` refused the piped record | `05910b8` (ADR-0216) | `[run]` → one `failed` ActionResult naming `lo`, no type error; `network_missing.rs::should_act_on_the_piped_interface_when_a_record_arrives_instead_of_a_selector` |
+| **B-data-18** `explain` inside a frame did not print the narrowed spelling | `a419137` (ADR-0225) | `[run]` `enter process 1; explain get process` → `narrowed  get process 1`; `context.rs::should_print_the_narrowed_spelling_when_explaining_inside_an_object_frame` and three siblings |
+| **B-data-19** `watch` narrowed at the query level rather than on the argument seam | `fd06ebe` (pin), `1ea33fb` (the `--service` prerequisite), `a3ec71a` (the refactor) | `[test]` `watch.rs::should_narrow_a_watch_to_the_entered_object_rather_than_the_whole_machine`, `::should_refuse_a_watch_the_context_cannot_narrow_rather_than_widening` — pinned first, unchanged across the refactor |
+| **B-data-20** §17.5 redaction did not reach §20.2's retention | `76d7eed` (ADR-0262) | `[test]` `native.rs::should_keep_a_secret_out_of_the_retained_result_as_well_as_out_of_history` and two siblings |
+
+#### Providers — all twelve
+
+| Was | Closed by | Proof |
+|---|---|---|
+| **B-prov-1** `get process \| count` exited 1 on a churning host | `4e53ee4` (ADR-0230) | `ESRCH` from a `/proc/<pid>/stat` read is `io.not_found`, not `provider.unavailable`; `common::tests::should_read_esrch_as_the_object_being_gone_when_a_procfs_read_fails`. 0 failures in 60 runs under four forking shells, against 2 in 40 before. **The shell was wrong and the three tests were right** — none of them changed |
+| **B-prov-2** `cpu` was `null` in every one-shot run | `dfa66eb` (ADR-0232) | `ono.process/1` gains `cpu_window`; a single read answers the lifetime share, `--sample <duration>` buys the rate. `process.rs::should_report_the_share_over_the_process_lifetime_when_nothing_earlier_was_observed`, case `120-process-cpu-share` |
+| **B-prov-3** two TIME_WAIT sockets were one place | `79d6a9c` (ADR-0231) | a record supplying none of its identity components states no identity; `ono-provider-api/tests/contract.rs::should_refuse_to_identify_a_record_whose_every_identity_component_is_null`, `::should_not_make_two_records_the_same_object_because_both_have_no_identity` |
+| **B-prov-4** `trace service` was registered and executed by nothing | `d1a6e5f` | `services_logs_missing.rs::should_trace_a_service_to_the_processes_it_owns`, `::should_refuse_to_trace_a_service_that_does_not_exist`. No production code changed |
+| **B-prov-5** `service.depends_on` had no provider evidence | `bf25291` (ADR-0239) | `GetAll` already carried `Requires`/`Requisite`/`BindsTo`/`Wants`; `ono.service/1` now has `dependencies`. `relationships.rs::should_link_a_service_to_the_units_it_requires` and four siblings |
+| **B-prov-6** `trace mount` had no propagation peers | `bf3e8ee` (ADR-0236) | `ono.mount/1` gains `peer_group` from `mountinfo(5)`; `relationships.rs::should_link_a_mount_to_the_other_mounts_of_its_propagation_peer_group`, case `122-mount-propagation-peers` under `CAP_SYS_ADMIN` |
+| **B-prov-7 / B-prov-8** `watch` polled everywhere; no watch reported `source: subscription` | `cc0ca32` (ADR-0235), `1789185` (ADR-0241) | `watch file` on inotify, `watch interface`/`route` on the rtnetlink multicast groups, `tail --follow` waits on the file. `files_missing.rs::should_report_a_created_file_before_the_next_poll_would_have_come`, `network_missing.rs::should_watch_interfaces_through_the_kernel_rather_than_by_asking_it_again` and its route sibling |
+| **B-prov-9** `--preserve` did not restore timestamps on a copied directory | `8dccec2` (ADR-0234) | `utimensat(2)` by path reaches a directory, a read-only file and a symlink, and its failure is reported. `files_missing.rs::should_preserve_the_timestamps_of_a_copied_tree_when_preserve_is_given`, case `121-copy-preserves-a-tree` |
+| **B-prov-10** nothing made ignoring a declared option impossible | `e0c6eec` (ADR-0233), with `e8ca19d` fixing the three that were being ignored | `xtask/tests/contracts.rs::should_report_a_declared_option_no_implementation_names`, `::should_not_accept_an_option_named_only_by_a_test` |
+| **B-prov-11** network write paths had no privileged conformance | `a96b337` (ADR-0237), `6218424` (ADR-0238), `bb5dca3` | a case may now name `capability:`, `user:` and `security:`; case `123-privileged-network-writes` runs all nine mutations against a live kernel under `CAP_NET_ADMIN`, `stop socket` included |
+| **B-prov-12** `resolve dns --server <ip>` was refused as `provider.unsupported` | `3e19bc3` (ADR-0240) | `ono-provider-net` gains an RFC 1035 client (A, AAAA, PTR; UDP with a TCP retry; every length bounded). `network_missing.rs::should_answer_from_the_nameserver_that_was_named_rather_than_from_the_system_resolver` and three siblings, case `124-dns-named-server` |
+
+#### Remote, KUANG/11 and spatial — eleven
+
+| Was | Closed by | Proof |
+|---|---|---|
+| **B-remote-1** inside a link frame, `get link` was sent to the other side | `2d80a5c` (ADR-0269, superseding ADR-0103's note) | `[run]` `link host testbox --transport local; enter link testbox; get link \| count \| to json` → `[1]`; `remote.rs::should_answer_for_this_sessions_links_and_jobs_from_inside_a_link_frame`, `::should_detach_the_link_it_is_standing_in_when_the_link_table_feeds_the_mutation`, case `044` |
+| **B-kuang-1** `grant capability --scope`/`--duration` were declared and ignored | `a5be21b` (ADR-0264) | `--scope <key>=<value>` validated against the capability's declared keys, `--duration` making a lease the broker checks; `plugins_missing.rs::should_record_the_scope_the_operator_named_on_the_grant`, `::should_refuse_a_scope_key_the_capability_does_not_declare`, `::should_make_a_lease_that_expires_when_a_grant_is_given_a_span` |
+| **B-kuang-2** grants, leases and the audit trail did not survive a session | `a5be21b` (ADR-0265) | `always` grants to `<config>/kuang/policy.yaml`, the trail appended to `<state>/kuang/audit.jsonl`; `plugins_missing.rs::should_read_back_an_always_grant_in_a_later_session`, `::should_forget_a_stored_grant_when_it_is_revoked_in_a_later_session`, `::should_keep_the_audit_trail_across_sessions`, case `125-kuang-capability-policy` |
+| **B-kuang-4** the negotiated `OverflowPolicy` was never enforced | `1665e1e` (ADR-0267) | `host_emit` consults it; `fail-stream` raises K11206, which nothing raised before. `ono-kuang-sdk/tests/conformance.rs::should_end_the_stream_and_keep_the_instance_when_the_negotiated_overflow_fails_the_stream`, `::should_keep_the_oldest_values_and_drop_the_rest_when_the_overflow_drops_the_newest` |
+| **B-kuang-5** `contributions.views`/`annotations` were listed and never loaded | `c111f91` (ADR-0268) | the box's second permitted outcome: an annotation key outside the package namespace is `package.invalid` at parse time, a view contribution is `package.incompatible` naming the `view_protocol` dimension. `manifest_validation.rs::should_refuse_an_annotation_key_outside_the_packages_namespace` and two siblings. Registering a view stays a tranche inside C-4 |
+| **B-kuang-6** the seven `docs/spec/kuang/*.v1.yaml` contracts had no drift check | `122dcea` (ADR-0266) | `check_kuang_contracts` holds four of the seven against `crates/ono-kuang-*` both ways; the manifest half asks the parser rather than mirroring it. `xtask/tests/contracts.rs::should_match_the_kuang_contracts_against_the_runtime_that_serves_them` and two siblings |
+| **B-spat-1** every read-only mount at 100 % was a "storage pressure" landmark | `13b6157` (ADR-0270) | `[run]` `enter storage; look` lists exits and no snap landmark; `ono-spatial-query/tests/landmarks.rs::should_not_promote_a_read_only_filesystem_that_is_full_as_storage_pressure`, `::should_still_promote_a_writable_filesystem_above_the_threshold`, `::should_still_promote_a_full_filesystem_that_does_not_say_whether_it_is_writable` |
+| **B-spat-2** a map of an object was a flat list with unusable rows | `c064639` (ADR-0272) | `[run]` `enter process 1; map` — every row reads `— process.parent_of`, and `containerd-shim (pid 171616)` tells four namesakes apart; `ono-spatial-render/tests/object_map.rs::should_name_the_relation_every_neighbour_of_an_object_stands_in`, `::should_tell_two_neighbours_sharing_a_display_name_apart`, case `105` s5ae |
+| **B-spat-3 / the S11c `help here` line** `help here` did not exist (v0.4 §38.2) | `13b6157` (ADR-0271) | `[run]` `enter process 1; help here` names every exit with what is behind it, the spelling that traverses it, and `permission_denied` where the provider gave one; `ono-cli/tests/spatial_help.rs` (three cases), `ono-command/tests/completion.rs` (two topic cases) |
+| **B-spat-4** `near --relation` did not name the positional spelling; an empty `near` was silent | `13b6157` (ADR-0271), corrected by `b904327` (ADR-0275) | `[run]` `near --relation process` → "`relation` is a positional selector: write `near <relation>`"; `enter process 1; near socket` → `Ono-Sendai-E1008 spatial.permission_denied … /proc/1/fd`. `spatial_navigation_missing.rs`' three near cases, `ono-spatial-query/tests/neighborhood.rs::should_keep_the_exit_at_this_end_of_a_relation_rather_than_the_one_at_the_other`, case `102` s4w/s4y/s4z |
+| **B-spat-5** a tombstone never named its replacement candidate | `4e1f23f` (ADR-0273) | a tombstone keeps at most eight sources with their relations, captured before `forget_edges`, and asks each once when it is rendered; a source reaching several live objects is discarded. `ono-spatial-core/tests/trail.rs::should_keep_the_source_that_reached_a_place_so_a_candidate_can_be_asked_for_later`, `::should_name_the_replacement_once_one_has_been_identified`, `::should_keep_the_first_candidate_rather_than_revising_it`, case `096` `44.7e` — which is this box's own exit test |
+
+#### Harness, bookkeeping and the split remainders — thirteen
+
+| Was | Closed by | Proof |
+|---|---|---|
+| **B-harn-1** `check_commands` skipped its cross-checks for a command omitting the field | `25b6139` (ADR-0246) | `verb`, `target` and `argument_mode` are required keys; `target: null` stays a valid declaration. `xtask/tests/contracts.rs::should_reject_a_command_that_declares_no_verb` and three siblings |
+| **B-harn-2 / B-harn-3** the unfinished-work scan excused all of `xtask/tests/`, and its walk of `tests/`, `fuzz/` and `examples/` was unproven | `80c8cb7` | the excuse is now two files; the walk is pinned by a fixture per tree, plus a guard that reports a top-level Rust tree the list does not walk. `xtask/tests/scan.rs::should_reject_a_placeholder_in_an_xtask_test_that_is_not_the_scanners_own`, `::should_scan_every_rust_tree_the_repository_layout_allows`, `::should_report_a_rust_tree_the_scan_does_not_walk` |
+| **B-harn-4** `docs/ACCEPTANCE.md` claimed a generation that does not exist | `42713e4` (ADR-0248) | §4.1 D and §4.7.4 now describe the drift check they really have; the boxes stay ticked because the drift check is real and green. `xtask/tests/reference.rs`' three tests, one of which failed on exactly those two sentences |
+| **B-harn-5** ADR-0015's threat-model table named intentions, not tests | `9d7f16a` (ADR-0245, superseding ADR-0015) | same fifteen threats, same mitigations, a *Proven by* column naming test functions. `xtask/tests/spatial_evidence.rs::should_find_every_test_the_threat_model_names` turns the gate red when a named proof goes missing — verified by pointing T1 at a test nobody wrote |
+| **B-harn-6** five behaviours verified by running the shell had no regression test | `5f683e0` | one outcome test each: `read file` on 20 MB as one value, `explain remove file *.txt` naming the glob and removing nothing, `--user root` leaving out what root does not own, `trace connection --remote` over a loopback connection the test opens itself, and `unmount filesystem /etc`'s own sentence |
+| **B-harn-7** §27.2's binding check was never run against the real table | `42713e4` (ADR-0247) | `xtask::bindings::check_bindings` runs `unbound_stable_commands` over the embedded registry and `builtin_commands`, with `BOUND_ELSEWHERE` naming what binds each of the fifty-two; both directions fail. `xtask/tests/bindings.rs`, three tests |
+| **B-split-B8** the §12.3 refusal was proven only in the container | `73aa3a0` | one workspace test each way, including a child process's invalid-UTF-8 stdout reaching a pipeline value losslessly (§12.2) |
+| **B-split-D4** (first half) completion answered only static registry metadata | `4a91ec8` (ADR-0252) | `ProviderValues` fills the `ValueCompleter` seam; `completion.rs::should_offer_this_machines_users_when_completing_a_user_selector`, `::should_answer_a_completion_that_no_provider_can_serve_without_waiting_for_one`, case `044`. **The budget half stays open above** |
+| **B-split-E3** no `vcs` prompt segment, and the object-context segment was unasserted | `7cad7d6` (ADR-0250) | case `113-prompt-segments` |
+| **B-split-E5** the *bounded* half of §20.2's retention was untested | `e6094eb` (ADR-0249) | the seventeenth result evicts the first, and a result over the value bound is retained truncated and says so |
+| **B-split-J1 / B-split-J5** `view tree` was exercised by nothing, and `get link \| view table` was proven only in halves | `365ac0a` | `view.rs::should_open_the_tree_view_over_a_graph_and_leave_the_pick_behind` drives a real PTY; cases `111-view-tree-navigation` and `112-link-overview` |
+| **the acceptance image was grading the wrong program** — not a box, and it outranked every box (AGENTS.md §14) | `9169db9` (ADR-0251) | `COPY` preserves mtimes and the Dockerfile caches `target/`, so cargo declared crates fresh and the image was built around a previous binary while carrying the new source. Observed, not imagined. The build now stamps `crates/`, `xtask/` and `docs/spec/` before compiling; `xtask/tests/packaging.rs::should_stamp_the_workspace_before_building_when_the_image_caches_its_target_directory` |
+| **a journal ordering test compared timestamps as text**, and a dry-run case read a record in the old key order | `d245b96`, `db27dd1` | both were tests wrong about data, not the shell wrong about behaviour (AGENTS.md §11) |
+
+---
 ### Done, verified today (2026-08-29, agent `triage`)
 
 Forty-eight boxes moved. The §37 phase lists below are now ticked with the proof beside each. The
@@ -1905,7 +1739,8 @@ ten most consequential, with the evidence that decided them:
    case `045-context-and-reuse.case` (`stdout-contains: /etc`, `filesystem`, `nothing to leave`).
 2. **G3 — `trace`** — `ono-command/tests/trace.rs::should_answer_a_trace_with_a_graph_rooted_at_the_named_object`,
    nine walk tests in `ono-graph/tests/trace.rs`, case `047-relationship-graph.case`
-   (`+-- child ->`). Split: `trace service` has no proof — B-prov-4.
+   (`+-- child ->`). Split closed since, by `d1a6e5f`: `trace service` is driven by
+   `services_logs_missing.rs::should_trace_a_service_to_the_processes_it_owns`.
 3. **H1 — `ono-protocol`** — `framing.rs::should_refuse_a_frame_claiming_more_than_the_limit_before_allocating`,
    `handshake.rs::should_prefer_the_highest_version_both_ends_speak`, `streams.rs`'s four
    multiplexing tests, seventeen `messages.rs` round trips; case `049-remote-link.case`.
@@ -1946,8 +1781,8 @@ native stages (`jobs_native.rs::should_finish_a_bounded_background_pipeline_and_
 `container`, `link` and `host` `*-event/1` schemas, all three written and watched
 (`containers_packages_missing.rs:697`, `remote_missing.rs:458`, `:485`); `read file` on a 20 MB
 file as one value; `get process --user root` narrowing; `unmount filesystem /etc` reaching the
-provider's own wording; and `trace connection --remote <ip>`. The last five have no regression
-test — B-harn-6.
+provider's own wording; and `trace connection --remote <ip>`. The last five had no regression
+test at the time; `5f683e0` gave each one, so **B-harn-6 is closed**.
 
 ---
 
@@ -1987,7 +1822,9 @@ budgets of §34 are tracked under *Cross-cutting*, not here.
 - [x] A12 — Configuration loading, with no eager plugin load and no network at startup —
       spec section 30 — exit test: acceptance `027-startup-is-quiet`
 - [x] A13 — Prompt with location URI and privilege indication — spec sections 4, 17 —
-      exit test: acceptance `028-prompt-shows-context`
+      exit test: acceptance `029-prompt-shows-context.case` (the box named `028`, which is
+      `028-config-is-restricted`; corrected 2026-08-29), and `113-prompt-segments.case` since
+      `7cad7d6`
 - [x] A14 — Structured error model and exit-status contract — spec sections 16, 43 —
       exit test: error taxonomy tests
 - [x] A15 — Phase A gate: `ono` as a login shell doing a real working session —
@@ -2013,8 +1850,9 @@ budgets of §34 are tracked under *Cross-cutting*, not here.
       raw program is refused naming `to json`), `crates/ono-value/tests/roundtrip.rs:190`
       ("undecodable bytes must never be lost") and
       `codec_properties.rs::should_round_trip_every_generated_byte_string_through_the_raw_form`.
-      **Split:** no workspace test asserts the refusal, and nothing asserts a child process's
-      invalid-UTF-8 stdout survives — B-split-B8.
+      **Split closed** by `73aa3a0`: `ono-cli/tests/native.rs` now asserts both in the
+      workspace — the §12.3 refusal, and a child process's invalid-UTF-8 stdout reaching a
+      pipeline value losslessly (§12.2).
 - [x] B9 — Pipeline type-checking before execution — spec §11.3 —
       `crates/ono-command/tests/expressions.rs::should_report_an_unknown_field_with_a_suggestion_before_the_pipeline_runs`,
       `pipeline.rs::should_report_the_typo_and_run_nothing_at_all`,
@@ -2033,20 +1871,32 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 
 - [x] C1 — `ono-provider-api`: the provider trait, capability declarations, and the
       `snapshot` / `subscribe` / `watch` triple with the `ObjectEvent` envelope of spec §31.14
-- [x] C2 — `process` from procfs — spec §23.1, §28.1 — acceptance `040-process-provider`
-- [x] C3 — `file`/`dir` — spec §23.4, §28.2 — acceptance `041-file-provider`
-- [x] C4 — `user`/`group` from NSS, `env` — spec §23.6, §28.7 — acceptance `042-identity-provider`
-- [x] C5 — `mount`/`filesystem` — spec §23.5, §28.6 — acceptance `043-mount-provider`
+**The seven case names these boxes carried — `040-process-provider` … `046-service-provider` —
+never existed**: they are the pre-implementation planning names, and the 2026-08-29 reconciliation
+replaced each with the case that actually covers the capability.
+
+- [x] C2 — `process` from procfs — spec §23.1, §28.1 —
+      acceptance `040-processes-inspect-jobs-signals.case`, `120-process-cpu-share.case`
+- [x] C3 — `file`/`dir` — spec §23.4, §28.2 —
+      acceptance `037-files-read-write-remove.case`, `121-copy-preserves-a-tree.case`
+- [x] C4 — `user`/`group` from NSS, `env` — spec §23.6, §28.7 —
+      acceptance `043-identity-sessions-and-accounts.case`, `021-cwd-and-environment.case`
+- [x] C5 — `mount`/`filesystem` — spec §23.5, §28.6 —
+      acceptance `042-storage-devices-and-mounts.case`, `122-mount-propagation-peers.case`
 - [x] C6 — `interface`/`route`/`neighbor` over netlink — spec §23.2, §28.5 —
-      acceptance `044-network-provider`
+      acceptance `039-network-dns-port-mutations.case`, `123-privileged-network-writes.case`
+      (nine write paths against a live kernel under `CAP_NET_ADMIN`)
 - [x] C7 — `socket`/`connection` over netlink sock_diag — spec §23.2, §28.4 —
-      acceptance `045-socket-provider`
+      acceptance `039-network-dns-port-mutations.case`, `123` (`stop socket` over
+      `NETLINK_SOCK_DIAG`), `047-relationship-graph.case`
 - [x] C8 — `service` over the systemd D-Bus API — spec §23.3, §28.3 —
-      acceptance `046-service-provider`
+      acceptance `038-services-set-and-journal.case`;
+      `services_logs_missing.rs::should_trace_a_service_to_the_processes_it_owns`
 - [ ] C9 — Generated provider conformance suite from `docs/spec/providers/*.yaml` — spec §35.3 —
       **open, and it is C-1 above.** What exists is a runtime drift check
       (`ono-cli/tests/providers.rs`) plus hand-written per-provider schema tests
-      (`ono-provider-linux/tests/schemas.rs`); no generator exists.
+      (`ono-provider-linux/tests/schemas.rs`); no generator exists — confirmed at `b904327`, where
+      `xtask/src/` holds no generator but `reference.rs`. An agent is on it (see *In progress*).
 
 ### Phase D — Language consistency and discoverability (spec §15, §27, §36, §47)
 
@@ -2058,8 +1908,10 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
       `::should_find_a_command_by_verb_and_target`,
       `implementations.rs::should_hand_the_bound_arguments_and_the_input_to_the_implementation`,
       `crates/ono-cli/tests/builtins.rs::should_dispatch_set_of_a_system_target_through_the_registry_rather_than_the_builtin`;
-      id uniqueness enforced by `xtask/src/contracts.rs:494`. **Split:** "bound to an
-      implementation" is never checked against the real table — B-harn-7.
+      id uniqueness enforced by `xtask/src/contracts.rs:494`. **Split closed** by `42713e4`
+      (ADR-0247): `xtask::bindings::check_bindings` runs §27.2's binding check over the embedded
+      registry and `builtin_commands` in the gate, both directions —
+      `xtask/tests/bindings.rs`, three tests.
 - [x] D3 — `help` generated from metadata for every command, target and topic — spec §15.2 —
       `crates/ono-command/tests/help.rs::should_generate_complete_help_for_every_command_in_the_registry`
       (iterates the registry and fails on any missing summary, example or field doc),
@@ -2068,8 +1920,10 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] D4 — Completion from metadata — spec §15.1 —
       `crates/ono-command/tests/completion.rs` (six position tests),
       `completion_missing.rs` (schema-field positions), case `044-semantic-completion.case` on a
-      real terminal. **Split:** provider-backed live values are not wired, and the < 50 ms budget
-      is a proxy — B-split-D4.
+      real terminal; provider-backed live values since `4a91ec8` (ADR-0252) —
+      `completion.rs::should_offer_this_machines_users_when_completing_a_user_selector`.
+      **Split, halved:** the < 50 ms first-result budget is still an in-process proxy —
+      B-split-D4.
 - [x] D5 — `type` and `inspect`, showing schema, provenance and the causal chain — spec §15.2 —
       `crates/ono-command/tests/meta.rs::should_report_what_a_pipeline_would_produce_without_running_it`,
       `::should_show_every_field_with_how_it_was_known_and_where_it_came_from`,
@@ -2100,8 +1954,8 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 - [x] E3 — Prompt as a HUD: link, privilege, context, path, jobs — spec §4.2 —
       case `029-prompt-shows-context.case`, `049-remote-link.case` (`testbox://`),
       `crates/ono-cli/tests/signals.rs::should_make_an_elevated_prompt_impossible_to_miss`,
-      case `025-job-control.case` (`+1 >`). **Split:** no `vcs` segment, and the object-context
-      segment is unasserted — B-split-E3.
+      case `025-job-control.case` (`+1 >`). **Split closed** by `7cad7d6` (ADR-0250): the `vcs`
+      segment exists and the object-context segment is asserted — case `113-prompt-segments.case`.
 - [x] E4 — Interactive selection over rendered collections, never altering pipeline data —
       spec §13.5 —
       `crates/ono-cli/tests/view.rs::should_pick_a_row_and_leave_it_addressable_as_the_current_value`
@@ -2113,7 +1967,8 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
       `::should_pick_one_item_of_the_current_result_by_position`,
       `::should_say_there_is_nothing_to_reuse_when_no_result_was_retained`,
       `crates/ono-history/tests/history.rs::should_record_where_and_how_a_command_ran_rather_than_only_its_text`;
-      case `045`. **Split:** the *bounded* half is untested — B-split-E5.
+      case `045`. **Split closed** by `e6094eb` (ADR-0249): the seventeenth result evicts the
+      first, and a result over the value bound is retained truncated and says so.
 
 ### Phase F — Live system semantics (spec §18)
 
@@ -2153,7 +2008,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
       `::should_report_a_trace_of_nothing_rather_than_an_empty_graph`, nine walk tests in
       `crates/ono-graph/tests/trace.rs`, case `047` for `process`,
       `options_and_selectors_missing.rs::should_trace_the_socket_on_the_requested_port_when_port_is_given`
-      for `socket`. **Split:** `trace service` is registered and run by nothing — B-prov-4.
+      for `socket`. **Split closed** by `d1a6e5f`:
+      `services_logs_missing.rs::should_trace_a_service_to_the_processes_it_owns` and
+      `::should_refuse_to_trace_a_service_that_does_not_exist` drive the third stated target.
 - [x] G4 — Tree and ASCII graph renderers; the graph view never fabricates edges — §22.4 —
       `crates/ono-graph/tests/render.rs::should_draw_the_tree_of_the_specification`,
       `::should_draw_an_inferred_edge_differently_from_an_observed_one`,
@@ -2175,8 +2032,8 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
       `crates/ono-remote/tests/agent.rs::should_negotiate_the_registry_providers_with_their_availability`,
       `tests/subprocess.rs::should_run_a_query_against_an_agent_in_a_child_process`; case `049`
 - [ ] H3 — Agentless SSH fallback — §21.3 — **open, and it is C-3 above.** `--agentless` is
-      parsed and visible; `context.rs:615` says the fallback does not exist, and ADR-0037 §6
-      agrees.
+      parsed and visible; `context.rs:615` still says the fallback does not exist, and ADR-0037 §6
+      agrees. An agent is on it (see *In progress*).
 - [x] H4 — Provider negotiation and capability discovery — §21.2 —
       `crates/ono-remote/tests/agent.rs::should_announce_capabilities_with_the_risk_the_provider_declares`,
       `crates/ono-protocol/tests/handshake.rs::should_negotiate_the_intersection_of_the_two_capability_sets`,
@@ -2186,8 +2043,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
       `crates/ono-protocol/tests/trust.rs` (five tests: pin on first contact, refuse a changed
       key, refuse an unknown key under a required policy, deliberate replacement, a readable
       store), `crates/ono-remote/tests/trust.rs::should_refuse_a_changed_host_key_with_the_stable_safety_code`
-      (E0603, non-retryable). **Split:** the store is not consulted on the only production
-      transport and no case asserts E0603 — B-remote-2, which absorbs F12.
+      (E0603, non-retryable). **Split:** the store is still not consulted on either production
+      transport and no case asserts E0603 — B-remote-2, which absorbs F12. `593baee` (ADR-0274)
+      records what must exist first: a transport that certifies its peer to this process.
 - [x] H6 — Remote context and prompt — §14.4, §4.2 — case `049-remote-link.case` (`testbox://`
       in the prompt), `044` (`testbox (remote)`, `risk mutate + remote`),
       `crates/ono-cli/tests/remote_missing.rs::should_enter_the_remote_context_when_connecting_to_a_host`,
@@ -2199,7 +2057,9 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
       `crates/ono-kuang-protocol/tests/manifest_validation.rs` (14 tests),
       `src/error.rs::should_expose_all_27_codes_of_spec_31_79_when_enumerated`,
       `src/capability.rs::should_carry_all_29_families_of_the_registry_when_enumerated`
-      (ADR-0022). **Split:** no drift check against `crates/ono-kuang-*` — B-kuang-6.
+      (ADR-0022). **Split closed** by `122dcea` (ADR-0266): `check_kuang_contracts` holds four of
+      the seven against `crates/ono-kuang-*` both ways, the manifest half by asking the parser
+      rather than mirroring it — `xtask/tests/contracts.rs`, three tests.
 - [x] I2 — `ono-kuang-protocol` — §31.12 — `src/{frame,message,version,error,lifecycle,capability}.rs`
       unit suites, and the wire proof
       `crates/ono-kuang-sdk/tests/conformance.rs::should_quarantine_a_plugin_that_breaks_framing`
@@ -2208,33 +2068,38 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
       `::should_fail_closed_on_an_unknown_key_in_a_closed_section`,
       `::should_refuse_a_scope_key_the_capability_does_not_declare`;
       `crates/ono-cli/tests/plugins_missing.rs::should_install_a_package_from_a_path_reference_when_confirmed`;
-      cases `045`, `050`. **Split:** signature verification (§31.9) does not exist — C-5.
+      cases `045`, `050`. **Split:** signature verification (§31.9) still does not exist — C-5.
 - [x] I4 — Supervisor: install/enable/load/run states and lifecycle — §31.8 —
       `crates/ono-kuang-protocol/src/lifecycle.rs::should_walk_the_main_path_of_spec_31_8_when_each_step_is_legal`
       and five siblings (ADR-0041); `plugins_missing.rs::should_persist_enablement_across_sessions`,
       `::should_withdraw_contributions_when_a_package_is_unloaded`;
       `conformance.rs::should_quarantine_a_plugin_that_emits_beyond_credit`; case `045`.
-      **Split:** §31.10 isolation is capability brokering only, with no sandbox — C-4(a).
+      **Split:** §31.10 isolation is still capability brokering only, with no sandbox — C-4(a).
 - [x] I5 — Capability broker, scopes, policy, audit — §31.16–§31.19, §31.33 —
       `crates/ono-kuang-supervisor/src/policy.rs::should_deny_by_default_when_no_rule_matches`,
       `::should_let_a_system_deny_override_a_grant`,
       `::should_allow_a_path_inside_the_granted_scope_and_refuse_one_outside`; the four denial
       paths in `conformance.rs`; `plugins_missing.rs::should_record_a_denied_capability_use_in_the_audit_trail`;
-      case `045`. **Split:** `--scope`/`--duration` are declared and ignored (B-kuang-1) and
-      nothing persists (B-kuang-2).
+      case `045`. **Split closed** by `a5be21b` (ADR-0264, ADR-0265): `--scope` is validated
+      against the capability's declared keys and `--duration` makes a lease the broker checks;
+      `always` grants reach `<config>/kuang/policy.yaml` and the trail
+      `<state>/kuang/audit.jsonl`. `plugins_missing.rs`' eight broker tests, case
+      `125-kuang-capability-policy`.
 - [x] I6 — Host API domains — §31.12 — six of sixteen are implemented and proven:
       streams (emit/close), filesystem (read), state (get/set/delete), audit, clock (now),
       capabilities (check/request) — `conformance.rs::should_stream_typed_values_for_a_contributed_command`,
       `::should_refuse_a_state_write_beyond_quota_and_keep_state_intact`,
       `::should_audit_a_granted_call_with_the_virtual_clock`,
       `::should_refuse_and_audit_a_path_outside_the_granted_scope`.
-      **Split:** the other ten domains are absent — C-4(c).
+      **Split:** the other ten domains are still absent — C-4(c).
 - [x] I7 — Backpressure and quotas — §31.15 —
       `conformance.rs::should_deliver_everything_under_a_small_credit_window`,
       `::should_quarantine_a_plugin_that_emits_beyond_credit`,
       `::should_stop_cleanly_when_the_host_cancels_a_stream`,
       `crates/ono-kuang-supervisor/src/state.rs::should_refuse_a_write_beyond_quota_and_keep_existing_keys_intact`.
-      **Split:** the negotiated overflow policy is never enforced — B-kuang-4.
+      **Split closed** by `1665e1e` (ADR-0267): `host_emit` consults the negotiated policy, and
+      `fail-stream` raises K11206, which nothing raised before —
+      `conformance.rs::should_end_the_stream_and_keep_the_instance_when_the_negotiated_overflow_fails_the_stream`.
 - [x] I8 — Contribution model: commands, targets, schemas, relations, adapters —
       §31.22–§31.27 — `conformance.rs::should_surface_contract_shaped_contribution_tables`,
       `::should_close_the_stream_when_output_leaves_the_declared_schema`;
@@ -2243,7 +2108,10 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
       relations end to end in `docker/acceptance/cases/110-spatial-contributions.case`
       (`s9-a` … `s9-g`) and
       `crates/ono-kuang-testhost/tests/spatial_package.rs::should_refuse_a_package_that_declares_relations_without_asking_for_the_capability`
-      (ADR-0194). **Split:** views and annotations are listed and never loaded — B-kuang-5.
+      (ADR-0194). **Split closed** by `c111f91` (ADR-0268), by the second of the two outcomes the
+      box allowed: an annotation key outside the package's namespace is `package.invalid` and a
+      view contribution is `package.incompatible` naming the `view_protocol` dimension, so neither
+      is listed and ignored. Registering a view stays a tranche inside C-4.
 - [x] I9 — `ono-kuang-sdk` and the deterministic test host — §31.73 —
       `conformance.rs::should_audit_a_granted_call_with_the_virtual_clock` asserts the exact
       virtual timestamp; `crates/ono-kuang-testhost` is the real supervisor on a fixed clock
@@ -2252,7 +2120,7 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
       seventeen tests over every area ADR-0040 enumerates; case `050-kuang-plugin.case`
 - [ ] I11 — `ono-model-broker` — §31.12 — **open, and it is C-6 above.** The crate does not
       exist; `model_broker` is a manifest field nothing reads and `Capability::ModelInfer` is a
-      capability nothing checks.
+      capability nothing checks. **Nobody is on this one** — it is the next task for a free agent.
 
 ### Phase J — Advanced TUI views (spec §37 Phase J, §13.6, ADR-0050)
 
@@ -2262,7 +2130,10 @@ justify them", and records what it declines and why.
 - [x] J1 — Navigable graph view — §22.5 — `view tree` renders graph values navigably
       (`crates/ono-cli/src/view.rs:25-34`); the tree rendering is proven by
       `crates/ono-graph/tests/render.rs` and `crates/ono-render/tests/tree_layout.rs`.
-      **Split:** the navigation over it is exercised by no test — B-split-J1.
+      **Split closed** by `365ac0a`:
+      `view.rs::should_open_the_tree_view_over_a_graph_and_leave_the_pick_behind` drives a real
+      PTY — open on `trace process 1`, a carriage return opens the inspect pane, `q` leaves the
+      graph addressable as `@` — and case `111-view-tree-navigation` runs it in the container.
 - [x] J2 — Multi-pane inspect — §37 —
       `crates/ono-cli/tests/view.rs::should_pick_a_row_and_leave_it_addressable_as_the_current_value`
       asserts the `--- inspect` pane opens beside the collection. The multi-pane *watch* half is
@@ -2271,7 +2142,8 @@ justify them", and records what it declines and why.
       it; `::should_fall_back_to_plain_rendering_when_nobody_is_watching` proves §17.4 off-terminal
 - [x] J5 — Remote link overview — §37 — `get link | view table` (ADR-0050): `get link` proven by
       case `044-remote-links-as-objects.case` and `crates/ono-cli/tests/remote.rs`, `view table`
-      by `view.rs`. **Split:** the composition itself is unproven — B-split-J5.
+      by `view.rs`. **Split closed** by `365ac0a`: case `112-link-overview` makes two links
+      against this binary over a pipe pair, so it needs no network, and browses them in the view.
 
 J3 (timeline/history exploration, §20.3) is **not built, deliberately.** ADR-0050: §20.3 is a MAY,
 Ctrl-R and `history` already carry the semantics, and a timeline adds presentation over the same
@@ -2283,22 +2155,31 @@ records. It was removed from this board rather than carried as an open box.
       `docker/acceptance/cases/060-performance-budgets.case` (cold start, bare start, parse,
       first process row) and `100-spatial-performance-budgets.case` (the eight v0.4 budgets, none
       violated); `crates/ono-editor/tests/latency.rs` for the keystroke budget.
-      **Split:** four of spec §34's five pathological environments are absent — C-7.
+      **Split:** four of spec §34's five pathological environments are still absent — C-7, which
+      an agent holds (see *In progress*).
 - [ ] Fuzzers over parser, serializers, remote protocol, plugin protocol, procfs/netlink
-      decoders — spec §35.6 — **open, and it is C-2 above.**
+      decoders — spec §35.6 — **open, and it is C-2 above.** No `fuzz/` directory at `b904327`;
+      since `80c8cb7` the unfinished-work scan is pinned to walk one the day it appears. An agent
+      is on it (see *In progress*).
 - [x] A test for each risk in the threat model of spec §49 — every T1–T15 row of ADR-0015 has a
       passing test, enumerated in `docs/ACCEPTANCE.md` §4.4's final bullet; ADR-0203 adds seven
-      spatial rows the same way. **Split:** ADR-0015's own table still names intentions rather
-      than test functions — B-harn-5.
+      spatial rows the same way. **Split closed** by `9d7f16a`: **ADR-0245 supersedes ADR-0015**
+      with the same fifteen threats and a *Proven by* column that names test functions, and
+      `xtask/tests/spatial_evidence.rs::should_find_every_test_the_threat_model_names` turns the
+      gate red when a named proof goes missing.
 - [ ] Theme and semantic visual tokens — spec §44 — the 24 tokens are delivered and fully tested
       (`crates/ono-render/tests/presentation.rs`); **no theme is loadable**, which is C-7 above.
+      Re-checked at `b904327`: no source names `themes/`, no `docs/spec/*.yaml` declares a `theme`
+      key. An agent is on it (see *In progress*).
 - [x] The per-capability quality bar of spec §50 for every advertised command —
       `docs/ACCEPTANCE.md` §4.2, nine boxes, each proven by a registry-wide sweep rather than a
       sample: `ono-command/tests/help.rs` iterates every command, completion candidates are
       registry lookups, the provider conformance suites validate every emitted record, case
       `034-redirected-output-is-deterministic` requires terminal, file and pipe to be
       byte-identical, and case `033-errors-are-structured` requires an `Ono-Sendai-ENNNN` code on
-      every failure. **Split:** the first-completion budget is a proxy — B-split-D4.
+      every failure. **Split:** the first-completion budget is still a proxy — B-split-D4. Since
+      `e0c6eec` (ADR-0233) `spec-check` also holds every declared option against the sources, so a
+      command can no longer advertise an option no code reads.
 
 ---
 
@@ -2820,9 +2701,12 @@ Should-fix:
       Previously: **one open descriptor per pending directory.**
 - [ ] **F12 — the trust store's default policy is trust-on-first-use**, which contradicts ADR-0015
       T5's "an unknown key is refused, not prompted past". `crates/ono-protocol/src/trust.rs`.
-      Either the ADR or the default has to move. Tracked under *Next up* as **B-remote-2**, which
-      states why it cannot be settled yet: ADR-0037 §4 has both current transports
-      `Unauthenticated` by name, so the pin store is never consulted in production.
+      Either the ADR or the default has to move. Tracked under *Next up* as **B-remote-2**, and
+      **ADR-0274 (`593baee`, 2026-08-29) now records why it cannot be settled yet**: both `ssh`
+      and `local` go through `SubprocessTransport`, whose `peer_key` is truthfully `None`, so the
+      pin store is never consulted in production and which default is right depends on whether
+      first contact can be verified out of band. Copying `known_hosts` into the store is ruled
+      out — it would assert a verification this process did not perform (ADR-0037 §4, §2.17).
 - [x] **S1 (F13) — fixed.** `ProviderMutation` refuses a selection over the bulk threshold (10,
       a constant until configuration reaches invocations) with `safety.confirmation_required`
       naming the scope, before the first action; `--confirm` proceeds. `stop process` declares
@@ -2917,9 +2801,13 @@ unfinished-work scan keeps that true), so nothing below is a silenced requiremen
 
 Two entries left this section on 2026-08-29:
 
-- **`service.depends_on`** moved to *Next up* as **B-prov-5.** It was never blocked: the data is
-  reachable through a `Get` per unit over the systemd D-Bus API. What kept it here was its cost
-  class, and that is a design decision, not a block.
+- **`service.depends_on`** moved to *Next up* as **B-prov-5**, and was **delivered the same day**
+  by `bf25291` (ADR-0239). It was never blocked: the provider already called
+  `GetAll(org.freedesktop.systemd1.Unit)` for every unit it emitted, and that reply carries
+  `Requires`, `Requisite`, `BindsTo` and `Wants`. `ono.service/1` now has `dependencies`;
+  `enter service systemd-journald.service; look` answers `dependencies available 4` where it
+  answered nothing. Ordering (`After`, `Before`) is deliberately excluded: it says when, not
+  whether.
 - **The v0.4 RED suites** are delivered and green — the nine
   `crates/ono-cli/tests/spatial_*_missing.rs` files (175 tests) and the ten
   `docker/acceptance/cases/09x-spatial-*.case` scenarios (139 assertions), with
