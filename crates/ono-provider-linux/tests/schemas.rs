@@ -1,6 +1,10 @@
-//! The provider conformance suite of spec §35.3: the contracts these providers advertise are the
-//! ones `docs/spec/schemas/*.v1.yaml` fixes, and every record they emit satisfies the contract it
-//! claims.
+//! What these providers *do*, held against the contracts they advertise.
+//!
+//! The shape of each contract — its fields, types, nullability, units, identity and default view
+//! — is stated by the generated suite of spec §35.3
+//! (`crates/ono-cli/tests/provider_conformance.rs`, from `docs/spec/schemas/*.v1.yaml`). What is
+//! left here is what a declaration cannot express: the meaning of a field, and that every record
+//! a provider emits against a fixed `/proc` tree satisfies the contract it claims.
 
 #![allow(
     clippy::expect_used,
@@ -20,80 +24,7 @@ use ono_provider_linux::{
     EnvBinding, EnvProvider, FileProvider, IdentityProvider, ProcessProvider, StorageProvider,
     schemas,
 };
-use ono_value::{Schema, SchemaId, Value};
-
-/// One field as `docs/spec/schemas/*.v1.yaml` declares it: name, type, required, nullable.
-type FieldSpec = (&'static str, &'static str, bool, bool);
-
-fn assert_contract(
-    id: &SchemaId,
-    identity: &[&str],
-    default_view: &[&str],
-    fields: &[FieldSpec],
-) -> Arc<Schema> {
-    let schema = schemas::require(id).expect("the crate carries the schema it advertises");
-    let declared: Vec<(String, String, bool, bool)> = schema
-        .fields()
-        .iter()
-        .map(|field| {
-            (
-                field.name().to_owned(),
-                field.ty().name(),
-                field.is_required(),
-                field.is_nullable(),
-            )
-        })
-        .collect();
-    let wanted: Vec<(String, String, bool, bool)> = fields
-        .iter()
-        .map(|(name, ty, required, nullable)| {
-            ((*name).to_owned(), (*ty).to_owned(), *required, *nullable)
-        })
-        .collect();
-    assert_eq!(
-        declared, wanted,
-        "{id} must declare exactly the fields, types and nullability of its contract"
-    );
-    let declared_identity: Vec<&str> = schema.identity().iter().map(|name| &**name).collect();
-    assert_eq!(declared_identity, identity, "{id} identity");
-    let declared_view: Vec<&str> = schema.default_view().iter().map(|name| &**name).collect();
-    assert_eq!(declared_view, default_view, "{id} default view");
-    schema
-}
-
-#[test]
-fn should_declare_the_process_contract_exactly_as_the_registry_fixes_it() {
-    assert_contract(
-        &schemas::process_id(),
-        &["pid", "started"],
-        &["pid", "name", "cpu", "memory", "user"],
-        &[
-            ("pid", "int", true, false),
-            ("ppid", "int", false, true),
-            ("name", "string", true, false),
-            ("command", "list<string>", false, true),
-            ("executable", "path", false, true),
-            ("user", "ref<ono.user/1>", false, true),
-            ("group", "ref<ono.group/1>", false, true),
-            (
-                "state",
-                "enum<running|sleeping|disk-sleep|stopped|tracing-stop|zombie|dead|idle|unknown>",
-                true,
-                false,
-            ),
-            ("cpu", "float", false, true),
-            ("cpu_window", "duration", false, true),
-            ("memory", "bytesize", false, true),
-            ("virtual_mem", "bytesize", false, true),
-            ("threads", "int", false, true),
-            ("started", "timestamp", false, true),
-            ("cwd", "path", false, true),
-            ("service", "ref<ono.service/1>", false, true),
-            ("container", "ref<ono.container/1>", false, true),
-            ("pid_namespace", "int", false, true),
-        ],
-    );
-}
+use ono_value::Value;
 
 #[test]
 fn should_declare_the_cpu_field_as_a_percentage() {
@@ -115,114 +46,6 @@ fn should_declare_the_cpu_field_as_a_percentage() {
         window.ty().name(),
         "duration",
         "the window `cpu` is measured over is a duration, so a reader can compare two of them"
-    );
-}
-
-#[test]
-fn should_declare_the_file_contract_exactly_as_the_registry_fixes_it() {
-    assert_contract(
-        &schemas::file_id(),
-        &["device", "inode"],
-        &["name", "kind", "size", "modified", "owner"],
-        &[
-            ("path", "path", true, false),
-            ("name", "string", true, false),
-            (
-                "kind",
-                "enum<file|dir|symlink|socket|fifo|device|other>",
-                true,
-                false,
-            ),
-            ("size", "bytesize", false, true),
-            ("owner", "ref<ono.user/1>", false, true),
-            ("group", "ref<ono.group/1>", false, true),
-            ("mode", "string", false, true),
-            ("modified", "timestamp", false, true),
-            ("accessed", "timestamp", false, true),
-            ("created", "timestamp", false, true),
-            ("inode", "int", false, true),
-            ("device", "ref<ono.device/1>", false, true),
-            ("target", "path", false, true),
-        ],
-    );
-}
-
-#[test]
-fn should_declare_the_identity_contracts_exactly_as_the_registry_fixes_them() {
-    assert_contract(
-        &schemas::user_id(),
-        &["uid"],
-        &["uid", "name", "home", "shell"],
-        &[
-            ("uid", "int", true, false),
-            ("name", "string", false, true),
-            ("primary_group", "ref<ono.group/1>", false, true),
-            ("home", "path", false, true),
-            ("shell", "path", false, true),
-            ("gecos", "string", false, true),
-        ],
-    );
-    assert_contract(
-        &schemas::group_id(),
-        &["gid"],
-        &["gid", "name", "members"],
-        &[
-            ("gid", "int", true, false),
-            ("name", "string", false, true),
-            ("members", "list<string>", false, true),
-        ],
-    );
-    assert_contract(
-        &schemas::env_var_id(),
-        &["name"],
-        &["name", "value", "exported"],
-        &[
-            ("name", "string", true, false),
-            ("value", "string", true, false),
-            ("exported", "bool", true, false),
-            (
-                "source",
-                "enum<inherited|config|invocation|shell>",
-                true,
-                false,
-            ),
-        ],
-    );
-}
-
-#[test]
-fn should_declare_the_storage_contracts_exactly_as_the_registry_fixes_them() {
-    assert_contract(
-        &schemas::mount_id(),
-        &["target"],
-        &["target", "source", "filesystem", "read_only"],
-        &[
-            ("source", "string", true, false),
-            ("target", "path", true, false),
-            ("filesystem", "string", true, false),
-            ("options", "list<string>", true, false),
-            ("read_only", "bool", true, false),
-            ("device", "ref<ono.device/1>", false, true),
-            // ADR-0236: `mountinfo(5)`'s `shared:N`, which is what makes two mounts peers.
-            ("peer_group", "int", false, true),
-        ],
-    );
-    assert_contract(
-        &schemas::filesystem_id(),
-        &["uuid", "source"],
-        &["source", "type", "size", "used", "available", "target"],
-        &[
-            ("source", "string", true, false),
-            ("type", "string", true, false),
-            ("uuid", "uuid", false, true),
-            ("label", "string", false, true),
-            ("target", "path", false, true),
-            ("size", "bytesize", false, true),
-            ("used", "bytesize", false, true),
-            ("available", "bytesize", false, true),
-            ("read_only", "bool", false, true),
-            ("device", "ref<ono.device/1>", false, true),
-        ],
     );
 }
 

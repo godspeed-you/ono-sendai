@@ -12,7 +12,7 @@
 //! does), §46 (spatial session state), §47 (configuration), §34 (performance budgets), and the
 //! settled answers of §53.
 //!
-//! `crates/ono-cli/tests/providers.rs` is the model for the drift tests: a declaration no
+//! `crates/ono-cli/tests/provider_conformance.rs` is the model for the drift tests: a declaration no
 //! implementation serves is a promise nobody keeps, and a served thing no declaration names is
 //! undocumented surface. Both fail here rather than waiting for a user to notice.
 //!

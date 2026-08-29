@@ -980,7 +980,7 @@ pub fn check_spatial_registry(root: &Path) -> Vec<Problem> {
 /// The registry-internal checks of [`check_spatial_registry`] say the four documents agree with
 /// each other; this one says they agree with `ono-spatial-core`, which is the half that keeps a
 /// contract from becoming a description of what someone once intended. It is the same rule
-/// `crates/ono-cli/tests/providers.rs` applies to `docs/spec/providers/`: drift in either
+/// `crates/ono-cli/tests/provider_conformance.rs` applies to `docs/spec/providers/`: drift in either
 /// direction is a failure (ADR-0126, ADR-0128).
 #[must_use]
 pub fn check_spatial_implementation(root: &Path) -> Vec<Problem> {
@@ -1548,11 +1548,11 @@ fn check_landmarks(
 /// Checks the closed vocabularies of `spatial.yaml` against the types that implement them.
 ///
 /// This is the drift check that `docs/spec/providers/` gets from
-/// `crates/ono-cli/tests/providers.rs`, in the direction the spatial registry needs it: a name
-/// the registry knows and the implementation does not is a space, relation or landmark nothing
-/// can serve, and a name the implementation knows and the registry does not is undocumented
-/// surface. §41.3 generates help, completion, map legends and SDK enums from these lists, so the
-/// two cannot be allowed to disagree (ADR-0126, ADR-0128).
+/// `crates/ono-cli/tests/provider_conformance.rs`, in the direction the spatial registry needs
+/// it: a name the registry knows and the implementation does not is a space, relation or
+/// landmark nothing can serve, and a name the implementation knows and the registry does not is
+/// undocumented surface. §41.3 generates help, completion, map legends and SDK enums from these
+/// lists, so the two cannot be allowed to disagree (ADR-0126, ADR-0128).
 fn check_vocabularies(location: &str, subsystem: &Yaml) -> Vec<Problem> {
     use ono_spatial_core::neighborhood::{Completeness, Freshness, PermissionState};
     use ono_spatial_core::{
