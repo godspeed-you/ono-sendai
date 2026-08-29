@@ -67,7 +67,7 @@ pub use check::{check_pipeline, check_pipeline_with};
 pub use complete::{Candidate, CandidateKind, StageContext, ValueCompleter, complete};
 pub use contract::{
     ArgumentMode, CapabilitySpec, CommandContract, Confirmation, DeclaredType, Elevation, IoType,
-    ParameterSpec, Phase, Privilege, Stability, TargetSpec, VerbSpec,
+    Origin, ParameterSpec, Phase, Privilege, Stability, TargetSpec, VerbSpec,
 };
 pub use explain::{
     Adaptation, ExecutionPlan, PlanContext, Resolution, StagePlan, adapt_program, is_adapt, is_raw,

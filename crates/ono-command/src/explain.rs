@@ -14,7 +14,7 @@ use ono_parser::{Argument, Expr, Pipeline, RedirectOp, RedirectTarget, Stage, St
 use ono_provider_api::{ProviderRegistry, Risk};
 use ono_value::{MapValue, Value};
 
-use crate::contract::{IoType, Privilege};
+use crate::contract::{IoType, Origin, Privilege};
 use crate::invoke::ContextFrame;
 use crate::registry::CommandRegistry;
 
@@ -46,6 +46,7 @@ pub struct StagePlan {
     ordinal: usize,
     source: String,
     resolution: Resolution,
+    origin: Origin,
     provider: Option<String>,
     capability: Option<String>,
     input: String,
@@ -130,6 +131,13 @@ impl StagePlan {
             Resolution::Native { id } => Some(id),
             _ => None,
         }
+    }
+
+    /// Where the command the stage names came from: the core, or the package that contributed
+    /// it (spec §31.64).
+    #[must_use]
+    pub fn origin(&self) -> &Origin {
+        &self.origin
     }
 
     /// The provider that would answer, when one is registered for the target.
@@ -231,6 +239,7 @@ impl StagePlan {
             "command".into(),
             self.command().map_or(Value::Null, Value::string),
         );
+        map.insert("origin".into(), Value::string(&self.origin.to_string()));
         map.insert(
             "provider".into(),
             self.provider().map_or(Value::Null, Value::string),
@@ -280,6 +289,11 @@ impl StagePlan {
         let _ = writeln!(into, "{}. {}", self.ordinal, self.source);
         if let Some(id) = self.command() {
             row(into, "command", id);
+        }
+        // A core command's origin is the answer nobody asks for; a contributed one's is the first
+        // question about it (spec §31.64).
+        if !self.origin.is_core() {
+            row(into, "origin", &self.origin.to_string());
         }
         if let Some(narrowed) = &self.narrowed {
             row(into, "narrowed", narrowed);
@@ -751,6 +765,7 @@ fn plan_stage(
             ordinal,
             source: text,
             resolution: Resolution::Value,
+            origin: Origin::Core,
             provider: None,
             capability: None,
             input: "null".to_owned(),
@@ -777,6 +792,7 @@ fn plan_stage(
             resolution: Resolution::External {
                 head: program.to_owned(),
             },
+            origin: Origin::Core,
             provider: None,
             capability: None,
             input: upstream.map_or_else(|| "bytes".to_owned(), |io| io.text().to_owned()),
@@ -807,6 +823,7 @@ fn plan_stage(
             resolution: Resolution::External {
                 head: program.to_owned(),
             },
+            origin: Origin::Core,
             provider: None,
             capability: None,
             input: upstream.map_or_else(|| "bytes".to_owned(), |io| io.text().to_owned()),
@@ -843,6 +860,7 @@ fn plan_stage(
             resolution: Resolution::External {
                 head: head.to_owned(),
             },
+            origin: Origin::Core,
             provider: None,
             capability: None,
             input: upstream.map_or_else(|| "bytes".to_owned(), |io| io.text().to_owned()),
@@ -931,6 +949,7 @@ fn plan_stage(
         resolution: Resolution::Native {
             id: contract.id().to_owned(),
         },
+        origin: contract.origin().clone(),
         provider,
         capability: contract.provider_capability().map(str::to_owned),
         input: input.text().to_owned(),

@@ -42,6 +42,79 @@ impl fmt::Display for Stability {
     }
 }
 
+/// Where a registry entry came from (spec §31.64, ADR-0281).
+///
+/// Every registry entry records its origin, and the host sets it — a package cannot declare
+/// itself core. `docs/spec/kuang/contributions.v1.yaml` names three values; `remote-provider`
+/// arrives with the remote registry projection of spec §31.40 and is not constructed yet, so it
+/// is not spelled here as an arm nothing can build.
+///
+/// ```
+/// use ono_command::Origin;
+/// assert_eq!(Origin::Core.to_string(), "core");
+/// assert_eq!(
+///     Origin::plugin("dev.example.echo", "0.1.0").to_string(),
+///     "plugin(dev.example.echo, 0.1.0)"
+/// );
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub enum Origin {
+    /// Shipped with Ono. The only origin that may hold an `ono.*` id.
+    #[default]
+    Core,
+    /// Contributed by a KUANG/11 package, which the entry names by id and version.
+    Plugin {
+        /// The contributing package's id.
+        package: String,
+        /// The version of the package that contributed the entry.
+        version: String,
+    },
+}
+
+impl Origin {
+    /// The origin of an entry a package contributed.
+    #[must_use]
+    pub fn plugin(package: impl Into<String>, version: impl Into<String>) -> Self {
+        Origin::Plugin {
+            package: package.into(),
+            version: version.into(),
+        }
+    }
+
+    /// The contributing package's id, or `None` for a core entry.
+    #[must_use]
+    pub fn package(&self) -> Option<&str> {
+        match self {
+            Origin::Core => None,
+            Origin::Plugin { package, .. } => Some(package),
+        }
+    }
+
+    /// The contributing package's version, or `None` for a core entry.
+    #[must_use]
+    pub fn version(&self) -> Option<&str> {
+        match self {
+            Origin::Core => None,
+            Origin::Plugin { version, .. } => Some(version),
+        }
+    }
+
+    /// Whether the entry ships with Ono.
+    #[must_use]
+    pub const fn is_core(&self) -> bool {
+        matches!(self, Origin::Core)
+    }
+}
+
+impl fmt::Display for Origin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Origin::Core => f.write_str("core"),
+            Origin::Plugin { package, version } => write!(f, "plugin({package}, {version})"),
+        }
+    }
+}
+
 /// What the user needs before a command runs (ADR-0012 §11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Privilege {
@@ -585,6 +658,7 @@ pub struct CommandContract {
     streaming: bool,
     phase: Phase,
     examples: Vec<String>,
+    origin: Origin,
 }
 
 impl CommandContract {
@@ -592,6 +666,20 @@ impl CommandContract {
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Where the entry came from: the core, or the package that contributed it (spec §31.64).
+    #[must_use]
+    pub fn origin(&self) -> &Origin {
+        &self.origin
+    }
+
+    /// The same contract, attributed to `origin`. The host uses it at registration; a package
+    /// never sets its own origin.
+    #[must_use]
+    pub fn with_origin(mut self, origin: Origin) -> Self {
+        self.origin = origin;
+        self
     }
 
     /// The registry file the command was declared in, such as `process`.
@@ -911,6 +999,10 @@ impl RawCommand {
             streaming: self.streaming,
             phase,
             examples: self.examples.iter().map(RawExample::text).collect(),
+            // A contract file under `docs/spec/commands/` is the core's own declaration. A
+            // package's contribution is re-attributed by the host at registration, never by the
+            // document it was read from (spec §31.64).
+            origin: Origin::Core,
         })
     }
 }

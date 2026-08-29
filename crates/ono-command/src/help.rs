@@ -159,6 +159,8 @@ pub struct CommandHelp {
     pub providers: Vec<String>,
     /// How much of a compatibility promise the command is.
     pub stability: String,
+    /// Where the command came from: `core`, or the package that contributed it (spec §31.64).
+    pub origin: String,
     /// The spec §37 phase that delivers it.
     pub phase: String,
     /// The documented examples.
@@ -214,6 +216,7 @@ impl CommandHelp {
         }
         let _ = writeln!(text, "\nCONTRACT");
         row(&mut text, "id", &self.id);
+        row(&mut text, "origin", &self.origin);
         row(&mut text, "stability", &self.stability);
         row(&mut text, "phase", &self.phase);
         let _ = writeln!(text, "\nEXAMPLES");
@@ -267,6 +270,7 @@ impl CommandHelp {
             Value::list(self.providers.iter().map(|id| Value::string(id))),
         );
         map.insert("stability".into(), Value::string(&self.stability));
+        map.insert("origin".into(), Value::string(&self.origin));
         map.insert("phase".into(), Value::string(&self.phase));
         map.insert(
             "examples".into(),
@@ -557,6 +561,7 @@ fn command_help(
         risk: capability.map(|entry| entry.risk().as_str().to_owned()),
         providers: provider_ids,
         stability: command.stability().as_str().to_owned(),
+        origin: command.origin().to_string(),
         phase: command.phase().to_string(),
         examples: command.examples().to_vec(),
         related,

@@ -326,6 +326,7 @@ fn command_record(contract: &CommandContract) -> Value {
     let built = RecordValue::builder(schema, provenance)
         .set("id", Value::string(contract.id()))
         .and_then(|record| record.set("kind", Value::string("native")))
+        .and_then(|record| record.set("origin", Value::string(&contract.origin().to_string())))
         .and_then(|record| record.set("verb", Value::string(contract.verb())))
         .and_then(|record| {
             record.set(

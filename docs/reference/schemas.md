@@ -194,6 +194,7 @@ Default view: `spelling`, `kind`, `summary`, `stability`
 | `spelling` | `string` | — | required | How the command is written — `get process` for a registry entry, the head word for a resolution. |
 | `kind` | `enum` | — | required | The stage of the resolution order (spec §6.5, ADR-0011) that answers to the spelling: a language keyword, a user function, an alias, a native command, or an external executable on `PATH`. Every registry entry is `native`. |
 | `id` | `string` | — | nullable | The stable command id, e.g. `ono.process.get`; null for anything that is not a registry entry. |
+| `origin` | `string` | — | required | Where the entry came from (spec §31.64): `core` for a command Ono ships, and `plugin(<package-id>, <version>)` for one a KUANG/11 package contributes. The host sets it at registration; a package cannot declare itself core. `resolve command` answers for a head word rather than for a registry entry, and a head word is resolved by the shell's own resolution order, so that answer is always `core`. |
 | `verb` | `string` | — | nullable | The verb of a registry entry, or the verb a native resolution names; null otherwise. |
 | `target` | `string` | — | nullable | The target of a registry entry; null for a verb-only resolution and for every other kind. |
 | `path` | `path` | — | nullable | The absolute path of an external executable (ADR-0011); null for every other kind. |
