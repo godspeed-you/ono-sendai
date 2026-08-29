@@ -42,17 +42,11 @@ impl CommandImpl for WatchCommand {
     }
 
     fn invoke(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
+        // A watch narrows inside a context exactly as `get` does, and by the same seam: the
+        // command table amended the arguments before this ran (ADR-0076 §1), and
+        // `contract.query` carries them — declared parameters and ambient selectors alike — to
+        // the provider.
         let mut query = ctx.contract().query(ctx.arguments())?;
-        for frame in ctx.context() {
-            // A watch narrows inside a context exactly as `get` does (spec §14.3).
-            if frame.kind() == crate::FrameKind::Object {
-                query = query.with(super::producer::ambient_selector(
-                    ctx.contract(),
-                    ctx.providers(),
-                    frame,
-                )?);
-            }
-        }
 
         if ctx.contract().target() == Some("file") {
             query = file_tree_query(&query);
