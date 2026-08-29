@@ -32,8 +32,12 @@ pub enum EmitError {
     #[error("the stream was cancelled by the host")]
     Cancelled,
     /// The host refused the value — a schema violation closes the stream.
+    ///
+    /// Boxed so the whole error stays small enough to travel in a `Result` on the emission path
+    /// without the lint about it: a refusal is rare and a `WireError` carries a metadata map
+    /// (ADR-0228).
     #[error("the host refused the emission: {0}")]
-    Refused(WireError),
+    Refused(Box<WireError>),
     /// The connection to the host is gone.
     #[error("the host connection ended")]
     Transport,
@@ -269,7 +273,7 @@ impl Plugin {
                         name: "runtime.protocol_violation".to_owned(),
                         message: format!("the plugin does not implement `{method_name}`"),
                         help: None,
-                        metadata: serde_json::Map::new(),
+                        metadata: Box::default(),
                     };
                     if io.reply_error(seq, error).is_err() {
                         return;
@@ -339,7 +343,7 @@ impl<R: Read, W: Write> Io<R, W> {
                     name: "runtime.protocol_violation".to_owned(),
                     message: format!("no handler for `{name}`"),
                     help: None,
-                    metadata: serde_json::Map::new(),
+                    metadata: Box::default(),
                 }),
             };
         };
@@ -452,7 +456,7 @@ impl<R: Read, W: Write> Io<R, W> {
             name: "runtime.trap".to_owned(),
             message: "the host connection ended".to_owned(),
             help: None,
-            metadata: serde_json::Map::new(),
+            metadata: Box::default(),
         };
         self.send(&request).map_err(transport)?;
         loop {
@@ -519,7 +523,7 @@ impl<R: Read, W: Write> IoDyn for Io<R, W> {
         loop {
             if let Some((result, error)) = self.pump(Some(seq))? {
                 if let Some(error) = error {
-                    return Err(EmitError::Refused(error));
+                    return Err(EmitError::Refused(Box::new(error)));
                 }
                 if let Ok(emit) = serde_json::from_value::<EmitResult>(result.unwrap_or(Json::Null))
                     && let Some(current) = &mut self.current
@@ -603,7 +607,7 @@ impl Ctx<'_> {
             name: "runtime.protocol_violation".to_owned(),
             message: format!("the host's answer was not a check answer: {error}"),
             help: None,
-            metadata: serde_json::Map::new(),
+            metadata: Box::default(),
         })
     }
 

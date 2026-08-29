@@ -56,16 +56,16 @@ stdout-contains: [{"kind":"keyword"}]
 stdout-contains: [{"kind":"function"}]
 stdout-contains: Ono-Sendai-E0101 resolve.command_not_found command not found: definitely-not-a-command
 stdout-contains: Ono-Sendai-E0101 resolve.command_not_found command not found: ono:ls
-stdout-contains: [{"layer":"user","line":2,"value":3}]
+stdout-contains: [{"value":3,"layer":"user","line":2}]
 stdout-contains: config.ono"}]
-stdout-contains: [{"layer":"environment","value":4}]
-stdout-contains: [{"layer":"invocation","value":2}]
+stdout-contains: [{"value":4,"layer":"environment"}]
+stdout-contains: [{"value":2,"layer":"invocation"}]
 stdout-contains: [{"key":"safety.confirm.remote_destructive"},{"key":"safety.confirm.bulk_threshold"}]
-stdout-contains: [{"layer":"default","value":1000}]
+stdout-contains: [{"value":1000,"layer":"default"}]
 stdout-contains: Ono-Sendai-E0201 type.mismatch `render.table.max_rows` is an int
 stdout-contains: Ono-Sendai-E0202 type.unknown_field there is no setting `no.such.key`
-stdout-contains: [{"type":"bytesize","value":67108864}]
-stdout-contains: [{"changed":true,"status":"success"}]
+stdout-contains: [{"value":67108864,"type":"bytesize"}]
+stdout-contains: [{"status":"success","changed":true}]
 stdout-contains: ... N more
 stdout-contains: [{"size":1258292}]
 stdout-contains: [{"size":"1.20 MiB"}]

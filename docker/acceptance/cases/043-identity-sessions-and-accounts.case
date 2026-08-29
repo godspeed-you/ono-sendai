@@ -48,28 +48,28 @@ exit: 0
 stdout-contains: Ono-Sendai-E0401
 stdout-contains: session-status=1
 stdout-contains: [{"output":"stream<ono.session/1>"}]
-stdout-contains: [{"changed":false,"operation":"ono.user.add","status":"failed"}]
+stdout-contains: [{"status":"failed","changed":false,"operation":"ono.user.add"}]
 stdout-contains: add-user-status=1
 stdout-contains: Ono-Sendai-E0302
-stdout-contains: [{"changed":false,"operation":"ono.user.remove","status":"failed"}]
+stdout-contains: [{"status":"failed","changed":false,"operation":"ono.user.remove"}]
 stdout-contains: "name":"io.permission_denied"
 stdout-contains: remove-user-status=1
-stdout-contains: [{"changed":false,"operation":"ono.user.set","status":"failed"}]
+stdout-contains: [{"status":"failed","changed":false,"operation":"ono.user.set"}]
 stdout-contains: set-user-status=1
 stdout-contains: root-shell-unchanged
 stdout-contains: Ono-Sendai-E0301
 stdout-contains: nobody-such-user-ono
 stdout-contains: remove-missing-status=1
 stdout-contains: Ono-Sendai-E0201
-stdout-contains: [{"operation":"ono.group.add","status":"failed","target":"ono.group/1[testgroup-ono]"}]
+stdout-contains: [{"status":"failed","operation":"ono.group.add","target":"ono.group/1[testgroup-ono]"}]
 stdout-contains: add-group-status=1
-stdout-contains: [{"changed":false,"operation":"ono.group.add","status":"failed"}]
+stdout-contains: [{"status":"failed","changed":false,"operation":"ono.group.add"}]
 stdout-contains: add-member-status=1
 stdout-contains: gpasswd --add case root
-stdout-contains: [{"operation":"ono.group.remove","status":"failed"}]
+stdout-contains: [{"status":"failed","operation":"ono.group.remove"}]
 stdout-contains: remove-group-status=1
 stdout-contains: gpasswd --delete case root
-stdout-contains: [{"changed":false,"operation":"ono.group.set","status":"failed"}]
+stdout-contains: [{"status":"failed","changed":false,"operation":"ono.group.set"}]
 stdout-contains: set-group-status=1
 stdout-contains: [{"gid":0}]
 stdout-contains: [{"id":"ono.user.add"},{"id":"ono.user.remove"},{"id":"ono.user.set"},{"id":"ono.group.add"},{"id":"ono.group.remove"},{"id":"ono.group.set"}]

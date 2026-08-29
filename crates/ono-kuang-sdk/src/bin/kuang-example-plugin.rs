@@ -205,7 +205,7 @@ fn honest() -> Plugin {
             let parent = std::os::unix::process::parent_id();
             match ctx.emit(&relation_record(&me.to_string(), &parent.to_string())) {
                 Ok(()) => Outcome::Completed,
-                Err(ono_kuang_sdk::EmitError::Refused(error)) => Outcome::Failed(error),
+                Err(ono_kuang_sdk::EmitError::Refused(error)) => Outcome::Failed(*error),
                 Err(_) => Outcome::Cancelled,
             }
         })
@@ -215,7 +215,9 @@ fn honest() -> Plugin {
                 match ctx.emit(&Value::Int(i128::from(n))) {
                     Ok(()) => {}
                     Err(ono_kuang_sdk::EmitError::Cancelled) => return Outcome::Cancelled,
-                    Err(ono_kuang_sdk::EmitError::Refused(error)) => return Outcome::Failed(error),
+                    Err(ono_kuang_sdk::EmitError::Refused(error)) => {
+                        return Outcome::Failed(*error);
+                    }
                     Err(ono_kuang_sdk::EmitError::Transport) => return Outcome::Cancelled,
                 }
             }
@@ -228,7 +230,9 @@ fn honest() -> Plugin {
                 match ctx.emit(&Value::Int(n)) {
                     Ok(()) => {}
                     Err(ono_kuang_sdk::EmitError::Cancelled) => return Outcome::Cancelled,
-                    Err(ono_kuang_sdk::EmitError::Refused(error)) => return Outcome::Failed(error),
+                    Err(ono_kuang_sdk::EmitError::Refused(error)) => {
+                        return Outcome::Failed(*error);
+                    }
                     Err(ono_kuang_sdk::EmitError::Transport) => return Outcome::Cancelled,
                 }
             }
@@ -286,7 +290,7 @@ fn honest() -> Plugin {
             // Declared output is stream<dev.example.echo.item/1>; this emits a bare int.
             match ctx.emit(&Value::Int(42)) {
                 Ok(()) => Outcome::Completed,
-                Err(ono_kuang_sdk::EmitError::Refused(error)) => Outcome::Failed(error),
+                Err(ono_kuang_sdk::EmitError::Refused(error)) => Outcome::Failed(*error),
                 Err(_) => Outcome::Cancelled,
             }
         })

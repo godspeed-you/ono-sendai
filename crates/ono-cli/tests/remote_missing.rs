@@ -531,7 +531,7 @@ fn should_remove_the_piped_links_when_remove_link_follows_get_link() {
     run.assert_success();
     assert!(
         run.stdout()
-            .contains(r#"[{"operation":"ono.link.remove","status":"success"}]"#),
+            .contains(r#"[{"status":"success","operation":"ono.link.remove"}]"#),
         "one ono.action-result/1 per piped link, got {:?}",
         run.output()
     );

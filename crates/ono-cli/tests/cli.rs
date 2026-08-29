@@ -55,8 +55,11 @@ fn should_stop_quietly_when_the_reader_of_its_output_goes_away() {
         .expect("the shell runs");
     assert!(status.success(), "`head` finished normally");
     let written = std::fs::read_to_string(&errors).expect("the stderr file");
+    // Only the closed pipe is asserted about: a process that exits between being listed and
+    // being read is a partial failure the shell is right to report (spec §16.5), and it can
+    // happen on any busy host while this runs.
     assert!(
-        written.trim().is_empty(),
+        !written.contains("Broken pipe") && !written.contains("could not be written"),
         "a closed reader is not an error to report: {written:?}"
     );
 }

@@ -11,6 +11,9 @@ run: |
   echo "== the graph is a value: it serialises, and its type is inspectable =="
   ono -c 'trace process 1 | type' | head -2
   ono -c 'trace process 1 | to json' | head -c 200; echo
+  # The serialisation carries `edges` wherever in the document it falls: the graph is written in
+  # schema order — root, nodes, edges — and the node list is as long as the trace is (ADR-0228).
+  ono -c 'trace process 1 | to json' | grep -o '"edges"' | head -1
 
   echo "== a trace of nothing is an error naming what was asked =="
   ono -c 'trace process 999999' 2>&1 | head -1

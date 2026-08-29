@@ -57,15 +57,15 @@ run: |
   ono -c 'link host testbox --transport local; enter link testbox; explain stop process 1' | grep -E 'link |operation|privilege|risk'
 exit: 0
 stdout-contains: []
-stdout-contains: [{"mode":"agent","name":"testbox","state":"connected","transport":"local"}]
-stdout-contains: [{"address":"10.4.2.11","name":"devbox","source":"ssh-config"}]
+stdout-contains: [{"name":"testbox","transport":"local","mode":"agent","state":"connected"}]
+stdout-contains: [{"name":"devbox","address":"10.4.2.11","source":"ssh-config"}]
 stdout-contains: [{"name":"testbox","source":"link","transport":"local"}]
 stdout-contains: [{"address":"10.4.2.12","source":"ono"}]
-stdout-contains: [{"changed":true,"status":"success"}]
+stdout-contains: [{"status":"success","changed":true}]
 stdout-contains: [{"address":"10.4.2.13"}]
-stdout-contains: [{"host":"10.4.2.20","name":"staging","state":"defined","transport":"ssh"}]
+stdout-contains: [{"name":"staging","host":"10.4.2.20","transport":"ssh","state":"defined"}]
 stdout-contains: [{"name":"preprod"}]
-stdout-contains: {"identity":"testbox","kind":"link"}
+stdout-contains: {"kind":"link","identity":"testbox"}
 stdout-contains: [{"name":"testbox","state":"connected"}]
 stdout-contains: [{"operation":"ono.link.remove","status":"success"}]
 stdout-contains: Ono-Sendai-E1001

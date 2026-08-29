@@ -20,7 +20,7 @@ run: |
 
   # --- packages: the real dpkg, through its machine format --------------------------------
   out=$(ono -c 'get package bash | select name installed | to json')
-  if [ "$out" = '[{"installed":true,"name":"bash"}]' ]; then echo "bash-installed"; else echo "WRONG package: $out"; fi
+  if [ "$out" = '[{"name":"bash","installed":true}]' ]; then echo "bash-installed"; else echo "WRONG package: $out"; fi
   ono -c 'get package bash | to json' | grep -q '"version":"' && echo "has-version"
   ono -c 'get package bash | to json' | grep -q '"provider":"dpkg"' && echo "names-dpkg"
   n=$(ono -c 'get package | count | to json' | tr -d '[]')

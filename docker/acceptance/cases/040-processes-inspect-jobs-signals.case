@@ -53,10 +53,10 @@ stdout-contains: detail-has-open-files
 stdout-contains: detail-from-pipeline
 stdout-contains: Ono-Sendai-E0301
 stdout-contains: inspect-missing-status=1
-stdout-contains: [{"current":true,"id":1,"kind":"external","state":"running"}]
+stdout-contains: [{"id":1,"kind":"external","state":"running","current":true}]
 stdout-contains: job-has-process-group
 stdout-contains: [{"kind":"native","state":"running"}]
-stdout-contains: [{"changed":true,"status":"success"}]
+stdout-contains: [{"status":"success","changed":true}]
 stdout-contains: niceness=10
 stdout-contains: raise-denied-structured
 stdout-contains: raise-status=1

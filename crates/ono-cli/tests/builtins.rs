@@ -395,7 +395,7 @@ fn should_answer_get_env_with_a_variable_set_env_bound_in_the_same_session() {
     run.assert_success();
     assert_eq!(
         run.stdout().trim(),
-        r#"[{"name":"LIVE_PROBE","source":"shell","value":"live"}]"#,
+        r#"[{"name":"LIVE_PROBE","value":"live","source":"shell"}]"#,
         "ono.env-var/1: the variable bound this session is listed, with its source, got {:?}",
         run.stdout()
     );

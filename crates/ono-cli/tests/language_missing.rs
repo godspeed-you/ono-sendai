@@ -273,7 +273,7 @@ fn should_evaluate_now_to_a_timestamp() {
     run.assert_success();
     assert_eq!(
         run.stdout(),
-        "[{\"fields\":null,\"schema\":null,\"type\":\"timestamp\"}]\n",
+        "[{\"type\":\"timestamp\",\"schema\":null,\"fields\":null}]\n",
         "language.yaml `builtin_functions`: `now()` returns a timestamp, got stdout {:?} \
          stderr {:?}",
         run.stdout(),
@@ -330,7 +330,7 @@ fn should_type_an_iso_8601_literal_as_a_timestamp() {
     run.assert_success();
     assert_eq!(
         run.stdout(),
-        "[{\"fields\":null,\"schema\":null,\"type\":\"timestamp\"}]\n",
+        "[{\"type\":\"timestamp\",\"schema\":null,\"fields\":null}]\n",
         "spec §6.3 / §10.2: `2000-01-01T00:00:00Z` is a timestamp value, got stdout {:?} \
          stderr {:?}",
         run.stdout(),
