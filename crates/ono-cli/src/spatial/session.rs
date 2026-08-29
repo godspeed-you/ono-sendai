@@ -20,7 +20,7 @@
 //! for the duration of its run rather than rebuilt by it (ADR-0141, superseded here for the
 //! session's own commands).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use jiff::Timestamp;
@@ -375,7 +375,45 @@ impl SpatialSessionState {
             bridge.absorb(index, records, at)
         };
         self.promote(records, at);
+        self.sweep(at);
         absorbed
+    }
+
+    /// Forgets what no provider answers for any more and the session no longer points at
+    /// (§33.2, §34.2).
+    ///
+    /// The index is a cache, and a cache is swept where it is filled: every observation is the
+    /// moment at which the providers said what is there, so it is also the moment at which what
+    /// they stopped saying can be dropped. Without this a re-observed horizon left the previous
+    /// one behind — a churning host grew the index on every redraw of a full-screen map, and
+    /// each redraw then ranked a larger population than the one before (§34.2).
+    ///
+    /// What the session is still standing on, remembers in its trail, has pinned or holds a
+    /// tombstone for is kept whatever its age: those are places the reader can still ask about,
+    /// and §40 distinguishes a place that ended from one nobody ever saw.
+    fn sweep(&mut self, now: Timestamp) {
+        let mut protected: BTreeSet<SpatialId> = BTreeSet::new();
+        protected.insert(self.trail.current().clone());
+        protected.extend(self.trail.history().cloned());
+        for step in self.trail.steps() {
+            protected.insert(step.from().clone());
+            protected.insert(step.to().clone());
+        }
+        protected.extend(self.pins.pins().map(|pin| pin.spatial_id().clone()));
+        protected.extend(
+            self.tombstones
+                .entries(now)
+                .map(|tombstone| tombstone.spatial_id().clone()),
+        );
+        if let Some((center, _)) = &self.last_map {
+            protected.insert(center.clone());
+        }
+        if self.index.forget_stale(now, &protected) == 0 {
+            return;
+        }
+        let index = &self.index;
+        self.records.retain(|id, _| index.contains(id));
+        self.baselines.retain(|id, _| index.contains(id));
     }
 
     /// Runs the built-in landmark rules over what was just observed (§26.2).

@@ -458,6 +458,41 @@ impl SpatialIndex {
         dropped
     }
 
+    /// Forgets every entry whose retention has run out and that nothing still points at
+    /// (§33.2, §34.2).
+    ///
+    /// §33.2 makes the index a cache and the providers the truth. A cache that only ever grows
+    /// is not a cache: on a host whose processes come and go, every re-observation of the same
+    /// horizon left the objects of the previous one behind, so each redraw of a map ranked a
+    /// larger population than the one before and took longer to do it — which is exactly the
+    /// unbounded work §34.2 prohibits. An entry is dropped when its class's retention
+    /// ([`FreshnessPolicy::retention`]) has passed since the last provider answered for it,
+    /// unless a subscription is delivering its changes (§33.3, in which case it is current by
+    /// construction) or `protected` names it — the places the session is still standing on,
+    /// remembers in its trail, has pinned or holds a tombstone for (§20.1, §20.3, §20.4).
+    ///
+    /// Returns how many entries were forgotten.
+    pub fn forget_stale(&mut self, now: Timestamp, protected: &BTreeSet<SpatialId>) -> usize {
+        let expired: Vec<SpatialId> = self
+            .entries
+            .iter()
+            .filter(|(id, entry)| {
+                !protected.contains(*id)
+                    && !entry.subscribed
+                    && entry
+                        .observed_at
+                        .checked_add(self.freshness.retention(entry.object.object_type()))
+                        .is_ok_and(|deadline| deadline <= now)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        let forgotten = expired.len();
+        for id in expired {
+            self.remove(&id);
+        }
+        forgotten
+    }
+
     /// Forgets an object that has gone away, and every alias that named only it.
     pub fn remove(&mut self, id: &SpatialId) -> Option<IndexEntry> {
         let entry = self.entries.remove(id)?;

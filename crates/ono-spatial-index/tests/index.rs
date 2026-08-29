@@ -8,6 +8,8 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
+use std::collections::BTreeSet;
+
 use jiff::{Span, Timestamp};
 use ono_spatial_core::{
     BootIdentity, Confidence, PermissionState, Projection, RelationType, RelationshipEdge,
@@ -559,5 +561,90 @@ fn should_drop_a_relationship_from_both_of_its_ends_when_it_is_no_longer_asserte
             .expect("the process")
             .edges()
             .is_empty()
+    );
+}
+
+#[test]
+fn should_forget_an_object_no_provider_has_answered_for_since_its_retention_ran_out() {
+    // §33.2: "The index is a cache. Providers remain authoritative." A cache entry no provider
+    // answers for any more is not knowledge that merely went unmentioned — it is a claim about a
+    // moment that has passed. §33.3 gives every class a lifetime; past it the index stops
+    // pretending to know, and past its retention it stops carrying the entry at all.
+    let mut index = index();
+    let gone = process(1842, "nginx");
+    let here = process(1843, "postgres");
+    let (gone_id, here_id) = (gone.spatial_id().clone(), here.spatial_id().clone());
+    index.register(gone, at(0)).expect("registers");
+    index.register(here, at(0)).expect("registers");
+
+    index
+        .register(process(1843, "postgres"), at(60))
+        .expect("registers");
+    let forgotten = index.forget_stale(at(60), &BTreeSet::new());
+
+    assert_eq!(
+        forgotten, 1,
+        "only the object nobody answered for again is dropped"
+    );
+    assert!(
+        !index.contains(&gone_id),
+        "§33.2: an entry past its retention is not held on to"
+    );
+    assert!(
+        index.contains(&here_id),
+        "§33.3: an object observed again is current and stays"
+    );
+    assert!(
+        index.by_alias("nginx").is_empty(),
+        "§33.1: the alias index is a view of the entries and must not outlive them"
+    );
+}
+
+#[test]
+fn should_keep_an_object_the_session_still_points_at_when_it_forgets_the_stale_ones() {
+    // §20.1's trail, §20.3's dead destinations and §20.4's pins all name places the session is
+    // still holding on to. Forgetting one of those would make `back` arrive somewhere nobody
+    // ever saw, which §40 distinguishes from a place that ended.
+    let mut index = index();
+    let held = process(1842, "nginx");
+    let loose = process(1843, "postgres");
+    let (held_id, loose_id) = (held.spatial_id().clone(), loose.spatial_id().clone());
+    index.register(held, at(0)).expect("registers");
+    index.register(loose, at(0)).expect("registers");
+
+    let protected = BTreeSet::from([held_id.clone()]);
+    assert_eq!(index.forget_stale(at(60), &protected), 1);
+
+    assert!(
+        index.contains(&held_id),
+        "§20.1: the trail's places are kept"
+    );
+    assert!(!index.contains(&loose_id));
+}
+
+#[test]
+fn should_stay_bounded_when_a_churning_population_is_observed_over_and_over() {
+    // The defect this pins: a redraw of a full-screen map re-observes the horizon, and on a host
+    // whose processes come and go the index grew with every redraw — 508, then 538, then 613
+    // objects for a population that was never larger than about 500. §33 makes the index a cache
+    // with a lifetime; an accumulator makes every later redraw slower than the one before, and
+    // §34.2 forbids exactly that.
+    let mut index = index();
+    let mut pid = 0_i64;
+    for round in 0..20_i64 {
+        for _ in 0..100 {
+            pid += 1;
+            index
+                .register(process(pid, "worker"), at(round * 10))
+                .expect("registers");
+        }
+        index.forget_stale(at(round * 10), &BTreeSet::new());
+    }
+
+    assert!(
+        index.len() <= 200,
+        "§33: the index is a cache, not an accumulator — it holds {} objects for a population \
+         of 100",
+        index.len()
     );
 }

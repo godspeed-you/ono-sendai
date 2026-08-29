@@ -10,6 +10,10 @@ use std::collections::BTreeMap;
 use jiff::{Span, Timestamp};
 use ono_spatial_core::{Freshness, SpatialType};
 
+/// How many lifetimes an object nobody answers for again is kept: one to be stale in and one to
+/// be found in by a `back` or a `trail` that arrives late (§20.1, §33.3).
+const DEFAULT_RETENTION: i64 = 2;
+
 /// How long an observation of each object class stays fresh (§33.3).
 ///
 /// §33.3 calls its numbers "implementation defaults ... MAY be tuned without changing
@@ -20,6 +24,7 @@ use ono_spatial_core::{Freshness, SpatialType};
 pub struct FreshnessPolicy {
     ttls: BTreeMap<SpatialType, Span>,
     default: Span,
+    retention: i64,
 }
 
 impl FreshnessPolicy {
@@ -53,6 +58,7 @@ impl FreshnessPolicy {
         Self {
             ttls,
             default: seconds(30),
+            retention: DEFAULT_RETENTION,
         }
     }
 
@@ -62,6 +68,7 @@ impl FreshnessPolicy {
         Self {
             ttls: BTreeMap::new(),
             default: ttl,
+            retention: DEFAULT_RETENTION,
         }
     }
 
@@ -72,10 +79,33 @@ impl FreshnessPolicy {
         self
     }
 
+    /// Sets how many lifetimes an unanswered observation is kept for before it is forgotten.
+    ///
+    /// A multiple below one would forget an object the index still calls fresh, so one is the
+    /// floor.
+    #[must_use]
+    pub fn with_retention(mut self, lifetimes: i64) -> Self {
+        self.retention = lifetimes.max(1);
+        self
+    }
+
     /// How long an observation of `object_type` stays fresh.
     #[must_use]
     pub fn ttl(&self, object_type: SpatialType) -> Span {
         self.ttls.get(&object_type).copied().unwrap_or(self.default)
+    }
+
+    /// How long an observation of `object_type` is kept before the index forgets it (§33.2).
+    ///
+    /// A TTL says when the index stops *trusting* what it holds; a retention says when it stops
+    /// *holding* it. They are different questions: a place the session walked away from a moment
+    /// ago is stale and still worth keeping, and the same place an hour later is a claim about a
+    /// moment that has passed. Keeping every such claim is what turns a cache into an
+    /// accumulator, and §34.2 forbids the unbounded growth that follows.
+    #[must_use]
+    pub fn retention(&self, object_type: SpatialType) -> Span {
+        let ttl = self.ttl(object_type);
+        ttl.checked_mul(self.retention).unwrap_or(ttl)
     }
 
     /// The freshness of an observation of `object_type` made at `observed_at`, as of `now`.
