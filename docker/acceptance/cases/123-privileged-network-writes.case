@@ -1,0 +1,72 @@
+# The nine network write paths of ADR-0088, against a live kernel. Their unprivileged half — a
+# `failed` row with `io.permission_denied`, exit 1, and the system untouched — is proved by
+# `039-network-dns-port-mutations`; what had never been proved is that the rtnetlink request
+# layouts are the ones the kernel accepts. A request that is wrong in a way `EPERM` hides looks
+# exactly like a request that is right. So this case runs with `CAP_NET_ADMIN`, on a dummy
+# interface it creates and removes, and touches nothing that was there before it.
+case: the network write paths build requests a live kernel accepts
+capability: NET_ADMIN
+user: root
+timeout: 120
+run: |
+  echo "== --dry-run changes nothing and says what it would send =="
+  ono -c 'add interface onotest0 --kind dummy --dry-run | select status changed | to json'
+  ip link show onotest0 >/dev/null 2>&1 && echo "WRONG a dry run created the interface" || echo "dry-run-created-nothing"
+
+  echo "== add interface: a virtual interface the kernel accepts =="
+  ono -c 'add interface onotest0 --kind dummy | select status changed | to json'
+  ip link show onotest0 >/dev/null 2>&1 && echo "interface-exists"
+  ono -c 'get interface | where name == "onotest0" | select name | to json'
+
+  echo "== set interface: the mtu and the administrative state =="
+  ono -c 'set interface onotest0 --mtu 1400 | select status changed | to json'
+  echo "mtu=$(cat /sys/class/net/onotest0/mtu)"
+  ono -c 'start interface onotest0 | select status | to json'
+  ono -c 'get interface | where name == "onotest0" | to json' | grep -q '"netlink.admin_up":true' && echo "interface-is-up"
+
+  echo "== add interface --address, then a route through it =="
+  ono -c 'add interface onotest0 --address 10.99.7.1/24 | select status changed | to json'
+  ip -4 addr show onotest0 | grep -q '10.99.7.1/24' && echo "address-exists"
+  ono -c 'add route 10.99.8.0/24 --gateway 10.99.7.2 --interface onotest0 | select status changed | to json'
+  ip route show | grep -q '10.99.8.0/24' && echo "route-exists"
+  ono -c 'get route | where interface == "onotest0" | select interface | to json' | head -1
+
+  echo "== set route: the same prefix, a new metric =="
+  ono -c 'set route 10.99.8.0/24 --metric 200 | select status changed | to json'
+  ip route show | grep -q 'metric 200' && echo "metric-changed"
+
+  echo "== and every one of them comes back off =="
+  ono -c 'remove route 10.99.8.0/24 | select status changed | to json'
+  ip route show | grep -q '10.99.8.0/24' && echo "WRONG the route survived" || echo "route-gone"
+  ono -c 'remove interface onotest0 --address 10.99.7.1/24 | select status | to json'
+  ip -4 addr show onotest0 2>/dev/null | grep -q '10.99.7.1/24' && echo "WRONG the address survived" || echo "address-gone"
+  ono -c 'stop interface onotest0 | select status | to json'
+  ono -c 'remove interface onotest0 | select status changed | to json'
+  ip link show onotest0 >/dev/null 2>&1 && echo "WRONG the interface survived" || echo "interface-gone"
+
+  echo "== a request the kernel refuses is the kernel's refusal, not a guess =="
+  ono -c 'remove route 10.99.250.0/24 | to json' 2>&1 | grep -o 'Ono-Sendai-E030[0-9]' | head -1
+  ono -c 'remove route 10.99.250.0/24' >/dev/null 2>&1; echo "missing-route-status=$?"
+
+  echo "== the kernel told the watch, and the watch said so =="
+  ono -c 'watch interface | take 1 | select source | to json'
+  echo done=ok
+exit: 0
+stdout-contains: dry-run-created-nothing
+stdout-contains: [{"changed":false,"status":"skipped"}]
+stdout-contains: interface-exists
+stdout-contains: [{"name":"onotest0"}]
+stdout-contains: mtu=1400
+stdout-contains: address-exists
+stdout-contains: route-exists
+stdout-contains: "interface":"onotest0"
+stdout-contains: interface-is-up
+stdout-contains: metric-changed
+stdout-contains: route-gone
+stdout-contains: address-gone
+stdout-contains: interface-gone
+stdout-contains: missing-route-status=1
+stdout-contains: [{"source":"subscription"}]
+stdout-contains: done=ok
+stdout-not-contains: WRONG
+stdout-not-contains: Ono-Sendai-E0101

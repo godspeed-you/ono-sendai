@@ -959,3 +959,65 @@ fn should_report_a_permission_failure_when_stopping_a_socket_unprivileged_with_c
         "a refused stop leaves the listener serving"
     );
 }
+
+// --- `--dry-run` on the network write paths (ADR-0238) ----------------------------------------
+
+/// Runs a network mutation with `--dry-run` and asserts the one honest outcome: `skipped`,
+/// nothing changed, exit 0, and a message saying what would have been sent.
+fn assert_skipped_by_the_dry_run(script: &str, operation: &str, says: &str) {
+    let run = ono(&format!("{script} --dry-run | to json"));
+    assert!(
+        !run.stderr().contains("Ono-Sendai-E0202"),
+        "`--dry-run` is an option the mutation road has always honoured, so it must be declared \
+         and accepted; got {:?}",
+        run.output()
+    );
+    run.assert_success();
+    let row = single(&run);
+    assert_eq!(
+        row["status"].as_str(),
+        Some("skipped"),
+        "spec §11.6: asking without obeying answers `skipped`, got {row:?}"
+    );
+    assert_eq!(
+        row["changed"].as_bool(),
+        Some(false),
+        "a dry run changes nothing, got {row:?}"
+    );
+    assert_eq!(row["operation"].as_str(), Some(operation));
+    let message = row["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(says),
+        "the row says what would have happened, not merely that nothing did: expected \
+         {says:?} in {message:?}"
+    );
+}
+
+#[test]
+fn should_answer_a_dry_run_of_a_route_addition_without_asking_the_kernel_for_it() {
+    // The mutation road has honoured `Action::is_dry_run` since ADR-0068, and every network
+    // write path checks it — and no command declared the option, so no user could reach any of
+    // it (ADR-0238). Unprivileged is the point: a dry run never touches the kernel, so it
+    // succeeds where the real thing is refused.
+    assert_skipped_by_the_dry_run(
+        "add route 10.99.250.0/24 --gateway 10.99.250.1",
+        "ono.route.add",
+        "would add the route 10.99.250.0/24",
+    );
+}
+
+#[test]
+fn should_answer_a_dry_run_of_an_interface_change_without_asking_the_kernel_for_it() {
+    assert_skipped_by_the_dry_run(
+        "set interface lo --mtu 9000",
+        "ono.interface.set",
+        "would set the MTU to 9000",
+    );
+}
+
+#[test]
+fn should_still_refuse_the_same_mutation_when_it_is_not_a_dry_run() {
+    // The dry run is the only thing that changed: without it the kernel still refuses an
+    // unprivileged caller, and the refusal is still the kernel's (ADR-0088).
+    assert_refused_by_the_kernel("set interface lo --mtu 9000", "ono.interface.set");
+}

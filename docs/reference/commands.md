@@ -3142,6 +3142,7 @@ Add a routing table entry.
 | `--interface` | `string` | The outgoing interface. |
 | `--metric` | `int` | The route priority. |
 | `--table` | `string` | Which routing table to add to. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3175,6 +3176,7 @@ Remove a routing table entry.
 | name | type | meaning |
 |---|---|---|
 | `--table` | `string` | Which routing table to remove from. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3209,6 +3211,7 @@ Modify an existing routing table entry.
 |---|---|---|
 | `--gateway` | `ip` | New next hop. |
 | `--metric` | `int` | New priority. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3243,6 +3246,7 @@ Change an interface's configuration or administrative state.
 |---|---|---|
 | `--mtu` | `int` | New maximum transmission unit. |
 | `--up` | `bool` | Bring the interface administratively up or down. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3271,6 +3275,12 @@ Bring an interface up.
 |---|---|---|
 | `name` | `string` | The interface to bring up. |
 
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
+
 **Examples**
 
 ```text
@@ -3297,6 +3307,12 @@ Bring an interface down.
 | name | type | meaning |
 |---|---|---|
 | `name` | `string` | The interface to bring down. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3331,6 +3347,7 @@ Create a virtual interface, or add an address to an existing one.
 |---|---|---|
 | `--address` | `ipnetwork` | Address to add. |
 | `--kind` | `string` | Virtual interface kind to create. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3364,6 +3381,7 @@ Delete a virtual interface, or remove an address from one.
 | name | type | meaning |
 |---|---|---|
 | `--address` | `ipnetwork` | Address to remove; without it the interface itself is deleted. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3445,6 +3463,7 @@ Force a socket closed.
 | name | type | meaning |
 |---|---|---|
 | `--confirm` | `bool` | Required: closing a socket under a running process is destructive, and a script never waits for a prompt (spec §17.4). Without it nothing is closed and the run fails with `safety.confirmation_required`. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
