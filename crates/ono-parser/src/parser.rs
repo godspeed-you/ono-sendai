@@ -1097,10 +1097,26 @@ impl Parser<'_> {
                     let text = token.text(self.source);
                     let name = text.strip_prefix("--").unwrap_or(text).to_owned();
                     end = token.span;
+                    // `--initial=10`: an `=` written against the option is punctuation between
+                    // the option and the expression that is its value, exactly as the space in
+                    // `--initial 10` is (ADR-0227). Written apart, `=` is not an operator in
+                    // this language and the expression parser reports it.
+                    let next = self.peek(LexMode::ExprOperand);
+                    let value = if next.kind == TokenKind::Eq
+                        && next.span.start() == token.span.end()
+                        && !ends_stage(self.peek_after(LexMode::ExprOperand, next).kind)
+                    {
+                        self.bump(LexMode::ExprOperand);
+                        let expression = self.parse_expression();
+                        end = expression.span();
+                        Some(expression)
+                    } else {
+                        None
+                    };
                     arguments.push(Argument::Option(OptionArg {
                         name,
-                        value: None,
-                        span: token.span,
+                        value,
+                        span: token.span.join(end),
                     }));
                 }
                 (ArgMode::Expression, _) => {

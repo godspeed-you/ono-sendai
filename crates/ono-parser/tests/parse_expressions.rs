@@ -287,6 +287,43 @@ fn should_read_a_long_option_between_expressions_when_the_mode_is_expression() {
 }
 
 #[test]
+fn should_read_the_equals_spelling_of_a_long_option_when_the_mode_is_expression() {
+    // `reduce $acc + @ --initial=10`: the `=` written against the option is punctuation between
+    // the option and its value, as the space in `--initial 10` is (ADR-0227). The value is the
+    // option's own, so the stage has two arguments rather than three.
+    let stage = stages("reduce $acc + @ --initial=10").remove(0);
+    assert_eq!(stage.arguments.len(), 2, "got {:?}", stage.arguments);
+    assert!(matches!(stage.arguments[0], Argument::Value(_)));
+    let Argument::Option(option) = &stage.arguments[1] else {
+        panic!("expected an option, got {:?}", stage.arguments[1]);
+    };
+    assert_eq!(option.name, "initial");
+    assert!(
+        option.value.is_some(),
+        "the value after `=` belongs to the option, got {option:?}"
+    );
+}
+
+#[test]
+fn should_read_an_expression_after_the_equals_of_a_long_option() {
+    let stage = stages("reduce $acc + @ --initial=(1 + 2)").remove(0);
+    let Argument::Option(option) = &stage.arguments[1] else {
+        panic!("expected an option, got {:?}", stage.arguments[1]);
+    };
+    assert!(option.value.is_some(), "got {option:?}");
+}
+
+#[test]
+fn should_still_refuse_an_equals_written_apart_from_its_option() {
+    // `=` is not an operator in this language, and nothing makes it one at a distance.
+    let parsed = ono_parser::parse("from json | reduce $acc + @ --initial = 10");
+    assert!(
+        !parsed.diagnostics().is_empty(),
+        "a spaced `=` is still a syntax error"
+    );
+}
+
+#[test]
 fn should_keep_a_spaced_double_negation_meaning_negation() {
     // `- -x` is still double negation; only the adjacent `--name` spelling is an option.
     let expression = only_expression("where - -cpu");

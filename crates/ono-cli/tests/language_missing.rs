@@ -602,3 +602,19 @@ fn should_let_a_function_body_rebind_a_binding_of_the_calling_scope() {
         run.stdout()
     );
 }
+
+#[test]
+fn should_seed_a_fold_when_the_initial_is_written_with_an_equals() {
+    // ADR-0227: `--name=value` reads the same in expression mode as in words mode.
+    let run = Shell::new()
+        .args(["-c", "from json | reduce $acc + @ --initial=10 | to json"])
+        .stdin("[1,2,3]")
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[16]",
+        "the fold started at 10: {:?}",
+        run.output()
+    );
+}
