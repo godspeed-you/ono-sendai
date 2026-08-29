@@ -1,6 +1,6 @@
 # ADR-0015: The threat model, made testable
 
-- Status: accepted
+- Status: superseded by ADR-0245
 - Date: 2026-08-26
 - Spec refs: §17, §31.16, §35.6, §43, §49
 - Decided by: agent (autonomous)

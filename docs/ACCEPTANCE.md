@@ -221,12 +221,14 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
       the kuang conformance garbage/oversize/misframe cases, and
       `ono-provider-netlink/tests/malformed_messages.rs`.
 - [x] The threat model of spec section 49 has a test for each stated risk — the T1–T15 table of
-      ADR-0015, each row now naming a passing test: T1/T9 `ono-render/tests/presentation.rs` and
-      case `048`; T2 `034`/`048`; T3 the §31.74 conformance suite; T4
-      `ono-editor/tests/completion.rs`; T5/T6 `ono-remote/tests/trust.rs` (E0603, E0702); T7 the
-      protocol and codec fuzz suites plus bounded frames; T8 `ono-history/tests/history.rs`
-      (default and configured redaction); T10/T11 `032`; T12/T13 the confirm-before-signal
-      tests; T14 `ono-provider-linux/tests/file.rs`; T15 `ono-cli/tests/signals.rs`.
+      ADR-0245, which supersedes ADR-0015 by replacing every row's stated *intention* with the
+      name of a test function that exists, runs in the gate and is not ignored (T1/T9 render
+      sanitisation, T2 the raw byte boundary, T3 KUANG/11 denial paths, T4 hostile completion
+      candidates, T5/T6 the trust store, T7 bounded frames and decoders, T8 history redaction,
+      T10/T11 resolution and PATH shadowing, T12/T13 identity before mutation, T14 the symlink
+      walk, T15 the elevated prompt). The rows are read back by
+      `xtask/tests/spatial_evidence.rs::should_find_every_test_the_threat_model_names`, so a
+      renamed or ignored proof turns the gate red rather than leaving this box ticked by nothing.
 
 ### 4.5 Delivery
 

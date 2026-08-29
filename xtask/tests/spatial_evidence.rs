@@ -403,3 +403,48 @@ fn should_report_a_checklist_proof_that_no_longer_exists() {
         "a test nobody wrote must not be reported as declared"
     );
 }
+
+#[test]
+fn should_find_every_test_the_threat_model_names() {
+    // ADR-0245 supersedes ADR-0015's table so that every one of spec §49's fifteen threats names
+    // a test rather than an intention — the debt ADR-0015's own Consequences recorded. The rows
+    // are read the same way ADR-0203's are, because they are one table: T16–T22 are numbered on
+    // from T15.
+    let review = read("docs/decisions/ADR-0245-the-threat-model-with-the-tests-that-hold-it.md");
+    let rows: Vec<&str> = review
+        .lines()
+        .filter(|line| line.starts_with("| T"))
+        .collect();
+    assert_eq!(
+        rows.len(),
+        15,
+        "spec §49 states fifteen threats; the table carries {}",
+        rows.len()
+    );
+
+    for row in &rows {
+        let number = row
+            .split('|')
+            .nth(1)
+            .map(str::trim)
+            .expect("every row opens with its number");
+        assert_proofs_exist(
+            row,
+            &format!("the threat model (ADR-0245), row {number}"),
+            1,
+        );
+    }
+
+    let joined = rows.join("\n");
+    let cases_named = joined
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|token| token.ends_with(".case"));
+    for case in cases_named {
+        assert!(
+            repo().join(case).is_file(),
+            "the threat model names `{case}`, which the referee does not collect"
+        );
+    }
+}
