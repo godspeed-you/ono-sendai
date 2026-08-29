@@ -798,3 +798,55 @@ fn should_pop_the_file_frame_when_leaving() {
         run.stdout()
     );
 }
+
+// --- what running the shell showed, pinned so it cannot regress silently (B-harn-6) -------------
+
+#[test]
+fn should_answer_a_large_file_with_one_value_rather_than_a_value_per_chunk() {
+    // Spec §12.1: `read file` answers with *the content*, one value. A reader that emitted a
+    // value per buffer would still print the same bytes, so nothing downstream would notice —
+    // until `| count`, `| each` or `| to json` saw twenty megabytes as thousands of rows. The
+    // file is big enough to force many reads and small enough to cost nothing on a tmpfs.
+    let directory = scratch();
+    directory.write("large.txt", vec![b'x'; 20 * 1024 * 1024]);
+
+    let run = ono_in(
+        &directory,
+        "read file large.txt --encoding utf-8 | count | to json",
+    );
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[1]",
+        "spec §12.1: the content of one file is one value however many reads it took, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_name_the_files_a_glob_resolved_to_when_explaining_a_removal() {
+    // Spec §17.3: "`remove file *.tmp` knows its exact targets before mutating", and §15.3 says
+    // `explain` reports what the shell would actually do. Together that means the plan names the
+    // resolved files, not the pattern — the one line an operator reads before a destructive
+    // command. Nothing is removed: `explain` never executes its subject.
+    let directory = scratch();
+    directory.write("a.txt", "a");
+    directory.write("b.txt", "b");
+    directory.write("c.md", "c");
+
+    let run = ono_in(&directory, "explain remove file *.txt");
+    run.assert_success();
+    let plan = run.stdout().to_owned();
+    assert!(
+        plan.contains("remove file a.txt b.txt"),
+        "spec §17.3: the plan names the exact targets the glob resolved to, got {plan:?}"
+    );
+    assert!(
+        !plan.contains("*.txt"),
+        "an unexpanded pattern in the plan tells the operator nothing about scope, got {plan:?}"
+    );
+    assert!(
+        directory.exists("a.txt") && directory.exists("b.txt") && directory.exists("c.md"),
+        "spec §15.3: explaining a removal removes nothing"
+    );
+}
