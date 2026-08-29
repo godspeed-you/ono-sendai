@@ -878,6 +878,17 @@ fn run_from(
                     position += 1;
                     continue;
                 }
+                // Spec §12.3 in its other direction: a stage declared over objects cannot be
+                // fed the bytes a program wrote. No adapter turned this invocation into
+                // objects, so there are none — and the contracts say so before anything is
+                // spawned, which is why `yes | take 1` answers at all (ADR-0376).
+                if let Some(consumer) =
+                    consumer_needing_objects(session, registry, list, segments.get(position + 1))
+                {
+                    return Err(Flow::Failed(unstructured_refusal(
+                        list, indices, source, consumer,
+                    )));
+                }
                 let (bytes, external_status) = crate::eval::run_external_segment(
                     session, list, indices, source, carried, last,
                 )?;
@@ -1056,6 +1067,61 @@ fn run_streamed_segment(
     } else {
         status
     })
+}
+
+/// The stage that would receive this external run's bytes and cannot use them.
+///
+/// A native command declares what reaches it. One that admits bytes — `from`, `to`, `format` —
+/// is the user decoding the program's output themselves and is handed the bytes. One declared
+/// over a stream of objects has nothing to work with, and that is knowable from the contract
+/// alone, before the program runs.
+fn consumer_needing_objects(
+    session: &Session,
+    registry: &'static CommandRegistry,
+    list: &StageList,
+    next: Option<&Segment>,
+) -> Option<&'static CommandContract> {
+    let Some(Segment::Native(following)) = next else {
+        return None;
+    };
+    let consumer = &list.stages[*following.first()?];
+    let contract = native_contract(session, registry, consumer, true)?;
+    (!accepts_bytes(contract.input().text())).then_some(contract)
+}
+
+/// The refusal for bytes that cannot become the objects the next stage is declared over.
+///
+/// The invocation is quoted as the user wrote it, so every route out of the refusal is a line
+/// they can run: the program raw, the output decoded explicitly, or the adapters that exist.
+fn unstructured_refusal(
+    list: &StageList,
+    indices: &[usize],
+    source: &str,
+    consumer: &'static CommandContract,
+) -> ErrorValue {
+    let stage = &list.stages[*indices.last().unwrap_or(&0)];
+    let invocation = source
+        .get(stage.span.start() as usize..stage.span.end() as usize)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let program = head_name(stage).to_owned();
+    let spelling = consumer.spelling();
+    ErrorValue::new(
+        ErrorCode::AdapterRequiredForStructuredPipeline,
+        format!(
+            "`{spelling}` is defined over objects, and no adapter can give `{invocation}` \
+             structured output"
+        ),
+    )
+    .with_help(format!(
+        "`raw {invocation}` runs the program as typed; `{invocation} | from <format>` decodes \
+         its output yourself; `get command {program}` lists what adapts it"
+    ))
+    .with_metadata("invocation", Value::string(&invocation))
+    .with_metadata("consumer", Value::string(&spelling))
+    .with_metadata("raw_fallback_safe", Value::Bool(true))
+    .with_metadata("recovery", Value::string(&format!("raw {invocation}")))
 }
 
 fn process_error_flow(error: ono_process::Error) -> Flow {

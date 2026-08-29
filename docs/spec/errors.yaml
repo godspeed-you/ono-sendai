@@ -310,9 +310,9 @@ errors:
     kind: type
     summary: A consumer demanded objects and no adapter can provide them for this invocation.
     help: >-
-      A forced structured invocation fails rather than silently downgrading to text
-      (spec v0.3 §1.18). Decode the output yourself (`| from json`), or drop the structured
-      consumer.
+      A stage declared over objects is never handed the bytes a program wrote, and a forced
+      structured invocation never downgrades to text (spec §12.3, spec v0.3 §1.18). Run the
+      program raw, decode the output yourself (`| from json`), or drop the structured consumer.
 
   # --- spatial (spec v0.4 §40, ADR-0125) ---------------------------------------------------
   - code: Ono-Sendai-E1001
