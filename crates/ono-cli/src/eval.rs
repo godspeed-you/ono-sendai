@@ -1668,13 +1668,36 @@ fn build_redirect(
     })
 }
 
+/// A stage's argument text and its words-mode reading, for a stage handed to a program.
+fn argument_region<'a>(stage: &Stage, source: &'a str) -> Option<(Vec<Argument>, &'a str)> {
+    let first = stage.arguments.first()?.span();
+    let last = stage.arguments.last()?.span();
+    let region = source.get(first.start() as usize..last.end() as usize)?;
+    Some((ono_parser::words_arguments(region), region))
+}
+
 /// Expands a stage's arguments into the argv an external command receives.
 ///
 /// A list contributes one argument per element, because it *is* several values; nothing else
 /// contributes more than one (ADR-0019).
+///
+/// A stage the parser read in expression mode — because the registry declares a native command
+/// of that name — and that resolution then handed to a program is read back as the words the
+/// user typed: `printf … | sort -r` is coreutils `sort` with the flag `-r`, not a native sort
+/// negating a field called `r` (ADR-0028, ADR-0260).
 pub fn stage_arguments(session: &mut Session, stage: &Stage, source: &str) -> Eval<Vec<OsString>> {
+    // The whole argument region, re-read in words mode, when the parse mode was decided by a
+    // native head the resolution did not choose (ADR-0260). Nothing else is re-read: a
+    // words-mode stage was already read as words.
+    let rewritten = (stage.mode == ono_parser::ArgMode::Expression)
+        .then(|| argument_region(stage, source))
+        .flatten();
+    let (arguments, source) = match &rewritten {
+        Some((arguments, region)) => (arguments.as_slice(), *region),
+        None => (stage.arguments.as_slice(), source),
+    };
     let mut argv = Vec::new();
-    for argument in &stage.arguments {
+    for argument in arguments {
         match argument {
             Argument::Word(word) => argv.extend(expand::expand_word(session, &word.text)?),
             Argument::Option(option) => match &option.value {

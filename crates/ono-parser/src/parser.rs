@@ -111,6 +111,41 @@ pub fn tokens(source: &str) -> Vec<Token> {
     parser.record.unwrap_or_default()
 }
 
+/// The arguments `text` reads as, in words mode.
+///
+/// A stage's argument mode is fixed at parse time by its head word (ADR-0009), before anything
+/// knows whether the head resolves to a native command or to a program of the same name. Where
+/// resolution chooses the program, its arguments are the words the user typed — `sort -r
+/// /tmp/a` is a flag and a path, not the arithmetic that `-r / tmp / a` also is — and this
+/// re-reads exactly that region of the source in the mode the program deserves (ADR-0260).
+///
+/// The spans of the returned arguments are offsets into `text`, so an option's value expression
+/// must be evaluated against `text` and not against the whole line.
+///
+/// ```
+/// use ono_parser::{Argument, words_arguments};
+/// let arguments = words_arguments("-r /tmp/a");
+/// assert_eq!(arguments.len(), 2);
+/// assert!(matches!(&arguments[0], Argument::Word(word) if word.text == "-r"));
+/// ```
+#[must_use]
+pub fn words_arguments(text: &str) -> Vec<Argument> {
+    let mut parser = Parser::new(text);
+    let mut arguments = Vec::new();
+    loop {
+        let token = parser.peek(LexMode::Words);
+        if ends_stage(token.kind) {
+            break;
+        }
+        let before = parser.pos;
+        arguments.push(parser.parse_words_argument(token, None));
+        if parser.pos == before {
+            parser.bump(LexMode::Words);
+        }
+    }
+    arguments
+}
+
 struct Parser<'a> {
     source: &'a str,
     limit: usize,

@@ -415,3 +415,60 @@ fn should_not_list_a_variable_remove_env_withdrew_in_the_same_session() {
         run.stdout()
     );
 }
+
+// --- a head that is both a native command and a program (ADR-0028, ADR-0260) -----------------
+
+#[test]
+fn should_run_the_program_with_its_flags_when_a_native_head_is_reached_by_bytes() {
+    // `sort` is a transform of the object pipeline and a coreutils program. Reached by bytes it
+    // is the program (ADR-0028), and a program's arguments are the words the user typed —
+    // `-r` is a flag, not the negation of a field called `r`.
+    let run = Shell::new()
+        .args(["-c", "sort -r"])
+        .stdin("b\na\nc\n")
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout(),
+        "c\nb\na\n",
+        "`sort -r` is coreutils sort with its flag: {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_pass_paths_to_the_program_unmerged_when_a_native_head_is_reached_by_bytes() {
+    // Read as an expression, `-u /a/b /c/d` is one arithmetic term — a negation, four divisions
+    // and two subtractions — and the program would receive it as a single argument.
+    let dir = scratch();
+    dir.write("left.txt", "a\n");
+    dir.write("right.txt", "b\n");
+    let run = Shell::new()
+        .args([
+            "-c",
+            &format!(
+                "diff -u {} {}",
+                dir.path().join("left.txt").display(),
+                dir.path().join("right.txt").display()
+            ),
+        ])
+        .run();
+    assert!(
+        run.stdout().contains("left.txt") && run.stdout().contains("right.txt"),
+        "diff received two paths and a flag: {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_keep_the_transform_when_objects_reach_a_head_of_the_same_name() {
+    // The other side of ADR-0028: reached by objects, `sort` is the transform.
+    let run = Shell::new()
+        .args([
+            "-c",
+            "get process | where pid == 1 | sort pid desc | select pid | to json",
+        ])
+        .run();
+    run.assert_success();
+    assert_eq!(run.stdout().trim(), "[{\"pid\":1}]", "{:?}", run.output());
+}
