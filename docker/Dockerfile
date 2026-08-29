@@ -18,8 +18,16 @@ COPY xtask ./xtask
 # a command in the process (spec section 27, section 36.4). Copying them here is what makes the
 # container prove that the contracts ship with the binary rather than sitting beside it.
 COPY docs/spec ./docs/spec
+# `target/` survives in a cache mount, and cargo decides what to rebuild from *mtimes*. `COPY`
+# preserves the host's mtimes, so a source file edited before the cached artifacts were written
+# looks older than them and cargo declares the crate fresh — the image then ships the previous
+# binary while carrying the new source, and the acceptance suite silently grades yesterday's
+# code. Stamping the workspace sources with the build's own clock is what makes the referee
+# grade what was copied. Only the workspace is stamped; the registry's sources keep their
+# mtimes, so dependencies stay cached and only `crates/` and `xtask/` are recompiled.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
+    find crates xtask docs/spec Cargo.toml Cargo.lock -type f -exec touch {} + && \
     cargo build --release --package ono-cli --package ono-kuang-sdk --locked \
       || cargo build --release --package ono-cli --package ono-kuang-sdk \
     && install -m 0755 target/release/ono /usr/local/bin/ono \

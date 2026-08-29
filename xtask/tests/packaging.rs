@@ -328,3 +328,45 @@ mod rpm {
         }
     }
 }
+
+// --- the acceptance image must be built from the sources it copies ------------------------------
+
+#[test]
+fn should_stamp_the_workspace_before_building_when_the_image_caches_its_target_directory() {
+    // The referee's own referee. `docker/Dockerfile` keeps `target/` in a BuildKit cache mount,
+    // and cargo decides what to rebuild from mtimes: `COPY` preserves the host's, so a source
+    // file edited *before* the cached artifacts were written looks older than them and the crate
+    // is declared fresh. The image then ships the previous binary while carrying the new source,
+    // and every acceptance case grades yesterday's code — silently, and while passing. This was
+    // observed, not imagined: an image built from a tree containing `prompt.vcs` shipped a binary
+    // that had never heard of it.
+    //
+    // Stamping the workspace with the build's own clock is what closes it. The rule is asserted
+    // here rather than trusted, because nothing else can notice its absence.
+    let dockerfile =
+        std::fs::read_to_string(repo().join("docker/Dockerfile")).expect("the image recipe");
+    let Some(build) = dockerfile
+        .split("RUN ")
+        .find(|step| step.contains("cargo build --release"))
+    else {
+        panic!("docker/Dockerfile no longer builds the binary with `cargo build --release`");
+    };
+
+    if !build.contains("type=cache,target=/build/target") {
+        // No cache mount, no staleness: a fresh target directory rebuilds everything anyway.
+        return;
+    }
+    assert!(
+        build.contains("touch"),
+        "the build step keeps `target/` in a cache mount and does not stamp the sources it \
+         copied, so cargo can declare a changed crate fresh and the image can ship the previous \
+         binary. Restore the `find … -exec touch {{}} +` before `cargo build`, or drop the cache \
+         mount. Step:\n{build}"
+    );
+    let stamp = build.find("touch").expect("the stamp");
+    let compile = build.find("cargo build").expect("the build");
+    assert!(
+        stamp < compile,
+        "the sources are stamped after the build, which stamps nothing that mattered"
+    );
+}
