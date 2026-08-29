@@ -50,6 +50,27 @@ pub enum Definition {
     Alias(std::sync::Arc<Alias>),
 }
 
+/// How long a link's agent is given to notice the hang-up before it is signalled, and again
+/// before it is killed (ADR-0161).
+///
+/// Closing the agent's input ends it in about a millisecond, so this bound is never reached in
+/// practice; it exists so that a far end which ignores end of input cannot make the shell wait
+/// for it forever.
+pub(crate) const AGENT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How many recent results `@-1` … `@-N` can reach (spec §20.2: retention is *bounded*).
+///
+/// Sixteen is deep enough that a session's working set of answers survives a few detours, and
+/// shallow enough that nothing accumulates: the seventeenth result evicts the first.
+pub const RETAINED_RESULTS: usize = 16;
+
+/// How many values of one result are retained for reuse (spec §20.2).
+///
+/// Ten thousand is well past what any screen showed and well short of what a `get file /` can
+/// produce. A result larger than this is kept truncated, and the shell says so at the moment it
+/// happens rather than letting a later `@-1` come up short in silence (ADR-0249).
+pub const RETAINED_VALUES: usize = 10_000;
+
 /// Everything a running shell knows.
 pub struct Session {
     cwd: PathBuf,
@@ -108,6 +129,9 @@ pub struct Session {
     expanding: Vec<String>,
     /// The layered configuration of ADR-0010, with the provenance of every value (ADR-0094).
     settings: crate::settings::Settings,
+    /// The theme every renderer paints with, resolved once configuration has been read
+    /// (spec §44, §30; ADR-0332).
+    theme: std::sync::Arc<ono_render::Theme>,
 }
 
 /// One remote link the session knows: a definition, established or not (spec §21.1, ADR-0103).
@@ -138,50 +162,142 @@ impl SessionLink {
             name: self.name.clone(),
             host: self.host.clone(),
             transport: self.transport.clone(),
-            agentless: self.agentless,
+            // The mode a link *is* in, not the one it was asked for: a link that fell back
+            // reports the fallback, and a definition that was never established reports what it
+            // would be made in (spec §21.3).
+            agentless: connection.map_or(self.agentless, LinkConnection::is_agentless),
             state: if connection.is_some() {
                 "connected"
             } else {
                 "defined"
             },
             targets: connection.map_or_else(Vec::new, LinkConnection::targets),
-            protocol: connection.map(|held| held.link.negotiated().version()),
-            providers: connection.map(|held| {
-                held.link
-                    .negotiated()
-                    .providers()
-                    .iter()
-                    .map(|descriptor| descriptor.id().to_owned())
-                    .collect()
-            }),
+            protocol: connection.and_then(LinkConnection::protocol_version),
+            providers: connection.map(LinkConnection::provider_ids),
         }
     }
 }
 
+/// What answers on the far side of an established link.
+///
+/// Spec §21 has two: the agent of §21.4, which speaks the link protocol, and the agentless
+/// fallback of §21.3, which is a reduced set of providers reading the far side with standard
+/// commands. Everything above the registry is identical for both — that is the point — so the
+/// difference lives here, where the shell describes a link rather than where it uses one.
+pub enum FarEnd {
+    /// The Ono agent of spec §21.4, reached over the link protocol.
+    Agent(ono_remote::RemoteLink),
+    /// The reduced provider set of spec §21.3: no agent on the far side.
+    Agentless(ono_remote::AgentlessLink),
+}
+
 /// An established link: the connection, and the registry its providers are mounted in.
 pub struct LinkConnection {
-    /// The link itself, kept so dropping the session hangs up.
-    pub link: ono_remote::RemoteLink,
+    /// What is answering over there, kept so dropping the session hangs up.
+    pub far_end: FarEnd,
     /// The mounted registry an active link frame answers from (spec §14.4).
     pub registry: std::sync::Arc<ProviderRegistry>,
+    /// The process serving this link, where the shell started one: `ono --agent` under the
+    /// `local` transport, `ssh` under `ssh`. A link's agent is a resource of the link
+    /// (spec §21.4), so the session that started it is the one that ends it — see
+    /// [`Session::hang_up`].
+    pub agent: Option<ono_remote::ChildProcess>,
 }
 
 impl LinkConnection {
-    /// The targets the remote negotiated, in mount order.
+    /// What the link's context can answer, in mount order.
+    ///
+    /// For an agent link that is what the handshake negotiated (spec §21.2). For a reduced link
+    /// nothing was negotiated, so the honest content of the field is the set of targets the
+    /// fallback can actually read — which is what makes the reduction visible in the table
+    /// itself, beside the targets it refuses (spec §21.3).
     #[must_use]
     pub fn targets(&self) -> Vec<String> {
-        self.registry
-            .providers()
-            .iter()
-            .flat_map(|provider| provider.targets().iter().map(|target| (*target).to_owned()))
-            .collect()
+        match &self.far_end {
+            FarEnd::Agent(_) => self
+                .registry
+                .providers()
+                .iter()
+                .flat_map(|provider| provider.targets().iter().map(|target| (*target).to_owned()))
+                .collect(),
+            FarEnd::Agentless(link) => link.answered_targets(),
+        }
+    }
+
+    /// The agent behind this link, where the far side has one (spec §21.4).
+    ///
+    /// `None` for the agentless fallback of §21.3: there is nobody over there to speak the link
+    /// protocol, which is precisely what makes that link reduced.
+    #[must_use]
+    pub const fn agent_link(&self) -> Option<&ono_remote::RemoteLink> {
+        match &self.far_end {
+            FarEnd::Agent(link) => Some(link),
+            FarEnd::Agentless(_) => None,
+        }
+    }
+
+    /// Whether the far side is the reduced set of spec §21.3 rather than the agent of §21.4.
+    #[must_use]
+    pub const fn is_agentless(&self) -> bool {
+        matches!(self.far_end, FarEnd::Agentless(_))
+    }
+
+    /// The link protocol version the handshake settled on, or `None` when no handshake happened.
+    #[must_use]
+    pub fn protocol_version(&self) -> Option<u16> {
+        match &self.far_end {
+            FarEnd::Agent(link) => Some(link.negotiated().version()),
+            FarEnd::Agentless(_) => None,
+        }
+    }
+
+    /// How the far side named itself: `ono/<version>` for the agent of spec §21.4, and the
+    /// reduced set naming itself and what `uname` said for the fallback of §21.3.
+    #[must_use]
+    pub fn far_end_name(&self) -> String {
+        match &self.far_end {
+            FarEnd::Agent(link) => link.negotiated().peer().agent().to_owned(),
+            FarEnd::Agentless(link) => match link.system() {
+                Some(system) => format!("agentless ({system})"),
+                None => "agentless".to_owned(),
+            },
+        }
+    }
+
+    /// The ids of the providers the far side offers (spec §21.2).
+    #[must_use]
+    pub fn provider_ids(&self) -> Vec<String> {
+        match &self.far_end {
+            FarEnd::Agent(link) => link
+                .negotiated()
+                .providers()
+                .iter()
+                .map(|descriptor| descriptor.id().to_owned())
+                .collect(),
+            FarEnd::Agentless(_) => vec![ono_remote::AGENTLESS_PROVIDER.to_owned()],
+        }
+    }
+
+    /// Says goodbye to the far side, where there is somebody to say it to.
+    pub fn hangup(&self) {
+        match &self.far_end {
+            FarEnd::Agent(link) => link.hangup(),
+            // A reduced link holds nothing open: each query is one command that has already
+            // ended by the time its records arrive.
+            FarEnd::Agentless(_) => {}
+        }
     }
 }
 
 impl std::fmt::Debug for LinkConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let host = match &self.far_end {
+            FarEnd::Agent(link) => link.host(),
+            FarEnd::Agentless(link) => link.host(),
+        };
         f.debug_struct("LinkConnection")
-            .field("host", &self.link.host())
+            .field("host", &host)
+            .field("agentless", &self.is_agentless())
             .finish_non_exhaustive()
     }
 }
@@ -243,7 +359,11 @@ impl Session {
     #[must_use]
     pub fn new(interactive: bool) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-        let env: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
+        let mut env: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
+        // v0.4 §30.4: "`PWD` remains the filesystem working directory." A shell started from a
+        // parent that never updated it would hand every external command a `PWD` that is not
+        // where they run, so the session states its own the moment it has one.
+        env.insert(OsString::from("PWD"), cwd.as_os_str().to_owned());
         let env_provider = std::sync::Arc::new(ono_provider_linux::EnvProvider::new(
             env.iter().map(|(name, value)| {
                 ono_provider_linux::EnvBinding::inherited(
@@ -285,6 +405,7 @@ impl Session {
             definitions: vec![BTreeMap::new()],
             expanding: Vec::new(),
             settings: crate::settings::Settings::new(),
+            theme: std::sync::Arc::new(ono_render::Theme::default()),
         }
     }
 
@@ -297,6 +418,17 @@ impl Session {
     /// The configuration settings, for a layer that sets one.
     pub fn settings_mut(&mut self) -> &mut crate::settings::Settings {
         &mut self.settings
+    }
+
+    /// The theme every renderer paints with (spec §44).
+    #[must_use]
+    pub fn theme(&self) -> &std::sync::Arc<ono_render::Theme> {
+        &self.theme
+    }
+
+    /// Replaces the theme, which `config::load` does once the settings are in (ADR-0332).
+    pub fn set_theme(&mut self, theme: ono_render::Theme) {
+        self.theme = std::sync::Arc::new(theme);
     }
 
     /// Defines `name` as a function or an alias in the innermost scope (ADR-0070).
@@ -391,7 +523,16 @@ impl Session {
     pub fn publish_host(&mut self) {
         let plugin_path = crate::plugins::plugin_path(self);
         let state_dir = crate::config::state_dir(self);
-        self.with_kuang(|host| host.configure(plugin_path, state_dir));
+        let config_dir = crate::config::user_config_dir(self);
+        // The machine-wide trust store is the administrator's, so it comes from the environment
+        // and not from the user's configuration directory (ADR-0312).
+        let system_trust = crate::kuang_trust::system_path(self.env_var("ONO_KUANG_SYSTEM_TRUST"));
+        self.with_kuang(|host| {
+            host.configure(plugin_path, state_dir, config_dir, system_trust);
+            // Spec §31.37: the trail outlives the process. Appending at the start of every
+            // pipeline keeps a session that is killed from losing everything before it.
+            host.persist_audit();
+        });
     }
 
     /// Keeps a loaded KUANG/11 package on the session (spec §31.10), answering the instance it
@@ -416,9 +557,11 @@ impl Session {
         self.with_kuang(|host| host.plugin_ids().map(str::to_owned).collect())
     }
 
-    /// Adds a remote link to the session's table.
+    /// Adds a remote link to the session's table, ending whatever link held the name before it.
     pub fn add_link(&mut self, link: SessionLink) {
-        self.links.retain(|held| held.name != link.name);
+        while let Some(replaced) = self.remove_link(&link.name) {
+            self.hang_up(replaced);
+        }
         self.links.push(link);
     }
 
@@ -440,10 +583,41 @@ impl Session {
     }
 
     /// Forgets the named link and hands it back, so the caller decides when the connection
-    /// drops — and with it, hangs up (ADR-0036 §8).
+    /// drops — and with it, hangs up (ADR-0036 §8). A caller that is letting the link go for
+    /// good passes it to [`hang_up`](Self::hang_up), which also ends the process serving it.
     pub fn remove_link(&mut self, name: &str) -> Option<SessionLink> {
         let index = self.links.iter().position(|link| link.name == name)?;
         Some(self.links.remove(index))
+    }
+
+    /// Ends a link the session has let go of: it hangs up, and the process it started to serve
+    /// the link is waited for (spec §21.4, §18.1, ADR-0161).
+    ///
+    /// A shell owns the processes it starts. `ono --agent` under the `local` transport, and the
+    /// `ssh` that carries the agent under `ssh`, are started by `link host` and are therefore
+    /// the shell's to end: hanging up closes their input, which is the ordinary way an agent
+    /// loop finishes, and this waits for that to happen rather than leaving an orphan behind.
+    pub fn hang_up(&self, link: SessionLink) {
+        let Some(connection) = link.connection else {
+            return;
+        };
+        // The hang-up is said explicitly rather than left to the drop, because a provider of
+        // this link may still be mounted somewhere and would hold the connection open.
+        connection.hangup();
+        let agent = connection.agent.clone();
+        drop(connection);
+        let (Some(agent), Some(runtime)) = (agent, self.runtime.as_ref()) else {
+            return;
+        };
+        runtime.block_on(agent.end(AGENT_GRACE));
+    }
+
+    /// Ends every link the session still holds. Called when the session goes, so no agent it
+    /// started can outlive the shell and reparent to init.
+    fn hang_up_all(&mut self) {
+        for link in std::mem::take(&mut self.links) {
+            self.hang_up(link);
+        }
     }
 
     /// How many frames on the stack stand on the named link.
@@ -496,7 +670,11 @@ impl Session {
 
     /// Publishes the link table as it is now, for `get link` and `get host` (ADR-0103).
     pub fn publish_links(&mut self) {
-        let rows = self.links.iter().map(SessionLink::row).collect();
+        let rows: Vec<crate::session_provider::LinkRow> =
+            self.links.iter().map(SessionLink::row).collect();
+        // §19.1: the same table is what the local root's link map is built from, and it must
+        // never quietly drop a link that is no longer connected (§35.2).
+        crate::spatial::links::publish(&rows);
         self.tables
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -625,23 +803,38 @@ impl Session {
             .publish_jobs(rows);
     }
 
-    /// Retains a finished pipeline's values for `@-1` and `@N` (spec §6.4, §20.2).
+    /// Retains a finished pipeline's values for `@-1` and `@N` (spec §6.4, §20.2), and answers
+    /// how many values it could not keep.
     ///
-    /// Retention is bounded twice: by result count, and by values per result — a `get file /`
-    /// that printed a million rows does not pin a million values in memory forever. A truncated
-    /// retention is honest about being one: reusing it yields the rows that were kept, exactly
-    /// as the screen showed only the rows that fit.
-    pub fn retain_result(&mut self, mut values: Vec<Value>) {
-        const KEEP_RESULTS: usize = 16;
-        const KEEP_VALUES: usize = 10_000;
+    /// Retention is bounded twice — by [`RETAINED_RESULTS`] and by [`RETAINED_VALUES`] — because
+    /// spec §20.2 asks for *bounded* recent results and a `get file /` that printed a million
+    /// rows must not pin a million values in memory for the rest of the session. The count of
+    /// what was dropped is returned rather than swallowed: a caller shows it, so a later `@-1`
+    /// that is short of what the screen held is never a surprise (ADR-0249).
+    pub fn retain_result(&mut self, mut values: Vec<Value>) -> usize {
         if values.is_empty() {
-            return;
+            return 0;
         }
-        values.truncate(KEEP_VALUES);
-        if self.results.len() == KEEP_RESULTS {
+        let dropped = values.len().saturating_sub(RETAINED_VALUES);
+        values.truncate(RETAINED_VALUES);
+        // Spec §20.2: "Retention policy must protect secrets". The policy that keeps a secret
+        // out of history is the one that keeps it out of what `@-1` replays, or the shell would
+        // redact the command that read a token and keep the token (spec §17.5, ADR-0262).
+        let policy = redaction_policy();
+        values = values
+            .into_iter()
+            .map(|value| {
+                value.map_text(&|text| {
+                    let redacted = policy.redact(text);
+                    (redacted != text).then(|| std::sync::Arc::from(redacted.as_str()))
+                })
+            })
+            .collect();
+        if self.results.len() == RETAINED_RESULTS {
             self.results.pop_front();
         }
         self.results.push_back(values);
+        dropped
     }
 
     /// The `n`th previous result, `1` for the most recent (spec §6.4 `@-1`).
@@ -693,10 +886,23 @@ impl Session {
         self.publish_env();
         // Spec §14.4: the active link frame decides where provider calls run. The innermost
         // link frame wins; without one, the local registry answers.
-        let remote = self.frames.iter().rev().find_map(|frame| {
-            matches!(frame.frame.kind(), ono_command::FrameKind::Link)
-                .then(|| frame.frame.identity().to_string())
-        });
+        let remote = self
+            .frames
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                matches!(frame.frame.kind(), ono_command::FrameKind::Link)
+                    .then(|| frame.frame.identity().to_string())
+            })
+            // v0.4 §19.2: standing on a linked host is the same statement about where provider
+            // calls run, made by `jump` instead of by `enter link`. A link the session has
+            // detached from is not reached: what is behind it is reported `stale` rather than
+            // answered with local objects wearing a remote name (§35.2, §35.4).
+            .or_else(|| {
+                ono_spatial_core::space::standing_in()
+                    .map(|scope| scope.host_scope().id().to_owned())
+                    .filter(|name| crate::spatial::links::reachable(name))
+            });
         if let Some(host) = remote
             && let Some(index) = self
                 .links
@@ -845,7 +1051,17 @@ impl Session {
     }
 
     /// Moves the session to `directory`, which must exist and be a directory.
+    ///
+    /// The process moves with it. A shell's working directory is the process's working directory:
+    /// `find file .` and every other native command that takes a relative path resolves it
+    /// through the kernel, so a session cwd the process did not follow would leave those commands
+    /// answering about wherever the shell happened to start. A kernel that refuses the move —
+    /// the directory went away between the caller's check and here — leaves the session where it
+    /// was rather than splitting the two.
     pub fn set_cwd(&mut self, directory: PathBuf) {
+        if std::env::set_current_dir(&directory).is_err() {
+            return;
+        }
         self.cwd = directory;
     }
 
@@ -1027,6 +1243,16 @@ impl Session {
     }
 }
 
+impl Drop for Session {
+    fn drop(&mut self) {
+        // Spec §31.37: the last pipeline's audit events are written before the session goes.
+        self.with_kuang(crate::kuang_host::Host::persist_audit);
+        // Fields are dropped after this runs, so the runtime is still here to wait on: a link
+        // torn down after the runtime has gone could only abandon its agent (ADR-0161).
+        self.hang_up_all();
+    }
+}
+
 /// Runs an adapter's version probe and returns what the program wrote (spec v0.3 §1.46).
 ///
 /// The probe is not a job: it has no terminal, no stdin and no place in the job table, so the
@@ -1043,4 +1269,13 @@ pub fn probe_version(executable: &std::path::Path, argv: &[String]) -> Option<St
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     Some(text)
+}
+
+/// The redaction policy the retention of spec §20.2 applies, which is history's own (§17.5).
+///
+/// One policy, built once: the patterns are the same ones `history` redacts by, so a secret
+/// cannot be kept in one place because it was removed from the other (ADR-0262).
+fn redaction_policy() -> &'static ono_history::Policy {
+    static POLICY: std::sync::OnceLock<ono_history::Policy> = std::sync::OnceLock::new();
+    POLICY.get_or_init(ono_history::Policy::default)
 }

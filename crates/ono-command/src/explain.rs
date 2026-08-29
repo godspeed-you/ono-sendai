@@ -14,7 +14,8 @@ use ono_parser::{Argument, Expr, Pipeline, RedirectOp, RedirectTarget, Stage, St
 use ono_provider_api::{ProviderRegistry, Risk};
 use ono_value::{MapValue, Value};
 
-use crate::contract::{IoType, Privilege};
+use crate::contract::{IoType, Origin, Privilege};
+use crate::invoke::ContextFrame;
 use crate::registry::CommandRegistry;
 
 /// The width the label column is padded to, matching spec §42.1's layout.
@@ -45,6 +46,7 @@ pub struct StagePlan {
     ordinal: usize,
     source: String,
     resolution: Resolution,
+    origin: Origin,
     provider: Option<String>,
     capability: Option<String>,
     input: String,
@@ -55,6 +57,8 @@ pub struct StagePlan {
     risk: Option<Risk>,
     fields: Vec<String>,
     notes: Vec<String>,
+    /// The explicit spelling a context frame narrows the stage to (spec §14.5, ADR-0225).
+    narrowed: Option<String>,
     demand: Option<(OutputDemand, String)>,
     /// The input type the contract declares, before the upstream type was threaded in.
     declared_input: Option<String>,
@@ -87,6 +91,9 @@ pub struct PlanContext<'a> {
     pub adapters: Option<&'a ono_adapter::Registry>,
     /// Resolves a program name to the path the shell would run, when `PATH` is known.
     pub executables: Option<&'a dyn Fn(&str) -> Option<PathBuf>>,
+    /// The context frames in force, so the plan can print the explicit spelling a frame narrows
+    /// the stage to (spec §14.5, ADR-0023, ADR-0225).
+    pub context: &'a [ContextFrame],
 }
 
 impl std::fmt::Debug for PlanContext<'_> {
@@ -124,6 +131,13 @@ impl StagePlan {
             Resolution::Native { id } => Some(id),
             _ => None,
         }
+    }
+
+    /// Where the command the stage names came from: the core, or the package that contributed
+    /// it (spec §31.64).
+    #[must_use]
+    pub fn origin(&self) -> &Origin {
+        &self.origin
     }
 
     /// The provider that would answer, when one is registered for the target.
@@ -225,6 +239,7 @@ impl StagePlan {
             "command".into(),
             self.command().map_or(Value::Null, Value::string),
         );
+        map.insert("origin".into(), Value::string(&self.origin.to_string()));
         map.insert(
             "provider".into(),
             self.provider().map_or(Value::Null, Value::string),
@@ -251,6 +266,12 @@ impl StagePlan {
             Value::list(self.fields.iter().map(|field| Value::string(field))),
         );
         map.insert(
+            "narrowed".into(),
+            self.narrowed
+                .as_ref()
+                .map_or(Value::Null, |spelling| Value::string(spelling)),
+        );
+        map.insert(
             "demand".into(),
             self.demand()
                 .map_or(Value::Null, |demand| Value::string(&demand.to_string())),
@@ -268,6 +289,14 @@ impl StagePlan {
         let _ = writeln!(into, "{}. {}", self.ordinal, self.source);
         if let Some(id) = self.command() {
             row(into, "command", id);
+        }
+        // A core command's origin is the answer nobody asks for; a contributed one's is the first
+        // question about it (spec §31.64).
+        if !self.origin.is_core() {
+            row(into, "origin", &self.origin.to_string());
+        }
+        if let Some(narrowed) = &self.narrowed {
+            row(into, "narrowed", narrowed);
         }
         if let Resolution::External { head } = &self.resolution {
             row(
@@ -440,6 +469,7 @@ pub fn plan_for(
             stdout,
             adapters: None,
             executables: None,
+            context: &[],
         },
     )
 }
@@ -467,6 +497,7 @@ pub fn plan_with(
             let planned = plan_stage(
                 registry,
                 providers,
+                context.context,
                 stage,
                 source,
                 ordinal,
@@ -478,7 +509,14 @@ pub fn plan_with(
         }
         plan_demands(&mut stages[first..], list, stdout);
         plan_adaptations(&mut stages[first..], list, source, context);
-        rethread(&mut stages[first..], list, registry, providers, source);
+        rethread(
+            &mut stages[first..],
+            list,
+            registry,
+            providers,
+            context.context,
+            source,
+        );
     }
 
     ExecutionPlan {
@@ -570,6 +608,7 @@ fn rethread(
     list: &StageList,
     registry: &CommandRegistry,
     providers: Option<&ProviderRegistry>,
+    frames: &[ContextFrame],
     source: &str,
 ) {
     let mut upstream: Option<IoType> = None;
@@ -589,6 +628,7 @@ fn rethread(
             *planned = plan_stage(
                 registry,
                 providers,
+                frames,
                 stage,
                 source,
                 ordinal,
@@ -710,6 +750,7 @@ fn stdout_redirection(stage: &Stage) -> Option<Redirected> {
 fn plan_stage(
     registry: &CommandRegistry,
     providers: Option<&ProviderRegistry>,
+    frames: &[ContextFrame],
     stage: &Stage,
     source: &str,
     ordinal: usize,
@@ -724,6 +765,7 @@ fn plan_stage(
             ordinal,
             source: text,
             resolution: Resolution::Value,
+            origin: Origin::Core,
             provider: None,
             capability: None,
             input: "null".to_owned(),
@@ -733,6 +775,7 @@ fn plan_stage(
             privilege: None,
             risk: None,
             fields,
+            narrowed: None,
             notes: vec!["the stage's head is a value, not a command".to_owned()],
             demand: None,
             declared_input: None,
@@ -749,6 +792,7 @@ fn plan_stage(
             resolution: Resolution::External {
                 head: program.to_owned(),
             },
+            origin: Origin::Core,
             provider: None,
             capability: None,
             input: upstream.map_or_else(|| "bytes".to_owned(), |io| io.text().to_owned()),
@@ -758,6 +802,7 @@ fn plan_stage(
             privilege: None,
             risk: None,
             fields,
+            narrowed: None,
             notes: vec![
                 "the program on PATH, run with no argv rewrite, no decoder and no renderer \
                  (spec v0.3 §1.17, ADR-0054)"
@@ -778,6 +823,7 @@ fn plan_stage(
             resolution: Resolution::External {
                 head: program.to_owned(),
             },
+            origin: Origin::Core,
             provider: None,
             capability: None,
             input: upstream.map_or_else(|| "bytes".to_owned(), |io| io.text().to_owned()),
@@ -787,6 +833,7 @@ fn plan_stage(
             privilege: None,
             risk: None,
             fields,
+            narrowed: None,
             notes: vec![
                 "forced adaptation: the program's output must become values, or the stage fails \
                  (spec v0.3 §1.18, ADR-0064)"
@@ -799,13 +846,21 @@ fn plan_stage(
         };
     }
 
-    let Ok(resolved) = registry.resolve(head, &stage.arguments) else {
+    let resolution = registry.resolve(head, &stage.arguments);
+    let Ok(resolved) = resolution else {
+        // A verb the registry knows, refused only for its target word, is reported as that
+        // refusal: `trace group root` is `trace` with a target it has no command for, and the
+        // executor answers `resolve.target_not_found` rather than searching `PATH` (ADR-0217).
+        let refusal = resolution
+            .err()
+            .filter(|error| error.code() == ono_core::ErrorCode::ResolveTargetNotFound);
         return StagePlan {
             ordinal,
             source: text,
             resolution: Resolution::External {
                 head: head.to_owned(),
             },
+            origin: Origin::Core,
             provider: None,
             capability: None,
             input: upstream.map_or_else(|| "bytes".to_owned(), |io| io.text().to_owned()),
@@ -815,11 +870,13 @@ fn plan_stage(
             privilege: None,
             risk: None,
             fields,
-            notes: vec![
-                "resolved after the registry: a user function, an alias, or an executable on PATH \
-                 (ADR-0011)"
+            narrowed: None,
+            notes: vec![match &refusal {
+                Some(error) => error.message().to_owned(),
+                None => "resolved after the registry: a user function, an alias, or an \
+                         executable on PATH (ADR-0011)"
                     .to_owned(),
-            ],
+            }],
             demand: None,
             declared_input: None,
             raw: false,
@@ -844,6 +901,7 @@ fn plan_stage(
     });
 
     let mut notes = Vec::new();
+    let mut narrowed = None;
     match contract.bind(resolved.arguments) {
         // The fields a stage reads are the ones its first selector names: `sort memory desc`
         // reads `memory`, and `desc` is the direction rather than a field.
@@ -857,6 +915,15 @@ fn plan_stage(
                 if !named.is_empty() {
                     fields = named;
                 }
+            }
+            // Everything a frame contributes can be written out by hand, and `explain` is where
+            // it is written (spec §14.5, ADR-0023). The plan reports the same narrowing the
+            // command table performs, from the same function (ADR-0225).
+            if let Some(registered) = providers
+                && let Ok(Some(filled)) =
+                    crate::narrow::narrow(contract, registered, frames, &bound)
+            {
+                narrowed = crate::narrow::spelling(contract, &bound, &filled);
             }
         }
         Err(error) => notes.push(format!("arguments do not bind: {}", error.message())),
@@ -882,6 +949,7 @@ fn plan_stage(
         resolution: Resolution::Native {
             id: contract.id().to_owned(),
         },
+        origin: contract.origin().clone(),
         provider,
         capability: contract.provider_capability().map(str::to_owned),
         input: input.text().to_owned(),
@@ -892,6 +960,7 @@ fn plan_stage(
         risk: capability.map(crate::contract::CapabilitySpec::risk),
         fields,
         notes,
+        narrowed,
         demand: None,
         declared_input: Some(contract.input().text().to_owned()),
         raw: false,

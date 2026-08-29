@@ -93,6 +93,25 @@ fn should_bind_a_bare_flag_as_true() {
 }
 
 #[test]
+fn should_bind_both_flags_when_one_bare_flag_follows_another() {
+    // `get dir --all --recursive` sets both. A flag whose value is not written waits only for a
+    // word that could be `true` or `false` (ADR-0009); another option is not one, so the flag it
+    // was waiting on is already decided and must not be forgotten.
+    let bound = bind("get dir /etc --all --recursive").expect("the stage binds");
+
+    assert!(
+        bound.flag("all"),
+        "`--all` is set, got {:?}",
+        bound.option("all")
+    );
+    assert!(
+        bound.flag("recursive"),
+        "`--recursive` is set, got {:?}",
+        bound.option("recursive")
+    );
+}
+
+#[test]
 fn should_apply_a_declared_default_when_the_option_is_absent() {
     let bound = bind("kill process 4419").expect("the stage binds");
 

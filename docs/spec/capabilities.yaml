@@ -304,6 +304,10 @@ provider_capabilities:
     summary: Check a host's reachability and advertised capabilities.
     risk: observe
     elevation: none
+  - id: host.trust
+    summary: Record, replace or forget a pinned host key (spec §21.5, ADR-0015 T5/T6).
+    risk: mutate
+    elevation: none
   - id: link.create
     summary: Establish a remote Ono link, performing the handshake of spec §21.2.
     risk: mutate

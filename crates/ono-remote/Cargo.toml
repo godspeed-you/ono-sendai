@@ -23,7 +23,16 @@ ono-protocol.workspace = true
 ono-provider-api.workspace = true
 ono-value.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["io-std"] }
+# The authenticated transport of spec §21.5: TLS 1.3 where the peer's certificate is the pinned
+# host key (ADR-0274 option 1, ADR-0353). Key exchange and record protection are the parts a
+# shell must not write twice, which is why `ono-protocol` left them outside the crate.
+rcgen.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+tokio-rustls.workspace = true
+# Signalling a child that will not take the hang-up. ADR-0005 chose `nix` for syscalls.
+nix = { workspace = true, features = ["signal"] }
+tokio = { workspace = true, features = ["io-std", "net"] }
 
 [dev-dependencies]
 jiff.workspace = true

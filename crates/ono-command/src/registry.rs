@@ -31,6 +31,7 @@ const COMMAND_FILES: &[&str] = &[
     include_str!("../../../docs/spec/commands/process.yaml"),
     include_str!("../../../docs/spec/commands/remote.yaml"),
     include_str!("../../../docs/spec/commands/service.yaml"),
+    include_str!("../../../docs/spec/commands/spatial.yaml"),
     include_str!("../../../docs/spec/commands/storage.yaml"),
 ];
 
@@ -153,6 +154,79 @@ impl CommandRegistry {
                 .map(crate::contract::RawCapability::into_spec)
                 .collect::<Result<Vec<_>, _>>()?,
         })
+    }
+
+    /// This registry with `contributions` added, and the contributions it refused.
+    ///
+    /// The registries KUANG/11 contributes into are the shell's own (spec §31.64): a contributed
+    /// command is a command, and the same `get command` finds it. Two rules keep that from
+    /// meaning "and is therefore trusted", both from
+    /// `docs/spec/kuang/contributions.v1.yaml` → `registration_checks`:
+    ///
+    /// - **`no-core-shadow`** — a contribution whose spelling a core command already holds is
+    ///   refused. Ono's own vocabulary cannot be replaced from a package directory.
+    /// - **conflict resolution (spec §31.65)** — when two packages claim one spelling, neither
+    ///   takes it. Both entries stay in the registry under their own ids, so `get command` and
+    ///   `help` still find them and `<package>:<command>` still runs them; what is refused is the
+    ///   bare spelling, because install order is not a resolution policy.
+    ///
+    /// A refusal is returned, never swallowed: nothing here shadows anything silently.
+    #[must_use]
+    pub fn extended(&self, contributions: Vec<CommandContract>) -> (Self, Vec<ErrorValue>) {
+        let mut extended = self.clone();
+        let mut refusals = Vec::new();
+        let mut accepted: Vec<CommandContract> = Vec::new();
+        for contribution in contributions {
+            if let Some(existing) = self.get(contribution.id()) {
+                refusals.push(shadow_error(&contribution, existing.origin()));
+                continue;
+            }
+            if let Some(clash) = accepted
+                .iter()
+                .find(|other| other.id() == contribution.id())
+            {
+                refusals.push(shadow_error(&contribution, clash.origin()));
+                continue;
+            }
+            accepted.push(contribution);
+        }
+
+        // A spelling every package but one wants is a spelling no package gets (spec §31.65).
+        let mut contested: BTreeMap<(String, Option<String>), usize> = BTreeMap::new();
+        for contribution in &accepted {
+            *contested
+                .entry((
+                    contribution.verb().to_owned(),
+                    contribution.target().map(str::to_owned),
+                ))
+                .or_default() += 1;
+        }
+
+        for contribution in accepted {
+            let spelling = (
+                contribution.verb().to_owned(),
+                contribution.target().map(str::to_owned),
+            );
+            let index = extended.commands.len();
+            let bare = if let Some(existing) = self.by_spelling.get(&spelling) {
+                refusals.push(shadow_error(
+                    &contribution,
+                    extended.commands[*existing].origin(),
+                ));
+                continue;
+            } else if contested.get(&spelling).copied().unwrap_or_default() > 1 {
+                refusals.push(contested_error(&contribution));
+                false
+            } else {
+                true
+            };
+            extended.by_id.insert(contribution.id().to_owned(), index);
+            if bare {
+                extended.by_spelling.insert(spelling, index);
+            }
+            extended.commands.push(contribution);
+        }
+        (extended, refusals)
     }
 
     /// Every command, in the order the contract files declare them.
@@ -343,4 +417,39 @@ fn yaml_error(error: serde_yaml_ng::Error) -> ErrorValue {
         ErrorCode::ProviderSchemaViolation,
         format!("an embedded contract file is not valid YAML: {error}"),
     )
+}
+
+/// A contribution that would have taken a name something else already holds (spec §31.65).
+fn shadow_error(contribution: &CommandContract, held_by: &crate::contract::Origin) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::KuangPackageInvalid,
+        format!(
+            "{} contributes `{}`, which would shadow the one {held_by} already provides",
+            contribution.origin(),
+            contribution.spelling()
+        ),
+    )
+    .with_help(
+        "a contribution never replaces a name the shell already answers to (spec §31.65); `<package>:<command>` runs it under its own name",
+    )
+}
+
+/// Two packages claiming one spelling, which neither of them then gets (spec §31.65).
+fn contested_error(contribution: &CommandContract) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::ResolveAmbiguous,
+        format!(
+            "`{}` is claimed by more than one package, so it names none of them",
+            contribution.spelling()
+        ),
+    )
+    .with_help(format!(
+        "write `{}:{}` for this one (spec §31.66)",
+        contribution.origin().package().unwrap_or_default(),
+        contribution
+            .id()
+            .rsplit('.')
+            .next()
+            .unwrap_or(contribution.id())
+    ))
 }

@@ -16,9 +16,10 @@
 
 use ono_core::ErrorCode;
 use ono_pipeline::{StreamEvent, ValueStream};
-use ono_provider_api::{Action, ActionOutcome, ObjectId, Selector};
+use ono_provider_api::{Action, ActionOutcome, ObjectId, ObjectRef, Selector};
 use ono_value::{ErrorValue, SchemaId, Value};
 
+use crate::bind::BoundArguments;
 use crate::contract::{Confirmation, DeclaredType};
 use crate::invoke::{CommandImpl, Invocation, Outcome, OutcomeFuture, must_be_awaited};
 
@@ -83,11 +84,16 @@ impl ProviderMutation {
         // The operation is the verb the user typed, which is the vocabulary every provider's
         // `act` already speaks: `kill`, `stop`, `start`, `restart`, `set`.
         let operation = contract.verb().to_owned();
+        // A words-mode argument written as an expression — `stop process $p`, the
+        // `each { stop process @.pid }` of spec §19.4, `--since (now() - 1h)` — is still an
+        // expression here (ADR-0009). A mutation reads values, so it resolves them once,
+        // against the invocation's scope, before it decides what to act on (ADR-0219).
+        let written = ctx.arguments().evaluated(ctx.scope())?;
         let mut arguments: Vec<(String, Value)> = contract
             .options()
             .iter()
             .filter_map(|option| {
-                ctx.arguments()
+                written
                     .option(option.name())
                     .map(|value| (option.name().to_owned(), value.clone()))
             })
@@ -115,8 +121,12 @@ impl ProviderMutation {
 
         // A command whose input is content rather than objects — `write file` takes
         // `bytes | string` — consumes the pipeline as the `content` argument, and its targets
-        // are the selector's (ADR-0082 §3).
+        // are the selector's (ADR-0082 §3). Content is what the contract says it accepts: a
+        // mutation that declares no content input takes the objects arriving on the pipeline as
+        // its targets, which is the object-in spelling of spec §11.5 (ADR-0216).
+        let takes_content = contract.input().admits_bytes() || contract.input().admits_text();
         if ctx.has_input()
+            && takes_content
             && !contract.input().is_stream()
             && let Some(input) = ctx.take_input()
         {
@@ -127,20 +137,22 @@ impl ProviderMutation {
         }
 
         let mut failures = Vec::new();
-        let targets = self.targets(ctx, target, &spelling, &mut failures).await?;
+        let targets = self
+            .targets(ctx, &written, target, &spelling, &mut failures)
+            .await?;
         let mut arguments = arguments;
         // A creating verb's selectors describe the object, and the provider needs them by name
         // — `mount filesystem <source> <target>` is a source and a target, not two anonymous
         // identity values (ADR-0098 §1).
         if creates(contract.verb()) {
-            arguments.extend(named_selectors(ctx));
+            arguments.extend(named_selectors(ctx, &written));
         }
         // The selectors that did not supply the targets — a `destination` — travel with the
         // action under their own names (ADR-0082 §2).
-        let supplied = self.target_selector(ctx);
+        let supplied = self.target_selector(ctx, &written);
         for spec in contract.selectors() {
             if supplied.as_deref() != Some(spec.name())
-                && let Some(value) = ctx.arguments().selector(spec.name())
+                && let Some(value) = written.selector(spec.name())
                 && !arguments.iter().any(|(name, _)| name == spec.name())
             {
                 arguments.push((spec.name().to_owned(), value.clone()));
@@ -150,7 +162,7 @@ impl ProviderMutation {
         // A command whose single action is destructive needs `--confirm` every time (spec
         // §17.4): a script never waits for a prompt, so without the flag it acts on nothing
         // and says so (ADR-0088 §3).
-        let confirmed = ctx.arguments().option("confirm") == Some(&Value::Bool(true));
+        let confirmed = written.option("confirm") == Some(&Value::Bool(true));
         if contract.confirmation() == Confirmation::Always && !confirmed {
             return Err(ErrorValue::new(
                 ErrorCode::SafetyConfirmationRequired,
@@ -172,12 +184,14 @@ impl ProviderMutation {
             return Err(ErrorValue::new(
                 ErrorCode::SafetyConfirmationRequired,
                 format!(
-                    "`{spelling}` would act on {} objects, which is more than the bulk                      threshold of {threshold}",
+                    "`{spelling}` would act on {} objects, which is more than the \
+                     bulk threshold of {threshold}",
                     targets.len(),
                 ),
             )
             .with_help(format!(
-                "nothing was changed. Write `--confirm` to act on all {} (spec §17.4), or                  narrow the selection",
+                "nothing was changed. Write `--confirm` to act on all {} (spec §17.4), \
+                 or narrow the selection",
                 targets.len(),
             )));
         }
@@ -185,7 +199,7 @@ impl ProviderMutation {
         let providers = ctx.providers();
         let mut outcomes = Vec::with_capacity(targets.len() + failures.len());
         outcomes.append(&mut failures);
-        let dry_run = ctx.arguments().option("dry-run") == Some(&Value::Bool(true));
+        let dry_run = written.option("dry-run") == Some(&Value::Bool(true));
         for object in targets {
             let mut action = Action::new(target, &operation, object.id);
             if let Some(source) = object.source {
@@ -233,11 +247,11 @@ impl ProviderMutation {
 
     /// The selector that supplies the targets when nothing arrives on the pipeline: the first
     /// one the user wrote, in the contract's order.
-    fn target_selector(&self, ctx: &Invocation<'_>) -> Option<String> {
+    fn target_selector(&self, ctx: &Invocation<'_>, written: &BoundArguments) -> Option<String> {
         ctx.contract()
             .selectors()
             .iter()
-            .find(|spec| ctx.arguments().selector(spec.name()).is_some())
+            .find(|spec| written.selector(spec.name()).is_some())
             .map(|spec| spec.name().to_owned())
     }
 
@@ -245,6 +259,7 @@ impl ProviderMutation {
     async fn targets(
         &self,
         ctx: &mut Invocation<'_>,
+        written: &BoundArguments,
         target: &str,
         spelling: &str,
         failures: &mut Vec<ActionOutcome>,
@@ -253,11 +268,14 @@ impl ProviderMutation {
             let mut objects = Vec::new();
             while let Some(event) = input.recv().await {
                 match event {
-                    StreamEvent::Value(Value::Record(record)) => match ObjectId::of(&record) {
-                        Some(id) => objects.push(Target {
-                            id,
+                    // One label rule for an object (ADR-0226): `ObjectRef::of` gives the short
+                    // form the object's schema declares, the same one a graph node draws and the
+                    // same one the selector branch resolves through the provider.
+                    StreamEvent::Value(Value::Record(record)) => match ObjectRef::of(&record) {
+                        Some(reference) => objects.push(Target {
+                            id: reference.id().clone(),
                             source: record.provenance().source().map(str::to_owned),
-                            label: Some(ono_graph::label_of(&record)),
+                            label: Some(reference.label().to_owned()),
                             unresolved: None,
                         }),
                         None => {
@@ -298,7 +316,7 @@ impl ProviderMutation {
         // yet, and asking the provider for it would answer "not found" to every request. Its
         // identity is the selectors as written, in contract order (ADR-0098 §1).
         if creates(ctx.contract().verb()) {
-            let named = named_selectors(ctx);
+            let named = named_selectors(ctx, written);
             if named.is_empty() {
                 return Err(ErrorValue::new(
                     ErrorCode::TypeMismatch,
@@ -327,7 +345,7 @@ impl ProviderMutation {
             .selectors()
             .iter()
             .find_map(|spec| {
-                ctx.arguments()
+                written
                     .selector(spec.name())
                     .map(|value| (spec, value.clone()))
             })
@@ -487,12 +505,12 @@ fn creates(verb: &str) -> bool {
 }
 
 /// The selectors that were written, by the names the contract gives them, in contract order.
-fn named_selectors(ctx: &Invocation<'_>) -> Vec<(String, Value)> {
+fn named_selectors(ctx: &Invocation<'_>, written: &BoundArguments) -> Vec<(String, Value)> {
     ctx.contract()
         .selectors()
         .iter()
         .filter_map(|spec| {
-            ctx.arguments()
+            written
                 .selector(spec.name())
                 .map(|value| (spec.name().to_owned(), value.clone()))
         })

@@ -1,0 +1,154 @@
+# v0.4 §44.8 (permission honesty), with §35.1 (the spatial layer reveals nothing the provider
+# could not legitimately answer), §35.2 (available / empty / unknown / permission_denied /
+# unsupported / stale stay distinct), §35.3 (navigation does not escalate), §40
+# (`spatial.permission_denied`) and §53 ("Unknown/denied data? Distinct from empty").
+#
+# What the container can provide: every process in the image belongs to the acceptance user, so
+# there is no other user's process whose file descriptors the kernel would hide. The restricted
+# resources here are therefore the ones the kernel really does deny this user — a directory the
+# user owns but has taken all permission from, root's home, and a root-only file — plus a
+# descriptor whose target has been unlinked, which is `unknown` rather than denied and so proves
+# the third state of §35.2 as well.
+#
+# The case asserts the same claim from both sides: a denied thing must be *named as denied*, and
+# it must never be reported as a count of zero.
+case: what this user may not see is reported as denied, never as empty and never as zero
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  place() {
+    ono -c "$1; echo ---PLACE---; $2" 2>&1 | sed -n '/---PLACE---/,$p'
+  }
+
+  mkdir -p /tmp/spatial/data /tmp/spatial/denied
+  DENIED=/tmp/spatial/denied
+  READABLE=/tmp/spatial/data
+  LONELY=/tmp/spatial/data/lonely.txt
+  VANISHED=/tmp/spatial/data/vanished.txt
+  printf 'nobody holds this\n' > "$LONELY"
+  printf 'this file is about to be unlinked\n' > "$VANISHED"
+  printf 'secret\n' > "$DENIED/secret.txt"
+  chmod 000 "$DENIED"
+  # A descriptor whose file no longer has a name: `unknown`, which is neither denied nor empty.
+  bash -c "exec 9< $VANISHED; exec sleep 90" > /dev/null 2>&1 &
+  HOLDER=$!
+  sleep 1
+  rm -f "$VANISHED"
+  echo "fixture: denied=$DENIED holder=$HOLDER (its file has been unlinked)"
+
+  echo "== a place this user may not read is refused, and says why (§35.1, §40) =="
+  prove 44.8a "entering a directory with no permission is spatial.permission_denied (§40)" \
+    'out=$(ono -c "enter $DENIED" 2>&1); status=$?;
+     printf "%s\n" "$out" | grep -qF "spatial.permission_denied" && test "$status" -ne 0'
+  prove 44.8b "the same holds for another user home this user may not enter (§35.1)" \
+    'out=$(ono -c "enter /root" 2>&1); status=$?;
+     printf "%s\n" "$out" | grep -qF "spatial.permission_denied" && test "$status" -ne 0'
+  prove 44.8c "a path inside a denied directory is denied, not reported as missing (§35.1)" \
+    'ono -c "enter /root/.bashrc" 2>&1 | grep -qF "spatial.permission_denied"'
+  prove 44.8d "navigation never asks for privilege to get around it (§35.3)" \
+    'out=$(ono -c "enter /root" 2>&1);
+     printf "%s\n" "$out" | grep -qF "spatial.permission_denied" &&
+     ! printf "%s\n" "$out" | grep -qiE "sudo|pkexec|password|elevat"'
+
+  echo "== denied is not empty, and never a count of zero (§35.2, §44.8) =="
+  # §35.2's six states describe a *group*, and `ono.spatial-neighbor/1` carries the state of the
+  # group a neighbour came from — the parent's children were read, so that group is `available`.
+  # What must not happen is the boundary disappearing: the directory is named from its parent
+  # (§35.1 hides nothing the kernel already gives out) and the denial is stated the moment the
+  # shell is asked to go there (§40, ADR-0198).
+  prove 44.8e "the denied directory is visible from its parent, and denied when it is reached (§35.2)" \
+    'place "enter $READABLE/.." "near | select display_name | to text" > /tmp/parent.txt;
+     grep -qF "$DENIED" /tmp/parent.txt &&
+     ono -c "enter $DENIED" 2>&1 | grep -qF "spatial.permission_denied"'
+  prove 44.8f "no group of a denied place is reported as zero (§35.2, §44.8)" \
+    'ono -c "map $DENIED --depth 1 --json" > /tmp/denied-map.json 2>&1;
+     grep -qF "\"completeness\":\"partial\"" /tmp/denied-map.json &&
+     ! grep -qE "\"(files|children|entries|processes)\" *: *0([^0-9]|$)" /tmp/denied-map.json'
+  prove 44.8g "a readable place with nothing in it is empty, which is a different answer (§35.2)" \
+    'place "enter $LONELY" "look --json" > /tmp/lonely.json;
+     grep -qF "lonely.txt" /tmp/lonely.json && ! grep -qF "permission_denied" /tmp/lonely.json &&
+     test "$(place "enter $LONELY" "near --type process --all | count | to text" | tail -1)" = "0"'
+  # The third state, and the sharpest one to get wrong: §32.1 keeps a default `look` from reading
+  # every process on the host to find the openers of one file, so that group is `unknown` — the
+  # shell could answer and did not — while asking for it explicitly answers `0`. `unknown` and
+  # `empty` are two different sentences about the same group, one minute apart.
+  prove 44.8h "a group nobody asked for is unknown, which is neither empty nor denied (§35.2, §32.1)" \
+    'grep -qF "\"state\":\"unknown\"" /tmp/lonely.json &&
+     grep -qF "available on request" /tmp/lonely.json &&
+     ! grep -qF "permission_denied" /tmp/lonely.json'
+
+  # The same rule at the other end of §32.1's cost classes: joining a socket to the process
+  # holding it means reading every `/proc/<pid>/fd` on the host, so a default `look` at a
+  # listener does not do it — and must not print the exit it did not read as a count. The
+  # listener is reached from a property, never from its owner, so nothing has told the shell who
+  # holds it (ADR-0209, dogfood finding 2 of 2026-08-28).
+  /opt/ono-fixtures/spatial/web-service.pl 18097 "$LONELY" 1 90 /tmp/fixture-097.state \
+    > /tmp/spatial/server-097.log 2>&1 &
+  for _ in $(seq 40); do [ -s /tmp/fixture-097.state ] && break; sleep 0.5; done
+  . /tmp/fixture-097.state
+  echo "fixture: listener main=$FIXTURE_WEB_MAIN port=$FIXTURE_WEB_PORT"
+  REACH="find place --type listener --where local.port == $FIXTURE_WEB_PORT | take 1 | enter"
+
+  echo "== an owner nobody looked up is unknown, not zero (§35.2, §32.1, §32.2) =="
+  prove 44.8m "the owner of a socket nobody asked about is unknown, never a count of zero" \
+    'place "$REACH" "look --json" > /tmp/listener.json;
+     grep -qF "\"process\"" /tmp/listener.json &&
+     ! grep -qE "\"process\" *: *\{[^}]*\"state\" *: *\"(empty|available)\"" /tmp/listener.json &&
+     grep -qF "available on request" /tmp/listener.json'
+  prove 44.8n "asked for explicitly, the same exit names the process that holds the socket (§6.2)" \
+    'place "$REACH" "look --all --json" | grep -qF "$FIXTURE_WEB_MAIN"'
+
+  echo "== a root-only file: the place exists, the content does not become visible (§35.1) =="
+  prove 44.8i "the file place answers with the metadata the kernel does give out (§15.5)" \
+    'place "enter /etc/shadow" "look --json" | grep -qF "/etc/shadow"'
+  prove 44.8j "and reading it is still refused, structurally (§35.1, v0.2 §16)" \
+    'out=$(ono -c "read file /etc/shadow" 2>&1); status=$?;
+     printf "%s\n" "$out" | grep -qF "Ono-Sendai-E0302" && test "$status" -ne 0'
+
+  echo "== discovery does not become enumeration (§35.1, §27.4) =="
+  prove 44.8k "find place does not silently return an empty, complete-looking answer for a denied scope (§35.1, §27.4)" \
+    'out=$(ono -c "find place --near /root secret" 2>&1); status=$?;
+     if test "$status" -eq 0; then
+       printf "%s\n" "$out" | tr "A-Z" "a-z" | grep -qE "permission_denied|partial|unknown|denied"
+     else
+       printf "%s\n" "$out" | grep -qF "spatial.permission_denied"
+     fi'
+  # §22 gives the map a `completeness` and §35.2 gives `partial` its meaning — "a source could
+  # not be read". A map that drew a denied place and called itself `complete` was claiming there
+  # was nothing more to see (§2.17); the boundary is that word plus the absence of the contents.
+  prove 44.8l "a map of a denied place shows the boundary rather than its contents (§35.1, §23.6)" \
+    'ono -c "map $DENIED --depth 1 --json" > /tmp/denied-map2.json 2>&1;
+     grep -qF "\"completeness\":\"partial\"" /tmp/denied-map2.json &&
+     ! grep -qF "secret.txt" /tmp/denied-map2.json'
+
+  chmod 700 "$DENIED"
+  kill "$HOLDER" "$FIXTURE_WEB_MAIN" 2>/dev/null
+  echo "permission checks done"
+exit: 0
+stdout-contains: PROVED 44.8a
+stdout-contains: PROVED 44.8b
+stdout-contains: PROVED 44.8c
+stdout-contains: PROVED 44.8d
+stdout-contains: PROVED 44.8e
+stdout-contains: PROVED 44.8f
+stdout-contains: PROVED 44.8g
+stdout-contains: PROVED 44.8h
+stdout-contains: PROVED 44.8m
+stdout-contains: PROVED 44.8n
+stdout-contains: PROVED 44.8i
+stdout-contains: PROVED 44.8j
+stdout-contains: PROVED 44.8k
+stdout-contains: PROVED 44.8l
+stdout-contains: permission checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

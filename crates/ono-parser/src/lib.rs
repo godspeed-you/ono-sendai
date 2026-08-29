@@ -65,4 +65,4 @@ pub use ast::{
 };
 pub use diagnostic::Diagnostic;
 pub use lexer::{Token, TokenKind};
-pub use parser::{Parsed, parse, tokens};
+pub use parser::{Parsed, parse, tokens, words_arguments};

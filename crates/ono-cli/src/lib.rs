@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod builtin;
+pub mod complete;
 pub mod config;
 pub mod context;
 pub mod context_jobs;
@@ -16,10 +17,12 @@ pub mod expand;
 pub mod hosts;
 pub mod invocation;
 pub mod kuang_host;
+pub mod kuang_trust;
 pub mod live;
 pub mod meta;
 pub mod native;
 pub mod piped;
+pub mod plugin_registry;
 pub mod plugins;
 pub mod providers;
 pub mod remote;
@@ -30,6 +33,9 @@ pub mod session;
 pub mod session_provider;
 pub mod settings;
 pub mod sink;
+pub mod spatial;
+pub mod theme;
+pub mod trust;
 pub mod view;
 
 /// The usage text, shown by `--help` and by the `help` builtin.

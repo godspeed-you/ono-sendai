@@ -1,0 +1,27 @@
+# Spec §4.2 (the prompt as a HUD) and §14.3 (an object context is impossible to miss). Two of
+# §4.2's suggested segments had nothing behind them here: `vcs` was not implemented at all, and
+# the object-context segment was implemented and asserted by nothing — every case that reads a
+# prompt uses `cd` or a link. Both are read off a real terminal, because a piped run draws no
+# prompt at all (§29.1).
+case: the prompt names the branch it is in and the object it entered
+pty: true
+columns: 100
+lines: 30
+timeout: 90
+env: NO_COLOR=1
+stdin: |
+  cd /tmp/checkout
+  enter process 1
+  leave
+  exit
+run: |
+  # A checkout as far as the prompt is concerned: the branch is read from HEAD, never by forking
+  # `git`, so this needs no git binary and costs the prompt one small read (ADR-0250).
+  mkdir -p /tmp/checkout/.git
+  printf 'ref: refs/heads/release-line\n' > /tmp/checkout/.git/HEAD
+  ono
+exit: 0
+stdout-contains: git:release-line
+stdout-contains: ://process/1
+stdout-not-contains: panicked
+stdout-not-contains: Ono-Sendai-E

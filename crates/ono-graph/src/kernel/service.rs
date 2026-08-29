@@ -149,3 +149,93 @@ fn belongs_to(cgroup: &str, unit: &str) -> bool {
     let leaf = format!("/{unit}");
     cgroup.ends_with(&leaf) || cgroup.contains(&format!("{leaf}/"))
 }
+
+/// The units a service requires: `service.depends_on` (spec v0.4 §13, ADR-0239).
+///
+/// The service manager declares them and the provider carries them on the record, so this
+/// composes rather than observes (§2.16): each name is matched against the units the same trace
+/// already enumerated. A dependency naming a unit the manager does not currently hold draws no
+/// edge — an edge to a node that is not there would be the dangling reference §42.3 forbids —
+/// and it is not a failure either, because a unit file may name a unit that was never installed.
+#[derive(Debug)]
+pub struct ServiceDependencies {
+    registry: Arc<ProviderRegistry>,
+    snapshots: Arc<super::lookup::SharedSnapshots>,
+}
+
+impl ServiceDependencies {
+    /// A provider resolving units through `registry`'s service provider.
+    #[must_use]
+    pub fn new(registry: Arc<ProviderRegistry>) -> Self {
+        Self {
+            registry,
+            snapshots: Arc::default(),
+        }
+    }
+
+    pub(crate) fn sharing(mut self, snapshots: Arc<super::lookup::SharedSnapshots>) -> Self {
+        self.snapshots = snapshots;
+        self
+    }
+}
+
+#[async_trait::async_trait]
+impl RelationshipProvider for ServiceDependencies {
+    fn id(&self) -> &str {
+        "linux.service-dependencies"
+    }
+
+    fn subjects(&self) -> &[&str] {
+        &["ono.service/1"]
+    }
+
+    fn relations(&self) -> &[&str] {
+        &["depends-on"]
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![Capability::new("service.trace", Risk::Read)]
+    }
+
+    async fn relationships(&self, subject: &Node) -> Relationships {
+        let Some(unit) = subject.text("name") else {
+            return Relationships::failed(missing_field(subject, "name"));
+        };
+        let wanted: Vec<String> = match subject.field("dependencies") {
+            Some(Value::List(units)) => units
+                .iter()
+                .filter_map(|value| value.as_str().ok().map(str::to_owned))
+                .collect(),
+            // A provider with no notion of dependencies says `null`, and there is nothing to
+            // draw — not a failure (spec §35.3).
+            _ => return Relationships::new(),
+        };
+        if wanted.is_empty() {
+            return Relationships::new();
+        }
+        let (services, stream_failures) = match self.snapshots.all(&self.registry, "service").await
+        {
+            Ok(found) => found,
+            Err(error) => return Relationships::failed(error),
+        };
+        let mut found = Relationships::new();
+        for failure in stream_failures {
+            found.fail(failure);
+        }
+        for name in wanted {
+            if name == unit {
+                continue;
+            }
+            let Some(record) = services
+                .iter()
+                .find(|record| record.get("name") == Some(&Value::String(name.as_str().into())))
+            else {
+                continue;
+            };
+            if let Some(node) = Node::of(record) {
+                found.push(Relationship::exact(subject, node, "depends-on", self.id()));
+            }
+        }
+        found
+    }
+}

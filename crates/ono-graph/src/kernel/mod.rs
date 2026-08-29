@@ -23,11 +23,11 @@ pub use container::ContainerImage;
 pub use dns::{RemoteHosts, Resolver};
 pub use file::FileHolders;
 pub use identity::{ProcessUsers, UserGroups, UserProcesses};
-pub use mount::{MountDevices, MountFilesystems, MountUsers};
+pub use mount::{MountDevices, MountFilesystems, MountPeers, MountUsers};
 pub use network::{InterfaceRoutes, InterfaceSockets, RouteInterfaces};
 pub use process::{OpenFiles, ProcessSockets, ProcessTree, SocketOwners};
 pub use remote::{HostLinks, LinkProviders};
-pub use service::ServiceProcesses;
+pub use service::{ServiceDependencies, ServiceProcesses};
 
 /// Every exact relationship provider, reading the running system.
 ///
@@ -57,6 +57,7 @@ pub fn rooted_relationships(
                 .rooted(root)
                 .sharing(Arc::clone(&snapshots)),
         ),
+        Arc::new(ServiceDependencies::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
         Arc::new(ProcessTree::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
         Arc::new(
             ProcessSockets::new(Arc::clone(&registry))
@@ -72,6 +73,7 @@ pub fn rooted_relationships(
         ),
         Arc::new(MountDevices::new(Arc::clone(&registry))),
         Arc::new(MountFilesystems::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
+        Arc::new(MountPeers::new(Arc::clone(&registry)).sharing(Arc::clone(&snapshots))),
         Arc::new(
             MountUsers::new(Arc::clone(&registry))
                 .rooted(root)

@@ -55,11 +55,76 @@ pub fn to_yaml(value: &Value) -> Result<String, ErrorValue> {
 /// Returns [`ErrorCode::ParseSyntax`] if the text is not YAML, and whatever [`from_json`]
 /// returns for the document it describes.
 pub fn from_yaml(text: &str, schemas: &SchemaRegistry) -> Result<Value, ErrorValue> {
+    let depth = yaml_depth(text);
+    if depth > MAX_YAML_DEPTH {
+        return Err(ErrorValue::new(
+            ErrorCode::ParseSyntax,
+            format!(
+                "the document nests {depth} collections deep, and {MAX_YAML_DEPTH} is the limit"
+            ),
+        )
+        .with_help(
+            "a document this deep is refused by the YAML parser too; it is refused here so that \
+             saying no costs no more than reading it (spec §49)",
+        ));
+    }
     let json: serde_json::Value = serde_yaml_ng::from_str(text).map_err(|error| {
         ErrorValue::new(ErrorCode::ParseSyntax, "the input is not valid YAML")
             .with_help(error.to_string())
     })?;
     from_json(&json, schemas)
+}
+
+/// The deepest flow-collection nesting any decoder in this workspace hands to the YAML parser.
+///
+/// The parser refuses deeper documents on its own, and the work it does before refusing grows
+/// with the square of the depth: 100 kB of `{e: {e: {…` took seven seconds to be turned down.
+/// Counting the nesting first — one linear scan — turns that into the same refusal at the speed
+/// of reading. Found by the §35.6 serializer fuzz target (ADR-0313).
+///
+/// It is exactly the ceiling `serde_yaml_ng` enforces itself — 128 nests, 129 does not — so no
+/// document that used to decode stops decoding because of this.
+///
+/// Every decoder that reads YAML written by somebody else — a plugin manifest, a package
+/// signature, an adapter pack and its fixtures, an operator's policy or trust store — checks
+/// [`yaml_depth`] against this before parsing. The compiled-in contracts of this build do not:
+/// they are not input.
+pub const MAX_YAML_DEPTH: usize = 128;
+
+/// The deepest `{`/`[` nesting in `text`, counting every one of them.
+///
+/// Quoting is deliberately not tracked. An earlier version of this skipped quoted scalars and
+/// comments so that a `{` inside a string would not count — and a document with an unbalanced
+/// quote then read as one long string, the count came back as nothing, and the bomb went
+/// through: `{"a":{"b":q":1,"c":` followed by fifty thousand `{` took thirteen seconds
+/// (ADR-0313). Two models of YAML quoting that disagree is one model too many, and the one that
+/// matters belongs to the parser.
+///
+/// So this counts naively, which can only *over*-count: what it answers is an upper bound on the
+/// structural nesting, never an under-estimate. The cost is that a document whose *strings*
+/// carry more than [`MAX_YAML_DEPTH`] unmatched brackets is refused although the parser would
+/// have read it. That is a strange document, and refusing it says so.
+///
+/// ```
+/// use ono_value::{MAX_YAML_DEPTH, yaml_depth};
+/// assert_eq!(yaml_depth("a: [1, [2, [3]]]\n"), 3);
+/// assert!(yaml_depth(&"{e: ".repeat(1_000)) > MAX_YAML_DEPTH);
+/// ```
+#[must_use]
+pub fn yaml_depth(text: &str) -> usize {
+    let mut depth = 0_usize;
+    let mut deepest = 0_usize;
+    for byte in text.bytes() {
+        match byte {
+            b'{' | b'[' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest
 }
 
 /// Serializes a value as YAML for a reader that knows nothing about Ono (spec §33.5, §12.3).

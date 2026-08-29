@@ -230,6 +230,20 @@ async fn should_answer_get_command_from_the_registry_itself() {
 }
 
 #[tokio::test]
+async fn should_say_a_core_command_was_contributed_by_the_core() {
+    let ran = run("get command --verb where", &fixture::no_providers())
+        .await
+        .expect("the pipeline runs");
+
+    let record = ran.only().as_record().expect("a command is an object");
+    assert_eq!(
+        record.get("origin"),
+        Some(&Value::string("core")),
+        "spec §31.64: every registry entry records where it came from"
+    );
+}
+
+#[tokio::test]
 async fn should_find_a_command_by_what_it_does_rather_than_by_its_name() {
     let ran = run(r#"find command "listening""#, &fixture::no_providers())
         .await

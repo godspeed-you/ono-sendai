@@ -14,13 +14,16 @@
               loudly; the helpers beside the test functions state preconditions the same way"
 )]
 
+mod support;
+
 use std::net::TcpListener;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 
 use ono_pipeline::StreamEvent;
 use ono_provider_api::{Provider, Query};
-use ono_provider_netlink::{SocketOwners, SocketProvider};
+use ono_provider_netlink::{SocketOwners, SocketProtocol, SocketProvider, decode_inet_sockets};
 use ono_value::{RecordValue, Value};
+use support::{inet_diag_msg, message, sockid};
 
 async fn sockets(query: &Query) -> Vec<RecordValue> {
     let provider = SocketProvider::new();
@@ -168,5 +171,79 @@ fn should_map_an_inode_to_its_owner_from_a_proc_tree() {
     assert!(
         owners.owner(99_002).is_none(),
         "an inode nobody holds has no owner, and that is not an error"
+    );
+}
+
+/// A listening TCP socket whose inode is `4242`, so a scan that attributes nothing leaves it
+/// without an owner.
+fn unowned_listener() -> Vec<u8> {
+    message(
+        20,
+        &inet_diag_msg(
+            2,
+            10,
+            &sockid((&[0, 0, 0, 0], 22), (&[0, 0, 0, 0], 0), 0x1234_5678_9abc),
+            0,
+            0,
+            0,
+            4_242,
+        ),
+    )
+}
+
+#[test]
+fn should_say_the_owner_is_denied_when_the_scan_was_refused_a_process() {
+    // v0.4 §35.2 and AGENTS.md section 6. The kernel gave this socket an inode, so a process
+    // holds it; the only join is `/proc/<pid>/fd`, and this reader was refused one of those
+    // directories. The owner is therefore not absent — it is withheld, and a null that means
+    // "there is none" would be the false-empty answer §42.4 forbids. The provider knows which
+    // of the two happened, so the provider is what says so.
+    let root = tempfile::tempdir().expect("a scratch directory");
+    let readable = root.path().join("4242").join("fd");
+    std::fs::create_dir_all(&readable).expect("the fixture tree is creatable");
+    symlink("socket:[99001]", readable.join("3")).expect("a symlink is creatable");
+
+    let closed = root.path().join("1234").join("fd");
+    std::fs::create_dir_all(&closed).expect("the fixture tree is creatable");
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o000))
+        .expect("a directory this test owns can be closed to itself");
+
+    let owners = SocketOwners::from_proc_root(root.path()).expect("the scan reads what it can");
+    let decoded = decode_inet_sockets(&unowned_listener(), SocketProtocol::Tcp, Some(&owners));
+    let socket = &decoded.records()[0];
+
+    let error = match socket.get("process") {
+        Some(Value::Error(error)) => error.clone(),
+        other => panic!(
+            "v0.4 section 35.2: an owner this reader was refused is denied, not absent; got \
+             {other:?}"
+        ),
+    };
+    assert_eq!(
+        error.code().name(),
+        "io.permission_denied",
+        "the refusal keeps the taxonomy's own name so a spatial group can map it (v0.2 section 43)"
+    );
+
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o700))
+        .expect("the fixture is removable again");
+}
+
+#[test]
+fn should_leave_the_owner_null_when_a_complete_scan_found_nobody_holding_it() {
+    // The other half of the same distinction: nothing was hidden from this scan, so the socket
+    // simply has no holder among the processes that were readable. That is an ordinary answer,
+    // and dressing it as a refusal would be as dishonest as the reverse.
+    let root = tempfile::tempdir().expect("a scratch directory");
+    let fd = root.path().join("4242").join("fd");
+    std::fs::create_dir_all(&fd).expect("the fixture tree is creatable");
+    symlink("socket:[99001]", fd.join("3")).expect("a symlink is creatable");
+
+    let owners = SocketOwners::from_proc_root(root.path()).expect("the scan reads what it can");
+    let decoded = decode_inet_sockets(&unowned_listener(), SocketProtocol::Tcp, Some(&owners));
+    assert_eq!(
+        decoded.records()[0].get("process"),
+        Some(&Value::Null),
+        "a complete scan that found no holder says so with null, not with a refusal"
     );
 }

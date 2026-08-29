@@ -1,0 +1,26 @@
+# Canonical HiddenSummary schema. Source: v0.4 §22's `hidden: HiddenSummary`, §23.6 ("It MUST NOT
+# silently drop significant landmarks without indicating hidden counts") and §54's checklist
+# question "Are hidden objects/counts disclosed?".
+#
+# The three numbers are the three different ways a bounded map leaves something out, and they are
+# kept apart because they mean different things to a reader: clustered objects are one click
+# away, aggregated ones are visible as part of a coarser node, and the rest are counted.
+id: ono.hidden-summary/1
+name: HiddenSummary
+summary: What a bounded map left out, and in which way.
+identity: [count]
+fields:
+  count:
+    type: int
+    required: true
+    doc: How many known places the map does not draw as their own node.
+  clustered:
+    type: int
+    required: true
+    doc: How many of those a cluster stands for (§8.2).
+  aggregated:
+    type: int
+    required: true
+    doc: How many were folded into a coarser node by the zoom level (§8.1).
+default_view:
+  columns: [count, clustered, aggregated]

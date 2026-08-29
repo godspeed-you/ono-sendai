@@ -1,0 +1,25 @@
+[package]
+name = "ono-spatial-core"
+description = "The spatial data model of Ono-Sendai: identity, places, relations, hierarchy, trail and tombstones (spec v0.4 §3, §10, §11, §20, §45.1)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-graph.workspace = true
+ono-provider-api.workspace = true
+ono-render.workspace = true
+ono-value.workspace = true
+jiff.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+serde_yaml_ng.workspace = true
+
+[lints]
+workspace = true

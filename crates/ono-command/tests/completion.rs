@@ -195,3 +195,31 @@ fn should_stay_far_inside_the_first_completion_budget() {
          below a millisecond"
     );
 }
+
+#[test]
+fn should_offer_the_help_topics_when_a_topic_is_being_typed() {
+    // Spec §15.1 makes completion metadata lookup: `help <tab>` has an answer — the topics the
+    // help system itself defines — and until now it had none, because a topic is a vocabulary of
+    // `help` alone and no contract carried it (v0.4 §38.2, ADR-0272).
+    let candidates = complete("help ");
+    let names = texts(&candidates);
+    assert!(names.contains(&"spatial"), "got {names:?}");
+    assert!(names.contains(&"here"), "got {names:?}");
+    assert!(names.contains(&"verbs"), "got {names:?}");
+    assert!(
+        names.contains(&"get process"),
+        "a command's own page is a topic too, got {names:?}"
+    );
+}
+
+#[test]
+fn should_narrow_the_help_topics_to_the_prefix_typed() {
+    let candidates = complete("help he");
+    let names = texts(&candidates);
+    // `help help` is a topic too, and `he` is its prefix as much as `here`'s; nothing else is.
+    assert!(names.contains(&"here"), "got {names:?}");
+    assert!(
+        names.iter().all(|name| name.starts_with("he")),
+        "got {names:?}"
+    );
+}

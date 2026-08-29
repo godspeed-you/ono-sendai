@@ -38,12 +38,19 @@ pub const PROVIDER_ID: &str = "linux.mountinfo";
 
 /// One line of `/proc/self/mountinfo`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MountInfo {
-    pub(crate) source: String,
-    pub(crate) target: PathBuf,
-    pub(crate) filesystem: String,
-    pub(crate) options: Vec<String>,
-    pub(crate) device: Option<String>,
+pub struct MountInfo {
+    /// What is mounted — a device path, a UUID, or a filesystem's own name for itself.
+    pub source: String,
+    /// Where it is mounted.
+    pub target: PathBuf,
+    /// The filesystem type, after the `-` separator.
+    pub filesystem: String,
+    /// The per-mount options, in the order the kernel lists them.
+    pub options: Vec<String>,
+    /// The `major:minor` of the device backing the mount.
+    pub device: Option<String>,
+    /// The propagation peer group of `mountinfo(5)`'s `shared:N`, where the mount is in one.
+    pub peer_group: Option<i64>,
 }
 
 impl MountInfo {
@@ -58,7 +65,8 @@ impl MountInfo {
 /// superoptions`, where the number of optional fields is variable and the `-` is what separates
 /// them from the rest. Splitting on a fixed column count is the bug this function exists to
 /// avoid.
-pub(crate) fn parse_mountinfo(text: &str) -> Vec<MountInfo> {
+#[must_use]
+pub fn parse_mountinfo(text: &str) -> Vec<MountInfo> {
     text.lines().filter_map(parse_mountinfo_line).collect()
 }
 
@@ -71,6 +79,16 @@ fn parse_mountinfo_line(line: &str) -> Option<MountInfo> {
     let filesystem = fields.get(separator + 1)?;
     let source = unescape(fields.get(separator + 2)?);
     let super_options = fields.get(separator + 3).copied().unwrap_or_default();
+    // The optional fields sit between the options and the `-`, and there may be none: a private
+    // mount says nothing there, which is why the separator has to be found rather than counted
+    // to. `shared:N` is the peer group; a mount that is only a slave (`master:N`) propagates to
+    // nothing and is in no group of its own.
+    let peer_group = fields
+        .get(6..separator)
+        .unwrap_or_default()
+        .iter()
+        .find_map(|field| field.strip_prefix("shared:"))
+        .and_then(|id| id.parse().ok());
 
     // The kernel reports per-mount and per-superblock options separately. A user asking "how is
     // this mounted" means both, so both are in the list, in that order, without duplicates.
@@ -90,6 +108,7 @@ fn parse_mountinfo_line(line: &str) -> Option<MountInfo> {
         target: PathBuf::from(target),
         filesystem: (*filesystem).to_owned(),
         options,
+        peer_group,
         // Major 0 is an anonymous device: tmpfs, procfs, an overlay. There is no block device
         // behind it, and saying `0:42` would suggest there is.
         device: match device.split_once(':') {
@@ -251,6 +270,9 @@ impl StorageProvider {
             Value::Bool(definition.options.iter().any(|option| option == "ro")),
         )?
         .set("device", Value::Null)?
+        // A definition in `/etc/fstab` is not mounted, so it is in no peer group: the kernel
+        // assigns one when the mount happens.
+        .set("peer_group", Value::Null)?
         .build())
     }
 
@@ -321,6 +343,12 @@ impl StorageProvider {
                 .device
                 .as_ref()
                 .map_or(Value::Null, |device| Value::string(device)),
+        )?
+        .set(
+            "peer_group",
+            mount
+                .peer_group
+                .map_or(Value::Null, |group| Value::Int(i128::from(group))),
         )?
         .build())
     }
@@ -885,15 +913,20 @@ fn mount_error(errno: nix::errno::Errno, target: &Path) -> ErrorValue {
 
 /// One line of `fstab(5)`: what is mounted where, with what, and how.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MountDefinition {
-    pub(crate) source: String,
-    pub(crate) target: PathBuf,
-    pub(crate) fs_type: String,
-    pub(crate) options: Vec<String>,
+pub struct MountDefinition {
+    /// What the line says to mount.
+    pub source: String,
+    /// Where it says to mount it.
+    pub target: PathBuf,
+    /// The filesystem type the line declares.
+    pub fs_type: String,
+    /// The comma-separated options, split.
+    pub options: Vec<String>,
 }
 
 /// Decodes `fstab(5)`: whitespace-separated fields, `#` comments, octal escapes for spaces.
-pub(crate) fn parse_fstab(text: &str) -> Vec<MountDefinition> {
+#[must_use]
+pub fn parse_fstab(text: &str) -> Vec<MountDefinition> {
     text.lines()
         .filter_map(|line| {
             let line = line.trim();

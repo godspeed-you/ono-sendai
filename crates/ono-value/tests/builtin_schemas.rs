@@ -75,6 +75,9 @@ fn should_define_the_process_schema_exactly_as_the_spec_does() {
             ("group", true),
             ("state", false),
             ("cpu", true),
+            // ADR-0232: a share of a CPU means nothing without the window it is a share over,
+            // so `ono.process/1` states the window beside the number.
+            ("cpu_window", true),
             ("memory", true),
             ("virtual_mem", true),
             ("threads", true),
@@ -82,6 +85,9 @@ fn should_define_the_process_schema_exactly_as_the_spec_does() {
             ("cwd", true),
             ("service", true),
             ("container", true),
+            // v0.4 §10.2 makes the pid namespace part of a process's spatial identity: without
+            // it a container's pid 1 and the host's pid 1 reduce to one identity (ADR-0134).
+            ("pid_namespace", true),
         ]
     );
     assert_eq!(names(process.identity()), ["pid", "started"]);
@@ -155,6 +161,10 @@ fn should_define_the_service_schema_exactly_as_the_spec_does() {
             ("since", true),
             ("provider", false),
             ("unit_file", true),
+            // ADR-0239: the units the service manager says this one requires. v0.4 §13 puts
+            // dependencies among a service place's groups, and nothing could fill them while
+            // the fact lived only on the bus.
+            ("dependencies", true),
         ]
     );
     assert_eq!(names(service.identity()), ["provider", "name"]);
@@ -216,6 +226,10 @@ fn should_define_the_mount_schema_exactly_as_the_spec_does() {
             ("options", false),
             ("read_only", false),
             ("device", true),
+            // ADR-0236: `mountinfo(5)`'s `shared:N`. §28.6 names no propagation field, and
+            // storage.yaml promises `trace mount` shows propagation peers; the group is the
+            // fact both mounts state, so it is the mount's and not the trace's.
+            ("peer_group", true),
         ]
     );
 }

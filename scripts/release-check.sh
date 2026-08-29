@@ -23,4 +23,15 @@ if grep -n '^- \[ \]' docs/ACCEPTANCE.md; then
   exit 1
 fi
 
+# Three boxes of the checklist are claims about the work board rather than about the shell:
+# section 4.5 Delivery, section 4.6.5 Delivery and section 4.7.2 "No release-blocking known
+# defects remain" all assert that `docs/STATE.md` holds no claim and no unexplained deferral.
+# Until ADR-0402 nothing read that file, so those boxes were true on the day they were written
+# and unexamined afterwards. The gate does not run this: holding a claim mid-run is correct.
+printf '\n\033[1m== the work board\033[0m\n'
+if ! cargo run --quiet --package xtask -- state-check; then
+  printf '\n\033[31mrelease-check: docs/STATE.md says the work is not finished\033[0m\n'
+  exit 1
+fi
+
 printf '\n\033[1;32mrelease-check: the shell is release-ready\033[0m\n'

@@ -72,7 +72,7 @@ pub fn check_pipeline_with(
     pipeline: &Pipeline,
     adapted: &[Option<String>],
 ) -> Result<(), ErrorValue> {
-    let mut element: Option<Arc<Schema>> = None;
+    let mut element: Vec<Arc<Schema>> = Vec::new();
     let mut index = 0;
     let lists =
         std::iter::once(&pipeline.head).chain(pipeline.tail.iter().map(|chained| &chained.list));
@@ -84,8 +84,8 @@ pub fn check_pipeline_with(
                 .and_then(|id| id.parse::<ono_value::SchemaId>().ok())
                 .and_then(|id| schemas.iter().find(|schema| *schema.id() == id).cloned());
             element = match adapted_here {
-                Some(schema) => Some(schema),
-                None => check_stage(registry, schemas, stage, element)?,
+                Some(schema) => vec![schema],
+                None => check_stage(registry, schemas, stage, &element)?,
             };
             index += 1;
         }
@@ -98,22 +98,20 @@ fn check_stage(
     registry: &CommandRegistry,
     schemas: &[Arc<Schema>],
     stage: &Stage,
-    upstream: Option<Arc<Schema>>,
-) -> Result<Option<Arc<Schema>>, ErrorValue> {
+    upstream: &[Arc<Schema>],
+) -> Result<Vec<Arc<Schema>>, ErrorValue> {
     let Some(head) = stage.head.name() else {
         // A value head — a variable, a parenthesised pipeline — carries no declared schema.
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let Ok(resolved) = registry.resolve(head, &stage.arguments) else {
         // Not a native command: an external program's output has no schema to check against, and
         // ADR-0011 puts `PATH` after the registry rather than instead of it.
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let contract = resolved.contract;
 
-    if contract.argument_mode() == ArgumentMode::Expression
-        && let Some(schema) = upstream.as_deref()
-    {
+    if contract.argument_mode() == ArgumentMode::Expression && !upstream.is_empty() {
         // The check is type-aware, not blind: only an expression bound to a parameter that
         // carries *values* reads fields from the stream. A word bound to a string parameter —
         // `sort cpu desc`'s direction, spec §6.3's own spelling — is vocabulary, and rejecting
@@ -125,6 +123,7 @@ fn check_stage(
                     .or_else(|| contract.option(name))
                     .is_none_or(|spec| spec.declared_type() != &crate::DeclaredType::String)
             };
+            let schema = upstream;
             for (name, binding) in bound.selectors().iter().chain(bound.options()) {
                 if !field_bearing(name) {
                     continue;
@@ -136,20 +135,43 @@ fn check_stage(
                 }
                 if let crate::Binding::Expressions(expressions) = binding {
                     for expression in expressions {
-                        check_fields(expression, schema)?;
+                        check_against_any(expression, schema)?;
                     }
                 }
             }
         } else {
             for argument in resolved.arguments {
                 if let Argument::Value(expression) = argument {
-                    check_fields(expression, schema)?;
+                    check_against_any(expression, upstream)?;
                 }
             }
         }
     }
 
-    Ok(output_schema(contract.output(), schemas, upstream))
+    Ok(output_schemas(contract.output(), schemas, upstream))
+}
+
+/// Checks an expression against a stage's element type, which a union output makes a *set* of
+/// schemas rather than one: `get config --problems` streams `ono.error/1` where `get config`
+/// streams `ono.config-setting/1`, and the option that decides which is written on the stage
+/// itself (ADR-0218).
+///
+/// A field is unknown only when no alternative declares it. The reported error is the first
+/// alternative's, so the message still names a schema and its nearest field.
+fn check_against_any(
+    expression: &ono_parser::Expr,
+    schemas: &[Arc<Schema>],
+) -> Result<(), ErrorValue> {
+    let mut first: Option<ErrorValue> = None;
+    for schema in schemas {
+        match check_fields(expression, schema) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                first.get_or_insert(error);
+            }
+        }
+    }
+    first.map_or(Ok(()), Err)
 }
 
 /// The schema flowing out of the last stage of `pipeline`, for completion (spec §15.1,
@@ -170,7 +192,11 @@ pub(crate) fn schema_after(
         for stage in &list.stages {
             let head = stage.head.name()?;
             let contract = registry.resolve(head, &stage.arguments).ok()?.contract;
-            element = output_schema(contract.output(), schemas, element);
+            let carried = element.map_or_else(Vec::new, |schema| vec![schema]);
+            element = match output_schemas(contract.output(), schemas, &carried).as_slice() {
+                [only] => Some(Arc::clone(only)),
+                _ => None,
+            };
         }
     }
     element
@@ -190,16 +216,30 @@ fn bare_direction(bound: &crate::BoundArguments) -> bool {
         )
 }
 
-/// The schema flowing out of a stage: its own where it names one, the upstream's where its output
-/// type is open, and nothing where it reshapes the stream into something undeclared.
-fn output_schema(
+/// The schemas flowing out of a stage: its own where it names them, the upstream's where its
+/// output type is open, and none where it reshapes the stream into something undeclared.
+///
+/// A union output — `stream<ono.config-setting/1 | ono.error/1>` — names every element type the
+/// stage may produce, and every one of them is carried (ADR-0218). An alternative nothing
+/// advertises makes the whole element type unknown rather than a subset that would reject a
+/// field the missing schema declares.
+fn output_schemas(
     output: &IoType,
     schemas: &[Arc<Schema>],
-    upstream: Option<Arc<Schema>>,
-) -> Option<Arc<Schema>> {
+    upstream: &[Arc<Schema>],
+) -> Vec<Arc<Schema>> {
     if output.is_open() {
-        return upstream;
+        return upstream.to_vec();
     }
-    let id: ono_value::SchemaId = output.element_schema()?.parse().ok()?;
-    schemas.iter().find(|schema| *schema.id() == id).cloned()
+    let mut carried = Vec::new();
+    for reference in output.schema_references() {
+        let Ok(id) = reference.parse::<ono_value::SchemaId>() else {
+            return Vec::new();
+        };
+        match schemas.iter().find(|schema| *schema.id() == id) {
+            Some(schema) => carried.push(Arc::clone(schema)),
+            None => return Vec::new(),
+        }
+    }
+    carried
 }

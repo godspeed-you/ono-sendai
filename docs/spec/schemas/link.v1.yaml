@@ -20,11 +20,12 @@ fields:
   transport:
     type: enum
     required: true
-    values: [ssh, local]
+    values: [ssh, local, tcp]
     doc: >-
       How the bytes travel. `ssh` spawns the remote agent over OpenSSH; `local` spawns
       `ono --agent` as a child of this shell, which is how a link is exercised without a
-      network.
+      network; `tcp` is Ono's own authenticated transport of spec §21.5, where the peer proves
+      it holds the key this shell pinned for the host (ADR-0353).
   mode:
     type: enum
     required: true

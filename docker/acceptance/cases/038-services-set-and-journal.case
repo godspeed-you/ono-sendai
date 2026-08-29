@@ -48,8 +48,8 @@ exit: 0
 stdout-contains: Ono-Sendai-E0401
 stdout-contains: status=1
 stdout-contains: Ono-Sendai-E0201
-stdout-contains: Ono-Sendai-E0202 unknown field `prio`
-stdout-contains: Ono-Sendai-E0202 unknown field `lvl`
+stdout-contains: Ono-Sendai-E0202 type.unknown_field unknown field `prio`
+stdout-contains: Ono-Sendai-E0202 type.unknown_field unknown field `lvl`
 stdout-contains: [{"identifier":"kernel","priority":5},{"identifier":"systemd","priority":6}]
 stdout-contains: [{"message":"ptrace attach was attempted"}]
 stdout-contains: [{"level":"info","unit":"init.scope"}]

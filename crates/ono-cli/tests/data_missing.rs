@@ -327,6 +327,36 @@ fn should_report_no_rows_when_the_snapshots_are_identical() {
 }
 
 #[test]
+fn should_report_two_fresh_snapshots_of_one_object_as_unchanged() {
+    // `diff` answers what changed about the objects, not when they were read. Two readings of
+    // the same unchanged user differ only in the instant each was observed, which is provenance
+    // (spec §26, §10.7) and not the object's state (ADR-0229).
+    let run = ono("get user root | diff (get user root) | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[]",
+        "nothing about root changed between the two readings: {}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_still_report_a_field_that_moved_between_two_snapshots() {
+    // The comparison ignores provenance, not data: a field that differs is still a change.
+    let run = ono("let before = [{\"pid\":1,\"name\":\"init\"}]; \
+         let now = [{\"pid\":1,\"name\":\"systemd\"}]; \
+         $now | diff $before --identity [pid] | select change | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[{\"change\":\"changed\"}]",
+        "a field that moved is a change: {}",
+        run.output()
+    );
+}
+
+#[test]
 fn should_compare_provider_records_by_their_schema_identity_without_an_override() {
     // `ono.process/1` declares `identity: [pid, started]`, so no `--identity` is needed. The
     // right side is an empty snapshot (no process has that pid), which makes pid 1 `added`.
@@ -422,5 +452,132 @@ fn should_stack_records_instead_of_truncating_a_table_when_the_terminal_is_narro
         "every value of pid 1 fits in 30 columns once stacked, so nothing may be truncated \
          (spec §13.3):\n{}",
         output.join("\n")
+    );
+}
+
+// --- a declared error field is data a path can descend into (ADR-0215, spec §10.5, §11.5) ----
+
+#[test]
+fn should_project_the_named_field_of_a_result_s_error_when_a_path_descends_into_it() {
+    // Spec §11.5 declares `ActionResult.error` as `ono.error/1`: the error stored there is the
+    // field's value, so `error.name` is the dotted selector `catch` and `where` match on, not
+    // the whole error record.
+    let run = ono("stop process 999999 | select status error.name error.code | to json");
+
+    let rows = rows(&run);
+    assert_eq!(
+        rows.len(),
+        1,
+        "one result per target (spec §16.5): {rows:?}"
+    );
+    let row = &rows[0];
+    assert_eq!(
+        row.get("status").and_then(Value::as_str),
+        Some("failed"),
+        "the mutation could not act on a process that is gone: {row:?}"
+    );
+    assert_eq!(
+        row.get("name").and_then(Value::as_str),
+        Some("io.not_found"),
+        "spec §16.1: `error.name` is the selector, not the record that holds it: {}",
+        text_of(row)
+    );
+    assert_eq!(
+        row.get("code").and_then(Value::as_str),
+        Some("Ono-Sendai-E0301"),
+        "spec §43: `error.code` is the stable code: {}",
+        text_of(row)
+    );
+}
+
+#[test]
+fn should_keep_a_row_whose_error_matches_when_a_predicate_reads_the_error_s_name() {
+    let run = ono("stop process 999999 | where error.name == \"io.not_found\" | count");
+
+    assert_eq!(
+        run.stdout()
+            .lines()
+            .last()
+            .map(str::trim)
+            .unwrap_or_default(),
+        "1",
+        "a predicate over `error.name` selects the failed result: {}",
+        run.output()
+    );
+    assert_ne!(
+        run.status().code(),
+        0,
+        "ADR-0006: a failed ActionResult still decides the aggregate exit status"
+    );
+}
+
+#[test]
+fn should_bind_a_caught_error_as_a_value_whose_fields_can_be_read() {
+    // Spec §16: `catch e` binds the structured error. Reading a field of it must answer the
+    // field, not re-raise the error the block just caught.
+    let run = ono("try { get file /nope/nope/nope } catch e { echo $e.name }");
+
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "io.not_found",
+        "the caught error's `name` is readable: {}",
+        run.output()
+    );
+}
+
+// --- what the pipeline dropped is said, not only counted (ADR-0014, ADR-0261) ----------------
+
+#[test]
+fn should_say_how_many_values_a_condition_could_not_be_decided_on() {
+    // ADR-0014: a row a predicate could not decide is excluded and counted, so "a user who is
+    // surprised by a row count has somewhere to look that is not the source code".
+    let run = Shell::new()
+        .args(["-c", "from json | where a > 1 | count"])
+        .stdin("[{\"a\":1},{\"a\":null},{\"a\":3}]")
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().lines().last().map(str::trim),
+        Some("1"),
+        "the answer is unchanged: {:?}",
+        run.output()
+    );
+    assert!(
+        run.stderr().contains('1') && run.stderr().contains("could not be decided"),
+        "the excluded row is reported: {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_say_how_many_unknown_values_an_aggregate_skipped() {
+    let run = Shell::new()
+        .args([
+            "-c",
+            "from json | measure a | select count skipped | to json",
+        ])
+        .stdin("[{\"a\":1},{\"a\":null},{\"a\":3}]")
+        .run();
+    run.assert_success();
+    assert!(
+        run.stderr().contains("skipped"),
+        "the skipped null is reported: {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_say_nothing_when_the_pipeline_dropped_nothing() {
+    let run = Shell::new()
+        .args(["-c", "from json | where a > 0 | count"])
+        .stdin("[{\"a\":1}]")
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stderr(),
+        "",
+        "a run that dropped nothing says nothing: {:?}",
+        run.stderr()
     );
 }

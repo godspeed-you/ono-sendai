@@ -162,6 +162,58 @@ fn should_pick_one_item_of_the_current_result_by_position() {
 }
 
 #[test]
+fn should_keep_a_secret_out_of_the_retained_result_as_well_as_out_of_history() {
+    // Spec §20.2: "Retention policy must protect secrets"; §17.5: a secret must not reach
+    // history through renderer output. The retention applies the same policy history does, so
+    // the shell cannot redact the command that read a token and keep the token (ADR-0262).
+    let run = Shell::new()
+        .args(["-c", "from json; @-1 | to json"])
+        .stdin("[{\"cmd\":\"psql --password=hunter2\"}]")
+        .run();
+    run.assert_success();
+    let replayed = run.stdout().lines().last().unwrap_or_default().to_owned();
+    assert!(
+        !replayed.contains("hunter2"),
+        "the secret is not replayed by `@-1`: {replayed}"
+    );
+    assert!(
+        replayed.contains("--password=<redacted>"),
+        "the command stays readable and only the value is gone: {replayed}"
+    );
+}
+
+#[test]
+fn should_keep_an_assignment_s_value_out_of_the_retained_result() {
+    let run = Shell::new()
+        .args(["-c", "from json; @-1 | to json"])
+        .stdin("[{\"line\":\"AWS_SECRET_ACCESS_KEY=abc123\"}]")
+        .run();
+    run.assert_success();
+    let replayed = run.stdout().lines().last().unwrap_or_default().to_owned();
+    assert!(
+        !replayed.contains("abc123") && replayed.contains("<redacted>"),
+        "an assignment's value is a secret wherever it is kept: {replayed}"
+    );
+}
+
+#[test]
+fn should_leave_ordinary_text_in_a_retained_result_alone() {
+    // A redaction that fires on ordinary text teaches people to turn it off (ADR-0033's own
+    // reasoning, carried over from history).
+    let run = Shell::new()
+        .args(["-c", "from json; @-1 | to json"])
+        .stdin("[{\"a\":\"hello world\"}]")
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout().lines().last(),
+        Some("[{\"a\":\"hello world\"}]"),
+        "nothing about this is a secret: {:?}",
+        run.output()
+    );
+}
+
+#[test]
 fn should_say_there_is_nothing_to_reuse_when_no_result_was_retained() {
     let run = ono("@-1 | count");
     assert!(!run.status().is_success());
@@ -328,4 +380,195 @@ fn should_fail_the_run_when_a_serialised_stream_carried_nothing_but_failures() {
     let empty = ono("get process | where pid == 2147483647 | to json");
     empty.assert_success();
     assert_eq!(empty.stdout().trim(), "[]");
+}
+
+// --- the byte boundary of spec §12.2 and §12.3, both ways (B-split-B8) --------------------------
+
+#[test]
+fn should_refuse_to_hand_objects_to_a_program_and_say_which_representation_to_choose() {
+    // Spec §12.3: "An object pipeline cannot be silently sent to an arbitrary process." The
+    // refusal is only useful if it carries the fix, so the message names a representation the
+    // user can actually write. Case `040-object-pipeline` proves this against the real system;
+    // nothing in the workspace did, and the workspace is where a regression is caught first.
+    let run = ono("get process | grep x");
+    assert!(
+        !run.status().is_success(),
+        "objects aimed at a program that reads bytes must not run, got {:?}",
+        run.output()
+    );
+    let complaint = run.stderr().to_owned();
+    assert!(
+        complaint.contains("Ono-Sendai-E0201"),
+        "spec §43: the refusal is `type.mismatch`, got {complaint:?}"
+    );
+    assert!(
+        complaint.contains("to json"),
+        "spec §12.3: the error suggests the serialization to choose, got {complaint:?}"
+    );
+}
+
+#[test]
+fn should_carry_undecodable_bytes_from_a_child_process_into_a_value_without_losing_them() {
+    // Spec §12.2: external stdout enters the value system as bytes, and undecodable bytes are
+    // never lost. `0xFF` is not valid UTF-8 anywhere, so a shell that decoded lossily would put
+    // U+FFFD (`efbfbd`) where the byte was, and one that decoded strictly would drop the value
+    // entirely. Bytes serialise as hex (spec §33.5), so the whole sequence is readable back.
+    let run = ono(r"printf 'a\xffb' | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        r#"["61ff62"]"#,
+        "spec §12.2: the child's three bytes arrive as three bytes — a lossy decode would show \
+         `61efbfbd62`, got {:?}",
+        run.stdout()
+    );
+}
+
+// --- the *bounded* half of §20.2's bounded retention (B-split-E5) --------------------------------
+
+#[test]
+fn should_evict_the_oldest_retained_result_when_the_seventeenth_arrives() {
+    // Spec §20.2: retention is bounded, and a bound nobody drives is a number nobody has
+    // checked. Seventeen results are retained in one run; the sixteen most recent answer, and
+    // the seventeenth back — the first — is gone with the structured refusal, not with an empty
+    // list that a script would read as "no rows".
+    let mut script = String::new();
+    for n in 1..=17 {
+        script.push_str(&format!("let v{n} = [{n}]; $v{n} | take 1; "));
+    }
+
+    let newest = ono(&format!("{script} @-1 | to json"));
+    newest.assert_success();
+    assert_eq!(
+        newest.stdout().lines().last().unwrap_or_default(),
+        "[17]",
+        "`@-1` is the most recent result"
+    );
+
+    let oldest_kept = ono(&format!("{script} @-16 | to json"));
+    oldest_kept.assert_success();
+    assert_eq!(
+        oldest_kept.stdout().lines().last().unwrap_or_default(),
+        "[2]",
+        "sixteen results are kept, so the oldest reachable one is the second that ran — the \
+         first was evicted"
+    );
+
+    let evicted = ono(&format!("{script} @-17 | to json"));
+    assert!(
+        !evicted.status().is_success(),
+        "the seventeenth result back was evicted, got {:?}",
+        evicted.output()
+    );
+    assert!(
+        evicted.stderr().contains("Ono-Sendai-E0102"),
+        "spec §43: a result that is no longer retained is a structured refusal, got {:?}",
+        evicted.stderr()
+    );
+}
+
+#[test]
+fn should_say_so_when_a_result_is_too_large_to_retain_whole() {
+    // Spec §20.2 bounds a result's values as well as the number of results. Truncating in
+    // silence is the failure mode this pins: `@-1` would come up short of what the screen just
+    // showed and nothing would connect the two. The notice goes to stderr, so stdout is still
+    // only the answer (spec §33.2).
+    let directory = ono_testkit::scratch();
+    let document: String = (0..10_005)
+        .map(|n| format!("{{\"n\":{n}}}"))
+        .collect::<Vec<String>>()
+        .join(",");
+    directory.write("big.json", format!("[{document}]"));
+
+    let run = Shell::new()
+        .cwd(directory.path())
+        .args([
+            "-c",
+            "read file big.json --encoding utf-8 | from json | take 10005; @-1 | count | to json",
+        ])
+        .run();
+    run.assert_success();
+
+    assert!(
+        run.stderr()
+            .contains("retained the first 10000 of 10005 values"),
+        "spec §20.2: a truncated retention says so, got stderr {:?}",
+        run.stderr()
+    );
+    assert_eq!(
+        run.stdout().lines().last().unwrap_or_default(),
+        "[10000]",
+        "what `@-1` reuses is what was retained, and the notice said how much that is"
+    );
+}
+
+// --- the other direction of §12.3: bytes reaching a stage defined over objects (B-data-9) -------
+
+#[test]
+fn should_refuse_a_program_whose_bytes_cannot_become_the_objects_the_next_stage_needs() {
+    // Spec §12.3 makes the boundary explicit in both directions. `count` is declared over a
+    // stream of objects and `ls` writes bytes no adapter decodes, so there is nothing for
+    // `count` to count. Answering `1` — the whole listing wrapped as a single value — is the
+    // silent conversion §12.3 exists to forbid, and it is the wrong number besides.
+    let run = ono("ls /etc | count");
+    assert!(
+        !run.status().is_success(),
+        "bytes no adapter can turn into objects must not reach a stage defined over objects, \
+         got {:?}",
+        run.output()
+    );
+    let complaint = run.stderr().to_owned();
+    assert!(
+        complaint.contains("Ono-Sendai-E0911"),
+        "spec §43: the refusal is `adapter.required_for_structured_pipeline`, got {complaint:?}"
+    );
+    assert!(
+        complaint.contains("count"),
+        "the refusal names the stage that needs objects, got {complaint:?}"
+    );
+    assert!(
+        complaint.contains("raw ls") || complaint.contains("from "),
+        "the refusal carries the routes out — run it raw, or decode it yourself, \
+         got {complaint:?}"
+    );
+}
+
+#[test]
+fn should_answer_at_once_when_an_endless_program_feeds_a_stage_defined_over_objects() {
+    // B-data-9's exit test. `yes` never ends, so a shell that reads its output before deciding
+    // whether the next stage can use it never answers at all. The question — can this program
+    // give `take` the objects it is declared over? — is answerable from the contracts alone,
+    // before anything is spawned, and that is when it is asked.
+    let started = std::time::Instant::now();
+    let run = ono("yes | take 1");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "`yes | take 1` must answer without waiting for a producer that never ends, took {elapsed:?}"
+    );
+    assert!(
+        !run.status().is_success(),
+        "there is nothing for `take` to take from bytes nothing decodes, got {:?}",
+        run.output()
+    );
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0911"),
+        "spec §43: the refusal is `adapter.required_for_structured_pipeline`, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_still_carry_a_whole_document_across_the_boundary_into_a_parser() {
+    // The byte carry ADR-0028 buffers is a *document*, and a document is one value: `from json`
+    // cannot answer half a document, so the buffering is the semantics rather than a shortcut.
+    // Only the stages declared over bytes reach it, which is what the refusals above enforce.
+    let run = ono("printf '[{\"a\":1},{\"a\":2}]' | from json | count | to json");
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[2]",
+        "a program's bytes reach the parser declared over them, whole, got {:?}",
+        run.output()
+    );
 }

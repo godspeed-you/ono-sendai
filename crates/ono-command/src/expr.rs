@@ -508,6 +508,34 @@ fn enum_word<'e>(
     candidate(&binary.lhs, &binary.rhs).or_else(|| candidate(&binary.rhs, &binary.lhs))
 }
 
+/// The variants of the enum field an ordering comparison names, in declared order.
+///
+/// `None` unless the operator orders — `<`, `<=`, `>`, `>=` — and one side is a path to a field
+/// the schema declares as an enum. Equality never needs this: two names are equal or they are
+/// not, whatever their positions (ADR-0222).
+fn ordered_enum(binary: &ono_parser::BinaryExpr, schema: &Schema) -> Option<Arc<[Arc<str>]>> {
+    if !matches!(
+        binary.op,
+        BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq
+    ) {
+        return None;
+    }
+    let variants_of = |expression: &Expr| match expression {
+        Expr::Path(path) => match schema.field(&path.name).map(ono_value::FieldDef::ty) {
+            Some(ono_value::FieldType::Enum(variants)) => Some(variants.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    variants_of(&binary.lhs).or_else(|| variants_of(&binary.rhs))
+}
+
+/// A value's position among `variants`, or `None` when it names none of them.
+fn rank(value: &Value, variants: &[Arc<str>]) -> Option<usize> {
+    let name = value.as_str().ok()?;
+    variants.iter().position(|variant| &**variant == name)
+}
+
 /// One step of a field chain, optional where it was written `?.`.
 fn field_step(access: &FieldAccess) -> FieldStep<'_> {
     if access.optional {
@@ -646,6 +674,24 @@ fn binary_op(
 
     if left.is_null() || right.is_null() {
         return Ok(Value::Null);
+    }
+
+    // An enum is a closed set written from least to greatest, so `where level >= error` orders by
+    // severity rather than by spelling — the comparison spec §41.4 writes and the one alphabet
+    // gets backwards (ADR-0222). Only an ordering comparison over a field the schema declares as
+    // an enum takes this reading; equality is equality either way.
+    if let Value::Record(record) = current
+        && let Some(variants) = ordered_enum(binary, record.schema())
+        && let (Some(left), Some(right)) = (rank(&left, &variants), rank(&right, &variants))
+    {
+        let ordering = left.cmp(&right);
+        return Ok(Value::Bool(match binary.op {
+            BinaryOp::Lt => ordering.is_lt(),
+            BinaryOp::LtEq => ordering.is_le(),
+            BinaryOp::Gt => ordering.is_gt(),
+            // `ordered_enum` answers for no other operator.
+            _ => ordering.is_ge(),
+        }));
     }
 
     Ok(match binary.op {

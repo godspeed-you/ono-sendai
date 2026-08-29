@@ -34,7 +34,7 @@ use crate::sink::Sink;
 /// build-time mistake rather than a user's, but it is reported rather than panicked over: a shell
 /// that aborts on startup teaches nobody anything.
 pub fn registry() -> Result<&'static CommandRegistry, ErrorValue> {
-    CommandRegistry::embedded()
+    crate::plugin_registry::registry()
 }
 
 /// The native implementations, built once against the registry and the shell's own providers.
@@ -47,7 +47,49 @@ fn implementations(session: &mut Session) -> Result<&'static CommandTable, Error
     if let Some(table) = TABLE.get() {
         return Ok(table);
     }
-    let built = ono_command::builtin_commands_for(registry()?, session.providers());
+    // §26.3 and §34.2 make the landmark thresholds and the map's node budget configurable, and
+    // §47 names the settings. They are read here, once, because this is the only point where the
+    // shell's resolved configuration and the process-wide spatial state (§29.2) meet.
+    crate::spatial::configure_from(session.settings());
+    let mut built = ono_command::builtin_commands_for(registry()?, session.providers());
+    // The spatial commands of v0.4 §6 are the shell's to dispatch (§45.6): they need the host and
+    // boot the session belongs to, which no library crate can know. Selection, ranking and
+    // identity stay in `ono-spatial-query` and `ono-spatial-index`, where §45.2 and §45.3 put
+    // them (ADR-0141).
+    built.register(std::sync::Arc::new(crate::spatial::FindPlace::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Look::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Near::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Enter::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Follow::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Map::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::MapLinks::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Home));
+    built.register(std::sync::Arc::new(crate::spatial::Back));
+    built.register(std::sync::Arc::new(crate::spatial::Up));
+    built.register(std::sync::Arc::new(crate::spatial::Jump::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::Trail));
+    built.register(std::sync::Arc::new(crate::spatial::PinPlace::new(
+        crate::spatial::PinStore::of(session),
+    )));
+    built.register(std::sync::Arc::new(crate::spatial::UnpinPlace::new(
+        crate::spatial::PinStore::of(session),
+    )));
     Ok(TABLE.get_or_init(|| built))
 }
 
@@ -164,8 +206,8 @@ pub(crate) fn remote_decision(
         _ => return None,
     };
     let handle = session.runtime()?.handle().clone();
-    let link = session.remote_link()?;
-    let mut stream = link.link.adapt(argv, demand_name, true).ok()?;
+    let link = session.remote_link()?.agent_link()?;
+    let mut stream = link.adapt(argv, demand_name, true).ok()?;
     handle.block_on(async {
         while let Some(message) = stream.recv().await {
             match message {
@@ -357,6 +399,32 @@ fn accepts_bytes(input: &str) -> bool {
     })
 }
 
+/// Whether a command's output *may* be text, among the alternatives it declares.
+///
+/// `look` answers with a `PlaceView` and, when `--json` asked for it, with the one document
+/// §29.1 requires it to write without a terminal (v0.4 §6.1). Both are its output, so the
+/// contract declares both, and what it actually produced decides how the result is written.
+fn admits_bytes(contract: &CommandContract) -> bool {
+    contract
+        .output()
+        .text()
+        .split('|')
+        .map(str::trim)
+        .any(|alternative| {
+            matches!(alternative, "string" | "bytes")
+                || alternative.starts_with("string")
+                || alternative.starts_with("bytes")
+        })
+}
+
+/// Whether these values are the text such a command wrote rather than the objects it returned.
+fn wrote_text(values: &[Value]) -> bool {
+    !values.is_empty()
+        && values
+            .iter()
+            .all(|value| matches!(value, Value::String(_) | Value::Bytes(_)))
+}
+
 /// Whether a command's output is bytes or text rather than objects.
 fn produces_bytes(contract: &CommandContract) -> bool {
     let output = contract.output().text();
@@ -406,6 +474,7 @@ pub fn check(
                 stdout: ono_adapter::Stdout::Stream,
                 adapters: Some(adapters),
                 executables: Some(&executables),
+                context: &[],
             },
         )
         .adapted_schemas()
@@ -480,6 +549,7 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
                 format!("`{}` is not a native command here", stage.span),
             ))
         })?;
+        refuse_switched_off_spatial(session, contract, stage)?;
         let arguments =
             crate::expand::expand_globs(session, &stage.arguments).map_err(Flow::Failed)?;
         let resolved = registry
@@ -775,6 +845,14 @@ fn run_from(
                     }
                     match decode_adapted(session, &plan, &argv, &bytes) {
                         Ok(values) => {
+                            // v0.4 §37: a typed object an adapter decoded may contribute to the
+                            // spatial model. The batch is in hand here and nowhere else, so this
+                            // is where it is offered (ADR-0193).
+                            if !crate::spatial::disabled(session)
+                                && let Some((runtime, _)) = session.pipeline_context()
+                            {
+                                runtime.block_on(crate::spatial::observe_adapted(&values));
+                            }
                             if last {
                                 write_result(session, stage, &values, false, source)?;
                             } else {
@@ -799,6 +877,17 @@ fn run_from(
                     }
                     position += 1;
                     continue;
+                }
+                // Spec §12.3 in its other direction: a stage declared over objects cannot be
+                // fed the bytes a program wrote. No adapter turned this invocation into
+                // objects, so there are none — and the contracts say so before anything is
+                // spawned, which is why `yes | take 1` answers at all (ADR-0376).
+                if let Some(consumer) =
+                    consumer_needing_objects(session, registry, list, segments.get(position + 1))
+                {
+                    return Err(Flow::Failed(unstructured_refusal(
+                        list, indices, source, consumer,
+                    )));
                 }
                 let (bytes, external_status) = crate::eval::run_external_segment(
                     session, list, indices, source, carried, last,
@@ -980,6 +1069,61 @@ fn run_streamed_segment(
     })
 }
 
+/// The stage that would receive this external run's bytes and cannot use them.
+///
+/// A native command declares what reaches it. One that admits bytes — `from`, `to`, `format` —
+/// is the user decoding the program's output themselves and is handed the bytes. One declared
+/// over a stream of objects has nothing to work with, and that is knowable from the contract
+/// alone, before the program runs.
+fn consumer_needing_objects(
+    session: &Session,
+    registry: &'static CommandRegistry,
+    list: &StageList,
+    next: Option<&Segment>,
+) -> Option<&'static CommandContract> {
+    let Some(Segment::Native(following)) = next else {
+        return None;
+    };
+    let consumer = &list.stages[*following.first()?];
+    let contract = native_contract(session, registry, consumer, true)?;
+    (!accepts_bytes(contract.input().text())).then_some(contract)
+}
+
+/// The refusal for bytes that cannot become the objects the next stage is declared over.
+///
+/// The invocation is quoted as the user wrote it, so every route out of the refusal is a line
+/// they can run: the program raw, the output decoded explicitly, or the adapters that exist.
+fn unstructured_refusal(
+    list: &StageList,
+    indices: &[usize],
+    source: &str,
+    consumer: &'static CommandContract,
+) -> ErrorValue {
+    let stage = &list.stages[*indices.last().unwrap_or(&0)];
+    let invocation = source
+        .get(stage.span.start() as usize..stage.span.end() as usize)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let program = head_name(stage).to_owned();
+    let spelling = consumer.spelling();
+    ErrorValue::new(
+        ErrorCode::AdapterRequiredForStructuredPipeline,
+        format!(
+            "`{spelling}` is defined over objects, and no adapter can give `{invocation}` \
+             structured output"
+        ),
+    )
+    .with_help(format!(
+        "`raw {invocation}` runs the program as typed; `{invocation} | from <format>` decodes \
+         its output yourself; `get command {program}` lists what adapts it"
+    ))
+    .with_metadata("invocation", Value::string(&invocation))
+    .with_metadata("consumer", Value::string(&spelling))
+    .with_metadata("raw_fallback_safe", Value::Bool(true))
+    .with_metadata("recovery", Value::string(&format!("raw {invocation}")))
+}
+
 fn process_error_flow(error: ono_process::Error) -> Flow {
     Flow::Failed(ErrorValue::new(error.code(), error.message().to_owned()))
 }
@@ -1047,9 +1191,16 @@ fn run_remote_adapted(
     // Ask first without running: the remote's own decision is what decides whether the
     // program runs there adapted or here raw.
     let Some(decision) = remote_decision(session, argv, demand) else {
-        return Ok(RemoteRun::NotAdapted(
-            "the remote agent cannot negotiate adapters".to_owned(),
-        ));
+        let reason = if session
+            .remote_link()
+            .is_some_and(crate::session::LinkConnection::is_agentless)
+        {
+            // Spec §21.3: the reduction stays visible wherever it changes what a command means.
+            "this link is agentless: there is no agent over there to negotiate adapters"
+        } else {
+            "the remote agent cannot negotiate adapters"
+        };
+        return Ok(RemoteRun::NotAdapted(reason.to_owned()));
     };
     if !decision.adapted {
         if matches!(demand, OutputDemand::Structured { .. }) {
@@ -1081,17 +1232,17 @@ fn run_remote_adapted(
         )));
     };
     let (sender, receiver) = tokio::sync::mpsc::channel::<StreamEvent>(256);
-    let link = session.remote_link().ok_or_else(|| {
-        Flow::Failed(ErrorValue::new(
-            ErrorCode::ResolveTargetNotFound,
-            "the link is gone",
-        ))
-    })?;
-    let mut stream = link
-        .link
-        .adapt(argv, demand_name, false)
-        .map_err(Flow::Failed)?;
-    let host: std::sync::Arc<str> = std::sync::Arc::from(link.link.host());
+    let link = session
+        .remote_link()
+        .and_then(crate::session::LinkConnection::agent_link)
+        .ok_or_else(|| {
+            Flow::Failed(ErrorValue::new(
+                ErrorCode::ResolveTargetNotFound,
+                "the link is gone",
+            ))
+        })?;
+    let mut stream = link.adapt(argv, demand_name, false).map_err(Flow::Failed)?;
+    let host: std::sync::Arc<str> = std::sync::Arc::from(link.host());
     runtime_handle.spawn(async move {
         while let Some(message) = stream.recv().await {
             let event = match message {
@@ -1270,6 +1421,23 @@ fn seed_bytes(values: Vec<Value>) -> Result<Vec<u8>, Flow> {
     Ok(bytes_of(&values))
 }
 
+/// Refuses a spatial verb while `spatial.enabled` is false (spec v0.4 §47, §40).
+///
+/// §47: "Disabling `spatial.enabled` MUST leave the typed shell and ordinary commands
+/// functional." Off switches off the verbs of §6 and nothing else, and they refuse by name
+/// rather than disappearing — `try { look } catch e { $e.name }` reads `spatial.unsupported`,
+/// which a script can branch on, where a missing command could only be guessed at.
+fn refuse_switched_off_spatial(
+    session: &Session,
+    contract: &'static CommandContract,
+    stage: &Stage,
+) -> Eval<()> {
+    if contract.id().starts_with("ono.place.") && crate::spatial::disabled(session) {
+        return Err(Flow::Failed(crate::spatial::switched_off(head_name(stage))));
+    }
+    Ok(())
+}
+
 /// Runs one run of native stages, answering with the bytes a following child process would read.
 #[expect(
     clippy::too_many_arguments,
@@ -1287,6 +1455,9 @@ fn run_native_segment(
     last: bool,
 ) -> Eval<(Option<Vec<u8>>, ExitStatus)> {
     let table = implementations(session).map_err(Flow::Failed)?;
+    // Taken before the pipeline borrows the session: a live view paints with the session's
+    // theme, not with whatever the default happens to be (spec §44, ADR-0332).
+    let theme = ono_render::Theme::clone(session.theme());
 
     // Everything is bound before anything runs. A pipeline that cannot be built runs no part of
     // itself, so a typo in the third stage never leaves the first two half-done.
@@ -1300,6 +1471,7 @@ fn run_native_segment(
                 format!("`{}` is not a native command here", stage.span),
             ))
         })?;
+        refuse_switched_off_spatial(session, contract, stage)?;
         let arguments =
             crate::expand::expand_globs(session, &stage.arguments).map_err(Flow::Failed)?;
         let resolved = registry
@@ -1374,6 +1546,9 @@ fn run_native_segment(
     let context = session.context();
     // A live view has nobody to watch it while its values are being bound (ADR-0069).
     let capturing = session.capturing();
+    // Whether the last stage's values reach a person rather than another stage, a file or a
+    // capture — the one fact a full-screen view may not decide for itself (spec v0.4 §29.1).
+    let displays = last && stage_has_no_redirection && !capturing;
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -1423,12 +1598,14 @@ fn run_native_segment(
         };
 
         let mut failed_rows = false;
-        for (contract, arguments) in &bound {
+        let final_stage = bound.len().saturating_sub(1);
+        for (position, (contract, arguments)) in bound.iter().enumerate() {
             let started = std::time::Instant::now();
             let mut invocation = Invocation::new(contract, arguments, providers)
                 .with_scope(std::sync::Arc::clone(&scope))
                 .with_context(context.clone())
-                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone());
+                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone())
+                .with_display(displays && position == final_stage);
             if let Some(previous) = stream.take() {
                 invocation = invocation.with_input(previous);
             }
@@ -1452,6 +1629,12 @@ fn run_native_segment(
 
         let mut values = Vec::new();
         let mut failures = Vec::new();
+        // The counters are shared by every stage of the pipeline (ADR-0014); the handle is taken
+        // before the stream is drained, because the stream is consumed to do it.
+        let counted = stream
+            .as_ref()
+            .map(|stream| stream.diagnostics().clone())
+            .unwrap_or_default();
         if let Some(mut stream) = stream {
             if last && !stream.boundedness().is_bounded() && stage_has_no_redirection {
                 // A live stream at a terminal renders in place (spec §18.3); anywhere else the
@@ -1459,8 +1642,8 @@ fn run_native_segment(
                 // pipe or file is a table that never learns its widths.
                 if !capturing && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
                     let (width, height) = live_geometry();
-                    failures.extend(crate::live::show(stream, width, height).await);
-                    return Ok((Vec::new(), failures, failed_rows));
+                    failures.extend(crate::live::show(stream, width, height, &theme).await);
+                    return Ok((Vec::new(), failures, failed_rows, counted));
                 }
                 return Err(ErrorValue::new(
                     ErrorCode::StreamUnboundedOperation,
@@ -1478,7 +1661,7 @@ fn run_native_segment(
                 }
             }
         }
-        Ok((values, failures, failed_rows))
+        Ok((values, failures, failed_rows, counted))
     };
 
     let collected = runtime.block_on(async {
@@ -1491,7 +1674,7 @@ fn run_native_segment(
         }
     });
 
-    let (values, failures, failed_rows) = collected.map_err(|error| {
+    let (values, failures, failed_rows, counted) = collected.map_err(|error| {
         if error.code() == ErrorCode::StreamCancelled {
             // 128 + SIGINT, the status every shell reports for an interrupted foreground job
             // (ADR-0008); the message would only repeat what the ^C on the terminal already
@@ -1511,18 +1694,33 @@ fn run_native_segment(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             &[],
         ));
-        for failure in &failures {
-            reporter.error(failure);
-        }
         if values.is_empty() {
-            let first = failures.into_iter().next().unwrap_or_else(|| {
+            // Nothing survived, so the failure is the answer rather than a note beside one. It
+            // travels as the error the run failed with — reported once, by the caller that
+            // reports every failure — and the rest are reported here (ADR-0221).
+            let mut remaining = failures.into_iter();
+            let first = remaining.next().unwrap_or_else(|| {
                 ErrorValue::new(
                     ErrorCode::ProviderUnavailable,
                     "the command produced nothing",
                 )
             });
+            for failure in remaining {
+                reporter.error(&failure);
+            }
             return Err(Flow::Failed(first));
         }
+        for failure in &failures {
+            reporter.error(failure);
+        }
+    }
+
+    // ADR-0014 counts what a pipeline dropped so that "a user who is surprised by a row count
+    // has somewhere to look that is not the source code". This is where they look: one note per
+    // run, on stderr, only when something was actually dropped, and only for the pipeline whose
+    // result they are reading (ADR-0261).
+    if last && !capturing {
+        report_counts(&counted);
     }
 
     // A failure of the provider kind — it could not answer, or not as promised — is never a
@@ -1556,13 +1754,10 @@ fn run_native_segment(
     }
 
     let stage = &list.stages[*indices.last().unwrap_or(&0)];
-    write_result(
-        session,
-        stage,
-        &values,
-        final_contract.is_some_and(produces_bytes),
-        source,
-    )?;
+    let serialised = final_contract.is_some_and(|contract| {
+        produces_bytes(contract) || (admits_bytes(contract) && wrote_text(&values))
+    });
+    write_result(session, stage, &values, serialised, source)?;
     Ok((None, status))
 }
 
@@ -1597,7 +1792,25 @@ fn stage_scope(
     source: &str,
 ) -> Eval<Scope> {
     let mut scope = Scope::new();
+    // v0.2 §20.2: `@-1` and `@N` name the results this session retained. A command argument that
+    // writes one — v0.4 §28.2's `enter @-1` — reads the same values the pipeline head does, or
+    // the reference would mean two different things in two positions of one language.
+    let mut previous: Vec<Value> = Vec::new();
+    for back in 1..=crate::session::RETAINED_RESULTS as u32 {
+        match session.previous_result(back) {
+            Some(values) => previous.push(Value::list(values.to_vec())),
+            None => break,
+        }
+    }
+    scope = scope.with_previous(previous);
     for (name, value) in session.bindings() {
+        // `each { … }` binds the item it iterates as `@` (spec §19.4, ADR-0071 §1). Inside the
+        // block that is the current value, not merely a variable spelled `@`, or the
+        // specification's own `each { restart service @ }` would reach a native stage with
+        // nothing bound (ADR-0219).
+        if name == "@" {
+            scope = scope.with_current(value.clone());
+        }
         scope = scope.with_variable(&name, value);
     }
     // The session's effective settings travel as `config.<key>` bindings, so a command that
@@ -1653,7 +1866,14 @@ fn bytes_of(values: &[Value]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for value in values {
         match value {
-            Value::Bytes(raw) => bytes.extend_from_slice(raw),
+            // Raw bytes are written byte for byte. A document `to json` or `to text` wrote is
+            // line-oriented and ends with a newline where it has none; `to bytes` is the escape
+            // hatch of spec §12.2, and a byte the shell added would be a byte the file did not
+            // have (ADR-0223).
+            Value::Bytes(raw) => {
+                bytes.extend_from_slice(raw);
+                continue;
+            }
             Value::String(text) => bytes.extend_from_slice(text.as_bytes()),
             other => bytes.extend_from_slice(other.to_string().as_bytes()),
         }
@@ -1689,7 +1909,8 @@ fn write_result(
     // not retained: its values are one rendered document, and reusing the objects it was made
     // from is what the retention of the *previous* result is for.
     if !serialised {
-        session.retain_result(values.to_vec());
+        let dropped = session.retain_result(values.to_vec());
+        crate::report::retention_notice(dropped, values.len());
     }
     match destination {
         Some(mut file) => {
@@ -1721,7 +1942,7 @@ fn write_result(
                 .iter()
                 .map(|(name, value)| (name.as_str(), value.as_str()))
                 .collect();
-            let mut sink = Sink::for_stdout(&borrowed);
+            let mut sink = Sink::for_stdout(&borrowed).with_theme(session.theme());
             if let Some(limit) = table_row_limit(session) {
                 sink = sink.with_max_rows(limit);
             }
@@ -1755,12 +1976,56 @@ fn rendered_bytes(values: &[Value], max_rows: Option<usize>) -> Vec<u8> {
     bytes
 }
 
+/// Says what the pipeline dropped, when it dropped anything.
+///
+/// A predicate that could not be decided excludes a row (ADR-0014, spec §10.5) and an aggregate
+/// skips a null rather than counting it as a zero (spec §35.3). Both are right, and both make a
+/// row count smaller than a user expects for a reason no output shows. One line on stderr, in
+/// the terms the language uses, is that reason (ADR-0261).
+fn report_counts(counted: &ono_pipeline::Diagnostics) {
+    let excluded = counted.excluded_unknown();
+    let skipped = counted.skipped_null();
+    if excluded == 0 && skipped == 0 {
+        return;
+    }
+    let reporter = crate::report::Reporter::new(ono_render::Presentation::choose(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        &[],
+    ));
+    if excluded > 0 {
+        reporter.note(&format!(
+            "{excluded} {} excluded because the condition could not be decided on {} \
+             (spec §10.5)",
+            plural(excluded, "value", "values"),
+            plural(excluded, "it", "them"),
+        ));
+    }
+    if skipped > 0 {
+        reporter.note(&format!(
+            "{skipped} unknown {} skipped, so the result is over the rest (spec §35.3)",
+            plural(skipped, "value was", "values were"),
+        ));
+    }
+}
+
+/// `one` for a count of one, `many` for anything else.
+fn plural(count: u64, one: &'static str, many: &'static str) -> &'static str {
+    if count == 1 { one } else { many }
+}
+
 /// Reports a failed write on the closed taxonomy of spec §43.
 ///
 /// The taxonomy has no generic I/O code, so anything the specific codes do not describe is
 /// reported the way `ono-process` reports it: the operating system refused the operation, with
 /// the real reason in the message.
 fn write_failed(error: std::io::Error) -> Flow {
+    // A reader that closed the pipe is not a failure to report. `… | head` is how a Unix user
+    // asks for the first page, and every other shell stops there in silence; a diagnostic on the
+    // terminal would be the shell complaining about being used correctly. The process stops with
+    // the status a program killed by `SIGPIPE` reports (ADR-0220).
+    if error.kind() == std::io::ErrorKind::BrokenPipe {
+        return Flow::Exit(ExitStatus::from_signal(13));
+    }
     let code = match error.kind() {
         std::io::ErrorKind::NotFound => ErrorCode::IoNotFound,
         std::io::ErrorKind::AlreadyExists => ErrorCode::IoAlreadyExists,

@@ -128,6 +128,12 @@ targets:
     summary: A known host from a configured source, reachable or not.
     schema: null
     phase: H
+  - id: ono.target.host-key
+    name: host-key
+    category: system
+    summary: A host key this shell has pinned, and the fingerprint it was pinned by.
+    schema: ono.host-key/1
+    phase: H
   - id: ono.target.user
     name: user
     category: system
@@ -278,6 +284,29 @@ targets:
     summary: A persistent Ono remote execution link. # spec §9.1 Remote, §21
     schema: null
     phase: H
+  # --- the spatial interface, v0.4 §3.3 -----------------------------------------------------
+  # A `Place` is "the current spatial interpretation of a SpatialObject or a canonical aggregate
+  # space" (v0.4 §3.3). It is the target word of the one spatial command that keeps one, because
+  # bare `find` belongs to findutils (ADR-0124); every other spatial verb takes the bare name.
+  - id: ono.target.place
+    name: place
+    category: system
+    summary: A place in the spatial interface — an object or a canonical space (v0.4 §3.3).
+    schema: ono.spatial-place/1
+    phase: S
+
+  # v0.4 §19.3 writes the federated map as `map links`, in the plural and beside the singular
+  # `link` above. The two are different questions: `get link` enumerates the links this session
+  # holds, `map links` draws the hosts they reach and the edges between them (§22). The registry
+  # records the word the spec actually writes; ADR-0172 says why it is a target word at all when
+  # every other spatial verb takes a bare name.
+  - id: ono.target.links
+    name: links
+    category: system
+    summary: The federated map of this host and the hosts it holds links to (v0.4 §19.3).
+    schema: ono.spatial-map/1
+    phase: S
+
   - id: ono.target.context
     name: context
     category: system

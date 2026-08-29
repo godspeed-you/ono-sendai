@@ -387,6 +387,85 @@ fn should_accept_a_bare_word_naming_an_enum_value_when_it_is_compared_with_the_e
     );
 }
 
+/// A record whose `level` is an enum written from least to greatest severity, as
+/// `ono.log-record/1` declares it.
+fn log_record(level: &str) -> Value {
+    let schema = Arc::new(
+        Schema::builder(SchemaId::new("ono.test-log", 1), "TestLog")
+            .field(
+                FieldDef::new(
+                    "level",
+                    FieldType::enumeration(&[
+                        "debug", "info", "notice", "warning", "error", "crit", "alert", "emerg",
+                    ]),
+                )
+                .required(),
+            )
+            .build()
+            .expect("the log schema is valid"),
+    );
+    RecordValue::builder(
+        schema.clone(),
+        Provenance::local("test", schema.id().clone()),
+    )
+    .set("level", Value::string(level))
+    .expect("the log record is valid")
+    .build()
+    .into_value()
+}
+
+#[test]
+fn should_order_an_enum_field_by_its_declared_values_when_compared() {
+    // Spec §41.4's own example is `where level >= error`. Compared as text, `warning` is greater
+    // than `error` and `crit` is less than it, which is the opposite of what the line means.
+    let kept = |level: &str| {
+        evaluate(
+            &expression("level >= error"),
+            &log_record(level),
+            &Scope::new(),
+        )
+        .expect("evaluates")
+    };
+    for severe in ["error", "crit", "alert", "emerg"] {
+        assert_eq!(
+            kept(severe),
+            Value::Bool(true),
+            "`level >= error` keeps `{severe}`"
+        );
+    }
+    for milder in ["warning", "notice", "info", "debug"] {
+        assert_eq!(
+            kept(milder),
+            Value::Bool(false),
+            "`level >= error` drops `{milder}`"
+        );
+    }
+}
+
+#[test]
+fn should_order_an_enum_field_by_its_declared_values_when_the_word_is_on_the_left() {
+    assert_eq!(
+        evaluate(
+            &expression("error < level"),
+            &log_record("crit"),
+            &Scope::new()
+        )
+        .expect("evaluates"),
+        Value::Bool(true),
+        "the comparison reads the same whichever side the word is written on"
+    );
+}
+
+#[test]
+fn should_keep_comparing_a_plain_string_field_as_text() {
+    // Only a field the schema declares as an enum has a declared order; a string field is text.
+    assert_eq!(
+        evaluate(&expression("name >= \"a\""), &unit(), &Scope::new()).expect("evaluates"),
+        Value::Bool(true),
+        "`nginx.service` sorts after `a` as text"
+    );
+}
+
 #[test]
 fn should_still_reject_a_bare_word_that_names_neither_a_field_nor_a_value_of_the_enum() {
     let record = unit();

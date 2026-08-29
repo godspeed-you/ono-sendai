@@ -25,8 +25,37 @@ use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
 use crate::hosts::{HostEntry, HostSources};
 
+/// The severities `ono.finding/1` carries, weakest first (spec §31.24's closed set).
+const SEVERITIES: &[&str] = &["info", "low", "medium", "high", "critical"];
+
+/// Where `severity` sits in that order, or `None` when it is not one of them.
+fn severity_rank(severity: &str) -> Option<usize> {
+    SEVERITIES.iter().position(|known| *known == severity)
+}
+
 /// The provider's stable id, as it appears in every record's provenance.
 pub const PROVIDER_ID: &str = "ono.shell";
+
+/// Everything `ono.shell` answers for on the machine it runs on.
+const ALL_TARGETS: &[&str] = &[
+    "job",
+    "link",
+    "host",
+    "host-key",
+    "plugin",
+    "capability",
+    "audit",
+    "assistant",
+    "model",
+    "finding",
+];
+
+/// The subset that describes the session rather than the machine (spec §14.4, ADR-0269).
+///
+/// A package loaded on the far side is a fact about the far side and stays remote; the links
+/// this session holds, the jobs it started and the hosts it knows are not.
+/// The targets the shell answers about itself: session facts, not observations of a machine.
+pub const SESSION_TARGETS: &[&str] = &["job", "link", "host", "host-key"];
 
 /// One job as the session publishes it — the fields of `ono.job/1`, before they are a record.
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +125,8 @@ impl SessionTables {
 pub struct SessionProvider {
     tables: Arc<Mutex<SessionTables>>,
     sources: HostSources,
+    /// Which of `ono.shell`'s targets this instance answers for (spec §14.4, ADR-0269).
+    targets: &'static [&'static str],
 }
 
 impl SessionProvider {
@@ -103,7 +134,26 @@ impl SessionProvider {
     /// sources of `sources`, read when asked.
     #[must_use]
     pub fn new(tables: Arc<Mutex<SessionTables>>, sources: HostSources) -> Self {
-        Self { tables, sources }
+        Self {
+            tables,
+            sources,
+            targets: ALL_TARGETS,
+        }
+    }
+
+    /// The same provider, narrowed to the targets that describe *this session* rather than a
+    /// machine (spec §14.4, ADR-0269).
+    ///
+    /// A link, a job and the context stack are facts about the shell that is running, not
+    /// observations of a host, so they answer here even when a link frame has swapped every
+    /// other provider for the far side's.
+    #[must_use]
+    pub fn session_facts(tables: Arc<Mutex<SessionTables>>, sources: HostSources) -> Self {
+        Self {
+            tables,
+            sources,
+            targets: SESSION_TARGETS,
+        }
     }
 
     fn schema(name: &str) -> Result<Arc<Schema>, ErrorValue> {
@@ -122,7 +172,14 @@ impl SessionProvider {
             "job" => Ok((self.jobs()?, Vec::new())),
             "link" => Ok((self.links()?, Vec::new())),
             "host" => self.hosts(None),
-            "plugin" => self.lock().kuang.plugin_records(),
+            "host-key" => Ok((self.host_keys()?, Vec::new())),
+            "plugin" => {
+                let (records, mut failures) = self.lock().kuang.plugin_records()?;
+                // A declaration the shell refused to register must not be a command that is
+                // quietly missing from `get command` (spec §31.65, ADR-0282).
+                failures.extend(crate::plugin_registry::refusals());
+                Ok((records, failures))
+            }
             "capability" => Ok((self.lock().kuang.capability_records(None)?, Vec::new())),
             "audit" => Ok((self.lock().kuang.audit_records()?, Vec::new())),
             // No assistant package is loaded, no model provider is configured, no analysis has
@@ -149,7 +206,7 @@ impl SessionProvider {
                 _ => None,
             })
             .map(str::to_owned);
-        let (package, management, instance) = {
+        let (package, management, instance, trust) = {
             let tables = self.lock();
             let Some(package) = id
                 .as_deref()
@@ -166,7 +223,8 @@ impl SessionProvider {
                     plugin: Arc::clone(&instance.plugin),
                     loaded_at: instance.loaded_at.clone(),
                 });
-            (package, management, instance)
+            let trust = tables.kuang.trust().clone();
+            (package, management, instance, trust)
         };
         Ok(ValueStream::spawn(
             ono_pipeline::PipelineConfig::new(),
@@ -188,6 +246,7 @@ impl SessionProvider {
                     instance.as_ref(),
                     &contributions,
                     failure,
+                    &trust,
                 );
                 match record {
                     Ok(record) => {
@@ -355,7 +414,16 @@ impl SessionProvider {
         }
         self.unload_instance(&id).await;
         let keep_state = action.argument("keep-state") == Some(&Value::Bool(true));
-        self.lock().kuang.remove_package(&package, keep_state)?;
+        let keep_grants = action.argument("keep-grants") == Some(&Value::Bool(true));
+        {
+            let mut tables = self.lock();
+            tables.kuang.remove_package(&package, keep_state)?;
+            if !keep_grants {
+                // The package is gone, so the permissions it held are gone with it: a package
+                // that comes back must ask again (spec §31.18, §31.81, ADR-0233).
+                tables.kuang.revoke_grants_of(&id);
+            }
+        }
         Ok(ActionOutcome::succeeded(action, true))
     }
 
@@ -380,6 +448,15 @@ impl SessionProvider {
             .links
             .iter()
             .map(|link| link_record(link, &schema))
+            .collect()
+    }
+
+    /// The pinned host keys, in the order the trust store's file records them (spec §21.5).
+    fn host_keys(&self) -> Result<Vec<RecordValue>, ErrorValue> {
+        let schema = Self::schema("ono.host-key")?;
+        crate::trust::rows(&self.sources)?
+            .iter()
+            .map(|row| host_key_record(row, &schema))
             .collect()
     }
 
@@ -572,6 +649,36 @@ pub fn link_value(link: &LinkRow) -> Result<Value, ErrorValue> {
     link_record(link, &schema).map(RecordValue::into_value)
 }
 
+/// One pinned host key as an `ono.host-key/1` record (ADR-0355).
+///
+/// # Errors
+///
+/// `provider.schema_violation` when the contract that defines the schema is missing.
+pub fn host_key_value(row: &crate::trust::KeyRow) -> Result<Value, ErrorValue> {
+    let schema = SessionProvider::schema("ono.host-key")?;
+    host_key_record(row, &schema).map(RecordValue::into_value)
+}
+
+fn host_key_record(
+    row: &crate::trust::KeyRow,
+    schema: &Arc<Schema>,
+) -> Result<RecordValue, ErrorValue> {
+    Ok(RecordValue::builder(
+        Arc::clone(schema),
+        Provenance::local(PROVIDER_ID, schema.id().clone()),
+    )
+    .set("host", Value::string(&row.host))?
+    .set("algorithm", Value::string(&row.algorithm))?
+    .set("fingerprint", Value::string(&row.fingerprint))?
+    .set(
+        "path",
+        row.path
+            .as_ref()
+            .map_or(Value::Null, |path| Value::Path(path.as_path().into())),
+    )?
+    .build())
+}
+
 fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, ErrorValue> {
     let strings = |items: &[String]| Value::list(items.iter().map(|item| Value::string(item)));
     Ok(RecordValue::builder(
@@ -666,21 +773,11 @@ impl Provider for SessionProvider {
     }
 
     fn targets(&self) -> &[&str] {
-        &[
-            "job",
-            "link",
-            "host",
-            "plugin",
-            "capability",
-            "audit",
-            "assistant",
-            "model",
-            "finding",
-        ]
+        self.targets
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
-        ["ono.job", "ono.link", "ono.host"]
+        ["ono.job", "ono.link", "ono.host", "ono.host-key"]
             .into_iter()
             .filter_map(|name| Self::schema(name).ok())
             .chain(
@@ -705,6 +802,9 @@ impl Provider for SessionProvider {
             Capability::new("job.list", Risk::Read),
             Capability::new("link.list", Risk::Read),
             Capability::new("host.list", Risk::Read),
+            // Reading, recording and forgetting a pin: `get host-key` is a read of session
+            // state, and the three mutations are the shell's own (ADR-0355).
+            Capability::new("host.trust", Risk::Mutate),
             Capability::new("plugin.list", Risk::Read),
             Capability::new("plugin.search", Risk::Read),
             Capability::new("plugin.inspect", Risk::Read),
@@ -838,6 +938,25 @@ impl Provider for SessionProvider {
                     .option_value("state")
                     .and_then(|value| value.as_str().ok())
                     .map(str::to_owned);
+                // `get finding --severity high`: a *minimum*, over the closed set of
+                // `ono.finding/1` (spec §31.24). A level outside that set is refused rather than
+                // ignored, because a filter nobody applied answers with everything (ADR-0233).
+                let floor = match query.option_value("severity") {
+                    Some(value) => {
+                        let wanted = value.as_str()?;
+                        Some(severity_rank(wanted).ok_or_else(|| {
+                            ErrorValue::new(
+                                ErrorCode::TypeMismatch,
+                                format!("`{wanted}` is not a severity `ono.finding/1` carries"),
+                            )
+                            .with_help(format!(
+                                "spec §31.24 closes the set at {}",
+                                SEVERITIES.join(", ")
+                            ))
+                        })?)
+                    }
+                    None => None,
+                };
                 let values: Vec<Value> = records
                     .into_iter()
                     .filter(|record| query.matches(record))
@@ -845,6 +964,15 @@ impl Provider for SessionProvider {
                         state.as_deref().is_none_or(|wanted| {
                             record.get("state").and_then(|value| value.as_str().ok())
                                 == Some(wanted)
+                        })
+                    })
+                    .filter(|record| {
+                        floor.is_none_or(|floor| {
+                            record
+                                .get("severity")
+                                .and_then(|value| value.as_str().ok())
+                                .and_then(severity_rank)
+                                .is_some_and(|rank| rank >= floor)
                         })
                     })
                     .take(limit)

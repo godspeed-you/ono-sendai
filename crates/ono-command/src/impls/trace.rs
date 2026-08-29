@@ -42,37 +42,49 @@ impl CommandImpl for TraceCommand {
 
             // The subject comes through the pipeline or resolves from the selectors; either
             // way it must exist before anything is traced.
-            let subject = match ctx.take_input() {
-                Some(stream) => first_record(stream).await,
-                None => first_record(ctx.providers().snapshot(&query)?).await,
-            }
-            .ok_or_else(|| {
-                ErrorValue::new(
-                    ErrorCode::ResolveTargetNotFound,
-                    format!(
-                        "nothing to trace: no {target} answers to `{}`",
-                        query
-                            .selectors()
-                            .first()
-                            .map_or_else(String::new, |selector| {
-                                match selector {
-                                    ono_provider_api::Selector::Field { name, value } => {
-                                        format!("{name} {value}")
+            let candidates = match ctx.take_input() {
+                Some(stream) => records(stream).await,
+                None => records(ctx.providers().snapshot(&query)?).await,
+            };
+            if candidates.is_empty() {
+                return Err({
+                    ErrorValue::new(
+                        ErrorCode::ResolveTargetNotFound,
+                        format!(
+                            "nothing to trace: no {target} answers to `{}`",
+                            query
+                                .selectors()
+                                .first()
+                                .map_or_else(String::new, |selector| {
+                                    match selector {
+                                        ono_provider_api::Selector::Field { name, value } => {
+                                            format!("{name} {value}")
+                                        }
+                                        other => format!("{other:?}"),
                                     }
-                                    other => format!("{other:?}"),
-                                }
-                            }),
-                    ),
-                )
-                .with_help(format!("`get {target}` shows what exists"))
-            })?;
+                                }),
+                        ),
+                    )
+                    .with_help(format!("`get {target}` shows what exists"))
+                });
+            }
 
-            let root = Node::of(&subject).ok_or_else(|| {
-                ErrorValue::new(
-                    ErrorCode::TypeMismatch,
-                    "this record declares no identity, so nothing can relate to it",
-                )
-            })?;
+            // A record whose identity field is null is a value, not an object (spec §27.3,
+            // §35.3): a `time-wait` socket whose inode the kernel has already released is a real
+            // connection that nothing can be related to. It is skipped rather than fatal, because
+            // the connections behind it in the same answer are objects and are what was asked
+            // for. Which of several matched objects is traced was already the provider's choice
+            // (spec §16.5, §22.1). Only when nothing in the answer is an object is there nothing
+            // to build a graph from, and that is a different refusal from "nothing answered".
+            let root = candidates
+                .iter()
+                .find_map(|record| Node::of(record))
+                .ok_or_else(|| {
+                    ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        "this record declares no identity, so nothing can relate to it",
+                    )
+                })?;
 
             let mut options = TraceOptions::from_query(&query);
             if let Some(depth) = ctx
@@ -112,14 +124,20 @@ impl CommandImpl for TraceCommand {
     }
 }
 
-/// The first record a stream yields, if any.
-async fn first_record(stream: ValueStream) -> Option<std::sync::Arc<ono_value::RecordValue>> {
+/// Every record a stream yields, in order. Non-records are not subjects and are dropped.
+///
+/// The whole answer is kept rather than its first row, because which record a selector that
+/// matched several yields first is the provider's business: the caller roots the graph at the
+/// first one that can be related to, and tells "nothing answered" apart from "nothing that
+/// answered is an object" (spec §16.5, §22.1).
+async fn records(stream: ValueStream) -> Vec<std::sync::Arc<ono_value::RecordValue>> {
     let collected = stream.collect().await;
     collected
         .into_values()
         .into_iter()
-        .find_map(|value| match value {
+        .filter_map(|value| match value {
             Value::Record(record) => Some(record),
             _ => None,
         })
+        .collect()
 }

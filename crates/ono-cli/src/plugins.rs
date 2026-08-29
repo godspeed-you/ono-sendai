@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use ono_command::CommandContract;
 use ono_core::{ErrorCode, ExitStatus};
 use ono_kuang_protocol::KuangError;
 use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Supervisor};
@@ -73,6 +74,10 @@ pub struct LoadOptions {
     /// Whether an experimental adapter pack may influence structured output
     /// (spec v0.3 §1.56), `--allow-experimental`.
     pub allow_experimental: bool,
+    /// Whether the load reports itself. `load plugin` is an operator asking for a load and is
+    /// told what it got; the lazy load behind a contributed command (spec §31.68) is not, because
+    /// the operator asked for the command and its answer is the only thing on stdout.
+    pub silent: bool,
 }
 
 impl LoadOptions {
@@ -138,6 +143,23 @@ pub fn load_plugin_with(
         ));
     }
 
+    // Integrity, signature and publisher trust are re-checked against what is on disk now, not
+    // against what was on disk at install: a file changed afterwards must not load
+    // (`lifecycle.v1.yaml` verification rules, ADR-0312 §4). No package code has run yet.
+    let resolved = crate::kuang_host::Resolved {
+        source: crate::kuang_host::source_of(&package, &management),
+        package: Ok(package.clone()),
+    };
+    if let Some(failure) = session
+        .with_kuang(|host| host.verify(&resolved))
+        .map_err(Flow::Failed)?
+        .blocking
+        .into_iter()
+        .next()
+    {
+        return Err(Flow::Failed(failure));
+    }
+
     // The policy is default-deny; what the user said on the command line is the only grant
     // (spec §31.18). A grant takes the scope the manifest asked for, never a wider one, and it
     // is recorded on the host so `get capability` and `revoke capability` see it.
@@ -165,7 +187,7 @@ pub fn load_plugin_with(
                 .standing_grants(id)
                 .any(|grant| grant.capability == capability)
             {
-                host.grant(id, capability, scope, class, "session");
+                host.grant(id, capability, scope, class, "session", "session", None);
             }
         }
         host.policy_for(id)
@@ -218,10 +240,14 @@ pub fn load_plugin_with(
             }
         }
         if package.manifest.runtime.is_none() {
-            println!("loaded {id} (adapters): {}", listed.join("; "));
+            if !options.silent {
+                println!("loaded {id} (adapters): {}", listed.join("; "));
+            }
             return Ok(ExitStatus::SUCCESS);
         }
-        println!("adapters of {id}: {}", listed.join("; "));
+        if !options.silent {
+            println!("adapters of {id}: {}", listed.join("; "));
+        }
     }
 
     let entry = package
@@ -236,8 +262,20 @@ pub fn load_plugin_with(
                 format!("`{id}` declares no runtime to load"),
             ))
         })?;
+    // v0.2 §31.7's `<from>-><to>` shapes, read before the manifest is handed to the loader:
+    // v0.4 §36.1 makes them the package's spatial contribution, and §35.5 makes holding the
+    // capability the condition for any of it reaching a map.
+    let shapes: Vec<String> = package
+        .manifest
+        .contributions
+        .as_ref()
+        .and_then(|contributions| contributions.relations.clone())
+        .unwrap_or_default();
     let mut config = LoadConfig::new(entry, package.manifest);
     config.policy = policy;
+    // The instance runs in its own directory under the state root, not in the user's (spec
+    // §31.10, §31.31, ADR-0283).
+    config.private_dir = session.with_kuang(|host| host.private_dir(id));
     let (runtime, _) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -248,20 +286,22 @@ pub fn load_plugin_with(
         .block_on(Supervisor::load(config))
         .map_err(|error| Flow::Failed(error_value(&error)))?;
 
-    println!(
-        "loaded {id} ({}): {}",
-        loaded.state().as_str(),
-        if loaded.commands().is_empty() {
-            "no commands contributed".to_owned()
-        } else {
-            loaded
-                .commands()
-                .iter()
-                .map(|command| command.contribution.id.clone())
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
-    );
+    if !options.silent {
+        println!(
+            "loaded {id} ({}): {}",
+            loaded.state().as_str(),
+            if loaded.commands().is_empty() {
+                "no commands contributed".to_owned()
+            } else {
+                loaded
+                    .commands()
+                    .iter()
+                    .map(|command| command.contribution.id.clone())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }
+        );
+    }
     session.with_kuang(|host| host.record_host_event(id, "plugin.load", "lifecycle.load", true));
     // Re-loading replaces (spec §31.72, ADR-0110 §3): the instance that was running is shut
     // down once the new one is kept, so a reload is never a moment without the package.
@@ -273,6 +313,12 @@ pub fn load_plugin_with(
                 .plugin
                 .shutdown(ono_kuang_protocol::ShutdownReason::Upgrade),
         );
+    }
+    // §35.5: the capability filter runs before the merge, and this is before. A package denied
+    // `relation.write` contributes no relation at all, so no map has one of its edges to drop.
+    crate::spatial::contributions::forget(id);
+    if let Some(plugin) = session.plugin(id) {
+        crate::spatial::contributions::adopt(id, &plugin, &shapes);
     }
     Ok(ExitStatus::SUCCESS)
 }
@@ -394,6 +440,18 @@ pub fn load_piped(session: &mut Session, words: &[String], targets: &[Value]) ->
     Ok(status)
 }
 
+/// The autonomy levels of spec §31.48, as code and name.
+///
+/// The list is deliberately closed and deliberately stops at `L4`: §31.48 rules out an
+/// unrestricted "root autonomous" level in the normal product model.
+const AUTONOMY_LEVELS: &[(&str, &str)] = &[
+    ("L0", "explain-only"),
+    ("L1", "observe"),
+    ("L2", "propose"),
+    ("L3", "act-confirmed"),
+    ("L4", "delegated-scope"),
+];
+
 /// Runs a management command over its words (the target word included).
 ///
 /// # Errors
@@ -418,6 +476,32 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
         // Spec §7.1: the assistant is selected explicitly, and no assistant package is loaded
         // in this build, so whatever was named is not found (ADR-0111 §3).
         Request::AskAssistant => {
+            // Spec §31.48: a package may declare which autonomy modes it supports, but the
+            // levels themselves are Ono's, and there is to be no unrestricted one. A word
+            // outside the vocabulary is refused here rather than carried into a turn, because a
+            // policy nothing can enforce is exactly the invisible unlimited delegation §31.48
+            // rules out (ADR-0233).
+            if let Some(level) = option("--autonomy")
+                && !AUTONOMY_LEVELS
+                    .iter()
+                    .any(|(code, name)| level.eq_ignore_ascii_case(code) || *name == level)
+            {
+                return Err(Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!("`{level}` is not an autonomy level this shell defines"),
+                    )
+                    .with_help(format!(
+                        "spec §31.48 gives {}; Ono controls the policy, whatever a package \
+                         supports",
+                        AUTONOMY_LEVELS
+                            .iter()
+                            .map(|(code, name)| format!("{code} {name}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )),
+                ));
+            }
             let Some(assistant) = arguments.first() else {
                 return Err(Flow::Failed(
                     ErrorValue::new(
@@ -454,7 +538,16 @@ pub fn run(session: &mut Session, request: Request, words: &[String]) -> Eval<Pr
                     .with_help("spec §31.18: never to a publisher or a class of packages"),
                 ));
             };
-            grant_capability(session, capability, plugin)
+            // `--scope` is repeatable: one key per occurrence, so a grant can bound two keys of
+            // the same capability without a nested literal on the command line.
+            let scopes: Vec<&str> = words
+                .iter()
+                .enumerate()
+                .filter(|(_, word)| *word == "--scope")
+                .filter_map(|(index, _)| words.get(index + 1))
+                .map(String::as_str)
+                .collect();
+            grant_capability(session, capability, plugin, &scopes, option("--duration"))
         }
         Request::InstallPlugin => {
             let Some(reference) = arguments.first() else {
@@ -580,7 +673,124 @@ fn install_plugin(session: &mut Session, reference: &str, confirmed: bool) -> Ev
 
 /// Runs `grant capability <capability> --plugin <id>` (spec §31.18): a standing session grant,
 /// in the scope the manifest asked for, effective at the package's next call.
-fn grant_capability(session: &mut Session, capability: &str, plugin: &str) -> Eval<Produced> {
+/// The grant durations this broker can hold itself to (spec §31.18).
+///
+/// §31.18 lists six durations a grant SHOULD support. Three of them — `once`, `this command` and
+/// `this view` — are bounded by an event the broker cannot observe from here: nothing tells the
+/// host that a use, a command or a view has ended, so a grant minted with one of those words
+/// would behave exactly like a session grant while claiming to be narrower. That is the defect
+/// this option exists to remove, so those words are refused by name rather than recorded
+/// (ADR-0264). `link-session` waits on the same thing for a link.
+const ENFORCEABLE_DURATIONS: &[&str] = &["session", "always"];
+
+/// Reads `--duration`: a §31.18 word, or a span that makes the grant a lease (spec §31.49).
+///
+/// Answers the `duration` word the record carries and the instant it stops working.
+fn grant_duration(
+    written: Option<&str>,
+    granted_at: jiff::Timestamp,
+) -> Result<(&'static str, Option<jiff::Timestamp>), ErrorValue> {
+    let Some(written) = written else {
+        return Ok(("session", None));
+    };
+    if let Some(word) = ENFORCEABLE_DURATIONS.iter().find(|word| **word == written) {
+        return Ok((word, None));
+    }
+    let span = ono_value::Duration::parse(written).map_err(|_| unenforceable_duration(written))?;
+    if span.is_negative() || span == ono_value::Duration::ZERO {
+        return Err(ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            format!("`{written}` is not a window a grant can stand in"),
+        )
+        .with_help("a lease expires after its span, so the span must be positive (spec §31.49)"));
+    }
+    let nanos = i64::try_from(span.nanoseconds()).map_err(|_| unenforceable_duration(written))?;
+    let expires_at = granted_at
+        .checked_add(jiff::Span::new().nanoseconds(nanos))
+        .map_err(|_| unenforceable_duration(written))?;
+    // A lease lives inside the session like every duration but `always`, and `expires_at` is
+    // what makes it narrower — the record shows both (`capability-grant.v1`).
+    Ok(("session", Some(expires_at)))
+}
+
+fn unenforceable_duration(written: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::TypeMismatch,
+        format!("`{written}` is not a duration `grant capability` can hold itself to"),
+    )
+    .with_help(format!(
+        "`--duration {}`, or a span such as `1h` for a lease that expires (spec §31.18, §31.49).          `once`, `command`, `view` and `link-session` need a boundary the broker cannot yet          observe and are refused rather than recorded",
+        ENFORCEABLE_DURATIONS.join("`/`")
+    ))
+}
+
+/// Reads the repeated `--scope key=value[,value]` words into the grant's scope (spec §31.16).
+///
+/// A key the capability does not declare is invalid rather than ignored, and a capability that
+/// declares no scope at all cannot be scoped: §31.16 forbids offering a scope that cannot be
+/// enforced as if it were a security boundary.
+fn grant_scope(
+    capability: ono_kuang_protocol::Capability,
+    written: &[&str],
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>, ErrorValue> {
+    if written.is_empty() {
+        return Ok(None);
+    }
+    let declared = capability.scope_keys();
+    if declared.is_empty() {
+        return Err(ErrorValue::new(
+            ErrorCode::TypeUnknownField,
+            format!("`{}` declares no scope keys", capability.id()),
+        )
+        .with_help(
+            "spec §31.16: a scope that cannot be enforced is never offered — grant it unscoped",
+        ));
+    }
+    let mut scope = serde_json::Map::new();
+    for entry in written {
+        let Some((key, values)) = entry.split_once('=') else {
+            return Err(ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("`--scope {entry}` names no key"),
+            )
+            .with_help("`--scope <key>=<value>[,<value>]`, repeated once per key (spec §31.16)"));
+        };
+        if !declared.iter().any(|declared| declared.name == key) {
+            return Err(ErrorValue::new(
+                ErrorCode::TypeUnknownField,
+                format!("`{}` has no scope key `{key}`", capability.id()),
+            )
+            .with_help(format!(
+                "spec §31.16: `{}` declares {}",
+                capability.id(),
+                declared
+                    .iter()
+                    .map(|declared| declared.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        scope.insert(
+            key.to_owned(),
+            serde_json::Value::Array(
+                values
+                    .split(',')
+                    .filter(|value| !value.is_empty())
+                    .map(|value| serde_json::Value::String(value.to_owned()))
+                    .collect(),
+            ),
+        );
+    }
+    Ok(Some(scope))
+}
+
+fn grant_capability(
+    session: &mut Session,
+    capability: &str,
+    plugin: &str,
+    scopes: &[&str],
+    duration: Option<&str>,
+) -> Eval<Produced> {
     let Some(capability) = ono_kuang_protocol::Capability::from_id(capability) else {
         return Err(Flow::Failed(
             ErrorValue::new(
@@ -601,11 +811,25 @@ fn grant_capability(session: &mut Session, capability: &str, plugin: &str) -> Ev
         ));
     };
     let request = declared_request(&package.manifest, capability);
-    let scope = request.and_then(|(request, _)| request.scope.clone());
+    // §31.19's precedence is "system deny > user deny > scoped grant > plugin request": the
+    // operator's scope outranks the manifest's, key by key. Keys the operator did not name keep
+    // whatever the package asked for.
+    let named = grant_scope(capability, scopes).map_err(Flow::Failed)?;
+    let mut scope = request.and_then(|(request, _)| request.scope.clone());
+    if let Some(named) = named {
+        let merged = scope.get_or_insert_with(serde_json::Map::new);
+        for (key, value) in named {
+            merged.insert(key, value);
+        }
+    }
+    let granted_at = jiff::Timestamp::now();
+    let (duration, expires_at) = grant_duration(duration, granted_at).map_err(Flow::Failed)?;
     let purpose = request.and_then(|(request, _)| request.purpose.clone());
     let class = request.map(|(_, class)| class);
     let (grant, value, policy, instance) = session.with_kuang(|host| {
-        let grant = host.grant(plugin, capability, scope, class, "prompt");
+        let grant = host.grant(
+            plugin, capability, scope, class, "prompt", duration, expires_at,
+        );
         let value =
             crate::kuang_host::grant_value(&grant, purpose.as_deref(), host.instance(plugin));
         (grant, value, host.policy_for(plugin), host.plugin(plugin))
@@ -786,4 +1010,82 @@ fn json_word(text: &str) -> serde_json::Value {
         return serde_json::Value::Bool(flag);
     }
     serde_json::Value::String(text.to_owned())
+}
+
+// --- lazy invocation of a declared contribution (spec §31.68, ADR-0282) -----------------------
+
+/// The registry entry a bare stage head names, when it names a contributed command.
+///
+/// `None` for every core command and for a head that is not a registry entry at all, so the
+/// evaluator's ordinary path is unchanged for everything Ono ships.
+#[must_use]
+pub fn contributed_command(stage: &ono_parser::Stage) -> Option<&'static CommandContract> {
+    let ono_parser::StageHead::Command(name) = &stage.head else {
+        return None;
+    };
+    if name.namespace.is_some() {
+        return None;
+    }
+    let registry = crate::native::registry().ok()?;
+    let target = stage
+        .arguments
+        .first()
+        .and_then(ono_parser::Argument::as_word);
+    let contract = registry
+        .find(&name.name, target)
+        .or_else(|| registry.find(&name.name, None))?;
+    (!contract.origin().is_core()).then_some(contract)
+}
+
+/// The registry entry `<package>:<command>` names, when the package declared it (spec §31.66).
+#[must_use]
+pub fn contributed_by_namespace(
+    namespace: &str,
+    command: &str,
+) -> Option<&'static CommandContract> {
+    let registry = crate::native::registry().ok()?;
+    registry.commands().iter().find(|contract| {
+        let Some(package) = contract.origin().package() else {
+            return false;
+        };
+        let matches_package = package == namespace || package.rsplit('.').next() == Some(namespace);
+        let short = contract.id().rsplit('.').next().unwrap_or_default();
+        matches_package && (short == command || contract.id() == command)
+    })
+}
+
+/// Runs a contributed command by its registry entry, loading its package first if the shell has
+/// not loaded it yet (spec §31.68).
+///
+/// The declaration in the manifest is what let the command be resolved without any of the
+/// package's code running; invoking it is the moment that changes, and it changes with the same
+/// policy negotiation `load plugin` performs.
+///
+/// # Errors
+///
+/// The load's own refusal — a denied required capability, a disabled package, a runtime that
+/// will not start — or the package's refusal of the invocation.
+pub fn invoke_contributed(
+    session: &mut Session,
+    contract: &CommandContract,
+    words: &[std::ffi::OsString],
+) -> Eval<Vec<Value>> {
+    let package = contract.origin().package().ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::ResolveCommandNotFound,
+            format!("`{}` names no package to run it", contract.spelling()),
+        ))
+    })?;
+    if loaded_package(session, package).is_none() {
+        load_plugin_with(
+            session,
+            package,
+            &LoadOptions {
+                silent: true,
+                ..LoadOptions::default()
+            },
+        )?;
+    }
+    let command = contract.id().rsplit('.').next().unwrap_or(contract.id());
+    invoke(session, package, command, words)
 }

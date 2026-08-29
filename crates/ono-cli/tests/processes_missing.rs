@@ -465,8 +465,9 @@ fn should_refuse_to_enter_a_process_that_does_not_exist() {
         run.output()
     );
     assert!(
-        run.stderr().contains("Ono-Sendai-E0301") || run.stderr().contains("Ono-Sendai-E0102"),
-        "the refusal is a structured not-found (errors.yaml `io.not_found` or `resolve.target_not_found`), got {:?}",
+        run.stderr().contains("Ono-Sendai-E1001"),
+        "the refusal is the structured not-found of a failed navigation (errors.yaml \
+         `spatial.not_found`, ADR-0191), got {:?}",
         run.stderr()
     );
     assert!(
@@ -665,5 +666,71 @@ fn should_report_partial_failure_row_by_row_when_a_bulk_kill_mixes_outcomes() {
         child.signal_within(Duration::from_secs(5)),
         Some(9),
         "process.yaml: `kill process` defaults to SIGKILL and the child died of it"
+    );
+}
+
+// --- a selector that names nothing is a refusal, whatever follows it (ADR-0221) --------------
+
+#[test]
+fn should_fail_the_run_when_a_named_process_is_not_there_and_a_count_follows() {
+    // `get process 999999 | count` reported the failure on stderr, wrote `0` to stdout and
+    // exited 0 — three answers that contradict each other. Spec §35.3: what could not be read is
+    // not zero.
+    let run = ono("get process 999999 | count");
+    assert_eq!(
+        run.status().code(),
+        1,
+        "a selector that names nothing did not answer, and the status says so: {:?}",
+        run.output()
+    );
+    assert!(
+        !run.stdout().contains('0'),
+        "spec §35.3: a count of what could not be read is not `0`: {:?}",
+        run.stdout()
+    );
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0301"),
+        "the refusal is still reported: {:?}",
+        run.stderr()
+    );
+    assert_eq!(
+        run.stderr().matches("Ono-Sendai-E0301").count(),
+        1,
+        "one failure is reported once: {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_report_a_named_process_that_is_not_there_exactly_once() {
+    let run = ono("get process 999999");
+    assert_eq!(
+        run.status().code(),
+        1,
+        "the run did not get what it asked for: {:?}",
+        run.output()
+    );
+    assert_eq!(
+        run.stderr().matches("Ono-Sendai-E0301").count(),
+        1,
+        "one failure is reported once, not twice: {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_still_count_what_arrived_when_only_some_of_the_stream_failed() {
+    // Spec §16.5: a partial failure is not a total one. Everything that could be read is still
+    // counted, and the count is a positive number.
+    let run = ono("get process | count");
+    let counted: i64 = run
+        .stdout()
+        .lines()
+        .last()
+        .and_then(|line| line.trim().parse().ok())
+        .unwrap_or_else(|| panic!("`count` answers a number, got {:?}", run.output()));
+    assert!(
+        counted > 1,
+        "the processes that could be read are still counted: {counted}"
     );
 }

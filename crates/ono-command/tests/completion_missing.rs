@@ -54,8 +54,9 @@ fn should_narrow_the_field_candidates_by_the_typed_prefix() {
     let narrowed = texts(&complete("get process | where cp"));
     assert_eq!(
         narrowed,
-        ["cpu"],
-        "spec §15.1: the typed prefix keeps only the fields that start with it"
+        ["cpu", "cpu_window"],
+        "spec §15.1: the typed prefix keeps only the fields that start with it — both of \
+         `ono.process/1`'s CPU fields do (ADR-0232), and nothing else does"
     );
 }
 

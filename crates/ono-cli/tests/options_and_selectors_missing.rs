@@ -518,3 +518,125 @@ fn should_resolve_an_endpoint_field_in_a_predicate_when_filtering_sockets_by_loc
         "the row that passed the predicate is the listener, got {found:?}"
     );
 }
+
+// --- what running the shell showed, pinned so it cannot regress silently (B-harn-6) -------------
+
+#[test]
+fn should_leave_out_the_processes_the_named_user_does_not_own() {
+    // The other half of `--user`: the sibling test proves nothing foreign gets *in*, which a
+    // provider that answered with an empty stream would also satisfy, and which says nothing
+    // about whether the option narrows at all. This one proves there was something to leave out
+    // — the shell's own process, which root does not own. Two single runs, and the conclusion
+    // needs no arithmetic across them: an unfiltered stream that holds a non-root process and a
+    // filtered one that holds none is a filter that narrowed.
+    let me = current_user();
+    if me == "root" {
+        // Running as root there may be no other user's process to leave out, and inventing one
+        // would need privileges the suite must not assume.
+        return;
+    }
+    let strangers = count(r#"get process | where user.name != "root" | count | to json"#);
+    assert!(
+        strangers >= 1,
+        "the shell answering this query runs as {me}, so the unfiltered stream holds at least \
+         one process root does not own"
+    );
+    let survivors =
+        count(r#"get process --user root | where user.name != "root" | count | to json"#);
+    assert_eq!(
+        survivors, 0,
+        "process.yaml: `--user root` narrows the stream, so none of the {strangers} process(es) \
+         root does not own survives it"
+    );
+}
+
+#[test]
+fn should_trace_a_connection_even_when_another_one_carries_no_identity() {
+    // The kernel reports no socket inode for a `TIME_WAIT` connection, and `ono.socket/1`
+    // identifies a socket by its inode — so such a row has no identity at all. Whichever
+    // connection the provider happens to yield first, `trace` has to answer about one it *can*
+    // relate to; refusing the whole graph because the first row of the match is unidentifiable
+    // is a failure the user cannot act on (spec §16.5, §22.1).
+    //
+    // The `TIME_WAIT` row is created here rather than waited for: closing the initiating side of
+    // a loopback connection leaves one behind for a minute, which is exactly the state that made
+    // this fail on a machine that had been running the suite.
+    {
+        let (listener, port) = listener();
+        let client =
+            std::net::TcpStream::connect(("127.0.0.1", port)).expect("a loopback connection opens");
+        let accepted = listener.accept().expect("the listener accepts it");
+        drop(accepted);
+        drop(client);
+        drop(listener);
+    }
+
+    let (listener, port) = listener();
+    let client =
+        std::net::TcpStream::connect(("127.0.0.1", port)).expect("a loopback connection opens");
+    let accepted = listener.accept().expect("the listener accepts it");
+
+    let run = ono("trace connection --remote 127.0.0.1 | to json");
+    run.assert_success();
+    assert!(
+        !rows(&run).is_empty(),
+        "a connection to 127.0.0.1 is open, so the trace has something to answer with, got {:?};          stderr: {}",
+        run.stdout(),
+        run.stderr()
+    );
+
+    drop(accepted);
+    drop(client);
+    drop(listener);
+}
+
+#[test]
+fn should_trace_the_connection_that_does_have_the_requested_remote() {
+    // The sibling test covers the peer nobody is talking to. This is the answer itself: with a
+    // loopback connection open, `trace connection --remote 127.0.0.1` returns a graph, and every
+    // socket in it is a socket with that peer (network.yaml, spec §22.3).
+    let (listener, port) = listener();
+    let client =
+        std::net::TcpStream::connect(("127.0.0.1", port)).expect("a loopback connection opens");
+    let accepted = listener.accept().expect("the listener accepts it");
+
+    let run = ono("trace connection --remote 127.0.0.1 | to json");
+    run.assert_success();
+
+    let graphs = rows(&run);
+    assert!(
+        !graphs.is_empty(),
+        "a connection to 127.0.0.1 is open, so the trace has something to answer with, got {:?}",
+        run.stdout()
+    );
+    let mut with_that_peer = 0_usize;
+    for graph in &graphs {
+        let nodes = graph["nodes"]
+            .as_sequence()
+            .unwrap_or_else(|| panic!("graph.v1: `nodes` is a list, got {graph:?}"));
+        for node in nodes {
+            if node["kind"].as_str() != Some("ono.socket/1") {
+                continue;
+            }
+            // A listening socket the connection reached has no peer of its own; a *connected*
+            // socket in this graph must be connected to the peer that was asked for.
+            match node["value"]["remote"]["address"].as_str() {
+                Some("127.0.0.1") => with_that_peer += 1,
+                None => {}
+                other => panic!(
+                    "spec §22.3: `--remote 127.0.0.1` traces only that peer's connections, and \
+                     this graph holds one to {other:?}: {node:?}"
+                ),
+            }
+        }
+    }
+    assert!(
+        with_that_peer >= 1,
+        "the trace answers about the connection it was asked for, so the graph holds at least \
+         one socket whose peer is 127.0.0.1, got {:?}",
+        run.stdout()
+    );
+
+    drop(accepted);
+    drop(client);
+}

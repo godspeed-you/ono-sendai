@@ -1,0 +1,1 @@
+try { unmount filesystem / } catch e { $e | to json }

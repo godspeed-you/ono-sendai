@@ -352,10 +352,27 @@ fn should_unmount_the_mounts_piped_in_from_get_mount() {
     }
     let run = ono("get mount / | unmount filesystem | to json");
     let row = assert_refused(&run, "ono.filesystem.unmount", &[PERMISSION_DENIED]);
-    assert_eq!(
-        text(&row, "target"),
-        "ono.mount/1[/]",
+    assert!(
+        text(&row, "target").starts_with("ono.mount/1[/]"),
         "the piped `ono.mount/1` record is the target (ADR-0068 §2 form), got {row:?}"
+    );
+}
+
+#[test]
+fn should_label_the_unmounted_mount_the_same_way_whichever_spelling_named_it() {
+    // ADR-0224: one label rule. `unmount filesystem /` and `get mount / | unmount filesystem`
+    // act on the same object and must render the same `target`.
+    if !unprivileged() {
+        return;
+    }
+    let named = ono("unmount filesystem / | to json");
+    let piped = ono("get mount / | unmount filesystem | to json");
+    let named = assert_refused(&named, "ono.filesystem.unmount", &[PERMISSION_DENIED]);
+    let piped = assert_refused(&piped, "ono.filesystem.unmount", &[PERMISSION_DENIED]);
+    assert_eq!(
+        text(&piped, "target"),
+        text(&named, "target"),
+        "the same mount renders the same target however it was named"
     );
 }
 
@@ -670,5 +687,25 @@ fn should_pop_the_mount_frame_when_leaving() {
         vec!["[2]", "[1]"],
         "spec §14.1: `enter mount` pushes a frame and `leave` pops it, got {:?}",
         run.output()
+    );
+}
+
+// --- what running the shell showed, pinned so it cannot regress silently (B-harn-6) -------------
+
+#[test]
+fn should_say_which_path_holds_no_mount_when_an_unmount_finds_none() {
+    // The sibling test pins the code. What the operator actually reads is the message, and the
+    // message is the provider's own: `/etc` is a real directory on every host, so "nothing is
+    // mounted at /etc" is the only answer that says *why* — a bare `io.not_found` would leave
+    // the reader wondering whether the path or the mount was missing (spec §16.2, §43).
+    let run = ono("unmount filesystem /etc | to json");
+    let row = assert_refused(&run, "ono.filesystem.unmount", &[NOT_FOUND]);
+    let message = row["error"]["message"]
+        .as_str()
+        .unwrap_or_else(|| panic!("spec §43: a failed row carries a message, got {row:?}"));
+    assert!(
+        message.contains("nothing is mounted at") && message.contains("/etc"),
+        "spec §16.2: the refusal names the resource that does not exist — the mount, not the \
+         directory, got {message:?}"
     );
 }

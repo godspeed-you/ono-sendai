@@ -1067,6 +1067,44 @@ fn run_stage_list(
         return crate::native::run_seeded(session, list, source, values);
     }
 
+    // Spec §31.68: a command an installed package *declared* is in the registry before any of
+    // that package's code has run, and "invoking the command triggers policy negotiation and
+    // load". Both spellings reach it — the bare `get echo-item` the registry resolves, and the
+    // qualified `echo:emit` of §31.66 — and neither starts anything until it is invoked. A
+    // package that declares nothing has no placeholder to invoke, so `<package>:command` is
+    // still a refusal there: the shell does not start a package to discover whether a name
+    // exists, which is the cost lazy loading exists to avoid.
+    if !background
+        && let Some(stage) = list.stages.first()
+        && let StageHead::Command(name) = &stage.head
+    {
+        let contributed = match name.namespace.as_deref() {
+            Some(namespace) if Namespace::from_prefix(Some(namespace)).is_none() => {
+                crate::plugins::contributed_by_namespace(namespace, &name.name)
+            }
+            Some(_) => None,
+            None => crate::plugins::contributed_command(stage),
+        };
+        if let Some(contract) = contributed {
+            let mut words = stage_arguments(session, stage, source)?;
+            // The target word is how the registry resolved the command, not an argument to it.
+            if name.namespace.is_none()
+                && contract.target().is_some_and(|target| {
+                    stage
+                        .arguments
+                        .first()
+                        .and_then(ono_parser::Argument::as_word)
+                        == Some(target)
+                })
+                && !words.is_empty()
+            {
+                words.remove(0);
+            }
+            let values = crate::plugins::invoke_contributed(session, contract, &words)?;
+            return crate::native::run_seeded(session, list, source, values);
+        }
+    }
+
     // A pipeline may start with a value instead of a command: `$hot | where …`, `@-1 | count`
     // (spec §10.2, §20.2). The head is evaluated once and a list splices, because a list *is*
     // several values (ADR-0019); everything after it runs as if a producer had streamed them.
@@ -1481,6 +1519,16 @@ fn builtin_name(session: &Session, stage: &Stage) -> Option<&'static str> {
 }
 
 /// The literal word after the head, which decides whether `set`/`remove` are the shell's.
+/// The registry's refusal when `head` is a verb it knows and only the target word is wrong.
+///
+/// `None` when the registry does not know the verb at all, or when it would answer something
+/// else: nothing here invents a reason the registry did not give (ADR-0217).
+fn registry_target_refusal(head: &str, arguments: &[Argument]) -> Option<ErrorValue> {
+    let registry = crate::native::registry().ok()?;
+    let error = registry.resolve(head, arguments).err()?;
+    (error.code() == ErrorCode::ResolveTargetNotFound).then_some(error)
+}
+
 fn first_word(stage: &Stage) -> Option<&str> {
     stage
         .arguments
@@ -1573,6 +1621,14 @@ fn build_command(session: &mut Session, stage: &Stage, source: &str) -> Eval<Com
     };
 
     let resolution = resolve::resolve(session, namespace, &name.name).map_err(|error| {
+        // A head word the registry knows as a verb was refused for its target word, not for
+        // itself: `trace group root` is `trace` with a target it has no command for. Reporting
+        // the verb as missing after the search reached `PATH` hides what was wrong, so the
+        // registry's own refusal — which names the target and its near misses — is the answer
+        // (spec §15.4, ADR-0217).
+        if let Some(refusal) = registry_target_refusal(&name.name, &stage.arguments) {
+            return Flow::Failed(refusal);
+        }
         let suggestions = resolve::suggestions(session, &name.name);
         let error = if suggestions.is_empty() {
             error
@@ -1650,13 +1706,36 @@ fn build_redirect(
     })
 }
 
+/// A stage's argument text and its words-mode reading, for a stage handed to a program.
+fn argument_region<'a>(stage: &Stage, source: &'a str) -> Option<(Vec<Argument>, &'a str)> {
+    let first = stage.arguments.first()?.span();
+    let last = stage.arguments.last()?.span();
+    let region = source.get(first.start() as usize..last.end() as usize)?;
+    Some((ono_parser::words_arguments(region), region))
+}
+
 /// Expands a stage's arguments into the argv an external command receives.
 ///
 /// A list contributes one argument per element, because it *is* several values; nothing else
 /// contributes more than one (ADR-0019).
+///
+/// A stage the parser read in expression mode — because the registry declares a native command
+/// of that name — and that resolution then handed to a program is read back as the words the
+/// user typed: `printf … | sort -r` is coreutils `sort` with the flag `-r`, not a native sort
+/// negating a field called `r` (ADR-0028, ADR-0260).
 pub fn stage_arguments(session: &mut Session, stage: &Stage, source: &str) -> Eval<Vec<OsString>> {
+    // The whole argument region, re-read in words mode, when the parse mode was decided by a
+    // native head the resolution did not choose (ADR-0260). Nothing else is re-read: a
+    // words-mode stage was already read as words.
+    let rewritten = (stage.mode == ono_parser::ArgMode::Expression)
+        .then(|| argument_region(stage, source))
+        .flatten();
+    let (arguments, source) = match &rewritten {
+        Some((arguments, region)) => (arguments.as_slice(), *region),
+        None => (stage.arguments.as_slice(), source),
+    };
     let mut argv = Vec::new();
-    for argument in &stage.arguments {
+    for argument in arguments {
         match argument {
             Argument::Word(word) => argv.extend(expand::expand_word(session, &word.text)?),
             Argument::Option(option) => match &option.value {

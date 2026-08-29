@@ -1,0 +1,80 @@
+# Canonical NavigationStep schema. Source: v0.4 §20.1, which spells the step field by field —
+# `timestamp`, `from`, `to`, `movement`, `relation?`, `scope_crossing?` — plus §6.4 ("the relation
+# traversed MUST be recorded"), §6.5 ("`jump` MUST visibly record the source and destination"),
+# §6.7 (what the trail MUST preserve) and §3.2 ("crossing a scope boundary MUST be observable in
+# the navigation trail"). ADR-0150 decides the field set.
+#
+# `from` and `to` are the opaque `SpatialId`s of §3.1, because a trail that named places by their
+# rendered names could not tell an exited process from its replacement (§44.7). Opaque ids are
+# unreadable on their own, so each end also travels as the `<type>/<key>` spelling §11.2 and §27.2
+# write a place with — the same spelling `enter` and `jump` take back — and as the display name a
+# person recognises. Nothing here is derived a second time: all three come from the same index
+# entry the movement resolved.
+id: ono.navigation-step/1
+name: NavigationStep
+summary: One movement of the session's navigation trail, from one place to another.
+identity: [timestamp, from, to]
+fields:
+  timestamp:
+    type: timestamp
+    required: true
+    doc: When the movement happened (§20.1).
+  movement:
+    type: enum
+    required: true
+    values: [enter, follow, jump, back, up, home]
+    doc: Which of §6's movements it was (§20.1).
+  from:
+    type: string
+    required: true
+    doc: The opaque `SpatialId` the movement started at (§20.1, §3.1).
+  to:
+    type: string
+    required: true
+    doc: The opaque `SpatialId` it arrived at (§20.1, §3.1).
+  from_ref:
+    type: string
+    nullable: true
+    doc: >-
+      The place it started at, in the canonical `<type>/<key>` spelling of §11.2 and §27.2 —
+      `process/1842`, `compute.processes`. Null where the session no longer knows the place.
+  to_ref:
+    type: string
+    nullable: true
+    doc: The same for the place it arrived at.
+  from_name:
+    type: string
+    nullable: true
+    doc: What a person calls the place it started at (§3.1's `display_name`).
+  to_name:
+    type: string
+    nullable: true
+    doc: What a person calls the place it arrived at.
+  relation:
+    type: string
+    nullable: true
+    doc: >-
+      The word the traversal was spelled with — `socket`, `parent`, `owner` (§6.4). Null for every
+      movement that is not a `follow`, because hierarchy is not a relationship (§2.6).
+  relation_id:
+    type: string
+    nullable: true
+    doc: >-
+      The relation the word named, as `docs/spec/spatial/relations.yaml` declares it —
+      `process.owns_socket`. A relation has two ends and therefore two words, so the id alone does
+      not say which way the movement went; both travel together (§11.4, §41.2).
+  scope_crossing:
+    type: record
+    nullable: true
+    doc: >-
+      The scope boundary the movement crossed, where it crossed one: the scope left, the scope
+      entered, the kind of boundary and whether it is remote (§3.2, §2.18). Null where both ends
+      belong to the same scope — never omitted, because an invisible crossing makes the trail lie.
+  host:
+    type: string
+    required: true
+    doc: >-
+      The host scope the movement happened on, so a cross-host path can be read back
+      unambiguously (§19, §20.1).
+default_view:
+  columns: [movement, from_name, to_name, relation]

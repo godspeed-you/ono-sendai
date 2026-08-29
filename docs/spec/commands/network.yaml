@@ -135,13 +135,15 @@ commands:
       - {name: query, type: string, doc: "The name or address to resolve. An address performs a reverse lookup."}
     options:
       - {name: type, type: string, doc: "Restrict to one record type."}
-      - {name: server, type: ip, doc: "Query this resolver instead of the system's."}
+      - {name: server, type: ip, doc: "Query this nameserver instead of the system's resolver. Ono asks it directly, so the answer is that server's and not what NSS, /etc/hosts or mDNS would add (ADR-0240)."}
+      - {name: port, type: port, doc: "Where the nameserver named by `--server` listens. 53 unless given; a local stub resolver often listens elsewhere."}
     privilege: none
     streaming: true
     phase: C
     examples:
       - resolve dns example.com
       - resolve dns 10.4.2.11
+      - resolve dns example.com --server 9.9.9.9
 
   - id: ono.port.test
     verb: test
@@ -291,6 +293,7 @@ commands:
       - {name: interface, type: string, doc: "The outgoing interface."}
       - {name: metric, type: int, doc: "The route priority."}
       - {name: table, type: string, doc: "Which routing table to add to."}
+      - {name: dry-run, type: bool, doc: "Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238)."}
     privilege: elevated
     streaming: false
     phase: C
@@ -310,6 +313,7 @@ commands:
       - {name: destination, type: ipnetwork, doc: "The prefix to stop routing."}
     options:
       - {name: table, type: string, doc: "Which routing table to remove from."}
+      - {name: dry-run, type: bool, doc: "Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238)."}
     privilege: elevated
     streaming: true
     phase: C
@@ -330,6 +334,7 @@ commands:
     options:
       - {name: gateway, type: ip, doc: "New next hop."}
       - {name: metric, type: int, doc: "New priority."}
+      - {name: dry-run, type: bool, doc: "Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238)."}
     privilege: elevated
     streaming: true
     phase: C
@@ -350,6 +355,7 @@ commands:
     options:
       - {name: mtu, type: int, doc: "New maximum transmission unit."}
       - {name: up, type: bool, doc: "Bring the interface administratively up or down."}
+      - {name: dry-run, type: bool, doc: "Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238)."}
     privilege: elevated
     streaming: true
     phase: C
@@ -367,12 +373,13 @@ commands:
     validation_required: true
     note: Overlaps `set interface --up true`; one spelling should be withdrawn before either is stable.
     argument_mode: words
-    input: "null"
+    input: "null | stream<ono.interface/1>"
     output: ono.action-result/1
     provider_capability: interface.set
     selectors:
       - {name: name, type: string, doc: "The interface to bring up."}
-    options: []
+    options:
+      - {name: dry-run, type: bool, doc: "Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238)."}
     privilege: elevated
     streaming: false
     phase: C
@@ -387,12 +394,13 @@ commands:
     validation_required: true
     note: Overlaps `set interface --up false`.
     argument_mode: words
-    input: "null"
+    input: "null | stream<ono.interface/1>"
     output: ono.action-result/1
     provider_capability: interface.set
     selectors:
       - {name: name, type: string, doc: "The interface to bring down."}
-    options: []
+    options:
+      - {name: dry-run, type: bool, doc: "Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238)."}
     privilege: elevated
     streaming: false
     phase: C
@@ -414,6 +422,7 @@ commands:
     options:
       - {name: address, type: ipnetwork, doc: "Address to add."}
       - {name: kind, type: string, doc: "Virtual interface kind to create."}
+      - {name: dry-run, type: bool, doc: "Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238)."}
     privilege: elevated
     streaming: false
     phase: C
@@ -427,13 +436,14 @@ commands:
     stability: experimental               # spec §52, interface/remove = "M?"; delivered by ADR-0088
     validation_required: true
     argument_mode: words
-    input: "null"
+    input: "null | stream<ono.interface/1>"
     output: ono.action-result/1
     provider_capability: interface.set
     selectors:
       - {name: name, type: string, doc: "The interface to delete or shrink."}
     options:
       - {name: address, type: ipnetwork, doc: "Address to remove; without it the interface itself is deleted."}
+      - {name: dry-run, type: bool, doc: "Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238)."}
     privilege: elevated
     streaming: false
     phase: C
@@ -489,6 +499,7 @@ commands:
     selectors: []
     options:
       - {name: confirm, type: bool, doc: "Required: closing a socket under a running process is destructive, and a script never waits for a prompt (spec §17.4). Without it nothing is closed and the run fails with `safety.confirmation_required`."}
+      - {name: dry-run, type: bool, doc: "Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238)."}
     confirmation: always
     privilege: elevated
     streaming: true

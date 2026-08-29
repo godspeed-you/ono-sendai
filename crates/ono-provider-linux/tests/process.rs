@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    FakeAccounts, ProcFixture, RecordingSignals, StatFields, TestClock, USER_HZ, drain,
-    expected_start, find, records,
+    FIXTURE_UPTIME_SECONDS, FakeAccounts, ProcFixture, RecordingSignals, StatFields, TestClock,
+    USER_HZ, drain, expected_start, find, records,
 };
 use ono_core::ErrorCode;
 use ono_provider_api::{Action, ObjectId, Provider, Query, Selector};
@@ -107,10 +107,15 @@ async fn should_report_every_declared_field_when_the_process_is_fully_readable()
         matches!(process.get("memory"), Some(Value::ByteSize(size)) if size.bytes() > 0),
         "the resident set is the page count times the page size, not the page count"
     );
-    assert_eq!(
-        process.access("cpu"),
-        FieldAccess::Unknown,
-        "one procfs read cannot answer a rate, and null is the only honest answer"
+    let cpu = process
+        .get("cpu")
+        .and_then(|value| value.as_float().ok())
+        .expect("the share of a CPU over the process's life");
+    assert!(
+        (cpu - 0.084).abs() < 1e-9,
+        "one procfs read cannot answer a rate over the last interval, but it answers one over \
+         the process's whole life: 42 ticks in the 500 seconds since it started, which is \
+         0.084% of one CPU (ADR-0232). Got {cpu}"
     );
     assert_eq!(
         process.access("container"),
@@ -143,7 +148,7 @@ async fn should_report_every_declared_field_when_the_process_is_fully_readable()
 }
 
 #[tokio::test]
-async fn should_report_a_rate_on_the_second_observation_after_null_on_the_first() {
+async fn should_report_the_rate_since_the_previous_observation_once_there_is_one() {
     let fixture = ProcFixture::new();
     let clock = TestClock::new();
     let provider = ProcessProvider::rooted(fixture.root())
@@ -165,9 +170,10 @@ async fn should_report_a_rate_on_the_second_observation_after_null_on_the_first(
     )
     .await;
     assert_eq!(
-        records(&first)[0].access("cpu"),
-        FieldAccess::Unknown,
-        "the first observation has nothing to divide by"
+        records(&first)[0].get("cpu"),
+        Some(&Value::Float(0.0)),
+        "the first observation has no earlier one to divide by, so it answers over the process's \
+         lifetime instead — during which this process used no CPU at all (ADR-0232)"
     );
 
     // Half a second of wall clock, during which the process used a quarter of a second of CPU.
@@ -675,5 +681,239 @@ async fn should_filter_by_any_field_the_schema_declares_rather_than_ignoring_the
         ["in-service"],
         "only the process in the service answers; the other was filtered, not the selector \
          ignored"
+    );
+}
+
+#[tokio::test]
+async fn should_filter_by_the_service_option_rather_than_ignoring_it() {
+    // ADR-0076 §4: an option a frame can spell must be honoured, because an option a provider
+    // ignores is a frame that widens silently. `ono.process.watch` declares `--service`, so
+    // inside `enter service nginx.service` a watch is narrowed by it.
+    let fixture = ProcFixture::new();
+    fixture
+        .process(21)
+        .stat("in-service", StatFields::default())
+        .cgroup("0::/system.slice/nginx.service");
+    fixture
+        .process(22)
+        .stat("outside", StatFields::default())
+        .cgroup("0::/user.slice/user-1000.slice/session-2.scope");
+
+    let query = Query::target("process").option("service", Value::string("nginx.service"));
+    let collected = drain(provider(&fixture).snapshot(&query).expect("a snapshot")).await;
+
+    let names: Vec<String> = records(&collected)
+        .iter()
+        .map(|record| {
+            record
+                .get("name")
+                .and_then(|value| value.as_str().ok())
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        names,
+        ["in-service"],
+        "only the process the service claims answers; the option filtered, it was not ignored"
+    );
+}
+
+#[tokio::test]
+async fn should_match_no_process_whose_service_is_unknown_when_the_service_option_is_given() {
+    // ADR-0014: unknown is not equal to anything. A process no unit claims is not "not in
+    // nginx.service"; it is a process whose service could not be determined.
+    let fixture = ProcFixture::new();
+    fixture.process(23).stat("orphan", StatFields::default());
+
+    let query = Query::target("process").option("service", Value::string("nginx.service"));
+    let collected = drain(provider(&fixture).snapshot(&query).expect("a snapshot")).await;
+
+    assert!(
+        records(&collected).is_empty(),
+        "a process with no service matches no service"
+    );
+}
+
+#[tokio::test]
+async fn should_report_the_pid_namespace_the_pid_was_read_in() {
+    // v0.4 §10.2: a local process identity is boot identity, pid, start time *and* pid namespace
+    // identity. Without the last one a container's pid 1 and the host's pid 1 are the same
+    // four-part identity, and entering one would arrive at the other (ADR-0134).
+    let fixture = ProcFixture::new();
+    fixture
+        .process(1)
+        .stat("systemd", StatFields::default())
+        .status(0, 0)
+        .namespace("pid", 4_026_531_836);
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process"))
+            .expect("the fixture proc tree can be enumerated"),
+    )
+    .await;
+    let records = records(&collected);
+    let process = records.first().expect("the fixture holds one process");
+
+    assert_eq!(
+        process.get("pid_namespace"),
+        Some(&Value::Int(4_026_531_836)),
+        "the namespace inode is what distinguishes two processes that share a pid number"
+    );
+    let source = process
+        .provenance()
+        .source()
+        .expect("every record says what it was read from");
+    assert!(
+        source.contains("/1/ns/pid"),
+        "provenance names the link the namespace was read from: {source}"
+    );
+}
+
+#[tokio::test]
+async fn should_report_a_null_pid_namespace_when_the_kernel_shows_no_namespace_link() {
+    // §2.17 and spec §35.3: unknown is null, never the root namespace. Guessing `4026531836`
+    // here would make every unreadable process look like a host process.
+    let fixture = ProcFixture::new();
+    fixture
+        .process(4419)
+        .stat("nginx", StatFields::default())
+        .status(1000, 100);
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process"))
+            .expect("the fixture proc tree can be enumerated"),
+    )
+    .await;
+    let records = records(&collected);
+    let process = records.first().expect("the fixture holds one process");
+
+    assert_eq!(
+        process.access("pid_namespace"),
+        FieldAccess::Unknown,
+        "a namespace nobody could read is unknown, not the root namespace"
+    );
+}
+
+#[tokio::test]
+async fn should_carry_the_pid_namespace_into_the_detail_record_as_well() {
+    // The two records name one object (§42.1), so they must agree on every part of its
+    // identity — otherwise `get process` and `inspect process` would be two different places.
+    let fixture = ProcFixture::new();
+    fixture
+        .process(4419)
+        .stat("nginx", StatFields::default())
+        .status(1000, 100)
+        .namespace("pid", 4_026_533_331);
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process").option("detail", Value::Bool(true)))
+            .expect("the fixture proc tree can be enumerated"),
+    )
+    .await;
+    let records = records(&collected);
+    let detail = records.first().expect("the fixture holds one process");
+
+    assert_eq!(detail.schema().id().to_string(), "ono.process-detail/1");
+    assert_eq!(
+        detail.get("pid_namespace"),
+        Some(&Value::Int(4_026_533_331))
+    );
+}
+
+// --- what `cpu` is measured over (ADR-0232) ---------------------------------------------------
+
+/// The `cpu` and `cpu_window` of the one process a snapshot answered.
+fn share(collected: &ono_pipeline::Collected) -> (f64, ono_value::Duration) {
+    let record = records(collected)
+        .first()
+        .cloned()
+        .expect("the fixture holds one process");
+    let cpu = record
+        .get("cpu")
+        .and_then(|value| value.as_float().ok())
+        .expect("the share of a CPU");
+    let window = match record.get("cpu_window") {
+        Some(Value::Duration(window)) => *window,
+        other => panic!("`cpu_window` says what `cpu` was measured over, got {other:?}"),
+    };
+    (cpu, window)
+}
+
+#[tokio::test]
+async fn should_report_the_share_over_the_process_lifetime_when_nothing_earlier_was_observed() {
+    // A single procfs read cannot answer a rate over the last interval, but it can answer one:
+    // the kernel states how much CPU the process has used and when it started, and the quotient
+    // of the two is a share of one logical CPU over a window the record names. Silence would be
+    // the wrong answer — spec §28.1's own example is `get process | where cpu > 20`, a question
+    // one invocation must be able to ask.
+    let fixture = ProcFixture::new();
+    fixture.process(4419).stat(
+        "nginx",
+        StatFields {
+            utime: 30,
+            stime: 12,
+            starttime: 12_345 * USER_HZ,
+            ..StatFields::default()
+        },
+    );
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process"))
+            .expect("a snapshot"),
+    )
+    .await;
+
+    let (cpu, window) = share(&collected);
+    let lifetime = FIXTURE_UPTIME_SECONDS - 12_345;
+    assert_eq!(
+        window,
+        ono_value::Duration::from_nanoseconds(i128::from(lifetime) * 1_000_000_000),
+        "the window is the process's lifetime: uptime minus its start"
+    );
+    assert!(
+        (cpu - 0.084).abs() < 1e-9,
+        "42 ticks of 100 per second over {lifetime} seconds is 0.084% of one CPU: got {cpu}"
+    );
+}
+
+#[tokio::test]
+async fn should_measure_the_share_over_the_interval_the_caller_asked_to_sample() {
+    // `--sample` buys the rate the lifetime average cannot give: what the process is doing now,
+    // over a window the caller chose and paid for.
+    let fixture = ProcFixture::new();
+    fixture.process(7).stat(
+        "busy",
+        StatFields {
+            utime: 30,
+            stime: 12,
+            starttime: 100 * USER_HZ,
+            ..StatFields::default()
+        },
+    );
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("process").option(
+                "sample",
+                Value::Duration(ono_value::Duration::from_nanoseconds(50_000_000)),
+            ))
+            .expect("a snapshot"),
+    )
+    .await;
+
+    let (cpu, window) = share(&collected);
+    assert!(
+        window.as_seconds_f64() >= 0.05 && window.as_seconds_f64() < 5.0,
+        "the window is the interval that was sampled, not the process's lifetime: got {window}"
+    );
+    assert!(
+        (cpu - 0.0).abs() < 1e-9,
+        "the fixture's counters did not move during the interval, so the share over it is zero \
+         — not the 0.033% its lifetime average would have shown: got {cpu}"
     );
 }

@@ -52,13 +52,16 @@ pub fn run(session: &mut Session, name: &str, values: Vec<Value>) -> Eval<ExitSt
             .iter()
             .map(|(name, value)| (name.as_str(), value.as_str()))
             .collect();
+        let sink = crate::sink::Sink::for_stdout(&borrowed).with_theme(session.theme());
         let sink = if tree {
-            crate::sink::Sink::for_stdout(&borrowed).with_view(View::Tree)
+            sink.with_view(View::Tree)
         } else {
-            crate::sink::Sink::for_stdout(&borrowed)
+            sink
         };
         sink.write(&values);
-        session.retain_result(values);
+        let total = values.len();
+        let dropped = session.retain_result(values);
+        crate::report::retention_notice(dropped, total);
         return Ok(ExitStatus::SUCCESS);
     }
 
@@ -74,7 +77,9 @@ pub fn run(session: &mut Session, name: &str, values: Vec<Value>) -> Eval<ExitSt
     if let Some(value) = selected {
         session.select(value);
     }
-    session.retain_result(values);
+    let total = values.len();
+    let dropped = session.retain_result(values);
+    crate::report::retention_notice(dropped, total);
     Ok(ExitStatus::SUCCESS)
 }
 

@@ -7,14 +7,14 @@ use std::sync::Arc;
 
 use common::{
     FixtureProvider, ProcFixture, TableResolver, edges, endpoint, file, filesystem, group,
-    interface, make_readable, mount, neighbor, node, owned_process, process, registry, route,
-    service, socket, trace_with, user,
+    interface, make_readable, mount, mount_in_group, neighbor, node, owned_process, process,
+    registry, route, service, service_requiring, socket, trace_with, user,
 };
 use ono_core::ErrorCode;
 use ono_graph::{
-    Confidence, FileHolders, InterfaceSockets, MountDevices, MountFilesystems, MountUsers,
-    OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, RouteInterfaces,
-    ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
+    Confidence, FileHolders, InterfaceSockets, MountDevices, MountFilesystems, MountPeers,
+    MountUsers, OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts, RouteInterfaces,
+    ServiceDependencies, ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
 };
 use ono_provider_api::Provider;
 use ono_value::Value;
@@ -540,6 +540,73 @@ async fn should_link_a_mount_to_the_filesystem_at_the_same_mount_point() {
 }
 
 #[tokio::test]
+async fn should_link_a_mount_to_the_other_mounts_of_its_propagation_peer_group() {
+    // storage.yaml: `trace mount` shows "a mount's device, filesystem, propagation peers and the
+    // processes using it". `mountinfo(5)`'s `shared:N` is what makes two mounts peers, and both
+    // state the same number — nothing is inferred from paths (spec §22.4, ADR-0236).
+    let mounts: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.mount",
+        &["mount"],
+        vec![
+            mount_in_group("/dev/sdb1", "/srv/data", "xfs", Some(7)),
+            mount_in_group("/dev/sdb1", "/exports/data", "xfs", Some(7)),
+            mount_in_group("/dev/sdc1", "/elsewhere", "ext4", Some(9)),
+            mount("/dev/sdd1", "/private", "ext4"),
+        ],
+    ))];
+    let registry = registry(mounts);
+    let subject = mount_in_group("/dev/sdb1", "/srv/data", "xfs", Some(7));
+
+    let graph = trace_with(
+        vec![Arc::new(MountPeers::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["peer -> /exports/data"],
+        "the peers are the other mounts of group 7: not the mount itself, not group 9, and not \
+         the private mount that propagates nothing"
+    );
+}
+
+#[tokio::test]
+async fn should_relate_a_private_mount_to_no_peer_at_all() {
+    // A mount in no peer group propagates to nothing. That is an absence the kernel states, and
+    // an empty answer is the honest one — not a failure (spec §10.5).
+    let mounts: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.mount",
+        &["mount"],
+        vec![
+            mount("/dev/sdd1", "/private", "ext4"),
+            mount_in_group("/dev/sdb1", "/srv/data", "xfs", Some(7)),
+        ],
+    ))];
+    let registry = registry(mounts);
+    let subject = mount("/dev/sdd1", "/private", "ext4");
+
+    let graph = trace_with(
+        vec![Arc::new(MountPeers::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert!(
+        edges(&graph).is_empty(),
+        "a private mount has no peers, got {:?}",
+        edges(&graph)
+    );
+    assert!(
+        graph.failures().is_empty(),
+        "having no peers is not a failure to report, got {:?}",
+        graph.failures()
+    );
+}
+
+#[tokio::test]
 async fn should_link_a_mount_to_the_processes_rooted_or_working_on_it() {
     let proc = ProcFixture::new();
     proc.process(700)
@@ -798,4 +865,73 @@ async fn should_link_a_process_to_the_user_it_runs_as() {
 
     assert_eq!(edges(&graph), ["runs-as -> postgres"]);
     assert_eq!(graph.edges()[0].confidence(), Confidence::Exact);
+}
+
+#[tokio::test]
+async fn should_link_a_service_to_the_units_it_requires() {
+    // v0.4 §13 lists dependencies among a service place's groups, and
+    // `docs/spec/spatial/relations.yaml` declares `service.depends_on` with the rule that "a
+    // provider must not claim a dependency it cannot justify". The service manager states them
+    // and the record carries them, so the edge is exact and composed rather than guessed
+    // (ADR-0239).
+    let services: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.service",
+        &["service"],
+        vec![
+            service_requiring("nginx.service", Some(812), &["network-online.target"]),
+            service_requiring("network-online.target", None, &[]),
+            service_requiring("unrelated.service", None, &[]),
+        ],
+    ))];
+    let registry = registry(services);
+    let subject = service_requiring("nginx.service", Some(812), &["network-online.target"]);
+
+    let graph = trace_with(
+        vec![Arc::new(ServiceDependencies::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert_eq!(
+        edges(&graph),
+        ["depends-on -> network-online.target"],
+        "only the unit the service says it requires; not every unit the manager holds"
+    );
+}
+
+#[tokio::test]
+async fn should_draw_no_dependency_edge_to_a_unit_the_manager_does_not_hold() {
+    // A unit file may name a unit that was never installed. v0.4 §42.3 wants every edge to reach
+    // a known object, an explicit unresolved endpoint or a typed remote reference — never a
+    // dangling id — so a name nothing answers to draws nothing, and that is not a failure.
+    let services: Vec<Arc<dyn Provider>> = vec![Arc::new(FixtureProvider::new(
+        "fixture.service",
+        &["service"],
+        vec![service_requiring(
+            "nginx.service",
+            Some(812),
+            &["never-installed.target"],
+        )],
+    ))];
+    let registry = registry(services);
+    let subject = service_requiring("nginx.service", Some(812), &["never-installed.target"]);
+
+    let graph = trace_with(
+        vec![Arc::new(ServiceDependencies::new(registry))],
+        node(&subject),
+        one_hop(),
+    )
+    .await;
+
+    assert!(
+        edges(&graph).is_empty(),
+        "a dependency nothing answers to is not an edge, got {:?}",
+        edges(&graph)
+    );
+    assert!(
+        graph.failures().is_empty(),
+        "and it is not a failure either, got {:?}",
+        graph.failures()
+    );
 }

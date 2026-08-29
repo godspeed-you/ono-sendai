@@ -1,0 +1,4 @@
+# a comment
+UUID=1234-5678 /            ext4 defaults 0 1
+/dev/sda1      /boot\040efi  vfat umask=0077 0 2
+tmpfs /tmp tmpfs rw,nosuid 0 0

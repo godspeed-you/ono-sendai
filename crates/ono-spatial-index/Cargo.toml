@@ -1,0 +1,22 @@
+[package]
+name = "ono-spatial-index"
+description = "The spatial discovery index of Ono-Sendai: registration, reconciliation, aliases, freshness, canonical parents, relation summaries and pins (spec v0.4 §33, §45.2)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-provider-api.workspace = true
+ono-spatial-core.workspace = true
+ono-value.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

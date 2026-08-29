@@ -176,7 +176,7 @@ commands:
       the two spellings should be withdrawn before either is stable — the mechanical symmetry
       §52 itself warns against.
     argument_mode: words
-    input: "null"
+    input: "null | stream<ono.mount/1>"
     output: ono.action-result/1
     provider_capability: mount.manage
     selectors:
@@ -196,7 +196,7 @@ commands:
     validation_required: true
     note: Duplicates `unmount filesystem`; see `ono.mount.start`.
     argument_mode: words
-    input: "null"
+    input: "null | stream<ono.mount/1>"
     output: ono.action-result/1
     provider_capability: mount.manage
     selectors:

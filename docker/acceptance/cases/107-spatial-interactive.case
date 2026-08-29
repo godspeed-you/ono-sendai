@@ -1,0 +1,219 @@
+# v0.4 §50 Phase S6 — the interactive spatial surface, on a real terminal: the startup horizon of
+# §5, the prompt as a place indicator (§21), the full-screen map of §23.3 with focus that is not
+# movement (§23.4), Backspace and Ctrl-C inside the view (§43.4), completion as spatial discovery
+# (§9.4), and the promise §44.10 and §52.2 make together — that an ordinary program still finds
+# the terminal in order afterwards.
+#
+# The session is driven through a pseudo-terminal by a keystroke script written into a fifo, so
+# the keys arrive with the pauses a person would leave between them: a bare Esc followed
+# instantly by a letter is an escape *sequence* to every terminal ever built, and a test that
+# sent one would be testing the pipe rather than the shell.
+#
+# Everything runs unprivileged, with no network, and nothing below types the name of an object
+# the shell has not printed first.
+case: the spatial interface at a terminal — a horizon, a prompt, a map you can leave
+pty: true
+columns: 100
+lines: 30
+timeout: 180
+env: NO_COLOR=1
+run: |
+  WORK="$(mktemp -d)"
+  mkdir -p "$WORK/deeper"
+  cd "$WORK"
+
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  # `script` gives ono a controlling terminal and forwards the fifo into it, which is the only
+  # way a key reaches a full-screen view at all.
+  drive() {
+    local keys="$1" out="$2" writer="$3" typist
+    rm -f "$keys" "$out"
+    mkfifo "$keys"
+    ( eval "$writer" ) > "$keys" &
+    typist=$!
+    # `script` answers with whatever the session did; the case asserts on the transcript, and a
+    # session that was killed on the way out is not a failure of anything asserted here.
+    script --quiet --return --command 'ono' "$out" < "$keys" > /dev/null 2>&1 || true
+    # The typist outlives the session it typed into: `exit` is the second-to-last thing it
+    # writes, so it is still sleeping when `ono` is already gone. It has to be reaped here.
+    # A case body that ends with a background job still running leaves the outer `script`'s
+    # pseudo-terminal open, and `script --return` then reports 129 however green every
+    # assertion was — reproducible with `( sleep 5 ) & exit 0` and nothing else.
+    wait "$typist" 2>/dev/null || true
+    rm -f "$keys"
+  }
+
+  ESC=$(printf '\033')
+  DOWN=$(printf '\033[B')
+  ENTER=$(printf '\r')
+  BACKSPACE=$(printf '\177')
+  INTERRUPT=$(printf '\003')
+  TAB=$(printf '\t')
+  ALT_ON="${ESC}[?1049h"
+  ALT_OFF="${ESC}[?1049l"
+
+  echo '== a session that opens, navigates a map, and gives the terminal back (§5, §23.3, §44.10) =='
+  drive /tmp/keys1 /tmp/session1 "
+    sleep 3
+    printf 'stty rows 30 cols 100\n'; sleep 2
+    printf 'cd deeper\n';       sleep 1
+    printf 'echo AT-PROMPT\n';  sleep 1
+    printf 'map\n';             sleep 5
+    printf '%s' '${DOWN}';      sleep 1
+    printf '?';                 sleep 2
+    printf '%s' '${ESC}';       sleep 2
+    printf '%s' '${ENTER}';     sleep 4
+    printf '%s' '${BACKSPACE}'; sleep 3
+    printf '%s' '${ESC}';       sleep 2
+    printf 'echo AFTER-MAP\n';  sleep 2
+    printf 'stty -a\n';         sleep 2
+    printf 'pwd\n';             sleep 2
+    printf 'enter compute\n';   sleep 2
+    printf 'trail\n';           sleep 3
+    printf 'exit\n';            sleep 2
+  "
+
+  # §5: the horizon establishes place and nearby possibilities without a discovery command.
+  for domain in compute network storage containers identity devices; do
+    prove "s6-horizon-$domain" "the startup horizon names $domain as a destination (§5)" \
+      "grep -qai '$domain' /tmp/session1"
+  done
+  prove s6a "the horizon names the host and link identity it is standing in (§5, §21.1)" \
+    "grep -qai 'local' /tmp/session1"
+  prove s6b "the session reached its prompt and ran what was typed (§5, §29.1)" \
+    "grep -qaF 'AT-PROMPT' /tmp/session1"
+
+  # §21.1, §21.2: the prompt carries link and place, and follows the place when it changes.
+  prove s6c "the prompt names the link before anything has moved (§21.1)" \
+    "grep -qaF 'local://' /tmp/session1"
+  prove s6d "the prompt follows the current place after \`enter compute\` (§21.2)" \
+    "grep -qaF 'local/compute://' /tmp/session1"
+  prove s6e "the movement history lives in \`trail\`, not in the prompt (§21.2)" \
+    "grep -qaF 'MOVEMENT' /tmp/session1"
+
+  # §23.3, §49.8, §52.2: the view borrows the screen and gives it back.
+  prove s6f "\`map\` opens a full-screen view on the alternate screen (§23.3, §52.1)" \
+    "grep -qaF '${ALT_ON}' /tmp/session1"
+  prove s6g "leaving the view restores the shell's own screen (§49.8, §52.2)" \
+    "grep -qaF '${ALT_OFF}' /tmp/session1"
+  prove s6h "the shell keeps working after the view closes (§49.8)" \
+    "grep -qaF 'AFTER-MAP' /tmp/session1"
+  prove s6i "the view draws the place it is centred on and its canonical exits (§23.1)" \
+    "grep -qaF 'map SYSTEM' /tmp/session1"
+  prove s6j "the view says where that place is, in the prompt's own spelling (§21.2, §23.1)" \
+    "grep -qaF 'local  map SYSTEM' /tmp/session1"
+  prove s6k "the focused node is marked without colour (§39.1)" \
+    "grep -qaE '>[[:space:]]+SYSTEM' /tmp/session1"
+  prove s6l "the view offers its key table, generated from the bindings in force (§23.3)" \
+    "grep -qaF 'close, keeping the place' /tmp/session1"
+  prove s6m "the key table names the semantic action behind Enter (§23.3)" \
+    "grep -qaF 'enter the focused node' /tmp/session1"
+
+  # §23.4, §43.4: focus browses; Enter navigates; Backspace comes back to where Enter came from.
+  prove s6n "Enter on a focused node moves the view into it (§23.4)" \
+    "grep -qaF 'map COMPUTE' /tmp/session1"
+  LAST_COMPUTE=$(grep -aboF 'map COMPUTE' /tmp/session1 | tail -1 | cut -d: -f1)
+  LAST_SYSTEM=$(grep -aboF 'map SYSTEM' /tmp/session1 | tail -1 | cut -d: -f1)
+  prove s6o "Backspace inside the view returns to the place Enter came from (§43.4)" \
+    "test -n '$LAST_COMPUTE' && test -n '$LAST_SYSTEM' && test '$LAST_SYSTEM' -gt '$LAST_COMPUTE'"
+
+  # §44.10, §52.2: an ordinary external program finds the terminal in order afterwards.
+  prove s6p "an external program inherits a canonical-mode terminal after the view (§44.10)" \
+    "grep -qa 'icanon' /tmp/session1 && ! grep -qa -- '-icanon' /tmp/session1"
+  prove s6q "the window size the shell was given is the one it hands on (§44.10)" \
+    "grep -qa 'rows 30' /tmp/session1 && grep -qa 'columns 100' /tmp/session1"
+  prove s6r "the working directory survives the view and the spatial navigation (§44.10, §53)" \
+    "grep -qa '/deeper' /tmp/session1"
+
+  echo '== completion is a lightweight local map, and a live view can be left (§9.4, §43.4) =='
+  drive /tmp/keys2 /tmp/session2 "
+    sleep 3
+    printf 'stty rows 30 cols 100\n'; sleep 2
+    printf 'echo TAB-NEXT\n';  sleep 2
+    printf 'enter %s' '${TAB}'; sleep 3
+    printf '%s' '${INTERRUPT}'; sleep 2
+    printf 'map --live\n';     sleep 6
+    printf '%s' '${INTERRUPT}'; sleep 3
+    printf 'echo SURVIVED\n';  sleep 2
+    printf 'exit\n';           sleep 2
+  "
+
+  prove s6s "\`enter <TAB>\` offers the places of the current neighbourhood (§9.4)" \
+    "grep -qai 'compute' /tmp/session2 && grep -qai 'network' /tmp/session2"
+  prove s6t "\`map --live\` opens a view and says how it is kept current (§25.1, §25.3)" \
+    "grep -qaF 'live  polled' /tmp/session2"
+  prove s6u "Ctrl-C leaves the live view and restores the shell screen (§43.4)" \
+    "grep -qaF '${ALT_OFF}' /tmp/session2"
+  prove s6v "Ctrl-C ended the view and not the shell (§43.4)" \
+    "grep -qaF 'SURVIVED' /tmp/session2"
+
+  echo '== nothing interactive is required, and nothing interactive leaks into a script (§29.1, §29.3) =='
+  prove s6w "a script gets exactly what it asked for and no horizon (§29.1, §5)" \
+    "test \"\$(ono -c 'echo only-this')\" = 'only-this'"
+  prove s6x "a script's stderr carries no horizon either (§29.1)" \
+    "test -z \"\$(ono -c 'echo x' 2>&1 >/dev/null)\""
+  prove s6y "the structured map still answers without a terminal (§29.1)" \
+    "ono -c 'map --json' | grep -qF '\"center\":'"
+  prove s6z "the text map still answers without a terminal (§23.2, §52.1)" \
+    "ono -c 'map' | grep -qF 'map SYSTEM'"
+  prove s6aa "a live view is refused rather than faked where there is no terminal (§25.1, §29.1)" \
+    "ono -c 'map --live' 2>&1 | grep -qF 'spatial.unsupported'"
+
+  echo '== the bindings and the modes are configurable (§23.3, §47) =='
+  prove s6ab "the key bindings are a typed setting (§23.3, §47)" \
+    "ono -c 'get config' | grep -qF 'spatial.map.keys'"
+  prove s6ac "the startup horizon is a typed setting, on by default (§5, §47, §53)" \
+    "ono -c 'get config | where key == \"spatial.startup_horizon\" | to json' | grep -qF '\"value\":true'"
+  prove s6ad "the map mode is a typed setting, \`auto\` by default (§23.3, §47)" \
+    "ono -c 'get config | where key == \"spatial.map.mode\" | to json' | grep -qF '\"value\":\"auto\"'"
+
+  # Every assertion above reports itself; the case's own exit status says only that the script
+  # reached its end, and a background typist that outlived its fifo must not decide it.
+  exit 0
+exit: 0
+stdout-contains: PROVED s6-horizon-compute
+stdout-contains: PROVED s6-horizon-network
+stdout-contains: PROVED s6-horizon-storage
+stdout-contains: PROVED s6-horizon-containers
+stdout-contains: PROVED s6-horizon-identity
+stdout-contains: PROVED s6-horizon-devices
+stdout-contains: PROVED s6a
+stdout-contains: PROVED s6b
+stdout-contains: PROVED s6c
+stdout-contains: PROVED s6d
+stdout-contains: PROVED s6e
+stdout-contains: PROVED s6f
+stdout-contains: PROVED s6g
+stdout-contains: PROVED s6h
+stdout-contains: PROVED s6i
+stdout-contains: PROVED s6j
+stdout-contains: PROVED s6k
+stdout-contains: PROVED s6l
+stdout-contains: PROVED s6m
+stdout-contains: PROVED s6n
+stdout-contains: PROVED s6o
+stdout-contains: PROVED s6p
+stdout-contains: PROVED s6q
+stdout-contains: PROVED s6r
+stdout-contains: PROVED s6s
+stdout-contains: PROVED s6t
+stdout-contains: PROVED s6u
+stdout-contains: PROVED s6v
+stdout-contains: PROVED s6w
+stdout-contains: PROVED s6x
+stdout-contains: PROVED s6y
+stdout-contains: PROVED s6z
+stdout-contains: PROVED s6aa
+stdout-contains: PROVED s6ab
+stdout-contains: PROVED s6ac
+stdout-contains: PROVED s6ad
+stdout-not-contains: FAILED

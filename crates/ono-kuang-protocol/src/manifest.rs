@@ -8,7 +8,7 @@
 
 use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as Json};
 
 use crate::{
@@ -54,7 +54,7 @@ pub enum RuntimeKind {
 }
 
 /// The scheduling class the supervisor applies (spec §31.15, §31.67).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CpuBudget {
     /// Must never block terminal input.
@@ -281,6 +281,15 @@ impl Manifest {
             KuangError::new(KuangErrorCode::PackageInvalid, detail)
                 .with_help("`verify plugin <reference>` reports which rule failed (spec §31.7)")
         };
+        let depth = ono_value::yaml_depth(text);
+        if depth > ono_value::MAX_YAML_DEPTH {
+            // Refused before the YAML parser sees it: the parser turns it down too, in time
+            // quadratic in the depth (ADR-0313, spec §49 T7).
+            return Err(invalid(format!(
+                "the manifest nests {depth} collections deep, and {} is the limit",
+                ono_value::MAX_YAML_DEPTH
+            )));
+        }
         let raw: RawManifest = serde_yaml_ng::from_str(text)
             .map_err(|error| invalid(format!("not a valid kuang-package/1 manifest: {error}")))?;
         if raw.format != PACKAGE_FORMAT {
@@ -332,6 +341,27 @@ impl Manifest {
             }
         }
         let network = validate_network(raw.network)?;
+        // §31.23: an annotation key is namespaced, and declaring it "is what keeps an annotation
+        // from being an undeclared schema fork". `contributions.v1.yaml`'s `id-in-namespace`
+        // registration check applies to every contributed id, so a key outside the package's own
+        // namespace — a claim on someone else's records — fails closed here rather than being
+        // listed by `inspect plugin` as if the host had accepted it.
+        let contributions = raw.contributions;
+        if let Some(paths) = &contributions
+            && let Some(keys) = &paths.annotations
+        {
+            let namespace = format!("{}.", raw.package.id);
+            for key in keys {
+                if !key.starts_with(&namespace) {
+                    return Err(invalid(format!(
+                        "the annotation key `{key}` is outside `{}`; a package annotates records \
+                         only inside its own namespace (spec §31.5, §31.23)",
+                        raw.package.id
+                    )));
+                }
+            }
+        }
+
         Ok(Self {
             package: PackageInfo {
                 id: raw.package.id,
@@ -350,7 +380,7 @@ impl Manifest {
             runtime_requested_capabilities: runtime_requested,
             state,
             network,
-            contributions: raw.contributions.map(|raw| ContributionPaths {
+            contributions: contributions.map(|raw| ContributionPaths {
                 commands: raw.commands,
                 schemas: raw.schemas,
                 targets: raw.targets,
@@ -366,7 +396,10 @@ impl Manifest {
                 capabilities: raw.capabilities,
                 optional: raw.optional,
             }),
-            remote: raw.remote,
+            remote: raw
+                .remote
+                .as_ref()
+                .and_then(|remote| serde_json::to_value(remote).ok()),
         })
     }
 
@@ -402,6 +435,31 @@ impl Manifest {
                 format!("the package does not support platform `{platform}`"),
             )
             .with_metadata("dimension", Json::String("platforms".into())));
+        }
+        // §31.27's views need `views.open`, `views.submit` and `views.close`, and this host
+        // implements no view protocol at all. Accepting the declaration, listing it in
+        // `inspect plugin` and registering nothing would tell an operator a lens exists where
+        // none does; §31.62 makes the view protocol its own version dimension, and a host that
+        // does not provide it says so (spec §31.7).
+        if let Some(views) = self
+            .contributions
+            .as_ref()
+            .and_then(|paths| paths.views.as_ref())
+            .filter(|views| !views.is_empty())
+        {
+            return Err(KuangError::new(
+                KuangErrorCode::PackageIncompatible,
+                format!(
+                    "the package contributes the view `{}` and this host implements no view \
+                     protocol to register it in",
+                    views.join("`, `")
+                ),
+            )
+            .with_metadata("dimension", Json::String("view_protocol".into()))
+            .with_help(
+                "spec §31.27: a contributed view needs `views.open`/`views.submit`/`views.close`, \
+                 which this build does not serve",
+            ));
         }
         Ok(())
     }
@@ -447,9 +505,42 @@ struct RawManifest {
     #[serde(default)]
     dependencies: Option<RawDependencies>,
     #[serde(default)]
-    remote: Option<Json>,
+    remote: Option<RawRemote>,
     #[serde(default)]
-    assistant: Option<Json>,
+    assistant: Option<RawAssistant>,
+}
+
+/// The `remote` section (spec §31.39), closed but carried as data.
+///
+/// Remote components are a later increment of Phase I; the shape is kept opaque per field so a
+/// local-only supervisor preserves the declaration without pretending to interpret it. What is
+/// not opaque is the set of keys: spec §31.7 makes every section closed, so a typo here fails
+/// closed like any other.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawRemote {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    components: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mode: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    links: Option<Json>,
+}
+
+/// The `assistant` section (spec §31.41–§31.48), closed for the same reason.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawAssistant {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_requirements: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    autonomy: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_policy: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tools: Option<Json>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    memory: Option<Json>,
 }
 
 #[derive(Debug, Deserialize)]

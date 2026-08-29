@@ -1,0 +1,128 @@
+# v0.4 §44.9 (live map), with §25.1 (what a live map subscribes to), §25.2 (the animation
+# policy: only real state changes), §25.3 (every live view says whether it is event-driven,
+# polled, cached, stale or partial), §22 (`live_capable`), §29.4 (a live stream in a pipe is an
+# ordinary bounded object stream) and §43.4/§43.6 (Ctrl-C leaves the live view without killing
+# the shell; no test may pass on timer animation alone).
+#
+# The change is real: a second process opens a TCP connection to the fixture listener while the
+# live map is watching, and closes it again. Nothing here is simulated and nothing is timed to
+# look busy.
+#
+# Reading chosen for §25.2, written down because it is the assertion that bites: a live map that
+# keeps emitting events while the topology is unchanged is showing activity the machine is not
+# having. The quiet-window check therefore requires `map --live | take 5` to be *unable* to
+# collect five events in six seconds of a still system. A heartbeat that carries no change is a
+# violation of §25.2 under this reading, not an implementation detail.
+case: a live map shows a connection appear and disappear, and shows nothing when nothing happens
+timeout: 240
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p /tmp/spatial/data
+  printf 'fixture payload\n' > /tmp/spatial/data/held.txt
+  /opt/ono-fixtures/spatial/web-service.pl 18080 /tmp/spatial/data/held.txt 1 200 \
+    /tmp/fixture-spatial.state > /tmp/spatial/server.log 2>&1 &
+  for _ in $(seq 40); do [ -s /tmp/fixture-spatial.state ] && break; sleep 0.5; done
+  . /tmp/fixture-spatial.state
+  echo "fixture: server=$FIXTURE_WEB_MAIN listener=:$FIXTURE_WEB_PORT"
+
+  echo "== the map says whether it can be watched at all (§22) =="
+  prove 44.9a "map --json declares live_capable (§22)" \
+    'ono -c "home; enter network; echo ---PLACE---; map --json" 2>&1 | sed -n "/---PLACE---/,\$p" \
+       | grep -qF "live_capable"'
+
+  echo "== a still system produces no live events (§25.2, §43.6) =="
+  timeout 6 ono -c 'home; enter network; map --live | take 5 | to json' > /tmp/quiet.out 2>&1
+  QUIET_STATUS=$?
+  # `to json` writes one document when the stream ends (v0.2 §12.2), so a run that never collects
+  # its five values writes nothing at all — which is exactly what the timeout above proves. What
+  # a still system does have to show is the opening value of the subscription, and the contract
+  # for `--live` says so in as many words: "the first value is the current state, every value
+  # after it is something that moved".
+  timeout 20 ono -c 'home; enter network; map --live | take 1 | to json' > /tmp/opening.json 2>&1
+  prove 44.9b "five events cannot be collected from an unchanging topology (§25.2, §43.6)" \
+    'test "$QUIET_STATUS" -eq 124 && test ! -s /tmp/quiet.out'
+  prove 44.9c "and what it did emit is a real projection, not a spinner (§25.1, §22)" \
+    'test -s /tmp/opening.json && tr "A-Z" "a-z" < /tmp/opening.json | grep -qE "node|edge|snapshot"'
+  prove 44.9d "the live view states its freshness model (§25.3)" \
+    'tr "A-Z" "a-z" < /tmp/opening.json | grep -qE "event|poll|cached|stale|partial"'
+
+  echo "== a real connection appears while the map watches, and disappears again (§44.9, §25.1) =="
+  # Three values: the opening state, the connection appearing, and it going away again. Asking
+  # for more than the machine is going to do would leave `to json` waiting for a document it can
+  # never finish, which is the same trap 44.9b turns into a proof.
+  timeout 60 ono -c 'home; enter network; map --live | take 3 | to json' > /tmp/live.out 2>&1 &
+  LIVE=$!
+  sleep 4
+  /opt/ono-fixtures/spatial/client.pl 127.0.0.1 "$FIXTURE_WEB_PORT" 8 > /tmp/spatial/client.log 2>&1 &
+  CLIENT=$!
+  for _ in $(seq 20); do [ -s /tmp/spatial/client.log ] && break; sleep 0.5; done
+  CLIENT_PORT=$(sed -n 's/^LOCAL=[^:]*:\([0-9]*\).*/\1/p' /tmp/spatial/client.log)
+  echo "fixture: client=$CLIENT from port $CLIENT_PORT"
+  wait "$CLIENT" 2>/dev/null
+  sleep 12
+  kill "$LIVE" 2>/dev/null
+  wait "$LIVE" 2>/dev/null
+  prove 44.9e "the new connection appears in the live stream as a real edge (§44.9, §25.1)" \
+    'test -n "$CLIENT_PORT" && grep -qF "$CLIENT_PORT" /tmp/live.out'
+  prove 44.9f "closing it is reported as a removal or a tombstone, not as silence (§25.1, §10.3)" \
+    'tr "A-Z" "a-z" < /tmp/live.out | grep -qE "removed|closed|gone|tombstone|disappear"'
+  prove 44.9g "every live record says where it came from (§25.3, §25.4)" \
+    'tr "A-Z" "a-z" < /tmp/live.out | grep -qE "event|poll|snapshot"'
+
+  echo "== the live map at a real terminal, a real change on it, and Ctrl-C (§23.3, §43.4) =="
+  # A second connection is opened while the full-screen live view is on the terminal, so what
+  # the terminal shows has to change because the machine changed (§43.6). The nested `script(1)`
+  # gives `ono` a genuine controlling terminal while the case still generates the keystrokes,
+  # which is the only way to send Ctrl-C (0x03) as a key rather than as text.
+  ( sleep 6
+    /opt/ono-fixtures/spatial/client.pl 127.0.0.1 "$FIXTURE_WEB_PORT" 4 \
+      > /tmp/spatial/client2.log 2>&1 ) &
+  PTY_CLIENT=$!
+  {
+    printf 'home\n'; sleep 1
+    printf 'enter network\n'; sleep 1
+    printf 'map --live\n'; sleep 9
+    printf '\003'; sleep 2
+    printf 'echo shell-survived-the-live-map\n'; sleep 1
+    printf 'look\n'; sleep 2
+    printf 'exit\n'; sleep 1
+  } | script --quiet --return --command 'stty rows 30 cols 100 2>/dev/null; ono' /dev/null \
+      > /tmp/livepty.out 2>&1
+  wait "$PTY_CLIENT" 2>/dev/null
+  PTY_CLIENT_PORT=$(sed -n 's/^LOCAL=[^:]*:\([0-9]*\).*/\1/p' /tmp/spatial/client2.log)
+  echo "fixture: terminal client used port ${PTY_CLIENT_PORT:-<none>}"
+  prove 44.9h "the live view at the terminal shows the connection that really appeared (§25.1, §44.9)" \
+    'test -n "$PTY_CLIENT_PORT" && grep -qF "$PTY_CLIENT_PORT" /tmp/livepty.out'
+  prove 44.9i "Ctrl-C leaves the live map and not the shell (§43.4)" \
+    'test -n "$PTY_CLIENT_PORT" && grep -qF "$PTY_CLIENT_PORT" /tmp/livepty.out &&
+     grep -qF "shell-survived-the-live-map" /tmp/livepty.out'
+  prove 44.9j "and the place the user was in is still the place afterwards (§23.4, §43.4)" \
+    'sed -n "/shell-survived-the-live-map/,\$p" /tmp/livepty.out | tr "A-Z" "a-z" \
+       | grep -qE "network|interface|connection"'
+
+  kill $FIXTURE_WEB_MAIN $FIXTURE_WEB_WORKERS "$CLIENT" 2>/dev/null
+  echo "fixture: stopped"
+exit: 0
+stdout-contains: PROVED 44.9a
+stdout-contains: PROVED 44.9b
+stdout-contains: PROVED 44.9c
+stdout-contains: PROVED 44.9d
+stdout-contains: PROVED 44.9e
+stdout-contains: PROVED 44.9f
+stdout-contains: PROVED 44.9g
+stdout-contains: PROVED 44.9h
+stdout-contains: PROVED 44.9i
+stdout-contains: PROVED 44.9j
+stdout-contains: fixture: stopped
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

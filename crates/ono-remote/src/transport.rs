@@ -18,13 +18,14 @@
 use std::pin::Pin;
 use std::process::ExitStatus;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use ono_core::ErrorCode;
 use ono_protocol::{HostKey, Transport};
 use ono_value::ErrorValue;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 /// A transport over a separate reader and writer, such as a process's stdin and stdout.
 ///
@@ -147,6 +148,24 @@ impl SshTarget {
     pub fn host(&self) -> &str {
         &self.host
     }
+
+    /// The user to log in as, where one was given.
+    #[must_use]
+    pub fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+
+    /// The port to connect to, where one was given.
+    #[must_use]
+    pub const fn port(&self) -> Option<u16> {
+        self.port
+    }
+
+    /// The client configuration file to read, where one was given.
+    #[must_use]
+    pub fn config(&self) -> Option<&std::path::Path> {
+        self.config.as_deref()
+    }
 }
 
 /// The one place the real ssh invocation is spelled.
@@ -196,15 +215,17 @@ pub struct SubprocessTransport {
     stdin: Option<ChildStdin>,
     stdout: ChildStdout,
     peer_key: Option<HostKey>,
-    exit: watch::Receiver<Option<ExitStatus>>,
+    child: ChildProcess,
 }
 
 impl SubprocessTransport {
     /// Spawns `command` with piped stdin/stdout and speaks through them.
     ///
-    /// The child is not killed when the transport goes away: closing its stdin is the hang-up
-    /// signal, exactly as it is for the agent loop, and the child is reaped in the background
-    /// whenever it exits.
+    /// Closing the child's stdin is the hang-up signal, exactly as it is for the agent loop,
+    /// and the child is reaped in the background whenever it exits. The child is *not* killed
+    /// when the transport goes away — a transport is a byte pipe and has no opinion about the
+    /// process's lifetime — but whoever started it can end it deliberately through
+    /// [`child`](Self::child), and must, so that nothing it started outlives it.
     ///
     /// # Errors
     ///
@@ -227,13 +248,25 @@ impl SubprocessTransport {
         let stdin = take_pipe(child.stdin.take(), &program)?;
         let stdout = take_pipe(child.stdout.take(), &program)?;
         let (sender, exit) = watch::channel(None);
-        tokio::spawn(reap(child, sender));
+        // One order at most is ever sent, and it is sent once: "end yourself".
+        let (orders, order) = mpsc::channel(1);
+        let pid = child.id();
+        tokio::spawn(reap(child, sender, order));
         Ok(Self {
             stdin: Some(stdin),
             stdout,
             peer_key: None,
-            exit,
+            child: ChildProcess { pid, exit, orders },
         })
+    }
+
+    /// A handle on the child, kept by whoever is responsible for its lifetime.
+    ///
+    /// The handle outlives the transport, which is what lets a caller hand the transport to a
+    /// link and still end the process when the link is torn down.
+    #[must_use]
+    pub fn child(&self) -> ChildProcess {
+        self.child.clone()
     }
 
     /// Declares the key an outer layer authenticated for this peer.
@@ -248,6 +281,30 @@ impl SubprocessTransport {
     /// The handle outlives the transport, so a caller can hand the transport to a link and
     /// still observe the child's end.
     pub fn exited(&self) -> impl std::future::Future<Output = Option<ExitStatus>> + Send + 'static {
+        self.child.exited()
+    }
+}
+
+/// The child a [`SubprocessTransport`] started, seen from outside the transport.
+///
+/// A process that was started to serve a link is a resource of that link: the side that spawned
+/// it is the side that must see it end, and [`end`](Self::end) is where that happens.
+#[derive(Debug, Clone)]
+pub struct ChildProcess {
+    pid: Option<u32>,
+    exit: watch::Receiver<Option<ExitStatus>>,
+    orders: mpsc::Sender<Duration>,
+}
+
+impl ChildProcess {
+    /// The process id, while the system still has one for it.
+    #[must_use]
+    pub const fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
+    /// Resolves when the child has exited, with its status where the system reported one.
+    pub fn exited(&self) -> impl std::future::Future<Output = Option<ExitStatus>> + Send + 'static {
         let mut receiver = self.exit.clone();
         async move {
             loop {
@@ -260,12 +317,57 @@ impl SubprocessTransport {
             }
         }
     }
+
+    /// Ends the child and waits for it, giving it `grace` at each step.
+    ///
+    /// A child that has already noticed the hang-up — the ordinary case, because the link shuts
+    /// its stdin down first — is never signalled: this returns as soon as it exits. One that has
+    /// not is asked with `SIGTERM` after `grace`, and made to with `SIGKILL` after another
+    /// `grace`, so the wait is bounded whatever the far end does.
+    pub async fn end(&self, grace: Duration) -> Option<ExitStatus> {
+        // A closed channel means the reaper has already finished; then the status is published.
+        let _ = self.orders.send(grace).await;
+        self.exited().await
+    }
 }
 
 /// Waits for the child so it is reaped, and publishes how it ended.
-async fn reap(mut child: Child, sender: watch::Sender<Option<ExitStatus>>) {
-    let status = child.wait().await.ok();
+///
+/// The task owns the [`Child`], so it is also the only place that may signal it: a pid is only
+/// safely a pid until it is waited for, and here it cannot be waited for behind the signal's
+/// back.
+async fn reap(
+    mut child: Child,
+    sender: watch::Sender<Option<ExitStatus>>,
+    mut orders: mpsc::Receiver<Duration>,
+) {
+    let status = tokio::select! {
+        status = child.wait() => status.ok(),
+        order = orders.recv() => match order {
+            Some(grace) => end_child(&mut child, grace).await,
+            // Nobody is left to ask for an end; the child's own is the only one that comes.
+            None => child.wait().await.ok(),
+        },
+    };
     let _ = sender.send(status);
+}
+
+/// Waits `grace` for the child to go on its own, then `SIGTERM`, then `SIGKILL`.
+async fn end_child(child: &mut Child, grace: Duration) -> Option<ExitStatus> {
+    if let Ok(status) = tokio::time::timeout(grace, child.wait()).await {
+        return status.ok();
+    }
+    if let Some(pid) = child.id() {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(pid.cast_signed()),
+            nix::sys::signal::Signal::SIGTERM,
+        );
+    }
+    if let Ok(status) = tokio::time::timeout(grace, child.wait()).await {
+        return status.ok();
+    }
+    let _ = child.start_kill();
+    child.wait().await.ok()
 }
 
 fn take_pipe<P>(pipe: Option<P>, program: &str) -> Result<P, ErrorValue> {

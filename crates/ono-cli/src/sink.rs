@@ -50,6 +50,13 @@ impl Sink {
         }
     }
 
+    /// Paints with `theme` rather than the default one (spec §44, ADR-0332).
+    #[must_use]
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.theme = theme.clone();
+        self
+    }
+
     /// Renders in a particular view rather than letting the values choose (spec §13.6).
     #[must_use]
     pub fn with_view(mut self, view: View) -> Self {
@@ -127,6 +134,25 @@ impl Sink {
                 .flat_map(|tree| layout.render_tree_styled(tree, &self.theme, self.presentation))
                 .collect();
         }
+        // A place view never renders as a table (spec v0.4 §6.1, §23.1): its headings are
+        // presentation over a structured object, and the renderer that knows them is
+        // `ono-spatial-render`, which may not invent an exit the view did not declare (§45.4).
+        if let [value] = values
+            && let Ok(record) = value.as_record()
+            && record.schema_id().to_string() == "ono.place-view/1"
+        {
+            return ono_spatial_render::place_view(record, self.width);
+        }
+        // Nor does a map (spec v0.4 §23.2): "Every terminal MUST have a non-fullscreen textual
+        // map representation", and §39.3 makes that representation adapt to the width rather than
+        // wrap. The width is therefore the one the environment states even when stdout is a pipe,
+        // because a map laid out for a terminal nobody has is a map that does not fit.
+        if let [value] = values
+            && let Ok(record) = value.as_record()
+            && record.schema_id().to_string() == "ono.spatial-map/1"
+        {
+            return ono_spatial_render::spatial_map(record, map_width(self.width), map_charset());
+        }
         let renderer = Renderer::new();
         let mut layout = Layout::new(self.width);
         if let Some(max_rows) = self.max_rows {
@@ -160,4 +186,41 @@ fn terminal_width(is_terminal: bool) -> usize {
         .map(|(columns, _)| columns)
         .filter(|columns| *columns >= NARROWEST_USABLE)
         .unwrap_or(REDIRECTED)
+}
+
+/// How wide a map may be drawn (spec v0.4 §39.3).
+///
+/// §39.3 is explicit that a map adapts to the terminal — "At narrow widths, maps MAY collapse
+/// into ranked tree/list projections" — and a map is the one view whose whole point is to fit.
+/// So `COLUMNS` is honoured wherever it is stated, including for redirected output, which stays
+/// deterministic because the environment is part of the run (spec v0.2 §4.6).
+fn map_width(fallback: usize) -> usize {
+    const NARROWEST_USABLE: usize = 20;
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|columns| columns.parse::<usize>().ok())
+        .filter(|columns| *columns >= NARROWEST_USABLE)
+        .unwrap_or(fallback)
+}
+
+/// Whether the terminal can be promised box-drawing characters (spec v0.4 §39.2).
+///
+/// §39.2 requires an ASCII fallback to exist; this is when it is taken. A terminal that says it
+/// is `dumb`, and a locale that does not promise UTF-8, both get ASCII — guessing wrong here
+/// prints mojibake, which is worse than a plainer drawing.
+#[must_use]
+pub fn map_charset() -> ono_spatial_render::Charset {
+    let utf8 = ["LC_ALL", "LC_CTYPE", "LANG"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+        .is_some_and(|locale| {
+            let locale = locale.to_ascii_uppercase();
+            locale.contains("UTF-8") || locale.contains("UTF8")
+        });
+    let dumb = std::env::var("TERM").is_ok_and(|term| term == "dumb");
+    if utf8 && !dumb {
+        ono_spatial_render::Charset::Unicode
+    } else {
+        ono_spatial_render::Charset::Ascii
+    }
 }

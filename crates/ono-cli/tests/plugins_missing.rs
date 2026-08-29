@@ -905,6 +905,47 @@ fn should_unload_a_loaded_package_before_removing_it() {
     );
 }
 
+/// A session script that grants `clock.read`, removes the package with `flags`, reinstalls it
+/// from `spare` and asks the reinstalled package for the clock.
+fn removal_keeping(spare: &Path, flags: &str) -> String {
+    format!(
+        "load plugin {ECHO} --grant clock.read; remove plugin {ECHO}{flags}; \
+         install plugin path:{spare} --confirm; load plugin {ECHO}; echo:clock | to json",
+        spare = spare.join(ECHO).display()
+    )
+}
+
+#[test]
+fn should_revoke_the_grants_of_a_removed_package_unless_asked_to_keep_them() {
+    // kuang.yaml declares `--keep-grants` on `remove plugin`: "Retain the capability grants made
+    // to it." A grant is made to one package (spec §31.18), so removing the package ends the
+    // permission it held unless the user says otherwise — and a package that comes back must not
+    // silently inherit what an earlier installation was allowed to do (spec §31.81).
+    let spare = ono_testkit::scratch();
+    lay_out_package(spare.path(), ECHO, "echo", "0.1.0", ">=11.1 <12");
+
+    let removed = ono(&plugin_home(), &removal_keeping(spare.path(), ""));
+    assert!(
+        !removed.status().is_success()
+            && (removed.stderr().contains("capability.denied")
+                || removed.stderr().contains("K11301")),
+        "spec §31.81: the package was removed, so the grant it held ended with it and the \
+         reinstalled package is denied the clock; got {:?}",
+        removed.output()
+    );
+
+    let kept = ono(
+        &plugin_home(),
+        &removal_keeping(spare.path(), " --keep-grants"),
+    );
+    assert!(
+        kept.status().is_success() && kept.stdout().contains("20"),
+        "`--keep-grants` retains the grants made to the package, so the clock still answers \
+         after it is reinstalled; got {:?}",
+        kept.output()
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Capabilities — spec §31.16–§31.19, `ono.capability-grant/1`
 // ---------------------------------------------------------------------------------------------
@@ -1018,6 +1059,193 @@ fn should_grant_and_revoke_a_capability_at_runtime() {
 }
 
 #[test]
+fn should_record_the_scope_the_operator_named_on_the_grant() {
+    // §31.19's precedence is "system deny > user deny > scoped grant > plugin request > default
+    // deny": the operator's scope outranks the package's request, so it is the one the grant
+    // carries and the one the broker checks. `--scope` is declared in kuang.yaml, and a declared
+    // safety control that is read by nothing is the F13 defect class.
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        &format!(
+            "grant capability filesystem.read --plugin {ECHO} --scope 'paths=/var/log/**' | to json"
+        ),
+    );
+    run.assert_success();
+    let document = last_json(&run);
+    let grant = only(&run, &document);
+    let scope = text(field(grant, "scope"));
+    assert!(
+        scope.contains("paths") && scope.contains("/var/log/**"),
+        "capability-grant.v1: `scope` carries the keys the operator named, got {scope}"
+    );
+}
+
+#[test]
+fn should_refuse_a_scope_key_the_capability_does_not_declare() {
+    // §31.16: "A key the capability does not declare is invalid, not ignored", and a scope that
+    // cannot be enforced MUST NOT be offered as if it were a security boundary.
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        &format!("grant capability filesystem.read --plugin {ECHO} --scope units=nginx.service"),
+    );
+    assert_refused_with(
+        &run,
+        "Ono-Sendai-E0202",
+        "spec §31.16: a scope key the capability does not declare is invalid",
+    );
+    assert!(
+        run.stderr().contains("paths"),
+        "the refusal names the keys `filesystem.read` does declare, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_make_a_lease_that_expires_when_a_grant_is_given_a_span() {
+    // §31.18: a grant prompt must state its duration, and §31.49 makes a grant with an expiry a
+    // lease. kuang.yaml's own example is `--duration 1h`.
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        &format!("grant capability clock.read --plugin {ECHO} --duration 1h | to json"),
+    );
+    run.assert_success();
+    let document = last_json(&run);
+    let grant = only(&run, &document);
+    let expires = field(grant, "expires_at");
+    assert!(
+        !expires.is_null(),
+        "capability-grant.v1: a grant with a span is a lease and carries `expires_at`, got \
+         {grant:?}"
+    );
+    let granted_at = str_field(grant, "granted_at").to_owned();
+    let expires_at = expires.as_str().unwrap_or_default().to_owned();
+    assert!(
+        expires_at > granted_at,
+        "the window closes after it opens: granted {granted_at}, expires {expires_at}"
+    );
+}
+
+#[test]
+fn should_refuse_a_duration_the_broker_cannot_enforce() {
+    // §31.18 lists the durations a grant SHOULD support. A word this broker cannot hold itself
+    // to is refused by name rather than silently recorded as something else — a duration that
+    // does nothing is the control this whole increment exists to remove.
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        &format!("grant capability clock.read --plugin {ECHO} --duration fortnight"),
+    );
+    assert_refused_with(
+        &run,
+        "Ono-Sendai-E0201",
+        "spec §31.18: a duration outside the vocabulary is refused",
+    );
+    assert!(
+        run.stderr().contains("session") && run.stderr().contains("always"),
+        "the refusal names the durations `grant capability` does take, got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_read_back_an_always_grant_in_a_later_session() {
+    // §31.18: "'Always' grants MUST be inspectable and revocable." §31.19 asks for a policy
+    // store kept apart from the packages so a package update cannot rewrite it. A grant the
+    // shell forgets at exit is neither inspectable nor a policy.
+    let home = plugin_home();
+    ono(
+        &home,
+        &format!("grant capability clock.read --plugin {ECHO} --duration always"),
+    )
+    .assert_success();
+
+    let later = ono(
+        &home,
+        &format!("get capability --plugin {ECHO} | where capability == \"clock.read\" | to json"),
+    );
+    later.assert_success();
+    let document = last_json(&later);
+    let grant = only(&later, &document);
+    assert_eq!(
+        str_field(grant, "decision"),
+        "allow",
+        "spec §31.19: the stored grant is the standing answer in a new session, got {grant:?}"
+    );
+    assert_eq!(
+        str_field(grant, "duration"),
+        "always",
+        "capability-grant.v1: the duration it was made with is what it keeps"
+    );
+    assert_eq!(
+        str_field(grant, "source"),
+        "user-policy",
+        "spec §31.19: a grant read out of the operator's policy came from that layer"
+    );
+
+    let used = ono(&home, &format!("load plugin {ECHO}; echo:clock | to json"));
+    assert!(
+        used.status().is_success(),
+        "spec §31.19: the stored grant is what the broker enforces, got {:?}",
+        used.output()
+    );
+}
+
+#[test]
+fn should_forget_a_stored_grant_when_it_is_revoked_in_a_later_session() {
+    // §31.18: an "always" grant is revocable, and a revocation that only lasts until the shell
+    // exits is not one.
+    let home = plugin_home();
+    ono(
+        &home,
+        &format!("grant capability clock.read --plugin {ECHO} --duration always"),
+    )
+    .assert_success();
+    ono(
+        &home,
+        &format!("revoke capability clock.read --plugin {ECHO}"),
+    )
+    .assert_success();
+
+    let later = ono(&home, &format!("load plugin {ECHO}; echo:clock"));
+    assert!(
+        !later.status().is_success()
+            && (later.stderr().contains("capability.denied") || later.stderr().contains("K11301")),
+        "spec §31.19: after revocation the broker denies the call in every later session, got \
+         {:?}",
+        later.output()
+    );
+}
+
+#[test]
+fn should_keep_the_audit_trail_across_sessions() {
+    // §31.33 makes KUANG/11 itself observable and §31.37 makes capability-sensitive actions
+    // auditable. A trail that dies with the process answers "what did that package do?" only
+    // for as long as nobody has left the shell.
+    let home = plugin_home();
+    ono(
+        &home,
+        &format!("load plugin {ECHO}; grant capability clock.read --plugin {ECHO}; echo:clock"),
+    )
+    .assert_success();
+
+    let later = ono(&home, "get audit | to json");
+    later.assert_success();
+    let document = last_json(&later);
+    let events = items(&document);
+    assert!(
+        events
+            .iter()
+            .any(|event| str_field(event, "capability") == "clock.read"
+                && str_field(event, "action") == "capability.grant"),
+        "spec §31.37: the grant made in the earlier session is still in the trail, got {:?}",
+        later.output()
+    );
+}
+
+#[test]
 fn should_refuse_to_grant_an_unknown_capability() {
     let home = plugin_home();
     let run = ono(
@@ -1088,6 +1316,35 @@ fn should_record_a_denied_capability_use_in_the_audit_trail() {
             .iter()
             .any(|event| event.get("capability").and_then(Value::as_str) == Some("clock.read")),
         "spec §31.37: a denial is audited as `denied` with the capability that was refused, got {events:?}"
+    );
+}
+
+#[test]
+fn should_give_every_audit_event_an_identity_of_its_own() {
+    // `ono.plugin-audit-event/1` declares `identity: [id]`, and §31.37 has a finding cite an
+    // event by it. The host's own events and each package's are minted by different counters,
+    // so an id has to say which trail it came from or two events claim to be one.
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        &format!("load plugin {ECHO}; echo:clock; get audit | select id | to json"),
+    );
+    let document = last_json(&run);
+    let ids: Vec<&str> = items(&document)
+        .iter()
+        .map(|record| str_field(record, "id"))
+        .collect();
+    let mut unique = ids.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        ids.len(),
+        "plugin-audit-event.v1 identifies an event by `id`, got {ids:?}"
+    );
+    assert!(
+        ids.len() > 1,
+        "the load and the denial are two events, got {ids:?}"
     );
 }
 
@@ -1223,6 +1480,34 @@ fn should_report_a_structured_not_found_when_asking_an_unknown_assistant() {
 }
 
 #[test]
+fn should_refuse_an_autonomy_level_the_shell_does_not_define() {
+    // Spec §31.48: "Assistant packages SHOULD declare supported autonomy modes, but Ono controls
+    // policy", and there is to be no unrestricted level. The level vocabulary is therefore the
+    // shell's, and a word outside it is refused rather than passed on: a turn must never run
+    // under a policy nothing can enforce.
+    let home = plugin_home();
+    let run = ono(&home, "ask assistant nobody \"hello\" --autonomy L9");
+    assert_refused_with(
+        &run,
+        "Ono-Sendai-E0201",
+        "spec §31.48: `L9` is not one of the autonomy levels Ono defines",
+    );
+    assert!(
+        run.stderr().contains("L4") && run.stderr().contains("L0"),
+        "the refusal names the levels there are, got {:?}",
+        run.stderr()
+    );
+
+    let accepted = ono(&home, "ask assistant nobody \"hello\" --autonomy L2");
+    assert!(
+        accepted.stderr().contains("Ono-Sendai-E0102"),
+        "a level the shell defines is accepted, and what is missing is then the assistant, got \
+         {:?}",
+        accepted.output()
+    );
+}
+
+#[test]
 fn should_report_no_findings_when_nothing_was_analysed() {
     let home = plugin_home();
     let run = ono(
@@ -1240,6 +1525,36 @@ fn should_report_no_findings_when_nothing_was_analysed() {
         vec!["[]", "[]"],
         "spec §31.24: findings are emitted by analyses; none ran, and `severity` is a finding.v1 field so the filter composes, got {:?}",
         run.output()
+    );
+}
+
+#[test]
+fn should_refuse_a_severity_the_finding_schema_does_not_carry() {
+    // kuang.yaml declares `--severity` on `get finding` as a minimum. `ono.finding/1` closes the
+    // set at five levels (spec §31.24) so that findings from unrelated packages sort against each
+    // other honestly; a sixth word is a filter nobody can apply, and a filter nobody applied
+    // answers with everything (ADR-0233).
+    let home = plugin_home();
+    let run = ono(&home, "get finding --severity urgent | count");
+    assert_refused_with(
+        &run,
+        "Ono-Sendai-E0201",
+        "spec §31.24: `urgent` is not one of the five severities",
+    );
+    assert!(
+        run.stderr().contains("critical") && run.stderr().contains("info"),
+        "the refusal names the levels there are, got {:?}",
+        run.stderr()
+    );
+
+    let accepted = ono(&home, "get finding --severity high | count | to json");
+    accepted.assert_success();
+    assert_eq!(
+        last_line(&accepted),
+        "[0]",
+        "a level the schema carries is a filter over the findings, of which there are none, got \
+         {:?}",
+        accepted.output()
     );
 }
 

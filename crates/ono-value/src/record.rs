@@ -184,13 +184,80 @@ impl RecordValue {
     }
 
     /// Reads a field, keeping the three outcomes of spec §10.5 apart.
+    ///
+    /// An error stored in a field the schema declares `error` is that field's *value* — spec
+    /// §11.5 declares `ActionResult.error` exactly so — and is reported `Known`. An error in a
+    /// field of any other type is the failure to read it (ADR-0215).
     #[must_use]
     pub fn access(&self, name: &str) -> FieldAccess {
         match self.get(name) {
             None => FieldAccess::Absent,
             Some(Value::Null) => FieldAccess::Unknown,
-            Some(Value::Error(error)) => FieldAccess::Failed(Arc::clone(error)),
+            Some(Value::Error(error)) if !self.declares_error(name) => {
+                FieldAccess::Failed(Arc::clone(error))
+            }
             Some(value) => FieldAccess::Known(value.clone()),
+        }
+    }
+
+    /// Whether the schema declares `name` as holding a structured error.
+    fn declares_error(&self, name: &str) -> bool {
+        self.schema
+            .field(name)
+            .is_some_and(|field| matches!(field.ty(), crate::FieldType::Error))
+    }
+
+    /// Whether two records hold the same data, whoever observed them and when.
+    ///
+    /// Ordinary equality compares provenance too, which is right for asking "is this the same
+    /// observation?". It is wrong for asking "did anything change?": two readings of one
+    /// unchanged object differ in the instant each was observed, and that is a fact about the
+    /// reading, not about the object (spec §26, §10.7, ADR-0229). Schema, declared fields and
+    /// provider extensions all take part; nothing else does.
+    ///
+    /// ```
+    /// use ono_value::{Provenance, RecordValue, SchemaId, Value, builtin_schemas};
+    /// use std::sync::Arc;
+    ///
+    /// let schema = builtin_schemas().get(&SchemaId::new("ono.user", 1)).expect("the contract");
+    /// let user = |source: &str| {
+    ///     RecordValue::builder(
+    ///         Arc::clone(&schema),
+    ///         Provenance::local("nss", schema.id().clone()).from_source(source),
+    ///     )
+    ///     .set("uid", Value::Int(0))
+    ///     .expect("uid is a field")
+    ///     .build()
+    /// };
+    /// assert!(user("one reading").same_data(&user("another reading")));
+    /// assert_ne!(user("one reading"), user("another reading"));
+    /// ```
+    #[must_use]
+    pub fn same_data(&self, other: &Self) -> bool {
+        self.schema.id() == other.schema.id()
+            && self.fields == other.fields
+            && self.extra == other.extra
+    }
+
+    /// This record with every text leaf rewritten by `rewrite`, wherever it appears.
+    ///
+    /// `rewrite` answers `None` for text it leaves alone. Schema, provenance and field positions
+    /// are unchanged: only the text moves, which is what a redaction is (spec §17.5, ADR-0262).
+    #[must_use]
+    pub fn map_text(&self, rewrite: &dyn Fn(&str) -> Option<Arc<str>>) -> Self {
+        Self {
+            schema: Arc::clone(&self.schema),
+            fields: self
+                .fields
+                .iter()
+                .map(|value| value.map_text(rewrite))
+                .collect(),
+            extra: self
+                .extra
+                .iter()
+                .map(|(key, value)| (Arc::from(key), value.map_text(rewrite)))
+                .collect(),
+            provenance: self.provenance.clone(),
         }
     }
 

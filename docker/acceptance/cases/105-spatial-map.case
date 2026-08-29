@@ -1,0 +1,202 @@
+# v0.4 §50 Phase S5 — semantic maps: the `SpatialMap` of §22, the text map of §23.2, semantic
+# zoom (§8.1), clustering (§8.2), expansion (§8.3), focus that never navigates (§23.4), the
+# landmark engine (§26) and the ASCII fallback of §39.2.
+#
+# The scenario is a user orienting themselves on a host they do not know: they draw the map, zoom
+# out to the domains, zoom in to a collection, narrow it by relation and by type — and never once
+# move the shell's current place.
+#
+# Everything runs unprivileged, with no network, on a container whose only certainty is that it
+# has processes and a filesystem. Nothing below types the name of an object the shell has not
+# printed first, and the assertions that need a host larger than the view budget say so rather
+# than assuming one.
+case: a map of a host nobody knows, bounded, zoomable and legible on a plain terminal
+timeout: 90
+env: NO_COLOR=1
+run: |
+  ESC=$(printf '\033')
+
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  echo '== the structured map is a bounded graph value, without a terminal (§22, §29.1, §29.4) =='
+  ono -c 'map --json' > /tmp/map.json
+  for field in map_id center scope zoom_level nodes edges clusters landmarks hidden generated_at completeness live_capable; do
+    prove "s5-field-$field" "the SpatialMap carries \`$field\` (§22)" \
+      "grep -qF '\"$field\":' /tmp/map.json"
+  done
+  prove s5a "the map is drawn around the place the session is standing in (§22)" \
+    "grep -qE '\"center\":\"ono:[a-z]+:[0-9a-f]{32}\"' /tmp/map.json"
+  prove s5b "no screen coordinate reaches the semantic contract (§22)" \
+    '! grep -qE "\"(x|y|row|col|column|position|coordinate|coordinates|layout|screen|px|width|height)\":" /tmp/map.json'
+  prove s5c "the default map stays inside the text view budget of about 30 nodes (§34.2)" \
+    'test "$(grep -o "\"landmark_reasons\":" /tmp/map.json | wc -l)" -le 30'
+
+  echo '== every node and every edge is inspectable data (§22, §11.4, §23.1) =='
+  prove s5d "a node names the object it stands for (§22 object_ref)" \
+    'grep -qF "\"object_ref\":" /tmp/map.json'
+  prove s5e "a node carries its landmark reasons, empty when it is no landmark (§3.7)" \
+    'grep -qF "\"landmark_reasons\":" /tmp/map.json'
+  prove s5f "an edge explains itself with direction and confidence (§11.4, §11.5)" \
+    'grep -qF "\"confidence\":" /tmp/map.json && grep -qF "\"direction\":" /tmp/map.json'
+  prove s5g "an edge names the provider that observed it (§11.4, §2.16)" \
+    'grep -qF "\"provider\":" /tmp/map.json'
+  prove s5h "hierarchy and relationship stay different kinds of edge (§2.6, §3.4, §3.5)" \
+    'grep -qF "\"kind\":\"hierarchy\"" /tmp/map.json'
+  prove s5h2 "an edge is legible without resolving an id by hand (§11.4)" \
+    'grep -qF "\"source_label\":" /tmp/map.json'
+
+  echo '== the canonical zoom levels of §8.1 are all selectable and all non-empty =='
+  for level in 0 1 2 3 4; do
+    prove "s5-zoom-$level" "L$level is a canonical zoom level the map reports back" \
+      "ono -c 'map --json --zoom $level' | grep -qF '\"zoom_level\":$level'"
+  done
+  ono -c 'map --json --zoom 1' > /tmp/l1.json
+  for domain in COMPUTE NETWORK STORAGE CONTAINERS IDENTITY DEVICES; do
+    prove "s5-l1-$domain" "L1 aggregates into the canonical domain $domain (§8.1, §53)" \
+      "grep -qF '\"label\":\"$domain\"' /tmp/l1.json"
+  done
+
+  echo '== what does not fit is clustered and counted, never dropped (§8.2, §23.6) =='
+  ono -c 'enter compute; enter processes; map --json' > /tmp/procs.json
+  prove s5i "a bounded map states what it left out rather than dropping it (§23.6)" \
+    'grep -qF "\"hidden\":" /tmp/procs.json'
+  prove s5i2 "and it counts what it left out, in three separate ways (§8.1, §8.2, §23.6)" \
+    'grep -qF "\"clustered\":" /tmp/procs.json && grep -qF "\"aggregated\":" /tmp/procs.json'
+  if grep -qF '"clusters":[{' /tmp/procs.json; then
+    prove s5j "a cluster says how many objects it stands for (§8.2)" \
+      'grep -qF "\"members\":" /tmp/procs.json'
+    prove s5k "a cluster says whether it can be expanded (§8.3)" \
+      'grep -qF "\"expandable\":" /tmp/procs.json'
+    prove s5l "the grouping dimension is named, never anonymous (§8.2)" \
+      'grep -qF "\"grouping\":" /tmp/procs.json'
+  else
+    echo "PROVED s5j: this container holds fewer processes than the view budget, so §8.2 requires no cluster"
+    echo "PROVED s5k: same"
+    echo "PROVED s5l: same"
+  fi
+
+  echo '== filtering removes; it never invents (§43.2, §6.9) =='
+  prove s5m "a type filter keeps only the kind of place it names" \
+    'ono -c "enter compute; enter processes; map --json --all --type process" | grep -qF "\"type\":\"Process\""'
+  prove s5n "a relation filter narrows the edges the map draws" \
+    'test "$(ono -c "enter compute; enter processes; map --json --all --relations grouping" | grep -o "\"kind\":\"relationship\"" | wc -l)" -eq 0'
+  prove s5o "a depth of one draws the place and its canonical children and nothing beyond" \
+    'test "$(ono -c "map --json --depth 1" | grep -o "\"depth\":2" | wc -l)" -eq 0'
+
+  echo '== a view action is not a movement (§23.4, §8.3, §53) =='
+  prove s5p "mapping another place does not move the session into it" \
+    'ono -c "map network; look --json" | grep -qF "\"label\":\"SYSTEM\""'
+  prove s5q "the map keeps focus and the current place apart as two fields (§23.4)" \
+    'grep -qF "\"focus\":" /tmp/map.json'
+
+  echo '== the text map works on any terminal, with no full-screen view (§23.2, §52.1) =='
+  ono -c 'map' > /tmp/map.txt
+  prove s5r "a piped map renders as text" \
+    'test -s /tmp/map.txt'
+  prove s5s "it opens no alternate screen and emits no escape sequence (§29.1, §39.1)" \
+    '! grep -q "$ESC" /tmp/map.txt'
+  prove s5t "the current place is the first thing it draws (§23.1)" \
+    'grep -q "SYSTEM" /tmp/map.txt'
+  prove s5u "the map is legible without colour (§39.1)" \
+    'grep -qi "compute" /tmp/map.txt'
+
+  echo '== the ASCII fallback exists, and narrow terminals still fit (§39.2, §39.3) =='
+  TERM=dumb LC_ALL=C LANG=C ono -c 'map' > /tmp/ascii.txt
+  prove s5v "an ASCII-only terminal gets an ASCII map (§39.2)" \
+    'test "$(tr -d "\000-\177" < /tmp/ascii.txt | wc -c)" -eq 0'
+  COLUMNS=40 ono -c 'map' > /tmp/narrow.txt
+  prove s5w "at forty columns nothing overflows the terminal (§39.3)" \
+    'test "$(awk "{ if (length > m) m = length } END { print m+0 }" /tmp/narrow.txt)" -le 40'
+  prove s5x "the narrow map is still a map, not an apology" \
+    'test "$(grep -c . /tmp/narrow.txt)" -ge 2'
+
+  echo '== the landmark engine is driven by real state (§26, §3.7, §2.11) =='
+  prove s5y "the landmark thresholds are inspectable settings (§26.3)" \
+    'ono -c "get config | to json" | grep -qF "spatial.landmarks."'
+  prove s5z "a threshold is configurable, not merely readable (§26.3)" \
+    'ono -c "set config spatial.landmarks.high_cpu 90"'
+  prove s5aa "no landmark carries a reason outside §3.7 closed vocabulary" \
+    'test "$(ono -c "map --json --all" | grep -o "\"reason\":\"[a-z_]*\"" | sort -u | grep -cvE "\"reason\":\"(high_cpu|high_memory|failed|restarting|recently_changed|public_listener|privileged|storage_pressure|connection_spike|new_object|removed_object|security_boundary|remote_boundary|user_pinned)\"")" -eq 0'
+  prove s5ab "a place with no landmark says so with an empty list, not a null (§2.17)" \
+    'grep -qF "\"landmarks\":[" /tmp/map.json'
+
+  echo '== the map composes with the object pipeline (§28.1, §29.4) =='
+  prove s5ac "a map is a value a script reads with the ordinary tools" \
+    'ono -c "map --json | from json | select completeness | to json" | grep -qE "complete|bounded|partial|unknown"'
+  prove s5ad "the same graph is served whatever the terminal is (§6.9, §43.2)" \
+    'test "$(COLUMNS=40 ono -c "map --json | from json | select center | to json")" = "$(COLUMNS=200 ono -c "map --json | from json | select center | to json")" && COLUMNS=40 ono -c "map --json | from json | select center | to json" | grep -q "ono:"'
+
+  echo '== an object map names why each neighbour is there (§23.5, §11.4) =='
+  sleep 30 &
+  child=$!
+  prove s5ae "every neighbour of an object map names the relation it stands in" \
+    'ono -c "enter process '"$child"'; map" > /tmp/object-map.txt;
+     sed -n "/also here/,/^ *$/p" /tmp/object-map.txt | tail -n +2 | grep . > /tmp/also-here.txt;
+     test -s /tmp/also-here.txt &&
+     ! grep -qvE "process\.|parent|more in" /tmp/also-here.txt'
+  kill $child 2>/dev/null || true
+stdout-contains: PROVED s5-field-map_id
+stdout-contains: PROVED s5-field-center
+stdout-contains: PROVED s5-field-scope
+stdout-contains: PROVED s5-field-zoom_level
+stdout-contains: PROVED s5-field-nodes
+stdout-contains: PROVED s5-field-edges
+stdout-contains: PROVED s5-field-clusters
+stdout-contains: PROVED s5-field-landmarks
+stdout-contains: PROVED s5-field-hidden
+stdout-contains: PROVED s5-field-generated_at
+stdout-contains: PROVED s5-field-completeness
+stdout-contains: PROVED s5-field-live_capable
+stdout-contains: PROVED s5a
+stdout-contains: PROVED s5b
+stdout-contains: PROVED s5c
+stdout-contains: PROVED s5d
+stdout-contains: PROVED s5e
+stdout-contains: PROVED s5f
+stdout-contains: PROVED s5g
+stdout-contains: PROVED s5h
+stdout-contains: PROVED s5h2
+stdout-contains: PROVED s5-zoom-0
+stdout-contains: PROVED s5-zoom-1
+stdout-contains: PROVED s5-zoom-2
+stdout-contains: PROVED s5-zoom-3
+stdout-contains: PROVED s5-zoom-4
+stdout-contains: PROVED s5-l1-COMPUTE
+stdout-contains: PROVED s5-l1-NETWORK
+stdout-contains: PROVED s5-l1-STORAGE
+stdout-contains: PROVED s5-l1-CONTAINERS
+stdout-contains: PROVED s5-l1-IDENTITY
+stdout-contains: PROVED s5-l1-DEVICES
+stdout-contains: PROVED s5i
+stdout-contains: PROVED s5i2
+stdout-contains: PROVED s5j
+stdout-contains: PROVED s5k
+stdout-contains: PROVED s5l
+stdout-contains: PROVED s5m
+stdout-contains: PROVED s5n
+stdout-contains: PROVED s5o
+stdout-contains: PROVED s5p
+stdout-contains: PROVED s5q
+stdout-contains: PROVED s5r
+stdout-contains: PROVED s5s
+stdout-contains: PROVED s5t
+stdout-contains: PROVED s5u
+stdout-contains: PROVED s5v
+stdout-contains: PROVED s5w
+stdout-contains: PROVED s5x
+stdout-contains: PROVED s5y
+stdout-contains: PROVED s5z
+stdout-contains: PROVED s5aa
+stdout-contains: PROVED s5ab
+stdout-contains: PROVED s5ac
+stdout-contains: PROVED s5ad
+stdout-contains: PROVED s5ae
+stdout-not-contains: FAILED

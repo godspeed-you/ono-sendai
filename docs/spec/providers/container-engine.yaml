@@ -13,3 +13,20 @@ providers:
     targets: [container, image]
     capabilities: [container.list, image.list, container.manage]
     schemas: [ono.container/1, ono.image/1]
+    conformance:
+      container: enumerable
+      image: enumerable
+    spatial:
+      # The engine's full container id is stable for the container's whole existence and is
+      # never reused (§10.1 Tier A). The name is a label the engine lets a user change, so it
+      # is not identity (§3.1).
+      identity_strategy: stable
+      canonical_parent:
+        Container: [containers]
+      relationships:
+        - container.contains_process
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, unsupported]
+      cost_class: normal
+      landmark_metrics: [state, created]

@@ -60,6 +60,8 @@ pub struct HostSources {
     pub ssh_config: Option<PathBuf>,
     /// The shell's own host file, read and written.
     pub own: Option<PathBuf>,
+    /// The pinned host keys of spec §21.5, read and written (ADR-0355).
+    pub trust_store: Option<PathBuf>,
 }
 
 impl HostSources {
@@ -68,26 +70,18 @@ impl HostSources {
     /// `XDG_CONFIG_HOME/ono`, then `~/.config/ono`).
     #[must_use]
     pub fn from_environment<'a>(environment: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
-        let mut home = None;
-        let mut xdg = None;
-        let mut explicit = None;
-        for (name, value) in environment {
-            match name {
-                "HOME" => home = Some(PathBuf::from(value)),
-                "XDG_CONFIG_HOME" => xdg = Some(PathBuf::from(value)),
-                "ONO_CONFIG_DIR" => explicit = Some(PathBuf::from(value)),
-                _ => {}
-            }
-        }
-        let config_dir = explicit
-            .or_else(|| xdg.map(|base| base.join(ono_core::SHORT_NAME)))
-            .or_else(|| {
-                home.as_ref()
-                    .map(|home| home.join(".config").join(ono_core::SHORT_NAME))
-            });
+        let environment: Vec<(&str, &str)> = environment.into_iter().collect();
+        let home = environment
+            .iter()
+            .find(|(name, _)| *name == "HOME")
+            .map(|(_, value)| PathBuf::from(*value));
+        let config_dir = crate::config::config_dir_from_environment(environment);
         Self {
             ssh_config: home.map(|home| home.join(".ssh").join("config")),
-            own: config_dir.map(|directory| directory.join(OWN_FILE)),
+            own: config_dir
+                .as_ref()
+                .map(|directory| directory.join(OWN_FILE)),
+            trust_store: config_dir.map(|directory| directory.join(crate::trust::STORE_FILE)),
         }
     }
 

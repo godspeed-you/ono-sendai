@@ -457,7 +457,11 @@ async fn should_resolve_a_path_to_one_object_reference() {
         .await
         .expect("the path resolves");
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0].label(), "resolve.txt");
+    assert_eq!(
+        found[0].label(),
+        path.to_string_lossy(),
+        "spec §22.4 draws a file as its path, and one label rule serves every reader (ADR-0226)"
+    );
 }
 
 #[test]

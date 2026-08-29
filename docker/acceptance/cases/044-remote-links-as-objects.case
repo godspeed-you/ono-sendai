@@ -39,6 +39,10 @@ run: |
   ono -c 'link host testbox --transport local; enter link testbox; detach link testbox | select status | to json; get context | to json; get link | select name state | to json'
   ono -c 'link host testbox --transport local; remove link testbox | select operation status | to json; enter link testbox' 2>&1 | tail -3
 
+  echo "== inside a link frame, the session's own links and jobs answer here (§14.4, ADR-0269) =="
+  ono -c 'link host testbox --transport local; enter link testbox; get link | count | to json; get job | count | to json'
+  ono -c 'link host testbox --transport local; enter link testbox; get link | detach link | select status | to json'
+
   echo "== connect host is one-shot =="
   ono -c 'connect host testbox --transport local | select name state | to json; get context | select kind identity | to json; leave; get link | to json'
 
@@ -57,18 +61,20 @@ run: |
   ono -c 'link host testbox --transport local; enter link testbox; explain stop process 1' | grep -E 'link |operation|privilege|risk'
 exit: 0
 stdout-contains: []
-stdout-contains: [{"mode":"agent","name":"testbox","state":"connected","transport":"local"}]
-stdout-contains: [{"address":"10.4.2.11","name":"devbox","source":"ssh-config"}]
+stdout-contains: [1]
+stdout-contains: [0]
+stdout-contains: [{"name":"testbox","transport":"local","mode":"agent","state":"connected"}]
+stdout-contains: [{"name":"devbox","address":"10.4.2.11","source":"ssh-config"}]
 stdout-contains: [{"name":"testbox","source":"link","transport":"local"}]
 stdout-contains: [{"address":"10.4.2.12","source":"ono"}]
-stdout-contains: [{"changed":true,"status":"success"}]
+stdout-contains: [{"status":"success","changed":true}]
 stdout-contains: [{"address":"10.4.2.13"}]
-stdout-contains: [{"host":"10.4.2.20","name":"staging","state":"defined","transport":"ssh"}]
+stdout-contains: [{"name":"staging","host":"10.4.2.20","transport":"ssh","state":"defined"}]
 stdout-contains: [{"name":"preprod"}]
-stdout-contains: {"identity":"testbox","kind":"link"}
+stdout-contains: {"kind":"link","identity":"testbox"}
 stdout-contains: [{"name":"testbox","state":"connected"}]
 stdout-contains: [{"operation":"ono.link.remove","status":"success"}]
-stdout-contains: Ono-Sendai-E0102
+stdout-contains: Ono-Sendai-E1001
 stdout-contains: Ono-Sendai-E0601
 stdout-contains: "agent":"ono/
 stdout-contains: "reachable":true

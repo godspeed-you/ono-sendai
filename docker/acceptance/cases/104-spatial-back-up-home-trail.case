@@ -1,0 +1,125 @@
+# v0.4 §50 Phase S4's third part — movement through history and hierarchy.
+# §6.5 (`jump`), §6.6 (`back`, `up`, `home`), §6.7 (`trail`), §20.1 (what a NavigationStep
+# records), §20.2 (the breadcrumb), §20.4 (pins), §29.2 (a script's navigation is script-local),
+# §40 (`spatial.history_empty` and `spatial.no_parent` never collapse), §44.6 (back versus up)
+# and §46.1 (the trail is session-local while a pin survives).
+#
+# The scenario is §44.6 done with objects the run owns: into a process the case started, along a
+# relationship edge to the process that spawned it, and then the two different ways out — `back`
+# through the edge it came by, `up` through the hierarchy that never knew about the edge. The
+# container runs no service manager and has no network, so every fixture here is a process, a
+# file and a directory the case makes itself.
+case: back follows history, up follows hierarchy, and the trail records both
+timeout: 90
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p /tmp/s4c
+  printf 'held by the fixture\n' > /tmp/s4c/held.conf
+  sh -c 'exec 3< /tmp/s4c/held.conf; sleep 60' &
+  holder=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -e "/proc/$holder/fd/3" ] && break
+    sleep 0.2
+  done
+
+  echo "== the two refusals of §40 stay two refusals =="
+  prove s4c-a "\`back\` with nothing behind it is \`spatial.history_empty\`" \
+    'ono -c "try { back } catch e { \$e | to json }" | grep -q "\"name\":\"spatial.history_empty\""'
+  prove s4c-b "\`up\` at the root is \`spatial.no_parent\`, a different condition" \
+    'ono -c "home; try { up } catch e { \$e | to json }" | grep -q "\"name\":\"spatial.no_parent\""'
+  prove s4c-c "a refused movement exits non-zero" \
+    '! ono -c "back" >/dev/null 2>&1'
+  prove s4c-d "the refusal prints its stable code beside its name" \
+    'ono -c "back" 2>&1 | grep -q "Ono-Sendai-E1006"'
+
+  echo "== §44.6: back follows history, up follows hierarchy =="
+  prove s4c-e "\`back\` returns to the process the edge was followed from" \
+    "ono -c 'enter process $holder; follow parent; back; look --json' | grep -qF '\"pid\":$holder'"
+  prove s4c-f "\`up\` after the same edge does not walk it back to the process" \
+    "! ono -c 'enter process $holder; follow parent; up; look --json' | grep -qF '\"pid\":$holder'"
+  prove s4c-g "\`up\` follows the canonical hierarchy of the place it stands on" \
+    'ono -c "home; enter compute; enter processes; up; look --json" | grep -qF "\"place_path\":\"local/compute\""'
+  prove s4c-h "\`home\` returns to the root system place of this host" \
+    "ono -c 'enter process $holder; follow file /tmp/s4c/held.conf; home; look --json' | grep -qF '\"object_type\":\"ono.system/1\"'"
+  prove s4c-i "the root is one place however it was reached" \
+    "test \"\$(ono -c 'home; look --json' | grep -o '\"id\":\"ono:[^\"]*\"' | head -1)\" = \"\$(ono -c \"enter process $holder; home; look --json\" | grep -o '\"id\":\"ono:[^\"]*\"' | head -1)\""
+
+  echo "== §6.7/§20.1: the trail records every movement, in order =="
+  prove s4c-j "\`trail --json\` answers a JSON array without a terminal" \
+    "ono -c 'enter process $holder; trail --json' | grep -q '^\['"
+  prove s4c-k "a step carries both ends, the kind and the timestamp" \
+    "ono -c 'enter process $holder; trail --json' | grep -q '\"movement\":\"enter\"' && ono -c 'enter process $holder; trail --json' | grep -q '\"timestamp\":'"
+  prove s4c-l "the relation a \`follow\` traversed is recorded" \
+    "ono -c 'enter process $holder; follow file /tmp/s4c/held.conf; trail --json' | grep -q '\"relation\":\"file\"'"
+  prove s4c-m "the declared relation id travels with the word" \
+    "ono -c 'enter process $holder; follow file /tmp/s4c/held.conf; trail --json' | grep -q '\"relation_id\":\"process.opened_file\"'"
+  prove s4c-n "\`back\` is itself a movement the trail keeps" \
+    "ono -c 'enter process $holder; back; trail --json' | grep -q '\"movement\":\"back\"'"
+  prove s4c-o "\`up\` is recorded as \`up\`, never as \`back\`" \
+    "ono -c 'enter process $holder; up; trail --json' | grep -q '\"movement\":\"up\"'"
+  prove s4c-p "the trail names the process by the spelling a user can type back" \
+    "ono -c 'enter process $holder; trail --json' | grep -qF '\"to_ref\":\"process/$holder\"'"
+  prove s4c-q "\`trail --compact\` writes the breadcrumb of §20.2" \
+    'ono -c "home; enter compute; enter processes; trail --compact" | grep -q "local > compute > processes"'
+
+  echo "== §6.5: jump resolves without adjacency and records both ends =="
+  prove s4c-r "a scoped selector reaches a place nothing here is adjacent to" \
+    "ono -c 'enter process $holder; jump storage:/tmp/s4c; look --json' | grep -qF '\"display_name\":\"/tmp/s4c\"'"
+  prove s4c-s "the jump is recorded as a jump between two different places" \
+    "ono -c 'enter process $holder; jump storage:/tmp/s4c; trail --json' | grep -q '\"movement\":\"jump\"'"
+  prove s4c-t "a jump that names nothing is refused, not approximated" \
+    'ono -c "try { jump ono-nothing-of-this-name } catch e { \$e | to json }" | grep -q "\"name\":\"spatial.not_found\""'
+
+  echo "== §20.4/§46.1: a pin survives the session and the trail does not =="
+  prove s4c-u "\`pin --name\` answers with the place it marked" \
+    'ono -c "enter compute; pin --name workshop" | grep -qi "compute"'
+  prove s4c-v "\`jump @<pin>\` reaches it from a later session" \
+    'ono -c "jump @workshop; look --json" | grep -qF "\"place_path\":\"local/compute\""'
+  prove s4c-w "the trail of that later session is empty" \
+    'test "$(ono -c "trail --json")" = "[]"'
+  prove s4c-x "\`unpin\` removes the landmark" \
+    'ono -c "unpin workshop" && ! ono -c "jump @workshop" >/dev/null 2>&1'
+
+  echo "== §29.2: a script's navigation never reaches the caller's place =="
+  printf 'enter compute\nenter processes\n' > /tmp/s4c/wander.ono
+  prove s4c-y "the caller stays where it was while the script wandered" \
+    'ono -c "enter storage; ono /tmp/s4c/wander.ono; look --json" | grep -qF "\"place_path\":\"local/storage\""'
+
+  kill "$holder" 2>/dev/null || true
+exit: 0
+stdout-contains: PROVED s4c-a
+stdout-contains: PROVED s4c-b
+stdout-contains: PROVED s4c-c
+stdout-contains: PROVED s4c-d
+stdout-contains: PROVED s4c-e
+stdout-contains: PROVED s4c-f
+stdout-contains: PROVED s4c-g
+stdout-contains: PROVED s4c-h
+stdout-contains: PROVED s4c-i
+stdout-contains: PROVED s4c-j
+stdout-contains: PROVED s4c-k
+stdout-contains: PROVED s4c-l
+stdout-contains: PROVED s4c-m
+stdout-contains: PROVED s4c-n
+stdout-contains: PROVED s4c-o
+stdout-contains: PROVED s4c-p
+stdout-contains: PROVED s4c-q
+stdout-contains: PROVED s4c-r
+stdout-contains: PROVED s4c-s
+stdout-contains: PROVED s4c-t
+stdout-contains: PROVED s4c-u
+stdout-contains: PROVED s4c-v
+stdout-contains: PROVED s4c-w
+stdout-contains: PROVED s4c-x
+stdout-contains: PROVED s4c-y
+stdout-not-contains: FAILED

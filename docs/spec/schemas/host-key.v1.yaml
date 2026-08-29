@@ -1,0 +1,37 @@
+# HostKey. Spec §21.5 requires "explicit host trust", and §49 lists remote agent impersonation
+# and host key changes among the threats a shell must answer for (ADR-0015 T5/T6). The trust
+# store is the shell's answer, and this is what one line of it looks like as an object, so a
+# person can read, pin and forget a host key with the ordinary verbs (ADR-0355).
+#
+# The record is the shell's own bookkeeping, like `ono.link/1`: a pin is not something a
+# provider found on a machine, it is a decision this shell recorded.
+id: ono.host-key/1
+name: HostKey
+summary: One host key this shell has pinned, and the fingerprint it is pinned by.
+identity: [host]
+fields:
+  host:
+    type: string
+    required: true
+    doc: The host the key is pinned for, as the link names it.
+  algorithm:
+    type: string
+    required: true
+    doc: >-
+      How the key was proved. `tls-x509` is the peer's end-entity certificate over the
+      authenticated transport of spec §21.5 (ADR-0353); the store keeps whatever name the
+      transport that verified the key gave it.
+  fingerprint:
+    type: string
+    required: true
+    doc: >-
+      The full SHA-256 fingerprint, `sha256:` and 64 hex digits. Never truncated: a shortened
+      fingerprint is one an impersonator can search for a collision against.
+  path:
+    type: path
+    nullable: true
+    doc: >-
+      The trust store file the pin is recorded in; null when the session has no configuration
+      directory and the store therefore lives only for this session.
+default_view:
+  columns: [host, algorithm, fingerprint]

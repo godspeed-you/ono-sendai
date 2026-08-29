@@ -8,6 +8,22 @@ providers:
     targets: [service]
     capabilities: [service.list, service.manage]
     schemas: [ono.service/1]
+    conformance:
+      service: enumerable
+    spatial:
+      # §13: "A service place represents the stable service-manager concept rather than a
+      # single process lifetime." The unit name is that concept, and it survives every
+      # restart of the processes below it (§10.1 Tier A, §44.7).
+      identity_strategy: stable
+      canonical_parent:
+        Service: [compute.services]
+      relationships:
+        - service.controls_process
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, permission_denied]
+      cost_class: normal
+      landmark_metrics: [state, substate, since, enabled]
 
   - id: systemd-journal
     doc: >-
@@ -17,6 +33,9 @@ providers:
     targets: [journal, log]
     capabilities: [log.read]
     schemas: [ono.journal-event/1, ono.log-record/1]
+    conformance:
+      journal: unbounded
+      log: unbounded
 
   - id: systemd-logind
     doc: >-
@@ -25,3 +44,15 @@ providers:
     targets: [session]
     capabilities: [session.list]
     schemas: [ono.session/1]
+    conformance:
+      session: enumerable
+    spatial:
+      identity_strategy: lifetime
+      canonical_parent:
+        Session: [identity.sessions]
+      relationships: []
+      freshness: on_demand
+      events: false
+      permissions: [available, empty, unsupported]
+      cost_class: normal
+      landmark_metrics: [state, since]

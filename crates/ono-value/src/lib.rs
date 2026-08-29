@@ -89,7 +89,7 @@ pub use json::{from_json, from_json_str, to_json, to_json_data, to_json_string};
 pub use map::MapValue;
 pub use net::IpNetwork;
 pub use provenance::{AdapterTrace, Link, Provenance};
-pub use raw::{from_bytes, to_bytes};
+pub use raw::{from_bytes, to_bytes, to_bytes_of};
 pub use record::{FieldAccess, FieldStep, RecordBuilder, RecordValue};
 pub use regex_value::RegexValue;
 pub use schema::{
@@ -100,4 +100,4 @@ pub use text::{canonical_text, to_text};
 pub use units::{ByteSize, ByteUnit, Duration, DurationUnit, Percent};
 pub use uuid::Uuid;
 pub use value::Value;
-pub use yaml::{from_yaml, to_yaml, to_yaml_data};
+pub use yaml::{MAX_YAML_DEPTH, from_yaml, to_yaml, to_yaml_data, yaml_depth};

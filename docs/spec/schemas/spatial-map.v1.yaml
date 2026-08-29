@@ -1,0 +1,94 @@
+# Canonical SpatialMap schema. Source: v0.4 §22, field for field — "map --json MUST return a
+# renderer-independent SpatialMap" — with §23.4's `focus` beside `center`, because §23.4 and §53
+# both turn on the two being different things: "Moving focus inside a map MUST NOT change the
+# shell's current place."
+#
+# §22's closing sentence is the constraint on the whole contract: "Screen coordinates MUST NOT
+# appear in the semantic SpatialMap contract. Layout coordinates belong to the renderer." No
+# field here, at any depth, names a row, a column, a width or a position.
+id: ono.spatial-map/1
+name: SpatialMap
+summary: The bounded, ranked, renderer-independent projection of the graph around a place.
+identity: [map_id]
+fields:
+  map_id:
+    type: uuid
+    required: true
+    doc: This projection's identity (§22).
+  center:
+    type: string
+    required: true
+    doc: The `spatial_id` of the current place the map is drawn around (§22).
+  focus:
+    type: string
+    nullable: true
+    doc: The node the view is centred on, where the caller named one. It is never thereby the current place (§23.4).
+  scope:
+    type: string
+    required: true
+    doc: The scope the projection belongs to (§3.2).
+  zoom_level:
+    type: int
+    required: true
+    doc: Which of §8.1's five canonical levels this projection is at (L0 SYSTEM to L4 DETAIL).
+  nodes:
+    type: list<ono.map-node/1>
+    required: true
+    doc: The objects drawn (§22).
+  edges:
+    type: list<ono.map-edge/1>
+    required: true
+    doc: The relationships and containments drawn between them (§22). Every endpoint resolves (§43.2).
+  clusters:
+    type: list<ono.map-cluster/1>
+    required: true
+    doc: The groups standing in for what the view budget could not draw (§8.2).
+  landmarks:
+    type: list<ono.landmark/1>
+    required: true
+    doc: What deserves attention here (§3.7, §26).
+  hidden:
+    type: ono.hidden-summary/1
+    required: true
+    doc: What the bound left out, disclosed rather than dropped (§23.6, §54).
+  generated_at:
+    type: timestamp
+    required: true
+    doc: When the projection was made.
+  completeness:
+    type: enum
+    required: true
+    values: [complete, bounded, partial, unknown]
+    doc: Whether everything known is drawn, the budget hid some, a source could not be read, or neither could be established (§3.6, §35.2).
+  live_capable:
+    type: bool
+    required: true
+    doc: Whether this map can subscribe to change events and update in place (§22, §25.1).
+  live:
+    type: bool
+    required: true
+    doc: >-
+      Whether this projection came out of a live view (§25.1). False for a `map` asked once, which
+      is a picture of one moment and says so.
+  freshness:
+    type: enum
+    required: true
+    values: [event_driven, polled, cached, stale, partial]
+    doc: >-
+      §25.3's five words: how the data behind this projection is kept current. A live view MUST
+      expose it, and a still one answers for the observation it was built from.
+  change_source:
+    type: enum
+    nullable: true
+    values: [provider_events, snapshot_comparison]
+    doc: >-
+      What the changes below were observed through (§25.4), or null where nothing was watching.
+  changes:
+    type: list<ono.spatial-change/1>
+    required: true
+    doc: >-
+      What moved since the previous value of a live stream (§25.1). Empty for the opening
+      snapshot and for a `map` asked once — §24.3 forbids inventing a change where no event source
+      or comparison snapshot exists, and §25.2 forbids reporting one where nothing moved.
+default_view:
+  columns: [center, zoom_level, completeness, generated_at]

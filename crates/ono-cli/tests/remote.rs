@@ -136,3 +136,56 @@ fn should_degrade_to_the_local_program_when_the_remote_has_no_adapter() {
         refused.stderr()
     );
 }
+
+#[test]
+fn should_answer_for_this_sessions_links_and_jobs_from_inside_a_link_frame() {
+    // §14.4 makes the active link frame decide where *provider calls* run, and a link, a job and
+    // a context are not observations of a machine — they are facts about this session. Answering
+    // `get link` from the far side made `get link | detach link` unspellable from inside the
+    // link it would detach, while `detach link` itself already acted here (ADR-0269).
+    let run = ono("link host testbox --transport local; \
+         enter link testbox; \
+         get link | count | to json; \
+         get job | count | to json; \
+         get context | count | to json; \
+         leave");
+    run.assert_success();
+    let counts: Vec<&str> = run
+        .stdout()
+        .lines()
+        .filter(|line| line.starts_with('['))
+        .collect();
+    assert_eq!(
+        counts.first().copied(),
+        Some("[1]"),
+        "§14.4: the session's own link table is what `get link` answers with, got {:?}",
+        run.output()
+    );
+    assert_eq!(
+        counts.get(1).copied(),
+        Some("[0]"),
+        "the session's own job table, empty here, got {:?}",
+        run.output()
+    );
+    assert!(
+        counts.get(2).is_some_and(|count| *count != "[0]"),
+        "the session's own context stack, which holds the link frame, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_detach_the_link_it_is_standing_in_when_the_link_table_feeds_the_mutation() {
+    // The composition the split above made unspellable: §14.5 asks that every operation remain
+    // expressible, and `get link | detach link` from inside the frame is the one a user reaches
+    // for when a link stops answering.
+    let run = ono("link host testbox --transport local; \
+         enter link testbox; \
+         get link | detach link | select status | to json");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("\"status\":\"success\""),
+        "the link the session stands in is the one detached, got {:?}",
+        run.output()
+    );
+}

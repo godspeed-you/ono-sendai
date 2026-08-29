@@ -2,8 +2,20 @@
 #
 # This registry is level 6 of spec §47: what each provider advertises — its targets, the
 # capabilities of `capabilities.yaml` it claims, and the schemas of `schemas/` it emits — declared
-# here first, implemented second. `crates/ono-cli/tests/providers.rs` fails when the built
-# registry and these declarations drift in either direction (spec §35.3).
+# here first, implemented second. `crates/ono-cli/tests/provider_conformance.rs` — generated
+# from these files by `cargo xtask conformance` — fails when the built registry and these
+# declarations drift in either direction (spec §35.3).
+#
+# `conformance:` says how a bare snapshot of each target behaves, so the generated suite can
+# exercise every target a provider serves rather than guess at one:
+#
+#   enumerable         a snapshot with no selector ends, and yields records of the declared
+#                      schemas — possibly none of them;
+#   selector_required  a snapshot with no selector must refuse with a structured error; a
+#                      provider that cannot answer without an argument says so rather than
+#                      answering emptily (spec §35.3);
+#   unbounded          a snapshot is a live stream that does not end on its own; what it emits
+#                      still has to satisfy the contract it claims.
 
 providers:
   - id: linux.procfs
@@ -11,38 +23,131 @@ providers:
     targets: [process, signal]
     capabilities: [process.list, process.inspect, process.signal, process.set]
     schemas: [ono.process/1, ono.process-detail/1]
+    conformance:
+      process: enumerable
+      signal: enumerable
+    spatial:
+      # §10.2: a pid is an attribute, a process identity is boot + pid + start time + pid
+      # namespace. The tier is therefore B, never A: the number is reused the moment the
+      # process ends.
+      identity_strategy: lifetime
+      canonical_parent:
+        Process: [service.controls_process, container.contains_process, compute.processes]
+      relationships:
+        - process.parent_of
+        - process.member_of_cgroup
+        - process.in_namespace
+        - process.opened_file
+        - service.controls_process
+        - container.contains_process
+        - process.run_by_user
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, permission_denied]
+      cost_class: cheap
+      landmark_metrics: [cpu, memory, state, started]
 
   - id: linux.fs
     doc: Files and directories, from the filesystem itself.
     targets: [file, dir]
     capabilities: [file.list, file.find, file.read, file.write, file.copy, file.move, file.remove, file.set, file.open, file.watch, dir.list]
     schemas: [ono.file/1]
+    conformance:
+      file: enumerable
+      dir: enumerable
+    spatial:
+      # A file is device + inode: the same object under any number of paths, and the same
+      # object after a rename (§10.1 Tier A).
+      identity_strategy: stable
+      # `path.parent` is not a relation: §3.4 and §15.1 make the Unix path tree hierarchy, so
+      # `up` from a file goes to the directory that contains it and `up` from a directory goes to
+      # the directory above it. A directory *root* has no path above it, and goes up to the mount
+      # that provides it — which is where §15.2's MOUNTS -> DIRECTORY ROOTS meets the Unix tree
+      # (ADR-0135, ADR-0187).
+      canonical_parent:
+        Directory: [path.parent, mount.backs_directory, storage.directories]
+        File: [path.parent]
+      relationships:
+        - mount.backs_directory
+        - process.opened_file
+        - user.owns_file
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, permission_denied, unknown]
+      cost_class: normal
+      landmark_metrics: [size, modified, owner, mode]
 
   - id: linux.nss
     doc: Users and groups, through NSS — so LDAP and sssd answer too, not only /etc/passwd.
     targets: [user, group]
     capabilities: [user.list, group.list, user.manage, group.manage]
     schemas: [ono.user/1, ono.group/1]
+    conformance:
+      user: enumerable
+      group: enumerable
+    spatial:
+      identity_strategy: stable
+      canonical_parent:
+        User: [identity.users]
+        Group: [identity.groups]
+      relationships:
+        - process.run_by_user
+        - user.owns_file
+        - user.member_of_group
+      freshness: on_demand
+      events: false
+      permissions: [available, empty, unknown]
+      cost_class: cheap
+      landmark_metrics: [uid, shell]
 
   - id: ono.session
     doc: The session's own environment. The shell is the source; no kernel interface is asked.
     targets: [env]
     capabilities: [env.read]
     schemas: [ono.env-var/1]
+    conformance:
+      env: enumerable
 
   - id: ono.shell
     doc: >-
       The shell's own tables, published by the session before each pipeline runs: the job table
       of spec §18.4, the links of spec §21 with the hosts they reach and the hosts the
       configured sources list (ADR-0090, ADR-0103), and the KUANG/11 packages of spec §31.8 —
-      the plugin home overlaid with the runtime instances this session started (ADR-0107).
-    targets: [job, link, host, plugin, capability, audit, assistant, model, finding]
-    capabilities: [job.list, link.list, host.list, plugin.list, plugin.search, plugin.inspect,
-                   plugin.remove, plugin.unload, plugin.set, capability.list, capability.revoke,
-                   audit.list, assistant.list, model.list, finding.list]
-    schemas: [ono.job/1, ono.link/1, ono.host/1, ono.plugin/1, ono.plugin-package/1,
+      the plugin home overlaid with the runtime instances this session started (ADR-0107) —
+      and the pinned host keys of spec §21.5, which are a decision this shell recorded rather
+      than something a provider found on a machine (ADR-0355).
+    targets: [job, link, host, host-key, plugin, capability, audit, assistant, model, finding]
+    capabilities: [job.list, link.list, host.list, host.trust, plugin.list, plugin.search,
+                   plugin.inspect, plugin.remove, plugin.unload, plugin.set, capability.list,
+                   capability.revoke, audit.list, assistant.list, model.list, finding.list]
+    schemas: [ono.job/1, ono.link/1, ono.host/1, ono.host-key/1, ono.plugin/1, ono.plugin-package/1,
               ono.plugin-inspection/1, ono.capability-grant/1, ono.plugin-audit-event/1,
               ono.assistant/1, ono.model-provider/1, ono.finding/1]
+    conformance:
+      job: enumerable
+      link: enumerable
+      host: enumerable
+      host-key: enumerable
+      plugin: enumerable
+      capability: enumerable
+      audit: enumerable
+      assistant: enumerable
+      model: enumerable
+      finding: enumerable
+    spatial:
+      # The job table is as long-lived as the session's jobs; a host is a stable name. One
+      # claim covers both, so it is the weaker of the two (§42).
+      identity_strategy: lifetime
+      canonical_parent:
+        Job: [compute.jobs]
+        Host: []
+      relationships:
+        - host.linked_to
+      freshness: event
+      events: true
+      permissions: [available, empty]
+      cost_class: cheap
+      landmark_metrics: [state, link]
 
   - id: linux.mountinfo
     doc: >-
@@ -51,9 +156,46 @@ providers:
     targets: [mount, filesystem]
     capabilities: [mount.list, filesystem.list, mount.manage]
     schemas: [ono.mount/1, ono.filesystem/1]
+    conformance:
+      mount: enumerable
+      filesystem: enumerable
+    spatial:
+      # A filesystem UUID is Tier A and a mount is Tier B — a mount point is reused the
+      # moment the filesystem is unmounted. One entry serves both, so the claim is the
+      # weaker of the two (§42, §10.1).
+      identity_strategy: lifetime
+      canonical_parent:
+        Mount: [filesystem.mounted_at, storage.mounts]
+        Filesystem: [device.backs_filesystem, storage.filesystems]
+      relationships:
+        - filesystem.mounted_at
+        - mount.backs_directory
+        - device.backs_filesystem
+      freshness: on_demand
+      events: true
+      permissions: [available, empty, permission_denied]
+      cost_class: cheap
+      landmark_metrics: [used, available, size, read_only]
 
   - id: linux.sysfs
     doc: Block and character devices, from the nodes under /dev and their sysfs entries (ADR-0097).
     targets: [device]
     capabilities: [device.list]
     schemas: [ono.device/1]
+    conformance:
+      device: enumerable
+    spatial:
+      # The device node is the identity, and it is stable for as long as the device is
+      # attached (§18: a device is a spatial object only where the provider supplies stable
+      # identity).
+      identity_strategy: stable
+      canonical_parent:
+        BlockDevice: [storage.devices]
+        Device: [devices]
+      relationships:
+        - device.backs_filesystem
+      freshness: on_demand
+      events: false
+      permissions: [available, empty, unknown]
+      cost_class: cheap
+      landmark_metrics: [size, subsystem, kind]

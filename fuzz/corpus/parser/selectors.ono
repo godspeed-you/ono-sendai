@@ -1,0 +1,1 @@
+get process 1234 | select name.first ?. pid | where @-1 => $x -> $x

@@ -588,8 +588,9 @@ fn should_refuse_to_enter_a_user_that_does_not_exist() {
     );
     let stderr = run.stderr();
     assert!(
-        stderr.contains("Ono-Sendai-E0102") && stderr.contains("nobody-such-user-ono"),
-        "the refusal is structured and names the account (spec §43, ADR-0023), got {stderr:?}"
+        stderr.contains("Ono-Sendai-E1001") && stderr.contains("nobody-such-user-ono"),
+        "the refusal is structured and names the account, and a failed `enter` is \
+         `spatial.not_found` in either grammar (spec §43, ADR-0023, ADR-0191), got {stderr:?}"
     );
 }
 

@@ -310,9 +310,122 @@ errors:
     kind: type
     summary: A consumer demanded objects and no adapter can provide them for this invocation.
     help: >-
-      A forced structured invocation fails rather than silently downgrading to text
-      (spec v0.3 §1.18). Decode the output yourself (`| from json`), or drop the structured
-      consumer.
+      A stage declared over objects is never handed the bytes a program wrote, and a forced
+      structured invocation never downgrades to text (spec §12.3, spec v0.3 §1.18). Run the
+      program raw, decode the output yourself (`| from json`), or drop the structured consumer.
+
+  # --- spatial (spec v0.4 §40, ADR-0125) ---------------------------------------------------
+  - code: Ono-Sendai-E1001
+    name: spatial.not_found
+    kind: resolution
+    summary: No place, object or alias answers to this spatial selector.
+    help: >-
+      `look` lists the exits of where you stand and `near` lists what is adjacent to it; both
+      answer without a name being known in advance (spec v0.4 §9). `find place <text>` searches
+      the index across domains.
+  - code: Ono-Sendai-E1002
+    name: spatial.ambiguous_selector
+    kind: resolution
+    summary: More than one place answers to this selector and none of them is the obvious one.
+    help: >-
+      The error metadata lists the candidates. Narrow the selector — `follow socket :443` rather
+      than `follow socket` — or use `near <relation>` to stand where all of them are visible. A
+      script never gets a picker: ambiguity is deterministic and fails (spec v0.4 §29.3).
+  - code: Ono-Sendai-E1003
+    name: spatial.not_enterable
+    kind: type
+    summary: This object exists but is not a place you can stand in.
+    help: >-
+      `enter` moves into a place; the registry's `enterable` flag says which object types are
+      one (spec v0.4 §41.1). Read the object with `get`/`inspect` instead, or enter the
+      collection that contains it.
+  - code: Ono-Sendai-E1004
+    name: spatial.no_relation
+    kind: resolution
+    summary: No relation of that name leaves this place.
+    help: >-
+      `look` names the exits this place has, and `docs/spec/spatial/relations.yaml` is the whole
+      vocabulary (spec v0.4 §41.2). A relation that exists but has no neighbour here answers
+      `spatial.not_found` instead — the name was understood.
+  - code: Ono-Sendai-E1005
+    name: spatial.no_parent
+    kind: resolution
+    summary: This place has no canonical parent, so `up` has nowhere to go.
+    help: >-
+      `up` follows the canonical hierarchy and the root is its top (spec v0.4 §6.6, §11.1). Use
+      `back` to retrace the trail you actually took, or `home` to return to the root.
+  - code: Ono-Sendai-E1006
+    name: spatial.history_empty
+    kind: conflict
+    summary: The navigation trail holds no earlier place to return to.
+    help: >-
+      `back` retraces the trail of this session, which starts empty and is not persisted across
+      sessions (spec v0.4 §46.1). `trail` shows what it holds; `up` moves by hierarchy instead
+      of by history.
+  - code: Ono-Sendai-E1007
+    name: spatial.destination_gone
+    kind: resolution
+    summary: The place the trail or pin points at no longer exists.
+    help: >-
+      The metadata carries the tombstone — when the object went away, and the replacement
+      candidate where one can be identified (spec v0.4 §10.3, §20.3). The trail record is kept;
+      `back` again skips to the nearest place that still exists.
+  - code: Ono-Sendai-E1008
+    name: spatial.permission_denied
+    kind: permission
+    summary: This user may not see the objects or relations behind this place.
+    help: >-
+      Denied is not empty: the group stays visible with its state so the boundary is legible
+      (spec v0.4 §35.2). Spatial navigation never escalates privilege on its own; run the
+      inspection deliberately as a user who may read it.
+  - code: Ono-Sendai-E1009
+    name: spatial.unsupported
+    kind: provider
+    summary: No installed provider can answer for this place, relation or domain.
+    help: >-
+      An unavailable domain stays visible and says why rather than disappearing (spec v0.4 §4).
+      `get provider` lists what this build can answer; a KUANG/11 package may contribute the
+      missing objects.
+  - code: Ono-Sendai-E1010
+    name: spatial.stale
+    kind: provider
+    summary: The index's answer is older than this operation is allowed to accept.
+    help: >-
+      The index is a cache and providers remain the truth (spec v0.4 §33.2). The metadata says
+      when the object was last observed; re-run the command to revalidate, and note that a
+      mutation always revalidates its target before it acts.
+  - code: Ono-Sendai-E1011
+    name: spatial.remote_unavailable
+    kind: provider
+    summary: The remote host this place belongs to cannot be reached.
+    help: >-
+      A remote root is an explicit space and crossing to it is never implicit (spec v0.4 §19,
+      §35.4). `get link` shows the links this session holds; `link host <name>` establishes one
+      deliberately.
+  - code: Ono-Sendai-E1012
+    name: spatial.scope_violation
+    kind: permission
+    summary: The movement would cross a scope boundary this session may not cross.
+    help: >-
+      Host, container, namespace and mount boundaries are visible on purpose (spec v0.4 §2.18,
+      §35.4). `trail` shows the boundary that was refused; enter the scope explicitly instead of
+      reaching through it.
+  - code: Ono-Sendai-E1013
+    name: spatial.map_too_large
+    kind: stream
+    summary: The requested map exceeds its node budget and cannot be drawn honestly.
+    help: >-
+      A map clusters rather than truncates arbitrarily (spec v0.4 §8.2), and refuses when even
+      clustering would not fit. Narrow the scope, lower the zoom level, or raise
+      `spatial.map.node_budget`.
+  - code: Ono-Sendai-E1014
+    name: spatial.identity_conflict
+    kind: conflict
+    summary: Two observations claim to be the same object and their identities disagree.
+    help: >-
+      Reconciliation refuses rather than merging two objects into one place (spec v0.4 §37.1,
+      §42.1). The metadata names both identities and the providers that asserted them; this is a
+      provider defect worth reporting.
 
   # --- KUANG/11, spec §31.79 (folded into the global model by ADR-0108) ---------------------
   - code: Ono-Sendai-K11001

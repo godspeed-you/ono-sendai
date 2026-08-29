@@ -1,0 +1,110 @@
+# Canonical PlaceView schema. Source: v0.4 §6.1 ("`look --json` -> PlaceView"; "`look` MUST
+# describe the current place, grouped exits/relationships, important attributes and landmarks";
+# "the headings are presentation, the underlying object MUST remain structured"), §24 (the
+# rendering rules: the information budget, groups as exits, the change section) and §29.1 (it
+# MUST answer without a terminal).
+#
+# §24.1 fixes the order of what matters, and the field set follows it: identity and state (`id`,
+# `type`, `label`, `place`), direct exits (`groups`), landmarks (`landmarks`), recent relevant
+# changes (`changed`), summary counts (each group's `count`). It "MUST NOT default to dumping all
+# properties of the underlying object" — `inspect` stays the exhaustive property view, and
+# `look --all` widens the exits rather than the properties (ADR-0143).
+#
+# `groups` and `neighborhood.groups` are one list under two names on purpose: §24.2 reads the
+# exits off the view, §3.6 reads them off the neighborhood, and a reader that found two different
+# answers would have found a bug.
+id: ono.place-view/1
+name: PlaceView
+summary: The current place, its exits, its landmarks and what changed around it.
+identity: [id, generated_at]
+fields:
+  id:
+    type: string
+    required: true
+    doc: The `spatial_id` of the place (§3.1). Opaque, and the same in every session.
+  type:
+    type: string
+    required: true
+    doc: The §3.3 spatial type of the place — `System`, `Compute`, `Process` — as the registry spells it.
+  label:
+    type: string
+    required: true
+    doc: What a person calls the place (§3.1's `display_name`).
+  hostname:
+    type: string
+    required: true
+    doc: The host the place belongs to (§3.2, §7.1). The prompt's first segment (§21.1).
+  place:
+    type: ono.spatial-place/1
+    required: true
+    doc: The place itself, in the same shape `find place` streams (§3.1, ADR-0140).
+  groups:
+    type: list<ono.neighborhood-group/1>
+    required: true
+    doc: The exits, ranked (§24.2). The same list as `neighborhood.groups`.
+  freshness:
+    type: enum
+    required: true
+    values: [event_driven, polled, cached, stale, partial]
+    doc: >-
+      How the data behind the place is kept current, in §25.3's vocabulary (§33.4). `polled` while
+      nothing subscribes; `stale` past the index TTL; `partial` where an exit could not be read.
+  exits:
+    type: record
+    required: true
+    doc: >-
+      The same exits, keyed by the word `look` prints and `enter`/`follow` take — §24.2's "groups
+      as exits", and §12's `parent`, `children`, `sockets`, `files`, `namespaces`, `cgroup`. A
+      reader that wants one exit by name reads this; one that wants them in rank order reads
+      `groups`.
+  domains:
+    type: list<ono.neighborhood-group/1>
+    nullable: true
+    doc: >-
+      The six canonical domains with their states (§7.1's `domains`, §4). Present at the root,
+      where they are the exits; null anywhere else, because a domain is not a neighbour of a
+      process.
+  links:
+    type: list<ono.link-place/1>
+    nullable: true
+    doc: >-
+      The links this session holds, with the state of each (§19.1's link map). Present at the
+      root of a host, where a linked host is one of the places reachable from here; null anywhere
+      else, because a link is not a neighbour of a process. A link that is not connected stays in
+      the list with the state that says so — dropping it would be the `empty` answer §35.2
+      forbids.
+  landmarks:
+    type: list<ono.landmark/1>
+    required: true
+    doc: What deserves attention here (§3.7, §26). Empty is an answer; null would not be.
+  neighborhood:
+    type: ono.neighborhood/1
+    required: true
+    doc: The bounded, ranked projection around the place, with what it left out (§3.6).
+  boundary:
+    type: ono.mount-boundary/1
+    nullable: true
+    doc: >-
+      The mount boundary this place sits on (§15.3). Present on a filesystem place — the mount
+      point it is under, its filesystem, its source and whether that is remote — so that
+      "crossing a mount boundary MUST be discoverable" is true of the place and not only of the
+      step that reached it. Null anywhere the path tree does not reach.
+  system:
+    type: ono.system/1
+    nullable: true
+    doc: >-
+      The `SystemPlace` of §7.1 in full, carried by `look --all` at the root. §24.1 keeps the
+      exhaustive view of the object behind a place out of the default `look`, so the default
+      names the system and `--all` describes it.
+  changed:
+    type: ono.change-summary/1
+    nullable: true
+    doc: >-
+      What changed in the window `--changes` asked for (§24.3). Null when the user did not ask;
+      never a fabricated summary when no event source or comparison snapshot exists.
+  generated_at:
+    type: timestamp
+    required: true
+    doc: When the view was made.
+default_view:
+  columns: [label, type, hostname, generated_at]

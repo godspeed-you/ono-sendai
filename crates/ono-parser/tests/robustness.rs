@@ -230,3 +230,37 @@ fn should_stay_linear_on_a_wall_of_unbalanced_parentheses() {
         "20k unbalanced parens took {elapsed:?}; the parser must degrade linearly"
     );
 }
+
+#[test]
+fn should_refuse_deeply_nested_index_and_call_suffixes_rather_than_overflowing_the_stack() {
+    // Found by the §35.6 parser fuzz target (ADR-0313) on its first campaign, in a mutation of
+    // the `for x in [1, 2, 3] { … }` seed: `[1` repeated aborted the process at around five
+    // thousand levels.
+    //
+    // The depth counter was released too early. `parse_primary` raises it around its own body
+    // and lowers it before returning; the postfix loop then recurses into the index expression
+    // — `1[1[1[…` — from outside that window, so a chain of suffixes nested without the counter
+    // ever rising. The two earlier nesting tests miss it because a repeated `[` never reaches
+    // the postfix loop at all: an index needs an operand in front of it.
+    for source in [
+        "[1".repeat(20_000),
+        "f(f".repeat(20_000),
+        format!("x{}", "[0]".repeat(20_000)),
+        // A prefix operator recursed into itself with the counter never rising either — found
+        // by the same target, in a mutation of the `get process … | select …` seed.
+        "- ".repeat(20_000),
+        "not ".repeat(20_000),
+    ] {
+        let parsed = ono_parser::parse(&source);
+        assert!(
+            !parsed.program().statements.is_empty() || !parsed.diagnostics().is_empty(),
+            "a chain of suffixes produced neither a tree nor a diagnostic"
+        );
+        for diagnostic in parsed.diagnostics() {
+            assert!(
+                diagnostic.span().end() as usize <= source.len(),
+                "deeply suffixed input produced an out-of-range span"
+            );
+        }
+    }
+}

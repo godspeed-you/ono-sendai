@@ -159,6 +159,8 @@ pub struct CommandHelp {
     pub providers: Vec<String>,
     /// How much of a compatibility promise the command is.
     pub stability: String,
+    /// Where the command came from: `core`, or the package that contributed it (spec §31.64).
+    pub origin: String,
     /// The spec §37 phase that delivers it.
     pub phase: String,
     /// The documented examples.
@@ -214,6 +216,7 @@ impl CommandHelp {
         }
         let _ = writeln!(text, "\nCONTRACT");
         row(&mut text, "id", &self.id);
+        row(&mut text, "origin", &self.origin);
         row(&mut text, "stability", &self.stability);
         row(&mut text, "phase", &self.phase);
         let _ = writeln!(text, "\nEXAMPLES");
@@ -267,6 +270,7 @@ impl CommandHelp {
             Value::list(self.providers.iter().map(|id| Value::string(id))),
         );
         map.insert("stability".into(), Value::string(&self.stability));
+        map.insert("origin".into(), Value::string(&self.origin));
         map.insert("phase".into(), Value::string(&self.phase));
         map.insert(
             "examples".into(),
@@ -557,6 +561,7 @@ fn command_help(
         risk: capability.map(|entry| entry.risk().as_str().to_owned()),
         providers: provider_ids,
         stability: command.stability().as_str().to_owned(),
+        origin: command.origin().to_string(),
         phase: command.phase().to_string(),
         examples: command.examples().to_vec(),
         related,
@@ -634,8 +639,30 @@ fn overview(registry: &CommandRegistry) -> TopicHelp {
             "help get process       one command in full".to_owned(),
             "help raw               the escape hatch that bypasses adaptation".to_owned(),
             "help adapt             force a program's output into values".to_owned(),
+            "help spatial           moving through the system as a space".to_owned(),
+            "help here              what the place you are standing in offers".to_owned(),
         ],
     }
+}
+
+/// The browsing topics `help <topic>` answers for, each with the line the landing page shows.
+///
+/// This is the only enumeration of them: [`builtin_topic`]'s match is what answers, and a match
+/// arm cannot be listed. Completion needs the list (spec §15.1) and so does anything that wants
+/// to say what `help` knows about, so the two are kept beside each other and `spec-check`'s
+/// example checks keep them honest.
+#[must_use]
+pub fn topics() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("verbs", "every verb and what it means"),
+        ("targets", "every target and what it denotes"),
+        ("capabilities", "what a provider must be allowed to do"),
+        ("commands", "every stable command"),
+        ("raw", "the escape hatch that bypasses adaptation"),
+        ("adapt", "force a program's output into values"),
+        ("spatial", "moving through the system as a space"),
+        ("here", "what the place you are standing in offers"),
+    ]
 }
 
 fn builtin_topic(registry: &CommandRegistry, topic: &str) -> Option<TopicHelp> {
@@ -730,6 +757,43 @@ fn builtin_topic(registry: &CommandRegistry, topic: &str) -> Option<TopicHelp> {
             see_also: vec![
                 "explain adapt <program>  the plan, the adapter chosen, the demand forced"
                     .to_owned(),
+            ],
+        },
+        // v0.4 §38.1: the overview a user reaches for before they know a verb to ask about. The
+        // eleven lines are the ones that section lists, in its order; each verb's full page is
+        // `help <verb>`, generated from `docs/spec/commands/spatial.yaml` like every other.
+        "spatial" => TopicHelp {
+            name: "spatial".to_owned(),
+            summary: "Moving through the system as a space (spec v0.4 §6, §38.1).".to_owned(),
+            entries: vec![
+                (
+                    "look".to_owned(),
+                    "see where you are and what is nearby".to_owned(),
+                ),
+                ("map".to_owned(), "see topology".to_owned()),
+                (
+                    "enter".to_owned(),
+                    "move into a visible child or object".to_owned(),
+                ),
+                ("follow".to_owned(), "traverse a relationship".to_owned()),
+                (
+                    "jump".to_owned(),
+                    "move directly to another known place".to_owned(),
+                ),
+                ("back".to_owned(), "return along your trail".to_owned()),
+                ("up".to_owned(), "go to the canonical parent".to_owned()),
+                ("home".to_owned(), "return to the system root".to_owned()),
+                ("near".to_owned(), "query neighbouring objects".to_owned()),
+                ("find place".to_owned(), "search known places".to_owned()),
+                ("trail".to_owned(), "inspect where you moved".to_owned()),
+                (
+                    "pin / unpin".to_owned(),
+                    "keep a place as a landmark of your own, across sessions".to_owned(),
+                ),
+            ],
+            see_also: vec![
+                "help look              one spatial command in full".to_owned(),
+                "help find place        the spatial search beside `find file`".to_owned(),
             ],
         },
         _ => return None,

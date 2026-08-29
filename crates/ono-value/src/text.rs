@@ -5,9 +5,10 @@
 //! ```
 //!
 //! This is the bridge that lets an object pipeline feed an ordinary Unix tool, so it is
-//! deliberately narrow. One value becomes exactly one line. A value that cannot become one line —
-//! a record, a list, a string containing a newline, a byte sequence that is not text — is a
-//! structured error naming what to use instead (spec §12.3), never a best-effort string.
+//! deliberately narrow. One value becomes exactly one line, and a record narrowed to a single
+//! field is that field. A value that cannot become one line — a record of several fields, a list,
+//! a string containing a newline, a byte sequence that is not text — is a structured error naming
+//! what to use instead (spec §12.3), never a best-effort string.
 
 use std::fmt::Write as _;
 
@@ -73,6 +74,9 @@ pub fn canonical_text(value: &Value) -> Result<String, ErrorValue> {
 /// follows the rules of spec §10.5 exactly: an unknown value becomes the word `null`, and a
 /// field whose read failed propagates that failure instead of becoming a blank line.
 ///
+/// A record that already holds exactly one field needs no `--field`: the projection would only
+/// repeat the name `select` already left, so the field itself is the line.
+///
 /// ```
 /// use ono_value::{Value, to_text};
 /// assert_eq!(to_text(&[Value::Int(1), Value::string("two")], None)?, "1\ntwo\n");
@@ -110,6 +114,12 @@ fn line_text(value: &Value) -> Result<String, ErrorValue> {
                 )
             })?
             .to_owned(),
+        // A record `select` has narrowed to one field carries no ambiguity about which field a
+        // line holds, so it needs no `--field` repeating the only name left (spec §29.1).
+        Value::Record(record) if sole_field(record).is_some() => {
+            let field = sole_field(record).unwrap_or(&Value::Null);
+            return line_text(field);
+        }
         Value::Record(_) | Value::Map(_) | Value::List(_) => {
             return Err(ErrorValue::new(
                 ErrorCode::TypeMismatch,
@@ -129,4 +139,15 @@ fn line_text(value: &Value) -> Result<String, ErrorValue> {
 
 fn not_text(message: &str) -> ErrorValue {
     ErrorValue::new(ErrorCode::TypeMismatch, message.to_owned())
+}
+
+/// The one value a record holds, when it holds exactly one — declared field or extension.
+fn sole_field(record: &crate::RecordValue) -> Option<&Value> {
+    let declared = record.schema().fields().len();
+    let extra = record.extra().len();
+    match (declared, extra) {
+        (1, 0) => record.field_at(0),
+        (0, 1) => record.extra().iter().next().map(|(_, value)| value),
+        _ => None,
+    }
 }

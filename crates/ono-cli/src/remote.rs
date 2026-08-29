@@ -34,6 +34,12 @@ pub enum Request {
     ConnectHost,
     /// `test host <name> [--timeout d]` — probe reachability and what the handshake negotiates.
     TestHost,
+    /// `add host-key <host> --fingerprint <fp>` — pin a key checked by some other means.
+    AddHostKey,
+    /// `set host-key <host> --fingerprint <fp>` — the deliberate re-trust of ADR-0015 T6.
+    SetHostKey,
+    /// `remove host-key <host>` — forget a pin.
+    RemoveHostKey,
 }
 
 impl Request {
@@ -46,13 +52,33 @@ impl Request {
             Self::DetachLink => "detach",
             Self::ConnectHost => "connect",
             Self::TestHost => "test",
+            Self::AddHostKey => "add",
+            Self::SetHostKey => "set",
+            Self::RemoveHostKey => "remove",
         }
     }
 
     fn target(self) -> &'static str {
         match self {
             Self::ConnectHost | Self::TestHost => "host",
+            Self::AddHostKey | Self::SetHostKey | Self::RemoveHostKey => "host-key",
             _ => "link",
+        }
+    }
+
+    /// The schema whose identity an `ono.action-result/1` row names for this request.
+    fn subject(self) -> &'static str {
+        match self {
+            Self::AddHostKey | Self::SetHostKey | Self::RemoveHostKey => "ono.host-key",
+            _ => "ono.link",
+        }
+    }
+
+    /// The field that identifies the subject in the contract's selectors.
+    fn identity_field(self) -> &'static str {
+        match self {
+            Self::AddHostKey | Self::SetHostKey | Self::RemoveHostKey => "host",
+            _ => "name",
         }
     }
 
@@ -65,6 +91,9 @@ impl Request {
             Self::DetachLink => "ono.link.detach",
             Self::ConnectHost => "ono.host.connect",
             Self::TestHost => "ono.host.test",
+            Self::AddHostKey => "ono.host-key.add",
+            Self::SetHostKey => "ono.host-key.set",
+            Self::RemoveHostKey => "ono.host-key.remove",
         }
     }
 }
@@ -92,6 +121,9 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         ("detach", Some("link")) => Some(Request::DetachLink),
         ("connect", Some("host")) => Some(Request::ConnectHost),
         ("test", Some("host")) => Some(Request::TestHost),
+        ("add", Some("host-key")) => Some(Request::AddHostKey),
+        ("set", Some("host-key")) => Some(Request::SetHostKey),
+        ("remove", Some("host-key")) => Some(Request::RemoveHostKey),
         _ => None,
     }
 }
@@ -113,7 +145,7 @@ pub fn answer(
     let _ = source;
     let bound = bind(request, stage)?;
     let name = bound
-        .require_selector("name")
+        .require_selector(request.identity_field())
         .map_err(Flow::Failed)?
         .to_string();
     act(session, request, &name, &bound)
@@ -138,12 +170,18 @@ pub fn answer_piped(
     let spelling = format!("{} {}", request.verb(), request.target());
     if matches!(
         request,
-        Request::AddLink | Request::ConnectHost | Request::TestHost
+        Request::AddLink | Request::ConnectHost | Request::TestHost | Request::AddHostKey
     ) {
         return Err(Flow::Failed(no_stream_input(&spelling, request.target())));
     }
     let bound = bind(request, stage)?;
-    let names = piped_names(&spelling, "ono.link", "name", targets).map_err(Flow::Failed)?;
+    let names = piped_names(
+        &spelling,
+        request.subject(),
+        request.identity_field(),
+        targets,
+    )
+    .map_err(Flow::Failed)?;
     if request == Request::RenameLink && names.len() != 1 {
         return Err(Flow::Failed(
             ErrorValue::new(
@@ -163,7 +201,7 @@ pub fn answer_piped(
         match act(session, request, &name, &bound) {
             Ok(values) => rows.extend(values),
             Err(Flow::Failed(error)) => {
-                rows.push(failed_row(&name, request.command_id(), error));
+                rows.push(failed_row(request, &name, request.command_id(), error));
             }
             Err(other) => return Err(other),
         }
@@ -221,10 +259,10 @@ pub(crate) fn piped_names(
 }
 
 /// The `failed` row for one piped link that could not be acted on.
-fn failed_row(name: &str, operation: &str, error: ErrorValue) -> Value {
+fn failed_row(request: Request, name: &str, operation: &str, error: ErrorValue) -> Value {
     let mut identity = MapValue::new();
-    identity.insert("name".into(), Value::string(name));
-    let target = ValueRef::object(SchemaId::new("ono.link", 1), identity);
+    identity.insert(request.identity_field().into(), Value::string(name));
+    let target = ValueRef::object(SchemaId::new(request.subject(), 1), identity);
     ActionResult::new(target, operation, ActionStatus::Failed)
         .with_error(error)
         .into_value()
@@ -290,11 +328,34 @@ fn act(
         }
         Request::RemoveLink => remove_link(session, name)?,
         Request::DetachLink => detach_link(session, name)?,
+        Request::AddHostKey | Request::SetHostKey => {
+            let fingerprint = option("fingerprint").ok_or_else(|| {
+                Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::ResolveTargetNotFound,
+                        format!("`{} host-key` needs the fingerprint to pin", request.verb()),
+                    )
+                    .with_help(
+                        "`add host-key prod-db --fingerprint sha256:…`; the host prints its own                          fingerprint when its agent starts listening (spec §21.5)",
+                    ),
+                )
+            })?;
+            let algorithm =
+                option("algorithm").unwrap_or_else(|| crate::trust::DEFAULT_ALGORITHM.to_owned());
+            pin_host_key(session, request, name, &algorithm, &fingerprint)?
+        }
+        Request::RemoveHostKey => {
+            crate::trust::forget(&session.host_sources(), name).map_err(Flow::Failed)?;
+            (
+                true,
+                format!("{name} is no longer trusted; it must be pinned again deliberately"),
+            )
+        }
     };
 
     let mut identity = MapValue::new();
-    identity.insert("name".into(), Value::string(name));
-    let target = ValueRef::object(SchemaId::new("ono.link", 1), identity);
+    identity.insert(request.identity_field().into(), Value::string(name));
+    let target = ValueRef::object(SchemaId::new(request.subject(), 1), identity);
     let elapsed = ono_value::Duration::from_nanoseconds(
         i128::try_from(started.elapsed().as_nanos()).unwrap_or(i128::MAX),
     );
@@ -305,9 +366,31 @@ fn act(
     Ok(vec![result.into_value()])
 }
 
+/// Records a pinned key, or replaces one, as the request asks (ADR-0355).
+fn pin_host_key(
+    session: &Session,
+    request: Request,
+    host: &str,
+    algorithm: &str,
+    fingerprint: &str,
+) -> Eval<(bool, String)> {
+    let sources = session.host_sources();
+    let changed = match request {
+        Request::SetHostKey => crate::trust::repin(&sources, host, algorithm, fingerprint),
+        _ => crate::trust::pin(&sources, host, algorithm, fingerprint),
+    }
+    .map_err(Flow::Failed)?;
+    let message = if changed {
+        format!("{host} is pinned to {fingerprint}")
+    } else {
+        format!("{host} was already pinned to {fingerprint}")
+    };
+    Ok((changed, message))
+}
+
 /// The transports this build has (ono.link/1 `transport`).
 fn check_transport(transport: &str) -> Eval<()> {
-    if matches!(transport, "ssh" | "local") {
+    if matches!(transport, "ssh" | "local" | "tcp") {
         return Ok(());
     }
     Err(Flow::Failed(
@@ -315,7 +398,7 @@ fn check_transport(transport: &str) -> Eval<()> {
             ErrorCode::TypeMismatch,
             format!("no transport answers to `{transport}`"),
         )
-        .with_help("the transports are `ssh` and `local` (ono.link/1)"),
+        .with_help("the transports are `ssh`, `local` and `tcp` (ono.link/1)"),
     ))
 }
 
@@ -455,8 +538,8 @@ fn remove_link(session: &mut Session, name: &str) -> Eval<(bool, String)> {
         (true, _) => format!("{name} detached, torn down and forgotten"),
         (false, _) => format!("{name} forgotten; it was never established"),
     };
-    // Dropping the connection hangs up (ADR-0036 §8).
-    drop(link);
+    // The link hangs up, and the process serving it is waited for (ADR-0036 §8, ADR-0161).
+    session.hang_up(link);
     Ok((true, message))
 }
 
@@ -477,7 +560,7 @@ fn connect_host(session: &mut Session, name: &str, transport: Option<String>) ->
     }
     let transport = transport.unwrap_or_else(|| "ssh".to_owned());
     check_transport(&transport)?;
-    let connection = crate::context::establish(session, name, &transport, None)?;
+    let connection = crate::context::establish(session, name, &transport, None, false)?;
     let link = SessionLink {
         name: name.to_owned(),
         host: name.to_owned(),
@@ -503,17 +586,16 @@ const DEFAULT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 fn negotiated_facts(
     transport: &str,
     connection: &crate::session::LinkConnection,
-) -> (String, u16, String, Vec<Value>) {
-    let negotiated = connection.link.negotiated();
-    let providers: Vec<Value> = negotiated
-        .providers()
+) -> (String, Option<u16>, String, Vec<Value>) {
+    let providers: Vec<Value> = connection
+        .provider_ids()
         .iter()
-        .map(|descriptor| Value::string(descriptor.id()))
+        .map(|id| Value::string(id))
         .collect();
     (
         transport.to_owned(),
-        negotiated.version(),
-        negotiated.peer().agent().to_owned(),
+        connection.protocol_version(),
+        connection.far_end_name(),
         providers,
     )
 }
@@ -540,11 +622,14 @@ fn test_host(
                 || (name.to_owned(), "ssh".to_owned()),
                 |link| (link.host.clone(), link.transport.clone()),
             );
+            // A definition that asked for the reduced set is probed in the reduced set.
+            let agentless = session.link(name).is_some_and(|link| link.agentless);
             let connection = crate::context::establish(
                 session,
                 &host,
                 &transport,
                 Some(timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT)),
+                agentless,
             )
             .map_err(|flow| match flow {
                 Flow::Failed(error) if error.code() != ErrorCode::RemoteUnreachable => {
@@ -586,7 +671,12 @@ fn test_host(
         .and_then(|builder| builder.set("duration", Value::Duration(elapsed)))
         .and_then(|builder| builder.set("error", Value::Null))
         .and_then(|builder| builder.set("transport", Value::string(&transport)))
-        .and_then(|builder| builder.set("protocol_version", Value::Int(i128::from(version))))
+        .and_then(|builder| {
+            builder.set(
+                "protocol_version",
+                version.map_or(Value::Null, |version| Value::Int(i128::from(version))),
+            )
+        })
         .and_then(|builder| builder.set("agent", Value::string(&agent)))
         .and_then(|builder| builder.set("providers", Value::list(providers)))
         .map_err(Flow::Failed)?
@@ -599,6 +689,11 @@ fn detach_link(session: &mut Session, name: &str) -> Eval<(bool, String)> {
         return Err(unknown_link(name));
     };
     let persistent = link.persistent;
+    // v0.4 §19.1/§35.2: detaching leaves the attachment. The link is not torn down — `changed`
+    // below reports only whether a frame was popped, exactly as v0.2 §9.1 defines it — but this
+    // session has stopped following the host's space, so the places behind it are `stale` rather
+    // than answered as if they were still being kept current (ADR-0171).
+    crate::spatial::links::detach(name);
     let frames = session.pop_link_frames(name);
     if frames == 0 {
         return Ok((
@@ -608,7 +703,9 @@ fn detach_link(session: &mut Session, name: &str) -> Eval<(bool, String)> {
     }
     // A one-shot connection (`connect host`) exists for its frame and goes with it (ADR-0104).
     if !persistent {
-        drop(session.remove_link(name));
+        if let Some(link) = session.remove_link(name) {
+            session.hang_up(link);
+        }
         return Ok((true, format!("{name} detached and hung up")));
     }
     Ok((true, format!("{name} detached; the link is kept")))

@@ -8,6 +8,8 @@
 //! schema carries the frame's target as a field, a selector on that field — so what a frame does
 //! can always be written out by hand.
 
+use std::fmt::Write as _;
+
 use ono_core::ErrorCode;
 use ono_provider_api::ProviderRegistry;
 use ono_value::ErrorValue;
@@ -47,6 +49,60 @@ pub(crate) fn narrow(
         narrowed = Some(contribute(contract, providers, target, frame, current)?);
     }
     Ok(narrowed)
+}
+
+/// The explicit spelling of `narrowed`, when a frame filled anything in.
+///
+/// Spec §14.5 and ADR-0023 require every contribution to have a spelling a user could have
+/// typed, and `explain` is where it is shown. A declared selector is written positionally, a
+/// declared option as `--name value`, and an ambient selector — a field the command declares no
+/// parameter for (ADR-0076 §3) — as the `where` that filters on it, which is what it does.
+///
+/// `None` when nothing was added, so a plan outside a frame says nothing about frames.
+pub(crate) fn spelling(
+    contract: &CommandContract,
+    written: &BoundArguments,
+    narrowed: &BoundArguments,
+) -> Option<String> {
+    let mut spelling = contract.spelling();
+    let mut filter = String::new();
+    let mut added = false;
+    for spec in contract.selectors() {
+        if written.selector_binding(spec.name()).is_some() {
+            continue;
+        }
+        if let Some(value) = narrowed.selector(spec.name()) {
+            let _ = write!(spelling, " {}", text_of(value));
+            added = true;
+        }
+    }
+    for spec in contract.options() {
+        if written.option_binding(spec.name()).is_some() {
+            continue;
+        }
+        if let Some(value) = narrowed.option(spec.name()) {
+            let _ = write!(spelling, " --{} {}", spec.name(), text_of(value));
+            added = true;
+        }
+    }
+    for (field, value) in narrowed.ambient() {
+        if written.ambient().iter().any(|(name, _)| name == field) {
+            continue;
+        }
+        let _ = write!(filter, " | where {field} == {}", text_of(value));
+        added = true;
+    }
+    added.then(|| format!("{spelling}{filter}"))
+}
+
+/// A selector value as it would be written on a command line, quoted only where it must be.
+fn text_of(value: &ono_value::Value) -> String {
+    let text = ono_value::canonical_text(value).unwrap_or_else(|_| value.to_string());
+    let bare = !text.is_empty()
+        && text.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_' | '/' | ':')
+        });
+    if bare { text } else { format!("{text:?}") }
 }
 
 fn contribute(

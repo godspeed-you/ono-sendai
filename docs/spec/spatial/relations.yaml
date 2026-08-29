@@ -1,0 +1,333 @@
+# The relation vocabulary of the spatial graph (spec v0.4 §3.5, §11.2, §32, §41.2).
+#
+# A relationship edge is a real connection between two objects, and is a different thing from
+# the hierarchical grouping of `spaces.yaml`: hierarchy orients, the graph describes what is
+# actually connected (§2.6, §11). Every edge Ono renders is explainable — `inspect relation`
+# answers with the relation, both ends, the direction, the provider, the provenance, the
+# confidence and when it was observed (§11.4) — and every relation name `follow` accepts is
+# declared here (§41.3). `cargo run -p xtask -- spec-check` compares this file against
+# `ono_spatial_core::relations()` in both directions (ADR-0126, ADR-0128).
+#
+# §41.2 fixes the required fields: `id`, `source`, `target`, `direction`, `canonical_label`,
+# `inverse_label`, `confidence`.
+#
+# `direction`        outbound | inbound | bidirectional — how a MapEdge is drawn (§22).
+# `canonical_label`  the word `follow` takes to traverse the edge from `source` to `target`.
+# `inverse_label`    the word `follow` takes to traverse it from `target` back to `source`.
+#                    `follow socket` from a process and `follow owner` from a socket are the two
+#                    ends of one edge, which is what makes the graph readable in both directions.
+#                    Labels are unique per source type, not globally: `follow process` means the
+#                    obvious thing from a service, a user and a container alike.
+# `canonical_group`  the word `look` prints for this exit at the `source` end — §12's `children`,
+#                    `files`, `sockets`. It is a word `follow` and `enter` take as well, so a
+#                    place never shows an exit a user cannot type (§24.2, ADR-0147).
+# `inverse_group`    the same at the `target` end — a socket's `owner`, a file's `openers`.
+# `confidence`       the §11.5 vocabulary — exact | strong | inferred | user_declared | unknown —
+#                    or §41.2's own `exact_or_provider_declared`, which says the edge is exact
+#                    when the provider observed it and carries the provider's own claim
+#                    otherwise. A relation is never silently promoted to `exact` (§22.2).
+# `cost_class`       §32.1 — cheap | normal | expensive | privileged | remote. Default `look`
+#                    and `map` avoid `expensive` relations unless they are already cached.
+
+version: 1
+
+relations:
+  # --- compute ---------------------------------------------------------------------------------
+  - id: process.parent_of
+    source: Process
+    target: Process
+    direction: outbound
+    canonical_label: child
+    inverse_label: parent
+    canonical_group: children
+    inverse_group: parent
+    confidence: exact
+    cost_class: cheap
+    doc: The process tree, from `/proc/<pid>/stat` (§3.5, §12).
+
+  - id: process.owns_socket
+    source: Process
+    target: Socket
+    direction: outbound
+    canonical_label: socket
+    inverse_label: owner
+    canonical_group: sockets
+    inverse_group: process
+    confidence: exact
+    cost_class: normal
+    doc: >-
+      A socket the process holds open, matched by inode across the process's descriptors and the
+      kernel's socket tables (§3.5, §12). `follow socket :443` traverses to one of them.
+
+  - id: process.opened_file
+    source: Process
+    target: File
+    direction: outbound
+    canonical_label: file
+    inverse_label: opener
+    canonical_group: files
+    inverse_group: openers
+    confidence: exact
+    cost_class: expensive
+    doc: >-
+      An open file descriptor of the process (§3.5, §11.2). Reading every process's descriptors
+      is a broad scan, so the group appears as a discoverable but unloaded exit (§32.2).
+
+  - id: process.member_of_cgroup
+    source: Process
+    target: Cgroup
+    direction: outbound
+    canonical_label: cgroup
+    inverse_label: process
+    canonical_group: cgroup
+    inverse_group: processes
+    confidence: exact
+    cost_class: cheap
+    doc: The cgroup the process is accounted to (§3.5, §16.3).
+
+  - id: process.in_namespace
+    source: Process
+    target: Namespace
+    direction: outbound
+    canonical_label: namespace
+    inverse_label: member
+    canonical_group: namespaces
+    inverse_group: members
+    confidence: exact
+    cost_class: cheap
+    doc: >-
+      A namespace the process belongs to. It is also a scope boundary: entering across one is
+      visible in the trail and the prompt (§16.2, §2.18).
+
+  - id: process.connects_to
+    source: Process
+    target: Endpoint
+    direction: outbound
+    canonical_label: endpoint
+    inverse_label: client
+    canonical_group: endpoints
+    inverse_group: clients
+    confidence: exact_or_provider_declared
+    cost_class: normal
+    doc: >-
+      The far end of a connection the process holds (§11.2). The local half is observed; how the
+      remote end is *named* is only as good as what the provider knows, which is why the
+      confidence is the provider's to declare.
+
+  - id: service.controls_process
+    source: Service
+    target: Process
+    direction: outbound
+    canonical_label: process
+    inverse_label: service
+    canonical_group: processes
+    inverse_group: service
+    confidence: exact
+    cost_class: cheap
+    doc: >-
+      The processes a service manager unit currently controls (§3.5, §13). The service place is
+      stable across a restart; the processes are not (§10.2).
+
+  - id: service.in_cgroup
+    source: Service
+    target: Cgroup
+    direction: outbound
+    canonical_label: cgroup
+    inverse_label: service
+    canonical_group: cgroup
+    inverse_group: services
+    confidence: exact_or_provider_declared
+    cost_class: normal
+    doc: >-
+      The control group a service manager places its unit in (§13's `resource/cgroup`). No
+      installed provider states it, so the exit answers `unsupported` rather than empty — which
+      is the difference §35.2 exists to keep.
+
+  - id: service.listens_on
+    source: Service
+    target: Listener
+    direction: outbound
+    canonical_label: listener
+    inverse_label: service
+    canonical_group: listeners
+    inverse_group: service
+    confidence: exact_or_provider_declared
+    cost_class: normal
+    doc: >-
+      The sockets a service manager unit listens on (§13's `listeners`). The socket belongs to the
+      process, and no installed provider joins the unit to it, so the exit answers `unsupported`
+      rather than being left off the view — a place that omitted the group would be claiming the
+      service has no listeners (§2.17, §35.2).
+
+  - id: service.depends_on
+    source: Service
+    target: Service
+    direction: outbound
+    canonical_label: dependency
+    inverse_label: dependent
+    canonical_group: dependencies
+    inverse_group: dependents
+    confidence: exact_or_provider_declared
+    cost_class: normal
+    doc: >-
+      A dependency the service manager itself declares (§3.5, §13). A provider must not claim a
+      dependency it cannot justify.
+
+  - id: container.contains_process
+    source: Container
+    target: Process
+    direction: outbound
+    canonical_label: process
+    inverse_label: container
+    canonical_group: processes
+    inverse_group: container
+    confidence: exact_or_provider_declared
+    cost_class: normal
+    doc: >-
+      A process running inside the container's scope (§3.5, §16.1). A runtime that lists its own
+      processes observes this; the kernel does not report it, and the derivation from the
+      container id in `/proc/<pid>/cgroup` is `strong` rather than `exact` (§11.5, ADR-0135).
+
+  # --- network ---------------------------------------------------------------------------------
+  - id: socket.connected_to
+    source: Socket
+    target: Endpoint
+    direction: bidirectional
+    canonical_label: peer
+    inverse_label: peer
+    canonical_group: peer
+    inverse_group: peer
+    confidence: exact
+    cost_class: normal
+    doc: >-
+      The other end of an established connection (§3.5, §14.4). It is bidirectional because a
+      connection has two ends and neither is the origin.
+
+  - id: socket.accepts_connection
+    source: Socket
+    target: Connection
+    direction: outbound
+    canonical_label: connection
+    inverse_label: listener
+    canonical_group: connections
+    inverse_group: listener
+    confidence: exact_or_provider_declared
+    cost_class: normal
+    doc: A connection a listening socket accepted (§11.2, §14.3).
+
+  - id: interface.has_address
+    source: Interface
+    target: Address
+    direction: outbound
+    canonical_label: address
+    inverse_label: interface
+    canonical_group: addresses
+    inverse_group: interface
+    confidence: exact
+    cost_class: cheap
+    doc: An address configured on the interface (§14.1, §14.2).
+
+  - id: route.via_interface
+    source: Route
+    target: Interface
+    direction: outbound
+    canonical_label: interface
+    inverse_label: route
+    canonical_group: interface
+    inverse_group: routes
+    confidence: exact
+    cost_class: cheap
+    doc: The interface a route sends through (§14.1).
+
+  # --- storage ---------------------------------------------------------------------------------
+  - id: filesystem.mounted_at
+    source: Filesystem
+    target: Mount
+    direction: outbound
+    canonical_label: mount
+    inverse_label: filesystem
+    canonical_group: mounts
+    inverse_group: filesystem
+    confidence: exact
+    cost_class: cheap
+    doc: Where a filesystem is mounted; a filesystem may be mounted more than once (§15.2).
+
+  - id: mount.backs_directory
+    source: Mount
+    target: Directory
+    direction: outbound
+    canonical_label: directory
+    inverse_label: mount
+    canonical_group: directory
+    inverse_group: mount
+    confidence: exact
+    cost_class: cheap
+    doc: >-
+      The directory a mount provides, which is how the Unix path tree and the storage hierarchy
+      meet without either replacing the other (§3.5, §15.3).
+
+  - id: device.backs_filesystem
+    source: BlockDevice
+    target: Filesystem
+    direction: outbound
+    canonical_label: filesystem
+    inverse_label: device
+    canonical_group: filesystems
+    inverse_group: device
+    confidence: exact_or_provider_declared
+    cost_class: normal
+    doc: The block device a filesystem lives on, where the provider can identify one (§15.2).
+
+  # --- identity --------------------------------------------------------------------------------
+  - id: process.run_by_user
+    source: Process
+    target: User
+    direction: outbound
+    canonical_label: user
+    inverse_label: process
+    canonical_group: user
+    inverse_group: processes
+    confidence: exact
+    cost_class: normal
+    doc: A process running as this user (§3.5, §17).
+
+  - id: user.owns_file
+    source: User
+    target: File
+    direction: outbound
+    canonical_label: file
+    inverse_label: owner
+    canonical_group: files
+    inverse_group: owner
+    confidence: exact
+    cost_class: expensive
+    doc: >-
+      A file owned by this user (§7.6's ownership relationships). Finding every such file is a
+      whole-filesystem scan, so it is an exit the user expands deliberately (§32.2).
+
+  - id: user.member_of_group
+    source: User
+    target: Group
+    direction: outbound
+    canonical_label: group
+    inverse_label: member
+    canonical_group: groups
+    inverse_group: members
+    confidence: exact
+    cost_class: cheap
+    doc: Group membership, through NSS (§17).
+
+  # --- hosts -----------------------------------------------------------------------------------
+  - id: host.linked_to
+    source: Host
+    target: Host
+    direction: bidirectional
+    canonical_label: host
+    inverse_label: host
+    canonical_group: hosts
+    inverse_group: hosts
+    confidence: exact
+    cost_class: remote
+    doc: >-
+      A link this session holds to another host (§3.5, §19.1). Crossing it is always explicit:
+      `jump` never opens a connection because a name resembles a known place (§35.4).

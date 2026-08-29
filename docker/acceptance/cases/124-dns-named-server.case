@@ -1,0 +1,35 @@
+# `resolve dns --server`: ADR-0087 refused it, ADR-0240 delivers it over a DNS client of the
+# crate's own. The container has no network at all — `--network=none` — and ships no nameserver
+# to point at, so what is proved here is the surface and the refusals: that the option is
+# accepted rather than `provider.unsupported`, that a server which answers nothing is that
+# server's failure and never an empty result, that `--port` without `--server` says nothing and
+# is refused, and that the system resolver is unchanged and still answers from `/etc/hosts`. The
+# positive path is proved by the unit and CLI tests, which start a real nameserver.
+case: a named nameserver is asked, and its silence is a failure rather than an empty answer
+timeout: 150
+run: |
+  echo "== the option is delivered, not declared =="
+  out=$(ono -c 'resolve dns fixture.example --server 127.0.0.1 --port 15353 --type A | to json' 2>&1); echo "unanswered-status=$?"
+  echo "$out" | head -1
+  echo "$out" | grep -q 'Ono-Sendai-E0901' && echo "WRONG still unsupported"
+
+  echo "== --port says where a named server listens, and nothing on its own =="
+  ono -c 'resolve dns example.com --port 5353' 2>&1 | grep -o 'Ono-Sendai-E0201' | head -1
+
+  echo "== help and completion carry both options =="
+  ono -c 'help resolve dns' | grep -c -- '--server'
+  ono -c 'help resolve dns' | grep -c -- '--port'
+
+  echo "== the system resolver is unchanged: /etc/hosts still answers with no network at all =="
+  ono -c 'resolve dns localhost --type A | select name type | to json'
+  ono -c 'explain resolve dns' | grep -qi 'dns.resolve' && echo "capability-unchanged"
+  echo done=ok
+exit: 0
+stdout-contains: Ono-Sendai-E0401
+stdout-contains: unanswered-status=1
+stdout-contains: Ono-Sendai-E0201
+stdout-contains: [{"name":"localhost","type":"A"}]
+stdout-contains: capability-unchanged
+stdout-contains: done=ok
+stdout-not-contains: WRONG
+stdout-not-contains: Ono-Sendai-E0101

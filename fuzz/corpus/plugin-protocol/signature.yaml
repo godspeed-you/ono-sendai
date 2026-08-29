@@ -1,0 +1,13 @@
+format: kuang-signature/1
+algorithm: ed25519
+key: ed25519:abababababababababababababababababababababababababababababababab
+signed:
+  package: dev.example.users
+  version: 0.1.0
+  publisher: dev.example
+  files:
+  - path: adapters.yaml
+    sha256: cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
+  - path: manifest.yaml
+    sha256: efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef
+signature: 12121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212

@@ -9,6 +9,8 @@ providers:
     targets: [dns]
     capabilities: [dns.resolve]
     schemas: [ono.dns-record/1]
+    conformance:
+      dns: selector_required
 
   - id: ono.probe
     doc: >-
@@ -17,3 +19,5 @@ providers:
     targets: [port]
     capabilities: [port.probe]
     schemas: [ono.probe-result/1]
+    conformance:
+      port: selector_required

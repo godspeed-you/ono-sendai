@@ -1,0 +1,69 @@
+# Spec §34's pathological environments, third of four: a filesystem that is both very deep and
+# very wide. See case `151` for what this series is and how the figures are taken; case `100`
+# already carries a directory of twenty thousand entries, so what is added here is depth, a
+# directory an order of magnitude wider, and a `find` across the whole tree.
+case: the budgets of section 34 hold on a deep and wide filesystem
+timeout: 900
+env: NO_COLOR=1
+run: |
+  median() { sort -n | awk '{ v[NR] = $1 } END { if (NR == 0) { print -1 } else { print v[int((NR + 1) / 2)] } }'; }
+
+  measure() {
+    local label="$1" limit_ms="$2" runs="$3" statement="$4" figure
+    ono --no-config -c "$statement" >/dev/null 2>&1
+    figure=$(
+      for _ in $(seq "$runs"); do
+        local start end
+        start=$(date +%s%N)
+        ono --no-config -c "$statement" >/dev/null 2>&1
+        end=$(date +%s%N)
+        echo $(( (end - start) / 1000000 ))
+      done | median
+    )
+    echo "$label: ${figure}ms (§34 budget ${limit_ms}ms, median of $runs runs, $statement)"
+    if [ "$figure" -le "$limit_ms" ]; then
+      echo "$label: within budget"
+    else
+      echo "$label: OVER BUDGET"
+    fi
+  }
+
+  echo "== building the fixture =="
+  # Wide: one directory with fifty thousand entries.
+  mkdir -p /tmp/wide
+  ( cd /tmp/wide && for i in $(seq 50000); do : > "entry-$i"; done )
+  # Deep: a chain two hundred directories long, with a file at the bottom.
+  deep=/tmp/deep
+  mkdir -p "$deep"
+  path="$deep"
+  for i in $(seq 200); do path="$path/level-$i"; done
+  mkdir -p "$path"
+  : > "$path/needle.txt"
+  # Spread: a thousand directories of a hundred files each, for a `find` that has to walk.
+  for i in $(seq 1000); do
+    mkdir -p "/tmp/spread/dir-$i"
+    ( cd "/tmp/spread/dir-$i" && for j in $(seq 100); do : > "file-$j"; done )
+  done
+  echo "fixture: $(ls /tmp/wide | wc -l) entries in one directory, 200 levels deep, $(find /tmp/spread -type f | wc -l) files spread over 1000 directories"
+
+  echo "== section 34 =="
+  measure cold-start-under-load 100 20 'true'
+  measure first-file-row 50 20 'get file /tmp/wide | take 1'
+  measure first-deep-file-row 50 20 "get file $deep | take 1"
+  measure first-dir-row 50 20 'get dir /tmp/spread | take 1'
+  # A whole listing and a whole search are not budgeted by §34 by name; they are measured and
+  # printed so the cost is visible between runs, and asserted against a generous ceiling.
+  measure whole-wide-listing 10000 3 'get file /tmp/wide | count'
+  measure find-across-the-spread 20000 3 'find file /tmp/spread --name "file-1" | count'
+  echo "listed: $(ono --no-config -c 'get file /tmp/wide | count')"
+  echo "found: $(ono --no-config -c 'find file /tmp/deep --name needle.txt | count')"
+exit: 0
+stdout-contains: cold-start-under-load: within budget
+stdout-contains: first-file-row: within budget
+stdout-contains: first-deep-file-row: within budget
+stdout-contains: first-dir-row: within budget
+stdout-contains: whole-wide-listing: within budget
+stdout-contains: find-across-the-spread: within budget
+stdout-not-contains: OVER BUDGET
+stdout-not-contains: panicked
+stdout-not-contains: Ono-Sendai-E

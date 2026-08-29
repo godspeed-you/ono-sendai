@@ -16,6 +16,14 @@ use std::path::Path;
 use ono_testkit::{Scratch, scratch};
 use xtask::reference::{check_committed, generate};
 
+/// The workspace root.
+fn repo() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask sits in the workspace")
+        .to_path_buf()
+}
+
 fn registries() -> Scratch {
     let repo = scratch();
     repo.write(
@@ -267,5 +275,59 @@ fn should_publish_no_adapter_pages_when_no_pack_is_declared() {
     assert!(
         written.iter().all(|page| !page.path.contains("/adapters/")),
         "a repository without packs has no adapter pages to keep up to date"
+    );
+}
+
+// --- the checklist's own generation claims (B-harn-4) -------------------------------------------
+
+fn generated_pages() -> Vec<String> {
+    // Everything this repository generates from its contracts, not only the reference pages:
+    // the provider conformance suite is written by `cargo xtask conformance` and drift-checked
+    // by `spec-check` exactly as `docs/reference/` is, so a box may name it (ADR-0331).
+    xtask::reference::generate(&repo())
+        .expect("the registries generate")
+        .into_iter()
+        .chain(xtask::conformance::generate(&repo()).expect("the declarations generate"))
+        .map(|page| page.path)
+        .collect()
+}
+
+#[test]
+fn should_report_a_box_that_claims_a_generation_nobody_wrote() {
+    // The two claims this rule was written for: §4.1 D said "docs and provider conformance tests
+    // are generated from them" and §4.7.4 said the spatial conformance suite is "generated from
+    // `docs/spec/providers/*.yaml`". Only `docs/reference/` is generated; both suites are
+    // hand-written and checked against the registries instead.
+    let claim = "- [x] **D — Consistency.** Registries exist under `docs/spec/`; docs and \
+                 provider conformance tests are generated from them.\n";
+    let problems = xtask::reference::check_generation_claims(claim, &generated_pages());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert_eq!(problems[0].location, "docs/ACCEPTANCE.md");
+    assert!(problems[0].detail.contains("generated from"));
+}
+
+#[test]
+fn should_accept_a_box_that_names_the_page_it_claims_is_generated() {
+    let claim = "- [x] **Support claims are published.** `docs/reference/adapters/` — a page per \
+                 adapter — is generated from the contracts.\n";
+    assert_eq!(
+        xtask::reference::check_generation_claims(claim, &generated_pages()),
+        Vec::new()
+    );
+}
+
+#[test]
+fn should_find_every_generation_claim_of_this_repositorys_checklist_true() {
+    let text = std::fs::read_to_string(repo().join("docs/ACCEPTANCE.md"))
+        .expect("docs/ACCEPTANCE.md is readable");
+    let problems = xtask::reference::check_generation_claims(&text, &generated_pages());
+    assert!(
+        problems.is_empty(),
+        "docs/ACCEPTANCE.md claims a generation the tree does not perform:\n{}",
+        problems
+            .iter()
+            .map(|problem| format!("  {}", problem.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }

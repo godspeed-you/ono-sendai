@@ -31,6 +31,9 @@ stdout-contains: one
 | `pty:` | `true` runs the script under a real controlling terminal (spec §29.3). |
 | `columns:` / `lines:` | terminal size — as `COLUMNS`/`LINES`, and as the pty's window size when `pty: true`. Proves the 80-column and 200-column requirements of `docs/ACCEPTANCE.md` §4.2. |
 | `env:` | a `NAME=value` pair for the container. Repeatable. |
+| `capability:` | a Linux capability the case needs, as `--cap-add` names it (`NET_ADMIN`, `SYS_ADMIN`). Repeatable. Only for a case whose whole point is a privileged path; the default is no capability at all. |
+| `user:` | the container user to run as. Only `root`, and only together with `capability:` — a capability is useless to the unprivileged `case` user. |
+| `security:` | a `--security-opt` value the case needs, such as `apparmor=unconfined` for a case that mounts. Repeatable, and only for a privileged case: the host's AppArmor profile denies `mount(2)` even to `CAP_SYS_ADMIN`. |
 | `timeout:` | seconds before the case is killed and failed. Defaults to `30`. |
 | `stdout-contains:` | literal text that must appear. Repeatable. |
 | `stdout-not-contains:` | literal text that must not appear. Repeatable. |

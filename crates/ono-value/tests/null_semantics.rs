@@ -21,6 +21,7 @@ fn schema() -> Arc<Schema> {
             .field(FieldDef::new("id", FieldType::Int).required())
             .field(FieldDef::new("memory", FieldType::ByteSize).nullable())
             .field(FieldDef::new("owner", FieldType::String).nullable())
+            .field(FieldDef::new("failure", FieldType::Error).nullable())
             .identity(["id"])
             .default_view(["id", "memory"])
             .build()
@@ -41,6 +42,14 @@ fn record() -> RecordValue {
             Value::Error(Arc::new(
                 ErrorValue::new(ErrorCode::IoPermissionDenied, "access denied")
                     .with_help("requires root or read capability"),
+            )),
+        )
+        .unwrap()
+        .set(
+            "failure",
+            Value::Error(Arc::new(
+                ErrorValue::new(ErrorCode::IoNotFound, "the target is gone")
+                    .with_help("nothing was signalled"),
             )),
         )
         .unwrap()
@@ -149,4 +158,74 @@ fn should_reject_a_required_path_over_a_null_receiver() {
         .expect_err("a required field access on null is a type error");
 
     assert_eq!(error.code(), ErrorCode::TypeMismatch);
+}
+
+// --- ADR-0215: an error a schema declares is data, not a failed read -------------------------
+
+#[test]
+fn should_report_a_field_declared_as_an_error_as_the_error_it_holds() {
+    // `ono.action-result/1`'s `error` is declared `ono.error/1` (spec §11.5): the error stored
+    // there is the field's value, not a failure to read the field.
+    match record().access("failure") {
+        FieldAccess::Known(Value::Error(error)) => {
+            assert_eq!(error.code(), ErrorCode::IoNotFound);
+        }
+        other => panic!("a declared error field holds its error as a value, got {other:?}"),
+    }
+}
+
+#[test]
+fn should_read_the_fields_of_an_error_a_schema_declares() {
+    let value = Value::Record(Arc::new(record()));
+
+    assert_eq!(
+        value
+            .follow(&[FieldStep::required("failure"), FieldStep::required("name")])
+            .unwrap(),
+        Value::string("io.not_found"),
+        "spec §16.1: `name` is the dotted selector predicates match on"
+    );
+    assert_eq!(
+        value
+            .follow(&[FieldStep::required("failure"), FieldStep::required("code")])
+            .unwrap(),
+        Value::string("Ono-Sendai-E0301")
+    );
+    assert_eq!(
+        value
+            .follow(&[FieldStep::required("failure"), FieldStep::required("kind")])
+            .unwrap(),
+        Value::string("io")
+    );
+}
+
+#[test]
+fn should_refuse_a_step_that_names_no_field_of_an_error() {
+    let value = Value::Record(Arc::new(record()));
+    let error = value
+        .follow(&[FieldStep::required("failure"), FieldStep::required("cpy")])
+        .expect_err("`cpy` is not a field of Error");
+
+    assert_eq!(error.code(), ErrorCode::TypeUnknownField);
+    assert_eq!(
+        value
+            .follow(&[FieldStep::required("failure"), FieldStep::optional("cpy")])
+            .unwrap(),
+        Value::Null,
+        "`?.` turns an absent field of an error into null, as it does for any record"
+    );
+}
+
+#[test]
+fn should_keep_a_stored_error_in_a_field_of_another_type_a_failed_access() {
+    // `memory` is a bytesize. An error there is spec §10.5's third case and still raises.
+    let value = Value::Record(Arc::new(record()));
+    let error = value
+        .follow(&[
+            FieldStep::required("memory"),
+            FieldStep::required("message"),
+        ])
+        .expect_err("a failed access is not a record to descend into");
+
+    assert_eq!(error.code(), ErrorCode::IoPermissionDenied);
 }

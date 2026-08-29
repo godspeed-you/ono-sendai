@@ -59,11 +59,18 @@ impl ObjectId {
         }
     }
 
-    /// The identity of `record`, or `None` when its schema declares none.
+    /// The identity of `record`, or `None` when the record states none.
     ///
-    /// A schema with no declared identity is one whose records are values rather than objects —
-    /// a projection, a measurement — and giving those a synthetic identity would let a live view
-    /// claim two unrelated rows were the same row.
+    /// A record states no identity in two ways, and both mean the same thing. Its schema may
+    /// declare none — those records are values rather than objects, a projection or a
+    /// measurement, and giving them a synthetic identity would let a live view claim two
+    /// unrelated rows were the same row. Or it may declare identity fields and the record supply
+    /// **none** of them: a null is the absence of a value, not a value (spec §35.3), so a record
+    /// whose every identity component is null says nothing about which object it is, and two such
+    /// records are not thereby the same object (spec §2.17, ADR-0231).
+    ///
+    /// One present component is enough. `ono.route/1` identifies by five fields and the default
+    /// route has no destination; that route is still an object.
     #[must_use]
     pub fn of(record: &RecordValue) -> Option<Self> {
         let schema = record.schema();
@@ -75,6 +82,9 @@ impl ObjectId {
             .iter()
             .map(|field| record.get(field).cloned().unwrap_or(Value::Null))
             .collect();
+        if values.iter().all(|value| matches!(value, Value::Null)) {
+            return None;
+        }
         let key = identity_key(&values);
         Some(Self {
             schema: schema.id().clone(),
@@ -155,21 +165,46 @@ impl ObjectRef {
     #[must_use]
     pub fn of(record: &RecordValue) -> Option<Self> {
         let id = ObjectId::of(record)?;
-        // The label is the first field of the default view that is not part of the identity —
-        // the one a person would use to say which object they mean.
-        let label = record
-            .schema()
-            .default_view()
-            .iter()
-            .find(|column| !record.schema().identity().contains(column))
-            .and_then(|column| record.get(column))
-            .and_then(|value| ono_value::canonical_text(value).ok())
+        // One label rule for an object (ADR-0226): the short form its schema declares, which is
+        // what a person reads wherever the object is shown — a graph node, an `ActionResult`
+        // target, a refusal. A schema that declares none falls back to the first default-view
+        // column outside the identity, because the identity is printed beside this label and
+        // what it must add is the thing the identity does not show.
+        let label = crate::label::declared_label(record)
+            .or_else(|| {
+                record
+                    .schema()
+                    .default_view()
+                    .iter()
+                    .find(|column| !record.schema().identity().contains(column))
+                    .and_then(|column| record.get(column))
+                    .and_then(|value| ono_value::canonical_text(value).ok())
+            })
             .unwrap_or_else(|| id.to_string());
         Some(Self {
             id,
             label,
             provenance: record.provenance().clone(),
         })
+    }
+
+    /// A reference to an object a provider *named* but does not serve as a record of its own.
+    ///
+    /// The far end of a connection, the control group a process reports, the namespace a pid was
+    /// read in: each is a real thing a provider told us about inside another object's record, and
+    /// spec v0.4 §42.3 requires an edge to reach "a known spatial object, an explicit unresolved
+    /// endpoint object, or a remote/opaque reference with correct type" rather than a dangling
+    /// id. This is how the second and third of those are built.
+    ///
+    /// `provenance` is the provenance of the record that named it, never a new attribution: the
+    /// observation belongs to whoever made it (spec §26).
+    #[must_use]
+    pub fn derived(id: ObjectId, label: impl Into<String>, provenance: Provenance) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            provenance,
+        }
     }
 
     /// The object's identity.

@@ -63,13 +63,13 @@ fi
 # quoting rules of its own. Assertion keys are repeatable; every one of them must hold.
 # The full directive list lives in docker/README.md.
 
-declare -a assert_kind assert_arg want_env
+declare -a assert_kind assert_arg want_env want_caps want_security
 
 parse_case() {
   local file="$1" key value collecting="" line
   name=""; run=""; stdin_text=""; want_exit="0"; want_pty="0"; want_timeout="30"
-  want_cols=""; want_lines=""
-  assert_kind=(); assert_arg=(); want_env=()
+  want_cols=""; want_lines=""; want_user=""
+  assert_kind=(); assert_arg=(); want_env=(); want_caps=(); want_security=()
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ -n "$collecting" ]]; then
@@ -115,6 +115,11 @@ parse_case() {
       columns)              want_cols="$value" ;;
       lines)                want_lines="$value" ;;
       env)                  want_env+=("$value") ;;
+      # A case that proves a privileged path says so itself, so the privilege is visible in the
+      # case and nowhere else; every other case stays unprivileged (docs/ACCEPTANCE.md, ADR-0237).
+      capability)           want_caps+=("$value") ;;
+      user)                 want_user="$value" ;;
+      security)             want_security+=("$value") ;;
       stdout-matches)       assert_kind+=(matches);      assert_arg+=("$value") ;;
       stdout-not-matches)   assert_kind+=(not-matches);  assert_arg+=("$value") ;;
       stdout-contains)      assert_kind+=(contains);     assert_arg+=("$value") ;;
@@ -177,6 +182,9 @@ for file in "${cases[@]}"; do
 
   runtime_args=(run --rm --interactive --network=none)
   for pair in "${want_env[@]}"; do runtime_args+=(--env "$pair"); done
+  for capability in "${want_caps[@]}"; do runtime_args+=(--cap-add "$capability"); done
+  for option in "${want_security[@]}"; do runtime_args+=(--security-opt "$option"); done
+  if [[ -n "$want_user" ]]; then runtime_args+=(--user "$want_user"); fi
   if [[ -n "$want_cols" ]];  then runtime_args+=(--env "COLUMNS=$want_cols"); fi
   if [[ -n "$want_lines" ]]; then runtime_args+=(--env "LINES=$want_lines"); fi
 

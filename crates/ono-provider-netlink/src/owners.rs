@@ -11,6 +11,7 @@
 //! and `get socket --process` performs exactly one scan for the whole dump, never one per socket.
 
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -46,6 +47,7 @@ impl ProcessOwner {
 #[derive(Debug, Clone, Default)]
 pub struct SocketOwners {
     by_inode: BTreeMap<u64, ProcessOwner>,
+    refused: usize,
 }
 
 impl SocketOwners {
@@ -55,8 +57,9 @@ impl SocketOwners {
     ///
     /// Returns an error only when `/proc` itself cannot be listed. A process whose descriptors
     /// this user may not read is skipped, because that is the ordinary state of every process
-    /// belonging to somebody else, and the sockets it holds then report a null owner — which the
-    /// schema documents as "no owner, or not visible to you".
+    /// belonging to somebody else. How many were skipped is counted rather than forgotten: a
+    /// socket the scan could not attribute is a socket with no owner when nothing was hidden,
+    /// and a socket whose owner this reader may not see when something was (spec v0.4 §35.2).
     pub fn from_proc() -> Result<Self, ErrorValue> {
         Self::from_proc_root(Path::new("/proc"))
     }
@@ -91,7 +94,10 @@ impl SocketOwners {
 
         let mut owners = Self::default();
         for pid in pids {
-            let inodes = socket_inodes(&root.join(pid.to_string()).join("fd"));
+            let (inodes, refused) = socket_inodes(&root.join(pid.to_string()).join("fd"));
+            if refused {
+                owners.refused += 1;
+            }
             if inodes.is_empty() {
                 continue;
             }
@@ -121,6 +127,41 @@ impl SocketOwners {
         self.by_inode.len()
     }
 
+    /// How many processes did not let their open descriptors be read.
+    ///
+    /// Zero means the scan saw every process on the machine, so an inode it did not attribute is
+    /// an inode nobody holds. Anything else means an unattributed inode may be held by one of
+    /// the processes that were refused, and spec v0.4 §35.2 forbids reporting that as absence.
+    #[must_use]
+    pub fn refused(&self) -> usize {
+        self.refused
+    }
+
+    /// Why an inode this scan did not attribute has no owner here, where the reason is a refusal.
+    ///
+    /// `None` when nothing was hidden: the socket then has no holder among the processes, which
+    /// is an answer rather than an unknown.
+    #[must_use]
+    pub fn refusal(&self) -> Option<ErrorValue> {
+        if self.refused == 0 {
+            return None;
+        }
+        Some(
+            ErrorValue::new(
+                ErrorCode::IoPermissionDenied,
+                format!(
+                    "{} process(es) did not let their open files be read, so the owner of this \
+                     socket could not be seen",
+                    self.refused
+                ),
+            )
+            .with_help(
+                "the owning process is only discoverable through `/proc/<pid>/fd`; running with \
+                 more privilege would show it",
+            ),
+        )
+    }
+
     /// Whether the scan attributed nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -128,13 +169,20 @@ impl SocketOwners {
     }
 }
 
-/// The socket inodes a process's descriptor directory points at.
-fn socket_inodes(directory: &Path) -> Vec<u64> {
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        // Somebody else's process, or one that exited between listing `/proc` and reading it.
-        return Vec::new();
+/// The socket inodes a process's descriptor directory points at, and whether reading it was
+/// refused.
+///
+/// The two failures are different facts: a directory that is not there belongs to a process that
+/// exited during the scan, and a directory that may not be opened belongs to somebody else's
+/// process whose sockets this reader will never see (spec v0.4 §35.2).
+fn socket_inodes(directory: &Path) -> (Vec<u64>, bool) {
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::PermissionDenied => return (Vec::new(), true),
+        // A process that exited between listing `/proc` and reading it.
+        Err(_) => return (Vec::new(), false),
     };
-    entries
+    let inodes = entries
         .flatten()
         .filter_map(|entry| std::fs::read_link(entry.path()).ok())
         .filter_map(|target| {
@@ -142,7 +190,8 @@ fn socket_inodes(directory: &Path) -> Vec<u64> {
             let inode = target.strip_prefix("socket:[")?.strip_suffix(']')?;
             inode.parse().ok()
         })
-        .collect()
+        .collect();
+    (inodes, false)
 }
 
 /// The contents of `/proc/<pid>/comm`, without its trailing newline.

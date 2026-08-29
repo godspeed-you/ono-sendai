@@ -72,6 +72,9 @@ pub struct UnitProperties {
     pub result: Option<String>,
     /// `ExecMainStatus` — the exit status of the last main process, where one has exited.
     pub exec_main_status: Option<i32>,
+    /// The units this one requires: `Requires`, `Requisite`, `BindsTo` and `Wants`, merged and
+    /// sorted. Ordering (`After`, `Before`) is deliberately not among them (ADR-0239).
+    pub dependencies: Vec<String>,
 }
 
 impl UnitProperties {

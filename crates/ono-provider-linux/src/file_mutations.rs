@@ -433,16 +433,17 @@ fn preserve_attributes(path: &Path, metadata: &std::fs::Metadata) -> std::io::Re
         path,
         std::fs::Permissions::from_mode(metadata.mode() & 0o7777),
     )?;
-    let times = std::fs::FileTimes::new()
-        .set_accessed(metadata.accessed()?)
-        .set_modified(metadata.modified()?);
-    std::fs::File::options()
-        .write(true)
-        .open(path)
-        .and_then(|file| file.set_times(times))
-        // A directory or a read-only file cannot be opened for writing; the timestamps are
-        // then the one attribute "where permitted" does not reach.
-        .or(Ok::<(), std::io::Error>(()))?;
+    // `utimensat(2)` rather than a writable handle: a directory cannot be opened for writing at
+    // all, and a read-only file only by its owner, so setting times through a handle skipped
+    // exactly the entries a copied tree is made of (ADR-0234).
+    nix::sys::stat::utimensat(
+        nix::fcntl::AT_FDCWD,
+        path,
+        &timespec(metadata.atime(), metadata.atime_nsec()),
+        &timespec(metadata.mtime(), metadata.mtime_nsec()),
+        nix::sys::stat::UtimensatFlags::NoFollowSymlink,
+    )
+    .map_err(std::io::Error::from)?;
     // Only root may give a file away; for everyone else the ownership stays the copier's, which
     // is what "where permitted" means.
     let _ = nix::unistd::chown(
@@ -451,6 +452,11 @@ fn preserve_attributes(path: &Path, metadata: &std::fs::Metadata) -> std::io::Re
         Some(nix::unistd::Gid::from_raw(metadata.gid())),
     );
     Ok(())
+}
+
+/// A `TimeSpec` from the seconds and nanoseconds `stat(2)` reported.
+fn timespec(seconds: i64, nanoseconds: i64) -> nix::sys::time::TimeSpec {
+    nix::sys::time::TimeSpec::new(seconds, nanoseconds)
 }
 
 /// Removes one entry: a file or symlink, an empty directory, or — with `recursive` — a tree.

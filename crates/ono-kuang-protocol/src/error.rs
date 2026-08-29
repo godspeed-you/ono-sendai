@@ -139,7 +139,10 @@ pub struct KuangError {
     code: KuangErrorCode,
     message: String,
     help: Option<String>,
-    metadata: serde_json::Map<String, serde_json::Value>,
+    // Boxed so the whole error stays small enough to travel in a `Result` without a lint about
+    // it: the metadata is empty on almost every error, and a rarely-filled map does not belong
+    // inline in every `Err` the protocol returns.
+    metadata: Box<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl KuangError {
@@ -150,7 +153,7 @@ impl KuangError {
             code,
             message: message.into(),
             help: None,
-            metadata: serde_json::Map::new(),
+            metadata: Box::default(),
         }
     }
 
@@ -194,7 +197,7 @@ impl KuangError {
 
     /// The machine-readable details.
     #[must_use]
-    pub const fn metadata(&self) -> &serde_json::Map<String, serde_json::Value> {
+    pub fn metadata(&self) -> &serde_json::Map<String, serde_json::Value> {
         &self.metadata
     }
 }
@@ -223,8 +226,12 @@ pub struct WireError {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
     /// Machine-readable details.
+    ///
+    /// Boxed so the whole struct stays small enough to travel in a `Result` without a lint about
+    /// it: the map is empty on almost every error, and `preserve_order` makes it an index map
+    /// (ADR-0228). The wire form is unchanged — a `Box` serialises as what it holds.
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
-    pub metadata: serde_json::Map<String, serde_json::Value>,
+    pub metadata: Box<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl From<&KuangError> for WireError {
@@ -234,7 +241,7 @@ impl From<&KuangError> for WireError {
             name: error.code().name().to_owned(),
             message: error.message().to_owned(),
             help: error.help().map(str::to_owned),
-            metadata: error.metadata().clone(),
+            metadata: Box::new(error.metadata().clone()),
         }
     }
 }
@@ -268,7 +275,7 @@ impl WireError {
             name: code.name().to_owned(),
             message: message.into(),
             help: None,
-            metadata: serde_json::Map::new(),
+            metadata: Box::default(),
         }
     }
 }
@@ -292,7 +299,7 @@ impl WireError {
         if let Some(help) = &self.help {
             error = error.with_help(help.clone());
         }
-        for (key, value) in &self.metadata {
+        for (key, value) in self.metadata.iter() {
             error = error.with_metadata(key, value.clone());
         }
         error
@@ -336,7 +343,7 @@ mod tests {
             name: "future.code".to_owned(),
             message: "from a newer taxonomy".to_owned(),
             help: None,
-            metadata: serde_json::Map::new(),
+            metadata: Box::default(),
         };
         let error = wire.to_kuang_error();
         assert_eq!(error.code(), KuangErrorCode::RuntimeProtocolViolation);

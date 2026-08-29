@@ -35,6 +35,41 @@ pub fn to_bytes(value: &Value) -> Result<Bytes, ErrorValue> {
     Ok(out.freeze())
 }
 
+/// Serializes a stream into raw bytes, optionally taking one named field of each value.
+///
+/// `field` is the bridge of spec §29.1 in its byte form: a record has no byte form of its own,
+/// but the one field that *is* bytes does, and naming it writes exactly those bytes with nothing
+/// added — which is how an adapted program's body reaches a file
+/// (`adapt curl url | to bytes --field body > page.html`). The path may be dotted, as
+/// [`to_text`](crate::to_text)'s is (ADR-0223).
+///
+/// ```
+/// use bytes::Bytes;
+/// use ono_value::{Value, to_bytes_of};
+/// let values = [Value::string("a"), Value::string("b")];
+/// assert_eq!(to_bytes_of(&values, None)?, Bytes::from_static(b"ab"));
+/// # Ok::<(), ono_value::ErrorValue>(())
+/// ```
+///
+/// # Errors
+///
+/// Returns [`ErrorCode::TypeMismatch`] when a value — or the named field of one — has no raw
+/// byte form, and whatever reading the path raises when it names no field.
+pub fn to_bytes_of(values: &[Value], field: Option<&str>) -> Result<Bytes, ErrorValue> {
+    let mut out = BytesMut::new();
+    for value in values {
+        match field {
+            Some(path) => {
+                let steps: Vec<crate::FieldStep<'_>> =
+                    path.split('.').map(crate::FieldStep::required).collect();
+                append(&value.follow(&steps)?, &mut out)?;
+            }
+            None => append(value, &mut out)?,
+        }
+    }
+    Ok(out.freeze())
+}
+
 fn append(value: &Value, out: &mut BytesMut) -> Result<(), ErrorValue> {
     match value {
         Value::Bytes(raw) => out.put_slice(raw),
@@ -52,7 +87,10 @@ fn append(value: &Value, out: &mut BytesMut) -> Result<(), ErrorValue> {
                 ErrorCode::TypeMismatch,
                 format!("a {} has no raw byte form", other.type_name()),
             )
-            .with_help("use `to json`, `to yaml`, `to csv` or `to text`"));
+            .with_help(
+                "name the one field that is bytes with `--field`, or use `to json`, `to yaml`, \
+                 `to csv` or `to text`",
+            ));
         }
     }
     Ok(())

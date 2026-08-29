@@ -1,0 +1,127 @@
+# Spec §34's pathological environments, last of four: a provider that never answers, a command
+# that writes an enormous amount to stdout, and an unbounded stream under a budget. See case `151`
+# for what this series is and how the figures are taken.
+#
+# The "slow NSS / high-latency link" of §34's list is built here as a provider that stalls
+# forever, which is the strictly harder case: what is asserted is everything that must not wait
+# for it — start-up, the parser, and every provider that answers from the kernel — and that a
+# statement which *does* need it can be cancelled rather than having to be killed.
+case: the budgets of section 34 hold beside a stalled provider, huge output and an endless stream
+timeout: 600
+env: NO_COLOR=1
+run: |
+  median() { sort -n | awk '{ v[NR] = $1 } END { if (NR == 0) { print -1 } else { print v[int((NR + 1) / 2)] } }'; }
+
+  measure() {
+    local label="$1" limit_ms="$2" runs="$3" statement="$4" figure
+    ono --no-config -c "$statement" >/dev/null 2>&1
+    figure=$(
+      for _ in $(seq "$runs"); do
+        local start end
+        start=$(date +%s%N)
+        ono --no-config -c "$statement" >/dev/null 2>&1
+        end=$(date +%s%N)
+        echo $(( (end - start) / 1000000 ))
+      done | median
+    )
+    echo "$label: ${figure}ms (§34 budget ${limit_ms}ms, median of $runs runs, $statement)"
+    if [ "$figure" -le "$limit_ms" ]; then
+      echo "$label: within budget"
+    else
+      echo "$label: OVER BUDGET"
+    fi
+  }
+
+  echo "== a provider that never answers =="
+  mkdir -p /tmp/stalled
+  for tool in dpkg-query apt-cache journalctl; do
+    cp /opt/ono-fixtures/perf/slow-provider "/tmp/stalled/$tool"
+    chmod +x "/tmp/stalled/$tool"
+  done
+  export PATH=/tmp/stalled:$PATH
+  echo "PATH now finds $(command -v dpkg-query), which sleeps for an hour"
+
+  # Nothing that does not need the stalled tool may wait for it: §34's start-up, parse and
+  # first-row budgets are all measured with it on PATH.
+  measure cold-start-beside-a-stalled-provider 100 20 'true'
+  measure parse-beside-a-stalled-provider 100 20 'true | true | true'
+  measure first-process-row-beside-a-stalled-provider 50 20 'get process | take 1'
+  measure first-file-row-beside-a-stalled-provider 50 20 'get file /etc | take 1'
+
+  # And a statement that *does* need it must be interruptible rather than unkillable. The shell is
+  # given two seconds and then a TERM; what is asserted is that it is gone, not that it answered.
+  ono --no-config -c 'get package | count' >/tmp/stalled.out 2>&1 &
+  stalled=$!
+  sleep 2
+  if kill -0 "$stalled" 2>/dev/null; then
+    kill -TERM "$stalled" 2>/dev/null
+    for _ in $(seq 50); do kill -0 "$stalled" 2>/dev/null || break; sleep 0.1; done
+    if kill -0 "$stalled" 2>/dev/null; then
+      echo "STALLED-PROVIDER-UNKILLABLE"
+      kill -KILL "$stalled" 2>/dev/null
+    else
+      echo "a statement waiting on a stalled provider ends when it is asked to"
+    fi
+  else
+    echo "a statement waiting on a stalled provider ended on its own: $(head -c 200 /tmp/stalled.out)"
+  fi
+  wait "$stalled" 2>/dev/null || true
+  export PATH=${PATH#/tmp/stalled:}
+
+  echo "== huge stdout =="
+  # A hundred megabytes through a native pipeline and out to a file. What §34 asks is that the
+  # shell stays inside a budget; what would break it is buffering the whole stream in memory.
+  yes 'the quick brown fox jumps over the lazy dog' | head -c 100000000 > /tmp/huge.txt
+  echo "wrote $(wc -c < /tmp/huge.txt) bytes"
+  start=$(date +%s%N)
+  ono --no-config -c 'cat /tmp/huge.txt' > /tmp/huge.copy
+  end=$(date +%s%N)
+  echo "huge-stdout: $(( (end - start) / 1000000 ))ms for $(wc -c < /tmp/huge.copy) bytes"
+  if cmp -s /tmp/huge.txt /tmp/huge.copy; then
+    echo "huge stdout arrived byte for byte"
+  else
+    echo "HUGE-STDOUT-CORRUPTED"
+  fi
+  # A hundred megabytes through the shell and into a POSIX pipe that stops reading after the
+  # first line: §12.5 makes that an ordinary `SIGPIPE`, and a shell that had buffered the stream
+  # would pay for all of it before noticing.
+  start=$(date +%s%N)
+  ono --no-config -c 'cat /tmp/huge.txt' 2>/dev/null | head -c 100 > /tmp/huge.head
+  end=$(date +%s%N)
+  figure=$(( (end - start) / 1000000 ))
+  echo "huge-stdout-into-a-closed-pipe: ${figure}ms for the first 100 bytes (ceiling 2000ms)"
+  if [ "$figure" -le 2000 ]; then
+    echo "huge-stdout-into-a-closed-pipe: within budget"
+  else
+    echo "huge-stdout-into-a-closed-pipe: OVER BUDGET"
+  fi
+
+  echo "== an unbounded stream under a budget =="
+  # §11.1 and §34: an endless stream must be answerable without ending. `take` bounds it, and the
+  # run has to finish — a shell that waited for the end would never return.
+  start=$(date +%s%N)
+  ono --no-config -c 'watch process | take 1 | count' > /tmp/unbounded.out 2>&1
+  status=$?
+  end=$(date +%s%N)
+  echo "unbounded-take: $(( (end - start) / 1000000 ))ms, exit $status, answer $(cat /tmp/unbounded.out)"
+  if [ "$status" -eq 0 ]; then
+    echo "a bounded read of an endless stream ends"
+  else
+    echo "UNBOUNDED-TAKE-FAILED"
+  fi
+  # An endless stream with nowhere to render is refused rather than hung (spec §11.1, §18.3).
+  ono --no-config -c 'watch process' > /tmp/unbounded-refused.out 2>&1
+  echo "refusal: $(head -c 200 /tmp/unbounded-refused.out)"
+exit: 0
+stdout-contains: cold-start-beside-a-stalled-provider: within budget
+stdout-contains: parse-beside-a-stalled-provider: within budget
+stdout-contains: first-process-row-beside-a-stalled-provider: within budget
+stdout-contains: first-file-row-beside-a-stalled-provider: within budget
+stdout-contains: huge stdout arrived byte for byte
+stdout-contains: huge-stdout-into-a-closed-pipe: within budget
+stdout-contains: a bounded read of an endless stream ends
+stdout-not-contains: OVER BUDGET
+stdout-not-contains: STALLED-PROVIDER-UNKILLABLE
+stdout-not-contains: HUGE-STDOUT-CORRUPTED
+stdout-not-contains: UNBOUNDED-TAKE-FAILED
+stdout-not-contains: panicked

@@ -1,0 +1,27 @@
+# Cgroup. Derived from spec v0.4 §16.3 — "Cgroups SHOULD be spatially navigable through hierarchy
+# where the kernel hierarchy is meaningful" — and §12, which lists `cgroup` among a process
+# place's exits. No v0.2 or v0.3 section defines it and no provider serves `get cgroup`: the
+# control-group path is a fact `/proc/<pid>/cgroup` carries, which `ono.process-detail/1` already
+# reports, and the spatial bridge composes a place from it (ADR-0135). The path is the identity,
+# exactly as it is for the kernel.
+id: ono.cgroup/1
+name: Cgroup
+summary: A control group, named by the path the kernel gives it in the unified hierarchy.
+identity: [path]
+fields:
+  path:
+    type: path
+    required: true
+    doc: >-
+      The control group's path in the unified hierarchy, `/system.slice/nginx.service`, as
+      `/proc/<pid>/cgroup` reports it. The kernel's own identity for the group.
+  name:
+    type: string
+    required: true
+    doc: The last component of the path, `nginx.service` — what a place view shows.
+  parent:
+    type: path
+    nullable: true
+    doc: The path of the enclosing control group; null for the root of the hierarchy.
+default_view:
+  columns: [path, name, parent]

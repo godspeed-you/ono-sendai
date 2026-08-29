@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use ono_command::{ArgumentMode, CommandRegistry, Privilege, Stability};
+use ono_command::{ArgumentMode, CommandRegistry, Origin, Privilege, Stability};
 use ono_parser::ArgMode;
 use ono_value::SchemaId;
 
@@ -274,4 +274,28 @@ fn should_list_the_targets_a_verb_can_be_applied_to() {
         targets.windows(2).all(|pair| pair[0] < pair[1]),
         "targets are listed in a stable order"
     );
+}
+
+// --- origin (spec §31.64, ADR-0281) -----------------------------------------------------------
+
+#[test]
+fn should_attribute_every_embedded_command_to_the_core() {
+    for command in registry().commands() {
+        assert_eq!(
+            command.origin(),
+            &Origin::Core,
+            "spec §31.64: `{}` ships with Ono, so its registry entry reads `core`",
+            command.id()
+        );
+        assert_eq!(command.origin().to_string(), "core");
+    }
+}
+
+#[test]
+fn should_write_a_package_origin_as_the_package_and_its_version() {
+    let origin = Origin::plugin("dev.example.echo", "0.1.0");
+    assert_eq!(origin.to_string(), "plugin(dev.example.echo, 0.1.0)");
+    assert_eq!(origin.package(), Some("dev.example.echo"));
+    assert_eq!(origin.version(), Some("0.1.0"));
+    assert_eq!(Origin::Core.package(), None);
 }

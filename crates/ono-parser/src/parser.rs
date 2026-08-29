@@ -111,6 +111,41 @@ pub fn tokens(source: &str) -> Vec<Token> {
     parser.record.unwrap_or_default()
 }
 
+/// The arguments `text` reads as, in words mode.
+///
+/// A stage's argument mode is fixed at parse time by its head word (ADR-0009), before anything
+/// knows whether the head resolves to a native command or to a program of the same name. Where
+/// resolution chooses the program, its arguments are the words the user typed — `sort -r
+/// /tmp/a` is a flag and a path, not the arithmetic that `-r / tmp / a` also is — and this
+/// re-reads exactly that region of the source in the mode the program deserves (ADR-0260).
+///
+/// The spans of the returned arguments are offsets into `text`, so an option's value expression
+/// must be evaluated against `text` and not against the whole line.
+///
+/// ```
+/// use ono_parser::{Argument, words_arguments};
+/// let arguments = words_arguments("-r /tmp/a");
+/// assert_eq!(arguments.len(), 2);
+/// assert!(matches!(&arguments[0], Argument::Word(word) if word.text == "-r"));
+/// ```
+#[must_use]
+pub fn words_arguments(text: &str) -> Vec<Argument> {
+    let mut parser = Parser::new(text);
+    let mut arguments = Vec::new();
+    loop {
+        let token = parser.peek(LexMode::Words);
+        if ends_stage(token.kind) {
+            break;
+        }
+        let before = parser.pos;
+        arguments.push(parser.parse_words_argument(token, None));
+        if parser.pos == before {
+            parser.bump(LexMode::Words);
+        }
+    }
+    arguments
+}
+
 struct Parser<'a> {
     source: &'a str,
     limit: usize,
@@ -1043,6 +1078,9 @@ impl Parser<'_> {
             }
         };
         let mode = head.name().map_or(ArgMode::Words, ArgMode::for_head);
+        // Owned, because the argument loop borrows `self` mutably and the head is what decides
+        // whether a bare `--where` takes an expression rather than the next word (ADR-0138).
+        let head_name = head.name().map(str::to_owned);
         let lex_mode = match mode {
             ArgMode::Words => LexMode::Words,
             ArgMode::Expression => LexMode::ExprOperand,
@@ -1084,7 +1122,7 @@ impl Parser<'_> {
                     self.bump(lex_mode);
                 }
                 (ArgMode::Words, _) => {
-                    let argument = self.parse_words_argument(token);
+                    let argument = self.parse_words_argument(token, head_name.as_deref());
                     end = argument.span();
                     arguments.push(argument);
                 }
@@ -1094,10 +1132,26 @@ impl Parser<'_> {
                     let text = token.text(self.source);
                     let name = text.strip_prefix("--").unwrap_or(text).to_owned();
                     end = token.span;
+                    // `--initial=10`: an `=` written against the option is punctuation between
+                    // the option and the expression that is its value, exactly as the space in
+                    // `--initial 10` is (ADR-0227). Written apart, `=` is not an operator in
+                    // this language and the expression parser reports it.
+                    let next = self.peek(LexMode::ExprOperand);
+                    let value = if next.kind == TokenKind::Eq
+                        && next.span.start() == token.span.end()
+                        && !ends_stage(self.peek_after(LexMode::ExprOperand, next).kind)
+                    {
+                        self.bump(LexMode::ExprOperand);
+                        let expression = self.parse_expression();
+                        end = expression.span();
+                        Some(expression)
+                    } else {
+                        None
+                    };
                     arguments.push(Argument::Option(OptionArg {
                         name,
-                        value: None,
-                        span: token.span,
+                        value,
+                        span: token.span.join(end),
                     }));
                 }
                 (ArgMode::Expression, _) => {
@@ -1237,9 +1291,9 @@ impl Parser<'_> {
 
     // --- words-mode arguments ------------------------------------------------------------
 
-    fn parse_words_argument(&mut self, token: Token) -> Argument {
+    fn parse_words_argument(&mut self, token: Token, head: Option<&str>) -> Argument {
         match token.kind {
-            TokenKind::Word => self.parse_word_argument(token),
+            TokenKind::Word => self.parse_word_argument(token, head),
             TokenKind::Str
             | TokenKind::RawStr
             | TokenKind::UnterminatedStr
@@ -1267,7 +1321,7 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_word_argument(&mut self, token: Token) -> Argument {
+    fn parse_word_argument(&mut self, token: Token, head: Option<&str>) -> Argument {
         self.bump(LexMode::Words);
         let text = token.text(self.source);
         if let Some(rest) = text.strip_prefix("--")
@@ -1282,8 +1336,22 @@ impl Parser<'_> {
                 && name.bytes().all(is_ident_continue);
             if named {
                 let value_start = token.span.start() + 2 + name.len() as u32 + 1;
-                let value = value_text
-                    .map(|text| self.option_value(text, Span::new(value_start, token.span.end())));
+                let value = match value_text {
+                    Some(text) => {
+                        Some(self.option_value(text, Span::new(value_start, token.span.end())))
+                    }
+                    // `--where <predicate>`: the value is the expression that follows, read in
+                    // expression mode so that `>` compares and a bare identifier is a field
+                    // path (ADR-0138). Nothing follows an option at the end of a stage, and the
+                    // command reports the missing value with the type it wanted.
+                    None if head
+                        .is_some_and(|head| ArgMode::option_takes_expression(head, name))
+                        && !ends_stage(self.peek(LexMode::ExprOperand).kind) =>
+                    {
+                        Some(self.parse_expression())
+                    }
+                    None => None,
+                };
                 let span = value
                     .as_ref()
                     .map_or(token.span, |value| token.span.join(value.span()));
@@ -1521,8 +1589,21 @@ impl Parser<'_> {
             TokenKind::Ident if token.text(self.source) == "not" => UnaryOp::Not,
             _ => return self.parse_postfix(),
         };
+        // A prefix operator recurses into itself, so it needs the counter the same way nesting
+        // does: `- - - …` reaches no other rule, and unguarded it ran out of stack long before
+        // it ran out of input.
+        if self.depth >= MAX_DEPTH {
+            self.report(Diagnostic::syntax(
+                token.span,
+                "this expression nests more deeply than the parser will follow",
+            ));
+            self.bump(LexMode::ExprOperand);
+            return Expr::Error(Span::at(token.span.start()));
+        }
         self.bump(LexMode::ExprOperand);
+        self.depth += 1;
         let operand = self.parse_unary();
+        self.depth -= 1;
         Expr::Unary(Box::new(UnaryExpr {
             op,
             op_span: token.span,
@@ -1567,7 +1648,14 @@ impl Parser<'_> {
                     self.bump(LexMode::Expr);
                     let saved = self.no_brace;
                     self.no_brace = false;
+                    // The index is one level deeper, and the counter must stay raised while it
+                    // is read. `parse_primary` raises and lowers it around its own body, so by
+                    // the time this loop runs it is back where it started: without this a chain
+                    // of suffixes — `1[1[1[…` — recursed with the counter never rising, and the
+                    // inner `parse_primary` refused nothing until the stack ran out.
+                    self.depth += 1;
                     let index = self.parse_expression();
+                    self.depth -= 1;
                     self.no_brace = saved;
                     let end = self
                         .close(TokenKind::RBracket, token, "`]`")
@@ -1579,7 +1667,10 @@ impl Parser<'_> {
                     }));
                 }
                 TokenKind::LParen if adjacent => {
+                    // The arguments are one level deeper, for the same reason the index is.
+                    self.depth += 1;
                     let (arguments, end) = self.parse_call_arguments(token);
+                    self.depth -= 1;
                     expression = Expr::Call(Box::new(CallExpr {
                         span: expression.span().join(end),
                         callee: expression,

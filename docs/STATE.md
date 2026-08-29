@@ -27,12 +27,14 @@ git push origin implementation && git push origin --tags
 ```
 
 **`release-check: the shell is release-ready` — printed 2026-08-26 by `scripts/release-check.sh`
-at commit 21b37d9.** All ten phases of spec §37 are complete, proven and tagged; every box in
-docs/ACCEPTANCE.md §4 is ticked by a named automated proof; the containerised suite stands at
-35 cases green and the workspace at ~1 400 outcome tests across 21 crates. What remains under
-Next up is post-release deepening — every item deliberate, none blocking the deliverable.
-Promoting `implementation` to `main` is the user's decision and the user's action
-(AGENTS.md §12.1).
+at commit 21b37d9, and again on 2026-08-29 by agent `S11c` at the end of the v0.4 tranche.** All
+ten phases of spec §37 are complete, proven and tagged; all 143 boxes in docs/ACCEPTANCE.md §4 are
+ticked by a named automated proof, and the 2026-08-29 reconciliation traced every one of the 168
+test names and every acceptance case they cite to something that exists and runs in the gate. The
+containerised suite stands at **96 cases** in `docker/acceptance/cases/` and the workspace at
+~2 600 outcome tests across **30 crates**. What remains under Next up is post-release deepening —
+every item deliberate, none blocking the deliverable. Promoting `implementation` to `main` is the
+user's decision and the user's action (AGENTS.md §12.1).
 
 Phases A–D are complete and tagged. B/C/D landed as: native commands wired into the evaluator
 (ADR-0028), partial failure semantics (ADR-0029), the §33.5 interop serialisation (ADR-0030),
@@ -49,7 +51,12 @@ is an **enhancement layered on it** — the External Command Adaptation Layer �
 immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a checksum line in
 `docs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
-**The v0.3 tranche is in progress (started 2026-08-27).** v0.2 was released as `v0.2.0` from
+**The v0.3 tranche is complete** (started 2026-08-27, delivered by ADR-0052 … ADR-0067; all 39
+boxes of `docs/ACCEPTANCE.md` §4.6 are ticked, cases `070`–`089`). **The v0.4 tranche is complete**
+(delivered 2026-08-28/29, ADR-0124 … ADR-0212 and the S11c session below; §4.7's boxes are ticked,
+cases `090`–`110`). What follows is the paragraph as it stood while v0.3 was running; it is kept
+because ADR-0027's analysis and the build order below are still the map of that layer.
+v0.2 was released as `v0.2.0` from
 `main` at `273d3cd`; the External Command Adaptation Layer is implemented on `implementation`
 in the same loop, against the same referee. Its definition of done is `docs/ACCEPTANCE.md`
 §4.6 — 39 boxes derived from v0.3 §2.1–§2.6, §1.67 and §1.68 — and `scripts/release-check.sh`
@@ -93,140 +100,1808 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- (empty — installable packages delivered, see *Done*; `scripts/release-check.sh` green on
-  2026-08-27 with the package check in the chain)
+## Session records (2026-08-27 … 2026-08-29)
+
+Every session below is complete. They are kept because each carries the reasoning behind a
+decision the code no longer shows, and because several open lines under *Next up* were first
+observed here.
+
+**The five parallel tranches have landed (2026-08-29).** The board carried them as claims while
+they ran; every one of their branches is now an ancestor of `implementation`, every worktree is
+clean, and nothing is held. What each of them delivered is recorded under *Done* and in the
+commits their merges carry.
+
+| Tranche | Branch | Merged as | What it delivered |
+|---|---|---|---|
+| KUANG/11 | `close-kuang` | `3fc924a` | isolation, the wasm tier, the missing host API domains, contributed commands (C-4, B-kuang-3) |
+| security | `close-security` | `0b09af9` | the §35.6 fuzz targets and package signature verification (C-2, C-5) |
+| remote | `close-remote` | `045fb0c` | agentless mode and an authenticated transport (C-3, B-remote-2) |
+| honesty | `close-honesty` | `5865421` | three release-checklist claims made checkable rather than judged (ADR-0401, ADR-0402) |
+| last | `close-last` | `c7a63f4` | B-data-9; C-6 stays designed-not-written and is recorded under C-6 |
+
+**What running six agents on eight cores cost, kept because the next parallel run needs it:**
+load average 49 and no idle CPU, under which the testkit's 20 s timeout fires on healthy code and
+agents start chasing phantom failures — which costs more load. The ones that kept running were
+capped at `-j 2` / `--test-threads=2`, told to pass `--all-features` on *every* cargo command (a
+bare `cargo test` between two gate runs changes the feature set and rebuilds the workspace
+twice), and told never to delete `target/` or the incremental caches to save disk.
+
+**S11c — the four defects the v0.4 dogfooding session left open — is complete (2026-08-29,
+agent `S11c`).** Seven commits, gate green on each; the container ran on image
+`ono-sendai:acceptance-s11c`. Final verdicts: `gate: green`, `acceptance: 88 passed, 0 failed`,
+`release-check: the shell is release-ready`.
+
+| Commit | What it delivers |
+|---|---|
+| `fix(spatial)` | a null a provider left is not an empty exit (ADR-0209), and `ono.socket/1`'s `process` carries a refusal where the owner scan was refused |
+| `fix(spatial)` | `find place` refuses a question it cannot ask (ADR-0210): E0202 for a field nothing declares, and evaluation errors surface |
+| `test(spatial)` | the PTY budgets are liveness bounds, not a race with the machine |
+| `fix(spatial)` | a refusal lists its candidates as values, not as newlines in its message (ADR-0211) |
+| `fix(spatial)` | the hidden count says what it counts (ADR-0212) |
+| `fix(spatial)` | two corrections the container found in the first two of those — an exit is "stated" by its group, and a record rather than a target decides whether a predicate can be asked |
+| `test(spatial)` | the jump-refusal budget is a hang guard, not a race with the machine |
+
+**Two things the container caught that the workspace suite did not**, both in this session's own
+first drafts, both now covered by a workspace test as well: an exit is keyed by its *group*
+(`process`) and not by its `follow` label (`owner`), and a provider *target* may serve several
+schemas, so the *record* decides whether a predicate can be asked of it. Cases `091`/`094`
+(`44.2m`, `44.5g`) and `092` (`44.3c`) are the assertions that found them.
+
+**One flake seen twice and not fixed by that session — fixed since, by `4e53ee4` (ADR-0230):**
+`ESRCH` from a `/proc/<pid>/stat` read had no `std::io::ErrorKind` name and was classified
+`provider.unavailable`, so a vanished row became a partial failure instead of being omitted. The
+shell was wrong and the three tests were right; none of them changed. What that session recorded:
+`spatial_topology_missing.rs::should_bound_the_root_horizon_instead_of_listing_every_known_object`
+runs `get process | count`, and on a busy machine a process listed by the enumerator exits before
+its `/proc/<pid>/stat` can be read, so v0.2 §9's partial-failure semantics give the run exit 1 —
+correct behaviour, and a test premise that only holds on a quiet host. Seen in one gate run and
+one `release-check` run; green on the next of each. Filed under *Next up*.
+
+The four findings, and the one that was offered as a bonus:
+
+- [x] finding 2 — a `null` a provider answered is rendered as `empty` (ADR-0209)
+- [x] finding 3 — `find place --where` swallows unknown fields and evaluation errors (ADR-0210)
+- [x] finding 4 — a multi-line diagnostic prints `\u{a}` instead of its line breaks (ADR-0211)
+- [x] finding 1 — `look`'s hidden count does not describe the list above it (ADR-0212)
+- [x] `help here` (§38.2, a SHOULD) — filed under *Next up* by S11c and **delivered on the same
+  day by `13b6157` (ADR-0271)**, with the help metadata, the completion and the acceptance case it
+  needed: `enter process 1; help here` names every exit with what is behind it and the spelling
+  that traverses it, and says `permission_denied` where the provider gave one rather than a count
+  it does not have. `ono-cli/tests/spatial_help.rs` (three cases), `ono-command/tests/completion.rs`
+  (two topic cases), case `102` s4x.
+
+**S6 + S7 + S8 + the map correction are integrated on one branch (2026-08-28, agent `integrate-1`).**
+Three merges, in that order, on top of `implementation` at `cbbcd2c`; gate green, acceptance 75/75.
+The resolutions worth knowing later:
+
+- **`home` extends the navigation history (ADR-0184).** S8's ADR-0170 had excluded it; §20.1 lists
+  `home` in the `movement` enum and §2.4 makes every movement reversible, so `back` returns
+  through it. ADR-0170 is superseded on that one point, and
+  `docker/acceptance/cases/106-spatial-remote.case` s8u spends three `back`s where it spent two —
+  its assertion is unchanged.
+- **`map --live` has two surfaces, and `Invocation::displays()` (ADR-0173) decides which.** Where
+  the values are *shown* — an interactive terminal — it is S6's full-screen polled view
+  (ADR-0176); where they are *consumed* it is S7's event-driven stream (ADR-0180), which is what
+  `map --live --json | take 3 | to json` reads. Shown with no terminal to draw into it is still
+  refused with `spatial.unsupported`, which §25.2 requires rather than a faked view. ADR-0180
+  itself assigns the alternate screen to S6 and the stream to S7; this is that split.
+- **The expansion memory of ADR-0183 lives in `crate::spatial::map::project_at`**, the one
+  re-projection path the still map, the full-screen view and the live stream all take (§45.4).
+- **`look --changes` answers `unknown`, not `unsupported`** (ADR-0181), so case 102's s4q reads
+  the new word. It is delivered now; `unsupported` was the honest answer while it was not.
+- **A case body that ends with a background job still running makes the acceptance runner report
+  exit 129**, however green its assertions are: the orphan holds the outer `script`'s
+  pseudo-terminal open. Reproducible with `( sleep 5 ) & exit 0` and nothing else. Case 107 now
+  reaps its typist inside `drive`; any future PTY case must do the same.
+
+- **What a target answered belongs to a moment and to a host (ADR-0190).** ADR-0186's target
+  cache collided with two other decisions when the branches met. With ADR-0180, a live map
+  re-projected by reading the answer from *before* the change, so `live::reproject` now calls
+  `SpatialSessionState::forget_targets` first — an event is precisely the statement that §33.3's
+  lifetime assumption no longer holds (§33.2). With ADR-0169's remote scopes, the cache key was
+  the target name alone, so a session that jumped into a link recalled the *local* answer for the
+  remote host; the key now carries the scope (§43.7). Case 106's s8l catches the second, and
+  case 108 the first.
+
+Two tests are environment-dependent on a developer machine and green in the container. Neither is
+a merge regression:
+
+- `spatial_relationships_missing::should_show_the_connection_edge_appear_and_vanish…` — **the
+  TIME_WAIT identity collapse S7 recorded**, diagnosed exactly here and **fixed since by
+  `79d6a9c` (ADR-0231)**: a record supplying none of its identity components states no identity,
+  so two TIME_WAIT sockets are two objects. Was: `ono.socket/1` declares
+  `identity: [inode]` and a socket in TIME_WAIT has no inode, so *every* TIME_WAIT socket on the
+  host projects to the same `SpatialId`. The test's own closing connection is then merged with
+  whatever else on the machine happens to be in TIME_WAIT, and the third live value describes a
+  foreign peer instead of the closure. The acceptance container has no other TIME_WAIT sockets,
+  which is why case 108 is green and this is not. **Exit test:** two TIME_WAIT sockets are two
+  places. The fix belongs to the v0.2 identity contract — a record whose identity components are
+  all null has no identity and must not merge (§2.17, §35.3) — and is its own increment, not an
+  integration's.
+- `spatial_topology_missing::should_complete_the_relations_available…` — a PTY completion test
+  with an 8 s budget; it fails under parallel load and passes with `--test-threads=1`.
+
+**The v0.4 tranche is running (started 2026-08-28).** The specification is
+`docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md`; its executable requirements are
+the nine `crates/ono-cli/tests/spatial_*_missing.rs` suites (175 tests) and the ten
+`docker/acceptance/cases/09x-spatial-*.case.v04` scenarios (139 assertions). The build order is
+§50's own dependency-driven sequence, and a phase is done when its suites are un-ignored and
+green — never by judgement:
+
+**A phase is done when the tests the map assigns to it are green — not when a suite is.** The
+test-to-phase analysis of 2026-08-28 (175 tests read body by body) gives the counts below and
+found that §50 leaves eleven normative areas unassigned; they are slotted here, and the S4 block
+is split, because 102 of the 175 tests first become attemptable when the command surface exists:
+
+| Phase | Tests | Also owns (areas §50 never assigns) |
+|---|---:|---|
+| S1 | 5 | §47 configuration declarations |
+| S2 | 1 | §18 device spaces — §50's identity list omits Device although §7.7 makes DEVICES a domain |
+| S3 | 3 | — (`find place` + the ADR-0124 rewrite in one commit) |
+| S4a `look`/`near` + domains | ~30 | §31 `trace` interop (a trace never moves the place) — **done**, 32 tests |
+| S4b `enter`/`follow` | ~30 | §30 `cd`/place integration, §35 permission honesty |
+| S4c `back`/`up`/`home`/`trail`/`jump`/`pin` | ~25 | §46 session state, §29.2 script isolation — **done**, 19 tests |
+| S4d storage and the cwd distinction | ~12 | §15 mount boundaries |
+| S4e the `spatial.enabled` refusal path and the §34 budgets | ~5 | §47 behaviour half |
+| S5 | 27 | §26 landmark engine, §39 ASCII fallback — **done**, 26 tests; 2 deferred (ADR-0165) |
+| S6 | 13 | §5 startup horizon, §21 prompt/HUD, §27.2 picker, §9.4 completion — **done**, 14 tests |
+| S7 | 7 | — |
+| S8 | 12 | — |
+| S9 | 2 | — |
+| S10 | 3 | — |
+| S11 | 0 | the ten `.case.v04` scenarios renamed and green, the §34 budgets as gates, **`docs/ACCEPTANCE.md` §4.7 written from v0.4 §52** — without it `release-check.sh` cannot see this tranche — **the ten scenarios done**, 87/87 cases green |
+
+| Phase | Delivers (§50) | Suites it turns green |
+|---|---|---|
+| S1 | spatial core contracts: `SpatialId`, projection, canonical places, relation registry, hierarchy, trail, structured errors, machine-readable registries | `spatial_contracts_missing` (registry, errors) |
+| S2 | provider identity and relation bridge, canonical parents, permission-state propagation, conformance | `spatial_identity_missing`, `spatial_contracts_missing` (conformance) |
+| S3 | index, aliases, selector resolution, `find`, neighborhood, pins, freshness | `spatial_topology_missing` (discovery) |
+| S4 | the navigation commands | `spatial_navigation_missing`, `spatial_topology_missing`, `spatial_storage_missing` |
+| S5 | `SpatialMap`, ranking, clustering, zoom, text renderer, relation inspection | `spatial_map_missing` |
+| S6 | the interactive full-screen map | `spatial_interactive_missing` |
+| S7 | live topology, tombstones, landmark updates, freshness | `spatial_relationships_missing` (live), `spatial_identity_missing` (tombstones) |
+| S8 | remote federation | `spatial_remote_missing` |
+| S9 | KUANG/11 spatial SDK | `spatial_contracts_missing` (§36) |
+| S10 | v0.3 adapter reconciliation | `spatial_contracts_missing` (§37) |
+| S11 | release hardening: the ten §44 scenarios renamed to `.case` and green | the acceptance suite |
+
+Architecture is normative in responsibility, not in name (§45): `ono-spatial-core` (identity,
+places, relations, trail, tombstones — no rendering), `ono-spatial-index` (registration,
+reconciliation, aliases, freshness, canonical parent, pins), `ono-spatial-query` (look/near/find
+plans, ranking, zoom, clustering), `ono-spatial-render` (text and full-screen), `ono-spatial-events`
+(event merge, diff, live). `ono-cli` parses, dispatches and owns the session place — nothing more
+(§45.6).
+
+- (empty — the v0.4 tranche is complete through S11b; no agent holds a claim)
+
+**S1 — spatial core contracts — is complete (2026-08-28, agent `S1`).** Five commits, gate green
+on each:
+
+1. `feat(spatial)` the fourteen §40 errors as the `spatial` family `Ono-Sendai-E1001`–`E1014`
+   (ADR-0125, ADR-0127) in `docs/spec/errors.yaml` and `ono_core::ErrorCode`.
+2. `feat(spatial)` the §41 registry: `docs/spec/spatial/{spatial,spaces,relations,landmarks}.yaml`
+   (ADR-0126, ADR-0128), wired into `xtask spec-check`.
+3. `feat(spatial)` `crates/ono-spatial-core` — `SpatialId` and the §10 tiers (ADR-0129), the
+   `SpatialObject` projection, `SpatialScope` with boundary detection, `Place`, `HierarchicalEdge`
+   and `RelationshipEdge`, the canonical geography, the canonical-parent resolver (ADR-0130), the
+   navigation trail and tombstones.
+4. `feat(spatial)` `crates/ono-spatial-index` — registration and §42.1 reconciliation, the alias
+   and search index, freshness, canonical-parent lookup, bounded relation summaries and pins
+   (ADR-0131).
+5. `feat(config)` the eleven `spatial.*` settings of §47, plus the five landmark thresholds §26.3
+   requires to be configurable.
+
+Green from `crates/ono-cli/tests/spatial_contracts_missing.rs`:
+`should_register_the_whole_spatial_error_family_in_the_error_taxonomy`,
+`should_ship_the_machine_readable_spatial_registry`,
+`should_declare_every_canonical_space_with_the_fields_the_registry_requires`,
+`should_declare_every_relation_with_its_direction_labels_and_confidence`,
+`should_expose_every_spatial_setting_as_a_typed_setting_with_its_default`.
+
+Still ignored in that suite and correctly so: `should_serve_exactly_the_canonical_spaces_the_registry_declares`
+and `should_serve_every_relation_it_declares_and_declare_every_relation_it_serves` run `map` and
+`near`, which S3–S5 deliver. The registry-versus-implementation drift they describe is already
+enforced against `ono-spatial-core` by `cargo run -p xtask -- spec-check`
+(`xtask::contracts::check_spatial_implementation`); those two tests add the third party — what the
+*commands* serve — and go green with S5.
+
+**What S2 needs from S1** — the three things:
+
+- `ono_spatial_core::Projection::project_as(record, object_type)` is the provider seam. The type
+  is the caller's, because `ono.socket/1` is a `Listener` or a `Connection` and `ono.file/1` is a
+  `Directory` or a `File`; `spatial_types_of(schema)` lists the candidates. `project` (without the
+  type) works only where exactly one candidate exists.
+- Identity is scoped and opaque (ADR-0129). Everything but a process takes its schema's identity
+  fields plus the scope chain; a process takes boot identity, pid, start time and pid namespace
+  (§10.2), reading `pid`, `started` and, where a provider supplies it, `pid_namespace`. Registering
+  the same `(scope, ObjectRef)` under two ids is `spatial.identity_conflict`.
+- The §42 provider claims block (`spatial:` under each entry in `docs/spec/providers/*.yaml`) is
+  **not** written yet; `spatial_contracts_missing::should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_index`
+  is S2's. Its `identity_strategy` must be one of `stable`/`lifetime`/`observation`, matching
+  `ono_spatial_core::IdentityTier`, and its `cost_class` one of `ono_spatial_core::CostClass`.
+
+**S2 — provider identity and relation bridge — is complete (2026-08-28, agent `S2`).** Six
+commits, gate green on each:
+
+1. `feat(spatial)` the §42 provider claims in `docs/spec/providers/*.yaml`, enforced by
+   `xtask::contracts::check_provider_claims` (ADR-0132).
+2. `feat(providers)` `pid_namespace` on `ono.process/1` and `ono.process-detail/1`, read from
+   `/proc/<pid>/ns/pid` (ADR-0134).
+3. `feat(spatial)` `ono_spatial_index::bridge` — which place a record is, and reconciliation
+   (ADR-0133).
+4. `feat(spatial)` the core exact relations, composed from provider facts (ADR-0135).
+5. `feat(spatial)` permission-state propagation from the provider to the group (ADR-0136).
+6. `test(spatial)` the bridge's type table held against the canonical geography.
+
+**§50's gate for S2 — "provider objects can be reconciled into one graph without duplicate
+identity for known-equal objects" — is met**, proven twice in
+`crates/ono-spatial-index/tests/bridge.rs`: one process seen through `ono.process/1` and
+`ono.process-detail/1` is one place, and one disk seen through `linux.sysfs` (`ono.device/1`) and
+the util-linux `lsblk` adapter (`ono.block-device/1`) is one place — which is also §37.1's
+adapter identity merge, four phases early.
+
+Green from `crates/ono-cli/tests/spatial_contracts_missing.rs`:
+`should_declare_the_spatial_claims_on_every_provider_that_feeds_the_spatial_index`. The other 46
+new outcome tests live in the crates: `crates/ono-spatial-index/tests/{bridge,relations,conformance}.rs`
+(37) and `crates/ono-provider-linux/tests/process.rs` (3), plus the existing suites unchanged.
+
+**What S3 needs from S2** — the three things:
+
+- **`ProviderBridge` is the entry point, not `Projection::project`.** `bridge::spatial_type_of`
+  decides a record's place from the record (`ono.socket/1` → Listener or Connection,
+  `ono.file/1` → Directory or File, `ono.device/1` → BlockDevice or Device), and
+  `ProviderBridge::absorb(index, records, at)` registers a batch and settles its relations.
+  `Absorbed` keeps four outcomes apart: `added`, `reconciled`, `unplaced` (a schema §7 gives no
+  domain — a value, not an error) and `refused` (a place that could not be built). A schema that
+  no canonical domain holds — `ono.image/1`, `ono.link/1`, `ono.plugin/1`, `ono.package/1` — is
+  deliberately not a place (ADR-0133).
+- **Selector resolution has two different keys, and they are not the identity.**
+  `SpatialIndex::by_alias`/`search` answer what a *user* types (S1's alias index);
+  `ProviderBridge::resolve(type, key)` answers what another *record* names — a pid, an interface
+  name or index, a unit name, a uid, a container's full or short id, a path, a socket inode. It
+  walks `SpatialType::is_a`, so a reference to a `Socket` reaches the `Listener` it is. Neither is
+  the `SpatialId`, which stays opaque.
+- **A neighborhood group may already be refused before ranking sees it.**
+  `SpatialIndex::relation_summary` returns a `withheld` group with one of §35.2's six states and
+  the provider's own message wherever a field carried an error, and `total()` is `None` there —
+  so `near`/`look` must render the state, never fall back to a count. `SpatialIndex::withheld(id)`
+  lists them. Three places are composed rather than served — `Endpoint`, `Cgroup`, `Namespace` —
+  and are ordinary index entries with real identities (ADR-0135); `up` from a file follows the
+  Unix path tree through `ono_spatial_core::PATH_PARENT`, not a relation.
+
+**S3 — index queries, selector resolution, `find place`, neighborhood, pins — is complete
+(2026-08-28, agent `S3`).** Five commits, gate green on each; `scripts/acceptance.sh` 68 passed,
+0 failed:
+
+1. `feat(parser)` a words-mode option whose value is a predicate expression (ADR-0138), declared
+   in `docs/spec/language.yaml` and held against the parser by `spec-check`.
+2. `feat(spatial)` `crates/ono-spatial-query` — §27.1 selector resolution, §27.2 ambiguity, §27.3
+   fuzzy that never acts, §3.6 neighborhood ranking, §6.8 search, §34 cost-aware planning
+   (ADR-0139).
+3. `feat(spatial)` `find place` — the contract (`place` target, `ono.spatial-place/1`,
+   `docs/spec/commands/spatial.yaml`) and the implementation in `ono-cli` (ADR-0140, ADR-0141),
+   **with the ADR-0124 rewrite of every Table 3 site in the same commit**.
+4. `feat(spatial)` pins that outlive the session — `$XDG_STATE_HOME/ono/pins.json` (§46.1).
+5. `test(acceptance)` `docker/acceptance/cases/101-spatial-find-place.case`, the S3 gate in the
+   container.
+
+Green from `crates/ono-cli/tests/spatial_navigation_missing.rs`:
+`should_stream_places_with_scope_and_provenance_when_find_searches_with_a_predicate`,
+`should_compose_with_the_v02_pipeline_when_a_find_result_is_filtered_and_counted`,
+`should_run_the_native_spatial_find_and_keep_the_external_find_reachable_when_both_exist`. The
+other 40 new outcome tests live in the crates:
+`crates/ono-spatial-query/tests/{resolution,neighborhood,search}.rs` (34),
+`crates/ono-cli/tests/spatial_pins.rs` (6) and `crates/ono-parser/tests/parse_commands.rs` (3).
+
+**What S4a needs from S3** — the four things:
+
+- **`near`'s ranking is `ono_spatial_query::neighborhood_of(index, center, request, pins, now)`.**
+  It returns S1's `Neighborhood` — `groups`, `landmarks`, `hidden_count`, `generated_at`,
+  `completeness` — already bounded and ranked. `NeighborhoodRequest` carries §6.2's five options
+  (`along`, `of_type`, `changed_within`, `limit`, `all`) plus `in_terminal_rows` for §3.6's
+  terminal-size input. S4a builds the *command* and the record shape; it must not re-rank, and it
+  must render a withheld group's §35.2 state rather than a count (`total() == None`).
+- **`look`'s view is that neighborhood plus a place.** The place record is
+  `ono.spatial-place/1` (ADR-0140) — `spatial_id`, `name`, `display_name`, `object_type` (the
+  v0.2 schema), `spatial_type`, `place_path`, `scope`, `parent`, `freshness`, `observed_at`,
+  `identity_tier`, `capabilities`, `pinned`, `provenance` — built by
+  `crate::spatial::find::place_record`, which S4a should lift out of `find.rs` when `look` needs
+  it too. A place carries no `pid`, `cpu` or `state`: those are the object's, one `inspect` away.
+- **A place a user typed is `ono_spatial_query::resolve(index, selector, context, now)`.**
+  `Resolution::require(selector)` turns it into the place or into §40's structured refusal —
+  `spatial.ambiguous_selector` with §27.2's three columns, or `spatial.not_found` whose help
+  lists the near misses. `SelectorContext::at(current_place)` is what makes steps 1 and 2 of
+  §27.1 (visible child, visible neighbour) mean anything, so S4a must pass the session's current
+  place, not `anywhere()`.
+- **The index is built per command and thrown away (ADR-0141).** `find place` asks only the
+  provider targets its query needs (`ono_spatial_query::discovery::targets_for`). S4a owns the
+  step that changes this: §46's `SpatialSessionState` holds the current place *and* the index, so
+  `look` twice reads the index rather than the providers, which is what §34's budget and S4e's
+  `should_answer_repeated_looks_far_inside_the_look_budget` need. `spatial::local_scope()` gives
+  the host and boot every observation belongs to (§10.2).
+
+**Not S3's, and still open:**
+
+- Canonical spaces are not answered by `find place`: it searches the index, and a space is
+  declared geography rather than an observed object. If a later phase wants `find place compute`
+  to answer the domain, that is a decision for it to record.
+- ~~The `argument_mode`-versus-ADR-0009 check in `xtask::contracts::check_commands` is dead
+  against this repository's own `docs/spec/language.yaml`.~~ **Repaired** by `harness` on
+  2026-08-28 (ADR-0159): `expression_heads()` reads the sequence of named modes the registry
+  actually writes, an empty declaration is now reported instead of short-circuiting the check,
+  and the fixture is written in the registry's shape so it can no longer certify a blind reader.
+  Exit test:
+  `xtask/tests/contracts.rs::should_reject_an_argument_mode_that_disagrees_with_the_grammar_this_repository_declares`.
+
+**Open, and deliberately not S1's:** `docs/ACCEPTANCE.md` has no v0.4 section yet, so
+`scripts/release-check.sh` cannot see this tranche. §4.7 needs writing from v0.4 §52 before S11,
+the way §4.6 was written from v0.3.
+
+**S4a — `look`, `near`, and the six domains as real places — is complete (2026-08-28, agent
+`S4a`).** Four commits, gate green on the last; `scripts/acceptance.sh` 69 passed, 0 failed:
+
+1. `fix(command)` a bare flag followed by another option was dropped — `get dir --all
+   --recursive` set only `--recursive`. A pre-existing defect, found because `look --all --json`
+   hit it; fixed red-first in its own commit.
+2. `feat(command)` an option whose value is optional (ADR-0144), so `look --changes [duration]`
+   and `near --changed [duration]` are spelled as §6.1 and §6.2 write them.
+3. `feat(spatial)` the commands themselves: contracts in `docs/spec/verbs.yaml` and
+   `docs/spec/commands/spatial.yaml`, seven new schemas, `crates/ono-spatial-render`,
+   `SpatialSessionState` in `ono-cli`, and `look`/`near`/`enter`/`home` (ADR-0142, ADR-0143,
+   ADR-0145).
+4. `test(acceptance)` `docker/acceptance/cases/102-spatial-look-near.case`, the S4a gate in the
+   container: 48 assertions, none of which types a name the shell has not printed first.
+
+Green now, all previously `#[ignore]`d — 32 tests:
+
+- `spatial_topology_missing` (20): `should_report_the_system_root_as_the_current_place_when_home_runs`,
+  `should_list_exactly_the_six_canonical_domains_when_looking_at_the_system_root`,
+  `should_carry_a_permission_state_on_every_domain_so_an_unavailable_one_stays_visible`,
+  `should_bound_the_root_horizon_instead_of_listing_every_known_object`,
+  `should_describe_the_current_place_with_an_id_kind_name_scope_and_permission_when_looking`,
+  `should_keep_the_same_spatial_id_for_the_root_across_separate_sessions`,
+  `should_enter_every_canonical_domain_when_named_at_the_root`,
+  `should_offer_the_{compute,network,storage,identity}_groups_the_spec_names_when_entering_*`,
+  `should_keep_containers_and_devices_enterable_with_a_state_when_no_provider_contributes`,
+  `should_show_the_users_the_user_provider_answers_for_when_entering_identity_users`,
+  `should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_mounts`,
+  `should_show_a_block_device_the_device_provider_answers_for_when_entering_devices`,
+  `should_bound_the_neighborhood_and_count_what_it_hides_when_a_place_has_many_neighbors`,
+  `should_expose_a_reason_on_every_landmark_when_a_place_reports_landmarks`,
+  `should_stream_neighbors_as_pipeline_objects_when_near_runs_at_the_root`,
+  `should_distinguish_an_unavailable_group_from_an_empty_one_when_a_domain_has_no_provider`,
+  `should_resolve_find_as_a_spatial_verb_while_the_external_tool_stays_reachable_by_path`.
+- `spatial_navigation_missing` (5): the three `look` tests, `should_bound_the_neighborhood_to_the_requested_size_when_near_is_limited`,
+  `should_run_the_native_spatial_look_and_keep_the_external_look_reachable_when_both_exist`.
+- `spatial_map_missing` (3): the three §24 tests —
+  `should_describe_identity_state_exits_and_landmarks_when_look_json_reports_a_place`,
+  `should_mark_a_group_as_an_exit_only_when_it_can_be_entered_when_look_lists_groups`,
+  `should_not_invent_a_change_section_when_no_snapshot_or_event_source_exists`.
+- `spatial_relationships_missing` (1): `should_keep_the_current_place_when_trace_projects_the_relationship_graph`.
+- `ono-command::binding` (1, new): `should_bind_both_flags_when_one_bare_flag_follows_another`.
+
+**What S4b needs from S4a** — the four things:
+
+- **`enter` is already dispatched in two places, and both move the place.**
+  `crate::context::claims` sends `enter` to the v0.2 context stack only when its first word names
+  a target `docs/spec/commands/` declares for `enter` (`dir`, `process`, `service`, `user`, …);
+  anything else — a domain, a collection, a pid, a quoted spatial id, or no argument at all —
+  reaches `crate::spatial::commands::Enter`, the target-less `ono.place.enter`. §30.2 applies to
+  both spellings, so `context::enter_record` now also calls `crate::spatial::enter_observed`
+  (ADR-0142). S4b owns `enter @<result-ref>`, `enter .` and the piped form of §28.2.
+- **`enter <object>` needs the object in the index first.** `Enter` resolves against what is
+  known, and observes the current place's surroundings only when the declared answer misses. That
+  is why `enter <pid>` at the root still refuses: the root observes the container and device
+  targets and nothing else (ADR-0143's source table). The step S4b owns is planning the targets a
+  *selector* implies — `ono_spatial_query::discovery::targets_for` already does exactly that for
+  a predicate — so `enter 1842` from anywhere reaches the process.
+  `spatial_navigation_missing::should_stream_neighbors_that_compose_with_the_pipeline_when_near_runs_in_a_script`
+  is the near test that waits on it.
+- **The trail is recorded, and nothing reads it yet.** Every move — `enter`, `home`, and the v0.2
+  `enter <target>` — records a `NavigationStep` with its `Movement` in
+  `SpatialSessionState::trail_mut()`. `follow` records `Movement::Follow` with the relation;
+  `back`, `up` and `trail` (S4c) read what is already being written.
+- **A place view is one function.** `crate::spatial::view::place_record` builds every
+  `ono.spatial-place/1` the shell emits — `look`, `near` and `find place` — so a field `follow`
+  needs is added once. `view::neighborhood_here` decides which of the two projections applies: a
+  canonical space gets `ono_spatial_query::space_neighborhood` over observed exits, an object
+  gets `neighborhood_of` over its edges. `follow <relation>` reads the second.
+
+**Left ignored, and why** (S4a's assignment ends here):
+
+- `spatial_topology_missing`: `should_answer_look_near_and_map_without_an_object_name_when_at_the_root`
+  (all-or-nothing, and two of its six scripts are `map` — S5);
+  `should_reach_a_process_it_never_names_…`, `should_offer_the_process_exits_…`,
+  `should_follow_the_parent_relation_…`, `should_discover_a_listening_socket_…`,
+  `should_reach_a_running_service_…` (all need `enter @-1` or `follow` — S4b); the two completion
+  tests (§9.4, PTY — S6).
+- `spatial_navigation_missing`: everything that needs `enter <object>`, `follow`, `jump`, `back`,
+  `up`, `trail` or `map`.
+- `spatial_map_missing`: everything about `map` (S5).
+
+### S9 + S10 + ADR-0191, the last six tests of the tranche (2026-08-28, agent `S9S10`)
+
+**Nothing in the nine spatial suites carries `#[ignore]` any more.** The six tests the table above
+listed are delivered and green; `grep -rn '#\[ignore' crates/*/tests/*.rs` finds nothing.
+
+- **S9 — KUANG/11 spatial extensions (§36, ADR-0194).** A package's `contributions.relations`
+  shapes now register real relations in its own namespace, gated by `relation.write`: without the
+  grant nothing is contributed, so §35.5's "filter before merging" holds by construction. A
+  package asserts its edges as data — the new canonical schema `ono.spatial-relation/1`, answered
+  by a contributed command whose target is `spatial-relation` — and the host resolves both ends
+  through the canonical provider, so a package can say two objects are related and can never say
+  an object exists. Every contributed edge carries the package as its provider and its `origin`
+  and a §11.5 confidence the host never raises to `exact`.
+  Files: `crates/ono-spatial-core/src/relation.rs` (the contributed registry),
+  `crates/ono-cli/src/spatial/contributions.rs` (new), `crates/ono-cli/src/spatial/map.rs`
+  (the merge into the horizon), `crates/ono-cli/src/plugins.rs` (adopt at load),
+  `crates/ono-spatial-query/src/map.rs` (`--relations` accepts a contributing package),
+  `crates/ono-kuang-sdk/src/bin/kuang-example-plugin.rs`,
+  `crates/ono-kuang-testhost/{src/lib.rs,tests/spatial_package.rs}`.
+- **S10 — v0.3 adapter reconciliation (§37, ADR-0193).** An adapted record never mints an identity
+  the canonical provider would not: `enter` resolves it through the provider first, so
+  `ps … | enter process` stands where `enter process <pid>` stands. A place keeps every source
+  that observed it, exposed as `sources` on `ono.spatial-place/1` and `ono.spatial-neighbor/1`, so
+  `inspect` on `lo` names `linux.netlink` **and** `adapter:org.ono.compat.iproute2.ip-link`. A
+  whole-document adapter's batch is offered to the index; a stream is not buffered to index it.
+  `… | enter` on bytes is `spatial.not_enterable`.
+- **ADR-0191 — one `enter`, one refusal.** A failed `enter` is `spatial.not_found`
+  (`Ono-Sendai-E1001`) in both grammars; `resolve.target_not_found` keeps every other job. Four
+  assertions were adjusted to the new spelling and named in the commit body:
+  `identity_missing::should_refuse_to_enter_a_user_that_does_not_exist`,
+  `network_missing::should_refuse_to_enter_an_interface_that_does_not_exist`,
+  `processes_missing::should_refuse_to_enter_a_process_that_does_not_exist`, and
+  `docker/acceptance/cases/044-remote-links-as-objects.case` (`enter link` after `remove link`).
+- **The TIME_WAIT flake above is fixed (ADR-0192)**, and it was a product defect rather than a
+  fixture one: a socket in `time-wait` or `close` has no inode — `ono.socket/1`'s identity — so
+  the index registered the kernel's 2MSL remnant as a *second* connection beside the one that had
+  just ended, and `map` carried two nodes for one connection (the duplicate §37.1 and §42.1
+  forbid). A released socket now has no place at all; `get socket` still lists it with its state.
+  `spatial_relationships_missing::should_show_the_connection_edge_appear_and_vanish…` failed two
+  runs in three before, and is green in four consecutive runs of its file after, unchanged.
+- **Acceptance:** `docker/acceptance/cases/110-spatial-contributions.case`, 13 assertions
+  (`s9-a`–`s9-g`, `s10-a`–`s10-f`). The two §4.7.1 boxes for §36 and §37 are ticked.
+
+**Next up from this increment:**
+
+- A contributed relation is an edge on the map and in the index, and is not yet a navigable exit:
+  `look` does not print it and `follow`/completion do not offer it (ADR-0194 §Consequences). Exit
+  test: `follow <contributed relation>` from a place the package's edge starts at moves there.
+- `spatial_topology_missing::should_complete_the_relations_available…` still fails under parallel
+  load and passes alone; the PTY budget in it is the fixture problem S6 recorded, not this.
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- `network/addresses`, `compute/cgroups` and `network/namespaces` report `unsupported`: no v0.2
+  provider target serves an address, a cgroup or a namespace as an object, although the bridge
+  composes cgroups and namespaces from process records (S2, ADR-0135). Composing the collections
+  from the same facts is a real increment, and §7.3 only requires the place to exist and to say
+  what it could not tell. `storage/directories` reports `unknown — available on request`, because
+  §33.3 makes the filesystem query-driven; S4d owns storage and the cwd distinction.
+- `ono.system/1` is declared from §7.1 field for field, and `look --all` at the root carries it
+  with `os`, `kernel` and `uptime` null: no provider answers for them, and §2.16 forbids the
+  spatial layer from reading them itself. A `get system` producer fills them.
+- `spatial_topology_missing::should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_mounts`
+  compares two separate `ono` runs against a live mount table. On a workstation where Docker is
+  creating and removing netns mounts it can lose the race and see a mount the first run did not.
+  Seen once, passing on re-run and green in the container; the test is right and the environment
+  is what moved.
+
+**S4b — `enter` on any place, and `follow` along a real edge — is complete (2026-08-28, agent
+`S4b`).** ADR-0146 to ADR-0149; gate green; acceptance case
+`docker/acceptance/cases/103-spatial-enter-follow.case` added (31 assertions).
+
+The increment turned on the thing S4a left dark: **an object place had no exits**. `near` at a
+process answered nothing, because the only source of relationship edges was the record-field
+bridge, which reads a `ppid` and a `cgroup` and cannot know which files a process holds open.
+ADR-0146 makes the edges of an object place the ones the **v0.2 relationship providers** of
+`ono-graph` assert about that object — the same providers `trace` walks — translated into the
+declared relations of `docs/spec/spatial/relations.yaml`. A neighbour therefore reports the
+relation word and the provider id `trace` reports for the same edge (§2.16, §31.3), and the
+record-field bridge keeps only the relations no relationship provider serves (cgroup, namespace,
+container, and the listener a connection was accepted by).
+
+**What S4c needs to know** — the five things:
+
+- **The trail is written and still unread.** Every movement records a `NavigationStep`:
+  `enter`/`home` from S4a, and now `follow` with `.along(relation)` — §6.4's "the relation
+  traversed MUST be recorded". `back`, `up`, `trail` and `jump` read what is already there.
+  `crates/ono-cli/tests/spatial_relationships_missing.rs::should_record_the_relation_it_traversed_when_a_follow_enters_the_trail`
+  is the test waiting on `trail --json`, and
+  `spatial_topology_missing::should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner`
+  is green up to its last statement, which is `trail --json`.
+- **`up` is `place.canonical_parent`, and it is already on every place view.** The place record
+  carries `canonical_parent` (§11.3, §33.1) and no longer carries a second `parent` field
+  answering the same question (ADR-0148). `ono_spatial_query::resolve::parent_of` computes it.
+  `spatial_identity_missing::should_move_to_the_declared_canonical_parent_deterministically_when_going_up`
+  asserts `up` lands on exactly that id and that `follow parent` lands somewhere else.
+- **Resolution and observation are one function.** `crate::spatial::commands::resolved_place`
+  resolves a selector the way §27.1 orders it and, when nothing visible answers, plans the
+  provider targets the *selector* implies and asks those. `jump` is the same resolution with
+  §27.1's step 6 allowed (`SelectorContext::across_links`) and a `Movement::Jump` step; it needs
+  no new observation machinery.
+- **A place view is still one function**, and it now carries what a movement needs to be checked
+  from outside: `canonical_ref`, `lifetime`, `state`, `summary`, the `exits` map keyed by the
+  word `look` prints, and the object's own identity fields at the top level, so
+  `look --json | from json | where pid == 1842` is an ordinary pipeline (ADR-0148).
+- **A refusal prints its dotted name.** `ono: Ono-Sendai-E1006 spatial.history_empty …` — the
+  renderer shows both halves of §43's identity now, so `back` at an empty trail and `up` at the
+  root are distinguishable in a terminal as well as in `catch e { $e.name }` (ADR-0148).
+
+Green now, all previously `#[ignore]`d — 39 tests:
+
+- `spatial_relationships_missing` (9): `should_enter_the_open_file_when_following_it_from_the_holding_process`,
+  `should_name_the_holding_process_among_the_file_neighbors_when_the_file_is_the_place`,
+  `should_name_the_same_relation_and_provider_as_trace_when_the_neighbor_is_the_open_file`,
+  `should_enter_the_listening_socket_when_following_it_from_its_owner_process`,
+  `should_reach_the_accepted_connection_when_following_it_from_the_listening_socket`,
+  `should_refuse_the_traversal_with_no_relation_when_the_process_owns_no_socket`,
+  `should_refuse_to_follow_a_canonical_child_that_is_not_a_relationship_edge`,
+  `should_bound_the_neighborhood_by_default_and_widen_it_with_all`,
+  `should_report_the_unreadable_namespace_group_as_unknown_rather_than_absent`.
+- `spatial_navigation_missing` (8): the two `enter` tests, `should_traverse_the_relationship_edge_when_following_the_parent_relation`,
+  `should_answer_no_relation_when_following_an_edge_the_current_place_does_not_have`,
+  the three ambiguity tests, `should_leave_the_callers_place_untouched_when_a_called_script_navigates`.
+- `spatial_identity_missing` (11): the four identity tests (287, 313, 334, 362), the three
+  permission-honesty tests, `should_keep_every_relationship_parent_while_naming_one_canonical_parent`,
+  `should_carry_source_provenance_and_confidence_on_every_relationship_edge`,
+  `should_use_the_defined_confidence_vocabulary_and_never_call_an_inferred_edge_exact`,
+  `should_expose_how_fresh_the_data_behind_a_place_is`.
+- `spatial_storage_missing` (9): the six §30 tests (cwd, place, `cd`, `PWD`), the two §44.3
+  walking tests, `should_refuse_a_path_that_does_not_exist_with_a_structured_error`.
+- `spatial_topology_missing` (1): `should_discover_a_listening_socket_by_its_port_and_follow_it_to_its_owning_process`.
+- `spatial_contracts_missing` (3): `should_refuse_an_unknown_place_with_a_structured_spatial_error`,
+  `should_serve_every_relation_it_declares_and_declare_every_relation_it_serves`,
+  `should_report_denied_information_as_denied_rather_than_as_an_empty_collection`.
+
+**Left ignored, with the reason on the test** (each carries it in its `#[ignore]` line):
+
+- `spatial_topology_missing::should_reach_a_process_it_never_names_…` and
+  `…should_offer_the_process_exits_…` — **delivered and green with `--test-threads=1`.** The
+  fixture selects its process with `ppid == std::process::id()`, and under cargo's default
+  parallelism that also matches the children every other test in the same binary spawned, so the
+  discovery walk reaches one of theirs. The fixture needs a predicate unique to itself.
+  *(Fixed 2026-08-28 by agent `fixtures` — see below.)*
+- `spatial_topology_missing::should_follow_the_parent_relation_…` — the `follow parent` half is
+  green; the test's last statement is `trail --json` (S4c).
+- `spatial_topology_missing::should_reach_a_running_service_…` — **the test and the inherited
+  v0.2 contract disagree.** It selects with `--where state == "running"`, and `ono.service/1`
+  declares `state` as `active | reloading | inactive | failed | activating | deactivating |
+  unknown` and reports `running` as the *substate*. No service on a systemd host answers to it.
+  In the acceptance container there is no service manager and the test takes its skip branch.
+  *(Resolved 2026-08-28 by ADR-0167 — see below.)*
+- `spatial_contracts_missing::should_refuse_an_ambiguous_selector_in_a_script_…` — the ambiguity
+  path is delivered, but the fixture copies `/bin/sleep` to a new name and runs it twice; on a
+  host whose coreutils is a multi-call binary (Ubuntu 25.10) the copy refuses to start
+  (`coreutils: unknown program 'ono-spatial-twin'`), so nothing answers to the name and the
+  refusal is `spatial.not_found`. The fixture needs a program it can rename.
+  *(Fixed 2026-08-28 by agent `fixtures` — see below.)*
+- everything that needs `back`, `up`, `trail`, `jump`, `pin` (S4c), `map` (S5), the mount
+  boundary and the directory summary (S4d), or tombstones (S7).
+
+**The three fixture-blocked v0.4 tests are delivered (2026-08-28, agent `fixtures`).** No
+assertion was weakened; only the fixtures were corrected, per AGENTS.md §11. One commit,
+ADR-0167.
+
+- `spatial_topology_missing::should_reach_a_process_it_never_names_…` and
+  `…should_offer_the_process_exits_…` — `SleepChild::selector()` now spells
+  `ppid == <test pid> and pid == <child pid>`. Parentage alone matched every other test's `ono`
+  shells in the same binary; the child's own pid is known to the fixture, and §9's "discovery
+  without prior names" forbids naming the *object* (its command name), not pointing at one's own
+  fixture. The walk is still `find place` → `enter @-1` → `look`. The same selector now serves
+  `should_follow_the_parent_relation_…` and the `follow` completion test, which carried the same
+  latent race.
+- `spatial_contracts_missing::should_refuse_an_ambiguous_selector_…` — the twins are now a
+  **symlink to `/bin/sh`**, not a copy of `/bin/sleep`. Two facts fix the fixture: the kernel
+  takes `comm` (the `name` of `ono.process/1`) from the basename of the path handed to `execve`,
+  symlink included, and it truncates it to 15 characters — hence `ono-twin-place`, not
+  `ono-spatial-twin`. A *copy* additionally loses to `ETXTBSY` under parallelism, because a
+  concurrent test's `spawn` inherits the copy's write descriptor across `fork`; a symlink leaves
+  no descriptor. Each twin is `sh -c 'read line'` on a pipe the test holds, and the test waits
+  for `/proc/<pid>/comm` before asking the shell to resolve the name.
+- `spatial_topology_missing::should_reach_a_running_service_…` — ADR-0167: a running service is
+  `state == "active" and substate == "running"`, held in the suite's `RUNNING_SERVICE` constant.
+  `running` is a *substate* in `ono.service/1`, never a `state`; requiring both also keeps
+  `active`/`exited` oneshots and `active`/`plugged` `.device` units — which have no process for
+  §44.2's "follow one of its processes" — out of the selection.
+- Proof: each file run ten times in a row under cargo's **default** parallelism, 10/10 green,
+  in a clean worktree at `da26bba` carrying only these fixture changes.
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- `process.connects_to` is declared and nothing serves it: the v0.2 graph reports a process's
+  sockets, not its endpoints, and the endpoint at the far end is the *socket's* `peer`. The exit
+  answers `unsupported`, which §35.2 makes a real answer; removing the relation or serving it is
+  a decision for whoever writes the endpoint provider.
+- `interface.has_address` has the same shape: `network/addresses` has no provider target, so an
+  interface's `addresses` exit is `unsupported` rather than a list.
+- A file place's `owner` is `unknown — available on request`: `user.owns_file` is
+  `CostClass::Expensive` and no user record is observed at a file place. Loading it on
+  `near --type user` is one line in `relations::adjacent_targets` and one test.
+- **`cargo test` retains no results between statements of one `-c` script until now.**
+  `stage_scope` did not populate `Scope::previous`, so `@-1` in a command argument resolved to
+  null while `@-1` at the head of a pipeline worked. Fixed here because `enter @-1` is §28.2;
+  every other command that takes a value argument gains the same reference.
+
+**S4c — movement through history and hierarchy (`back`, `up`, `home`, `trail`, `jump`,
+`pin`/`unpin`) — is complete (2026-08-28, agent `S4c`).** ADR-0150 to ADR-0153; acceptance case
+`docker/acceptance/cases/104-spatial-back-up-home-trail.case` added (25 assertions).
+
+The increment turned the trail from something written into something read, and fixed the one rule
+that made §44.6 undemonstrable. Six commands are new — `back`, `up`, `jump`, `trail`, `pin`,
+`unpin` — with their contracts in `docs/spec/commands/spatial.yaml`, their verbs in
+`docs/spec/verbs.yaml` and one new schema, `ono.navigation-step/1`.
+
+**What the next phases need to know:**
+
+- **`trail` answers `ono.navigation-step/1`** (ADR-0150). §20.1's six fields, plus `from_ref`/
+  `to_ref` (the `<type>/<key>` spelling a user can type back), `from_name`/`to_name`, `relation_id`
+  beside the `relation` *word*, and `host`. `trail` streams the records, `trail --json` writes them
+  as one array, `trail --compact` writes §20.2's breadcrumb. **S8** will need `host` to become
+  per-step rather than the session's — it is set in one place, `movement::step_record`.
+- **`scope_crossing` is already recorded and already rendered.** Every `jump` and `up` compares the
+  scope of both ends and records the boundary where they differ, as a record with `kind`, `from`,
+  `to`, `entering` and `remote`. **S4d**'s mount boundary (§44.3) and **S8**'s host boundary both
+  need only the two ends to carry different scopes; nothing in the trail has to change.
+- **A socket's canonical parent is `network.listeners`, not the process that owns it**
+  (ADR-0151, a fix). The S1 rule chain made `up` from a socket land on the same place as `back`,
+  which is precisely the distinction §44.6 exists to demonstrate. `parent_rules(Listener)` and
+  `parent_rules(Connection)` are now empty and fall through to the collection space;
+  `docs/spec/providers/linux-netlink.yaml` declares the same chain, because `spec-check` compares
+  them. A socket's `place_path` is therefore `local/network/listeners`.
+- **`still_a_place` in `crates/ono-cli/src/spatial/movement.rs` is the seam S7 needs** (ADR-0152).
+  §20.3's four outcomes are all implemented — return, skip-with-a-notice, `spatial.destination_gone`,
+  `spatial.history_empty` — behind one predicate that today answers "the session still knows this
+  place". A tombstone makes that predicate answer differently and makes `back` return the tombstone.
+- **A pin stores the place's *name* as its selector, plus its type** (ADR-0153). `jump @<pin>` reads
+  what `with_pins` already resolved; a pin whose place is gone is `spatial.destination_gone` and
+  stays in the store. **S5**'s landmark engine gets `user_pinned` from the same registry the query
+  layer already ranks by; nothing new is needed there.
+
+Green now, all previously `#[ignore]`d — 19 tests:
+
+- `spatial_navigation_missing` (9): `should_move_across_scopes_and_record_both_ends_when_jumping_to_a_resolved_place`,
+  `should_return_to_the_process_when_back_follows_the_navigation_history`,
+  `should_move_to_the_network_hierarchy_parent_when_up_follows_the_canonical_hierarchy`,
+  `should_return_to_the_system_root_when_home_runs_after_deep_navigation`,
+  `should_answer_history_empty_when_back_runs_with_no_previous_place`,
+  `should_answer_no_parent_when_up_runs_at_the_system_root`,
+  `should_record_every_movement_with_its_kind_and_relation_when_the_trail_is_read_as_json`,
+  `should_answer_not_found_when_a_navigation_argument_names_nothing`,
+  `should_start_at_the_system_root_with_an_empty_trail_when_a_new_session_begins`.
+- `spatial_contracts_missing` (4): `should_refuse_to_go_back_or_up_from_the_root_with_a_named_spatial_error`,
+  `should_start_every_session_at_the_local_system_root`,
+  `should_keep_a_scripts_navigation_out_of_the_callers_place`,
+  `should_keep_the_trail_session_local_while_a_pin_survives_the_session`.
+- `spatial_relationships_missing` (3): `should_return_to_the_process_with_back_after_following_a_socket_edge`,
+  `should_leave_the_relationship_chain_with_up_after_following_a_socket_edge`,
+  `should_record_the_relation_it_traversed_when_a_follow_enters_the_trail`.
+- `spatial_identity_missing` (2): `should_move_to_the_declared_canonical_parent_deterministically_when_going_up`,
+  `should_not_confuse_the_old_and_the_new_process_when_a_place_is_replaced`.
+- `spatial_topology_missing` (1): `should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner`
+  — its last statement was `trail --json`.
+
+**One assertion changed, with ADR-0151 in the same commit.**
+`spatial_navigation_missing::should_move_to_the_network_hierarchy_parent_when_up_follows_the_canonical_hierarchy`
+built its haystack from `display_name` and `scope`; under ADR-0140 the field that names the
+canonical location is `place_path`, and `scope` is the §3.2 boundary (`host:web01`). `place_path`
+is now in the haystack. What the test demands is unchanged: `up` lands under NETWORK and is not
+where `back` lands.
+
+**Left ignored, with the reason on the test:**
+
+- `spatial_identity_missing::should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_dead_place`
+  — `back` returns to the recorded place and the trail keeps the record, but the test also demands
+  that the place say it is dead, which is S7's tombstone (§10.3). Attempted and left.
+
+**Found, not fixed, and outside this increment:**
+
+- **`up` from a file place answers `spatial.no_parent`.** `parent_rules(File)` is `[path.parent]`,
+  and `path.parent` is only supplied by `canonical_parent_with`, which `resolve::parent_of` does not
+  call because only the caller knows which directories have been observed. §15.1 makes the enclosing
+  directory a file's parent, so this is a real gap and it is **S4d's**: it needs the directory
+  observed, which is the same query §15.4 and §44.3 need anyway.
+- `docs/spec/schemas/file.v1.yaml` gives a file the identity `[device, inode]`, so a trail step's
+  `from_ref`/`to_ref` for a file reads `file/0:46`. It is honest — that *is* the provider's
+  reference — but it is not a spelling anyone types. Whoever gives `ono.file/1` a path-shaped alias
+  fixes the trail's readability for free.
+
+**S5 — semantic maps, the landmark engine and the ASCII fallback — is complete (2026-08-28, agent
+`S5`).** ADR-0162 to ADR-0166; gate green; acceptance case
+`docker/acceptance/cases/105-spatial-map.case` added (55 assertions).
+
+Delivered:
+
+1. `crates/ono-spatial-query/src/map.rs` — the `SpatialMap` projection: §23.1's ranking, §8.1's
+   five zoom levels, §8.2's clustering, §8.3's expansion, the §34.2 budgets and the §6.9 filters.
+   It is handed a *horizon* by the shell and asks no provider anything (§45.3, §2.16).
+2. `crates/ono-spatial-query/src/landmark.rs` — **the landmark engine §50 assigns to no phase**
+   (ADR-0163). Eight of §3.7's fourteen reasons are produced from real provider fields; the other
+   six are documented absences, not silent branches.
+3. `crates/ono-spatial-render/src/map.rs` — the default textual map of §23.2 as a ranked tree,
+   width-aware, with the ASCII fallback §39.2 requires (ADR-0166).
+4. `crates/ono-cli/src/spatial/map.rs` — the `map` command, its contract in `docs/spec/verbs.yaml`
+   and `docs/spec/commands/spatial.yaml`, and five new schemas: `ono.spatial-map/1`,
+   `ono.map-node/1`, `ono.map-edge/1`, `ono.map-cluster/1`, `ono.hidden-summary/1` (ADR-0162).
+5. `spatial.map.node_budget`, `spatial.landmarks.*` and `spatial.look.change_window` are now
+   *read* — `crate::spatial::configure_from` hands the session what the user configured, which is
+   what makes §26.3's "inspectable and configurable" true rather than advertised.
+
+Green now, all previously `#[ignore]`d — 26 tests:
+
+- `spatial_map_missing` (21 of the 24; the three §24 tests were already green): the six §22
+  contract tests, the two §43.2 filter tests, the four §8 zoom and cluster tests, `--focus`, the
+  three landmark tests, and the three §23.2/§39 rendering tests.
+- `spatial_contracts_missing` (2): `should_serve_exactly_the_canonical_spaces_the_registry_declares`,
+  `should_bound_the_default_map_to_its_node_budget`.
+- `spatial_navigation_missing` (1): `should_answer_a_bounded_graph_when_map_json_runs_without_a_tty`.
+- `spatial_topology_missing` (1): `should_answer_look_near_and_map_without_an_object_name_when_at_the_root`.
+- `spatial_identity_missing` (1): `should_resolve_every_edge_endpoint_to_a_node_or_an_explicit_off_map_endpoint`.
+- `spatial_relationships_missing` (1): `should_explain_every_edge_with_relation_provider_and_confidence_when_mapping_a_process`.
+- 17 new crate-level outcome tests: `crates/ono-spatial-query/tests/{map,landmarks}.rs`.
+
+**Left ignored, with the reason on the test** (both in `spatial_map_missing`):
+
+- `should_show_more_than_the_default_when_the_map_is_asked_for_all` — **its two halves contradict
+  each other and the contracts suite.** The first (`--all` is strictly larger than the default) is
+  delivered and green. The second asks that `--all` at a 300-process collection contain one
+  particular freshly spawned process; `spatial_contracts_missing::should_bound_the_default_map_to_its_node_budget`
+  requires `--all` to stay inside `spatial.map.node_budget` (100) and §34.2 prohibits unbounded
+  rendering, so only a clock-relative ranking could reach it — and that makes the two §43.2 filter
+  tests compare two maps of two different moments and fail. ADR-0165 carries the analysis under a
+  `Spec deviation` heading. Reconciling it needs either a second, larger explicit bound or a
+  fixture the map is guaranteed to rank in.
+- `should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded` — **delivered
+  and green with `--test-threads=1`.** It compares a cluster's member count from one `ono` run
+  against the nodes a second run draws, and every sibling test in the binary spawns and reaps
+  twelve processes between the two, so the collection it counts is a different size each time.
+  Same family as the two topology fixtures S4b left.
+
+**What S6 needs from this renderer** — the four things:
+
+- **The seam is `spatial_map`'s input, not its output.** `ono_spatial_render::spatial_map(record,
+  width, charset)` is the whole text projection; the full-screen view of §23.3 takes the same
+  `ono.spatial-map/1` record — already ranked, bounded and clustered by `ono-spatial-query` — and
+  adds a viewport, a cursor and the key bindings. It must not re-select or re-rank, or the two
+  views will disagree about what the system looks like (§45.4, §49.5).
+- **Focus is already a request, not a mode.** `MapRequest::focus(node)` goes in and
+  `SpatialMap::focus` comes out beside `center`; moving the cursor is a new projection with a new
+  focus and no movement of the place (§23.4). `Enter` on the focused node is `enter <id>`, which
+  `crate::spatial::commands::resolved_place` already resolves.
+- **The interactive budget is the same number.** §34.2's 100 nodes is `spatial.map.node_budget`,
+  which `--all` already uses and `crate::spatial::configure_from` already reads.
+- **Colour is S6's to add and no semantics may depend on it.** §39.1 lists six things colour must
+  never be needed for; all six are carried by a word or a glyph today (`◆` for a landmark, `~~▸`
+  for an inferred edge, the confidence word, the state word), and the ASCII/Unicode choice is
+  `Charset`, decided from the locale and `TERM` in `crate::sink`.
+
+**What S7 needs from this map projection** — the three things:
+
+- **`live_capable` is `false` and says so honestly.** Nothing in this build subscribes to a
+  provider event, so §25.1's live map has no source; S7 flips the field when it has one, and
+  `map --live`/`map --changes` of §6.9 are declared in no contract until then.
+- **`MapEdge.changed` and `MapNode` are ready for a change state.** The edge already carries a
+  `changed` field (null today, §24.3 forbids inventing one), and the three change reasons of §3.7
+  — `new_object`, `removed_object`, `connection_spike` — are exactly the ones ADR-0163 leaves
+  undelivered because they are differences between two observations (§25.4), not facts about one.
+- **Landmarks are recomputed on every `absorb`,** so a live update recomputes them for free; what
+  S7 adds is the diff that makes a *change* visible, and the rule that a landmark asking for
+  attention reorders the map while one that merely informs does not (ADR-0165).
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- §26.2's high-memory rule cannot fire: no provider serves a host or cgroup memory budget, so a
+  share cannot be computed and §2.16 forbids the spatial layer reading `/proc/meminfo` itself. The
+  threshold setting stays inspectable. Same for the restart-loop rule: `ono.service/1` declares no
+  restart count.
+- §26.2 names four network rules — interface down, route change, unusually high traffic, new
+  remote peer — that §3.7's closed reason vocabulary has no word for. A core landmark may not
+  invent a reason (§3.7), so they are absent rather than approximated.
+- Clustering has one dimension, the canonical collection (§8.2's first). A cluster by user, by
+  cgroup or by container is a real increment with its own test; the dimension is already a field
+  on `ono.map-cluster/1`, so adding one changes no contract.
+- `map` honours `COLUMNS` even when stdout is redirected, which no other view does (ADR-0166).
+  Whoever decides that the whole renderer should do the same has one function to change,
+  `crate::sink::terminal_width`, and the table snapshots to re-check.
+
+**S6 — the interactive spatial surface — is complete (2026-08-28, agent `S6`).** ADR-0173 to
+ADR-0177; acceptance case `docker/acceptance/cases/107-spatial-interactive.case` added — 39
+assertions driven through a real pseudo-terminal — and **the containerised suite stands at 73
+cases green, 0 failed** (`scripts/acceptance.sh`, 2026-08-28).
+
+Delivered — the phase, plus the four areas §50 assigns to nobody:
+
+1. **§5 the startup horizon.** An interactive session runs `look` once before the first prompt
+   and never in a pipe. It is `look`, not a second renderer of the root, so §49.5 cannot be
+   broken by the two drifting apart (ADR-0175). `spatial.startup_horizon` and `spatial.enabled`
+   each switch it off.
+2. **§21 the prompt and the HUD.** `ono_spatial_query::resolve::concise_path` is §21.2's rule as
+   a function — `local`, `local/compute`, `local/process/nginx` — and the prompt, the place
+   view's heading and the map's header all read it. The working directory stays in the prompt
+   beside the place, because §30 keeps them different state (ADR-0175).
+3. **§23.3 the full-screen map.** `ono_spatial_render::view` holds the whole view model with no
+   terminal in it: `MapView` (viewport, cursor, search, help, detail overlay), `Action` (§23.3's
+   twenty-one semantic actions), `Keymap` (§23.3's table, overridable through the new
+   `spatial.map.keys`), `Effect` (what is left for the shell to do). `crate::spatial::interactive`
+   is the terminal side: alternate screen and raw mode as guards, resize, and the same
+   `go_back`/`go_up`/`go_home` the commands call (ADR-0174).
+4. **§27.2 the ambiguity picker,** interactive only; a script still gets
+   `spatial.ambiguous_selector`. `Candidate` now carries the identity key, so §27.2's rows read
+   `nginx/1842` and disambiguate rather than repeating one name three times — which also improved
+   the non-interactive refusal (ADR-0177).
+5. **§9.4 completion as spatial discovery.** `enter`/`jump`/`map <TAB>` offer the neighbourhood
+   and `follow <TAB>` the relations this place actually has, with §9.4's compact count or §35.2's
+   state word. Shown on the first Tab through the new `Completion::listing`; ordinary word
+   completion is unchanged (ADR-0177).
+6. **§25.1 `map --live`** as the explicit polling source §25.1 permits, saying `live polled` in
+   §25.3's vocabulary, refused with `spatial.unsupported` where there is no terminal (ADR-0176).
+7. **The seam that made all of it safe:** `ono_command::Invocation::displays` — the evaluator
+   tells the last stage of a foreground statement that its values will be *seen*. `map | to json`,
+   `map > file`, `$(map)` and `ono -c 'map'` therefore never open a screen (ADR-0173).
+
+Green now, all previously `#[ignore]`d — 14 tests:
+
+- `spatial_interactive_missing` (all 12): the horizon at a TTY and never in a pipe, `look` at 80
+  and at 40 columns, the prompt following the place, the picker, the map opening and closing, focus
+  that does not move the place, `back` at the prompt and Backspace in the view, Ctrl-C leaving the
+  live map, resize preserving the place, `stty`/`pwd` in order afterwards, `enter <TAB>`.
+- `spatial_topology_missing` (2): `should_complete_the_places_of_the_current_neighborhood_when_tab_follows_enter`,
+  `should_complete_the_relations_available_from_the_current_place_when_tab_follows_follow`.
+- 10 new crate-level outcome tests: `crates/ono-spatial-render/tests/view.rs`.
+
+**Nothing was left ignored by this phase.**
+
+**What S7 needs from this view loop** — the four things:
+
+- **The loop is where a live update lands.** `crate::spatial::interactive::run_map_view` reads a
+  terminal event with a timeout and, when the timeout expires and the view is live, rebuilds the
+  projection and calls `MapView::redraw`. S7 replaces the *source* of that rebuild — an event
+  subscription instead of a one-second poll — and changes nothing else: `redraw` already keeps the
+  cursor on the node it was on, and `MapView::set_live(live, freshness)` already takes §25.3's
+  word, so flipping `polled` to `event_driven` is one argument.
+- **Nothing repaints unless the drawing changed.** The loop compares the new frame with the one on
+  the screen and writes nothing when they are equal. That is what makes §39.4's `reduced_motion`
+  true by construction today; when S7 adds a change highlight, `spatial.reduced_motion` is the
+  switch that turns *that* off, and it is already read into the session (`configured_flag`).
+- **`Effect` is the whole vocabulary between the view and the shell.** A new key means a new
+  `Action` variant, a default binding and an `Effect`; the config syntax, the `?` help table and
+  the key-name parser follow for free.
+- **The map projection is one function.** `crate::spatial::map::projection(ctx, session, center,
+  request, now)` builds every `ono.spatial-map/1` the shell emits — `map`, `map --json`, every
+  frame of the full-screen view. A live diff belongs in what feeds it, never beside it.
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- §5's "providers SHOULD populate expensive counts asynchronously and update the horizon when
+  available" is a SHOULD this build does not do: the horizon is one synchronous `look`. It costs
+  what `look` costs. Making it asynchronous needs the same update channel S7 builds for the live
+  map, and belongs there — not in a second mechanism.
+- `spatial.reduced_motion` is read and inspectable but has nothing to disable, because this
+  renderer draws no animation at all (§25.2 forbids decorative motion). ADR-0176 says so; S7 gives
+  it something to switch off.
+- **§21.3's third marker has nothing to mark yet.** The section requires privilege, remote *and
+  namespace* changes to be recognisable in a colourless terminal. Privilege is the ` root`
+  segment and the `#` marker (v0.2 §17.2); remote is the link segment, which takes the host's
+  name instead of `local` (§14.4). A container or namespace boundary cannot be shown because
+  nothing produces a place in one: `ProviderBridge` projects every observation into the session's
+  own host scope, so `ScopeKind::Container` and `ScopeKind::Namespace` exist in the model
+  (`ono_spatial_core::scope`) and no place ever carries them. A marker written now could never
+  fire. The prompt is one line away from it — compare the current place's scope with the
+  session's and print `container:<id>` or `ns:<kind>/<id>` when they differ — and the increment
+  that makes a container's processes carry the container scope is the one that should write it.
+- The `/` search of §23.3 searches the *drawn* map. §23.3 says "search visible/global map"; the
+  global half is `find place`, which already exists as a command, and wiring it into the view's
+  search line is a real increment with its own test.
+- Completion asks no provider anything (§34's 50 ms budget), so `enter <TAB>` inside a collection
+  nobody has looked at offers the declared geography and no members. A background pre-observation
+  of the current neighbourhood would fix it and is exactly the "background discovery" of §34.1.
+- Two boxes in `docs/ACCEPTANCE.md` §4.7 — "full-screen map works on supported interactive
+  terminals" and "PTY interaction tests pass" — now have all their *unit* proofs green, but both
+  name case `099`, which is still `.case.v04`. They are S11's to tick with the rename.
+- **`spatial_map_missing::should_only_remove_{edges,nodes}_...` are flaky under a parallel run,
+  and were before this increment.** Both compare a map from one `ono` run against a map from a
+  second; every sibling test in the binary spawns shells between the two, and a process that
+  appeared in between is `recently_changed`, ranks into the second map and is absent from the
+  first. They pass with `--test-threads=1` and failed about one gate run in three here; seen
+  green in the gate before this increment and green again after it, and nothing in S6 touches
+  map ranking. Same family as the two ADR-0165 defers and as the two topology fixtures S4b left.
+  The fix is a fixture the two runs are guaranteed to agree on — not a change to either test.
+- **The twelve PTY tests are load-sensitive, and the gate runs them under load.** All twelve pass
+  in 47 s when `spatial_interactive_missing` runs on its own, and repeatedly; in a
+  `cargo test --workspace` on a machine also running two other worktrees (load average 16 on
+  8 CPUs) three of them exceeded their own 8 s screen budget waiting for `map` to open at
+  COMPUTE, because opening the view costs one full projection — the same providers `map` asks,
+  including systemd over D-Bus. Two things are true and both are worth writing down: the view is
+  unresponsive while a projection is in flight, which §34.2's view budget will eventually have to
+  answer for (S11 owns the budgets); and the picker's own fixture copies `/bin/sleep` and can hit
+  `ETXTBSY` when a sibling test forks across the copy, which
+  `spatial_contracts_missing::should_refuse_an_ambiguous_selector_in_a_script_rather_than_open_a_picker`
+  already documents and avoids by using a symlink instead. Run the file alone before believing a
+  failure in it.
+
+---
+**S8 — remote systems as space — is complete (2026-08-28, agent `S8`).** ADR-0168 to ADR-0172;
+gate green; acceptance case `docker/acceptance/cases/106-spatial-remote.case` added (51
+assertions, all proved locally against the real binary).
+
+Delivered:
+
+1. **A host's geography is its own** (ADR-0168). `ono_spatial_core::space` now keeps the
+   geographies this process knows: `stand_in` moves into one, `learn` registers one without
+   moving, `space_of_id` says which space an id names *and whose*. `SpatialIdentity::space_in`
+   adds the host to a canonical space's identity for a remote scope and nothing at all for a
+   local one, so every id built before S8 is unchanged and `testbox`'s `COMPUTE` is not this
+   machine's. Twenty-odd call sites became host-correct without being edited.
+2. **`jump <link>` crosses the boundary, visibly** (§19.2, §53). The destination is the linked
+   host's root `SystemPlace`; the crossing is stated in words on stderr, so a colourless terminal
+   sees it and a script's object stream stays objects; the trail step carries both ends and the
+   `scope_crossing` naming the scope entered; the prompt takes the host in `local`'s place
+   (§21.1, §21.3) whether `enter link` or `jump` put the session there.
+3. **The session's host follows the place.** `enter`, `follow`, `up`, `back` and `jump` all call
+   `SpatialSessionState::arrive_at`, which moves the geography, the provider bridge and — through
+   `Session::pipeline_context` — the provider registry to wherever the place actually is (§14.4).
+4. **Remote identity does not merge with local** (§43.7, ADR-0169). A remote scope is named by
+   the *link*, never by what the far side calls itself, and its boot identity is honestly unknown;
+   the provider bridge is per host, so its key memory cannot bridge a link; and §27.1 step 4 is
+   now the *current host's* index, so `enter process/1` on `testbox` is not answered with the
+   local pid 1 the index still holds.
+5. **The link map** (§19.1). `ono.link-place/1` is a new contract, and `ono.place-view/1` gains a
+   nullable `links` field, present at the root of a host. A link that is not connected stays in
+   the map with the state that says so.
+6. **A link that is gone is `stale`, never empty** (§35.2, §43.7, ADR-0171). `detach link` keeps
+   its v0.2 meaning and adds one: this session stops *following* the link. Standing on such a
+   host, `look` and `near` ask nothing at all — every exit is withheld `stale` with the link
+   named, the place's `permission` and `freshness` are `stale`. That is not only about age:
+   provider calls fall back to the local registry when no link is reachable, so asking would
+   answer a question about `testbox` with this machine's objects.
+7. **Provenance and confidence on every far-side relation** (§19.4, §11.4). A relationship edge
+   observed across a link carries `Provenance::remote(provider, host, …)`, and so does the
+   declared geography of a linked host — a remote observation is never indistinguishable from a
+   local one.
+8. **The federated map** (§19.3, ADR-0172). `map links` is its own command, `ono.place.map-links`,
+   with the target word §19.3 writes; it draws this host's root beside every linked host's root,
+   joined by `host.linked_to` edges whose confidence is the evidence's — `exact` for a link this
+   session negotiated, `user_declared` for a definition nobody has connected. The default `map`
+   mentions no linked host at all, which is §19.3's other half.
+
+Green from `crates/ono-cli/tests/spatial_remote_missing.rs` — **all thirteen**, none left ignored:
+`should_list_a_linked_host_among_the_places_when_looking_at_the_local_root`,
+`should_give_a_linked_host_a_root_place_distinct_from_the_local_root`,
+`should_announce_the_boundary_in_plain_text_when_jumping_to_a_linked_host`,
+`should_mark_the_remote_host_in_the_prompt_after_a_jump`,
+`should_record_the_host_and_the_scope_crossing_of_every_step_in_the_trail`,
+`should_return_home_to_the_local_root_from_a_remote_place`,
+`should_keep_a_remote_process_place_distinct_from_the_local_one_with_the_same_pid`,
+`should_report_a_place_behind_a_detached_link_as_stale_rather_than_empty`,
+`should_keep_a_detached_link_visible_with_its_state_in_the_link_map`,
+`should_carry_provenance_and_confidence_on_every_relation_that_comes_from_the_far_side`,
+`should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link`,
+`should_not_expand_a_remote_graph_into_the_default_root_map`,
+`should_show_the_linked_hosts_when_the_federated_map_is_asked_for`.
+
+**Two RED tests of this tranche contradict each other, and S7 owns the other one.** ADR-0170 has
+the trace in full. `spatial_remote_missing::should_return_home_to_the_local_root_from_a_remote_place`
+is only satisfiable if `home` does not push the place it left onto the stack `back` walks;
+`spatial_identity_missing::should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_dead_place`
+(still ignored, assigned to S7) is only satisfiable if it does. The two scripts are structurally
+identical — `L → P → home(L)` against `L → T → C → home(T)` — so no rule about `home` alone
+satisfies both. S8 implemented the S8 reading (`Movement::Home.extends_history() == false`, on the
+same argument that already made `back` not a toggle) and recorded the collision. **Whoever
+un-ignores the tombstone test reads ADR-0170 first.**
+
+**What S9 and S10 need from this phase** — the three things:
+
+- **A place's host is `SpatialSessionState::current_scope()`, not `scope()`.** The latter is the
+  machine the shell runs on and never changes; the former is the host the session is standing on.
+  Anything that projects, ranks or signs an observation wants the second.
+- **`crate::spatial::links` is the only place that answers "may I cross this link".** Both
+  `Session::pipeline_context` (which registry answers) and the spatial views (is this place stale)
+  read `links::reachable`. A plugin space or an adapted object that lives on a linked host asks
+  the same function.
+- **The link name is the scope id.** `remote_host:<link>` is the whole identity of a remote scope
+  (ADR-0169), so an adapter or a plugin that wants to place a remote object composes its scope
+  from the link name and nothing else.
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- §19.1's link map has no latency and no "last seen": `12ms` and `last seen 3h ago` are in the
+  spec's own example, and nothing in this build measures either. `ono.link-place/1` carries no
+  field for them rather than a null one nobody fills.
+- §19.4's *genuinely* two-sided cross-host correlation — a connection whose remote endpoint maps
+  to a linked host (§14.5) — is not built. What is built is the honesty requirement that holds for
+  every far-side edge: it says who observed it, from where, and how sure it is. The richer fixture
+  §43.3 asks for needs two hosts with a real connection between them, which an unprivileged
+  offline container cannot make.
+- A neighbour reached by canonical hierarchy rather than by an edge still carries a null
+  `confidence` and a null `provider`: there is no relationship to explain, and §2.6 forbids
+  inventing one. Every neighbour of a *process* has an edge, which is why the §19.4 test passes;
+  a place whose exits are collections would show the nulls.
+- `map links` draws one hop. §19.3's picture has `prod/web01 ----- prod/db01`, a link between two
+  *remote* hosts, which this session cannot observe: it would have to ask `testbox` for its own
+  link table, and nothing in the protocol carries one.
+- Two links to the same machine under two names are two scopes and therefore two sets of places.
+  That is a false distinction rather than a false merge, and §2.17 prefers it — but a session that
+  does it will see the same process twice.
 
 ---
 
+**S7 — live topology, tombstones and the change section — is complete (2026-08-28, agent `S7`).**
+ADR-0178 to ADR-0181 and ADR-0184; acceptance case `docker/acceptance/cases/108-spatial-live.case`
+added (23 assertions, dry-run against the real binary and the real fixtures).
+
+Delivered:
+
+1. `crates/ono-spatial-events` (§45.5) — the change model, §25.3's freshness vocabulary, the
+   §25.4 snapshot comparison, the event merge over the v0.2 watch envelope, and §26's landmark
+   recalculation trigger. It reaches no provider, no terminal and no clock (ADR-0178).
+2. **Tombstones** (ADR-0179). A place becomes one when a provider that was asked about it does not
+   answer for it — and only then: `io.not_found` is the object saying it is gone, every other
+   error is a reading failure, which §35.2 forbids rendering as absence. The index keeps the entry
+   (the identity is what tells a tombstone from a place that never existed), its lifetime closes,
+   and the relationships nobody asserts any more are dropped from both ends. `look`/`near`
+   describe it, `back` arrives at it, `follow` and `enter` refuse with `spatial.destination_gone`.
+   `spatial.tombstone.lifetime` (1m) is what "short-lived" means.
+3. **`map --live`** (ADR-0180) through the v0.2 watch runtime rather than a second one
+   (`ono_command::watch_events`, §2.16). It waits on events, drains a moment before drawing it,
+   re-projects through the still `map`'s own path, and emits only a difference. `live_capable` is
+   now answered rather than assumed; every value carries `live`, `freshness`, `change_source` and
+   the `ono.spatial-change/1` list §45.5 calls the live map update message.
+4. **`look --changes`** (ADR-0181) — the §25.4 comparison against what this session last saw
+   around the place, with §24.3's three distinct answers: `unknown` (no baseline), `empty` (a
+   baseline and no difference), `available` (the differences). It compares the *complete*
+   neighborhood, because comparing the ranked one reports the ranking as change.
+5. **`home` extends the navigation history** (ADR-0184), settling the conflict between
+   `spatial_identity_missing::should_return_the_tombstone_…` and
+   `spatial_remote_missing::should_return_home_to_the_local_root_from_a_remote_place`. §20.1 writes
+   a step for `home` and §2.4 makes every movement reversible, so `back` returns through it.
+   ADR-0170 is superseded on that point; **the remote test's assertions are unchanged** and only
+   the number of `back`s it spends walking its own history moved from two to three.
+
+Green now, all previously `#[ignore]`d — 5 tests:
+
+- `spatial_identity_missing` (4): `should_report_a_tombstone_rather_than_a_live_place_when_the_visited_process_has_exited`,
+  `should_refuse_to_traverse_a_relationship_when_the_place_is_a_tombstone`,
+  `should_never_resolve_a_tombstoned_place_to_a_live_object`,
+  `should_return_the_tombstone_and_keep_the_trail_record_when_back_points_at_a_dead_place`.
+- `spatial_relationships_missing` (1): `should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes`.
+- 20 new crate-level outcome tests: `crates/ono-spatial-events/tests/{snapshot_comparison,event_merge}.rs`
+  (15), `crates/ono-spatial-core/tests/trail.rs` (2), `crates/ono-spatial-index/tests/index.rs` (3).
+
+**Left ignored, with the reason on the test:**
+
+- `spatial_identity_missing::should_distinguish_a_tombstone_from_a_place_that_never_existed` —
+  §40's two conditions are delivered and distinct, and the `gone` half of the test passes. The
+  `never` half asks for two things this increment does not owe, and ADR-0179 §Spec deviation
+  carries both: `enter <target> <identity>` keeps v0.2 §14.3's `resolve.target_not_found` for an
+  identity nothing answers to (`identity_missing::should_refuse_to_enter_a_user_that_does_not_exist`
+  pins `Ono-Sendai-E0102`), and the script's exit status is its last statement's under ADR-0008,
+  while the refused `enter` leaves the place where it was, so the following `look` succeeds.
+- `spatial_interactive_missing::should_keep_the_shell_alive_when_ctrl_c_ends_the_live_map` — it
+  asserts the alternate screen goes on and off around `map --live`, which is **S6's full-screen
+  view**. S7 delivers the live *stream* and the change model; the view that renders it and the
+  key that leaves it are S6's, and the test is theirs to un-ignore.
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- **A TIME_WAIT socket has inode 0, and `ono.socket/1`'s identity is `[inode]`,** so every
+  TIME_WAIT socket on a host reconciles into one place whose label is whichever record was
+  absorbed last. Visible in a live map as a connection node that "appears" carrying an unrelated
+  peer. It is a v0.2 identity contract question (which fields make a socket that socket), not a
+  spatial one — exit test: two TIME_WAIT sockets are two places.
+- An unbounded stream must be bounded and serialised to reach stdout (v0.2 §18.3), and `to json`
+  collects, so `map --live --json | take N | to json` prints nothing at all if it is cut off
+  before the Nth value. A streaming serializer — `to jsonl`, or `to json` forwarding one document
+  per value on an unbounded stream — would make a live view scriptable without knowing in advance
+  how many changes to wait for. Exit test: `map --live --json | take 100` prints its first value
+  before the second arrives.
+- `spatial_map_missing::should_only_remove_{edges,nodes}…` fail on a loaded host and pass on a
+  quiet one: each compares two `ono` runs over the whole process collection, so a process started
+  between them is a node the earlier map does not have. Same family as the cluster-expansion test
+  S5 left; they failed identically on this tree before S7 touched it.
+
+**S4d + S4e — the storage remainder and the configuration behaviour — are complete
+(2026-08-28, agent `S4de`).** ADR-0185 to ADR-0188; gate green; acceptance case
+`docker/acceptance/cases/109-spatial-storage.case` added (25 assertions) and
+**`scripts/acceptance.sh` stands at 74 passed, 0 failed**.
+
+Delivered:
+
+1. **§47 the switch.** `spatial.enabled = false` leaves the typed shell and ordinary commands
+   working and answers every `ono.place.*` verb with `spatial.unsupported` (Ono-Sendai-E1009) —
+   a named refusal a script can branch on, not a command that vanished, which matters because
+   `look` shadows util-linux `look` (ADR-0185). One guard at the point the shell binds a native
+   stage, foreground and background alike. The setting is read from the *live* session settings,
+   not the `spatial.*` snapshot, because it is the one key whose purpose is to be flipped. The
+   spatial side effects of ordinary commands stop with the verbs: `enter <target>` still pushes
+   its v0.2 context frame and no longer moves the place, `cd` no longer synchronises one, and
+   §9.4's completion offers no neighbourhood.
+2. **§33.1/§34 the warm view.** The session remembers what each provider *query* answered and
+   when; a command inside that target's §33.3 lifetime reads it back instead of asking again
+   (ADR-0186). The lifetime is the index's own TTL policy over the kinds of place the target
+   produced, shortest first. `look --json`'s `freshness` is now `cached` when every target was
+   recalled and nothing was asked — §25.3's own word — and stays `polled` where it did ask.
+   Marginal cost of a repeated root `look` in a **debug** build on a loaded machine: ~70 ms →
+   ~44 ms, with no provider asked at all in the repeat. S11 owns the number as a release gate.
+3. **§15.3 the mount boundary as a place.** `ono.place-view/1` carries a nullable `boundary` of
+   the new `ono.mount-boundary/1` — local path, filesystem, source, `remote`, plus `read_only`
+   and the mount's `spatial_id` — every field composed from what `get mount` answered (§2.16),
+   and `ono-spatial-render` prints the block §15.3 draws. `remote` is decided from the filesystem
+   type and the shape of the source, conservatively in both halves (ADR-0187).
+4. **§3.2/§2.18 the crossing.** `movement::crossing_between` asks the two places' own scopes
+   first — a host or a container must not be understated — and only then whether the two paths
+   sit on different mounts, recording a `filesystem` `ScopeBoundary` that does not claim to have
+   left the host. `enter`, `jump` and `up` all go through the one function.
+5. **§15.1 the path tree keeps its shape.** `parent_rules(Directory)` is now
+   `[path.parent, mount.backs_directory]`, with `docs/spec/providers/linux-procfs.yaml` saying
+   the same. §15.1 is unconditional, so the parent of `/mnt/backup` is `/mnt`; the mount is
+   where the path tree runs out (`/` has no directory above it), which is where §15.2's
+   MOUNTS -> DIRECTORY ROOTS meets the Unix tree. Recorded as a **spec deviation** in ADR-0187.
+6. **§15.4 the directory place.** Children are hierarchy, not a relation (§3.4):
+   `SpatialIndex::path_children` is the reverse of `set_path_parent` and the neighbourhood puts
+   them first. The **read is whole and the view is bounded** — a 400-entry directory counts four
+   hundred, shows eight and says "392 more not shown" (ADR-0188). `storage::observe_place_at` is
+   the one seam every path spelling reaches: the object, the mount table, and the enclosing
+   directory — which is what makes **`up` from a file** reach it, the gap S4c left open.
+
+Green now, all previously `#[ignore]`d — 14 tests:
+
+- `spatial_storage_missing` (3, the suite is now fully green):
+  `should_show_the_source_device_and_filesystem_when_the_place_is_a_mount_boundary`,
+  `should_record_the_boundary_crossing_when_traversing_from_the_root_into_a_mounted_directory`,
+  `should_summarize_a_large_directory_instead_of_enumerating_it` — the last of which passed
+  before because nothing was ever read, and passes now because a bound was applied.
+- `spatial_contracts_missing` (7): `should_keep_the_typed_shell_working_when_the_spatial_layer_is_disabled`,
+  `should_answer_repeated_looks_far_inside_the_look_budget`, and **five S4 tests that were
+  delivered by S4b/S4c and left `#[ignore]`d by mistake** — `should_refuse_to_go_back_or_up_from_the_root_with_a_named_spatial_error`,
+  `should_start_every_session_at_the_local_system_root`,
+  `should_keep_a_scripts_navigation_out_of_the_callers_place`,
+  `should_keep_the_trail_session_local_while_a_pin_survives_the_session`,
+  `should_resolve_repeated_observations_of_one_object_to_the_same_spatial_id`.
+- `spatial_navigation_missing` (2, the suite is now fully green):
+  `should_stream_neighbors_that_compose_with_the_pipeline_when_near_runs_in_a_script`,
+  `should_keep_running_external_commands_when_spatial_navigation_has_happened`.
+- `spatial_topology_missing` (1, the suite is now fully green):
+  `should_follow_the_parent_relation_from_a_discovered_process_to_its_spawner` — its `#[ignore]`
+  said "un-ignored by the increment that delivers `trail`", and S4c delivered it.
+
+Each of the eight late un-ignores was run twice on its own before the ignore was removed.
+
+**Still ignored across the nine spatial suites at this commit — 6 tests, none of them S4's**
+(S7's tombstones and S8's remote federation landed in the integration between S4d's work and its
+rebase, and un-ignored the rest):
+
+| Suite | Test | Owed by |
+|---|---|---|
+| contracts | `should_keep_a_package_relation_out_of_the_map_until_its_capability_is_granted` | S9 |
+| contracts | `should_carry_the_contributing_package_as_the_origin_of_every_plugin_edge` | S9 |
+| contracts | `should_reconcile_an_adapted_object_with_its_native_twin_into_one_place` | S10 |
+| contracts | `should_never_let_raw_command_output_become_a_place` | S10 |
+| identity | `should_resolve_the_adapter_view_and_the_native_view_of_one_process_to_one_spatial_id` | S10 |
+| identity | `should_distinguish_a_tombstone_from_a_place_that_never_existed` | S7 |
+
+`spatial_storage_missing`, `spatial_navigation_missing`, `spatial_topology_missing`,
+`spatial_map_missing`, `spatial_relationships_missing`, `spatial_remote_missing` and
+`spatial_interactive_missing` carry no `#[ignore]` at all.
+
+Two of the S9/S10 tests pass when run with `--ignored`. They were left alone on purpose: a test
+that passes because the condition it describes cannot arise yet is not delivered, and S9/S10
+should be the increments that decide it.
+
+**Found, not fixed, and deliberately outside this increment:**
+
+- ~~`… | select <field> | to text` refuses with `Ono-Sendai-E0201`~~ — **fixed by S11a**
+  (`fix(data)`): a record `select` has narrowed to one field is that field's line, and
+  `get mount | select target | to text` prints one path per line. `--field` still projects a
+  dotted path or one field out of a full record, and a record of several fields is refused
+  exactly as before.
+- `spatial_map_missing::should_only_remove_{edges,nodes}_…` failed about one gate run in three
+  here, as S6 already recorded; they are green with `--test-threads=1`. **A gate run on this
+  machine now needs `RUST_TEST_THREADS=1` to be reliable**, and that is a fixture problem in
+  those two tests, not a harness one.
+- **`ono-sendai:acceptance` is one image tag shared by every worktree.** A concurrent
+  `scripts/acceptance.sh` in another worktree overwrites it, and a later `--no-build` run then
+  tests the *other* agent's binary — which cost an hour here before it was spotted. Set
+  `ONO_ACCEPTANCE_IMAGE=ono-sendai:acceptance-<agent>` while several agents share a machine.
+- `options_and_selectors_missing::should_trace_nothing_else_when_no_connection_has_the_requested_remote`
+  fails whenever *something else on the machine* holds a socket to 192.0.2.1 — a sibling
+  worktree running `test port 192.0.2.1 443` does exactly that, and the connection stays
+  `syn-sent` for two minutes. The test's premise ("this machine holds no connection to it") is
+  the thing that broke, not the shell. It is green on an idle machine.
+- §15.4's other optional neighbours are not delivered and say so rather than showing zero:
+  `open-by processes` needs an `lsof`-shaped provider, `owned-by users` is an expensive relation
+  nobody has asked to load, `changed recently` is a snapshot difference (§25.4).
+- §8.2 clustering of directory entries — grouping them by kind or by name instead of counting
+  them — is the next increment on top of ADR-0188; the field it would fill already exists on
+  `ono.map-cluster/1`.
+- An object place (a process, a socket, a directory) still expands its relationship providers on
+  every `look` and honestly says `polled`. Caching relationship edges is a later increment with
+  its own test; §34.1's background discovery needs the update channel S7 builds.
+
+**S11 — release hardening: the ten §44 acceptance scenarios — is complete (2026-08-28, agent
+`S11a`).** The ten `docker/acceptance/cases/09x-spatial-*.case.v04` files are renamed to `.case`
+and the referee runs all 87 cases green, twice in a row. Ten commits, gate green:
+
+| Commit | What it fixes | Proof |
+|---|---|---|
+| `fix(data)` | `… \| select f \| to text` refused a record `select` had narrowed to one field | `to_text` renders a one-field record; exit test `get mount \| select target \| to text` |
+| `fix(spatial)` collections | a collection said `unsupported` while the index held its members (ADR-0197) | `spatial_contracts_missing::should_show_a_place_only_an_adapter_observed…` |
+| `fix(spatial)` permission | a denied path was reported as missing, and an unreadable directory became the cwd (ADR-0198) | `spatial_identity_missing::should_refuse_a_path_this_user_may_not_read…` +2 |
+| `fix(spatial)` paths | `enter /srv/app/..` made a cycle in the path tree and the next `look` overflowed the stack (ADR-0199) | `spatial_storage_missing::should_stand_in_the_directory_a_path_names…`, `ono-spatial-query::resolution::should_answer_a_place_path_rather_than_looping…` |
+| `fix(spatial)` evidence | an edge said who observed it and never what they saw (ADR-0200) | `spatial_relationships_missing::should_carry_the_raw_evidence_of_an_edge…` |
+| `fix(spatial)` find | `find place --where` read the providers and not the index (ADR-0201) | `spatial_contracts_missing::should_find_a_place_by_its_properties…` |
+| `fix(spatial)` find record | a search result left `state` and the §24.1 summary null where `look` filled them | `::should_describe_a_search_result_and_a_place_view_with_the_same_record` |
+| `fix(spatial)` relations | a relation §32.1 declined for cost was reported as one nobody serves | `spatial_relationships_missing::should_say_a_costly_relation_is_unknown…` |
+| `fix(shell)` cwd | `cd` did not move the process, so `find file .` walked the launch directory | `builtins::should_change_the_directory_a_native_command_sees_when_cd_has_run` |
+| `fix(spatial)` denial | a map of a denied place called itself `complete`; `find --near <path>` never reached the filesystem | `spatial_identity_missing::should_not_call_a_map_complete…`, `::should_refuse_a_search_anchored_on_a_path…` |
+| `feat(spatial)` listeners | §13's `listeners` group was missing from a service place | `spatial_relationships_missing::should_offer_the_listeners_of_a_service…` |
+
+ADRs: 0197 (a collection shows the places it holds), 0198 (denied is not missing), 0199 (one
+directory however the path spells it), 0200 (an edge carries what the provider saw), 0201 (`find`
+searches the index too).
+
+**Found by S11a, not fixed, and recorded rather than faked:**
+
+- **A tombstone's `replacement:` candidate (§10.3's example, §40's "actionable next steps") is
+  never computed and answers `null`.** The field is on `ono.spatial-place/1`'s `tombstone` record
+  and `Tombstone::replaced_by` exists; nothing calls it. It cannot be answered at the moment the
+  old place ends: the source of the relation that reached it — the unit that controlled the
+  process — has not been observed again, so the index holds no candidate to name. Two honest
+  routes: re-observe that one source when a tombstone is rendered (a targeted query, not an
+  enumeration), or fill the tombstone lazily when a later observation records an edge from the
+  same source by the same relation to a live object of the same kind. Offer a candidate only when
+  that source reaches **exactly one** such object — a choice among several is a guess, not a
+  candidate (§2.17, §53). Exit test: after the §44.7 restart, `look --json` at the tombstone
+  carries `tombstone.replacement` equal to the new process's `spatial_id` and
+  `replacement_via` naming `service.controls_process`; `docker/acceptance/cases/096-…` `44.7e`
+  then asserts it instead of what it asserts now.
+- **`enter process <pid>` answers `spatial.not_found` for a process started with `setsid`.**
+  **Corrected by S11b: this does not reproduce — the report's `$!` is `setsid`'s own pid, and
+  `setsid` exits at once. See the S11b section below.** As reported:
+  Reproducible: `setsid sleep 60 & ono -c "enter process $!"`. The same pid entered without
+  `setsid` resolves. A session leader in its own session is an ordinary process and §12 makes it
+  a place; the selector or the provider query is filtering on something it should not. Exit test:
+  a `setsid`-started process is enterable by pid.
+- **Two gate runs in a row went red on tests whose premise the machine broke, and green on the
+  next.** `spatial_topology_missing::should_complete_the_relations_available_from_the_current_place_when_tab_follows_follow`
+  waits 8 s for the completion after a walk it recognises by its own *echo*, so a busy host makes
+  it wait for a walk that has not run yet — S6's note about it is exact and still true.
+  `::should_show_the_mounts_the_mount_provider_answers_for_when_entering_storage_mounts` compares
+  the mount table two `ono` processes saw, and the acceptance containers running beside it were
+  mounting and unmounting overlayfs between the two. Both are green on an idle machine and both
+  are premises about the host rather than claims about the shell. Neither is worth weakening; the
+  first would be sound if it waited for the *place* rather than for the echo.
+- **`ono.socket/1` gives a listener and its accepted connection the same `follow socket` word.**
+  §12's "`follow socket :443` MUST traverse to the matching socket" is served, and bare
+  `follow socket` on a process holding both is `spatial.ambiguous_selector` — correct, and worth
+  knowing before writing a case that assumed one socket.
+
+**S11b — the rest of v0.4 §52: budgets, evidence, the security review, dogfooding and the
+checklist — is complete (2026-08-28, agent `S11b`).** Eight commits, gate green on each; the
+container ran the new case on image `ono-sendai:acceptance-s11b`.
+
+| Commit | What it delivers |
+|---|---|
+| `test(spatial)` | the racy half of `should_complete_the_relations_available…` — it read until `parent` was on screen and then asserted `user` in the same breath, which is why the board carried it as "fails under parallel load" |
+| `fix(spatial)` | a map filter narrows the bounded map instead of re-selecting it (ADR-0202) |
+| `test(spatial)` | the §43.5 renderer snapshots at 40/80/120/200 columns, and §34's 16 ms frame budget at a real PTY |
+| `docs(decisions)` | ADR-0203, the spatial enumeration review: ADR-0015's table extended with seven rows, each naming a passing test |
+| `test(xtask)` | `xtask/tests/spatial_evidence.rs`, the guard that keeps §4.7 from rotting |
+| `test(acceptance)` | `docker/acceptance/cases/100-spatial-performance-budgets.case`, the §34 budgets at their real figures |
+| `feat(help)` | `help spatial` (§38.1, a MUST that was missing), found by dogfooding |
+| `docs` | `docs/dogfood/v0.4-2026-08-28.md`, and §4.7 ticked from the evidence |
+
+**The §34 budgets, measured in the container on the §43.3 fixtures.** None is violated, so no ADR
+documents a violation:
+
+| Budget (§34) | Measured |
+|---|---|
+| interactive startup to usable prompt < 150 ms | 0 ms over `bash` under the same `script(1)` harness (272 ms both) |
+| basic `look` local cached < 50 ms | 178 µs per repetition |
+| `near` cached < 50 ms | 343 µs |
+| map L0/L1 cached < 100 ms | 334 µs |
+| map L2 ordinary host < 250 ms | 472 µs |
+| search common indexed objects < 100 ms | 1 803 µs |
+| focus/navigation in a rendered map < 16 ms/frame | 88 µs median at a real PTY (slowest 386 µs) |
+| §34.1 discovery does not block the prompt | unchanged at 0 ms with 200 extra processes and a 20 000-entry directory |
+
+The startup figure is measured **against a baseline of the same harness running `bash`**, because
+`script(1)` costs about 270 ms of its own in that image — `bash` under it takes as long as `ono`
+does, to the millisecond — so an absolute figure would be a measurement of the harness. A whole
+non-interactive `ono -c true` run takes 18.5 ms there.
+
+**Found by dogfooding (`docs/dogfood/v0.4-2026-08-28.md`), one fixed, the rest under *Next up*.**
+The honest verdict on §52.3's statement is in that file: it holds for orientation and hierarchy
+and breaks at the first permission boundary, because a group the provider answered `null` for is
+rendered as `0` rather than as unknown.
+
+**Two entries on this board are closed by S11b's own evidence:**
+
+- **The bounded/filtered map defect is fixed** (ADR-0202). It now has a deterministic reproducer
+  rather than a host-dependent one: `ono-spatial-query::properties::should_keep_every_node_and_edge_a_filter_left_alone_and_invent_none`
+  is red at seed 1 on the old projection.
+- **"`enter process <pid>` cannot reach a process started with `setsid`" does not reproduce.** Its
+  reproducer — `setsid sleep 60 & ono -c "enter process $!"` — records `setsid`'s own pid, and
+  `setsid` forks and exits immediately, so the pid looked for belongs to a process that is gone.
+  Started properly (`setsid tail -f /dev/null &`, then the child's real pid) `find place --type
+  process --where pid == <pid>` finds it and `enter <pid>` enters it. No defect; the entry is
+  removed.
+
+**One thing S11b made slightly worse and did not hide.** The interactive suite gained a
+thirteenth PTY test (the frame budget), and one full-workspace gate run then failed
+`should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`, whose 8 s
+budget for closing a full-screen map of COMPUTE (500 processes) is tight when several PTY
+sessions run beside it. The file is green four runs in a row on its own and green on the
+following full gate. It belongs to the same family as the two host-premise flakes S11a recorded,
+and the fix is theirs: wait for the *place*, not for a byte count.
+
+**S11c measured that family and closed it.** The picker test joined it:
+`spatial_interactive_missing.rs::should_open_a_picker_and_make_the_choice_current_when_a_selector_is_ambiguous`
+failed roughly one run in four **with and without** that session's changes — four runs at
+`079aa98` gave one failure, three runs with the working tree on top gave one — so it was a
+premise about the host, not a claim about the shell, and two full gate runs in a row died on it
+and on the resize test. A referee that fails one run in two is not a referee (AGENTS.md §14), so
+the premise was fixed rather than the flake tolerated: `BUDGET` and `STARTUP` in that file are
+**liveness bounds, not performance assertions** — they exist so a screen change that never comes
+fails instead of hanging — and they are now 45 s and 60 s. No assertion changed, and the file
+still finishes in 14.7 s, because a bound that is never reached costs nothing. The §34 figures
+are asserted where they belong and are untouched:
+`::should_repaint_a_focus_move_far_inside_the_frame_budget_when_the_map_is_open` (16 ms per
+repaint) and `docker/acceptance/cases/100-spatial-performance-budgets.case`.
+
+What that leaves standing is the observation underneath, which is about the shell and stays on
+this board: **opening a full-screen map of COMPUTE on a 500-process host is unresponsive while
+one whole projection is in flight**, which §34.2's view budget will eventually have to answer for.
+
+A fourth member of the family, same treatment:
+`spatial_remote_missing.rs::should_refuse_to_jump_to_a_hostname_that_is_not_a_known_link` gave the
+run ten seconds to refuse `jump prod/web01.invalid`, and the refusal costs eight of CPU in a
+debug build on this host — measured at 10.02 s on `76adb95` and 8.6 s with S11c's changes, so it
+was the machine it raced, not a resolver. What proves nothing was dialled is the error name
+(`spatial.not_found`, never a resolve or connect failure); the budget is only the hang guard, and
+it is 60 s now.
+
+
 ## Next up (ordered)
 
-- [ ] **The v0.4 enhancement specification is unimplemented.**
-  `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` (3835 lines, "Spatial Systems
-  Interface") arrived on `main` on 2026-08-27, after the v0.3 tranche was complete. It is
-  checksummed and enumerated in AGENTS.md §2/§5.2, so the gate covers it, and nothing in the
-  0.3.0 release implements it. Starting it means the loop of AGENTS.md §7 from the top: read
-  §0 (relationship to the earlier specs) and §2 (core spatial invariants) first, decompose into
-  increments, write the RED suites — a tranche the size of the v0.3 one, not a follow-up.
-- [ ] Inside a link frame `get link` is sent to the other side (spec §14.4) and lists the
-  remote agent's empty link table, so `get link | detach link` cannot be spelled from inside the
-  link it would detach (seen while writing ADR-0118's detach case). Decide whether `get link`,
-  `get job`, `get context` always describe *this* session — exit test: `link host x; enter link
-  x; get link | count` answers 1
-- [ ] **Found by the wiki verification pass (2026-08-27), each reproducible with `ono -c`**
-  ((1)–(4) fixed, see *Done*): (5) `diff` of two fresh provider snapshots
-  of the same object reports `changed` (user, group, file, mount, service) although nothing
-  changed — volatile fields need excluding from the comparison — exit test: a data case;
-  (6) `get process <gone-pid> | count` prints E0301 *and* `VALUE 0` with exit 0; `each {
-  restart service @ }` drops the ActionResult rows; `get log`'s example `where level >=
-  error` compares strings alphabetically (level should order as severity); cosmetic:
-  `trace group root` → "command not found: trace", `get interface lo | stop interface` refuses
-  the piped record, `get config --problems | select code` fails, the E0701 bulk message has
-  runs of spaces, `trace connection --remote` without selector prints an empty name
-- [ ] One label rule for an object: `ObjectRef::of` (first default-view column outside the
-  identity — a mount's source device, a service's state) and `ono_graph::label_of` (a form per
-  schema — the mount point, `nginx.service`) disagree, so a resolved selector's ActionResult
-  row and a piped record's read differently for the same object (ADR-0088 §4, ADR-0116) —
-  exit test: `unmount filesystem /` and `get mount / | unmount filesystem` render the same
-  `target`
-- [ ] `select error.name` on an `ono.action-result/1` row yields the whole `ono.error/1` under
-  the key `name` instead of the string — a dotted path does not descend into an error value
-  (seen while writing case 042; the case selects `error` whole instead). Reproduce:
-  `unmount filesystem / | select error.name | to json`. `fix` candidate in `ono-command`'s
-  `select`. Exit test: a `data_missing`-style outcome test on the projection.
-- [ ] `unmount filesystem <dir>` for a directory that is no mount point answers E0301 with the
-  seam's wording "no filesystem answers to target …" (ProviderMutation resolving the `filesystem`
-  target); the provider's own "nothing is mounted at …" only reaches piped input. Cosmetic;
-  the code is right (ADR-0098 §1).
-- [ ] Acceptance case 049 (`a remote link answers from the other side, visibly`) ended with
-  exit 129 (128+SIGHUP) three times in full-suite runs on 2026-08-27 while five agent builds
-  loaded the machine, and passes alone and through the harness in isolation: `exit` with a live
-  link races the hangup `script` sends when its piped stdin reaches EOF. Confirm under low load;
-  if it recurs, make link teardown at exit not wait on the agent — exit test: the case green in
-  three consecutive full runs
-- [ ] `read file` streams a large file as several `bytes` values instead of one whole-file
-  value (ADR-0083 §3 defers chunking) — exit test: a files case reading a file larger than the
-  pipeline's chunk size through `| count`
-- [ ] `tail file` through inotify instead of the 100 ms poll (ADR-0083 §3) — exit test: the
-  existing follow test with the poll interval removed
-- [ ] `explain remove file *.txt` shows the resolved target count of the plan (ADR-0081) —
-  exit test: an explain case inside a scratch directory
-- [ ] `--preserve` timestamps on a directory copied with `--recursive` (`set_times` needs a
-  writable handle; directories are skipped today, ADR-0082 §6) — exit test: a files case
-  comparing `modified` of the copied tree
+**Rebuilt from evidence on 2026-08-29 (agent `triage`), and reconciled with the tree at
+`b904327` on 2026-08-29 (agent `STATE-recon`).** The triage pass was written against `ed923ee`.
+The fifty-nine commits between `ed923ee` and `b904327` closed **fifty-five** of its boxes and were
+never written back, because the agents that produced them were deliberately kept out of this file
+so they would not collide in it. Everything they closed now stands under *Done, reconciled* below
+with the commit and the proof; what stands here is what a reproduction against the built binary,
+or a check of the named evidence, still finds open at `b904327`.
 
-- [ ] network write paths, privileged conformance — ADR-0088 delivers the nine mutations and
-  proves only the unprivileged refusal; a root run in the container (`add route … --dry-run`,
-  then a real add/remove on a dummy interface and its removal) should prove the request layouts
-  against a live kernel — exit test: a new case under `docker/acceptance/cases/` run with
-  `CAP_NET_ADMIN`.
-- [ ] `resolve dns --server <ip>` — refused as provider.unsupported (ADR-0087 §1); needs a DNS
-  client (UDP/TCP query builder and parser) beside the system resolver.
-- [ ] `select error.code` on an ActionResult row projects the whole error under `code` rather
-  than the code string: reading a field *of* an error value (`FieldAccess::Failed`) yields the
-  error — decide whether an `ono.error/1` field is navigable as a record (spec §10.5 keeps
-  "could not read" apart from data, but the row's `error` *is* data).
-- [ ] `explain get process` inside a frame prints the narrowed spelling (`get process 1`,
-  `get process --user root`) — ADR-0023 promised it, ADR-0076 made the arguments available —
-  exit test: a context.rs case explaining inside `enter process 1`
-- [ ] `watch` composes `producer::ambient_selector` into its query on top of the narrowed
-  arguments of ADR-0076 §5; move it onto the argument seam and delete the query-level form —
-  exit test: a watch.rs case inside `enter process 1` (watch family)
+Method of the reconciliation, per box: find the evidence the entry names, check it exists at HEAD
+and says what the entry claims, and — wherever the behaviour is observable from the command line —
+run it against `target/debug/ono` and read the real answer. Nothing below was decided by reading
+source alone. Two by-products of the sweep, both reported rather than fixed here:
 
-- [ ] `to bytes --field body` refuses a record ("a record has no raw byte form") although
-  `--field` names the one bytes field to emit — the natural way to write an adapted `curl`
-  body to a file (`adapt curl url | to bytes --field body > page.html`) — exit test: a
-  data_codecs case emitting one bytes field verbatim
-- [ ] `explain` resolves a head by the registry alone, so `printf x | sort` is planned as
-  `ono.data.sort` while the executor runs `/usr/bin/sort` (ADR-0028); the plan must use the
-  executor's resolution — fixed with ADAPT-002, which needs it anyway (ADR-0052) — exit test:
-  a builtins.rs case explaining `printf x | sort`
-- [ ] A `SIGPIPE`d stdout (`ono -c '… | to json' | head -c 100`) reports io.permission_denied
-  where every other shell exits quietly — treat EPIPE on stdout as normal termination — exit
-  test: a cli case piping into head
-- [ ] `sort` over a stream of scalars requires a key; identity should be the default key so
-  `from json | sort` works on numbers — exit test: a transforms case
-- [ ] Registry integration of contributions with origin `plugin(id, version)` (§31.64) so
-  `get command` answers for a lazily loaded package; `always` grants and leases persisted under
-  spec §31.19's policy store; `--scope`/`--duration` on `grant capability` — exit test: a
-  plugins case granting with a scope and reading it back in a second session
-- [ ] Phase H remainder: agentless mode (spec §21.3), trust-store location + first-contact key
-  UX for a future authenticated transport (F12 rides along: TrustPolicy::Required records an
-  unknown key — TOFU — where ADR-0015 T5 wants refusal; decide when the TCP transport exists,
-  since both current transports are Unauthenticated-by-name per ADR-0037), eager surfacing of
-  remote watch refusals — ADR-0036/0037 carry the details
-- [ ] Phase I remainder (ADR-0040): wasm-component tier, objects/streams/views/models host
-  domains, install/verify/signing, on-disk state + migrations, hot reload, binary frame encoding
-  (a `perf` increment)
-- [ ] Remaining `*-event/1` schemas (container, link, host) — each un-deferred as its watch is
-  exercised; service, socket, interface, route, mount, file, user and group are written
-  (ADR-0034, ADR-0078..0080) — exit test: a watch case per target
-- [ ] `trace mount` propagation peers (storage.yaml promises them; ADR-0079 leaves them out
-  until a peer group has an object to stand for it) — exit test: a storage case over a bind
-  mount with `shared:` in mountinfo
-- [ ] `watch file` through inotify and `watch interface|route` through the rtnetlink multicast
-  groups, switching `source` to `subscription` (ADR-0078, ADR-0080) — exit test: a file
-  created between two polls arrives before the next poll would
-- [ ] `kill %N` for a native job (today: `fg` then Ctrl-C collects it) — exit test: a
-  jobs_native.rs case
-- [ ] Provider-native subscriptions (netlink, D-Bus signals) switching `source` to
-  `subscription` (ADR-0034) — exit test: a watch.rs case against a subscribing fixture
-- [ ] Retained results and secrets: spec §17.5 policy must reach the retention of §20.2
-  (ADR-0033 consequences) — exit test: a redacted field stays redacted in `@-1`
-- [ ] Provider options are silently ignored (`get process --user root` answers everything):
-  audit every declared option against what providers honour, then make ignoring impossible the
-  way selectors now cannot be ignored — exit test: a conformance case per optioned command
-- [ ] `--name=value` in expression mode — ADR-0032 pairs an option with the following
-  expression; the `=` spelling stays words-only until an increment adds it — exit test:
-  a parse_expressions case for `reduce $acc + @ --initial=10`
-- [ ] JSON object key order is alphabetical, not schema order (ADR-0030) — enabling
-  serde_json `preserve_order` reorders the protocol too; decide and pin — exit test:
-  data_codecs asserting §33.5 field order
-- [ ] Surface `ono-pipeline` `Diagnostics` counters (`excluded_unknown`, `skipped_null`) to the
-  user; ADR-0029 chose silence over an unread field — exit test: a case showing the count
-- [ ] Streaming the byte carry across a native/external join (ADR-0028 buffers it) — exit test:
-  `find / | from text | take 1` answers before the walk finishes
-- [ ] Backgrounding a pipeline with native stages (ADR-0028 defers it) — exit test: `get process |
-  count &` becomes a job `fg` can resume
+- **Every test function named anywhere in this file exists in the tree** — 273 distinct names,
+  cross-checked against the 2 607 `fn should_*` in `crates/` and `xtask/`. So does every test and
+  every acceptance case named in `docs/ACCEPTANCE.md` (168 names, 143 ticked boxes, no dangling
+  reference).
+- **Eight acceptance cases named by ticked boxes in the §37 phase lists did not exist**, and never
+  did: they are the pre-implementation planning names. `028-prompt-shows-context` is really `029`,
+  and C2–C8's seven `0NN-<target>-provider` cases are really `037`–`046` under other names. The
+  capabilities are all covered; the boxes now name the case that covers them.
+
+Baseline: workspace suite at `ed923ee` — 2 572 passed, 1 failed, 0 ignored (that one failure is
+B-prov-1, closed since by `4e53ee4`); 96 containerised cases in `docker/acceptance/cases/`;
+`release-check: the shell is release-ready` last printed at `21b37d9`.
+
+| Class | Meaning | Boxes |
+|---|---|---:|
+| **C — open, large** | a spec requirement that is its own tranche; four have an agent on them now | **7** |
+| **B — open, small** | a concrete defect with a reproduction and an exit test | **5** |
+| **closed since `ed923ee`** | listed under *Done, reconciled* with the commit that closed it | **55** |
+
+---
+
+### Class C — open and large (one tranche each)
+
+Four of the seven have an agent working them right now (see *In progress*). Their entries below
+describe the tree at `b904327` — **not** what those agents have reached, which this board does not
+know and must not claim.
+
+- [x] **C-1 — the generated provider conformance suite (spec §35.3, phase C9)** — done
+  2026-08-29, `33b6e10` + `a595c4f` + `81edc7c`, ADR-0331 (supersedes ADR-0248's decision *not* to
+  build the generator; its "a box claiming a generation must name a generated path" rule stays and
+  now accepts this output). `cargo xtask conformance` generates
+  `crates/ono-cli/tests/provider_conformance.rs` from `docs/spec/providers/*.yaml`,
+  `schemas/*.v1.yaml`, `capabilities.yaml` and `commands/*.yaml`; `spec-check` regenerates and
+  fails on drift. **87 generated tests over 18 provider entries, 30 schemas and 35 targets**,
+  where 4 providers and 2 schemas were covered before. The assertions live beside the generated
+  file in `tests/conformance_harness/mod.rs` — a 1600-line generated file with assertions inside
+  is a file nobody reads. Generation **refuses rather than emitting a hole**: an unexercised
+  target, an unknown exercise word, or a capability reaching neither a snapshot nor a command each
+  stop it. The declarations gained a `conformance:` block, because how a bare snapshot behaves is
+  not derivable from anything else. `docs/ACCEPTANCE.md` §4.1 C and D say "generated from" again,
+  and it is true now. Four contract violations found by the new suite and fixed in `81edc7c`.
+
+- [ ] **C-2 — the §35.6 fuzz targets.** There is still no `fuzz/` directory and no `cargo-fuzz` /
+  `libfuzzer` reference in any manifest. Seeded property and robustness suites stand in and are
+  what `docs/ACCEPTANCE.md` §4.4 ticks: `ono-parser/tests/robustness.rs`,
+  `ono-value/tests/{codec_fuzzing,codec_properties}.rs`,
+  `ono-protocol/tests/{fuzz_protocol,framing}.rs`,
+  `ono-provider-netlink/tests/malformed_messages.rs`, the kuang garbage/oversize/misframe cases,
+  and the seeded generator `ono-testkit/tests/fuzz_support.rs`. **No ADR records the
+  substitution, and ADR-0245 standing rule 3 says the opposite** ("A decoder without a fuzz
+  target is not finished"), so this is an undocumented deviation. **Scale:** either an ADR
+  recording the substitution (1 increment) or five `cargo-fuzz` targets, a corpus, and a CI
+  budget; `xtask::scan::rust_sources` walks a top-level `fuzz/` and, since `80c8cb7`, is pinned by
+  a fixture that proves it would — ~4 increments.
+- [ ] **C-3 — agentless mode (spec §21.3, phase H3).** `--agentless` is parsed and *visible*
+  (`remote_missing.rs::should_keep_the_agentless_mode_visible_in_the_link_table`, case `044`'s
+  `[{"mode":"agentless"}]`), but `crates/ono-cli/src/context.rs:615` still says it plainly: "this
+  build has no agentless provider — served by the agent until the fallback exists", and
+  `establish()` has two transports, both spawning `ono --agent`. ADR-0037 §6 states "This is not
+  spec §21.3 agentless mode". **What it takes:** a probe in `establish()` that falls back rather
+  than failing; a reduced provider set answering plain POSIX over `ssh <host> <cmd>` decoded by the
+  v0.3 adapter layer; `Availability::Unavailable(reason)` per target the reduced set cannot
+  answer, so "visibly reduced" is structural and not a string; `explain` and `get link` reading
+  the real reduced set; an acceptance assertion that a target available under the agent is
+  honestly refused under agentless. **Scale:** `ono-remote` + `ono-cli` + `ono-adapter`,
+  ~5 increments.
+- [ ] **C-4 — the rest of KUANG/11 (spec §31, ADR-0040).** Three things, down from four:
+  (a) **isolation** — `ono-kuang-supervisor/src/supervisor.rs:140` is a bare `Command` with piped
+  stdio; a grep of the crate for `setrlimit`, `seccomp`, `cgroup` and `unshare` finds nothing, and
+  the manifest's `memory_max`/`cpu_budget` are parsed and never enforced. (b) **the
+  wasm-component tier** — `RuntimeKind::WasmComponent` exists in `manifest.rs:47` and is never
+  spawned; `native-process` is the only tier. (c) **ten of the sixteen host API domains of
+  §31.12** — objects, schemas, commands, relations (as host calls), views, context, history,
+  network, process, secrets, models are absent, and streams/filesystem/state/clock are partial.
+  **(d) is closed:** grants, leases and the audit trail now survive a session
+  (`a5be21b`, ADR-0264/0265 — `<config>/kuang/policy.yaml`, `<state>/kuang/audit.jsonl`).
+  **Scale:** still the largest remaining tranche; ~3 crates, 8+ increments, and it is what
+  §31.74's conformance suite would have to grow to cover.
+- [ ] **C-5 — package signature verification (spec §31.9, §31.36).** `verify plugin` still always
+  answers `signature: absent` (`kuang_host.rs:1167`) and case `045` asserts exactly that.
+  `KuangErrorCode::PackageSignatureInvalid` (K11004, `ono-kuang-protocol/src/error.rs:68`) is
+  defined and **constructed nowhere**. There is no signing key handling, no detached-signature
+  parsing, no trust root; the workspace has no crypto dependency beyond `sha2` for the content
+  digest. **Scale:** a signature format decision (ADR), a verifier, a trust root,
+  `ono-kuang-protocol` + `ono-cli`, ~3 increments.
+- [ ] **C-6 — `ono-model-broker` (spec §31.12, phase I11).** The crate does not exist. **Designed
+  2026-08-29 by `close-last`; no file written.** The design is the resume point:
+  - **Surface today stays honest.** `session_provider.rs:178` answers `assistant | model | finding`
+    with an empty list; the operator writes the config, and no file means `[]`.
+  - **The contracts are already complete and normative**, which is most of the design:
+    `docs/spec/schemas/model-provider.v1.yaml`, `docs/spec/kuang/assistants.v1.yaml`
+    (`model_broker_protocol: ono-model/1` — *named* and undefined, so defining it is the tranche's),
+    `capabilities.v1.yaml`'s `model.infer` with scope keys `providers` (broker-enforced) and
+    `data_class` (explicitly **advisory** — must be labelled as such everywhere), and `K11601`
+    `model.provider_unavailable` / `K11602` `model.policy_denied` in both error registries.
+  - **Approval composes, no second vocabulary** (this is the ADR §31.12 asks for first): operator
+    approval for inference **is** a `model.infer` grant with `--scope providers=…` and
+    `--duration`, exactly as ADR-0264–0268 built it. §31.82's privacy plan is a *disclosure* shown
+    before the first remote inference, not a second prompt — separating "who approved" (the grant)
+    from "what leaves" (the plan) is what keeps one vocabulary.
+  - **Transport:** a `command` transport only — the operator configures an executable speaking
+    `ono-model/1`, one JSON document in, one out (structured, never scraped, the discipline of the
+    adapters and the remote agent). No HTTP client, so nothing untested ships. A `kind: remote`
+    provider is a local bridge process; `kind` declares *where* inference happens, which is what
+    the data policy hangs on.
+  - **The structural guard for "no LLM in a privileged path":** `ono-model-broker` takes an
+    already-decided `Grant` as a parameter, has no function returning a grant or a decision, and
+    does not depend on the policy crate — so no model output can sit between a check and the
+    operation it guards. Provable by the fixture `assistants.v1.yaml` itself names: an answer whose
+    text demands an escalation changes no grant and is audited.
+  - **Shape, 3 increments:** (1) contracts + crate + `get model` reading a real catalogue at
+    `<config>/kuang/models.yaml`, sibling of ADR-0265's `policy.yaml`; (2) `models.list` /
+    `models.infer` in `ono-kuang-protocol::method` and `supervisor::dispatch_host_call`, gated
+    through the existing `broker_check`, with `kuang-example-plugin` gaining the calls as it
+    already has `read-file` for `filesystem.read`; (3) privacy plan, prompt-injection fixture,
+    acceptance case 190.
+  - Resume in `../ono-sendai-wt-last` on `close-last` at `37ce5c3`; ADRs 0377–0400 and cases 190+
+    are free.
+
+- [x] **C-7 — the §34 pathological fixtures, and the theme system of §44** — done 2026-08-29.
+  **Themes** (`1c4866b`, ADR-0332): `theme.name` joins the ADR-0094 catalogue; resolution is
+  built-in → `/etc/ono/themes/<name>.toml` → `<config dir>/themes/<name>.toml`; two themes ship
+  (`ono`, `neon`); a theme file is TOML (`extends` + `[tokens]`) and is refused rather than
+  half-applied on any unknown token, key or value. The session owns the theme and the sinks,
+  reporter, REPL, live view and job output take it from there — which is what gives the setting an
+  effect. §44's closing rule is mechanical in three parts: a theme is consulted only where there
+  is colour, so every theme prints identical bytes under `NO_COLOR`, a pipe or a dumb terminal;
+  markers carry no control character and at most 4 chars; `ui.danger`/`ui.warning`/`ui.success`
+  keep distinct markers. 19 tests, acceptance case `150`.
+  **§34's environments** (`f349971`, `43f35e8`, ADR-0333): `docker/acceptance/fixtures/perf/` and
+  cases `151`–`154` — 10 000 forked processes; 5 000 listening unix sockets; 50 000 entries in one
+  directory plus 200 levels plus 100 000 files over 1 000 directories; a tool on `PATH` that never
+  answers, 100 MB of stdout, and `watch process`. Each measures §34's own figures, prints them
+  pass or fail, reports the size it actually reached, and **fails if the environment is not
+  pathological**. Two deviations under a `Spec deviation` heading: slow NSS and high-latency links
+  are one environment (the container runs `--network=none`, and never-answering is stricter than
+  slow); sockets reach thousands, not tens of thousands.
+
+
+---
+
+### Class B — open and small
+
+Each line says what is wrong, how to reproduce it, and what closes it. Five remain; the other
+thirty-seven are under *Done, reconciled*.
+
+#### Data and pipeline
+
+- [x] **B-data-9 — bytes that cannot become objects are refused before the program runs** — done
+  2026-08-29, `37ce5c3` on `close-last`, ADR-0376. It was a defect, and ADR-0028's reasoning held
+  only in part. Three symptoms, one cause: `ls /etc | count` answered **`1`** (wrong, and
+  plausible-looking), `seq 3 | take 1` answered one `VALUE` holding the whole listing as bytes,
+  and `yes | take 1` never returned. The byte carry was wrapped into a single `Value::Bytes` and
+  handed to stages declared over `stream<any>`, which counted the one value they were given; the
+  hang is the same bug seen through an endless producer, because the wrap needs EOF.
+  **Kept (ADR-0028 point 2):** the carry is one *document*, and there is no honest way to cut
+  arbitrary bytes into values — newline-cutting is the implicit text parsing §50 forbids, and
+  read-buffer-cutting makes a value whose content depends on scheduling. So `yes | from json`
+  still runs to EOF, correctly, for the reason `jq` does. Streaming it would have returned a
+  64 KiB slab of `y\n` and called it a stream.
+  **Corrected:** ADR-0028 point 1's own rule ("the transform binds anyway and reports the type
+  error when it runs") — the binding happened, the type error never did. The contract question is
+  now asked at plan time: a consumer declared over objects, fed by an invocation no adapter
+  decodes, is refused with `Ono-Sendai-E0911` **before the program is spawned**, so `yes` is never
+  started and there is nothing to end. Tests in `crates/ono-cli/tests/native.rs`, incl. the exit
+  test `should_answer_at_once_when_an_endless_program_feeds_a_stage_defined_over_objects` with a
+  10 s liveness bound, and `should_still_carry_a_whole_document_across_the_boundary_into_a_parser`
+  holding the buffering decision. **Not yet run in the container** — case `084-adapters-remote`
+  is the one case of the affected shape and its `grep -c 'Ono-Sendai-E0'` still matches, but that
+  is reasoning, not a passing case.
+
+#### Found by the class-C tranches (2026-08-29), each its own increment
+
+- [x] **A failed `enter` cost 23.9 s** — fixed 2026-08-29, `c46d524`, ADR-0416. The cause was
+  `SpatialIndex::record_edge` recognising an edge by recomputing `edge_id()` — a SHA-256 — on both
+  sides of a linear scan, so recording one edge cost two hashes per neighbour the place already
+  had. Measured: `find place --type process | count` 6.16 s → 0.59 s, a failing `enter` 23.93 s →
+  4.76 s (debug), 1.40 s in release with 0.27 s of that CPU;
+  `spatial_contracts_missing.rs` 2 timeouts → 27/27 green. **The earlier entry mis-stated the
+  budget**, and the correction matters: §34's 50 ms figures are for `look` and `near` *cached*
+  (0.10 s and below here), and §34 says in as many words that "Cold provider discovery MAY exceed
+  these targets". A one-shot `ono -c` is cold discovery.
+- [ ] **A miss sweeps everything a hit never touches.** What remains after ADR-0416: a selector
+  that resolves stops at the first step of §27.1, and one that does not runs to the last, which
+  consults the whole index and so projects all six domains. 1.40 s in release, of which only
+  0.27 s is CPU — the rest is reading 920 processes and their sockets, files and mounts. Allowed
+  by §34, but it is the reason a miss is ten times a hit. A design question, not a defect: a
+  persistent index across processes, or a bounded last step. §34's real obligation here is the
+  other sentence — the shell MUST stay interactive and update progressively — and that belongs to
+  the interactive path, which a one-shot `ono -c` never exercised. Measure it there.
+- [ ] **`get service` costs 3.0 s to enumerate, and two tests that call it concurrently exceed the
+  testkit's 10 s bound.** `get service | count` 3.01 s vs `get service <unit> | to json` 0.15 s and
+  `get process | count` 0.40 s (debug, 920 processes), so the cost is in enumerating all units, not
+  in any one of them. `trace service systemd-journald.service` is 4.49 s debug / 1.42 s release.
+  `services_logs_missing.rs` is 20/20 green with `--test-threads=1` and fails two tests when they
+  run in parallel — both invoke that same command. Exit test: the file green under the default
+  test parallelism, by making the enumeration cheaper rather than by raising a bound.
+- [ ] **§34's socket budget is missed by ~20 %, measured.** Acceptance case `152` ran for the
+  first time on 2026-08-29 and fails honestly:
+
+  ```text
+  ordinary host (2 sockets)      first socket row      46 ms   (§34 budget 50 ms) within
+  5002 listening unix sockets    first socket row      60 ms                      OVER
+  5002 listening unix sockets    first connection row  61 ms                      OVER
+  5002 listening unix sockets    whole socket table    67 ms   (budget 5000 ms)   within
+  5002 listening unix sockets    cold start            21 ms   (budget 100 ms)    within
+  ```
+
+  Both figures are the median of 20 runs of `get socket | take 1` / `get connection | take 1`.
+  The shape says what is wrong: the whole table costs 67 ms and the *first row* costs 60 ms, so
+  `take 1` pays for the enumeration of all 5002 before it answers — the provider reads the table
+  and then yields, where §34's per-row budget assumes it streams. The case is **not** relaxed and
+  stays red until the provider answers the first row without reading the last. Exit test: case
+  `152` green with the fixture at 5000.
+- [ ] **`ono.socket/1` identifies a socket by `inode` alone, and `TIME_WAIT` has none.**
+  3 of 16 connections in a live snapshot carried a wholly-null identity. The user-visible
+  consequence was found and its symptom fixed (`8db67f2`: `trace` now roots at the first record it
+  can relate to, instead of refusing the whole answer with `Ono-Sendai-E0201 this record declares
+  no identity`; it fails at HEAD too, verified by `git stash`, and the fix carries a test that
+  leaves a `TIME_WAIT` connection behind on purpose). What remains is the identity itself: a
+  fallback to `(protocol, local, remote)` — a schema-identity change with its own increment.
+- [ ] **`ono.filesystem/1` identifies by `(uuid, source)`, and two `source: none` pseudo
+  filesystems share one identity.** Needs a device-number field the schema does not have.
+- [ ] **No renderer emits the theme markers.** ADR-0332 requires every theme to carry distinct
+  markers for `ui.danger`/`ui.warning`/`ui.success`, but tables and the error renderer print plain
+  text where colour is off, so the guarantee is enforced on the theme and unused by the output.
+  A rendering change with its own snapshot consequences.
+- [ ] **§34's numbers are unmeasured.** Cases `151`–`154` (and `060`, `100` beside them for
+  comparison) were built but never measured, because the machine ran at load 27–49 throughout and
+  a budget measured under that load is worthless. Needs one quiet container run.
+- [ ] **Five acceptance cases have never run in the container**: `150`–`154`. Case `150`'s script
+  was executed end-to-end outside the container against every assertion, and every command in
+  `151`–`154` plus both Perl fixtures was validated at small size — which is how a `use strict`
+  error that made `many-sockets.pl` open nothing, and an off-by-one `tail -3` in case `150`, were
+  found and fixed (`43f35e8`). They still need the real run.
+
+#### Providers, remote and KUANG/11
+
+- [ ] **B-remote-2 — host-key pinning is dead code on the only production transport.** The trust
+  store is complete and proven at unit level (`ono-protocol/tests/trust.rs` and
+  `ono-remote/tests/trust.rs::should_refuse_a_changed_host_key_with_the_stable_safety_code`,
+  thirteen tests including the E0603 refusal), but ADR-0037 §4 has ssh links use
+  `TrustPolicy::Unauthenticated`, so the pin store is never consulted in production and no
+  acceptance case asserts E0603. **ADR-0274 (`593baee`) now records why the exit test cannot be
+  written yet**: both `ssh` and `local` go through `SubprocessTransport`, whose `peer_key` is
+  truthfully `None`, because OpenSSH authenticates the host in its own `known_hosts` and offers
+  the parent no way to learn which key it accepted. What must exist first is a transport that
+  certifies its peer to this process — an Ono-native authenticated TCP transport (TLS or Noise,
+  where the peer's key *is* the `HostKey`), or an ssh implementation inside Ono. Two things are
+  ruled out in the meantime: copying `known_hosts` into the store, and adding a trust-store
+  command surface while nothing writes to the store on any production path. This subsumes **F12**.
+  Exit test: an acceptance case in which a changed key refuses with E0603, over a transport that
+  authenticates.
+- [ ] **B-kuang-3 — a lazily loaded package's contributions have no registry origin.** §31.64
+  wants `get command` to answer for a contributed command with origin `plugin(id, version)`;
+  nothing in the command schema or `ono-command` carries an origin — a grep of
+  `ono-command/src/{registry,invoke}.rs` for `origin` finds nothing, and `plugin(id` appears
+  nowhere in `crates/` or `docs/decisions/`. Exit test: `get command` names the package a
+  contributed command came from, before that package is loaded.
+
+#### Spatial
+
+- [ ] **B-spat-6 — a full-screen map of COMPUTE is unresponsive while one projection is in
+  flight.** Measured by S11c on a 500-process host; §34.2's view budget will eventually have to
+  answer for it. `98fa9ce` (ADR-0263) fixed the *neighbouring* defect — the index grew by one
+  population per observation, so the view got monotonically slower for as long as it stayed open —
+  and did not make the first projection concurrent with the repaint, which is what this asks for.
+  No ADR covers it. Exit test: opening a full-screen map of COMPUTE on a 500-process host repaints
+  within the §34.2 frame budget throughout, not only once the projection lands.
+
+#### Harness and bookkeeping
+
+- [ ] **B-split-D4 — the first-completion budget is still measured by a proxy.** The other half of
+  this box is closed: `4a91ec8` (ADR-0252) installs `ono_cli::complete::ProviderValues` in the
+  `ValueCompleter` seam, so `get user <TAB>` offers this machine's accounts, bounded by a 40 ms
+  deadline on its own thread, a five-second cache and the synchronous registry only
+  (`completion.rs::should_offer_this_machines_users_when_completing_a_user_selector`, case `044`).
+  What remains is spec §34's < 50 ms first-result budget, asserted as a 1 000-iteration in-process
+  proxy (`completion.rs::should_stay_far_inside_the_first_completion_budget`, whose own comment
+  says a wall-clock assertion "is flaky on shared hardware") and never measured in the container.
+  ADR-0252 records why: it needs a completion the container can invoke without a terminal, which
+  is new public surface. Exit test: case `060` measures the first completion.
+
+---
+
+### Done, reconciled with the tree at `b904327` (2026-08-29, agent `STATE-recon`)
+
+**Fifty-five boxes closed.** Every line names the commit that closed it and the evidence that
+proves it; where the behaviour is observable from the command line, the answer quoted is the one
+`target/debug/ono` gave during this reconciliation. `[run]` marks a line settled by running the
+shell, `[test]` one settled by reading the named proof at HEAD.
+
+Nothing in this section was fixed by this agent. It writes back what fifty-nine commits between
+`ed923ee` and `b904327` had already delivered, and which no board update had recorded.
+
+#### Data and pipeline — nineteen of twenty
+
+| Was | Closed by | Proof |
+|---|---|---|
+| **B-data-1** a dotted path into an error value yielded the error, not the field | `c354dd2` (ADR-0215) | `[run]` `unmount filesystem / \| select error.name \| to json` → `[{"name":"io.permission_denied"}]` |
+| **B-data-2** `diff` reported `changed` for two byte-identical records — provenance carried the instant of observation | `79f58df` (ADR-0229) | `[run]` `get user root \| diff (get user root) \| to json` → `[]`; `data_missing.rs::should_report_two_fresh_snapshots_of_one_object_as_unchanged` |
+| **B-data-3** `@` was null inside an `each` block whose body was a native command | `0820686` (ADR-0219) | `[run]` `get process \| where pid == 1 \| each { get process @.pid \| count }` → `1`; `language_missing.rs::should_bind_the_iterated_item_for_a_native_stage_inside_an_each_block` |
+| **B-data-4** `to bytes --field <name>` refused a record | `df54ffc` (ADR-0223) | `[test]` `ono-value/tests/text_and_bytes_codecs.rs::should_write_the_named_field_of_each_record_as_raw_bytes`, `adapters.rs::should_write_one_field_s_bytes_verbatim_when_to_bytes_names_it` |
+| **B-data-5** a `SIGPIPE`d stdout was reported as `io.permission_denied` | `85d2983` (ADR-0220) | `[run]` `get process \| to json` into a closed reader → stderr empty; `cli.rs::should_stop_quietly_when_the_reader_of_its_output_goes_away`, case `034` |
+| **B-data-6** JSON object key order was alphabetical, not schema order | `320387a` (ADR-0228) | `[run]` `echo '{"zebra":1,"alpha":2}' \| ono -c 'from json \| to json'` → `[{"zebra":1,"alpha":2}]` |
+| **B-data-7** `--name=value` was a parse error in expression mode | `1b4f16d` (ADR-0227) | `[run]` `from json \| reduce $acc + @ --initial=10` over `[1,2,3]` → `16`; `parse_expressions.rs::should_read_the_equals_spelling_of_a_long_option_when_the_mode_is_expression` |
+| **B-data-8** the pipeline's `Diagnostics` counters never reached the user | `3221510` (ADR-0261) | `[test]` `data_missing.rs::should_say_how_many_values_a_condition_could_not_be_decided_on`, `::should_say_how_many_unknown_values_an_aggregate_skipped`, `::should_say_nothing_when_the_pipeline_dropped_nothing` |
+| **B-data-10** `sort` after an external head could not reach GNU sort's flags | `78f5935` (ADR-0260) | `[run]` `printf 'b\na\nc\n' \| ono -c 'sort -r'` → `c b a`; `builtins.rs::should_run_the_program_with_its_flags_when_a_native_head_is_reached_by_bytes`. Residue on record in ADR-0260: `sort -k1,2` is still a parse error, `sort '-k1,2'` works |
+| **B-data-11** `get log`'s `level` compared alphabetically, not by severity | `ae60d8c` (ADR-0222) | `[test]` `expressions.rs::should_order_an_enum_field_by_its_declared_values_when_compared`, `services_logs_missing.rs::should_order_the_level_by_severity_rather_than_by_spelling`. **The old entry's reproduction is obsolete**: `from json \| where level >= "error"` still keeps `warning`, and that is now correct — the decision orders a field the *schema* declares an enum, and a schemaless string field still compares as text (ADR-0222, deliberately) |
+| **B-data-12** `get process <gone-pid> \| count` printed an error and a value and exited 0 | `ca0efde` (ADR-0221) | `[run]` `get process 999999 \| count` → the `io.not_found` refusal, no `VALUE 0`, **status 1**; `processes_missing.rs::should_fail_the_run_when_a_named_process_is_not_there_and_a_count_follows` |
+| **B-data-13** the E0701 bulk-guard message carried runs of spaces | `f784422` | `[run]` `get process \| stop process` → one clean line, "…more than the bulk threshold of 100" |
+| **B-data-14** two label rules for one object | `733af7b` (ADR-0224) then `9130d29` (ADR-0226, superseding it) | `[run]` `unmount filesystem /` and `get mount / \| unmount filesystem` both render `ono.mount/1[/]`; `storage_missing.rs::should_label_the_unmounted_mount_the_same_way_whichever_spelling_named_it` |
+| **B-data-15** `get config --problems \| select code` failed the pre-flight check | `5708edb` (ADR-0218) | `[run]` no E0202; `meta_config_missing.rs` (the `--problems \| select code name` assertion) and `::should_still_refuse_a_field_neither_side_of_the_declared_union_has` |
+| **B-data-16** `trace group root` reported "command not found: trace" | `83dedd1` (ADR-0217) | `[run]` → `Ono-Sendai-E0102 resolve.target_not_found \`trace\` has no target \`group\``; `meta_config_missing.rs::should_name_the_target_when_a_known_verb_was_given_one_it_does_not_have` |
+| **B-data-17** `get interface lo \| stop interface` refused the piped record | `05910b8` (ADR-0216) | `[run]` → one `failed` ActionResult naming `lo`, no type error; `network_missing.rs::should_act_on_the_piped_interface_when_a_record_arrives_instead_of_a_selector` |
+| **B-data-18** `explain` inside a frame did not print the narrowed spelling | `a419137` (ADR-0225) | `[run]` `enter process 1; explain get process` → `narrowed  get process 1`; `context.rs::should_print_the_narrowed_spelling_when_explaining_inside_an_object_frame` and three siblings |
+| **B-data-19** `watch` narrowed at the query level rather than on the argument seam | `fd06ebe` (pin), `1ea33fb` (the `--service` prerequisite), `a3ec71a` (the refactor) | `[test]` `watch.rs::should_narrow_a_watch_to_the_entered_object_rather_than_the_whole_machine`, `::should_refuse_a_watch_the_context_cannot_narrow_rather_than_widening` — pinned first, unchanged across the refactor |
+| **B-data-20** §17.5 redaction did not reach §20.2's retention | `76d7eed` (ADR-0262) | `[test]` `native.rs::should_keep_a_secret_out_of_the_retained_result_as_well_as_out_of_history` and two siblings |
+
+#### Providers — all twelve
+
+| Was | Closed by | Proof |
+|---|---|---|
+| **B-prov-1** `get process \| count` exited 1 on a churning host | `4e53ee4` (ADR-0230) | `ESRCH` from a `/proc/<pid>/stat` read is `io.not_found`, not `provider.unavailable`; `common::tests::should_read_esrch_as_the_object_being_gone_when_a_procfs_read_fails`. 0 failures in 60 runs under four forking shells, against 2 in 40 before. **The shell was wrong and the three tests were right** — none of them changed |
+| **B-prov-2** `cpu` was `null` in every one-shot run | `dfa66eb` (ADR-0232) | `ono.process/1` gains `cpu_window`; a single read answers the lifetime share, `--sample <duration>` buys the rate. `process.rs::should_report_the_share_over_the_process_lifetime_when_nothing_earlier_was_observed`, case `120-process-cpu-share` |
+| **B-prov-3** two TIME_WAIT sockets were one place | `79d6a9c` (ADR-0231) | a record supplying none of its identity components states no identity; `ono-provider-api/tests/contract.rs::should_refuse_to_identify_a_record_whose_every_identity_component_is_null`, `::should_not_make_two_records_the_same_object_because_both_have_no_identity` |
+| **B-prov-4** `trace service` was registered and executed by nothing | `d1a6e5f` | `services_logs_missing.rs::should_trace_a_service_to_the_processes_it_owns`, `::should_refuse_to_trace_a_service_that_does_not_exist`. No production code changed |
+| **B-prov-5** `service.depends_on` had no provider evidence | `bf25291` (ADR-0239) | `GetAll` already carried `Requires`/`Requisite`/`BindsTo`/`Wants`; `ono.service/1` now has `dependencies`. `relationships.rs::should_link_a_service_to_the_units_it_requires` and four siblings |
+| **B-prov-6** `trace mount` had no propagation peers | `bf3e8ee` (ADR-0236) | `ono.mount/1` gains `peer_group` from `mountinfo(5)`; `relationships.rs::should_link_a_mount_to_the_other_mounts_of_its_propagation_peer_group`, case `122-mount-propagation-peers` under `CAP_SYS_ADMIN` |
+| **B-prov-7 / B-prov-8** `watch` polled everywhere; no watch reported `source: subscription` | `cc0ca32` (ADR-0235), `1789185` (ADR-0241) | `watch file` on inotify, `watch interface`/`route` on the rtnetlink multicast groups, `tail --follow` waits on the file. `files_missing.rs::should_report_a_created_file_before_the_next_poll_would_have_come`, `network_missing.rs::should_watch_interfaces_through_the_kernel_rather_than_by_asking_it_again` and its route sibling |
+| **B-prov-9** `--preserve` did not restore timestamps on a copied directory | `8dccec2` (ADR-0234) | `utimensat(2)` by path reaches a directory, a read-only file and a symlink, and its failure is reported. `files_missing.rs::should_preserve_the_timestamps_of_a_copied_tree_when_preserve_is_given`, case `121-copy-preserves-a-tree` |
+| **B-prov-10** nothing made ignoring a declared option impossible | `e0c6eec` (ADR-0233), with `e8ca19d` fixing the three that were being ignored | `xtask/tests/contracts.rs::should_report_a_declared_option_no_implementation_names`, `::should_not_accept_an_option_named_only_by_a_test` |
+| **B-prov-11** network write paths had no privileged conformance | `a96b337` (ADR-0237), `6218424` (ADR-0238), `bb5dca3` | a case may now name `capability:`, `user:` and `security:`; case `123-privileged-network-writes` runs all nine mutations against a live kernel under `CAP_NET_ADMIN`, `stop socket` included |
+| **B-prov-12** `resolve dns --server <ip>` was refused as `provider.unsupported` | `3e19bc3` (ADR-0240) | `ono-provider-net` gains an RFC 1035 client (A, AAAA, PTR; UDP with a TCP retry; every length bounded). `network_missing.rs::should_answer_from_the_nameserver_that_was_named_rather_than_from_the_system_resolver` and three siblings, case `124-dns-named-server` |
+
+#### Remote, KUANG/11 and spatial — eleven
+
+| Was | Closed by | Proof |
+|---|---|---|
+| **B-remote-1** inside a link frame, `get link` was sent to the other side | `2d80a5c` (ADR-0269, superseding ADR-0103's note) | `[run]` `link host testbox --transport local; enter link testbox; get link \| count \| to json` → `[1]`; `remote.rs::should_answer_for_this_sessions_links_and_jobs_from_inside_a_link_frame`, `::should_detach_the_link_it_is_standing_in_when_the_link_table_feeds_the_mutation`, case `044` |
+| **B-kuang-1** `grant capability --scope`/`--duration` were declared and ignored | `a5be21b` (ADR-0264) | `--scope <key>=<value>` validated against the capability's declared keys, `--duration` making a lease the broker checks; `plugins_missing.rs::should_record_the_scope_the_operator_named_on_the_grant`, `::should_refuse_a_scope_key_the_capability_does_not_declare`, `::should_make_a_lease_that_expires_when_a_grant_is_given_a_span` |
+| **B-kuang-2** grants, leases and the audit trail did not survive a session | `a5be21b` (ADR-0265) | `always` grants to `<config>/kuang/policy.yaml`, the trail appended to `<state>/kuang/audit.jsonl`; `plugins_missing.rs::should_read_back_an_always_grant_in_a_later_session`, `::should_forget_a_stored_grant_when_it_is_revoked_in_a_later_session`, `::should_keep_the_audit_trail_across_sessions`, case `125-kuang-capability-policy` |
+| **B-kuang-4** the negotiated `OverflowPolicy` was never enforced | `1665e1e` (ADR-0267) | `host_emit` consults it; `fail-stream` raises K11206, which nothing raised before. `ono-kuang-sdk/tests/conformance.rs::should_end_the_stream_and_keep_the_instance_when_the_negotiated_overflow_fails_the_stream`, `::should_keep_the_oldest_values_and_drop_the_rest_when_the_overflow_drops_the_newest` |
+| **B-kuang-5** `contributions.views`/`annotations` were listed and never loaded | `c111f91` (ADR-0268) | the box's second permitted outcome: an annotation key outside the package namespace is `package.invalid` at parse time, a view contribution is `package.incompatible` naming the `view_protocol` dimension. `manifest_validation.rs::should_refuse_an_annotation_key_outside_the_packages_namespace` and two siblings. Registering a view stays a tranche inside C-4 |
+| **B-kuang-6** the seven `docs/spec/kuang/*.v1.yaml` contracts had no drift check | `122dcea` (ADR-0266) | `check_kuang_contracts` holds four of the seven against `crates/ono-kuang-*` both ways; the manifest half asks the parser rather than mirroring it. `xtask/tests/contracts.rs::should_match_the_kuang_contracts_against_the_runtime_that_serves_them` and two siblings |
+| **B-spat-1** every read-only mount at 100 % was a "storage pressure" landmark | `13b6157` (ADR-0270) | `[run]` `enter storage; look` lists exits and no snap landmark; `ono-spatial-query/tests/landmarks.rs::should_not_promote_a_read_only_filesystem_that_is_full_as_storage_pressure`, `::should_still_promote_a_writable_filesystem_above_the_threshold`, `::should_still_promote_a_full_filesystem_that_does_not_say_whether_it_is_writable` |
+| **B-spat-2** a map of an object was a flat list with unusable rows | `c064639` (ADR-0272) | `[run]` `enter process 1; map` — every row reads `— process.parent_of`, and `containerd-shim (pid 171616)` tells four namesakes apart; `ono-spatial-render/tests/object_map.rs::should_name_the_relation_every_neighbour_of_an_object_stands_in`, `::should_tell_two_neighbours_sharing_a_display_name_apart`, case `105` s5ae |
+| **B-spat-3 / the S11c `help here` line** `help here` did not exist (v0.4 §38.2) | `13b6157` (ADR-0271) | `[run]` `enter process 1; help here` names every exit with what is behind it, the spelling that traverses it, and `permission_denied` where the provider gave one; `ono-cli/tests/spatial_help.rs` (three cases), `ono-command/tests/completion.rs` (two topic cases) |
+| **B-spat-4** `near --relation` did not name the positional spelling; an empty `near` was silent | `13b6157` (ADR-0271), corrected by `b904327` (ADR-0275) | `[run]` `near --relation process` → "`relation` is a positional selector: write `near <relation>`"; `enter process 1; near socket` → `Ono-Sendai-E1008 spatial.permission_denied … /proc/1/fd`. `spatial_navigation_missing.rs`' three near cases, `ono-spatial-query/tests/neighborhood.rs::should_keep_the_exit_at_this_end_of_a_relation_rather_than_the_one_at_the_other`, case `102` s4w/s4y/s4z |
+| **B-spat-5** a tombstone never named its replacement candidate | `4e1f23f` (ADR-0273) | a tombstone keeps at most eight sources with their relations, captured before `forget_edges`, and asks each once when it is rendered; a source reaching several live objects is discarded. `ono-spatial-core/tests/trail.rs::should_keep_the_source_that_reached_a_place_so_a_candidate_can_be_asked_for_later`, `::should_name_the_replacement_once_one_has_been_identified`, `::should_keep_the_first_candidate_rather_than_revising_it`, case `096` `44.7e` — which is this box's own exit test |
+
+#### Harness, bookkeeping and the split remainders — thirteen
+
+| Was | Closed by | Proof |
+|---|---|---|
+| **B-harn-1** `check_commands` skipped its cross-checks for a command omitting the field | `25b6139` (ADR-0246) | `verb`, `target` and `argument_mode` are required keys; `target: null` stays a valid declaration. `xtask/tests/contracts.rs::should_reject_a_command_that_declares_no_verb` and three siblings |
+| **B-harn-2 / B-harn-3** the unfinished-work scan excused all of `xtask/tests/`, and its walk of `tests/`, `fuzz/` and `examples/` was unproven | `80c8cb7` | the excuse is now two files; the walk is pinned by a fixture per tree, plus a guard that reports a top-level Rust tree the list does not walk. `xtask/tests/scan.rs::should_reject_a_placeholder_in_an_xtask_test_that_is_not_the_scanners_own`, `::should_scan_every_rust_tree_the_repository_layout_allows`, `::should_report_a_rust_tree_the_scan_does_not_walk` |
+| **B-harn-4** `docs/ACCEPTANCE.md` claimed a generation that does not exist | `42713e4` (ADR-0248) | §4.1 D and §4.7.4 now describe the drift check they really have; the boxes stay ticked because the drift check is real and green. `xtask/tests/reference.rs`' three tests, one of which failed on exactly those two sentences |
+| **B-harn-5** ADR-0015's threat-model table named intentions, not tests | `9d7f16a` (ADR-0245, superseding ADR-0015) | same fifteen threats, same mitigations, a *Proven by* column naming test functions. `xtask/tests/spatial_evidence.rs::should_find_every_test_the_threat_model_names` turns the gate red when a named proof goes missing — verified by pointing T1 at a test nobody wrote |
+| **B-harn-6** five behaviours verified by running the shell had no regression test | `5f683e0` | one outcome test each: `read file` on 20 MB as one value, `explain remove file *.txt` naming the glob and removing nothing, `--user root` leaving out what root does not own, `trace connection --remote` over a loopback connection the test opens itself, and `unmount filesystem /etc`'s own sentence |
+| **B-harn-7** §27.2's binding check was never run against the real table | `42713e4` (ADR-0247) | `xtask::bindings::check_bindings` runs `unbound_stable_commands` over the embedded registry and `builtin_commands`, with `BOUND_ELSEWHERE` naming what binds each of the fifty-two; both directions fail. `xtask/tests/bindings.rs`, three tests |
+| **B-split-B8** the §12.3 refusal was proven only in the container | `73aa3a0` | one workspace test each way, including a child process's invalid-UTF-8 stdout reaching a pipeline value losslessly (§12.2) |
+| **B-split-D4** (first half) completion answered only static registry metadata | `4a91ec8` (ADR-0252) | `ProviderValues` fills the `ValueCompleter` seam; `completion.rs::should_offer_this_machines_users_when_completing_a_user_selector`, `::should_answer_a_completion_that_no_provider_can_serve_without_waiting_for_one`, case `044`. **The budget half stays open above** |
+| **B-split-E3** no `vcs` prompt segment, and the object-context segment was unasserted | `7cad7d6` (ADR-0250) | case `113-prompt-segments` |
+| **B-split-E5** the *bounded* half of §20.2's retention was untested | `e6094eb` (ADR-0249) | the seventeenth result evicts the first, and a result over the value bound is retained truncated and says so |
+| **B-split-J1 / B-split-J5** `view tree` was exercised by nothing, and `get link \| view table` was proven only in halves | `365ac0a` | `view.rs::should_open_the_tree_view_over_a_graph_and_leave_the_pick_behind` drives a real PTY; cases `111-view-tree-navigation` and `112-link-overview` |
+| **the acceptance image was grading the wrong program** — not a box, and it outranked every box (AGENTS.md §14) | `9169db9` (ADR-0251) | `COPY` preserves mtimes and the Dockerfile caches `target/`, so cargo declared crates fresh and the image was built around a previous binary while carrying the new source. Observed, not imagined. The build now stamps `crates/`, `xtask/` and `docs/spec/` before compiling; `xtask/tests/packaging.rs::should_stamp_the_workspace_before_building_when_the_image_caches_its_target_directory` |
+| **a journal ordering test compared timestamps as text**, and a dry-run case read a record in the old key order | `d245b96`, `db27dd1` | both were tests wrong about data, not the shell wrong about behaviour (AGENTS.md §11) |
+
+---
+### Done, verified today (2026-08-29, agent `triage`)
+
+Forty-eight boxes moved. The §37 phase lists below are now ticked with the proof beside each. The
+ten most consequential, with the evidence that decided them:
+
+1. **E1 — the context stack** — `ono-cli/tests/context.rs::should_enter_a_directory_and_leave_back_out_of_it`,
+   `::should_show_the_stack_when_asked_for_the_context`, `::should_stay_on_the_ground_when_there_is_nothing_to_leave`;
+   case `045-context-and-reuse.case` (`stdout-contains: /etc`, `filesystem`, `nothing to leave`).
+2. **G3 — `trace`** — `ono-command/tests/trace.rs::should_answer_a_trace_with_a_graph_rooted_at_the_named_object`,
+   nine walk tests in `ono-graph/tests/trace.rs`, case `047-relationship-graph.case`
+   (`+-- child ->`). Split closed since, by `d1a6e5f`: `trace service` is driven by
+   `services_logs_missing.rs::should_trace_a_service_to_the_processes_it_owns`.
+3. **H1 — `ono-protocol`** — `framing.rs::should_refuse_a_frame_claiming_more_than_the_limit_before_allocating`,
+   `handshake.rs::should_prefer_the_highest_version_both_ends_speak`, `streams.rs`'s four
+   multiplexing tests, seventeen `messages.rs` round trips; case `049-remote-link.case`.
+4. **I2 — `ono-kuang-protocol`** — `frame.rs`, `message.rs`, `version.rs`, `error.rs`
+   (`should_expose_all_27_codes_of_spec_31_79_when_enumerated`), `lifecycle.rs`, `capability.rs`
+   (`should_carry_all_29_families_of_the_registry_when_enumerated`), and the wire proof
+   `ono-kuang-sdk/tests/conformance.rs::should_quarantine_a_plugin_that_breaks_framing`.
+5. **I10 — the plugin conformance suite** — `ono-kuang-sdk/tests/conformance.rs`, seventeen tests
+   over every §31.74 area: manifest validation, the four denial paths, cancellation, backpressure
+   both directions, quota exhaustion, four protocol-violation quarantines; case `050`.
+6. **B10 — `ActionResult` and partial failure** —
+   `ono-command/tests/mutations.rs::should_keep_a_mixed_result_apart_rather_than_collapsing_it`
+   (the exact `[Success, Failed, Success]` sequence) and `::should_answer_with_one_outcome_per_object_that_arrived`;
+   case `037-files-read-write-remove.case` (`[{"status":"success"},{"status":"success"}]`).
+7. **D6 — `explain`** — `ono-command/tests/explain.rs::should_render_a_plan_in_the_shape_of_spec_42_1`
+   plus six siblings; case `043-discoverable-from-the-shell.case` proves non-execution with
+   `stdout-contains: explain-never-ran` **and** `stdout-not-contains: RAN`.
+8. **D5 — `type` and `inspect`, causal chain included** —
+   `ono-command/tests/meta.rs::should_show_the_causal_chain_of_an_error` asserts `chain.len() == 1`
+   with the nested `io.permission_denied` ("spec §16.2: the whole causal chain, not only the
+   top"), beside `::should_show_every_field_with_how_it_was_known_and_where_it_came_from`.
+9. **F1/F2 — watch and in-place rendering** —
+   `ono-command/tests/watch.rs::should_begin_a_watch_with_the_current_state_and_then_the_changes`
+   (snapshot first, `changed` naming its field, `source: "poll"`), `ono-cli/src/live.rs`'s
+   `should_report_no_change_when_an_event_repeats_the_shown_state`, and
+   `watch_live.rs::should_render_in_place_at_a_terminal_and_stop_on_ctrl_c`; case `046`.
+10. **I8 — contributed relations reach the spatial map** — the one that surprised the audit:
+    `docker/acceptance/cases/110-spatial-contributions.case` `s9-a` … `s9-g` prove no edges
+    without the grant, the edge present with it, `"provider":"dev.example.echo"` and
+    `"confidence":"strong"` — never `exact` — plus
+    `ono-kuang-testhost/tests/spatial_package.rs::should_refuse_a_package_that_declares_relations_without_asking_for_the_capability`.
+
+Eight non-phase entries moved with them, each verified by running the shell today: keyless `sort`
+(`language_missing.rs::should_sort_scalars_by_themselves_when_no_key_is_given`, and the string and
+descending forms); `kill %N` on a native job
+(`::should_stop_a_native_job_when_kill_names_it_by_job_number`); backgrounding a pipeline with
+native stages (`jobs_native.rs::should_finish_a_bounded_background_pipeline_and_say_so`); the
+`container`, `link` and `host` `*-event/1` schemas, all three written and watched
+(`containers_packages_missing.rs:697`, `remote_missing.rs:458`, `:485`); `read file` on a 20 MB
+file as one value; `get process --user root` narrowing; `unmount filesystem /etc` reaching the
+provider's own wording; and `trace connection --remote <ip>`. The last five had no regression
+test at the time; `5f683e0` gave each one, so **B-harn-6 is closed**.
+
+---
 
 Phase A is decomposed to increment level. Later phases are listed at their coarse shape and are
 decomposed by the agent that starts them — decomposing early would invent detail the spec does
@@ -264,7 +1939,9 @@ budgets of §34 are tracked under *Cross-cutting*, not here.
 - [x] A12 — Configuration loading, with no eager plugin load and no network at startup —
       spec section 30 — exit test: acceptance `027-startup-is-quiet`
 - [x] A13 — Prompt with location URI and privilege indication — spec sections 4, 17 —
-      exit test: acceptance `028-prompt-shows-context`
+      exit test: acceptance `029-prompt-shows-context.case` (the box named `028`, which is
+      `028-config-is-restricted`; corrected 2026-08-29), and `113-prompt-segments.case` since
+      `7cad7d6`
 - [x] A14 — Structured error model and exit-status contract — spec sections 16, 43 —
       exit test: error taxonomy tests
 - [x] A15 — Phase A gate: `ono` as a login shell doing a real working session —
@@ -272,31 +1949,37 @@ budgets of §34 are tracked under *Cross-cutting*, not here.
 
 ### Phase B — Value system and native pipelines (spec §10, §11, §12, §13, §25)
 
-- [x] B3 — Stream engine: bounded channels, backpressure, cancellation, the streaming/blocking
-      distinction — `crates/ono-pipeline/tests/{backpressure,boundedness,cancellation}.rs`
-- [x] B6 — Conversion `to`/`from` json, yaml, csv, text, bytes — `crates/ono-value/tests/`
-- [x] B7 — Renderer separated from data: table, stacked, list, tree, raw, hex; width-aware
-      layout; visible truncation; semantic theme tokens — `crates/ono-render/tests/`
 - [x] B1 — Value model: scalars, semantic scalars, units, `Record`, `Map`, `List`, provenance —
       `crates/ono-value/tests/` — ADR-0016 — commit d020129
 - [x] B2 — Schema model and registry, the canonical schemas of spec §28, compatibility rules —
       `crates/ono-value/tests/{builtin_schemas,schema_compatibility}.rs` — commit d020129
+- [x] B3 — Stream engine: bounded channels, backpressure, cancellation, the streaming/blocking
+      distinction — `crates/ono-pipeline/tests/{backpressure,boundedness,cancellation}.rs`
 - [x] B4 — Transforms `where`, `select`, `take`, `skip`, `each` (streaming) — spec §53 —
       `crates/ono-pipeline/tests/streaming_transforms.rs`, `crates/ono-command/tests/transforms.rs`
-      — the acceptance case lands with the evaluator wiring
 - [x] B5 — Transforms `sort`, `group`, `count`, `measure`, `reduce`, `join`, `diff` (bounded) —
-      `crates/ono-pipeline/tests/blocking_transforms.rs` — acceptance case with the wiring
-- [x] B9 — Pipeline type-checking before execution: `where cpy > 20` reports
-      `type.unknown_field` with a suggestion from the contract's output schema, before anything is
-      enumerated — `crates/ono-command/src/check.rs` — acceptance case with the wiring
-- [ ] B8 — Object-to-external and external-to-object boundaries: structured input to an external
-      command is a structured error suggesting `to json`; external stdout enters as bytes/text
-      without loss — spec §12.2, §12.3 — exit test: acceptance `035-interop-boundary`
-- [ ] B9 — Pipeline type-checking before execution where schemas are known: `where cpy > 20`
-      reports `type.unknown_field` with a suggestion, before enumeration starts — spec §11.3 —
-      exit test: acceptance `036-typo-caught-before-execution`
-- [ ] B10 — `ActionResult` and partial failure: bulk mutation reports per-target results and
-      never collapses them — spec §11.5, §16.5 — exit test: acceptance `037-partial-failure`
+      `crates/ono-pipeline/tests/blocking_transforms.rs`
+- [x] B6 — Conversion `to`/`from` json, yaml, csv, text, bytes — `crates/ono-value/tests/`
+- [x] B7 — Renderer separated from data: table, stacked, list, tree, raw, hex; width-aware
+      layout; visible truncation; semantic theme tokens — `crates/ono-render/tests/`
+- [x] B8 — Object-to-external and external-to-object boundaries — spec §12.2, §12.3 —
+      `docker/acceptance/cases/040-object-pipeline.case` (`boundary-refused`: an object aimed at a
+      raw program is refused naming `to json`), `crates/ono-value/tests/roundtrip.rs:190`
+      ("undecodable bytes must never be lost") and
+      `codec_properties.rs::should_round_trip_every_generated_byte_string_through_the_raw_form`.
+      **Split closed** by `73aa3a0`: `ono-cli/tests/native.rs` now asserts both in the
+      workspace — the §12.3 refusal, and a child process's invalid-UTF-8 stdout reaching a
+      pipeline value losslessly (§12.2).
+- [x] B9 — Pipeline type-checking before execution — spec §11.3 —
+      `crates/ono-command/tests/expressions.rs::should_report_an_unknown_field_with_a_suggestion_before_the_pipeline_runs`,
+      `pipeline.rs::should_report_the_typo_and_run_nothing_at_all`,
+      `crates/ono-cli/tests/native.rs::should_reject_a_misspelled_field_before_anything_runs`,
+      case `042-inspection-without-text-parsing.case` (`perhaps: cpu`)
+- [x] B10 — `ActionResult` and partial failure — spec §11.5, §16.5 —
+      `crates/ono-command/tests/mutations.rs::should_keep_a_mixed_result_apart_rather_than_collapsing_it`,
+      `::should_answer_with_one_outcome_per_object_that_arrived`,
+      `crates/ono-provider-api/tests/contract.rs::should_report_what_it_did_to_each_target_rather_than_one_boolean`,
+      case `037-files-read-write-remove.case`
 
 ### Phase C — Linux core providers (spec §23, §28, §35.3)
 
@@ -304,115 +1987,363 @@ Every provider answers from the kernel, systemd or NSS — never by parsing unst
 (spec §50, AGENTS.md §6). Every provider ships its conformance case in the same increment.
 
 - [x] C1 — `ono-provider-api`: the provider trait, capability declarations, and the
-      `snapshot` / `subscribe` / `watch` triple with the `ObjectEvent` envelope of spec §31.14,
-      shaped so KUANG/11 consumes it without special cases (spec §31 preamble, §31.13)
-- [x] C2 — `process` from procfs: enumeration, `ono.process/1` fields, CPU as a rate not a
-      cumulative, permission-denied fields as errors not zeros — spec §23.1, §28.1 —
-      exit test: acceptance `040-process-provider`
-- [x] C3 — `file`/`dir`: metadata, recursion, symlinks, permissions, xattrs where present —
-      spec §23.4, §28.2 — exit test: acceptance `041-file-provider`
+      `snapshot` / `subscribe` / `watch` triple with the `ObjectEvent` envelope of spec §31.14
+**The seven case names these boxes carried — `040-process-provider` … `046-service-provider` —
+never existed**: they are the pre-implementation planning names, and the 2026-08-29 reconciliation
+replaced each with the case that actually covers the capability.
+
+- [x] C2 — `process` from procfs — spec §23.1, §28.1 —
+      acceptance `040-processes-inspect-jobs-signals.case`, `120-process-cpu-share.case`
+- [x] C3 — `file`/`dir` — spec §23.4, §28.2 —
+      acceptance `037-files-read-write-remove.case`, `121-copy-preserves-a-tree.case`
 - [x] C4 — `user`/`group` from NSS, `env` — spec §23.6, §28.7 —
-      exit test: acceptance `042-identity-provider`
-- [x] C5 — `mount`/`filesystem` — spec §23.5, §28.6 — exit test: acceptance `043-mount-provider`
+      acceptance `043-identity-sessions-and-accounts.case`, `021-cwd-and-environment.case`
+- [x] C5 — `mount`/`filesystem` — spec §23.5, §28.6 —
+      acceptance `042-storage-devices-and-mounts.case`, `122-mount-propagation-peers.case`
 - [x] C6 — `interface`/`route`/`neighbor` over netlink — spec §23.2, §28.5 —
-      exit test: acceptance `044-network-provider`
-- [x] C7 — `socket`/`connection` over netlink sock_diag, joined to owning process —
-      spec §23.2, §28.4 — exit test: acceptance `045-socket-provider`
-- [x] C8 — `service` over the systemd D-Bus API, degrading to `provider.unavailable` where
-      systemd is not running — spec §23.3, §28.3 — exit test: acceptance `046-service-provider`
-      plus a D-Bus fixture test for the positive path (see *Deferred*)
-- [ ] C9 — Generated provider conformance suite from `docs/spec/providers/*.yaml` — spec §35.3
+      acceptance `039-network-dns-port-mutations.case`, `123-privileged-network-writes.case`
+      (nine write paths against a live kernel under `CAP_NET_ADMIN`)
+- [x] C7 — `socket`/`connection` over netlink sock_diag — spec §23.2, §28.4 —
+      acceptance `039-network-dns-port-mutations.case`, `123` (`stop socket` over
+      `NETLINK_SOCK_DIAG`), `047-relationship-graph.case`
+- [x] C8 — `service` over the systemd D-Bus API — spec §23.3, §28.3 —
+      acceptance `038-services-set-and-journal.case`;
+      `services_logs_missing.rs::should_trace_a_service_to_the_processes_it_owns`
+- [ ] C9 — Generated provider conformance suite from `docs/spec/providers/*.yaml` — spec §35.3 —
+      **open, and it is C-1 above.** What exists is a runtime drift check
+      (`ono-cli/tests/providers.rs`) plus hand-written per-provider schema tests
+      (`ono-provider-linux/tests/schemas.rs`); no generator exists — confirmed at `b904327`, where
+      `xtask/src/` holds no generator but `reference.rs`. An agent is on it (see *In progress*).
 
 ### Phase D — Language consistency and discoverability (spec §15, §27, §36, §47)
 
-- [x] D0 — The registries themselves: `docs/spec/{verbs,targets,errors,capabilities,language}.yaml`,
-      `schemas/*.v1.yaml`, `commands/*.yaml` — ADR-0012 — commit 6b107d0
+- [x] D0 — The registries themselves — ADR-0012 — commit 6b107d0
 - [x] D1 — `xtask spec-check` validates the registries and cross-checks them against the
-      implementation: undocumented stable command, metadata without implementation, doc example
-      that no longer parses, schema break without version bump, provider output outside its
-      advertised schema — spec §36.5
-- [ ] D2 — The command registry drives dispatch: one stable id per command, bound to an
-      implementation, verified by `spec-check` — spec §27.2
-- [ ] D3 — `help` generated from metadata for every command, target and topic — spec §15.2
-- [ ] D4 — Completion from metadata: commands, verbs, targets, options, argument positions, and
-      live values where a provider is cheap — spec §15.1 — exit test: first results < 50 ms
-- [ ] D5 — `type` and `inspect`, showing schema, provenance and the causal chain — spec §15.2
-- [ ] D6 — `explain`: the resolution and execution plan without executing, in the shape of
-      spec §42 — spec §15.3
-- [ ] D7 — Fuzzy command discovery and the suggestion path of `resolve.command_not_found` —
-      spec §15.4
-- [x] D8 — Generated documentation under `docs/reference/`, reproducible from the registries and
-      checked by the gate — spec §36.2, §46
+      implementation — spec §36.5
+- [x] D2 — The command registry drives dispatch — spec §27.2 —
+      `crates/ono-command/tests/registry.rs::should_load_every_command_the_contract_files_declare`,
+      `::should_find_a_command_by_verb_and_target`,
+      `implementations.rs::should_hand_the_bound_arguments_and_the_input_to_the_implementation`,
+      `crates/ono-cli/tests/builtins.rs::should_dispatch_set_of_a_system_target_through_the_registry_rather_than_the_builtin`;
+      id uniqueness enforced by `xtask/src/contracts.rs:494`. **Split closed** by `42713e4`
+      (ADR-0247): `xtask::bindings::check_bindings` runs §27.2's binding check over the embedded
+      registry and `builtin_commands` in the gate, both directions —
+      `xtask/tests/bindings.rs`, three tests.
+- [x] D3 — `help` generated from metadata for every command, target and topic — spec §15.2 —
+      `crates/ono-command/tests/help.rs::should_generate_complete_help_for_every_command_in_the_registry`
+      (iterates the registry and fails on any missing summary, example or field doc),
+      `::should_generate_help_for_a_verb`, `::should_generate_help_for_a_target`,
+      `::should_generate_help_for_a_topic`; case `043-discoverable-from-the-shell.case`
+- [x] D4 — Completion from metadata — spec §15.1 —
+      `crates/ono-command/tests/completion.rs` (six position tests),
+      `completion_missing.rs` (schema-field positions), case `044-semantic-completion.case` on a
+      real terminal; provider-backed live values since `4a91ec8` (ADR-0252) —
+      `completion.rs::should_offer_this_machines_users_when_completing_a_user_selector`.
+      **Split, halved:** the < 50 ms first-result budget is still an in-process proxy —
+      B-split-D4.
+- [x] D5 — `type` and `inspect`, showing schema, provenance and the causal chain — spec §15.2 —
+      `crates/ono-command/tests/meta.rs::should_report_what_a_pipeline_would_produce_without_running_it`,
+      `::should_show_every_field_with_how_it_was_known_and_where_it_came_from`,
+      `::should_show_the_causal_chain_of_an_error`; case `043`
+- [x] D6 — `explain` — spec §15.3 —
+      `crates/ono-command/tests/explain.rs::should_render_a_plan_in_the_shape_of_spec_42_1` and six
+      siblings, `crates/ono-cli/tests/builtins.rs::should_explain_without_running_anything`;
+      case `043` (`explain-never-ran` with `stdout-not-contains: RAN`)
+- [x] D7 — Fuzzy command discovery and the `resolve.command_not_found` suggestion path —
+      spec §15.4 —
+      `crates/ono-cli/tests/meta_config_missing.rs::should_report_command_not_found_with_suggestions_when_no_stage_answers`,
+      `crates/ono-command/tests/meta.rs::should_find_a_command_by_what_it_does_rather_than_by_its_name`,
+      `help.rs::should_suggest_a_near_miss_for_an_unknown_topic`, `suggest.rs`'s unit tests
+- [x] D8 — Generated documentation under `docs/reference/` — spec §36.2, §46
 
 ### Phase E — Contextual systems interface (spec §14, §20)
 
-- [ ] E1 — Context stack, `enter`/`leave`, filesystem and object contexts — spec §14.1–§14.3
-- [ ] E2 — Implicit selectors from context — spec §14.3
-- [ ] E3 — Prompt as a HUD: link, privilege, context, path, vcs, jobs — spec §4.2
-- [ ] E4 — Interactive selection over rendered collections, never altering pipeline data —
-      spec §13.5
-- [ ] E5 — Semantic history and bounded structured result retention; `@`, `@-1`, `@3` —
-      spec §20.1, §20.2, §6.4
+- [x] E1 — Context stack, `enter`/`leave`, filesystem and object contexts — spec §14.1–§14.3 —
+      `crates/ono-cli/tests/context.rs::should_enter_a_directory_and_leave_back_out_of_it`,
+      `::should_show_the_stack_when_asked_for_the_context`,
+      `::should_stay_on_the_ground_when_there_is_nothing_to_leave`,
+      `::should_refuse_to_enter_an_object_that_does_not_exist`,
+      `::should_leave_every_frame_at_once_when_asked`; case `045-context-and-reuse.case`
+- [x] E2 — Implicit selectors from context — spec §14.3 —
+      `crates/ono-command/tests/producers.rs::should_narrow_a_producer_with_the_ambient_selector_of_a_context_frame`,
+      `::should_refuse_a_query_the_context_cannot_narrow_rather_than_widening`, and one per target
+      in `processes_missing.rs`, `storage_missing.rs`, `network_missing.rs`, `identity_missing.rs`
+- [x] E3 — Prompt as a HUD: link, privilege, context, path, jobs — spec §4.2 —
+      case `029-prompt-shows-context.case`, `049-remote-link.case` (`testbox://`),
+      `crates/ono-cli/tests/signals.rs::should_make_an_elevated_prompt_impossible_to_miss`,
+      case `025-job-control.case` (`+1 >`). **Split closed** by `7cad7d6` (ADR-0250): the `vcs`
+      segment exists and the object-context segment is asserted — case `113-prompt-segments.case`.
+- [x] E4 — Interactive selection over rendered collections, never altering pipeline data —
+      spec §13.5 —
+      `crates/ono-cli/tests/view.rs::should_pick_a_row_and_leave_it_addressable_as_the_current_value`
+      (a real PTY: arrow, Enter, `q`, then `@ | to json`), `::should_fall_back_to_plain_rendering_when_nobody_is_watching`;
+      `ono.data.view` is registered as a pass-through stage (ADR-0050)
+- [x] E5 — Semantic history and structured result retention; `@`, `@-1`, `@3` —
+      spec §20.1, §20.2, §6.4 —
+      `crates/ono-cli/tests/native.rs::should_reuse_the_previous_result_without_rerunning_it`,
+      `::should_pick_one_item_of_the_current_result_by_position`,
+      `::should_say_there_is_nothing_to_reuse_when_no_result_was_retained`,
+      `crates/ono-history/tests/history.rs::should_record_where_and_how_a_command_ran_rather_than_only_its_text`;
+      case `045`. **Split closed** by `e6094eb` (ADR-0249): the seventeenth result evicts the
+      first, and a result over the value bound is retained truncated and says so.
 
 ### Phase F — Live system semantics (spec §18)
 
-- [ ] F1 — `watch` over a query, event/snapshot model, explicit polling metadata — §18.2
-- [ ] F2 — In-place rendering keyed by stable object identity — §18.3
-- [ ] F3 — Native background jobs, `get job`, the prompt's job segment — §18.4
-- [ ] F4 — Cancellation through native pipelines and into external processes — §18.5
+- [x] F1 — `watch` over a query, event/snapshot model, explicit polling metadata — §18.2 —
+      `crates/ono-command/tests/watch.rs::should_begin_a_watch_with_the_current_state_and_then_the_changes`
+      (snapshot first, `changed` naming its field, `source: "poll"`),
+      `::should_emit_an_empty_snapshot_when_the_watched_listing_has_nothing_in_it`;
+      case `046-live-system-semantics.case`
+- [x] F2 — In-place rendering keyed by stable object identity — §18.3 —
+      `crates/ono-cli/src/live.rs::tests::should_report_no_change_when_an_event_repeats_the_shown_state`,
+      `crates/ono-cli/tests/watch_live.rs::should_render_in_place_at_a_terminal_and_stop_on_ctrl_c`
+- [x] F3 — Native background jobs, `get job`, the prompt's job segment — §18.4 —
+      `crates/ono-cli/tests/jobs_native.rs::should_background_a_watch_as_a_job_the_shell_lists`,
+      `::should_share_one_number_space_between_native_and_external_jobs`,
+      `::should_finish_a_bounded_background_pipeline_and_say_so`;
+      `processes_missing.rs::should_list_a_detached_live_view_as_a_native_job`; case `046`
+- [x] F4 — Cancellation through native pipelines and into external processes — §18.5 —
+      `crates/ono-cli/tests/signals.rs::should_interrupt_a_native_pipeline_and_leave_the_prompt_standing`,
+      `::should_report_a_command_the_terminal_interrupted_as_128_plus_sigint`,
+      `watch_live.rs::should_reattach_a_backgrounded_watch_and_end_it_with_ctrl_c`;
+      case `030-signals-and-process-groups.case`
 
 ### Phase G — Relationship graph (spec §22)
 
-- [ ] G1 — Graph value type with provenance and confidence — §22.1, §22.2
-- [ ] G2 — Exact relationship providers: process tree, socket to process, service to process,
-      mount to device — §22.3
-- [ ] G3 — `trace` for process, service and socket — §22.3
-- [ ] G4 — Tree and ASCII graph renderers; the graph view never fabricates edges — §22.4
+- [x] G1 — Graph value type with provenance and confidence — §22.1, §22.2 —
+      `crates/ono-graph/tests/graph.rs::should_describe_itself_as_a_record_of_the_graph_contract`
+      (validates `ono.graph/1`, asserts `confidence` and `provider` on every edge),
+      `::should_travel_a_pipeline_and_survive_being_serialized_as_json`; case `047`
+- [x] G2 — Exact relationship providers — §22.3 — `crates/ono-graph/tests/relationships.rs`:
+      `::should_link_a_process_to_its_parent_and_to_its_children`,
+      `::should_link_a_process_to_the_socket_it_holds_by_inode`,
+      `::should_link_a_service_to_its_main_process_and_to_its_cgroup_members`,
+      `::should_link_a_mount_to_the_device_backing_it`, plus the inference discipline in
+      `::should_mark_a_reverse_resolved_host_as_inferred_and_keep_its_evidence`
+- [x] G3 — `trace` for process, service and socket — §22.3 —
+      `crates/ono-command/tests/trace.rs::should_answer_a_trace_with_a_graph_rooted_at_the_named_object`,
+      `::should_report_a_trace_of_nothing_rather_than_an_empty_graph`, nine walk tests in
+      `crates/ono-graph/tests/trace.rs`, case `047` for `process`,
+      `options_and_selectors_missing.rs::should_trace_the_socket_on_the_requested_port_when_port_is_given`
+      for `socket`. **Split closed** by `d1a6e5f`:
+      `services_logs_missing.rs::should_trace_a_service_to_the_processes_it_owns` and
+      `::should_refuse_to_trace_a_service_that_does_not_exist` drive the third stated target.
+- [x] G4 — Tree and ASCII graph renderers; the graph view never fabricates edges — §22.4 —
+      `crates/ono-graph/tests/render.rs::should_draw_the_tree_of_the_specification`,
+      `::should_draw_an_inferred_edge_differently_from_an_observed_one`,
+      `crates/ono-render/tests/tree_layout.rs`,
+      `relationships.rs::should_not_invent_a_device_for_a_filesystem_that_has_none`,
+      `::should_not_invent_a_gateway_neighbour_the_kernel_has_not_resolved`;
+      `crates/ono-cli/tests/native.rs::should_draw_a_trace_as_a_tree_rather_than_a_table`
 
 ### Phase H — Remote links (spec §21)
 
-- [ ] H1 — `ono-protocol`: typed transport, framing, versioning, multiplexed streams — §21.2
-- [ ] H2 — `ono-agent`: the remote endpoint — §21.4
-- [ ] H3 — Agentless SSH fallback — §21.3
-- [ ] H4 — Provider negotiation and capability discovery — §21.2
-- [ ] H5 — Security model: host key pinning, `remote.host_key_changed` — §21.5, §49
-- [ ] H6 — Remote context and prompt — §14.4, §4.2
+- [x] H1 — `ono-protocol`: typed transport, framing, versioning, multiplexed streams — §21.2 —
+      `crates/ono-protocol/tests/framing.rs::should_refuse_a_frame_claiming_more_than_the_limit_before_allocating`,
+      `handshake.rs::should_prefer_the_highest_version_both_ends_speak`,
+      `streams.rs::should_keep_concurrent_streams_apart_when_both_are_open`,
+      `::should_leave_the_other_streams_running_when_one_is_cancelled`,
+      `::should_bound_a_fast_remote_producer_when_the_local_consumer_is_slow`, `messages.rs`
+- [x] H2 — the remote endpoint — §21.4 — there is no `ono-agent` crate; the endpoint is
+      `crates/ono-remote/src/agent.rs` reached as `ono --agent` (ADR-0036 §1) —
+      `crates/ono-remote/tests/agent.rs::should_negotiate_the_registry_providers_with_their_availability`,
+      `tests/subprocess.rs::should_run_a_query_against_an_agent_in_a_child_process`; case `049`
+- [ ] H3 — Agentless SSH fallback — §21.3 — **open, and it is C-3 above.** `--agentless` is
+      parsed and visible; `context.rs:615` still says the fallback does not exist, and ADR-0037 §6
+      agrees. An agent is on it (see *In progress*).
+- [x] H4 — Provider negotiation and capability discovery — §21.2 —
+      `crates/ono-remote/tests/agent.rs::should_announce_capabilities_with_the_risk_the_provider_declares`,
+      `crates/ono-protocol/tests/handshake.rs::should_negotiate_the_intersection_of_the_two_capability_sets`,
+      `crates/ono-remote/tests/provider.rs::should_mount_one_provider_per_negotiated_target`;
+      case `044-remote-links-as-objects.case`
+- [x] H5 — Security model: host key pinning, `remote.host_key_changed` — §21.5, §49 —
+      `crates/ono-protocol/tests/trust.rs` (five tests: pin on first contact, refuse a changed
+      key, refuse an unknown key under a required policy, deliberate replacement, a readable
+      store), `crates/ono-remote/tests/trust.rs::should_refuse_a_changed_host_key_with_the_stable_safety_code`
+      (E0603, non-retryable). **Split:** the store is still not consulted on either production
+      transport and no case asserts E0603 — B-remote-2, which absorbs F12. `593baee` (ADR-0274)
+      records what must exist first: a transport that certifies its peer to this process.
+- [x] H6 — Remote context and prompt — §14.4, §4.2 — case `049-remote-link.case` (`testbox://`
+      in the prompt), `044` (`testbox (remote)`, `risk mutate + remote`),
+      `crates/ono-cli/tests/remote_missing.rs::should_enter_the_remote_context_when_connecting_to_a_host`,
+      `::should_pop_the_link_frame_when_detaching`
 
 ### Phase I — KUANG/11 extension runtime (spec §31)
 
-- [ ] I1 — `docs/spec/kuang/` contracts: manifest, capability, protocol schemas — §31.78
-- [ ] I2 — `ono-kuang-protocol`: the typed host/plugin protocol — §31.12
-- [ ] I3 — Package identity, layout, manifest validation, verification — §31.5–§31.7, §31.9
-- [ ] I4 — Supervisor: install/enable/load/run states, lifecycle, isolation — §31.8, §31.10
-- [ ] I5 — Capability broker, scopes, grant UX, storage and policy, audit — §31.16–§31.19, §31.33
-- [ ] I6 — Host API domains: objects, streams, schemas, commands, relations, views, context,
-      history, filesystem, network, process, secrets, models, state, audit, clock — §31.12
-- [ ] I7 — Backpressure, quotas and overflow policy — §31.15
-- [ ] I8 — Contribution model: commands, targets, schemas, relations, views, annotations — §31.22–§31.27
-- [ ] I9 — `ono-kuang-sdk` and the deterministic test host — §31.73
-- [ ] I10 — Plugin conformance suite — §31.74
-- [ ] I11 — `ono-model-broker`: operator-approved inference, no LLM in a privileged path — §31.12
+- [x] I1 — `docs/spec/kuang/` contracts — §31.78 — all seven exist and are consumed:
+      `crates/ono-kuang-protocol/tests/manifest_validation.rs` (14 tests),
+      `src/error.rs::should_expose_all_27_codes_of_spec_31_79_when_enumerated`,
+      `src/capability.rs::should_carry_all_29_families_of_the_registry_when_enumerated`
+      (ADR-0022). **Split closed** by `122dcea` (ADR-0266): `check_kuang_contracts` holds four of
+      the seven against `crates/ono-kuang-*` both ways, the manifest half by asking the parser
+      rather than mirroring it — `xtask/tests/contracts.rs`, three tests.
+- [x] I2 — `ono-kuang-protocol` — §31.12 — `src/{frame,message,version,error,lifecycle,capability}.rs`
+      unit suites, and the wire proof
+      `crates/ono-kuang-sdk/tests/conformance.rs::should_quarantine_a_plugin_that_breaks_framing`
+- [x] I3 — Package identity, layout, manifest validation — §31.5–§31.7 —
+      `manifest_validation.rs::should_refuse_a_third_party_claim_on_the_ono_namespace`,
+      `::should_fail_closed_on_an_unknown_key_in_a_closed_section`,
+      `::should_refuse_a_scope_key_the_capability_does_not_declare`;
+      `crates/ono-cli/tests/plugins_missing.rs::should_install_a_package_from_a_path_reference_when_confirmed`;
+      cases `045`, `050`. **Split:** signature verification (§31.9) still does not exist — C-5.
+- [x] I4 — Supervisor: install/enable/load/run states and lifecycle — §31.8 —
+      `crates/ono-kuang-protocol/src/lifecycle.rs::should_walk_the_main_path_of_spec_31_8_when_each_step_is_legal`
+      and five siblings (ADR-0041); `plugins_missing.rs::should_persist_enablement_across_sessions`,
+      `::should_withdraw_contributions_when_a_package_is_unloaded`;
+      `conformance.rs::should_quarantine_a_plugin_that_emits_beyond_credit`; case `045`.
+      **Split:** §31.10 isolation is still capability brokering only, with no sandbox — C-4(a).
+- [x] I5 — Capability broker, scopes, policy, audit — §31.16–§31.19, §31.33 —
+      `crates/ono-kuang-supervisor/src/policy.rs::should_deny_by_default_when_no_rule_matches`,
+      `::should_let_a_system_deny_override_a_grant`,
+      `::should_allow_a_path_inside_the_granted_scope_and_refuse_one_outside`; the four denial
+      paths in `conformance.rs`; `plugins_missing.rs::should_record_a_denied_capability_use_in_the_audit_trail`;
+      case `045`. **Split closed** by `a5be21b` (ADR-0264, ADR-0265): `--scope` is validated
+      against the capability's declared keys and `--duration` makes a lease the broker checks;
+      `always` grants reach `<config>/kuang/policy.yaml` and the trail
+      `<state>/kuang/audit.jsonl`. `plugins_missing.rs`' eight broker tests, case
+      `125-kuang-capability-policy`.
+- [x] I6 — Host API domains — §31.12 — six of sixteen are implemented and proven:
+      streams (emit/close), filesystem (read), state (get/set/delete), audit, clock (now),
+      capabilities (check/request) — `conformance.rs::should_stream_typed_values_for_a_contributed_command`,
+      `::should_refuse_a_state_write_beyond_quota_and_keep_state_intact`,
+      `::should_audit_a_granted_call_with_the_virtual_clock`,
+      `::should_refuse_and_audit_a_path_outside_the_granted_scope`.
+      **Split:** the other ten domains are still absent — C-4(c).
+- [x] I7 — Backpressure and quotas — §31.15 —
+      `conformance.rs::should_deliver_everything_under_a_small_credit_window`,
+      `::should_quarantine_a_plugin_that_emits_beyond_credit`,
+      `::should_stop_cleanly_when_the_host_cancels_a_stream`,
+      `crates/ono-kuang-supervisor/src/state.rs::should_refuse_a_write_beyond_quota_and_keep_existing_keys_intact`.
+      **Split closed** by `1665e1e` (ADR-0267): `host_emit` consults the negotiated policy, and
+      `fail-stream` raises K11206, which nothing raised before —
+      `conformance.rs::should_end_the_stream_and_keep_the_instance_when_the_negotiated_overflow_fails_the_stream`.
+- [x] I8 — Contribution model: commands, targets, schemas, relations, adapters —
+      §31.22–§31.27 — `conformance.rs::should_surface_contract_shaped_contribution_tables`,
+      `::should_close_the_stream_when_output_leaves_the_declared_schema`;
+      `crates/ono-cli/tests/plugins.rs::should_load_a_package_and_run_its_contributed_command`,
+      `::should_adapt_through_a_third_party_pack_once_its_grant_is_explicit`;
+      relations end to end in `docker/acceptance/cases/110-spatial-contributions.case`
+      (`s9-a` … `s9-g`) and
+      `crates/ono-kuang-testhost/tests/spatial_package.rs::should_refuse_a_package_that_declares_relations_without_asking_for_the_capability`
+      (ADR-0194). **Split closed** by `c111f91` (ADR-0268), by the second of the two outcomes the
+      box allowed: an annotation key outside the package's namespace is `package.invalid` and a
+      view contribution is `package.incompatible` naming the `view_protocol` dimension, so neither
+      is listed and ignored. Registering a view stays a tranche inside C-4.
+- [x] I9 — `ono-kuang-sdk` and the deterministic test host — §31.73 —
+      `conformance.rs::should_audit_a_granted_call_with_the_virtual_clock` asserts the exact
+      virtual timestamp; `crates/ono-kuang-testhost` is the real supervisor on a fixed clock
+      (ADR-0040 §1); the example plugin ships into the container
+- [x] I10 — Plugin conformance suite — §31.74 — `crates/ono-kuang-sdk/tests/conformance.rs`,
+      seventeen tests over every area ADR-0040 enumerates; case `050-kuang-plugin.case`
+- [ ] I11 — `ono-model-broker` — §31.12 — **open, and it is C-6 above.** The crate does not
+      exist; `model_broker` is a manifest field nothing reads and `Capability::ModelInfer` is a
+      capability nothing checks. **Nobody is on this one** — it is the next task for a free agent.
 
-### Phase J — Advanced TUI views (spec §37 Phase J, §13.6)
+### Phase J — Advanced TUI views (spec §37 Phase J, §13.6, ADR-0050)
 
-- [ ] J1 — Navigable graph view — §22.5
-- [ ] J2 — Multi-pane inspect/watch — §37
-- [ ] J3 — Timeline/history exploration — §20.3
-- [ ] J4 — Object pickers — §13.5
-- [ ] J5 — Remote link overview — §37
+ADR-0050 collapses Phase J into one verb, `view`, on §37 J's own "deliver only where semantics
+justify them", and records what it declines and why.
+
+- [x] J1 — Navigable graph view — §22.5 — `view tree` renders graph values navigably
+      (`crates/ono-cli/src/view.rs:25-34`); the tree rendering is proven by
+      `crates/ono-graph/tests/render.rs` and `crates/ono-render/tests/tree_layout.rs`.
+      **Split closed** by `365ac0a`:
+      `view.rs::should_open_the_tree_view_over_a_graph_and_leave_the_pick_behind` drives a real
+      PTY — open on `trace process 1`, a carriage return opens the inspect pane, `q` leaves the
+      graph addressable as `@` — and case `111-view-tree-navigation` runs it in the container.
+- [x] J2 — Multi-pane inspect — §37 —
+      `crates/ono-cli/tests/view.rs::should_pick_a_row_and_leave_it_addressable_as_the_current_value`
+      asserts the `--- inspect` pane opens beside the collection. The multi-pane *watch* half is
+      declined by ADR-0050 ("arrangement, not semantics").
+- [x] J4 — Object pickers — §13.5 — the same test: a real PTY picks a row and bare `@` then names
+      it; `::should_fall_back_to_plain_rendering_when_nobody_is_watching` proves §17.4 off-terminal
+- [x] J5 — Remote link overview — §37 — `get link | view table` (ADR-0050): `get link` proven by
+      case `044-remote-links-as-objects.case` and `crates/ono-cli/tests/remote.rs`, `view table`
+      by `view.rs`. **Split closed** by `365ac0a`: case `112-link-overview` makes two links
+      against this binary over a pipe pair, so it needs no network, and browses them in the view.
+
+J3 (timeline/history exploration, §20.3) is **not built, deliberately.** ADR-0050: §20.3 is a MAY,
+Ctrl-R and `history` already carry the semantics, and a timeline adds presentation over the same
+records. It was removed from this board rather than carried as an open box.
 
 ### Cross-cutting, tracked to the release checklist
 
-- [ ] Performance budgets of spec §34 measured in the container on the pathological fixtures
+- [x] Performance budgets of spec §34 measured in the container —
+      `docker/acceptance/cases/060-performance-budgets.case` (cold start, bare start, parse,
+      first process row) and `100-spatial-performance-budgets.case` (the eight v0.4 budgets, none
+      violated); `crates/ono-editor/tests/latency.rs` for the keystroke budget.
+      **Split:** four of spec §34's five pathological environments are still absent — C-7, which
+      an agent holds (see *In progress*).
 - [ ] Fuzzers over parser, serializers, remote protocol, plugin protocol, procfs/netlink
-      decoders — spec §35.6
-- [ ] A test for each risk in the threat model of spec §49
-- [ ] Theme and semantic visual tokens — spec §44
-- [ ] The per-capability quality bar of spec §50 for every advertised command
+      decoders — spec §35.6 — **open, and it is C-2 above.** No `fuzz/` directory at `b904327`;
+      since `80c8cb7` the unfinished-work scan is pinned to walk one the day it appears. An agent
+      is on it (see *In progress*).
+- [x] A test for each risk in the threat model of spec §49 — every T1–T15 row of ADR-0015 has a
+      passing test, enumerated in `docs/ACCEPTANCE.md` §4.4's final bullet; ADR-0203 adds seven
+      spatial rows the same way. **Split closed** by `9d7f16a`: **ADR-0245 supersedes ADR-0015**
+      with the same fifteen threats and a *Proven by* column that names test functions, and
+      `xtask/tests/spatial_evidence.rs::should_find_every_test_the_threat_model_names` turns the
+      gate red when a named proof goes missing.
+- [ ] Theme and semantic visual tokens — spec §44 — the 24 tokens are delivered and fully tested
+      (`crates/ono-render/tests/presentation.rs`); **no theme is loadable**, which is C-7 above.
+      Re-checked at `b904327`: no source names `themes/`, no `docs/spec/*.yaml` declares a `theme`
+      key. An agent is on it (see *In progress*).
+- [x] The per-capability quality bar of spec §50 for every advertised command —
+      `docs/ACCEPTANCE.md` §4.2, nine boxes, each proven by a registry-wide sweep rather than a
+      sample: `ono-command/tests/help.rs` iterates every command, completion candidates are
+      registry lookups, the provider conformance suites validate every emitted record, case
+      `034-redirected-output-is-deterministic` requires terminal, file and pipe to be
+      byte-identical, and case `033-errors-are-structured` requires an `Ono-Sendai-ENNNN` code on
+      every failure. **Split:** the first-completion budget is still a proxy — B-split-D4. Since
+      `e0c6eec` (ADR-0233) `spec-check` also holds every declared option against the sources, so a
+      command can no longer advertise an option no code reads.
 
 ---
 
 ## Done
+
+**The orphaned-shell leak is fixed (2026-08-28, agent `leak`, ADR-0160).** The 160 shells were
+not spinning and not deadlocked on a lock: every one of them held the *master* side of its own
+controlling terminal. `nix::pty::openpty` is glibc's `openpty(3)`, which opens `/dev/ptmx` and
+the slave without `O_CLOEXEC`, and `PtySession::start` passed them straight to `spawn`, so every
+program the shell started under a terminal inherited that terminal's master —
+`/proc/<pid>/fdinfo/4` said `tty-index: 29` while `/proc/<pid>/fd/0` was `/dev/pts/29`. The last
+reference to the master was therefore held by the shell reading from it, closing it in the caller
+could never produce end of file, and the shell waited in `ep_poll` for a byte nobody could send.
+Marking both descriptors `FD_CLOEXEC` in `PtySession::start` is the whole fix; the child still
+gets the terminal as the three `dup2` duplicates `plan::prepare_pty` makes. `pgrep -c -x ono`
+after a full `scripts/gate.sh` run is now 0, where it used to grow by a shell per PTY test.
+Proven by `crates/ono-cli/tests/session_lifetime.rs`
+(`should_exit_when_the_terminal_it_was_given_goes_away`,
+`should_not_hold_the_terminal_that_drives_it`), both RED before the fix.
+
+
+
+- [x] `fix(remote)` a shell ends the agent processes it started (ADR-0161): `link host` spawns
+  `ono --agent` (or `ssh … ono --agent`) as its own child, and nothing waited for it — the shell
+  exited first and the agent reparented to whatever init the machine runs. Measured from a
+  process with `PR_SET_CHILD_SUBREAPER`: the shell was reaped, and a second, still-running
+  process reparented onto the subreaper in the same millisecond, every run. In the container
+  that init is `script` (`bash -lc 'script …'` execs it), whose `SIGCHLD` reaping took the
+  orphan for its own child and hung up the `bash` under it — case 049's exit 129. Now
+  `Session::hang_up` says the goodbye explicitly (`Link::hangup`) and waits for the process
+  through a `ChildProcess` handle that outlives the transport, escalating `SIGTERM`/`SIGKILL`
+  only after a 2 s grace it never reaches; `impl Drop for Session` does it for every link still
+  held, before the runtime field is dropped. Every teardown path — `remove link`, `detach link`
+  of a one-shot, `leave` of a one-shot frame, `add link` replacing a name, a handshake that
+  failed after the child was spawned — goes through it. RED first in
+  `crates/ono-cli/tests/session_lifetime.rs::should_end_the_agent_it_started_before_it_exits`.
+  Proof: 20 consecutive `scripts/acceptance.sh --keep-image remote-link` runs green while a full
+  69-case suite ran beside them; the subreaper probe sees no orphan; a linked `ono -c` costs the
+  same as before (10 runs, 1.64 s, unchanged)
+
+- [x] `fix(process)` an interactive `ono` no longer outlives the terminal it was given
+  (ADR-0160): `PtySession::start` marks the `openpty` master and slave `FD_CLOEXEC`, so a program
+  the shell starts under a terminal no longer inherits that terminal's master and end of file on
+  the shell's input becomes possible at all. RED first in
+  `crates/ono-cli/tests/session_lifetime.rs`; `pgrep -c -x ono` after a full gate run went from
+  "one per PTY test, forever" to 0. Case 049's exit 129 was a second, separate leak of the same
+  kind — the link's agent, not the shell — and is fixed by ADR-0161 below
 
 - [x] installable `.deb`/`.rpm` for x86_64 and aarch64 (docs/ACCEPTANCE.md §4.5, ADR-0121,
   ADR-0122, ADR-0123): package metadata and maintainer scripts in `crates/ono-cli/Cargo.toml`
@@ -809,9 +2740,16 @@ should-fix or unbuilt, and each entry says which.
       `help`, `jobs`, `fg`, `bg` and `exit` all run from a config file. The error text the code
       itself prints says configuration "runs nothing". `028-config-is-restricted` only tries
       `touch`, so it does not prove what it claims.
-- [ ] **R4 — a builtin ignores its redirections and cannot be piped.** `help > out.txt` prints to
-      stdout and writes no file; `help | cat` reports `resolve.command_not_found` for `help` and
-      then reports success.
+- [x] **R4 — a builtin ignores its redirections and cannot be piped.** Verified fixed on
+      2026-08-29 by the triage pass, though not the way the report imagined: both spellings are
+      structured refusals naming the alternative rather than silent losses.
+      `ono -c 'help > out.txt'` answers `Ono-Sendai-E0201 type.mismatch` — "`help` runs in the
+      shell itself and cannot be redirected … Send it through a command that does:
+      `help | to text > file`. The redirection at 5..14 was not applied" — writing no file *and
+      saying so*; `ono -c 'help | cat'` answers "`help` runs in the shell itself and cannot be a
+      pipeline stage", never `resolve.command_not_found`, and the run fails.
+      Previously: **`help > out.txt` printed to stdout and wrote no file; `help | cat` reported
+      `resolve.command_not_found` for `help` and then reported success.**
 - [x] **R5 — an unterminated `${` eats the rest of the word.** `printf '[%s]' a${HOMEb` yields
       `[a$]`. `crates/ono-cli/src/expand.rs` drains the iterator looking for `}` and drops what it
       consumed, while its own comment says the text is kept as typed. Silent data loss inside an
@@ -880,7 +2818,12 @@ Should-fix:
       Previously: **one open descriptor per pending directory.**
 - [ ] **F12 — the trust store's default policy is trust-on-first-use**, which contradicts ADR-0015
       T5's "an unknown key is refused, not prompted past". `crates/ono-protocol/src/trust.rs`.
-      Either the ADR or the default has to move.
+      Either the ADR or the default has to move. Tracked under *Next up* as **B-remote-2**, and
+      **ADR-0274 (`593baee`, 2026-08-29) now records why it cannot be settled yet**: both `ssh`
+      and `local` go through `SubprocessTransport`, whose `peer_key` is truthfully `None`, so the
+      pin store is never consulted in production and which default is right depends on whether
+      first contact can be verified out of band. Copying `known_hosts` into the store is ruled
+      out — it would assert a verification this process did not perform (ADR-0037 §4, §2.17).
 - [x] **S1 (F13) — fixed.** `ProviderMutation` refuses a selection over the bulk threshold (10,
       a constant until configuration reaches invocations) with `safety.confirmation_required`
       naming the scope, before the first action; `--confirm` proceeds. `stop process` declares
@@ -959,8 +2902,41 @@ security review — and because re-testing these later costs nothing if they are
 
 ## Deferred / blocked
 
-_(empty — an entry here needs a reason, the ignored test's path, and the ADR that states the
-assumption)_
+*Deferred* means blocked on something outside this repository. Work that is merely unfinished
+belongs under *Next up*, and the 2026-08-29 triage moved everything that was really work out of
+here. The workspace holds **no `#[ignore]`d test at all** (`cargo xtask spec-check`'s
+unfinished-work scan keeps that true), so nothing below is a silenced requirement.
+
+**One entry, and it is blocked on the kernel.**
+
+- **`socket.accepts_connection` cannot be observed.** It is declared in
+  `docs/spec/spatial/relations.yaml`, claimed by no provider, and produces no edges (ADR-0135).
+  Neither `sock_diag` nor procfs relates an accepted connection to the listener it came from, and
+  matching by local port would be a guess v0.4 §11.5 has no value for. Unblocked only by a kernel
+  interface that supplies the link; until then the relation is declared and honestly empty rather
+  than faked or removed. **Exit test:** none can be written today, which is the point.
+
+Two entries left this section on 2026-08-29:
+
+- **`service.depends_on`** moved to *Next up* as **B-prov-5**, and was **delivered the same day**
+  by `bf25291` (ADR-0239). It was never blocked: the provider already called
+  `GetAll(org.freedesktop.systemd1.Unit)` for every unit it emitted, and that reply carries
+  `Requires`, `Requisite`, `BindsTo` and `Wants`. `ono.service/1` now has `dependencies`;
+  `enter service systemd-journald.service; look` answers `dependencies available 4` where it
+  answered nothing. Ordering (`After`, `Before`) is deliberately excluded: it says when, not
+  whether.
+- **The v0.4 RED suites** are delivered and green — the nine
+  `crates/ono-cli/tests/spatial_*_missing.rs` files (175 tests) and the ten
+  `docker/acceptance/cases/09x-spatial-*.case` scenarios (139 assertions), with
+  `xtask/tests/spatial_evidence.rs` failing the gate if a `*.case.v04` file returns or if a test
+  `docs/ACCEPTANCE.md` §4.7 names as a proof goes missing or ignored. The files keep their
+  `_missing` names because renaming them would rename 113 proofs the checklist points at, which is
+  a `refactor` of its own. The three questions those suites could not settle are fixed contracts
+  now: **ADR-0124** (spatial verbs take the bare name; `find place` beside `find file`, so bare
+  `find` stays findutils and case `087` stays green; `look` shadows util-linux `look`),
+  **ADR-0125** (the fourteen §40 conditions are the family `spatial`, `Ono-Sendai-E1001`–`E1014`,
+  in `docs/spec/errors.yaml` — one taxonomy in one file), and **ADR-0126** (the registry is
+  `docs/spec/spatial/{spatial,spaces,relations,landmarks}.yaml`).
 
 ---
 

@@ -32,7 +32,7 @@ run: |
   test ! -e build && echo tree-removed=ok
   echo files=ok
 exit: 0
-stdout-contains: [{"changed":true,"operation":"ono.file.write","status":"success"}]
+stdout-contains: [{"operation":"ono.file.write","status":"success","changed":true}]
 stdout-contains: ["hello"]
 stdout-contains: ["00ff41"]
 stdout-contains: overwrite-refused=1

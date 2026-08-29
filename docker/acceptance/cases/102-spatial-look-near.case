@@ -1,0 +1,199 @@
+# v0.4 §50 Phase S4's first half — `look`, `near` and the six canonical domains as real places.
+# §5 (the spatial horizon), §6.1 (`look`), §6.2 (`near`), §7 (the root and the six domains and the
+# collections each MUST provide access to), §24 (the information budget, groups as exits, and the
+# change section that may never be fabricated), §29.1 (all of it without a terminal) and §35.2
+# (`unsupported` is not `empty`).
+#
+# The scenario is the first thirty seconds of a session: a user who knows no name on this host
+# starts at the root, sees its geography, and walks into it. Nothing here types the name of an
+# object — only the words the shell itself printed.
+#
+# The container runs no systemd, no journald and no container runtime, and its user is
+# unprivileged. That is the point of asserting §35.2 here: a domain nothing feeds must still be a
+# place, and it must say why it is empty rather than claim there is nothing there.
+case: a session starts somewhere, sees the system's geography, and walks into it without a name
+timeout: 60
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  echo "== a fresh session is somewhere, and says where without a terminal (§7.1, §29.1, §46.1) =="
+  ono -c 'look --json' > /tmp/root.json
+  prove s4a "a fresh session stands at the root SYSTEM place" \
+    'grep -qF "\"label\":\"SYSTEM\"" /tmp/root.json'
+  prove s4b "the root names the host it represents (§7.1)" \
+    "grep -qE '\"hostname\":\"[^\"]+\"' /tmp/root.json"
+  prove s4c "the root place is a SystemPlace, not a link-table host (ADR-0142)" \
+    'grep -qF "\"object_type\":\"ono.system/1\"" /tmp/root.json'
+
+  echo "== the six canonical domains are the horizon, and each says what it could tell (§4, §35.2) =="
+  for domain in COMPUTE NETWORK STORAGE CONTAINERS IDENTITY DEVICES; do
+    prove "s4-$domain" "the root offers $domain as an exit" \
+      "grep -qF '\"label\":\"$domain\"' /tmp/root.json"
+  done
+  prove s4d "the plain rendering names them too, so text is sufficient (§2 invariant 13)" \
+    'ono -c "look" | tr "A-Z" "a-z" | grep -q "compute"'
+  prove s4e "every exit states whether it can be entered (§24.2)" \
+    'test "$(ono -c "near | count | to text")" -ge 6'
+
+  echo "== the horizon is bounded: the root is never a list of everything (§7.1, §2.9) =="
+  prove s4f "the root neighbourhood is bounded well below the object count" \
+    'test "$(ono -c "near | count | to text")" -le 64'
+  prove s4g "the bound is disclosed rather than silent (§3.6)" \
+    'grep -qF "\"hidden_count\"" /tmp/root.json'
+  prove s4h "the view states how complete it is (§3.6)" \
+    'grep -qF "\"completeness\"" /tmp/root.json'
+
+  echo "== the domains are enterable, including the ones nothing feeds (§4, §7.5, §7.7) =="
+  for domain in compute network storage containers identity devices; do
+    prove "s4-enter-$domain" "\`enter $domain\` makes it the current place" \
+      "ono -c 'enter $domain; look --json' | grep -qiF '\"type\":\"$domain\"'"
+  done
+
+  echo "== each domain offers the collections §7 names (§7.2, §7.3, §7.4, §7.6) =="
+  ono -c 'enter compute; look --json' > /tmp/compute.json
+  for group in processes services jobs cgroups; do
+    prove "s4-compute-$group" "COMPUTE provides access to \`$group\`" \
+      "grep -qF '\"label\":\"$group\"' /tmp/compute.json"
+  done
+  ono -c 'enter network; look --json' > /tmp/network.json
+  for group in interfaces addresses routes neighbors listeners connections namespaces; do
+    prove "s4-network-$group" "NETWORK provides access to \`$group\`" \
+      "grep -qF '\"label\":\"$group\"' /tmp/network.json"
+  done
+  ono -c 'enter storage; look --json' > /tmp/storage.json
+  for group in filesystems mounts directories; do
+    prove "s4-storage-$group" "STORAGE provides access to \`$group\`" \
+      "grep -qF '\"label\":\"$group\"' /tmp/storage.json"
+  done
+  ono -c 'enter identity; look --json' > /tmp/identity.json
+  for group in users groups sessions; do
+    prove "s4-identity-$group" "IDENTITY provides access to \`$group\`" \
+      "grep -qF '\"label\":\"$group\"' /tmp/identity.json"
+  done
+
+  echo "== unavailable is not empty: this image runs no service manager (§35.2, §2.17) =="
+  prove s4i "every state COMPUTE reports comes from the §35.2 vocabulary" \
+    '! grep -oE "\"state\":\"[a-z_]+\"" /tmp/compute.json | grep -qvE "\"state\":\"(available|empty|unknown|permission_denied|unsupported|stale)\""'
+  prove s4j "with no service manager it is not claimed to be empty" \
+    "ono -c 'enter compute; enter services; look --json' | grep -qE '\"permission\":\"(unknown|permission_denied|unsupported|stale)\"'"
+
+  echo "== the spatial layer shows what the providers answer, and nothing else (§2.16) =="
+  prove s4k "the mounts the mount provider answers for are places" \
+    'ono -c "enter storage; enter mounts; near | to text --field name" | grep -qx "/"'
+  prove s4l "the users the user provider answers for are places" \
+    'ono -c "enter identity; enter users; near | to text --field name" | grep -qx "root"'
+  prove s4m "the processes collection bounds its neighbourhood and \`--all\` widens it" \
+    'test "$(ono -c "enter compute; enter processes; near | count | to text")" -le "$(ono -c "enter compute; enter processes; near --all | count | to text")"'
+
+  echo "== \`near\` is an ordinary object stream (§6.2, §29.4) =="
+  prove s4n "every neighbour names the exit it was reached through" \
+    'test "$(ono -c "near | where relation == \"\" | count | to text")" = "0"'
+  prove s4o "--limit bounds the answer" \
+    'test "$(ono -c "near --limit 3 | count | to text")" -le 3'
+  prove s4p "the stream composes with the v0.2 pipeline unchanged" \
+    'test "$(ono -c "near | select relation | count | to text")" = "$(ono -c "near | count | to text")"'
+
+  echo "== no change section is invented where nothing was watching (§24.3) =="
+  prove s4q "\`look --changes\` is accepted and states why it can say nothing" \
+    'ono -c "look --json --changes 10s" | grep -qF "\"state\":\"unknown\",\"source\":null,\"entries\":[]"'
+  prove s4r "the default look carries no change section at all" \
+    'ono -c "look --json" | grep -qF "\"changed\":null"'
+
+  echo "== Unix survives the move (§2 invariant 15, §44.10) =="
+  prove s4s "an external command still runs after spatial navigation" \
+    'test "$(ono -c "enter compute; enter processes; exec:printf still-unix")" = "still-unix"'
+
+  echo done=ok
+  echo "== the commands teach themselves (§38.1) =="
+  prove s4t "help spatial explains every verb of the §38.1 overview" \
+    'ono -c "help spatial" > /tmp/help-spatial.txt;
+     for verb in look map enter follow jump back up home near find trail; do
+       grep -qE "^ +$verb" /tmp/help-spatial.txt || { echo "no line for $verb"; cat /tmp/help-spatial.txt; exit 1; }
+     done'
+  prove s4u "the overview points at a verb's own page, and that page is the full one" \
+    'ono -c "help spatial" | grep -qF "help look" &&
+     ono -c "help look" | grep -qF -- "--json"'
+  prove s4v "help here names the relations the place it is asked at actually offers (§38.2)" \
+    'ono -c "enter process 1; help here" > /tmp/help-here.txt;
+     grep -qE "^ +children" /tmp/help-here.txt &&
+     grep -qE "^ +cgroup" /tmp/help-here.txt &&
+     grep -qF "near children" /tmp/help-here.txt &&
+     ! ono -c "help here" | grep -qE "^ +cgroup"'
+  prove s4w "near refuses a relation the place does not offer and names the ones it has (§40)" \
+    'ono -c "enter process 1; near owner" 2>&1 | grep -qF "Ono-Sendai-E1004" &&
+     ono -c "enter process 1; near owner" 2>&1 | grep -qF "sockets"'
+  prove s4y "near names an exit at this end of a relation, not the one at the other (§6.2)" \
+    'test "$(ono -c "enter process 1; near parent | count | to json" | tail -1)" = "[0]" &&
+     test "$(ono -c "enter process 1; near children | count | to json" | tail -1)" != "[0]"'
+  prove s4z "an exit that could not be read says so instead of answering empty (§35.2, §42.4)" \
+    'ono -c "enter compute; near cgroups" 2>&1 | grep -qE "Ono-Sendai-E100[89]"'
+  prove s4x "an option that names a positional selector says how to spell it (§40)" \
+    'ono -c "enter process 1; near --relation process" 2>&1 | grep -qF "near <relation>"'
+
+exit: 0
+stdout-contains: done=ok
+stdout-contains: PROVED s4a
+stdout-contains: PROVED s4b
+stdout-contains: PROVED s4c
+stdout-contains: PROVED s4-COMPUTE
+stdout-contains: PROVED s4-NETWORK
+stdout-contains: PROVED s4-STORAGE
+stdout-contains: PROVED s4-CONTAINERS
+stdout-contains: PROVED s4-IDENTITY
+stdout-contains: PROVED s4-DEVICES
+stdout-contains: PROVED s4d
+stdout-contains: PROVED s4e
+stdout-contains: PROVED s4f
+stdout-contains: PROVED s4g
+stdout-contains: PROVED s4h
+stdout-contains: PROVED s4-enter-compute
+stdout-contains: PROVED s4-enter-network
+stdout-contains: PROVED s4-enter-storage
+stdout-contains: PROVED s4-enter-containers
+stdout-contains: PROVED s4-enter-identity
+stdout-contains: PROVED s4-enter-devices
+stdout-contains: PROVED s4-compute-processes
+stdout-contains: PROVED s4-compute-services
+stdout-contains: PROVED s4-compute-jobs
+stdout-contains: PROVED s4-compute-cgroups
+stdout-contains: PROVED s4-network-interfaces
+stdout-contains: PROVED s4-network-addresses
+stdout-contains: PROVED s4-network-routes
+stdout-contains: PROVED s4-network-neighbors
+stdout-contains: PROVED s4-network-listeners
+stdout-contains: PROVED s4-network-connections
+stdout-contains: PROVED s4-network-namespaces
+stdout-contains: PROVED s4-storage-filesystems
+stdout-contains: PROVED s4-storage-mounts
+stdout-contains: PROVED s4-storage-directories
+stdout-contains: PROVED s4-identity-users
+stdout-contains: PROVED s4-identity-groups
+stdout-contains: PROVED s4-identity-sessions
+stdout-contains: PROVED s4i
+stdout-contains: PROVED s4j
+stdout-contains: PROVED s4k
+stdout-contains: PROVED s4l
+stdout-contains: PROVED s4m
+stdout-contains: PROVED s4n
+stdout-contains: PROVED s4o
+stdout-contains: PROVED s4p
+stdout-contains: PROVED s4q
+stdout-contains: PROVED s4r
+stdout-contains: PROVED s4s
+stdout-contains: PROVED s4t
+stdout-contains: PROVED s4u
+stdout-contains: PROVED s4v
+stdout-contains: PROVED s4w
+stdout-contains: PROVED s4x
+stdout-contains: PROVED s4y
+stdout-contains: PROVED s4z
+stdout-not-contains: FAILED

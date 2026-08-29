@@ -67,7 +67,11 @@ fn cd(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     }
 
     session.set_env("PWD", resolved.as_os_str());
-    session.set_cwd(resolved);
+    session.set_cwd(resolved.clone());
+    // v0.4 §30.3: `cd` updates the spatial place only where §47's `spatial.follow_cwd` says it
+    // should — by default inside the storage family, so a `cd` cannot end a process
+    // investigation. §30.4 keeps `PWD` the working directory and nothing else.
+    crate::spatial::storage::follow_cwd(session, &resolved);
     Ok(ExitStatus::SUCCESS)
 }
 
@@ -330,7 +334,15 @@ fn help(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         .collect::<Vec<_>>()
         .join(" ");
 
-    let registry = match ono_command::CommandRegistry::embedded() {
+    // v0.4 §38.2: "At any place: `help here` … SHOULD show spatial operations supported by that
+    // place." It cannot be a registry topic like the others, because the answer is a fact about
+    // the session's current place and the registry knows nothing about where anybody is standing.
+    if topic == "here" {
+        println!("{}", crate::spatial::here_help(session)?.render());
+        return Ok(ExitStatus::SUCCESS);
+    }
+
+    let registry = match crate::native::registry() {
         Ok(registry) => registry,
         Err(error) => return Err(Flow::Failed(error)),
     };
@@ -416,7 +428,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         )));
     };
 
-    let registry = ono_command::CommandRegistry::embedded().map_err(Flow::Failed)?;
+    let registry = crate::native::registry().map_err(Flow::Failed)?;
     // The last stage's consumer is whatever the shell's stdout is, and a plan that assumed a
     // terminal would promise interactive rendering to a script (spec v0.3 §1.4).
     let stdout = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
@@ -441,6 +453,9 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     // Inside a link frame the remote negotiates (spec v0.3 §1.54): the local registry is not
     // consulted for the plan, and the remote's answer is reported per stage below.
     let remote_host = session.link_host();
+    // Everything a frame contributes has an explicit spelling, and `explain` is where it is
+    // written (spec §14.5, ADR-0023, ADR-0225).
+    let frames = session.context();
     let (providers, adapters) = session.registries();
     let adapters = remote_host.is_none().then_some(adapters);
     let plan = ono_command::plan_with(
@@ -452,6 +467,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             stdout,
             adapters,
             executables: Some(&executables),
+            context: &frames,
         },
     );
     // The plan quotes the source it was given and the paths it resolved, both of which are
@@ -473,11 +489,29 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             &mut block,
             "mode",
             if link.agentless {
-                "agentless — requested; this build serves it through the agent (spec §21.3)"
+                "agentless — a reduced provider set over standard commands (spec §21.3)"
             } else {
                 "agent"
             },
         );
+        // Spec §21.3: what a reduced link *can* answer is the visible half of what it cannot, so
+        // the plan says it before a command is run rather than after one is refused.
+        if link.agentless {
+            let answered = link
+                .connection
+                .as_ref()
+                .map(crate::session::LinkConnection::targets)
+                .unwrap_or_default();
+            plan_row(
+                &mut block,
+                "answers",
+                &if answered.is_empty() {
+                    "nothing — this link was never established".to_owned()
+                } else {
+                    answered.join(" ")
+                },
+            );
+        }
         plan_row(
             &mut block,
             "identity",
@@ -530,8 +564,17 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             let Some(argv) = crate::native::literal_argv(stage) else {
                 continue;
             };
+            let agentless = session.link(&host).is_some_and(|link| link.agentless);
             let state = crate::native::remote_decision(session, &argv, demand).map_or_else(
-                || "raw (the remote agent cannot negotiate adapters)".to_owned(),
+                || {
+                    if agentless {
+                        "raw (this link is agentless: there is no agent over there to negotiate \
+                         adapters)"
+                            .to_owned()
+                    } else {
+                        "raw (the remote agent cannot negotiate adapters)".to_owned()
+                    }
+                },
                 |decision| decision.state,
             );
             print_safely(&format!("  adaptation on {host}: {state}"));

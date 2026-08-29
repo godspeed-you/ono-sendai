@@ -1,0 +1,1 @@
+get process | where cpu > 20 and memory >= 512MiB | sort cpu desc | take 10

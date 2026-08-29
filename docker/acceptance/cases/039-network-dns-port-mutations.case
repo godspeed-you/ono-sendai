@@ -29,15 +29,15 @@ run: |
   kill "$listener" 2>/dev/null
   echo "checked"
 exit: 0
-stdout-contains: {"error":{"code":"Ono-Sendai-E0302"
+stdout-contains: "status":"failed","error":{"code":"Ono-Sendai-E0302"
 stdout-contains: "operation":"ono.route.add","status":"failed"
 stdout-contains: add-route-status=1
 stdout-contains: routes-added=0
 stdout-contains: Ono-Sendai-E0701
-stdout-contains: [{"address":"127.0.0.1","name":"localhost","type":"A"}]
+stdout-contains: [{"name":"localhost","type":"A","address":"127.0.0.1"}]
 stdout-contains: [{"type":"PTR"}]
 stdout-contains: Ono-Sendai-E0
-stdout-contains: {"error":null,"host":"127.0.0.1","port":4711,"reachable":true}
+stdout-contains: {"host":"127.0.0.1","port":4711,"reachable":true,"error":null}
 stdout-contains: [{"reachable":false}]
 stdout-contains: closed-port-status=0
 stdout-contains: checked

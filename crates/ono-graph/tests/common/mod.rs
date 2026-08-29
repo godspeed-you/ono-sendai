@@ -270,6 +270,11 @@ pub fn socket(inode: i64, protocol: &str, local: Value, remote: Value, state: &s
 
 /// A service record.
 pub fn service(name: &str, pid: Option<i64>) -> RecordValue {
+    service_requiring(name, pid, &[])
+}
+
+/// A service record that says which units it requires (`service.v1.yaml` `dependencies`).
+pub fn service_requiring(name: &str, pid: Option<i64>, requires: &[&str]) -> RecordValue {
     RecordValue::builder(schema("ono.service"), provenance("ono.service"))
         .set("name", Value::String(name.into()))
         .and_then(|builder| builder.set("state", Value::String("active".into())))
@@ -278,6 +283,12 @@ pub fn service(name: &str, pid: Option<i64>) -> RecordValue {
             builder.set(
                 "pid",
                 pid.map_or(Value::Null, |pid| Value::Int(i128::from(pid))),
+            )
+        })
+        .and_then(|builder| {
+            builder.set(
+                "dependencies",
+                Value::list(requires.iter().map(|unit| Value::String((*unit).into()))),
             )
         })
         .expect("the fixture service record")
@@ -302,12 +313,23 @@ pub fn file(path: &str, kind: &str, device: i64, inode: i64) -> RecordValue {
 
 /// A mount record.
 pub fn mount(source: &str, target: &str, filesystem: &str) -> RecordValue {
+    mount_in_group(source, target, filesystem, None)
+}
+
+/// A mount in the propagation peer group `mountinfo(5)` spells `shared:N`.
+pub fn mount_in_group(
+    source: &str,
+    target: &str,
+    filesystem: &str,
+    peer_group: Option<i128>,
+) -> RecordValue {
     RecordValue::builder(schema("ono.mount"), provenance("ono.mount"))
         .set("source", Value::String(source.into()))
         .and_then(|builder| builder.set("target", Value::Path(Arc::from(Path::new(target)))))
         .and_then(|builder| builder.set("filesystem", Value::String(filesystem.into())))
         .and_then(|builder| builder.set("options", Value::List(Arc::from([]))))
         .and_then(|builder| builder.set("read_only", Value::Bool(false)))
+        .and_then(|builder| builder.set("peer_group", peer_group.map_or(Value::Null, Value::Int)))
         .expect("the fixture mount record")
         .build()
 }

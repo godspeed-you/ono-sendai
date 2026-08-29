@@ -97,6 +97,16 @@ argument_modes:
     heads:
       [where, select, sort, group, take, skip, each, reduce, count, measure, join, diff,
        if, elif, while, until, let, return, match]
+    # ADR-0138. A words-mode head may still take one predicate: `find place --where pid > 1`
+    # would otherwise redirect into a file called `1`, because `>` is a redirection in words
+    # mode. The pair is `(head, option)`, so the meaning of a word changes for exactly the
+    # option that declares it and for no other command's `--where`.
+    option_values:
+      - head: find
+        option: where
+        doc: >-
+          The predicate of `find place` (v0.4 §6.8): read in expression mode, so `>` compares
+          and a bare identifier is a field path of the object being searched for.
 escapes:
   words_into_expression:
     syntax: "( … )"

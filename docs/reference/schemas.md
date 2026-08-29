@@ -133,14 +133,14 @@ Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `id` | `uuid` | — | required | The grant's own identity, so it can be revoked and cited precisely. |
-| `plugin` | `ref<ono.plugin/1>` | — | required | The package the grant is made to. A grant is never to a publisher or to a class of packages. |
+| `plugin` | `ref<ono.plugin/1>` | — | nullable | The package the grant is made to. A grant is never to a publisher or to a class of packages. Null on the rows `get capability` lists before the grants: a capability *definition* the broker knows and no package has asked for yet names no package, and saying so with a null is what spec §35.3 requires instead of inventing one (ADR-0111). |
 | `capability` | `string` | — | required | The capability id, from `kuang_capabilities` in `docs/spec/capabilities.yaml`. |
-| `class` | `enum` | — | required | How the package declared it (spec §31.17). A `required` denial blocks the load; an `optional` denial degrades it. |
+| `class` | `enum` | — | nullable | How the package declared it (spec §31.17). A `required` denial blocks the load; an `optional` denial degrades it. Null on a definition row, which no package has declared (ADR-0111). |
 | `decision` | `enum` | — | required | The standing answer. `ask` is not a grant: it prompts, once, per the requirements of spec §31.18, and resolves to `deny` where no one can be asked. |
 | `scope` | `record` | — | nullable | The scope keys the capability declares, e.g. `{paths: ["/var/log/nginx/**"]}`. Null means unscoped. A key the capability does not declare is invalid, not ignored. |
 | `enforcement` | `enum` | — | required | Whether the scope is checked at every call, merely recorded, or absent because the capability has no scope. Spec §31.16: a scope that cannot be enforced reliably MUST NOT be offered as if it were a security boundary, so this field is shown wherever the scope is. |
 | `duration` | `enum` | — | required | The durations of spec §31.18. Everything but `always` lives only in the session. |
-| `granted_at` | `timestamp` | — | required | When the decision was made. |
+| `granted_at` | `timestamp` | — | nullable | When the decision was made. Null on a definition row, where no decision has been made yet (ADR-0111). |
 | `expires_at` | `timestamp` | — | nullable | When it stops working. Null for a grant with no expiry; a grant with one is a lease (spec §31.49) and every field below applies to it. |
 | `max_uses` | `int` | — | nullable | How many times the lease may be used. Null means unlimited within its window. |
 | `uses` | `int` | — | required | How many times it has been used. A count, never null. |
@@ -151,6 +151,35 @@ Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_
 | `link` | `string` | — | nullable | The link the grant applies to, for a remote projection. Null for a local grant. A local grant does not become a remote one; effective authority is the intersection of both sides' policy (spec §31.40). |
 | `purpose` | `string` | — | nullable | What the package said it needed the capability for, as shown in the prompt (spec §31.18). Package-authored, sanitised, and attributed to the package rather than to Ono. |
 | `revoked_at` | `timestamp` | — | nullable | When it was revoked. Null while it stands. A revoked grant is retained rather than deleted, so the record of what was once permitted survives. |
+
+## Cgroup — `ono.cgroup/1`
+
+A control group, named by the path the kernel gives it in the unified hierarchy.
+
+Identity: `path`
+
+Default view: `path`, `name`, `parent`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `path` | `path` | — | required | The control group's path in the unified hierarchy, `/system.slice/nginx.service`, as `/proc/<pid>/cgroup` reports it. The kernel's own identity for the group. |
+| `name` | `string` | — | required | The last component of the path, `nginx.service` — what a place view shows. |
+| `parent` | `path` | — | nullable | The path of the enclosing control group; null for the root of the hierarchy. |
+
+## ChangeSummary — `ono.change-summary/1`
+
+What changed around a place in a time window, or why nothing can be said about it.
+
+Identity: `window`, `state`
+
+Default view: `window`, `state`, `source`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `window` | `duration` | — | required | The horizon the summary covers (§24.3, `spatial.look.change_window`). |
+| `state` | `enum` | — | required | Whether changes could be observed at all (§35.2). `unsupported` means no event source and no comparison snapshot existed, which §24.3 forbids being rendered as "nothing changed". |
+| `source` | `string` | — | nullable | What the changes were observed through — an event stream or a snapshot comparison (§25.4). |
+| `entries` | `list<record>` | — | required | The changes themselves, each carrying the object it happened to and when it was observed. |
 
 ## Command — `ono.command/1`
 
@@ -165,6 +194,7 @@ Default view: `spelling`, `kind`, `summary`, `stability`
 | `spelling` | `string` | — | required | How the command is written — `get process` for a registry entry, the head word for a resolution. |
 | `kind` | `enum` | — | required | The stage of the resolution order (spec §6.5, ADR-0011) that answers to the spelling: a language keyword, a user function, an alias, a native command, or an external executable on `PATH`. Every registry entry is `native`. |
 | `id` | `string` | — | nullable | The stable command id, e.g. `ono.process.get`; null for anything that is not a registry entry. |
+| `origin` | `string` | — | required | Where the entry came from (spec §31.64): `core` for a command Ono ships, and `plugin(<package-id>, <version>)` for one a KUANG/11 package contributes. The host sets it at registration; a package cannot declare itself core. `resolve command` answers for a head word rather than for a registry entry, and a head word is resolved by the shell's own resolution order, so that answer is always `core`. |
 | `verb` | `string` | — | nullable | The verb of a registry entry, or the verb a native resolution names; null otherwise. |
 | `target` | `string` | — | nullable | The target of a registry entry; null for a verb-only resolution and for every other kind. |
 | `path` | `path` | — | nullable | The absolute path of an external executable (ADR-0011); null for every other kind. |
@@ -550,6 +580,20 @@ Default view: `gid`, `name`, `members`
 | `name` | `string` | — | nullable | The group name; null when the identity provider cannot resolve the gid. |
 | `members` | `list<string>` | — | nullable | Login names listed as supplementary members. Names rather than user references, because the account database stores names and they need not resolve to an account. Users whose primary group this is are not listed here; null when the provider cannot enumerate them. |
 
+## HiddenSummary — `ono.hidden-summary/1`
+
+What a bounded map left out, and in which way.
+
+Identity: `count`
+
+Default view: `count`, `clustered`, `aggregated`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `count` | `int` | — | required | How many known places the map does not draw as their own node. |
+| `clustered` | `int` | — | required | How many of those a cluster stands for (§8.2). |
+| `aggregated` | `int` | — | required | How many were folded into a coarser node by the zoom level (§8.1). |
+
 ## HostEvent — `ono.host-event/1`
 
 One change to one known host, as a live stream emits it.
@@ -565,6 +609,21 @@ Default view: `kind`, `at`, `host`, `changed`
 | `host` | `record` | — | optional | The host as it now is — or, for `removed`, as it last was. Identity is its name. |
 | `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
 | `source` | `enum` | — | required | How the change was observed. `poll` means the runtime re-read the host sources at the configured interval — explicit, as spec §18.2 requires. |
+
+## HostKey — `ono.host-key/1`
+
+One host key this shell has pinned, and the fingerprint it is pinned by.
+
+Identity: `host`
+
+Default view: `host`, `algorithm`, `fingerprint`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `host` | `string` | — | required | The host the key is pinned for, as the link names it. |
+| `algorithm` | `string` | — | required | How the key was proved. `tls-x509` is the peer's end-entity certificate over the authenticated transport of spec §21.5 (ADR-0353); the store keeps whatever name the transport that verified the key gave it. |
+| `fingerprint` | `string` | — | required | The full SHA-256 fingerprint, `sha256:` and 64 hex digits. Never truncated: a shortened fingerprint is one an impersonator can search for a collision against. |
+| `path` | `path` | — | nullable | The trust store file the pin is recorded in; null when the session has no configuration directory and the store therefore lives only for this session. |
 
 ## Host — `ono.host/1`
 
@@ -670,10 +729,10 @@ Default view: `name`, `state`, `addresses`, `mtu`, `mac`
 | `index` | `int` | — | required | The kernel interface index. |
 | `mac` | `string` | — | nullable | The link-layer address; null for interfaces that have none, such as loopback or tun. |
 | `state` | `enum` | — | required | The operational state as the kernel reports it, not the administrative flag. |
-| `mtu` | `int` | — | required | The maximum transmission unit in bytes. |
+| `mtu` | `int` | bytes | required | The maximum transmission unit in bytes. |
 | `addresses` | `list<ipnetwork>` | — | required | Configured addresses with their prefix lengths; an empty list when none are configured. |
-| `rx_bytes` | `bytesize` | — | nullable | Bytes received since the counter was last reset; null when the provider has no counters. |
-| `tx_bytes` | `bytesize` | — | nullable | Bytes transmitted since the counter was last reset. |
+| `rx_bytes` | `bytesize` | bytes | nullable | Bytes received since the counter was last reset; null when the provider has no counters. |
+| `tx_bytes` | `bytesize` | bytes | nullable | Bytes transmitted since the counter was last reset. |
 
 ## Job — `ono.job/1`
 
@@ -716,6 +775,22 @@ Default view: `timestamp`, `priority`, `identifier`, `message`
 | `host` | `string` | — | required | The hostname the entry was recorded on. |
 | `cursor` | `string` | — | required | The journal cursor, a stable continuation and provenance token (spec v0.3 §1.37). |
 
+## Landmark — `ono.landmark/1`
+
+An object or condition promoted because it helps orientation or deserves attention.
+
+Identity: `subject`, `reason`
+
+Default view: `name`, `reason`, `evidence`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `subject` | `string` | — | required | The `spatial_id` of the place the landmark is about (§3.1). |
+| `name` | `string` | — | required | What a person calls that place. |
+| `reason` | `enum` | — | required | Why it is a landmark. §3.7 makes the reason mandatory, and the vocabulary is closed. |
+| `evidence` | `string` | — | required | The observation that made the rule fire — the number, the state, the pin (§26.1). |
+| `source` | `string` | — | required | Who claimed it — a built-in rule, the user's pin, or a plugin id (§26.5, §35.5). |
+
 ## LinkEvent — `ono.link-event/1`
 
 One change to one link this session holds, as a live stream emits it.
@@ -732,6 +807,25 @@ Default view: `kind`, `at`, `link`, `changed`
 | `changed` | `list<string>` | — | optional | For `changed`, the names of the fields whose values moved. Null for every other kind. |
 | `source` | `enum` | — | required | How the change was observed. `poll` means the runtime compared the link table at the configured interval — explicit, as spec §18.2 requires. |
 
+## LinkPlace — `ono.link-place/1`
+
+One linked host as a place the session can jump to, with the state of the link that reaches it.
+
+Identity: `name`
+
+Default view: `name`, `host`, `transport`, `state`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `name` | `string` | — | required | The link's name — the word `jump` takes, and the scope a place behind it belongs to (§3.2). |
+| `display_name` | `string` | — | required | The same text under the name §3.1 gives the field. |
+| `host` | `string` | — | required | The host the link points at, which a definition may spell differently from the link's name. |
+| `transport` | `enum` | — | required | How the bytes travel (`ono.link/1`'s `transport`). |
+| `state` | `enum` | — | required | The §19.1 link-map state, in §35.2's vocabulary. `connected` when the link is established and this session still follows it; `stale` when it is established but the session has detached, so nothing keeps the places behind it current; `disconnected` when it is a definition nothing negotiated, or one that was torn down. A link is never dropped from the map to say it is not connected — that would be the `empty` answer §35.2 and §53 forbid. |
+| `reachable` | `bool` | — | required | Whether a spatial command may cross the link right now (§35.4). False is not an error: the link stays a place, and `jump` refuses it with `spatial.remote_unavailable` rather than dialling anything. |
+| `scope` | `string` | — | required | The §3.2 scope the host's places belong to, rendered as `<kind>:<id>` — `remote_host:web01`. |
+| `spatial_id` | `string` | — | required | The root `SystemPlace` of the linked host — the place `jump <name>` arrives at (§19.2). It exists as soon as the link does: §4 gives every host the canonical root space, and the id is derived from the link's scope rather than from anything the far side was asked (§35.4). |
+
 ## Link — `ono.link/1`
 
 One remote Ono link this session holds.
@@ -744,7 +838,7 @@ Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 |---|---|---|---|---|
 | `name` | `string` | — | required | The host as the user named it — the prompt's spelling, and `enter link`'s argument. |
 | `host` | `string` | — | required | The host the link points at. `link host prod-db` points at `prod-db` itself; a definition may point elsewhere (`add link prod-db --host 10.4.2.11`), and the table never hides where a link goes. |
-| `transport` | `enum` | — | required | How the bytes travel. `ssh` spawns the remote agent over OpenSSH; `local` spawns `ono --agent` as a child of this shell, which is how a link is exercised without a network. |
+| `transport` | `enum` | — | required | How the bytes travel. `ssh` spawns the remote agent over OpenSSH; `local` spawns `ono --agent` as a child of this shell, which is how a link is exercised without a network; `tcp` is Ono's own authenticated transport of spec §21.5, where the peer proves it holds the key this shell pinned for the host (ADR-0353). |
 | `mode` | `enum` | — | required | Whether the far side is the Ono agent of spec §21.4 or the agentless fallback of §21.3. The fallback MUST be visible because semantics and performance may differ, so the mode is part of the record wherever the link is described. |
 | `state` | `enum` | — | required | Whether the link is usable now: `connected` once the handshake succeeded, `defined` for a definition recorded with `add link` that was never established, `closed` once torn down. |
 | `targets` | `list<string>` | — | required | The targets the remote negotiated (spec §21.2), which is what its context can answer. Empty for a link that was never established: nothing was negotiated. |
@@ -762,7 +856,7 @@ Default view: `timestamp`, `level`, `unit`, `message`
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `timestamp` | `timestamp` | — | required | When the record was received by the journal (the realtime clock). |
-| `level` | `enum` | — | nullable | The severity name of `priority`: emerg, alert, crit, error, warning, notice, info, debug. Null when the journal reported no priority. |
+| `level` | `enum` | — | nullable | The severity name of `priority`, written from least to greatest so that `where level >= error` orders by severity (spec §41.4, ADR-0222): debug, info, notice, warning, error, crit, alert, emerg. That is the reverse of the syslog `priority` number, where 0 is the most severe. Null when the journal reported no priority. |
 | `priority` | `int` | — | required | The syslog priority, 0 (emergency) to 7 (debug). |
 | `message` | `string` | — | required | The record's message. |
 | `identifier` | `string` | — | nullable | The syslog identifier — the program name as the record names itself. |
@@ -772,6 +866,67 @@ Default view: `timestamp`, `level`, `unit`, `message`
 | `boot_id` | `string` | — | required | The boot the record belongs to. |
 | `host` | `string` | — | required | The hostname the record was recorded on. |
 | `cursor` | `string` | — | required | The journal cursor, a stable continuation and provenance token. |
+
+## MapCluster — `ono.map-cluster/1`
+
+A group of objects one map node stands for because the view budget could not draw them.
+
+Identity: `id`
+
+Default view: `label`, `members`, `grouping`, `expandable`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The cluster's stable identity, which `map --expand <id>` takes (§8.3). |
+| `label` | `string` | — | required | What the group is called — the canonical collection its members are filed under. |
+| `members` | `int` | — | required | How many objects it stands for (§8.2). |
+| `grouping` | `string` | — | required | The dimension it was grouped along, from §8.2's list of allowed dimensions. |
+| `expandable` | `bool` | — | required | Whether `map --expand` can draw its members instead (§8.3). |
+
+## MapEdge — `ono.map-edge/1`
+
+One relationship or containment a map draws between two of its nodes.
+
+Identity: `id`
+
+Default view: `relation`, `source_label`, `target_label`, `confidence`, `provider`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The edge's stable identity, so the same edge is the same edge in a later map (§11.4). |
+| `source` | `string` | — | required | Where the edge starts — a node's `spatial_id`, or the id of the cluster standing for it (§8.2, §43.2). |
+| `target` | `string` | — | required | Where the edge leads, read the same way. |
+| `source_label` | `string` | — | required | What a person calls the source. §11.4 makes every displayed relationship inspectable, and a relationship whose two ends are opaque ids is not inspectable by a person; the ids stay beside it for anything that resolves them. |
+| `target_label` | `string` | — | required | What a person calls the target, for the same reason. |
+| `relation` | `string` | — | required | The declared relation of `docs/spec/spatial/relations.yaml`, or the §3.4 grouping for a hierarchy edge. |
+| `kind` | `enum` | — | required | Whether the edge is canonical containment (§3.4) or a real connection (§3.5). §2.6 forbids confusing the two. |
+| `confidence` | `enum` | — | required | How confident the assertion is (§11.5). A map must show an inferred edge differently from an exact one. |
+| `direction` | `enum` | — | required | Which way the edge runs (§3.5). |
+| `provider` | `string` | — | required | Who observed it (§11.4). The canonical geography is asserted by the spatial layer itself. |
+| `evidence` | `map` | — | required | §11.4's "raw evidence/reference where safe": what the provider actually saw, as it reported it — the descriptor and the access mode of an open file, the inode of a socket. Empty for a hierarchy edge, which is containment declared by the spatial layer and has no observation behind it (§2.6, §3.4, §4.1). |
+| `provenance` | `map` | — | required | The full v0.2 provenance of the assertion (§11.4). |
+| `observed_at` | `timestamp` | — | nullable | When it was observed; null when nothing recorded an observation time (§2.17). |
+| `changed` | `string` | — | nullable | How the edge changed inside the change window — §22's optional `changed` field; null without an event source or a comparison snapshot (§24.3). |
+
+## MapNode — `ono.map-node/1`
+
+One object a map draws.
+
+Identity: `id`
+
+Default view: `label`, `type`, `state`, `landmark_reasons`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The place's `spatial_id` (§3.1). Opaque, stable and unique within one map. |
+| `object_ref` | `map` | — | required | The provider's own reference to the object — the schema it is served under and the values of that schema's identity fields — or, for a canonical space, the space the geography declares (§3.1, §41.1). Every visible node corresponds to inspectable data (§23.1). |
+| `space` | `string` | — | nullable | The registry id of the canonical space this node is (`compute`, `compute.processes`), or null for an observed object (§41.1). |
+| `label` | `string` | — | required | The name a user reads. |
+| `type` | `string` | — | required | What kind of place it is, in §3.3's vocabulary. |
+| `state` | `string` | — | nullable | The provider's own state word, where it reported one; null is "not known", never "fine" (§2.17). |
+| `canonical_parent` | `string` | — | nullable | The `spatial_id` `up` arrives at (§11.3); null at the root. |
+| `landmark_reasons` | `list<string>` | — | required | Why this node deserves attention, from §3.7's closed vocabulary. Empty when it is no landmark. |
+| `depth` | `int` | — | required | How many hierarchy hops from the map's centre the node was reached (§6.9). |
 
 ## ModelProvider — `ono.model-provider/1`
 
@@ -798,6 +953,23 @@ Default view: `name`, `kind`, `location`, `context_window`, `tools`, `data_polic
 | `denied_classes` | `list<string>` | — | required | Classes that may never be sent here. A request carrying one is refused with `model.policy_denied` rather than trimmed, so the boundary stays visible. |
 | `available` | `bool` | — | required | Whether the provider can answer right now. |
 | `unavailable_reason` | `string` | — | nullable | Why it cannot, when it cannot (spec §35.3). Null when it is available. |
+
+## MountBoundary — `ono.mount-boundary/1`
+
+The mount a path place sits on — where it is, what it is, and whether it is remote.
+
+Identity: `local_path`
+
+Default view: `local_path`, `filesystem`, `source`, `remote`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `local_path` | `path` | — | required | The mount point, as §15.3's "local path" (`ono.mount/1`'s `target`). |
+| `filesystem` | `string` | — | required | The filesystem type the kernel names, straight from `ono.mount/1`. |
+| `source` | `string` | — | required | What is mounted there — a device, a network export, a pseudo-filesystem name. |
+| `remote` | `bool` | — | required | Whether the filesystem lives on another machine (§15.3's `remote yes`). Decided from the filesystem type and the source, never guessed from the mount point (ADR-0187). |
+| `read_only` | `bool` | — | nullable | Whether the mount is read-only, where the provider said. |
+| `mount` | `string` | — | nullable | The `spatial_id` of the mount place, so `enter`/`up` can reach it (§15.2, §3.1). |
 
 ## MountEvent — `ono.mount-event/1`
 
@@ -831,6 +1003,7 @@ Default view: `target`, `source`, `filesystem`, `read_only`
 | `options` | `list<string>` | — | required | The mount options, one element per option, never a single joined string. |
 | `read_only` | `bool` | — | required | Whether the mount is read-only. Extracted from the options because users filter on it. |
 | `device` | `ref<ono.device/1>` | — | nullable | The backing device; null for pseudo- and network filesystems. |
+| `peer_group` | `int` | — | nullable | The propagation peer group `mountinfo(5)` gives as `shared:N`. Two mounts with the same group are peers: a mount or unmount under one appears under the other. Null when the mount is private, which is a mount that propagates nothing — not an unknown (ADR-0236). |
 
 ## Namespace — `ono.namespace/1`
 
@@ -851,6 +1024,29 @@ Default view: `id`, `type`, `processes`, `pid`, `user`, `command`
 | `uid` | `int` | — | nullable | That user's id. |
 | `command` | `string` | — | nullable | That process's command line. |
 
+## NavigationStep — `ono.navigation-step/1`
+
+One movement of the session's navigation trail, from one place to another.
+
+Identity: `timestamp`, `from`, `to`
+
+Default view: `movement`, `from_name`, `to_name`, `relation`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `timestamp` | `timestamp` | — | required | When the movement happened (§20.1). |
+| `movement` | `enum` | — | required | Which of §6's movements it was (§20.1). |
+| `from` | `string` | — | required | The opaque `SpatialId` the movement started at (§20.1, §3.1). |
+| `to` | `string` | — | required | The opaque `SpatialId` it arrived at (§20.1, §3.1). |
+| `from_ref` | `string` | — | nullable | The place it started at, in the canonical `<type>/<key>` spelling of §11.2 and §27.2 — `process/1842`, `compute.processes`. Null where the session no longer knows the place. |
+| `to_ref` | `string` | — | nullable | The same for the place it arrived at. |
+| `from_name` | `string` | — | nullable | What a person calls the place it started at (§3.1's `display_name`). |
+| `to_name` | `string` | — | nullable | What a person calls the place it arrived at. |
+| `relation` | `string` | — | nullable | The word the traversal was spelled with — `socket`, `parent`, `owner` (§6.4). Null for every movement that is not a `follow`, because hierarchy is not a relationship (§2.6). |
+| `relation_id` | `string` | — | nullable | The relation the word named, as `docs/spec/spatial/relations.yaml` declares it — `process.owns_socket`. A relation has two ends and therefore two words, so the id alone does not say which way the movement went; both travel together (§11.4, §41.2). |
+| `scope_crossing` | `record` | — | nullable | The scope boundary the movement crossed, where it crossed one: the scope left, the scope entered, the kind of boundary and whether it is remote (§3.2, §2.18). Null where both ends belong to the same scope — never omitted, because an invisible crossing makes the trail lie. |
+| `host` | `string` | — | required | The host scope the movement happened on, so a cross-host path can be read back unambiguously (§19, §20.1). |
+
 ## Neighbor — `ono.neighbor/1`
 
 An ARP or NDP neighbour table entry.
@@ -868,6 +1064,44 @@ Default view: `address`, `mac`, `interface`, `state`
 | `state` | `enum` | — | required | The neighbour cache state as the kernel reports it. |
 | `router` | `bool` | — | nullable | Whether the neighbour advertises itself as a router; null outside NDP. |
 | `updated` | `timestamp` | — | nullable | When the entry was last confirmed; null when the provider keeps no timestamp. |
+
+## NeighborhoodGroup — `ono.neighborhood-group/1`
+
+One exit of a place — the objects a relation or a collection leads to, and what is known about them.
+
+Identity: `label`
+
+Default view: `label`, `count`, `state`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `label` | `string` | — | required | The word a user types to take the exit — `processes`, `sockets`, `parent` (§24.2). |
+| `name` | `string` | — | required | The same text under the name the object pipeline gives every object's name (v0.2 §33.5). |
+| `display_name` | `string` | — | required | The same text under the name §3.1 gives the field. |
+| `relation` | `string` | — | nullable | The relation the members are reached by (§3.5); null for a collection reached by containment. |
+| `count` | `int` | — | nullable | How many places lie behind the exit, and null where nobody could count them. §2.17 and §42.4: a group the provider refused carries its `state` and no number, because `files  permission denied for 14 process FDs` and `files  0` are different facts. |
+| `state` | `enum` | — | required | What the user was told about the objects behind the exit (§35.2). These stay distinct. |
+| `detail` | `string` | — | nullable | What the provider said in place of a count, for a group that could not be read (§35.2). |
+| `navigable` | `bool` | — | required | Whether `enter <label>` really is a move from here (§24.2). |
+| `freshness` | `enum` | — | required | How current the answer is (§33.4). `unknown` is not `fresh`. |
+| `members` | `list<ono.spatial-place/1>` | — | nullable | The places behind the exit. Null in the default view, which shows counts and states; `look --all` and `near` carry them (§6.1, §6.2, §24.1). |
+
+## Neighborhood — `ono.neighborhood/1`
+
+The bounded, ranked projection of what surrounds a place.
+
+Identity: `center`, `generated_at`
+
+Default view: `center`, `hidden_count`, `completeness`, `generated_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `center` | `string` | — | required | The `spatial_id` of the place the projection is around. |
+| `groups` | `list<ono.neighborhood-group/1>` | — | required | The exits, in the order the query layer ranked them (§3.6, §24.2). |
+| `landmarks` | `list<ono.landmark/1>` | — | required | What deserves attention here (§3.7). Empty is an answer; null would not be. |
+| `hidden_count` | `int` | — | required | How many known neighbours the view budget left out (§3.6, §34.2). |
+| `completeness` | `enum` | — | required | Whether everything adjacent is here (`complete`), the budget hid some (`bounded`), a source could not be read (`partial`), or neither could be established (§3.6, §35.2). |
+| `generated_at` | `timestamp` | — | required | When the projection was made. |
 
 ## OpenFile — `ono.open-file/1`
 
@@ -902,6 +1136,33 @@ Default view: `name`, `version`, `installed`, `description`
 | `installed` | `bool` | — | nullable | Whether the package is installed. Null when the manager could not say — never a guess (spec §35.3). |
 | `description` | `string` | — | nullable | The manager's one-line description, where the query that produced the record carried one. |
 | `provider` | `string` | — | required | The package manager that answered, such as `dpkg`; part of the identity. |
+
+## PlaceView — `ono.place-view/1`
+
+The current place, its exits, its landmarks and what changed around it.
+
+Identity: `id`, `generated_at`
+
+Default view: `label`, `type`, `hostname`, `generated_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The `spatial_id` of the place (§3.1). Opaque, and the same in every session. |
+| `type` | `string` | — | required | The §3.3 spatial type of the place — `System`, `Compute`, `Process` — as the registry spells it. |
+| `label` | `string` | — | required | What a person calls the place (§3.1's `display_name`). |
+| `hostname` | `string` | — | required | The host the place belongs to (§3.2, §7.1). The prompt's first segment (§21.1). |
+| `place` | `ono.spatial-place/1` | — | required | The place itself, in the same shape `find place` streams (§3.1, ADR-0140). |
+| `groups` | `list<ono.neighborhood-group/1>` | — | required | The exits, ranked (§24.2). The same list as `neighborhood.groups`. |
+| `freshness` | `enum` | — | required | How the data behind the place is kept current, in §25.3's vocabulary (§33.4). `polled` while nothing subscribes; `stale` past the index TTL; `partial` where an exit could not be read. |
+| `exits` | `record` | — | required | The same exits, keyed by the word `look` prints and `enter`/`follow` take — §24.2's "groups as exits", and §12's `parent`, `children`, `sockets`, `files`, `namespaces`, `cgroup`. A reader that wants one exit by name reads this; one that wants them in rank order reads `groups`. |
+| `domains` | `list<ono.neighborhood-group/1>` | — | nullable | The six canonical domains with their states (§7.1's `domains`, §4). Present at the root, where they are the exits; null anywhere else, because a domain is not a neighbour of a process. |
+| `links` | `list<ono.link-place/1>` | — | nullable | The links this session holds, with the state of each (§19.1's link map). Present at the root of a host, where a linked host is one of the places reachable from here; null anywhere else, because a link is not a neighbour of a process. A link that is not connected stays in the list with the state that says so — dropping it would be the `empty` answer §35.2 forbids. |
+| `landmarks` | `list<ono.landmark/1>` | — | required | What deserves attention here (§3.7, §26). Empty is an answer; null would not be. |
+| `neighborhood` | `ono.neighborhood/1` | — | required | The bounded, ranked projection around the place, with what it left out (§3.6). |
+| `boundary` | `ono.mount-boundary/1` | — | nullable | The mount boundary this place sits on (§15.3). Present on a filesystem place — the mount point it is under, its filesystem, its source and whether that is remote — so that "crossing a mount boundary MUST be discoverable" is true of the place and not only of the step that reached it. Null anywhere the path tree does not reach. |
+| `system` | `ono.system/1` | — | nullable | The `SystemPlace` of §7.1 in full, carried by `look --all` at the root. §24.1 keeps the exhaustive view of the object behind a place out of the default `look`, so the default names the system and `--all` describes it. |
+| `changed` | `ono.change-summary/1` | — | nullable | What changed in the window `--changes` asked for (§24.3). Null when the user did not ask; never a fabricated summary when no event source or comparison snapshot exists. |
+| `generated_at` | `timestamp` | — | required | When the view was made. |
 
 ## PluginAuditEvent — `ono.plugin-audit-event/1`
 
@@ -1010,6 +1271,7 @@ Default view: `plugin`, `host_api`, `isolation`, `degraded`, `started_at`
 | `disabled_features` | `list<string>` | — | required | The features the package switched off because of a denial — spec §31.63's `model.infer denied -> feature disabled: explain-flow`. Empty when nothing was disabled. The package supplies this in its `lifecycle.init` answer; it is the plugin's own account of what it gave up. |
 | `limits` | `record` | — | required | The effective quotas of spec §31.15: memory, persistent state, event queue depth, call deadline, concurrent host calls, output rate. Each is the smaller of the package's declaration and host policy. |
 | `overflow` | `enum` | — | required | The effective default overflow policy for this instance's streams. The manifest may declare a preference; host policy decides (spec §31.15). |
+| `sandbox` | `record` | — | required | What the host actually confined this instance with before its first instruction ran (spec §31.10, §31.15): `memory_max` and the observed `memory_peak`, the `cpu_class` and the `nice` it became, the `open_files` and `file_size` ceilings, the private `working_directory` it was given, the `environment` names it received — and nothing else — and how far the `filesystem` and `network` scopes reach. The last two are `kernel` when the kernel refuses what the scope does not allow and `broker` when the host can only refuse a call the package makes *to the host*; spec §31.16 forbids presenting the second as if it were the first. |
 | `network` | `record` | — | required | The effective outbound policy and the destinations in scope. `{outbound: none}` when the package declared none. |
 | `degraded` | `bool` | — | required | Whether the instance is running with denied optional capabilities (spec §31.8). |
 | `started_at` | `timestamp` | — | required | When the instance was created. |
@@ -1087,7 +1349,8 @@ Default view: `pid`, `name`, `parent`, `user`, `cpu`, `memory`, `started`, `serv
 | `user` | `ref<ono.user/1>` | — | nullable | The effective user; carries the numeric uid even when the name cannot be resolved. |
 | `group` | `ref<ono.group/1>` | — | nullable | The effective group; carries the numeric gid even when the name cannot be resolved. |
 | `state` | `enum` | — | required | The kernel scheduling state. `unknown` when the provider read a state it does not model. |
-| `cpu` | `float` | percent | nullable | Share of one logical CPU since the previous observation; null until a second sample exists. |
+| `cpu` | `float` | percent | nullable | Share of one logical CPU over the window `cpu_window` names (ADR-0232). |
+| `cpu_window` | `duration` | — | nullable | The window `cpu` is the share over. Null exactly when `cpu` is (ADR-0232). |
 | `memory` | `bytesize` | — | nullable | Resident set size. |
 | `virtual_mem` | `bytesize` | — | nullable | Virtual memory size. |
 | `threads` | `int` | — | nullable | Number of threads in the process. |
@@ -1095,6 +1358,7 @@ Default view: `pid`, `name`, `parent`, `user`, `cpu`, `memory`, `started`, `serv
 | `cwd` | `path` | — | nullable | Current working directory; null when not readable by this user. |
 | `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
+| `pid_namespace` | `int` | — | nullable | The inode of the pid namespace the `pid` was read in, from `/proc/<pid>/ns/pid`. Two processes in different namespaces can carry the same pid number, so the spatial layer needs this to tell a container's pid 1 from the host's (spec v0.4 §10.2). Null when the link is not readable — never the root namespace, which would be a guess. |
 | `cgroup` | `path` | — | nullable | The control group path, as `/proc/<pid>/cgroup` reports it for the unified hierarchy; null on a kernel without cgroups. |
 | `open_files` | `list<path>` | — | nullable | The paths the process holds open, from `/proc/<pid>/fd`; descriptors on pipes, sockets and anonymous inodes are not files and are not listed. An error value when this user may not read the descriptor table. |
 | `sockets` | `list<int>` | — | nullable | The inodes of the sockets the process holds open — the `inode` an `ono.socket/1` carries, so the two join. An error value when this user may not read the descriptor table. |
@@ -1133,7 +1397,8 @@ Default view: `pid`, `name`, `cpu`, `memory`, `user`
 | `user` | `ref<ono.user/1>` | — | nullable | The effective user; carries the numeric uid even when the name cannot be resolved. |
 | `group` | `ref<ono.group/1>` | — | nullable | The effective group; carries the numeric gid even when the name cannot be resolved. |
 | `state` | `enum` | — | required | The kernel scheduling state. `unknown` when the provider read a state it does not model. |
-| `cpu` | `float` | percent | nullable | Share of one logical CPU, as spec §28.1 documents it. Null until a second sample exists, because a single procfs read cannot answer it. |
+| `cpu` | `float` | percent | nullable | Share of one logical CPU, as spec §28.1 documents it, measured over the window `cpu_window` names: the interval since the previous observation of this process where there was one, the interval `--sample` asked for where the caller asked, and the process's lifetime otherwise. Null only when the kernel gave neither (ADR-0232). |
+| `cpu_window` | `duration` | — | nullable | The window `cpu` is the share over. A short window is what the process is doing now; a window as long as the process's life is its average since it started. Null exactly when `cpu` is (ADR-0232). |
 | `memory` | `bytesize` | — | nullable | Resident set size. |
 | `virtual_mem` | `bytesize` | — | nullable | Virtual memory size. |
 | `threads` | `int` | — | nullable | Number of threads in the process. |
@@ -1141,6 +1406,7 @@ Default view: `pid`, `name`, `cpu`, `memory`, `user`
 | `cwd` | `path` | — | nullable | Current working directory; null when not readable by this user. |
 | `service` | `ref<ono.service/1>` | — | nullable | The service unit the process belongs to; null when it belongs to none. |
 | `container` | `ref<ono.container/1>` | — | nullable | The container the process runs in; null outside a container or without a provider. |
+| `pid_namespace` | `int` | — | nullable | The inode of the pid namespace the `pid` was read in, from `/proc/<pid>/ns/pid`. Two processes in different namespaces can carry the same pid number, so the spatial layer needs this to tell a container's pid 1 from the host's (spec v0.4 §10.2). Null when the link is not readable — never the root namespace, which would be a guess. |
 
 ## Provider — `ono.provider/1`
 
@@ -1248,6 +1514,7 @@ Default view: `name`, `state`, `substate`, `enabled`, `description`
 | `since` | `timestamp` | — | nullable | When the unit entered its current state. |
 | `provider` | `string` | — | required | The service provider that produced this record; part of the identity. |
 | `unit_file` | `path` | — | nullable | The unit file backing the service; null for transient or generated units. |
+| `dependencies` | `list<string>` | — | nullable | The units this one requires, named as the service manager names them. For systemd that is `Requires`, `Requisite`, `BindsTo` and `Wants` merged; ordering (`After`, `Before`) is not among them, because ordering says when and not whether (ADR-0239). Null where the provider has no notion of a dependency at all; an empty list where it has one and there are none. |
 
 ## Session — `ono.session/1`
 
@@ -1308,6 +1575,157 @@ Default view: `protocol`, `local`, `remote`, `state`, `process`
 | `process` | `ref<ono.process/1>` | — | nullable | The owning process; null when no process owns the socket, or when this user may not see the owner. Spec §10.5 forbids collapsing those two into an empty string. |
 | `user` | `ref<ono.user/1>` | — | nullable | The owning user. |
 | `inode` | `int` | — | nullable | The socket inode; the identity field, null when the provider cannot supply it. |
+
+## SpatialChange — `ono.spatial-change/1`
+
+One difference between two observations of a space, and what it was observed through.
+
+Identity: `kind`, `id`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `kind` | `enum` | — | required | What kind of difference this is (§25.1). |
+| `id` | `string` | — | required | The node identity or edge identity it happened to — the same id the map draws. |
+| `observed_at` | `timestamp` | — | required | When the difference was seen. §24.3 forbids a fabricated change summary, and a change with no time behind it is exactly that. |
+| `label` | `string` | — | required | What a person calls it, so the change reads without resolving the id (§11.4). |
+| `reason` | `string` | — | nullable | The §3.7 landmark reason this change amounts to — `new_object`, `removed_object` or `recently_changed` — or null where §3.7's closed vocabulary has no word for it. A core rule may not invent one. |
+| `places` | `list<string>` | — | required | The places the change touches, whose landmarks §26 has to re-judge: one for a node, both ends for an edge. |
+| `source` | `enum` | — | required | How it was observed (§25.4). `snapshot_comparison` is the provenance §25.4 requires of a change inferred by comparing successive projections rather than announced by a provider. |
+
+## SpatialMap — `ono.spatial-map/1`
+
+The bounded, ranked, renderer-independent projection of the graph around a place.
+
+Identity: `map_id`
+
+Default view: `center`, `zoom_level`, `completeness`, `generated_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `map_id` | `uuid` | — | required | This projection's identity (§22). |
+| `center` | `string` | — | required | The `spatial_id` of the current place the map is drawn around (§22). |
+| `focus` | `string` | — | nullable | The node the view is centred on, where the caller named one. It is never thereby the current place (§23.4). |
+| `scope` | `string` | — | required | The scope the projection belongs to (§3.2). |
+| `zoom_level` | `int` | — | required | Which of §8.1's five canonical levels this projection is at (L0 SYSTEM to L4 DETAIL). |
+| `nodes` | `list<ono.map-node/1>` | — | required | The objects drawn (§22). |
+| `edges` | `list<ono.map-edge/1>` | — | required | The relationships and containments drawn between them (§22). Every endpoint resolves (§43.2). |
+| `clusters` | `list<ono.map-cluster/1>` | — | required | The groups standing in for what the view budget could not draw (§8.2). |
+| `landmarks` | `list<ono.landmark/1>` | — | required | What deserves attention here (§3.7, §26). |
+| `hidden` | `ono.hidden-summary/1` | — | required | What the bound left out, disclosed rather than dropped (§23.6, §54). |
+| `generated_at` | `timestamp` | — | required | When the projection was made. |
+| `completeness` | `enum` | — | required | Whether everything known is drawn, the budget hid some, a source could not be read, or neither could be established (§3.6, §35.2). |
+| `live_capable` | `bool` | — | required | Whether this map can subscribe to change events and update in place (§22, §25.1). |
+| `live` | `bool` | — | required | Whether this projection came out of a live view (§25.1). False for a `map` asked once, which is a picture of one moment and says so. |
+| `freshness` | `enum` | — | required | §25.3's five words: how the data behind this projection is kept current. A live view MUST expose it, and a still one answers for the observation it was built from. |
+| `change_source` | `enum` | — | nullable | What the changes below were observed through (§25.4), or null where nothing was watching. |
+| `changes` | `list<ono.spatial-change/1>` | — | required | What moved since the previous value of a live stream (§25.1). Empty for the opening snapshot and for a `map` asked once — §24.3 forbids inventing a change where no event source or comparison snapshot exists, and §25.2 forbids reporting one where nothing moved. |
+
+## SpatialNeighbor — `ono.spatial-neighbor/1`
+
+One object in the neighborhood of the current place, with the relation that reaches it.
+
+Identity: `spatial_id`
+
+Default view: `relation`, `display_name`, `spatial_type`, `state`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `relation` | `string` | — | required | The word `follow` takes to traverse the edge from here — `parent`, `socket`, `user` — or a collection's label where the neighbour is reached by hierarchy (§3.5, §6.4, §24.2). |
+| `group` | `string` | — | required | The exit it appeared under, as `look` prints it — §12's `children`, `files`, `sockets`. |
+| `source` | `string` | — | nullable | The `spatial_id` the edge starts at (§11.4). Null where the neighbour is reached by hierarchy rather than by a relationship edge: §2.6 keeps the two apart, and a containment dressed up as an explainable relation would be the confusion it forbids. |
+| `target` | `string` | — | nullable | The `spatial_id` the edge leads to (§11.4); null for a hierarchical member. |
+| `direction` | `enum` | — | nullable | Which way the edge runs (§11.4, §22); null for a hierarchical member. |
+| `confidence` | `enum` | — | nullable | How certain the edge is (§11.5). An inferred edge is never labelled exact, whatever the relation registry would admit; null for a hierarchical member. |
+| `provider` | `string` | — | nullable | Who asserted the edge — `linux.open-files`, `linux.process-tree`. The v0.2 relationship provider's own id, because §2.16 forbids the spatial layer from becoming a second source. Null for a hierarchical member. |
+| `provider_relation` | `string` | — | nullable | The word that provider uses for the relation — `reads`, `runs-as`. The same word `trace` prints for the same edge (§31.3); null where the neighbour is reached by hierarchy. |
+| `evidence` | `record` | — | nullable | §11.4's "raw evidence/reference where safe": what the provider actually saw, as it reported it — the descriptor and the access mode of an open file, the inode of a socket. Empty where the provider recorded no detail; null for a hierarchical member, which is containment and has no observation behind it (§2.6, §3.4). |
+| `provenance` | `record` | — | required | Where the edge was observed, when, and by whom (§11.4, §27.4). |
+| `observed_at` | `timestamp` | — | nullable | When the edge was last seen (§11.4); null for a hierarchical member. |
+| `spatial_id` | `string` | — | required | The opaque, stable identity of the neighbour (§3.1). |
+| `name` | `string` | — | required | What a person calls it. Not identity (§3.1). |
+| `display_name` | `string` | — | required | The same text under the name §3.1 gives the field. |
+| `object_type` | `string` | — | required | The v0.2 schema of the object behind the place, such as `ono.process/1`. |
+| `type` | `string` | — | required | What kind of place it is, in §3.3's vocabulary and the families it belongs to. |
+| `canonical_ref` | `record` | — | nullable | The provider's own reference to the neighbour — its schema and that schema's identity fields. §28.1 makes a selected object a typed value, and a neighbour nobody can name again is not one. Null where the neighbour is a canonical space. |
+| `identity` | `record` | — | nullable | The named components §3.1 composes its `spatial_id` from (§27.2's disambiguation). |
+| `spatial_type` | `string` | — | required | The §3.3 type — `process`, `service`, `listener` — lower-cased. |
+| `state` | `enum` | — | required | What the user was told about the group this neighbour came from (§35.2). |
+| `place_path` | `string` | — | required | Where it sits in the canonical hierarchy, from the host down (§27.2's third column). |
+| `scope` | `string` | — | required | The §3.2 boundary it belongs to, rendered as `<kind>:<id>`. |
+| `freshness` | `enum` | — | required | How current the answer about it is (§27.4, §33.4). |
+| `sources` | `list<string>` | — | required | Every provider that has observed this place, canonical and adapted alike. v0.4 §37.1 reconciles an adapted object with its canonical twin into one place and keeps both on the record, so a reader can see that `ip link` and `linux.netlink` agreed about the same interface; the adapter's name is the `adapter:<id>` provenance v0.3 §1.47 gives it. |
+| `pinned` | `bool` | — | required | Whether the user pinned it (§20.4, §26.4). |
+
+## SpatialPlace — `ono.spatial-place/1`
+
+A place in the spatial interface, with the path, scope and freshness that disambiguate it.
+
+Identity: `spatial_id`
+
+Default view: `name`, `spatial_type`, `place_path`, `freshness`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `spatial_id` | `string` | — | required | The opaque, stable identity of §3.1. A user copies, pins or compares one but never composes one; `enter "<spatial_id>"` is the exact-id escape from ambiguity of §29.3. |
+| `name` | `string` | — | required | What a person calls the place. Not identity (§3.1). |
+| `display_name` | `string` | — | required | §3.1's `display_name` — the same text as `name`, under the name §3.1 gives the field. |
+| `type` | `string` | — | required | What kind of place this is, in §3.3's vocabulary, with the families it belongs to after it: `process`, `connection socket`, `directory`. §14.3 and §14.4 split §3.3's `Socket` into a listener and a connection, and both readings are true of one place, so the chain is written out rather than one of them chosen (ADR-0148). |
+| `object_type` | `string` | — | required | The v0.2 schema of the object behind the place, such as `ono.process/1`. This is what makes a place recognisable to the pipeline it flows into and what §37.1's identity merge compares. A canonical space has none of its own and reports `ono.spatial-place/1`. |
+| `spatial_type` | `string` | — | required | The §3.3 type — `process`, `service`, `listener`, `directory`, `compute` — lower-cased. |
+| `place_path` | `string` | — | required | Where the place sits in the canonical hierarchy, from the host down: `local/compute/processes`. §27.2's third column, and §6.8's path information. |
+| `scope` | `string` | — | required | The §3.2 boundary the place belongs to, rendered as `<kind>:<id>` — `host:web01`. |
+| `canonical_ref` | `record` | — | nullable | §3.1's `canonical_ref`: the provider's own reference to the object — the schema it serves it under and the values of that schema's identity fields. This is the handle an action revalidates through (§33.2) and what §37.1's identity merge compares. Null for a canonical space, which no provider serves. |
+| `canonical_parent` | `string` | — | nullable | The `spatial_id` `up` reaches (§11.3), spelled under the name §33.1 gives the field. It is the same answer as `parent`, and it is deterministic for a given view profile. |
+| `state` | `any` | — | nullable | The object's own state, as the provider reports it — `running`, `listen`, `active`. §24.1 puts it at the top of a place view; null where the object has none. |
+| `summary` | `record` | — | nullable | What the provider's default view says about the object — a process's user and memory, a mount's filesystem and source, a socket's endpoints (§12, §13, §14.3, §15.3). §24.1 budgets this: the exhaustive property list is `inspect`'s, not a place view's. |
+| `tombstone` | `record` | — | nullable | §10.3: present exactly when this place is a tombstone — when the object went away, how long ago, and what took its place where a replacement can be identified. Its presence is what makes a tombstone "visually distinct" in a structured reader, the way the rendering makes it distinct on a terminal. Null for a place that is still there. |
+| `lifetime` | `record` | — | nullable | §3.1's `lifetime`: the identity tier, when the object was first and last observed, when it started where the provider states that, and when it ended where it has (§10.1, §10.2, §10.3). Null for a canonical space, which is declared rather than born. |
+| `freshness` | `enum` | — | required | How current the answer is (§27.4, §33.4). `unknown` is not `fresh`: a place that was never observed says so (§2.17). |
+| `observed_at` | `timestamp` | — | nullable | When a provider last saw the object; null for a canonical space, which nobody observes. |
+| `identity_tier` | `enum` | — | required | How far the identity can be trusted (§10.1). A renderer may not imply persistence for an observation identity. |
+| `capabilities` | `list<string>` | — | required | What the navigation layer may offer for the place — `enter`, `follow`, `watch`, `act`. |
+| `identity` | `record` | — | nullable | The named components §3.1 composes the opaque `spatial_id` from — a process's boot, pid and start time, a user's uid, a unit's name. Not the object's properties, which §24.1 keeps out of a place and `inspect` shows in full: these are what make this place *this* place, and what a reader needs to recognise it. Null for a canonical space, whose identity is its id. |
+| `permission` | `enum` | — | required | What this user could be told about the place (§35.2). An observed object answered, so it is `available`; a canonical space reports the state of what it holds, which is how an unavailable domain stays visible instead of vanishing (§4, §2.17, ADR-0142). |
+| `sources` | `list<string>` | — | required | Every provider that has observed this place, canonical and adapted alike. v0.4 §37.1 reconciles an adapted object with its canonical twin into one place and keeps both on the record, so a reader can see that `ip link` and `linux.netlink` agreed about the same interface; the adapter's name is the `adapter:<id>` provenance v0.3 §1.47 gives it. |
+| `pinned` | `bool` | — | required | Whether the user pinned the place (§20.4, §26.4). |
+| `provenance` | `record` | — | required | Where the fact came from — the provider, when it was observed, the source and the link (§27.4). A search result that may come from a cache says so. |
+
+## SpatialRelation — `ono.spatial-relation/1`
+
+One relationship edge a contributor asserts between two places.
+
+Identity: `source_type`, `source_key`, `target_type`, `target_key`
+
+Default view: `relation`, `source_key`, `target_key`, `confidence`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `relation` | `string` | — | nullable | The contributor's own word for the relation, as `inspect relation` prints it beside the declared relation (§11.4). Null where the contributor has only one. |
+| `source_type` | `string` | — | required | The §3.3 kind of place the edge starts at — `process`, `service`, `interface`. |
+| `source_key` | `string` | — | required | The key the canonical provider names that object by — a process's pid, a service's name, a mount's target. The host resolves it against the provider; a key nothing answers to contributes no edge. |
+| `target_type` | `string` | — | required | The §3.3 kind of place the edge leads to. |
+| `target_key` | `string` | — | required | The key the canonical provider names the far object by. |
+| `confidence` | `enum` | — | nullable | How certain the contributor is (§11.5). Null is read as `unknown`, and a contributor never raises an edge above what the relation admits — §36.2 forbids a contributed relationship that "appears exact without provenance". |
+
+## SystemPlace — `ono.system/1`
+
+The root place of one host — what a session stands in before it has moved anywhere.
+
+Identity: `host`
+
+Default view: `hostname`, `os`, `kernel`, `uptime`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `host` | `string` | — | required | The §3.2 host scope this system is, rendered as `<kind>:<id>` — `host:web01`. |
+| `hostname` | `string` | — | required | What the host calls itself. |
+| `os` | `string` | — | nullable | The operating system, where a provider answers for it. |
+| `kernel` | `string` | — | nullable | The kernel release, where a provider answers for it. |
+| `uptime` | `duration` | — | nullable | How long the system has been up, where a provider answers for it. |
+| `domains` | `list<ono.neighborhood-group/1>` | — | required | The canonical domains of §4, each with its §35.2 state — the exits of the root. |
+| `landmarks` | `list<ono.landmark/1>` | — | required | What deserves attention here (§3.7). Empty is a real answer; null would not be. |
+| `links` | `list<ono.link/1>` | — | nullable | The linked hosts reachable from here (§19.1); null until the federation phase serves them. |
+| `generated_at` | `timestamp` | — | required | When the projection was made. |
 
 ## UserEvent — `ono.user-event/1`
 

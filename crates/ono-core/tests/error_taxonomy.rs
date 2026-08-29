@@ -224,3 +224,107 @@ fn should_carry_the_adapter_family_of_the_v03_specification_when_enumerated() {
         assert_eq!(ErrorCode::from_code(code), Some(found));
     }
 }
+
+#[test]
+fn should_carry_the_spatial_family_of_the_v04_specification_when_enumerated() {
+    // Spec v0.4 §40 names the fourteen structured errors of the spatial interface; they join
+    // the closed taxonomy as the E10xx block in the order §40 lists them, each mapped onto one
+    // of the twelve kinds (ADR-0125, ADR-0127).
+    let expected = [
+        (
+            "Ono-Sendai-E1001",
+            "spatial.not_found",
+            ErrorKind::Resolution,
+        ),
+        (
+            "Ono-Sendai-E1002",
+            "spatial.ambiguous_selector",
+            ErrorKind::Resolution,
+        ),
+        ("Ono-Sendai-E1003", "spatial.not_enterable", ErrorKind::Type),
+        (
+            "Ono-Sendai-E1004",
+            "spatial.no_relation",
+            ErrorKind::Resolution,
+        ),
+        (
+            "Ono-Sendai-E1005",
+            "spatial.no_parent",
+            ErrorKind::Resolution,
+        ),
+        (
+            "Ono-Sendai-E1006",
+            "spatial.history_empty",
+            ErrorKind::Conflict,
+        ),
+        (
+            "Ono-Sendai-E1007",
+            "spatial.destination_gone",
+            ErrorKind::Resolution,
+        ),
+        (
+            "Ono-Sendai-E1008",
+            "spatial.permission_denied",
+            ErrorKind::Permission,
+        ),
+        (
+            "Ono-Sendai-E1009",
+            "spatial.unsupported",
+            ErrorKind::Provider,
+        ),
+        ("Ono-Sendai-E1010", "spatial.stale", ErrorKind::Provider),
+        (
+            "Ono-Sendai-E1011",
+            "spatial.remote_unavailable",
+            ErrorKind::Provider,
+        ),
+        (
+            "Ono-Sendai-E1012",
+            "spatial.scope_violation",
+            ErrorKind::Permission,
+        ),
+        (
+            "Ono-Sendai-E1013",
+            "spatial.map_too_large",
+            ErrorKind::Stream,
+        ),
+        (
+            "Ono-Sendai-E1014",
+            "spatial.identity_conflict",
+            ErrorKind::Conflict,
+        ),
+    ];
+    for (code, name, kind) in expected {
+        let found = ErrorCode::from_name(name)
+            .unwrap_or_else(|| panic!("spec v0.4 §40 requires the error `{name}`"));
+        assert_eq!(found.code(), code, "{name} keeps its number");
+        assert_eq!(
+            found.kind(),
+            kind,
+            "{name} maps onto the kind ADR-0127 assigns"
+        );
+        assert_eq!(ErrorCode::from_code(code), Some(found));
+    }
+}
+
+#[test]
+fn should_keep_a_spatial_refusal_distinguishable_from_the_general_condition_it_resembles() {
+    // ADR-0125: a spatial code exists because §40 names a condition a script must be able to
+    // tell apart from the general one — "this place is gone since you visited it" is not "no
+    // such command", and a denied neighborhood group is not a denied file read.
+    assert_ne!(
+        ErrorCode::SpatialNotFound,
+        ErrorCode::ResolveTargetNotFound,
+        "a spatial selector nothing answers is its own condition"
+    );
+    assert_ne!(
+        ErrorCode::SpatialPermissionDenied,
+        ErrorCode::IoPermissionDenied,
+        "a denied neighborhood is not a denied file read"
+    );
+    assert_eq!(
+        ErrorCode::SpatialPermissionDenied.kind(),
+        ErrorCode::IoPermissionDenied.kind(),
+        "ADR-0125: both are `permission`, so a script that branches on kind keeps working"
+    );
+}

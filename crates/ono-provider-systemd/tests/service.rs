@@ -125,6 +125,30 @@ async fn should_report_every_schema_field_when_a_unit_is_running() {
             PathBuf::from("/lib/systemd/system/nginx.service").into()
         ))
     );
+    assert_eq!(
+        nginx.get("dependencies"),
+        Some(&Value::list([
+            Value::string("network-online.target"),
+            Value::string("nginx.socket"),
+        ])),
+        "service.v1.yaml `dependencies`: the units systemd says this one requires, sorted, with \
+         `Requires`, `Requisite`, `BindsTo` and `Wants` merged (ADR-0239)"
+    );
+}
+
+#[tokio::test]
+async fn should_report_no_dependencies_as_an_empty_list_rather_than_as_null() {
+    // systemd has the notion of a dependency, so a unit with none says "none" and not "unknown"
+    // (spec §35.3). The distinction is what lets `look` show an empty `dependencies` exit rather
+    // than an unanswerable one (v0.4 §13, §35.2).
+    let provider = provider_over(RecordedSystemd::running()).await;
+    let timer = unit(&provider, "logrotate.timer").await;
+
+    assert_eq!(
+        timer.get("dependencies"),
+        Some(&Value::list([])),
+        "a unit that requires nothing has an empty list of dependencies, not a null"
+    );
 }
 
 #[tokio::test]

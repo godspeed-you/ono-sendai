@@ -1,0 +1,24 @@
+[package]
+name = "ono-spatial-query"
+description = "Spatial query planning for Ono-Sendai: selector resolution, neighborhood ranking, place search and cost-aware discovery (spec v0.4 §27, §3.6, §6.8, §45.3)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ono-core.workspace = true
+ono-provider-api.workspace = true
+ono-spatial-core.workspace = true
+ono-spatial-index.workspace = true
+ono-value.workspace = true
+jiff.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+ono-testkit.workspace = true
+
+[lints]
+workspace = true

@@ -430,6 +430,73 @@ impl Value {
         }
     }
 
+    /// Whether two values hold the same data, whoever observed them and when.
+    ///
+    /// Identical to `==` for every value but a record, where it ignores provenance
+    /// ([`RecordValue::same_data`], ADR-0229). Lists and maps compare their elements the same
+    /// way, so a record nested inside one is compared by its data too.
+    #[must_use]
+    pub fn same_data(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Record(left), Value::Record(right)) => left.same_data(right),
+            (Value::List(left), Value::List(right)) => {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .zip(right.iter())
+                        .all(|(left, right)| left.same_data(right))
+            }
+            (Value::Map(left), Value::Map(right)) => {
+                left.len() == right.len()
+                    && left.iter().zip(right.iter()).all(
+                        |((left_key, left), (right_key, right))| {
+                            left_key == right_key && left.same_data(right)
+                        },
+                    )
+            }
+            (left, right) => left == right,
+        }
+    }
+
+    /// This value with every text leaf rewritten by `rewrite`, wherever it appears.
+    ///
+    /// `rewrite` answers `None` for text it leaves alone, and the value is returned unchanged
+    /// where nothing matched. Lists, maps and records are walked, so a string inside a record
+    /// inside a list is reached; everything that is not text is itself (spec §17.5, ADR-0262).
+    ///
+    /// ```
+    /// use ono_value::Value;
+    /// use std::sync::Arc;
+    ///
+    /// let secret = Value::list([Value::string("token=hunter2"), Value::Int(1)]);
+    /// let hidden = secret.map_text(&|text| {
+    ///     text.starts_with("token=").then(|| Arc::from("token=<redacted>"))
+    /// });
+    /// assert_eq!(
+    ///     hidden,
+    ///     Value::list([Value::string("token=<redacted>"), Value::Int(1)])
+    /// );
+    /// ```
+    #[must_use]
+    pub fn map_text(&self, rewrite: &dyn Fn(&str) -> Option<Arc<str>>) -> Self {
+        match self {
+            Value::String(text) => match rewrite(text) {
+                Some(replacement) => Value::String(replacement),
+                None => self.clone(),
+            },
+            Value::List(items) => {
+                Value::List(items.iter().map(|item| item.map_text(rewrite)).collect())
+            }
+            Value::Map(map) => Value::Map(Arc::new(
+                map.iter()
+                    .map(|(key, value)| (Arc::from(key), value.map_text(rewrite)))
+                    .collect(),
+            )),
+            Value::Record(record) => Value::Record(Arc::new(record.map_text(rewrite))),
+            other => other.clone(),
+        }
+    }
+
     /// The value as a structured error.
     ///
     /// # Errors
@@ -464,7 +531,14 @@ fn follow_step(receiver: &Value, step: FieldStep<'_>) -> Result<Value, ErrorValu
             None => absent(receiver, step),
         },
         Value::Null if step.is_optional() => Ok(Value::Null),
-        Value::Error(error) => Err((**error).clone()),
+        // An error in hand is a record of the shape `ono.error/1` declares, so a path descends
+        // into it: `error.name` is the selector, `error.source.message` walks the chain of spec
+        // §16.1 (ADR-0215). A raised failure never reaches here — `access` reports that one
+        // level up, and it still refuses.
+        Value::Error(error) => match error.field(step.name()) {
+            Some(value) => Ok(value),
+            None => absent(receiver, step),
+        },
         other => Err(ErrorValue::new(
             ErrorCode::TypeMismatch,
             format!(

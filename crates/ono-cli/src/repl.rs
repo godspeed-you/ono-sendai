@@ -62,6 +62,9 @@ fn token_colour(kind: ono_parser::TokenKind) -> Token {
 /// budgets 50 ms for the first results from local metadata — which is a lookup, not a search.
 struct ShellCompleter {
     commands: Vec<String>,
+    /// What only a provider can complete: the users on this machine, the services of this host
+    /// (spec §15.1, ADR-0252). `None` where no provider should be asked at all.
+    values: Option<crate::complete::ProviderValues>,
     /// The adapter registry, so completion after an adapted program knows the schema its
     /// records have, and before the pipe offers only the flags the adapter declares (spec v0.3
     /// §1.59): what the contracts say, and nothing invented.
@@ -69,24 +72,36 @@ struct ShellCompleter {
     resolver: Option<ono_command::Resolver>,
 }
 
-/// Completes an expression-mode selector — `where <field>`, `select <field>` — with the fields
-/// of the schema flowing into the stage.
-struct FieldCompleter {
+/// Completes a selector from whichever source can answer it.
+///
+/// An expression-mode selector — `where <field>`, `select <field>` — names a field of the schema
+/// flowing into the stage, which only the contracts know. A words-mode selector names an object,
+/// which only a provider knows (spec §15.1). One hook, two questions, and the command's own
+/// argument mode says which is being asked.
+struct SelectorCompleter {
     fields: Vec<String>,
+    values: Option<crate::complete::ProviderValues>,
 }
 
-impl ono_command::ValueCompleter for FieldCompleter {
+impl ono_command::ValueCompleter for SelectorCompleter {
     fn complete(
         &self,
-        _command: &ono_command::CommandContract,
-        _parameter: &ono_command::ParameterSpec,
+        command: &ono_command::CommandContract,
+        parameter: &ono_command::ParameterSpec,
         prefix: &str,
     ) -> Vec<ono_command::Candidate> {
-        self.fields
-            .iter()
-            .filter(|field| field.starts_with(prefix))
-            .map(ono_command::Candidate::value)
-            .collect()
+        if command.argument_mode() == ono_command::ArgumentMode::Expression {
+            return self
+                .fields
+                .iter()
+                .filter(|field| field.starts_with(prefix))
+                .map(ono_command::Candidate::value)
+                .collect();
+        }
+        self.values
+            .as_ref()
+            .map(|values| ono_command::ValueCompleter::complete(values, command, parameter, prefix))
+            .unwrap_or_default()
     }
 }
 
@@ -103,7 +118,7 @@ impl ShellCompleter {
         if upstream.is_empty() || upstream.ends_with([';', '&']) {
             return Vec::new();
         }
-        let Ok(registry) = ono_command::CommandRegistry::embedded() else {
+        let Ok(registry) = crate::native::registry() else {
             return Vec::new();
         };
         // Planned with a structured consumer after it, because that is what the stage under
@@ -129,6 +144,7 @@ impl ShellCompleter {
                 stdout: ono_adapter::Stdout::Stream,
                 adapters: self.adapters.as_deref(),
                 executables: Some(&executables),
+                context: &[],
             },
         );
         let stages = plan.stages();
@@ -175,16 +191,26 @@ impl Completer for ShellCompleter {
         let prefix = &line[start..cursor];
         let is_head = line[..start].trim().is_empty() || line[..start].trim_end().ends_with('|');
 
+        // §9.4: after a spatial verb, completion is a lightweight local map — the places or
+        // relations the session can see from where it stands, offered at once and *before* the
+        // broader matches the registry and the filesystem know about.
+        let neighbourhood = if is_head || prefix.starts_with('-') {
+            Vec::new()
+        } else {
+            spatial_offers(line, start, prefix)
+        };
+
         let mut candidates: Vec<String> = Vec::new();
 
-        if let Ok(registry) = ono_command::CommandRegistry::embedded() {
+        if let Ok(registry) = crate::native::registry() {
             let context = ono_command::StageContext::from_line(line, cursor);
-            let fields = FieldCompleter {
+            let fields = SelectorCompleter {
                 fields: if is_head {
                     Vec::new()
                 } else {
                     self.upstream_fields(line, cursor)
                 },
+                values: if is_head { None } else { self.values.clone() },
             };
             candidates.extend(
                 ono_command::complete(registry, &context, Some(&fields))
@@ -216,11 +242,54 @@ impl Completer for ShellCompleter {
         candidates.sort_unstable();
         candidates.dedup();
 
-        Completion {
-            span: Span::new(start as u32, cursor as u32),
-            candidates,
+        let span = Span::new(start as u32, cursor as u32);
+        if neighbourhood.is_empty() {
+            return Completion::new(span, candidates);
         }
+
+        // §9.4: "prioritize services visible in the current neighborhood and then offer broader
+        // matches" — in that order, and shown, because the point is to teach the neighbourhood.
+        let mut listing: Vec<String> = neighbourhood
+            .iter()
+            .map(|offer| offer.line.clone())
+            .collect();
+        let mut merged: Vec<String> = neighbourhood
+            .into_iter()
+            .map(|offer| offer.insert)
+            .collect();
+        for candidate in candidates {
+            if !merged.contains(&candidate) {
+                listing.push(format!("  {candidate}"));
+                merged.push(candidate);
+            }
+        }
+        Completion::new(span, merged).shown(listing)
     }
+}
+
+/// The neighbourhood a spatial verb is asking about, where the word under the cursor is the one
+/// that names a place or a relation (spec v0.4 §9.4).
+///
+/// Only the verb's *first* word is answered this way: `enter` takes one place and `follow` takes
+/// one relation, and a second word is a selector inside that relation, which is another question.
+/// The answer is prepended to the ordinary candidates rather than replacing them, because
+/// `enter service nginx` is still the v0.2 spelling and its targets are still offered — §9.4 asks
+/// for the neighbourhood *first*, not alone.
+fn spatial_offers(line: &str, start: usize, prefix: &str) -> Vec<crate::spatial::complete::Offer> {
+    let stage = &line[..start];
+    let stage = &stage[stage.rfind(['|', ';', '&']).map_or(0, |at| at + 1)..];
+    let offers = match stage.trim() {
+        // §6.3, §6.5, §6.9: all three take a place, and the places are the same ones.
+        "enter" | "jump" | "map" => crate::spatial::complete::places_here(),
+        // §6.4, §9.4's second half: the relations this place actually has.
+        "follow" => crate::spatial::complete::relations_here(),
+        _ => return Vec::new(),
+    };
+    let prefix = prefix.to_lowercase();
+    offers
+        .into_iter()
+        .filter(|offer| offer.insert.to_lowercase().starts_with(&prefix))
+        .collect()
 }
 
 fn path_candidates(prefix: &str) -> Vec<String> {
@@ -249,7 +318,7 @@ fn path_candidates(prefix: &str) -> Vec<String> {
 
 /// Runs the interactive loop until the user leaves.
 pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> ExitStatus {
-    let theme = Theme::default();
+    let theme = Theme::clone(session.theme());
     let presentation =
         Presentation::choose(std::io::stdout().is_terminal(), &environment_pairs(session));
 
@@ -258,6 +327,18 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
         .with_highlighter(ParserHighlighter)
         .with_completer(ShellCompleter {
             commands: resolve::candidates(session, ""),
+            values: Some(crate::complete::ProviderValues::new(
+                session
+                    .env()
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.to_string_lossy().into_owned(),
+                            value.to_string_lossy().into_owned(),
+                        )
+                    })
+                    .collect(),
+            )),
             adapters: Some(session.shared_adapters()),
             resolver: Some(resolve::resolver(session)),
         });
@@ -276,6 +357,13 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
 
     if presentation.allows_color() || std::io::stdout().is_terminal() {
         print_identity_line(session, &theme, presentation);
+    }
+
+    // From here on this process is an interactive session: a picker may open, and a map may take
+    // the screen (spec v0.4 §29.1, §29.3).
+    crate::spatial::mark_interactive();
+    if std::io::stdin().is_terminal() {
+        print_startup_horizon(session, reporter);
     }
 
     // The shell ignores the signals a terminal generates for the foreground job, so Ctrl-C
@@ -469,6 +557,9 @@ fn print_identity_line(session: &Session, theme: &Theme, presentation: Presentat
 fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
     // Spec §14.4: the active link frame determines where provider calls and processes run, and
     // the prompt MUST make that unambiguous — the host takes `local`'s place entirely.
+    // v0.4 §19.2/§21.1: standing on a linked host is the same fact about where the next command
+    // operates, whether `enter link` or `jump` put the session there, and §21.3 requires it to be
+    // recognisable without colour — so the host takes `local`'s place in the text itself.
     let location = session
         .frames()
         .iter()
@@ -477,8 +568,19 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
             matches!(frame.frame.kind(), ono_command::FrameKind::Link)
                 .then(|| frame.frame.identity().to_string())
         })
+        .or_else(|| {
+            ono_spatial_core::space::standing_in().map(|scope| scope.host_scope().id().to_owned())
+        })
         .unwrap_or_else(|| "local".to_owned());
     let mut prompt = ono_editor::Prompt::plain("").segment(location, Token::PromptLink);
+
+    // Spec v0.4 §21.1: the current spatial place is a semantic component of the prompt beside the
+    // link, and §21.2 keeps it to `<host>/<place-kind>/<display-name>` so a deep traversal never
+    // takes the line the user is typing with it. The link segment above is the path's first
+    // segment, so only what the place adds to it is painted here.
+    if let Some(place) = spatial_place(session) {
+        prompt = prompt.segment(place, Token::PromptContext);
+    }
 
     // Spec §17.2: an elevated context must be impossible to miss. The kernel's answer, not
     // `$USER`'s — and painted in the token the theme reserves for exactly this.
@@ -506,6 +608,12 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
         }
     }
 
+    // Spec §4.2's optional `vcs` segment: `git:main` when the working directory is inside a
+    // checkout, and nothing at all when it is not (ADR-0250).
+    if let Some(branch) = vcs_segment(session) {
+        prompt = prompt.segment(format!(" {branch}"), Token::Dim);
+    }
+
     let jobs = session.executor().jobs().len();
     if jobs > 0 {
         prompt = prompt.segment(format!(" +{jobs}"), Token::Accent);
@@ -516,6 +624,98 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
         " > "
     };
     prompt.segment(marker, Token::Dim)
+}
+
+/// The source-control segment of spec §4.2, or nothing when there is none to show.
+///
+/// The segment is read from the repository's own files rather than from `git`: a prompt drawn
+/// before every line must not fork a process, and spec §34 budgets the prompt. The branch is
+/// what `.git/HEAD` says, which is the one fact that is both cheap and always true; the
+/// specification's `*` for a dirty tree is deliberately not shown (ADR-0250). Switched off by
+/// `prompt.vcs`.
+fn vcs_segment(session: &Session) -> Option<String> {
+    if session.settings().flag("prompt.vcs") == Some(false) {
+        return None;
+    }
+    vcs_branch(session.cwd()).map(|branch| format!("git:{branch}"))
+}
+
+/// The branch `directory` is on, looking upwards for the checkout it belongs to.
+fn vcs_branch(directory: &std::path::Path) -> Option<String> {
+    let mut candidate = Some(directory);
+    while let Some(here) = candidate {
+        if let Some(branch) = branch_of(&here.join(".git")) {
+            return Some(branch);
+        }
+        candidate = here.parent();
+    }
+    None
+}
+
+/// The branch named by the `HEAD` of the checkout `git` points at.
+///
+/// `git` is a directory in an ordinary clone and a file holding `gitdir: <path>` in a worktree
+/// or a submodule; both are followed, once, because a chain deeper than that is git's business
+/// and not a prompt's.
+fn branch_of(git: &std::path::Path) -> Option<String> {
+    let metadata = std::fs::metadata(git).ok()?;
+    let directory = if metadata.is_dir() {
+        git.to_path_buf()
+    } else {
+        let pointer = std::fs::read_to_string(git).ok()?;
+        let target = pointer.trim().strip_prefix("gitdir:")?.trim();
+        let target = std::path::Path::new(target);
+        if target.is_absolute() {
+            target.to_path_buf()
+        } else {
+            git.parent()?.join(target)
+        }
+    };
+    let head = std::fs::read_to_string(directory.join("HEAD")).ok()?;
+    let head = head.trim();
+    match head.strip_prefix("ref: refs/heads/") {
+        // A detached HEAD is a commit, and forty hex characters in a prompt is a wall: the
+        // short form is what every other tool shows and what a person can compare.
+        None => head
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+            .then(|| head.chars().take(7).collect::<String>())
+            .filter(|short| short.len() == 7),
+        Some(branch) => (!branch.is_empty()).then(|| branch.to_owned()),
+    }
+}
+
+/// What the current spatial place adds to the link segment already painted (spec v0.4 §21.2).
+///
+/// `local` at the root adds nothing — the link says that — so the prompt stays exactly what v0.2
+/// showed until the user has moved somewhere. Switched off entirely by `spatial.enabled`, which
+/// §47 requires to leave the typed shell working.
+fn spatial_place(session: &Session) -> Option<String> {
+    if session.settings().flag("spatial.enabled") == Some(false) {
+        return None;
+    }
+    let path = crate::spatial::place_segment()?;
+    let (_, rest) = path.split_once('/')?;
+    Some(format!("/{rest}"))
+}
+
+/// The compact spatial horizon of spec v0.4 §5, drawn once when an interactive session starts.
+///
+/// §5: "Starting an interactive Ono session MUST provide enough information to establish place
+/// and nearby possibilities without requiring an explicit discovery command" — the host identity,
+/// the canonical domains, their counts and the current landmarks. That is exactly what `look`
+/// answers at the root, so the horizon is `look`, not a second renderer that could disagree with
+/// it (§49.5). §29.1 is the other half: it is drawn only at a terminal, so a script's streams
+/// carry nothing it did not ask for.
+fn print_startup_horizon(session: &mut Session, reporter: &Reporter) {
+    if session.settings().flag("spatial.enabled") == Some(false)
+        || session.settings().flag("spatial.startup_horizon") == Some(false)
+    {
+        return;
+    }
+    let before = session.status();
+    let _ = run_source(session, "look", reporter);
+    session.set_status(before);
 }
 
 fn environment_pairs(session: &Session) -> Vec<(&str, &str)> {
@@ -594,6 +794,9 @@ mod tests {
     fn completer() -> ShellCompleter {
         ShellCompleter {
             commands: vec!["cd".to_owned(), "git".to_owned()],
+            // These tests are about the parts of a line the contracts and the filesystem
+            // answer; a provider that would read the real machine has no place in them.
+            values: None,
             adapters: None,
             resolver: None,
         }

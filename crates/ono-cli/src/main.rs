@@ -29,7 +29,7 @@ fn main() -> ExitCode {
             eprintln!("try `{} --help`", ono_core::SHORT_NAME);
             ExitStatus::USAGE
         }
-        Invocation::Agent(_) => {
+        Invocation::Agent(_, agent_options) => {
             // The remote end of a link (spec §21.2): serve this machine's providers over
             // stdin/stdout. The transport already carried authentication (ADR-0037), and the
             // agent talks the protocol and nothing else — no prompt, no terminal, no config
@@ -61,6 +61,22 @@ fn main() -> ExitCode {
                     std::env::var("USER").unwrap_or_else(|_| "ono".to_owned()),
                 ))
                 .with_adapters(adapters);
+            let identity = match agent_identity(&agent_options) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+                    return ExitCode::from(ExitStatus::FAILURE);
+                }
+            };
+            if agent_options.print_host_key {
+                // What a person pins this host by, on stdout so it can be read by a script or
+                // copied into `add host-key` on the machine that will link here (spec §21.5).
+                println!("{}", identity.fingerprint());
+                return ExitCode::from(ExitStatus::SUCCESS);
+            }
+            if let Some(address) = &agent_options.listen {
+                return runtime.block_on(serve_authenticated(address, &identity, config));
+            }
             return runtime.block_on(ono_remote::agent_main(
                 tokio::io::stdin(),
                 tokio::io::stdout(),
@@ -145,5 +161,86 @@ fn start(interactive: bool, options: &Options) -> (Session, Reporter) {
     };
     let reporter = Reporter::new(presentation);
     config::load(&mut session, options, &reporter);
+    // The theme is only known once the configuration has been read, and the reporter that read
+    // it had to exist first — so the one the session keeps is themed afterwards (ADR-0332).
+    let reporter = reporter.with_theme(session.theme());
     (session, reporter)
+}
+
+/// The identity a listening agent presents, from `--host-key` or the configuration directory.
+///
+/// It is generated on first use and kept, because a host whose identity changed on every start
+/// would be refused by everyone who pinned it (spec §21.5, ADR-0353).
+fn agent_identity(
+    options: &ono_cli::invocation::AgentOptions,
+) -> Result<ono_remote::HostIdentity, ono_value::ErrorValue> {
+    let path = match &options.host_key {
+        Some(path) => path.clone(),
+        None => {
+            let environment: Vec<(String, String)> = std::env::vars().collect();
+            let directory = ono_cli::config::config_dir_from_environment(
+                environment
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str())),
+            )
+            .ok_or_else(|| {
+                ono_value::ErrorValue::new(
+                    ono_core::ErrorCode::IoNotFound,
+                    "this account has no configuration directory to keep a host identity in",
+                )
+                .with_help(
+                    "set `HOME`, `XDG_CONFIG_HOME` or `ONO_CONFIG_DIR`, or name the file with \
+                     `--host-key` (ADR-0010)",
+                )
+            })?;
+            directory.join(ono_cli::trust::HOST_KEY_FILE)
+        }
+    };
+    ono_remote::HostIdentity::open_or_create(&path)
+}
+
+/// Serves links over Ono's own authenticated transport (spec §21.5): one TLS 1.3 endpoint,
+/// one agent per peer.
+///
+/// The address actually bound and the fingerprint peers must pin are written to stderr before
+/// the first peer is accepted, so an operator can read the fingerprint off the host's own
+/// console — which is the one channel that makes a first pin worth anything — and so a caller
+/// that asked for port 0 learns which port the system chose.
+async fn serve_authenticated(
+    address: &str,
+    identity: &ono_remote::HostIdentity,
+    config: ono_remote::AgentConfig,
+) -> ExitCode {
+    let listener = match ono_remote::TlsListener::bind(address, identity).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+            return ExitCode::from(ExitStatus::FAILURE);
+        }
+    };
+    match listener.local_addr() {
+        Ok(bound) => eprintln!("{}: listening on {bound}", ono_core::SHORT_NAME),
+        Err(error) => {
+            eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+            return ExitCode::from(ExitStatus::FAILURE);
+        }
+    }
+    eprintln!(
+        "{}: host key {}",
+        ono_core::SHORT_NAME,
+        identity.fingerprint()
+    );
+    loop {
+        match listener.accept().await {
+            Ok(transport) => {
+                let config = config.clone();
+                tokio::spawn(async move {
+                    let _ = ono_remote::serve_registry(transport, config).await;
+                });
+            }
+            // One peer that could not complete a handshake is not a reason to stop serving the
+            // rest: it is reported and the listener stays up (spec §16.5).
+            Err(error) => eprintln!("{}: {}", ono_core::SHORT_NAME, error.message()),
+        }
+    }
 }

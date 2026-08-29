@@ -16,6 +16,9 @@ use crate::policy::{Evaluation, Policy};
 /// and these (spec §31.15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostLimits {
+    /// The ceiling on a single instance's allocated memory, in bytes. A package may declare less
+    /// and never more (spec §31.15).
+    pub memory_max: u64,
     /// The persistent-state ceiling, in bytes.
     pub state_quota: u64,
     /// The bounded event queue depth per stream — the credit window.
@@ -31,6 +34,7 @@ pub struct HostLimits {
 impl Default for HostLimits {
     fn default() -> Self {
         Self {
+            memory_max: 512 * 1024 * 1024,
             state_quota: 1024 * 1024,
             queue_depth: 16,
             call_deadline_ms: 5_000,
@@ -117,7 +121,12 @@ pub fn negotiate(
         granted,
         denied,
         limits: EffectiveLimits {
-            memory_max: manifest.runtime.as_ref().map(|runtime| runtime.memory_max),
+            // "Host policy caps it": the effective ceiling is the smaller of the two, so a
+            // package cannot declare its way past the host's own limit (spec §31.15).
+            memory_max: manifest
+                .runtime
+                .as_ref()
+                .map(|runtime| runtime.memory_max.min(limits.memory_max)),
             state_quota,
             queue_depth: limits.queue_depth,
             call_deadline_ms: limits.call_deadline_ms,

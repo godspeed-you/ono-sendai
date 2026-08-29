@@ -69,6 +69,15 @@ registration_checks:
 # ---------------------------------------------------------------------------------------------
 command:
   same_schema_as: docs/spec/commands/*.yaml
+  # Where the declaration lives on disk, so spec §31.68's registry placeholders can be built
+  # without starting the package: `contributions.commands` in the manifest names documents inside
+  # the package, each a `commands:` list of the fields below (ADR-0282). The same fields cross the
+  # handshake as `hello.contributions.commands`, so the placeholder and the loaded entry cannot
+  # disagree about what the package contributes.
+  declaration:
+    manifest_field: contributions.commands
+    document: "{commands: [<the fields below>]}"
+    read_without_running: true
   fields:
     id: {type: string, required: true, doc: "`<package.id>.command.<kebab-name>`, e.g. `dev.example.packet-eye.command.trace-packet`."}
     verb: {type: string, required: true, doc: "An existing verb wherever the semantics allow it."}

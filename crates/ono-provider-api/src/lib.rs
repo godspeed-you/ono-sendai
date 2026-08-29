@@ -19,6 +19,7 @@
 mod action;
 mod capability;
 mod events;
+mod label;
 mod object;
 mod query;
 mod registry;
@@ -26,6 +27,7 @@ mod registry;
 pub use action::{Action, ActionOutcome};
 pub use capability::{Availability, Capability, Risk};
 pub use events::{EventSink, EventStream};
+pub use label::{declared_label, endpoint_label, endpoint_text, label_of};
 pub use object::{EventKind, ObjectEvent, ObjectId, ObjectRef};
 pub use query::{Query, Selector};
 pub use registry::ProviderRegistry;

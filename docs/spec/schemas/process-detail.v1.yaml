@@ -46,7 +46,11 @@ fields:
     type: float
     unit: percent
     nullable: true
-    doc: Share of one logical CPU since the previous observation; null until a second sample exists.
+    doc: Share of one logical CPU over the window `cpu_window` names (ADR-0232).
+  cpu_window:
+    type: duration
+    nullable: true
+    doc: The window `cpu` is the share over. Null exactly when `cpu` is (ADR-0232).
   memory:
     type: bytesize
     nullable: true
@@ -75,6 +79,14 @@ fields:
     type: ref<ono.container/1>
     nullable: true
     doc: The container the process runs in; null outside a container or without a provider.
+  pid_namespace:
+    type: int
+    nullable: true
+    doc: >-
+      The inode of the pid namespace the `pid` was read in, from `/proc/<pid>/ns/pid`. Two
+      processes in different namespaces can carry the same pid number, so the spatial layer
+      needs this to tell a container's pid 1 from the host's (spec v0.4 §10.2). Null when the
+      link is not readable — never the root namespace, which would be a guess.
   cgroup:
     type: path
     nullable: true

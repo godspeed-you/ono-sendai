@@ -12,11 +12,14 @@ use std::sync::Arc;
 
 use ono_core::ErrorCode;
 use ono_kuang_protocol::{
-    AuditEvent, Capability, CapabilityRequest, DeclarationClass, HOST_API, Manifest, PluginState,
-    Role, RuntimeKind, ShutdownReason, WireError,
+    AuditEvent, Capability, CapabilityRequest, DeclarationClass, HOST_API, Manifest,
+    PackageSignature, PluginState, Role, RuntimeKind, SIGNATURE_FILE, ShutdownReason, WireError,
+    artifact_files,
 };
 use ono_kuang_supervisor::{LoadConfig, LoadedPlugin, Policy, Supervisor};
 use ono_provider_api::{Action, ActionOutcome, ObjectId};
+
+use crate::kuang_trust::{Trust, TrustStore};
 use ono_value::{ErrorValue, MapValue, Provenance, RecordValue, Schema, SchemaId, Value};
 
 /// One discovered package: its directory and its parsed manifest.
@@ -91,8 +94,21 @@ pub struct Grant {
     pub source: &'static str,
     /// When it was made.
     pub granted_at: Value,
+    /// The §31.18 duration word the record carries.
+    pub duration: &'static str,
+    /// When it stops working. `None` for a grant with no expiry; a grant with one is a lease
+    /// (spec §31.49), and the broker checks the window on every call.
+    pub expires_at: Option<jiff::Timestamp>,
     /// When it was revoked; `None` while it stands.
     pub revoked_at: Option<Value>,
+}
+
+impl Grant {
+    /// Whether the grant still answers as of `now`: not revoked, and inside its window.
+    #[must_use]
+    pub fn stands_at(&self, now: jiff::Timestamp) -> bool {
+        self.revoked_at.is_none() && self.expires_at.is_none_or(|expiry| expiry > now)
+    }
 }
 
 /// The host: where packages are, which of them run, and what they were granted.
@@ -100,20 +116,251 @@ pub struct Grant {
 pub struct Host {
     plugin_path: Vec<PathBuf>,
     state_dir: Option<PathBuf>,
+    /// Where the operator's capability policy is kept — apart from the packages, so a package
+    /// update cannot rewrite it (spec §31.19).
+    config_dir: Option<PathBuf>,
     instances: Vec<Instance>,
     grants: Vec<Grant>,
     minted: u64,
     /// The trails of instances that are gone, and the host's own events: an unload does not
     /// erase what a package did (spec §31.37).
     retained_audit: Vec<AuditEvent>,
+    /// The trail earlier sessions wrote, read back from disk (spec §31.33, §31.37).
+    persisted_audit: Vec<AuditEvent>,
+    /// The ids already on disk, so a flush appends what is new and nothing twice.
+    written_audit: std::collections::BTreeSet<String>,
+    /// Which policy store the grants in memory were read from, so it is read once per session.
+    policy_read: Option<PathBuf>,
+    /// Whose keys this machine accepts, and the stores that exist and could not be read
+    /// (spec §31.36, ADR-0312).
+    trust: TrustContext,
+    /// Which stores the trust in memory was read from, so they are read once per session.
+    trust_read: Option<(PathBuf, Option<PathBuf>)>,
+}
+
+/// What the operator's trust stores say, as a verification needs it.
+///
+/// Carried rather than looked up, because a verification runs inside a stream the host does not
+/// outlive: `inspect plugin` builds its record after the pipeline has been handed off.
+#[derive(Debug, Clone, Default)]
+pub struct TrustContext {
+    /// The enrolled keys, system store and user store together.
+    pub store: TrustStore,
+    /// A store that exists and does not read as one. Fail closed: an unreadable store is not an
+    /// empty store, because it may be the one holding the revocation.
+    pub problems: Vec<ErrorValue>,
+}
+
+/// One package's stored capability decisions (spec §31.19's `policy.yaml`).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct StoredPolicy {
+    #[serde(default)]
+    plugins: std::collections::BTreeMap<String, std::collections::BTreeMap<String, StoredDecision>>,
+}
+
+/// One stored decision: `allow` on its own, or the scope it is bounded by.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct StoredDecision {
+    /// `allow` or `deny`. §31.19's example writes the word alone; this build writes a mapping so
+    /// the scope has somewhere to live, and reads both.
+    #[serde(default = "allow_word")]
+    decision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+fn allow_word() -> String {
+    "allow".to_owned()
 }
 
 impl Host {
     /// Tells the host where the session's plugin home and state directory are. Called before
     /// every pipeline, since both come from the environment and the environment can change.
-    pub fn configure(&mut self, plugin_path: Vec<PathBuf>, state_dir: Option<PathBuf>) {
+    pub fn configure(
+        &mut self,
+        plugin_path: Vec<PathBuf>,
+        state_dir: Option<PathBuf>,
+        config_dir: Option<PathBuf>,
+        system_trust: PathBuf,
+    ) {
         self.plugin_path = plugin_path;
         self.state_dir = state_dir;
+        self.config_dir = config_dir;
+        self.read_policy();
+        self.read_trust(system_trust);
+        self.read_audit();
+    }
+
+    /// Reads both trust stores into this session, once per pair of paths (spec §31.36).
+    fn read_trust(&mut self, system: PathBuf) {
+        let user = crate::kuang_trust::user_path(self.config_dir.as_deref());
+        let paths = (system, user);
+        if self.trust_read.as_ref() == Some(&paths) {
+            return;
+        }
+        let (store, problems) = TrustStore::read(Some(&paths.0), paths.1.as_deref());
+        self.trust = TrustContext { store, problems };
+        self.trust_read = Some(paths);
+    }
+
+    /// Whose keys this machine accepts.
+    #[must_use]
+    pub fn trust(&self) -> &TrustContext {
+        &self.trust
+    }
+
+    /// Where the operator's capability policy lives (spec §31.19's suggested location).
+    fn policy_path(&self) -> Option<PathBuf> {
+        self.config_dir
+            .as_ref()
+            .map(|dir| dir.join("kuang").join("policy.yaml"))
+    }
+
+    /// Where the audit trail is appended (spec §31.33, §31.37).
+    fn audit_path(&self) -> Option<PathBuf> {
+        self.state_dir
+            .as_ref()
+            .map(|dir| dir.join("kuang").join("audit.jsonl"))
+    }
+
+    /// Reads the operator's stored grants into this session, once per store (spec §31.19).
+    ///
+    /// A stored grant enters the session as `always`, sourced `user-policy`: §31.19's precedence
+    /// distinguishes the layer a decision came from, and an operator asking why a package they
+    /// never granted anything to holds a capability is asking exactly that question.
+    fn read_policy(&mut self) {
+        let Some(path) = self.policy_path() else {
+            return;
+        };
+        if self.policy_read.as_ref() == Some(&path) {
+            return;
+        }
+        self.policy_read = Some(path.clone());
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        if ono_value::yaml_depth(&text) > ono_value::MAX_YAML_DEPTH {
+            return;
+        }
+        let Ok(stored) = serde_yaml_ng::from_str::<StoredPolicy>(&text) else {
+            return;
+        };
+        for (plugin, decisions) in stored.plugins {
+            for (capability, decision) in decisions {
+                let Some(capability) = Capability::from_id(&capability) else {
+                    continue;
+                };
+                if decision.decision != "allow" {
+                    continue;
+                }
+                let id = self.mint();
+                self.grants.push(Grant {
+                    id,
+                    plugin: plugin.clone(),
+                    capability,
+                    scope: decision.scope,
+                    class: None,
+                    source: "user-policy",
+                    granted_at: Value::now(),
+                    duration: "always",
+                    expires_at: None,
+                    revoked_at: None,
+                });
+            }
+        }
+    }
+
+    /// Writes the `always` grants that stand back to the policy store (spec §31.18, §31.19).
+    fn write_policy(&self) {
+        let Some(path) = self.policy_path() else {
+            return;
+        };
+        let mut stored = StoredPolicy::default();
+        for grant in self
+            .grants
+            .iter()
+            .filter(|grant| grant.duration == "always" && grant.revoked_at.is_none())
+        {
+            stored
+                .plugins
+                .entry(grant.plugin.clone())
+                .or_default()
+                .insert(
+                    grant.capability.id().to_owned(),
+                    StoredDecision {
+                        decision: "allow".to_owned(),
+                        scope: grant.scope.clone(),
+                    },
+                );
+        }
+        let Ok(text) = serde_yaml_ng::to_string(&stored) else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, text);
+    }
+
+    /// Reads the trail earlier sessions wrote (spec §31.37).
+    fn read_audit(&mut self) {
+        let Some(path) = self.audit_path() else {
+            return;
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        self.persisted_audit = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<AuditEvent>(line).ok())
+            .collect();
+        self.written_audit = self
+            .persisted_audit
+            .iter()
+            .map(|event| event.id.clone())
+            .collect();
+    }
+
+    /// Appends everything this session has recorded and not yet written (spec §31.33, §31.37).
+    ///
+    /// An audit trail that dies with the process answers "what did that package do?" only for as
+    /// long as nobody has left the shell, so it is appended at the start of every pipeline and
+    /// once more when the session ends.
+    pub fn persist_audit(&mut self) {
+        let Some(path) = self.audit_path() else {
+            return;
+        };
+        let fresh: Vec<AuditEvent> = self
+            .live_audit()
+            .into_iter()
+            .filter(|event| !self.written_audit.contains(&event.id))
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        let mut text = String::new();
+        for event in &fresh {
+            let Ok(line) = serde_json::to_string(event) else {
+                continue;
+            };
+            text.push_str(&line);
+            text.push('\n');
+        }
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let appended = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, text.as_bytes()));
+        if appended.is_ok() {
+            self.written_audit
+                .extend(fresh.iter().map(|event| event.id.clone()));
+            // What is on disk is what `get audit` reads, so an event moves from the live list to
+            // the persisted one in the same step — never into neither.
+            self.persisted_audit.extend(fresh);
+        }
     }
 
     /// The directories packages are installed under, in search order.
@@ -206,6 +453,18 @@ impl Host {
             .map(|dir| dir.join("kuang").join(id).join("management.json"))
     }
 
+    /// The package's own directory under the host's state root (spec §31.31).
+    ///
+    /// `~/.local/state/ono/kuang/<package-id>/` — the one place on the machine that belongs to
+    /// this package: its private working directory is made inside it, and its persistent state
+    /// lives beside that. `None` when the session has no state root at all.
+    #[must_use]
+    pub fn private_dir(&self, id: &str) -> Option<PathBuf> {
+        self.state_dir
+            .as_ref()
+            .map(|dir| dir.join("kuang").join(id))
+    }
+
     /// The loaded instance of `id`.
     #[must_use]
     pub fn instance(&self, id: &str) -> Option<&Instance> {
@@ -262,6 +521,8 @@ impl Host {
         scope: Option<serde_json::Map<String, serde_json::Value>>,
         class: Option<DeclarationClass>,
         source: &'static str,
+        duration: &'static str,
+        expires_at: Option<jiff::Timestamp>,
     ) -> Grant {
         let grant = Grant {
             id: self.mint(),
@@ -271,10 +532,15 @@ impl Host {
             class,
             source,
             granted_at: Value::now(),
+            duration,
+            expires_at,
             revoked_at: None,
         };
         self.grants.push(grant.clone());
         self.record_host_event(plugin, capability.id(), "capability.grant", true);
+        if duration == "always" {
+            self.write_policy();
+        }
         grant
     }
 
@@ -286,6 +552,9 @@ impl Host {
             .position(|grant| grant.id == id && grant.revoked_at.is_none())?;
         self.grants[index].revoked_at = Some(Value::now());
         let grant = self.grants[index].clone();
+        if grant.duration == "always" {
+            self.write_policy();
+        }
         self.record_host_event(
             &grant.plugin,
             grant.capability.id(),
@@ -295,11 +564,30 @@ impl Host {
         Some(grant)
     }
 
+    /// Revokes every grant that still stands for `plugin`, answering how many ended.
+    ///
+    /// A grant is made to one package (spec §31.18), so a package that is removed takes the
+    /// permissions it held with it unless `remove plugin --keep-grants` says otherwise
+    /// (spec §31.81, ADR-0233). The grants themselves are retained as revoked rather than
+    /// deleted, so the audit trail still shows what the package was once allowed to do.
+    pub fn revoke_grants_of(&mut self, plugin: &str) -> usize {
+        let standing: Vec<ono_value::Uuid> =
+            self.standing_grants(plugin).map(|grant| grant.id).collect();
+        standing
+            .into_iter()
+            .filter(|id| self.revoke(*id).is_some())
+            .count()
+    }
+
     /// The grants that stand for `plugin`, oldest first.
+    ///
+    /// A lease whose window has closed does not stand: §31.49 makes the expiry part of the
+    /// grant, so `get capability` must stop calling it an allow the moment it stops being one.
     pub fn standing_grants(&self, plugin: &str) -> impl Iterator<Item = &Grant> {
+        let now = jiff::Timestamp::now();
         self.grants
             .iter()
-            .filter(move |grant| grant.plugin == plugin && grant.revoked_at.is_none())
+            .filter(move |grant| grant.plugin == plugin && grant.stands_at(now))
     }
 
     /// Every grant ever made, revoked ones included: a revoked grant is retained rather than
@@ -314,7 +602,7 @@ impl Host {
     pub fn policy_for(&self, plugin: &str) -> Policy {
         self.standing_grants(plugin)
             .fold(Policy::deny_all(), |policy, grant| {
-                policy.grant(grant.capability, grant.scope.clone())
+                policy.lease(grant.capability, grant.scope.clone(), grant.expires_at)
             })
     }
 
@@ -328,7 +616,10 @@ impl Host {
     pub fn record_host_event(&mut self, plugin: &str, capability: &str, action: &str, ok: bool) {
         let id = self.mint();
         self.retained_audit.push(AuditEvent {
-            id: id.to_string(),
+            // The host is one source among several (`AuditTrail::for_source`); its events carry
+            // the same v4-shaped identity with the host's own namespace, so nothing it records
+            // can collide with a package's trail.
+            id: format!("ffffffff-{}", &id.to_string()[9..]),
             plugin: plugin.to_owned(),
             invocation: "host".to_owned(),
             capability: capability.to_owned(),
@@ -352,6 +643,17 @@ impl Host {
     /// Every audit event the host knows: the retained ones, then each running instance's.
     #[must_use]
     pub fn audit_events(&self) -> Vec<AuditEvent> {
+        let mut events = self.persisted_audit.clone();
+        events.extend(
+            self.live_audit()
+                .into_iter()
+                .filter(|event| !self.written_audit.contains(&event.id)),
+        );
+        events
+    }
+
+    /// What this session has recorded: the retained trails and every running instance's.
+    fn live_audit(&self) -> Vec<AuditEvent> {
         let mut events = self.retained_audit.clone();
         for instance in &self.instances {
             events.extend(instance.plugin.audit());
@@ -469,6 +771,7 @@ impl Host {
                 package,
                 &management,
                 self.instance(&package.manifest.package.id),
+                &self.trust,
             )?);
         }
         Ok((records, failures))
@@ -597,52 +900,80 @@ pub fn source_of(package: &Installed, management: &Management) -> String {
         .unwrap_or_else(|| format!("path:{}", package.directory.display()))
 }
 
-/// The content hash of the package's artifact: its manifest and its runtime entry, in that
-/// order (spec §31.36's "are these the exact bytes referenced?").
+/// The content hash of the package's artifact (spec §31.36's "are these the exact bytes
+/// referenced?").
+///
+/// It covers every file of [`artifact_files`], each under its own path, so moving a byte from
+/// one file to another changes the answer.
 #[must_use]
 pub fn integrity_of(package: &Installed) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
-    for relative in artifact_files(&package.manifest) {
-        if let Ok(bytes) = std::fs::read(package.directory.join(&relative)) {
-            hasher.update(relative.as_bytes());
-            hasher.update(bytes);
-        }
+    for file in artifact_files(&package.directory) {
+        hasher.update(file.path.as_bytes());
+        hasher.update(file.sha256.as_bytes());
     }
     let digest = hasher.finalize();
     let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
     format!("sha256:{hex}")
 }
 
-/// The files that make up a package artifact, relative to its directory.
+/// What the package's signature says (spec §31.36's "did a key sign these bytes?").
+#[derive(Debug, Clone)]
+pub struct SignatureCheck {
+    /// `valid`, `invalid` or `absent`, as `ono.verification-result/1` spells them.
+    pub state: &'static str,
+    /// The document, when the package carries one that reads as a signature. Present even when
+    /// the signature does not verify: what it claims is still what it claims.
+    pub document: Option<PackageSignature>,
+    /// Why the signature does not belong to this artifact. `None` when it does, and when there
+    /// is none — `absent` is not a failure (spec §31.36).
+    pub failure: Option<ErrorValue>,
+}
+
+/// Checks the signature the package carries, if it carries one.
+///
+/// A document that is there and cannot be read is `invalid`, never `absent`: a signature the
+/// host cannot check is a claim it must not pass over.
 #[must_use]
-pub fn artifact_files(manifest: &Manifest) -> Vec<String> {
-    let mut files = vec!["manifest.yaml".to_owned()];
-    if let Some(entry) = manifest
-        .runtime
-        .as_ref()
-        .and_then(|runtime| runtime.entry.clone())
-    {
-        files.push(entry);
-    }
-    if let Some(contributions) = &manifest.contributions {
-        for paths in [
-            &contributions.commands,
-            &contributions.schemas,
-            &contributions.targets,
-            &contributions.views,
-            &contributions.relations,
-            &contributions.annotations,
-            &contributions.tools,
-            &contributions.adapters,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            files.extend(paths.iter().cloned());
+pub fn signature_of(package: &Installed) -> SignatureCheck {
+    let Ok(text) = std::fs::read_to_string(package.directory.join(SIGNATURE_FILE)) else {
+        return SignatureCheck {
+            state: "absent",
+            document: None,
+            failure: None,
+        };
+    };
+    let refused = |document, error: &ono_kuang_protocol::KuangError| SignatureCheck {
+        state: "invalid",
+        document,
+        failure: Some(crate::plugins::error_value(error)),
+    };
+    match PackageSignature::parse(&text) {
+        Err(error) => refused(None, &error),
+        Ok(document) => {
+            match document.check(&package.manifest, &artifact_files(&package.directory)) {
+                Ok(()) => SignatureCheck {
+                    state: "valid",
+                    document: Some(document),
+                    failure: None,
+                },
+                Err(error) => refused(Some(document), &error),
+            }
         }
     }
-    files
+}
+
+/// The word `ono.plugin/1.trust` and `ono.plugin-package/1.trust` carry for one package
+/// (ADR-0312's table).
+#[must_use]
+pub fn trust_word(check: &SignatureCheck, standing: Trust) -> &'static str {
+    match (check.state, standing) {
+        ("absent", _) => "local",
+        ("invalid", _) | (_, Trust::Untrusted) => "untrusted",
+        (_, Trust::SystemTrusted | Trust::UserTrusted) => "verified",
+        _ => "signed",
+    }
 }
 
 /// When the artifact was placed: the manifest's modification time, the closest fact on disk.
@@ -677,6 +1008,7 @@ pub fn plugin_record(
     package: &Installed,
     management: &Management,
     instance: Option<&Instance>,
+    trust: &TrustContext,
 ) -> Result<RecordValue, ErrorValue> {
     let manifest = &package.manifest;
     let plugin = instance.map(|instance| &*instance.plugin);
@@ -688,15 +1020,27 @@ pub fn plugin_record(
             .map(|role| Value::string(role_name(*role))),
     );
     let text_or_null = |text: Option<String>| text.map_or(Value::Null, |text| Value::string(&text));
+    let signature = signature_of(package);
+    let standing = signature
+        .document
+        .as_ref()
+        .map_or(Trust::Unknown, |document| {
+            if signature.failure.is_none() {
+                trust.store.judge(document.publisher(), document.key())
+            } else {
+                Trust::Unknown
+            }
+        });
+    let package_trust = trust_word(&signature, standing);
     Ok(RecordValue::builder(Arc::clone(schema), provenance(schema))
         .set("id", Value::string(&manifest.package.id))?
         .set("name", Value::string(&manifest.package.name))?
         .set("version", Value::string(&manifest.package.version))?
         .set("publisher", Value::string(&manifest.package.publisher))?
         .set("state", Value::string(state.as_str()))?
-        // An unsigned package placed on this machine is a local development package — visibly
-        // untrusted, and capability-limited exactly like every other (spec §31.36).
-        .set("trust", Value::string("local"))?
+        // Spec §31.36's four questions stay four answers: this one is about who produced the
+        // artifact, and `local` is what an unsigned development package says.
+        .set("trust", Value::string(package_trust))?
         .set("isolation", Value::string(isolation(manifest)))?
         .set("roles", roles)?
         .set("enabled", Value::Bool(management.enabled))?
@@ -833,7 +1177,7 @@ impl Host {
             .as_ref()
             .map(|package| self.management(&package.manifest.package.id))
             .unwrap_or_default();
-        verification(resolved, &management)
+        verification(resolved, &management, &self.trust)
     }
 
     /// The `ono.plugin-package/1` records of the packages matching `term` in the configured
@@ -900,7 +1244,13 @@ impl Host {
             let already = installed.iter().any(|held| {
                 held.manifest.package.id == info.id && held.manifest.package.version == info.version
             });
-            records.push(package_record(&schema, &package, &reference, already)?);
+            records.push(package_record(
+                &schema,
+                &package,
+                &reference,
+                already,
+                &self.trust,
+            )?);
         }
         Ok((records, failures))
     }
@@ -914,15 +1264,71 @@ impl Host {
 pub fn verification(
     resolved: &Resolved,
     management: &Management,
+    trust: &TrustContext,
 ) -> Result<Verification, ErrorValue> {
     let schema = schema("ono.verification-result")?;
     let mut blocking = Vec::new();
-    let mut warnings = vec![
-        "signature: absent".to_owned(),
-        "transparency: unknown".to_owned(),
-    ];
+    let mut warnings = vec!["transparency: unknown".to_owned()];
+    let mut signature = "unknown";
+    let mut publisher = Value::Null;
+    let mut key = Value::Null;
+    let mut standing = Trust::Unknown;
+    // A store that exists and cannot be read is blocking, because it may be the one holding the
+    // revocation: an unreadable trust store is not an empty one (ADR-0312).
+    for problem in &trust.problems {
+        blocking.push(
+            problem
+                .clone()
+                .with_metadata("check", Value::string("publisher")),
+        );
+    }
     let (package_name, integrity, compatibility, manifest, runtime) = match &resolved.package {
         Ok(package) => {
+            let check = signature_of(package);
+            signature = check.state;
+            if let Some(document) = &check.document {
+                // The key is reported whenever a document names one, valid or not: an operator
+                // asking why a signature failed is asking whose key it claimed to be. The
+                // publisher is reported only when the signature holds, because a publisher is
+                // what a valid signature *attests to* and an invalid one attests to nothing
+                // (`ono.verification-result/1`).
+                key = Value::string(&document.key().to_string());
+                if check.failure.is_none() {
+                    publisher = Value::string(document.publisher());
+                }
+            }
+            if let Some(failure) = &check.failure {
+                blocking.push(
+                    failure
+                        .clone()
+                        .with_metadata("check", Value::string("signature")),
+                );
+            }
+            match (&check.document, check.failure.is_none()) {
+                (Some(document), true) => {
+                    standing = trust.store.judge(document.publisher(), document.key());
+                    if standing == Trust::Unknown {
+                        warnings.push(
+                            "trust: unknown, no trust store enrols this key for this publisher"
+                                .to_owned(),
+                        );
+                    }
+                }
+                _ => warnings.push(format!("signature: {signature}")),
+            }
+            if standing.blocks() {
+                blocking.push(
+                    ErrorValue::new(
+                        ErrorCode::KuangPublisherUntrusted,
+                        format!(
+                            "the key that signed `{}` is revoked in a trust store",
+                            package.manifest.package.id
+                        ),
+                    )
+                    .with_help("`verify plugin` names the key; remove its `revoked` entry to accept it again (spec §31.36)")
+                    .with_metadata("check", Value::string("publisher")),
+                );
+            }
             let integrity = match &management.integrity {
                 Some(recorded) if *recorded == integrity_of(package) => "valid",
                 Some(_) => {
@@ -984,10 +1390,10 @@ pub fn verification(
         .set("package", Value::string(&package_name))?
         .set("source", Value::string(&resolved.source))?
         .set("integrity", Value::string(integrity))?
-        .set("signature", Value::string("absent"))?
-        .set("publisher", Value::Null)?
-        .set("key", Value::Null)?
-        .set("trust", Value::string("unknown"))?
+        .set("signature", Value::string(signature))?
+        .set("publisher", publisher)?
+        .set("key", key)?
+        .set("trust", Value::string(standing.name()))?
         .set("transparency", Value::string("unknown"))?
         .set("compatibility", Value::string(compatibility))?
         .set("manifest", Value::string(manifest))?
@@ -1148,8 +1554,20 @@ pub fn package_record(
     package: &Installed,
     source: &str,
     installed: bool,
+    trust: &TrustContext,
 ) -> Result<RecordValue, ErrorValue> {
     let manifest = &package.manifest;
+    let signature = signature_of(package);
+    let standing = signature
+        .document
+        .as_ref()
+        .map_or(Trust::Unknown, |document| {
+            if signature.failure.is_none() {
+                trust.store.judge(document.publisher(), document.key())
+            } else {
+                Trust::Unknown
+            }
+        });
     Ok(RecordValue::builder(Arc::clone(schema), provenance(schema))
         .set("id", Value::string(&manifest.package.id))?
         .set("name", Value::string(&manifest.package.name))?
@@ -1179,8 +1597,8 @@ pub fn package_record(
         )?
         .set("network", network_of(manifest))?
         .set("integrity", Value::Null)?
-        .set("signature", Value::string("absent"))?
-        .set("trust", Value::string("local"))?
+        .set("signature", Value::string(signature.state))?
+        .set("trust", Value::string(trust_word(&signature, standing)))?
         .set("installed", Value::Bool(installed))?
         .set("size", Value::Null)?
         .set("published_at", Value::Null)?
@@ -1262,6 +1680,37 @@ pub async fn discover(package: &Installed) -> Result<Contributions, ErrorValue> 
     Ok(contributions)
 }
 
+/// What an instance is actually confined by, as the contract record shows it (spec §31.10).
+///
+/// Every field is something the host applied, not something the manifest asked for, and the two
+/// `confinement` fields say in spec §31.16's own vocabulary how far each one reaches: a scope the
+/// host can only check when the package asks it is `broker`, never presented as a boundary.
+fn sandbox_of(instance: &Instance) -> Value {
+    let sandbox = instance.plugin.sandbox();
+    let bytes = |value: u64| Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(value)));
+    map([
+        ("memory_max", bytes(sandbox.memory_max)),
+        (
+            "memory_peak",
+            instance.plugin.peak_memory().map_or(Value::Null, bytes),
+        ),
+        ("cpu_class", kebab(&sandbox.cpu_class)),
+        ("nice", Value::Int(i128::from(sandbox.nice))),
+        ("open_files", Value::Int(i128::from(sandbox.open_files))),
+        ("file_size", bytes(sandbox.file_size)),
+        (
+            "working_directory",
+            Value::Path(sandbox.working_directory.clone().into()),
+        ),
+        (
+            "environment",
+            Value::list(sandbox.environment.iter().map(|name| Value::string(name))),
+        ),
+        ("filesystem", Value::string(sandbox.filesystem.as_str())),
+        ("network", Value::string(sandbox.network.as_str())),
+    ])
+}
+
 /// The `ono.plugin-runtime/1` record of a loaded instance — the negotiated contract (spec §31.63).
 ///
 /// # Errors
@@ -1333,6 +1782,7 @@ pub fn runtime_record(package: &Installed, instance: &Instance) -> Result<Record
                 ]),
             )?
             .set("overflow", kebab(&contract.overflow))?
+            .set("sandbox", sandbox_of(instance))?
             .set("network", network_of(manifest))?
             .set("degraded", Value::Bool(contract.degraded))?
             .set("started_at", instance.loaded_at.clone())?
@@ -1361,6 +1811,7 @@ pub fn inspection_record(
     instance: Option<&Instance>,
     contributions: &Contributions,
     last_error: Option<ErrorValue>,
+    trust: &TrustContext,
 ) -> Result<RecordValue, ErrorValue> {
     let schema = schema("ono.plugin-inspection")?;
     let manifest = &package.manifest;
@@ -1373,7 +1824,7 @@ pub fn inspection_record(
         source: source_of(package, management),
         package: Ok(package.clone()),
     };
-    let verification = verification(&resolved, management)?;
+    let verification = verification(&resolved, management, trust)?;
     let runtime = instance
         .map(|instance| runtime_record(package, instance))
         .transpose()?
@@ -1394,15 +1845,36 @@ pub fn inspection_record(
             .set("capability_requests", capability_requests(manifest, plugin))?
             .set("verification", verification.record.into_value())?
             .set("runtime", runtime)?
-            .set("memory_current", Value::Null)?
+            // Spec §31.33's health block. The figures come from the kernel's own accounting of
+            // the instance, sampled while it runs; `null` until the host has taken a sample, and
+            // `null` for an unloaded package, because an unmeasured figure is not a zero
+            // (spec §35.3).
+            .set(
+                "memory_current",
+                plugin
+                    .and_then(LoadedPlugin::current_memory)
+                    .map_or(Value::Null, bytes),
+            )?
             .set(
                 "memory_limit",
-                manifest
-                    .runtime
-                    .as_ref()
-                    .map_or(Value::Null, |runtime| bytes(runtime.memory_max)),
+                plugin.map_or_else(
+                    || {
+                        manifest
+                            .runtime
+                            .as_ref()
+                            .map_or(Value::Null, |runtime| bytes(runtime.memory_max))
+                    },
+                    |plugin| bytes(plugin.sandbox().memory_max),
+                ),
             )?
-            .set("cpu_time", Value::Null)?
+            .set(
+                "cpu_time",
+                plugin
+                    .and_then(LoadedPlugin::cpu_time)
+                    .map_or(Value::Null, |nanoseconds| {
+                        Value::Duration(ono_value::Duration::from_nanoseconds(nanoseconds))
+                    }),
+            )?
             .set("host_calls", Value::Int(0))?
             .set("open_streams", Value::Int(0))?
             .set("queued_events", Value::Int(0))?
@@ -1434,6 +1906,16 @@ pub fn inspection_record(
 #[must_use]
 pub fn install_plan(package: &Installed, source: &str, destination: &Path) -> Value {
     let manifest = &package.manifest;
+    // Spec §31.9's plan prints `signature      valid / dev.ono-labs`; a package that carries no
+    // signature says `unsigned`, which is a stated answer and not a blank.
+    let signature = signature_of(package);
+    let signature = match &signature.document {
+        Some(document) if signature.failure.is_none() => {
+            format!("valid / {}", document.publisher())
+        }
+        Some(_) | None if signature.state == "absent" => "unsigned".to_owned(),
+        _ => "invalid".to_owned(),
+    };
     map([
         (
             "package",
@@ -1444,7 +1926,7 @@ pub fn install_plan(package: &Installed, source: &str, destination: &Path) -> Va
         ),
         ("source", Value::string(source)),
         ("integrity", Value::string(&integrity_of(package))),
-        ("signature", Value::string("unsigned")),
+        ("signature", Value::string(&signature)),
         ("contributions", declared_contributions(manifest)),
         ("capabilities", capability_requests(manifest, None)),
         (
@@ -1682,7 +2164,7 @@ fn grant_record(
     purpose: Option<&str>,
     instance: Option<&Instance>,
 ) -> Result<RecordValue, ErrorValue> {
-    let standing = grant.filter(|grant| grant.revoked_at.is_none());
+    let standing = grant.filter(|grant| grant.stands_at(jiff::Timestamp::now()));
     let enforcement = instance
         .and_then(|instance| {
             instance
@@ -1712,12 +2194,23 @@ fn grant_record(
             grant.map_or(Value::Null, |grant| json_map(grant.scope.as_ref())),
         )?
         .set("enforcement", enforcement)?
-        .set("duration", Value::string("session"))?
+        .set(
+            "duration",
+            Value::string(grant.map_or("session", |grant| grant.duration)),
+        )?
         .set(
             "granted_at",
             grant.map_or(Value::Null, |grant| grant.granted_at.clone()),
         )?
-        .set("expires_at", Value::Null)?
+        .set(
+            "expires_at",
+            grant
+                .and_then(|grant| grant.expires_at)
+                .map_or(Value::Null, |expiry| {
+                    Value::parse_timestamp(&expiry.to_string())
+                        .unwrap_or_else(|_| Value::string(&expiry.to_string()))
+                }),
+        )?
         .set("max_uses", Value::Null)?
         .set("uses", Value::Int(0))?
         .set("actions", Value::Null)?

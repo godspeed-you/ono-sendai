@@ -20,6 +20,10 @@ run: |
   ono -c 'load plugin dev.example.users --grant process.exec; explain getent passwd | where uid == 0' | grep -F 'adapted by dev.example.users.getent-passwd'
   echo "== the grant bounds what may run =="
   sed -i 's/executables: \[getent\]/executables: [id]/' "$home/dev.example.users/manifest.yaml"
+  # The example package ships signed (spec §31.36), so editing its manifest breaks the signature
+  # and the load would be refused as K11004 before the grant is even looked at. An author who
+  # edits a package re-signs it; the demo key ships beside the example for exactly that.
+  kuang-sign sign "$home/dev.example.users" --key /opt/ono-examples/keys/dev.example.key > /dev/null
   ono -c 'load plugin dev.example.users --grant process.exec' 2>&1 | grep -c 'Ono-Sendai-E0909'
   echo done=ok
 exit: 0

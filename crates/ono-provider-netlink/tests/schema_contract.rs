@@ -1,5 +1,11 @@
-//! The schemas this crate advertises are the contract in `docs/spec/schemas/*.v1.yaml`, and
-//! every record it emits satisfies the one it claims (spec §35.3, ADR-0012).
+//! What this crate's decoders *do*, held against the contracts they claim.
+//!
+//! The shape of each contract — its fields, types, nullability, units, identity and default view
+//! — and the set of schemas each provider advertises are stated by the generated suite of spec
+//! §35.3 (`crates/ono-cli/tests/provider_conformance.rs`, from `docs/spec/providers/*.yaml` and
+//! `docs/spec/schemas/*.v1.yaml`). What is left here is what a declaration cannot express: what a
+//! field means, and that every record decoded from a fixed netlink byte stream satisfies the
+//! contract it claims (ADR-0012).
 
 #![allow(
     clippy::unwrap_used,
@@ -13,12 +19,9 @@ mod support;
 
 use std::net::Ipv6Addr;
 
-use ono_provider_api::Provider;
 use ono_provider_netlink::{
-    InterfaceNames, InterfaceProvider, NeighborProvider, RouteProvider, SocketProtocol,
-    SocketProvider, decode_inet_sockets, decode_interfaces, decode_neighbors, decode_routes,
-    decode_unix_sockets, endpoint_schema, interface_schema, neighbor_schema, route_schema,
-    socket_schema,
+    InterfaceNames, SocketProtocol, decode_inet_sockets, decode_interfaces, decode_neighbors,
+    decode_routes, decode_unix_sockets, socket_schema,
 };
 use ono_value::Value;
 use support::{
@@ -32,91 +35,6 @@ fn names() -> InterfaceNames {
 }
 
 #[test]
-fn should_declare_the_identity_the_contract_names() {
-    assert_eq!(
-        interface_schema()
-            .identity()
-            .iter()
-            .map(|f| &**f)
-            .collect::<Vec<_>>(),
-        ["index"],
-        "an interface can be renamed while staying the same interface (spec §23.2)"
-    );
-    assert_eq!(
-        route_schema()
-            .identity()
-            .iter()
-            .map(|f| &**f)
-            .collect::<Vec<_>>(),
-        ["table", "family", "destination", "gateway", "interface"]
-    );
-    assert_eq!(
-        neighbor_schema()
-            .identity()
-            .iter()
-            .map(|f| &**f)
-            .collect::<Vec<_>>(),
-        ["address", "interface"]
-    );
-    assert_eq!(
-        socket_schema()
-            .identity()
-            .iter()
-            .map(|f| &**f)
-            .collect::<Vec<_>>(),
-        ["inode"]
-    );
-    assert!(
-        endpoint_schema().identity().is_empty(),
-        "an endpoint is a structural sub-record, not an addressable object"
-    );
-}
-
-#[test]
-fn should_declare_every_field_the_contract_names() {
-    let interface_definition = interface_schema();
-    let interface: Vec<&str> = interface_definition
-        .fields()
-        .iter()
-        .map(ono_value::FieldDef::name)
-        .collect();
-    assert_eq!(
-        interface,
-        [
-            "name",
-            "index",
-            "mac",
-            "state",
-            "mtu",
-            "addresses",
-            "rx_bytes",
-            "tx_bytes"
-        ]
-    );
-
-    let socket_definition = socket_schema();
-    let socket: Vec<&str> = socket_definition
-        .fields()
-        .iter()
-        .map(ono_value::FieldDef::name)
-        .collect();
-    assert_eq!(
-        socket,
-        [
-            "protocol", "family", "local", "remote", "state", "process", "user", "inode"
-        ]
-    );
-
-    let endpoint_definition = endpoint_schema();
-    let endpoint: Vec<&str> = endpoint_definition
-        .fields()
-        .iter()
-        .map(ono_value::FieldDef::name)
-        .collect();
-    assert_eq!(endpoint, ["address", "port", "path", "host"]);
-}
-
-#[test]
 fn should_document_the_option_that_fills_the_owning_process() {
     let definition = socket_schema();
     let process = definition
@@ -126,29 +44,6 @@ fn should_document_the_option_that_fills_the_owning_process() {
     assert!(
         doc.contains("--process"),
         "a field that is null unless an option is given must say which option, got `{doc}`"
-    );
-}
-
-#[test]
-fn should_advertise_exactly_the_schemas_it_emits() {
-    let advertised: Vec<String> = [
-        InterfaceProvider::new().schemas(),
-        RouteProvider::new().schemas(),
-        NeighborProvider::new().schemas(),
-        SocketProvider::new().schemas(),
-    ]
-    .concat()
-    .iter()
-    .map(|schema| schema.id().to_string())
-    .collect();
-
-    assert!(advertised.contains(&"ono.interface/1".to_owned()));
-    assert!(advertised.contains(&"ono.route/1".to_owned()));
-    assert!(advertised.contains(&"ono.neighbor/1".to_owned()));
-    assert!(advertised.contains(&"ono.socket/1".to_owned()));
-    assert!(
-        advertised.contains(&"ono.endpoint/1".to_owned()),
-        "a nested record type is part of the contract a consumer must be able to read"
     );
 }
 

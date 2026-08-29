@@ -610,7 +610,7 @@ Serialize a value or stream into text or bytes.
 |---|---|---|
 | `--pretty` | `bool` | Indent the output for a human reader (spec §33.5). |
 | `--human` | `bool` | Emit display forms such as `1.2 GiB` instead of canonical values. Off by default: §33.5 requires canonical values unless a human format is explicitly requested. |
-| `--field` | `string` | For `text`, emit this one field per line — the bridge spec §29.1 writes for feeding an ordinary Unix tool. |
+| `--field` | `string` | For `text`, emit this one field per line — the bridge spec §29.1 writes for feeding an ordinary Unix tool. Unnecessary once `select` has left exactly one field: a one-field record is already one line. For `bytes`, write this one field's bytes verbatim, which is how an adapted program's body reaches a file (`adapt curl url | to bytes --field body > page.html`, ADR-0223). |
 
 **Examples**
 
@@ -618,6 +618,7 @@ Serialize a value or stream into text or bytes.
 get process | to json
 get process | to json --pretty
 get process | to json > out.json
+get mount | select target | to text
 ```
 
 ### `from`
@@ -2614,7 +2615,7 @@ Return resolved configuration settings with the layer and file that set each one
 | stability | stable |
 | phase | A |
 | input | `null` |
-| output | `stream<ono.config-setting/1>` |
+| output | `stream<ono.config-setting/1> | stream<ono.error/1>` |
 | provider capability | `config.read` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
@@ -2629,7 +2630,7 @@ Return resolved configuration settings with the layer and file that set each one
 
 | name | type | meaning |
 |---|---|---|
-| `--problems` | `bool` | Return the diagnostics from loading the config layers instead of the settings. A bad setting never stops the shell from starting (ADR-0010), so the diagnostics stay available as values. |
+| `--problems` | `bool` | Return the diagnostics from loading the config layers instead of the settings, as `ono.error/1` values (ADR-0218). A bad setting never stops the shell from starting (ADR-0010), so the diagnostics stay available as values. |
 | `--overridden` | `bool` | Include the values of the layers each setting overrides. |
 
 **Examples**
@@ -2899,13 +2900,15 @@ Perform an explicit DNS resolution.
 | name | type | meaning |
 |---|---|---|
 | `--type` | `string` | Restrict to one record type. |
-| `--server` | `ip` | Query this resolver instead of the system's. |
+| `--server` | `ip` | Query this nameserver instead of the system's resolver. Ono asks it directly, so the answer is that server's and not what NSS, /etc/hosts or mDNS would add (ADR-0240). |
+| `--port` | `port` | Where the nameserver named by `--server` listens. 53 unless given; a local stub resolver often listens elsewhere. |
 
 **Examples**
 
 ```text
 resolve dns example.com
 resolve dns 10.4.2.11
+resolve dns example.com --server 9.9.9.9
 ```
 
 ### `test port`
@@ -3141,6 +3144,7 @@ Add a routing table entry.
 | `--interface` | `string` | The outgoing interface. |
 | `--metric` | `int` | The route priority. |
 | `--table` | `string` | Which routing table to add to. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3174,6 +3178,7 @@ Remove a routing table entry.
 | name | type | meaning |
 |---|---|---|
 | `--table` | `string` | Which routing table to remove from. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3208,6 +3213,7 @@ Modify an existing routing table entry.
 |---|---|---|
 | `--gateway` | `ip` | New next hop. |
 | `--metric` | `int` | New priority. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3242,6 +3248,7 @@ Change an interface's configuration or administrative state.
 |---|---|---|
 | `--mtu` | `int` | New maximum transmission unit. |
 | `--up` | `bool` | Bring the interface administratively up or down. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3258,7 +3265,7 @@ Bring an interface up.
 | id | `ono.interface.start` |
 | stability | experimental |
 | phase | C |
-| input | `null` |
+| input | `null | stream<ono.interface/1>` |
 | output | `ono.action-result/1` |
 | provider capability | `interface.set` |
 | privilege | elevated |
@@ -3269,6 +3276,12 @@ Bring an interface up.
 | name | type | meaning |
 |---|---|---|
 | `name` | `string` | The interface to bring up. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3285,7 +3298,7 @@ Bring an interface down.
 | id | `ono.interface.stop` |
 | stability | experimental |
 | phase | C |
-| input | `null` |
+| input | `null | stream<ono.interface/1>` |
 | output | `ono.action-result/1` |
 | provider capability | `interface.set` |
 | privilege | elevated |
@@ -3296,6 +3309,12 @@ Bring an interface down.
 | name | type | meaning |
 |---|---|---|
 | `name` | `string` | The interface to bring down. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3330,6 +3349,7 @@ Create a virtual interface, or add an address to an existing one.
 |---|---|---|
 | `--address` | `ipnetwork` | Address to add. |
 | `--kind` | `string` | Virtual interface kind to create. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3346,7 +3366,7 @@ Delete a virtual interface, or remove an address from one.
 | id | `ono.interface.remove` |
 | stability | experimental |
 | phase | C |
-| input | `null` |
+| input | `null | stream<ono.interface/1>` |
 | output | `ono.action-result/1` |
 | provider capability | `interface.set` |
 | privilege | elevated |
@@ -3363,6 +3383,7 @@ Delete a virtual interface, or remove an address from one.
 | name | type | meaning |
 |---|---|---|
 | `--address` | `ipnetwork` | Address to remove; without it the interface itself is deleted. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3444,6 +3465,7 @@ Force a socket closed.
 | name | type | meaning |
 |---|---|---|
 | `--confirm` | `bool` | Required: closing a socket under a running process is destructive, and a script never waits for a prompt (spec §17.4). Without it nothing is closed and the run fails with `safety.confirmation_required`. |
+| `--dry-run` | `bool` | Report what would be sent without sending it. The provider answers `skipped` with the request it would have made (ADR-0088, ADR-0238). |
 
 **Examples**
 
@@ -3680,6 +3702,7 @@ Enumerate or resolve processes.
 | `--user` | `ref<ono.user/1>` | Restrict to processes of one user. |
 | `--group` | `ref<ono.group/1>` | Restrict to processes whose effective group is this one. |
 | `--tree` | `bool` | Emit the parent/child structure rather than a flat stream. |
+| `--sample` | `duration` | Measure `cpu` over this interval instead of over each process's lifetime: the provider reads the CPU counters, waits, and answers the rate over exactly that window (ADR-0232). The invocation takes at least this long. |
 
 **Examples**
 
@@ -3687,6 +3710,7 @@ Enumerate or resolve processes.
 get process
 get process 4419
 get process | where cpu > 20
+get process --sample 500ms | where cpu > 20
 ```
 
 ### `inspect process`
@@ -4518,6 +4542,128 @@ Show a link's transport, agent, negotiated providers and multiplexed streams.
 trace link prod-db
 ```
 
+### `get host-key`
+
+List the host keys this shell has pinned.
+
+| | |
+|---|---|
+| id | `ono.host-key.get` |
+| stability | experimental |
+| phase | H |
+| input | `null` |
+| output | `stream<ono.host-key/1>` |
+| provider capability | `host.list` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `host` | `string` | Show the pin for one host. |
+
+**Examples**
+
+```text
+get host-key
+```
+
+### `add host-key`
+
+Pin a host key, having checked its fingerprint by some other means.
+
+| | |
+|---|---|
+| id | `ono.host-key.add` |
+| stability | experimental |
+| phase | H |
+| input | `null` |
+| output | `ono.action-result/1` |
+| provider capability | `host.trust` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `host` | `string` | The host the key belongs to. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--fingerprint` | `string` | The full `sha256:` fingerprint to pin. |
+| `--algorithm` | `string` | How the key is proved; `tls-x509` by default. |
+
+**Examples**
+
+```text
+add host-key prod-db --fingerprint sha256:1f0c
+```
+
+### `set host-key`
+
+Replace a pinned host key — the deliberate re-trust after a key really changed.
+
+| | |
+|---|---|
+| id | `ono.host-key.set` |
+| stability | experimental |
+| phase | H |
+| input | `null | stream<ono.host-key/1>` |
+| output | `stream<ono.action-result/1>` |
+| provider capability | `host.trust` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `host` | `string` | The host to re-trust. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--fingerprint` | `string` | The new full `sha256:` fingerprint. |
+| `--algorithm` | `string` | How the key is proved; `tls-x509` by default. |
+
+**Examples**
+
+```text
+set host-key prod-db --fingerprint sha256:9ab4
+```
+
+### `remove host-key`
+
+Forget a pinned host key, so the host must be trusted again deliberately.
+
+| | |
+|---|---|
+| id | `ono.host-key.remove` |
+| stability | experimental |
+| phase | H |
+| input | `null | stream<ono.host-key/1>` |
+| output | `stream<ono.action-result/1>` |
+| provider capability | `host.trust` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `host` | `string` | The host to forget. |
+
+**Examples**
+
+```text
+remove host-key prod-db
+```
+
 ## service
 
 ### `get service`
@@ -4854,6 +5000,416 @@ tail journal --lines 50
 tail journal | where priority <= 3 | take 1
 ```
 
+## spatial
+
+### `find place`
+
+Search the spatial index for places, by name, type, predicate or anchor.
+
+| | |
+|---|---|
+| id | `ono.place.find` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `stream<ono.spatial-place/1>` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `name` | `string` | The name or alias to look for. Without one, every place the search reaches answers (v0.4 §6.8). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--type` | `string` | Restrict to one spatial type — `process`, `service`, `listener`, `directory` (v0.4 §3.3; ADR-0124 makes the type an option rather than a second target word). |
+| `--where` | `value` | A predicate over the objects being searched for, evaluated against each object as its provider described it: `--where state == "running"`, `--where local.port == 8080` (v0.4 §6.8; ADR-0138 makes its value an expression, ADR-0140 fixes what it reads). |
+| `--near` | `string` | A place selector the search is anchored to; only places under that anchor answer (v0.4 §6.8). |
+| `--limit` | `int` | How many places to answer with. The search is bounded by default, because §34 budgets it. |
+| `--all` | `bool` | Answer every match, however many. May be expensive (v0.4 §6.2). |
+
+**Examples**
+
+```text
+find place nginx
+find place --type service --where state == "active"
+find place --where local.port == 8080 | take 1
+```
+
+### `look`
+
+Describe the current place, its exits, its landmarks and what changed around it.
+
+| | |
+|---|---|
+| id | `ono.place.look` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `ono.place-view/1 | string` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--json` | `bool` | Write the `PlaceView` as one JSON document rather than rendering it (v0.4 §6.1, §29.1). |
+| `--all` | `bool` | Widen the exits: every group lists the places behind it instead of counting them (v0.4 §6.1, §24.1). |
+| `--changes` | `duration` | Report what changed in this window, or in `spatial.look.change_window` when the duration is left out (v0.4 §6.1, §24.3). |
+
+**Examples**
+
+```text
+look
+look --json
+look --all
+```
+
+### `near`
+
+Stream the ranked, bounded neighbourhood of the current place.
+
+| | |
+|---|---|
+| id | `ono.place.near` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `stream<ono.spatial-neighbor/1>` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `relation` | `string` | One exit only — the relation or collection to look along (v0.4 §6.2). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--type` | `string` | Restrict to one spatial type — `process`, `listener`, `mount` (v0.4 §6.2, §3.3). |
+| `--changed` | `duration` | Only neighbours observed to change inside this window, or inside `spatial.look.change_window` when the duration is left out (v0.4 §6.2). |
+| `--limit` | `int` | How many neighbours to answer with. The neighbourhood is bounded by default (v0.4 §6.2, §34.2). |
+| `--all` | `bool` | The complete currently known one-hop neighbourhood. May be expensive (v0.4 §6.2). |
+
+**Examples**
+
+```text
+near
+near --limit 5
+near --type process | take 3
+```
+
+### `enter`
+
+Move into a hierarchical child or an explicitly selected place.
+
+| | |
+|---|---|
+| id | `ono.place.enter` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `selector` | `string` | The place to move into: a visible child, a visible neighbour, a canonical id or a spatial id (v0.4 §6.3, §27.1). |
+
+**Examples**
+
+```text
+enter compute
+enter processes
+enter network
+```
+
+### `follow`
+
+Traverse a relationship edge of the current place — never a hierarchy edge.
+
+| | |
+|---|---|
+| id | `ono.place.follow` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `relation` | `string` | The relation to traverse: the word `look` prints for the exit, or the relation label the registry declares — `parent`, `socket`, `children` (v0.4 §6.4, §24.2). |
+| `selector` | `string` | Which neighbour, where the relation reaches more than one: `follow socket :443`, `follow file /etc/nginx/nginx.conf` (v0.4 §6.4). |
+
+**Examples**
+
+```text
+follow parent
+follow socket :443
+follow service
+```
+
+### `map`
+
+Project the bounded, ranked graph around a place — as text, or as a `SpatialMap`.
+
+| | |
+|---|---|
+| id | `ono.place.map` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `ono.spatial-map/1 | string` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `selector` | `string` | The place to map. Without one, the current place; naming one maps it without moving there (v0.4 §6.9, §23.4). |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--json` | `bool` | Write the `SpatialMap` as one JSON document rather than rendering it. It is a bounded graph value and depends on no terminal (v0.4 §22, §29.4). |
+| `--depth` | `int` | How many hierarchy hops to draw. Two by default: the place, its canonical children and what lies behind them (v0.4 §6.9). |
+| `--zoom` | `int` | One of the five canonical levels of §8.1 — 0 SYSTEM, 1 DOMAIN, 2 COLLECTION, 3 ENTITY, 4 DETAIL. A place finer than the level is drawn as its canonical ancestor at it. |
+| `--expand` | `string` | Draw the members of a cluster instead of the cluster. A view action: it never changes the current place (v0.4 §8.3). |
+| `--focus` | `string` | Centre the view on one node. Focus is not navigation and never moves the shell (v0.4 §23.4, §53). |
+| `--relations` | `string` | Keep only these relations' edges, comma-separated. Filtering removes edges; it never creates one (v0.4 §6.9, §43.2). |
+| `--type` | `string` | Keep only nodes of these spatial types, comma-separated — `process`, `service`, `listener`. It narrows the bounded map rather than re-selecting what fills it, so the answer is always a subset of the same map without it, and what it removed is counted in `hidden` (v0.4 §6.9, §3.3, §43.2). |
+| `--all` | `bool` | The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2, §47). |
+| `--live` | `bool` | Keep the map current. At an interactive terminal it is the full-screen view of §23.3, redrawn from a polling source and saying so in §25.3's vocabulary; where the values are consumed instead, it is a stream that subscribes to the change events of everything this place is drawn from — the first value is the current state, every value after it is something that moved (v0.4 §25.1, §25.2, §25.3, §29.1). |
+
+**Examples**
+
+```text
+map
+map --json
+map --zoom 1
+map --all --type process
+map --live --json
+```
+
+### `map links`
+
+Draw the federated map — this host beside the hosts this session holds links to.
+
+| | |
+|---|---|
+| id | `ono.place.map-links` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `ono.spatial-map/1 | string` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--json` | `bool` | Write the `SpatialMap` as one JSON document rather than rendering it (v0.4 §22, §29.4). |
+| `--all` | `bool` | The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2). |
+
+**Examples**
+
+```text
+map links
+map links --json
+```
+
+### `home`
+
+Return to the root system place of the active host.
+
+| | |
+|---|---|
+| id | `ono.place.home` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Examples**
+
+```text
+home
+home; look
+```
+
+### `back`
+
+Return to the previous place in the actual navigation history.
+
+| | |
+|---|---|
+| id | `ono.place.back` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Examples**
+
+```text
+back
+follow socket :443; back
+```
+
+### `up`
+
+Move to the canonical hierarchical parent of the current place.
+
+| | |
+|---|---|
+| id | `ono.place.up` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Examples**
+
+```text
+up
+home; enter compute; enter processes; up
+```
+
+### `jump`
+
+Move directly to a resolved place, without adjacency and across scopes.
+
+| | |
+|---|---|
+| id | `ono.place.jump` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | conditional |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `selector` | `string` | The place to move to: a name, a `<type>/<key>` or `<domain>:<key>` spelling, a spatial id, or `@<pin>` for a bookmark (v0.4 §6.5, §20.4, §27.1). |
+
+**Examples**
+
+```text
+jump storage:/data
+jump process/1842
+jump @edge-proxy
+```
+
+### `trail`
+
+Show the navigation trail of this session, movement by movement.
+
+| | |
+|---|---|
+| id | `ono.place.trail` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `stream<ono.navigation-step/1> | string` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--json` | `bool` | Write the steps as one JSON document rather than rendering them (v0.4 §6.7, §29.1). |
+| `--compact` | `bool` | Write the breadcrumb of the current place — `local > compute > processes > 1842` — instead of the steps (v0.4 §6.7, §20.2). |
+
+**Examples**
+
+```text
+trail
+trail --json
+trail --compact
+```
+
+### `pin`
+
+Mark the current place as a persistent user landmark.
+
+| | |
+|---|---|
+| id | `ono.place.pin` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `ono.spatial-place/1` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--name` | `string` | What to call the pin; `jump @<name>` reaches it. Without one the place's own name is used (v0.4 §20.4). |
+
+**Examples**
+
+```text
+pin
+pin --name edge-proxy
+```
+
+### `unpin`
+
+Remove a user landmark.
+
+| | |
+|---|---|
+| id | `ono.place.unpin` |
+| stability | stable |
+| phase | S |
+| input | `null` |
+| output | `null` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `name` | `string` | Which pin to remove. Without one, the pin on the current place is removed (v0.4 §6, §20.4). |
+
+**Examples**
+
+```text
+unpin
+unpin edge-proxy
+```
+
 ## storage
 
 ### `get mount`
@@ -5114,7 +5670,7 @@ Activate a mount definition.
 | id | `ono.mount.start` |
 | stability | experimental |
 | phase | C |
-| input | `null` |
+| input | `null | stream<ono.mount/1>` |
 | output | `ono.action-result/1` |
 | provider capability | `mount.manage` |
 | privilege | elevated |
@@ -5141,7 +5697,7 @@ Deactivate a mount.
 | id | `ono.mount.stop` |
 | stability | experimental |
 | phase | C |
-| input | `null` |
+| input | `null | stream<ono.mount/1>` |
 | output | `ono.action-result/1` |
 | provider capability | `mount.manage` |
 | privilege | elevated |

@@ -1,0 +1,119 @@
+# Phase I (spec §31.22, §31.64, §31.65, §31.68): what a package declares is in the registry before
+# any of its code has run. `get command` finds a contributed command and names the package it came
+# from; `help` and `explain` say the same; invoking it is what triggers the load; and a
+# contribution that would take a name Ono already answers to is refused and reported.
+# ADR-0281, ADR-0282.
+case: a declared contribution is a registry entry before its package is loaded
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - clock.read
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/commands.yaml" <<'CONTRIB'
+  commands:
+    - id: dev.example.echo.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      examples:
+        - get echo-item --count 3
+  CONTRIB
+
+  echo "== the manifest's declaration is a registry entry, and it says where it came from (§31.64, §31.68) =="
+  ono -c 'get command --verb get --target echo-item | select id origin | to json'
+
+  echo "== help and explain say the same, with nothing loaded (§31.64) =="
+  ono -c 'help get echo-item' | grep -E '^  origin'
+  ono -c 'explain "get echo-item"' | grep -E '^   origin'
+
+  echo "== a core command reads core, so origin distinguishes rather than decorates (§31.64) =="
+  ono -c 'get command --verb where | select origin | to json'
+
+  echo "== invoking the contributed command is what loads the package (§31.68) =="
+  ono -c 'get echo-item --count 3 | to json'
+  ono -c 'echo:emit --count 2 | to json'
+
+  echo "== a contribution that would shadow a core command is refused and reported (§31.65) =="
+  mkdir -p "$home/plugins/dev.example.thief/contributions"
+  cat > "$home/plugins/dev.example.thief/manifest.yaml" <<'THIEF'
+  format: kuang-package/1
+  package:
+    id: dev.example.thief
+    name: thief
+    version: 0.1.0
+    description: Tries to answer for a name Ono already answers to.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/thief
+    memory_max: 8MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  THIEF
+  cat > "$home/plugins/dev.example.thief/contributions/commands.yaml" <<'THIEFC'
+  commands:
+    - id: dev.example.thief.command.process
+      verb: get
+      target: process
+      summary: Answer for processes instead of Ono.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      examples: []
+  THIEFC
+  ono -c 'get command --verb get --target process | select id origin | to json'
+  ono -c 'get plugin' 2>&1 >/dev/null | head -2
+exit: 0
+stdout-contains: {"id":"dev.example.echo.command.emit","origin":"plugin(dev.example.echo, 0.1.0)"}
+stdout-contains: origin        plugin(dev.example.echo, 0.1.0)
+stdout-contains: origin       plugin(dev.example.echo, 0.1.0)
+stdout-contains: {"origin":"core"}
+stdout-contains: [1,2,3]
+stdout-contains: [1,2]
+stdout-contains: {"id":"ono.process.get","origin":"core"}
+stdout-contains: which would shadow the one core already provides
+stdout-not-contains: panicked

@@ -1,0 +1,141 @@
+# v0.4 §50 Phases S9 and S10 in the container: what a KUANG/11 package may add to the space, and
+# what the v0.3 external command adapters may. §36 (KUANG/11 spatial extensions), §36.1 (the
+# contribution types), §36.2 (what a plugin may never do), §35.5 (plugin nodes and edges are
+# filtered by capability *before* the merge), §31.64/§53 (a plugin cannot create untraceable
+# truth), §11.5 (confidence), §37 (adapted objects in the spatial model), §37.1 (identity merge)
+# and §37.2 (raw text never becomes a place). ADR-0193, ADR-0194.
+#
+# The package is the conformance fixture the container already ships, laid out with the one thing
+# these cases are about: a declared `process->process` relation contribution and an optional
+# `relation.write`. Its relation command asserts an edge between two processes that really exist —
+# itself and the shell that started it — so every edge here is one the host could resolve through
+# the process provider, and none of it is a fixture pretending to be a system.
+case: a package extends the space only under its capability, and an adapted object is one place
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit, and knows one relation.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  contributions:
+    relations: ["process->process"]
+  capabilities:
+    optional:
+      - relation.write
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== §35.5, §36.2: without the capability the package's edges are not in the map =="
+  prove s9-a "a map drawn while the package is loaded without \`relation.write\` carries none of its edges" \
+    'ono -c "load plugin dev.example.echo; map --json --relations dev.example.echo" |
+       tail -1 > /tmp/s9-denied.json &&
+     ! grep -q "dev.example.echo" /tmp/s9-denied.json'
+  prove s9-b "the map is still a SpatialMap: a package that contributed nothing removes nothing (§22)" \
+    'grep -q "\"edges\"" /tmp/s9-denied.json && grep -q "\"nodes\"" /tmp/s9-denied.json'
+  prove s9-c "the package says which capability it lacks rather than failing silently (§31.17)" \
+    'ono -c "load plugin dev.example.echo; get plugin | where id == \"dev.example.echo\" |
+             select state degraded_reason | to json" 2>&1 |
+       tail -1 | grep -q "relation.write not granted"'
+
+  echo "== §36.1, §31.64, §11.5: with the grant, the edge is there and says where it came from =="
+  ono -c 'load plugin dev.example.echo --grant relation.write; map --json --relations dev.example.echo' |
+    tail -1 > /tmp/s9-granted.json
+  prove s9-d "the package's relationship provider contributes its edge once granted" \
+    'grep -q "dev.example.echo" /tmp/s9-granted.json'
+  prove s9-e "the edge names the contributing package as its provider (§31.64, §53)" \
+    'ono -c "load plugin dev.example.echo --grant relation.write; map --json --relations dev.example.echo" |
+       tail -1 | grep -q "\"provider\":\"dev.example.echo\""'
+  prove s9-f "the edge carries a §11.5 confidence and never claims to have been observed exactly" \
+    'grep -q "\"confidence\":\"strong\"" /tmp/s9-granted.json &&
+     ! grep -q "\"confidence\":\"exact\"" /tmp/s9-granted.json'
+  prove s9-g "both ends of the contributed edge are places the process provider answers for (§2.16, §36.2)" \
+    'ono -c "load plugin dev.example.echo --grant relation.write; map --json --relations dev.example.echo" |
+       tail -1 | grep -q "\"type\":\"Process\""'
+
+  echo "== §37.1: an adapted object and its native twin are one place with both sources =="
+  prove s10-a "the loopback interface is one place after being seen natively and through \`ip link\`" \
+    'test "$(ono -c "get interface | where name == \"lo\" | count | to text;
+                     ip link | where name == \"lo\" | count | to text;
+                     enter network; near --type interface --all | where name == \"lo\" | count | to text" |
+             tail -1)" = "1"'
+  prove s10-b "the place keeps both sources on the record: the provider and the adapter (v0.3 §1.47)" \
+    'ono -c "ip link | where name == \"lo\" | count | to text;
+             enter network; near --type interface --all | where name == \"lo\" | select sources | to json" |
+       tail -1 | grep -q "adapter:org.ono.compat.iproute2.ip-link"'
+  prove s10-c "the native provider is on the same record" \
+    'ono -c "ip link | where name == \"lo\" | count | to text;
+             enter network; near --type interface --all | where name == \"lo\" | select sources | to json" |
+       tail -1 | grep -q "linux.netlink"'
+
+  echo "== §37.1: the adapter view and the native view of one process are one spatial id =="
+  sleep 60 &
+  pid=$!
+  native=$(ono -c "enter process $pid; look --json" | tail -1 | sed 's/.*"spatial_id":"\([^"]*\)".*/\1/')
+  adapted=$(ono -c "ps -p $pid | take 1 | enter process
+  look --json" | tail -1 | sed 's/.*"spatial_id":"\([^"]*\)".*/\1/')
+  prove s10-d "\`ps … | enter process\` reconciles to the canonical identity of the same process" \
+    'test -n "'"$native"'" && test "'"$native"'" = "'"$adapted"'"'
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+
+  echo "== §37.2: raw command output never becomes a place =="
+  prove s10-e "entering the bytes of \`raw ip link\` is \`spatial.not_enterable\`, not a parsed table" \
+    'ono -c "try { raw ip link | enter } catch e { \$e | select name | to json }" |
+       grep -q "spatial.not_enterable"'
+  prove s10-f "running the program raw leaves the spatial index alone" \
+    'test "$(ono -c "raw ip link | to text;
+                     enter network; near --type interface --all | where name == \"lo\" | count | to text" |
+             tail -1)" = "1"'
+
+  echo "contribution and adapter checks done"
+exit: 0
+stdout-contains: PROVED s9-a
+stdout-contains: PROVED s9-b
+stdout-contains: PROVED s9-c
+stdout-contains: PROVED s9-d
+stdout-contains: PROVED s9-e
+stdout-contains: PROVED s9-f
+stdout-contains: PROVED s9-g
+stdout-contains: PROVED s10-a
+stdout-contains: PROVED s10-b
+stdout-contains: PROVED s10-c
+stdout-contains: PROVED s10-d
+stdout-contains: PROVED s10-e
+stdout-contains: PROVED s10-f
+stdout-contains: contribution and adapter checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

@@ -10,6 +10,7 @@
 mod fixture;
 
 use fixture::{FixtureProvider, providers};
+use ono_value::Value;
 
 // --- watch (spec §18.2, ADR-0024) ------------------------------------------------------------
 
@@ -119,4 +120,59 @@ async fn should_emit_an_empty_snapshot_when_the_watched_listing_has_nothing_in_i
         "an empty snapshot carries no object, got {:?}",
         event.get("process")
     );
+}
+
+// --- a watch narrows inside a context frame (spec §14.3, ADR-0023, ADR-0076 §5) --------------
+
+#[tokio::test]
+async fn should_narrow_a_watch_to_the_entered_object_rather_than_the_whole_machine() {
+    // Spec §14.3: a command inside a frame acts on what the frame names, or refuses. A watch is
+    // no exception, and its snapshot is the same set `get` would have answered.
+    let frame = ono_command::ContextFrame::new("owner", Value::string("root"));
+    let registry = providers(FixtureProvider::new());
+    let ran = fixture::run_with_context(
+        "watch process --every 30ms | take 2",
+        &registry,
+        vec![frame],
+    )
+    .await
+    .expect("the watch runs");
+
+    assert_eq!(
+        ran.values().len(),
+        2,
+        "root owns exactly two fixture objects, and the snapshot is those two"
+    );
+    for value in ran.values() {
+        let event = value.as_record().expect("an event record");
+        let object = event
+            .get("process")
+            .expect("the event carries the object")
+            .as_record()
+            .expect("the object is a record");
+        assert_eq!(
+            object.get("owner"),
+            Some(&Value::string("root")),
+            "every event belongs to the entered object (spec §14.3)"
+        );
+    }
+}
+
+#[tokio::test]
+async fn should_refuse_a_watch_the_context_cannot_narrow_rather_than_widening() {
+    // Spec §14.3's prohibition applies to `watch` exactly as it does to `get`: the widget schema
+    // carries no `mount` field and `watch process` declares no `mount` parameter, so a mount
+    // frame can narrow it neither way. (A *service* frame can: `ono.process.watch` declares
+    // `--service`, which the procfs provider honours — ADR-0076 §2 and §4.)
+    let frame = ono_command::ContextFrame::new("mount", Value::string("/"));
+    let registry = providers(FixtureProvider::new());
+    let error = fixture::run_with_context(
+        "watch process --every 30ms | take 1",
+        &registry,
+        vec![frame],
+    )
+    .await
+    .expect_err("a frame that cannot narrow refuses");
+
+    assert_eq!(error.code(), ono_core::ErrorCode::ResolveTargetNotFound);
 }

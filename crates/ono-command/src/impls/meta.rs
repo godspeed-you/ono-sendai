@@ -86,6 +86,7 @@ impl CommandImpl for MetaCommand {
                         stdout: ono_adapter::Stdout::Stream,
                         adapters: ctx.adapters(),
                         executables: Some(&executables),
+                        context: ctx.context(),
                     },
                 );
                 Ok(values([plan.to_value()]))
@@ -124,6 +125,7 @@ impl MetaCommand {
                     stdout: ono_adapter::Stdout::Stream,
                     adapters: ctx.adapters(),
                     executables: Some(&executables),
+                    context: ctx.context(),
                 },
             );
             let last = plan
@@ -324,6 +326,7 @@ fn command_record(contract: &CommandContract) -> Value {
     let built = RecordValue::builder(schema, provenance)
         .set("id", Value::string(contract.id()))
         .and_then(|record| record.set("kind", Value::string("native")))
+        .and_then(|record| record.set("origin", Value::string(&contract.origin().to_string())))
         .and_then(|record| record.set("verb", Value::string(contract.verb())))
         .and_then(|record| {
             record.set(
@@ -470,6 +473,17 @@ fn inspected_fields(record: &RecordValue) -> Value {
         described.insert("value".into(), held);
         Value::Map(Arc::new(described))
     }))
+}
+
+/// A provenance as the value a record carries: the provider, when it was observed, what it was
+/// read from, whether it crossed a link, the schema and the confidence — and, for an adapted
+/// value, the ten questions of spec v0.3 §1.8 under the same keys the rendered block uses.
+///
+/// One rendering, so a script and a person read the same names wherever provenance appears —
+/// `inspect`, and every place the v0.4 spatial layer answers with (§27.4).
+#[must_use]
+pub fn provenance_value(provenance: &Provenance) -> Value {
+    provenance_map(provenance)
 }
 
 fn provenance_map(provenance: &Provenance) -> Value {

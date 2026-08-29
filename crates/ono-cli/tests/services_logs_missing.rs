@@ -62,6 +62,21 @@ fn string_field<'a>(row: &'a serde_yaml_ng::Value, field: &str) -> &'a str {
         .unwrap_or_else(|| panic!("field `{field}` must be a string in {row:?}"))
 }
 
+/// An RFC 3339 timestamp field, in a form two of them can be ordered by.
+///
+/// Comparing the rendered text is not the same comparison: the journal trims trailing zeros
+/// from the fraction, so `…12.2754Z` and `…12.275498Z` are one microsecond apart and order the
+/// other way round as strings. Everything up to the fraction is fixed-width and orders
+/// correctly as text; the fraction is padded to nanoseconds so that it does too.
+fn instant(row: &serde_yaml_ng::Value, field: &str) -> (String, String) {
+    let text = string_field(row, field).trim_end_matches('Z').to_owned();
+    let (whole, fraction) = match text.split_once('.') {
+        Some((whole, fraction)) => (whole.to_owned(), fraction.to_owned()),
+        None => (text, String::new()),
+    };
+    (whole, format!("{fraction:0<9}"))
+}
+
 fn int_field(row: &serde_yaml_ng::Value, field: &str) -> i64 {
     row.get(field)
         .and_then(serde_yaml_ng::Value::as_i64)
@@ -277,7 +292,7 @@ fn should_emit_existing_records_in_order_before_following_when_lines_is_given() 
         run.stdout()
     );
     assert!(
-        string_field(&rows[0], "timestamp") <= string_field(&rows[1], "timestamp"),
+        instant(&rows[0], "timestamp") <= instant(&rows[1], "timestamp"),
         "the journal is append-ordered: the first emitted record is not newer than the second, \
          got {:?}",
         run.stdout()
@@ -347,6 +362,36 @@ fn should_run_the_failed_service_example_when_a_level_threshold_composes() {
     ) else {
         return;
     };
+}
+
+#[test]
+fn should_order_the_level_by_severity_rather_than_by_spelling() {
+    // Spec §41.4's own example is `where level >= error`. As text, `warning` is greater than
+    // `error` and `crit` is less than it, so the threshold kept exactly the records it was meant
+    // to drop (ADR-0222).
+    let run = ono("get log | take 400 | where level >= warning | select level | to json");
+    let Some(rows) = records_or_unavailable(&run, "`where level >= warning`") else {
+        return;
+    };
+    for row in &rows {
+        let level = string_field(row, "level");
+        assert!(
+            matches!(level, "warning" | "error" | "crit" | "alert" | "emerg"),
+            "`level >= warning` keeps only what is at least a warning, got {level:?}"
+        );
+    }
+
+    let below = ono("get log | take 400 | where level < warning | select level | to json");
+    let Some(rows) = records_or_unavailable(&below, "`where level < warning`") else {
+        return;
+    };
+    for row in &rows {
+        let level = string_field(row, "level");
+        assert!(
+            matches!(level, "debug" | "info" | "notice"),
+            "`level < warning` keeps only what is milder, got {level:?}"
+        );
+    }
 }
 
 #[test]
@@ -501,5 +546,138 @@ fn should_refuse_set_service_without_a_property_when_nothing_is_asked_to_change(
         run.stderr().contains("--enabled"),
         "the diagnostic names the property option service.yaml declares, got {:?}",
         run.stderr()
+    );
+}
+
+// --- trace service (spec §22.3, §41.6; `ono.service.trace`) -----------------------------------
+
+#[test]
+fn should_trace_a_service_to_the_processes_it_owns() {
+    // service.yaml `ono.service.trace`: "Show a service's processes, sockets, dependencies and
+    // recent journal context" as one `ono.graph/1`. `systemd-journald.service` runs on every
+    // systemd system and owns at least the journal daemon, so the graph's root is the unit and
+    // the processes it claims are nodes beneath it.
+    let run = ono(&format!("trace service {JOURNALD} | to json"));
+    let Some(graphs) = records_or_unavailable(&run, "trace service") else {
+        return;
+    };
+    assert_eq!(
+        graphs.len(),
+        1,
+        "`trace` yields one Graph (spec §9.1), got {graphs:?}"
+    );
+    let graph = &graphs[0];
+    assert_eq!(
+        graph["root"]["schema"].as_str(),
+        Some("ono.service/1"),
+        "graph.v1.yaml `root`: the traced service is the root, got {:?}",
+        graph["root"]
+    );
+    assert!(
+        graph["root"]["identity"]
+            .get("name")
+            .and_then(serde_yaml_ng::Value::as_str)
+            == Some(JOURNALD),
+        "the root's identity names the unit that was traced, got {:?}",
+        graph["root"]
+    );
+    let nodes = graph["nodes"]
+        .as_sequence()
+        .cloned()
+        .unwrap_or_else(|| panic!("graph.v1.yaml `nodes` is a list, got {:?}", graph["nodes"]));
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["kind"].as_str() == Some("ono.process/1")),
+        "spec §41.6: a running unit's processes are among its nodes, got {} nodes",
+        nodes.len()
+    );
+    assert!(
+        graph["edges"]
+            .as_sequence()
+            .is_some_and(|edges| !edges.is_empty()),
+        "spec §22.1: the relationships are edges, not implied by node order, got {:?}",
+        graph["edges"]
+    );
+}
+
+#[test]
+fn should_relate_a_service_to_the_units_it_requires() {
+    // v0.4 §13 lists dependencies among a service place's groups, and
+    // `docs/spec/spatial/relations.yaml` declares `service.depends_on`. Until ADR-0239 nothing
+    // claimed it: `ListUnits` carries no dependency information and the per-unit properties that
+    // do were read and thrown away. `systemd-journald.service` requires its own sockets on every
+    // systemd system, so the trace must relate it to at least one other unit.
+    let run = ono(&format!("trace service {JOURNALD} | to json"));
+    let Some(graphs) = records_or_unavailable(&run, "trace service") else {
+        return;
+    };
+    let edges = graphs[0]["edges"]
+        .as_sequence()
+        .cloned()
+        .unwrap_or_default();
+    let dependencies: Vec<&str> = edges
+        .iter()
+        .filter(|edge| edge["relation"].as_str() == Some("depends-on"))
+        .filter_map(|edge| edge["to"]["label"].as_str())
+        .collect();
+    assert!(
+        !dependencies.is_empty(),
+        "service.yaml `ono.service.trace`: a unit's dependencies are part of what it relates \
+         to, and systemd states them (ADR-0239); got the relations {:?}",
+        edges
+            .iter()
+            .filter_map(|edge| edge["relation"].as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        dependencies.iter().all(|unit| *unit != JOURNALD),
+        "a unit is not its own dependency, got {dependencies:?}"
+    );
+}
+
+#[test]
+fn should_list_the_dependencies_of_a_unit_as_a_field_of_its_record() {
+    // The dependency edge is composed from a fact the record carries, not observed a second
+    // time (spec §2.16): `get service` answers it, so `where` and `select` compose over it.
+    let run = ono(&format!(
+        "get service {JOURNALD} | select name dependencies | to json"
+    ));
+    let Some(rows) = records_or_unavailable(&run, "`get service` with its dependencies") else {
+        return;
+    };
+    let units = rows
+        .first()
+        .and_then(|row| row.get("dependencies"))
+        .and_then(serde_yaml_ng::Value::as_sequence)
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "service.v1.yaml `dependencies` is a list, and systemd has the notion, so it is \
+                 never null here; got {:?}",
+                run.stdout()
+            )
+        });
+    assert!(
+        !units.is_empty(),
+        "`{JOURNALD}` requires its sockets on every systemd system, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_refuse_to_trace_a_service_that_does_not_exist() {
+    let run = ono("trace service nothing-answers-to-this.service | to json");
+    assert!(
+        !run.stderr().contains("Ono-Sendai-E0101"),
+        "`trace service` is implemented; a unit that is not there is a resolution failure, not \
+         an unimplemented command. Got {:?}",
+        run.output()
+    );
+    assert!(
+        !run.status().is_success(),
+        "tracing a unit nothing answers to is a failure, not an empty graph (spec §16.5), got \
+         {:?}",
+        run.output()
     );
 }

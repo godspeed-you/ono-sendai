@@ -74,13 +74,13 @@ run: |
   ono -c 'load plugin dev.example.old' 2>&1 | head -1
 exit: 0
 stdout-contains: {"id":"dev.example.echo","state":"installed"}
-stdout-contains: {"compatibility":"compatible","manifest":"valid","signature":"absent"}
+stdout-contains: {"manifest":"valid","compatibility":"compatible","signature":"absent"}
 stdout-contains: {"origin":"plugin"}
 stdout-contains: {"id":"dev.example.echo","installed":true}
 stdout-contains: Ono-Sendai-E0701
-stdout-contains: {"changed":true,"status":"success"}
+stdout-contains: {"status":"success","changed":true}
 stdout-contains: [2]
-stdout-contains: {"class":"optional","decision":"allow"}
+stdout-contains: {"decision":"allow","class":"optional"}
 stdout-contains: {"capability":"clock.read","decision":"allow"}
 stdout-contains: Ono-Sendai-K11301
 stdout-contains: {"enabled":false}

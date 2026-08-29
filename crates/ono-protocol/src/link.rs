@@ -498,6 +498,17 @@ impl Link {
         Err(refusal.unwrap_or_else(|| unreachable("the remote ended the action without answering")))
     }
 
+    /// Says goodbye now, without waiting for the link to be dropped.
+    ///
+    /// Queued frames are flushed and the transport is shut down, so a peer reading a pipe sees
+    /// end of input — the hang-up an agent loop ends on. An owner that must know the peer has
+    /// gone before it can proceed calls this and then waits for the peer; dropping the link
+    /// does the same thing, but only once every [`RemoteStream`] and mounted provider derived
+    /// from it has gone too.
+    pub fn hangup(&self) {
+        self.inner.frames.hangup();
+    }
+
     fn start(&self, kind: FrameKind, message: Message) -> Result<RemoteStream, ErrorValue> {
         let opened = self.inner.open(kind, &message)?;
         Ok(RemoteStream {
@@ -515,7 +526,7 @@ impl Drop for Link {
     fn drop(&mut self) {
         // The reader task shares `LinkInner` (and with it the frame sink), so the sink cannot
         // close by going out of scope; the link's owner is the one who says goodbye.
-        self.inner.frames.hangup();
+        self.hangup();
     }
 }
 

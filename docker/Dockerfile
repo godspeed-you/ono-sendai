@@ -13,17 +13,30 @@ ENV CARGO_TERM_COLOR=never CARGO_INCREMENTAL=0
 COPY Cargo.toml Cargo.lock* rust-toolchain.toml clippy.toml rustfmt.toml ./
 COPY crates ./crates
 COPY xtask ./xtask
+# The fuzz targets are a workspace member (ADR-0313). The image never builds them — it builds
+# `ono-cli` and `ono-kuang-sdk` — but cargo loads every member's manifest before it builds
+# anything, so the directory has to be here. Its corpus is a few hundred kilobytes.
+COPY fuzz ./fuzz
 # The machine-readable contracts are compile-time inputs, not documentation: `ono-value` and
 # `ono-command` embed them with `include_str!`, so there is exactly one definition of a schema or
 # a command in the process (spec section 27, section 36.4). Copying them here is what makes the
 # container prove that the contracts ship with the binary rather than sitting beside it.
 COPY docs/spec ./docs/spec
+# `target/` survives in a cache mount, and cargo decides what to rebuild from *mtimes*. `COPY`
+# preserves the host's mtimes, so a source file edited before the cached artifacts were written
+# looks older than them and cargo declares the crate fresh — the image then ships the previous
+# binary while carrying the new source, and the acceptance suite silently grades yesterday's
+# code. Stamping the workspace sources with the build's own clock is what makes the referee
+# grade what was copied. Only the workspace is stamped; the registry's sources keep their
+# mtimes, so dependencies stay cached and only `crates/` and `xtask/` are recompiled.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
+    find crates xtask fuzz docs/spec Cargo.toml Cargo.lock -type f -exec touch {} + && \
     cargo build --release --package ono-cli --package ono-kuang-sdk --locked \
       || cargo build --release --package ono-cli --package ono-kuang-sdk \
     && install -m 0755 target/release/ono /usr/local/bin/ono \
-    && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin
+    && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin \
+    && install -m 0755 target/release/kuang-sign /usr/local/bin/kuang-sign
 
 FROM debian:bookworm-slim AS runtime
 
@@ -38,6 +51,8 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
 
 COPY --from=builder /usr/local/bin/ono /usr/local/bin/ono
 COPY --from=builder /usr/local/bin/kuang-example-plugin /usr/local/bin/kuang-example-plugin
+# The signing tool the SDK ships, so a case can be a package author (spec §31.36, ADR-0311).
+COPY --from=builder /usr/local/bin/kuang-sign /usr/local/bin/kuang-sign
 
 # A non-root user, so privilege boundaries are exercised the way real users meet them.
 RUN useradd --create-home --shell /usr/local/bin/ono case

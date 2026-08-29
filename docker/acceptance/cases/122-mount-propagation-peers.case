@@ -1,0 +1,56 @@
+# `trace mount` and the fourth thing storage.yaml promises: "a mount's device, filesystem,
+# propagation peers and the processes using it". ADR-0079 delivered three and left the peers;
+# ADR-0236 relates two mounts that state the same `shared:N` in `mountinfo(5)`. Proving it needs
+# a real shared bind mount, which needs `CAP_SYS_ADMIN` — so this case says so, runs as root, and
+# is the only one in the suite that does anything a normal user could not. Everything it asserts
+# about `ono` is asserted through the unprivileged reading side.
+case: two mounts of one propagation group are peers, and a private mount has none
+capability: SYS_ADMIN
+security: apparmor=unconfined
+user: root
+timeout: 90
+run: |
+  mkdir -p /tmp/prop/source /tmp/prop/peer /tmp/prop/lonely /tmp/prop/private
+
+  # A shared mount and a bind of it: the kernel gives both the same `shared:N`.
+  mount --bind /tmp/prop/source /tmp/prop/source
+  mount --make-shared /tmp/prop/source
+  mount --bind /tmp/prop/source /tmp/prop/peer
+  # And a private one beside them, which propagates nothing.
+  mount --bind /tmp/prop/private /tmp/prop/private
+  mount --make-private /tmp/prop/private
+
+  echo "== the kernel's own view =="
+  grep -c 'shared:' /proc/self/mountinfo > /dev/null && echo "kernel-has-shared-mounts"
+
+  echo "== the mount records carry the group =="
+  ono -c 'get mount | where target == "/tmp/prop/source" | select peer_group | to json'
+  ono -c 'get mount | where target == "/tmp/prop/private" | select peer_group | to json'
+  same=$(ono -c 'get mount | where peer_group != null and (target == "/tmp/prop/source" or target == "/tmp/prop/peer") | count | to json' | tr -d '[]')
+  if [ "$same" = "2" ]; then echo "both-mounts-are-in-a-group"; else echo "WRONG group members: $same"; fi
+
+  echo "== trace mount draws the peer =="
+  ono -c 'trace mount /tmp/prop/source' | grep -o 'peer -> [^ ]*' | head -2
+  ono -c 'trace mount /tmp/prop/source | to json' | grep -q '"relation":"peer"' && echo "peer-edge-exists"
+  ono -c 'trace mount /tmp/prop/source | to json' | grep -q '"peer_group"' && echo "peer-edge-says-why"
+
+  echo "== a private mount has no peer, and that is not a failure =="
+  ono -c 'trace mount /tmp/prop/private | to json' > /tmp/private.json; echo "private-status=$?"
+  grep -q '"relation":"peer"' /tmp/private.json && echo "WRONG a private mount has a peer"
+
+  echo "== the other three edges are unchanged =="
+  ono -c 'trace mount / | to json' | grep -q '"relation":"filesystem"' && echo "filesystem-edge-still-there"
+
+  umount /tmp/prop/peer; umount /tmp/prop/source; umount /tmp/prop/private
+  echo done=ok
+exit: 0
+stdout-contains: kernel-has-shared-mounts
+stdout-contains: both-mounts-are-in-a-group
+stdout-contains: peer -> /tmp/prop/peer
+stdout-contains: peer-edge-exists
+stdout-contains: peer-edge-says-why
+stdout-contains: private-status=0
+stdout-contains: [{"peer_group":null}]
+stdout-contains: filesystem-edge-still-there
+stdout-contains: done=ok
+stdout-not-contains: WRONG

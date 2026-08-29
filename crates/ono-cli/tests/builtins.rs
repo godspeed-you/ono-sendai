@@ -34,6 +34,27 @@ fn should_change_the_directory_an_external_command_sees_when_cd_has_run() {
 }
 
 #[test]
+fn should_change_the_directory_a_native_command_sees_when_cd_has_run() {
+    // `cd` moved the shell's own idea of where it stands and the directory an external command
+    // inherits, and left every native command resolving `.` against wherever the process
+    // happened to start. `find file .` after a `cd` therefore walked the shell's launch
+    // directory, which is a different machine from the one the user is looking at.
+    let dir = scratch();
+    dir.write("inside/one.txt", "1\n");
+    dir.write("inside/two.txt", "2\n");
+    let run = ono(&format!(
+        "cd {}/inside\nfind file . | select name | to text",
+        dir.path().display()
+    ));
+    run.assert_success();
+    assert!(
+        run.stdout().contains("one.txt") && run.stdout().contains("two.txt"),
+        "a relative path names the directory the shell is standing in, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
 fn should_report_a_directory_it_cannot_enter_and_leave_the_shell_where_it_was() {
     let dir = scratch();
     let run = Shell::new()
@@ -374,7 +395,7 @@ fn should_answer_get_env_with_a_variable_set_env_bound_in_the_same_session() {
     run.assert_success();
     assert_eq!(
         run.stdout().trim(),
-        r#"[{"name":"LIVE_PROBE","source":"shell","value":"live"}]"#,
+        r#"[{"name":"LIVE_PROBE","value":"live","source":"shell"}]"#,
         "ono.env-var/1: the variable bound this session is listed, with its source, got {:?}",
         run.stdout()
     );
@@ -393,4 +414,61 @@ fn should_not_list_a_variable_remove_env_withdrew_in_the_same_session() {
         "a withdrawn variable is no longer in the session's environment, got {:?}",
         run.stdout()
     );
+}
+
+// --- a head that is both a native command and a program (ADR-0028, ADR-0260) -----------------
+
+#[test]
+fn should_run_the_program_with_its_flags_when_a_native_head_is_reached_by_bytes() {
+    // `sort` is a transform of the object pipeline and a coreutils program. Reached by bytes it
+    // is the program (ADR-0028), and a program's arguments are the words the user typed —
+    // `-r` is a flag, not the negation of a field called `r`.
+    let run = Shell::new()
+        .args(["-c", "sort -r"])
+        .stdin("b\na\nc\n")
+        .run();
+    run.assert_success();
+    assert_eq!(
+        run.stdout(),
+        "c\nb\na\n",
+        "`sort -r` is coreutils sort with its flag: {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_pass_paths_to_the_program_unmerged_when_a_native_head_is_reached_by_bytes() {
+    // Read as an expression, `-u /a/b /c/d` is one arithmetic term — a negation, four divisions
+    // and two subtractions — and the program would receive it as a single argument.
+    let dir = scratch();
+    dir.write("left.txt", "a\n");
+    dir.write("right.txt", "b\n");
+    let run = Shell::new()
+        .args([
+            "-c",
+            &format!(
+                "diff -u {} {}",
+                dir.path().join("left.txt").display(),
+                dir.path().join("right.txt").display()
+            ),
+        ])
+        .run();
+    assert!(
+        run.stdout().contains("left.txt") && run.stdout().contains("right.txt"),
+        "diff received two paths and a flag: {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_keep_the_transform_when_objects_reach_a_head_of_the_same_name() {
+    // The other side of ADR-0028: reached by objects, `sort` is the transform.
+    let run = Shell::new()
+        .args([
+            "-c",
+            "get process | where pid == 1 | sort pid desc | select pid | to json",
+        ])
+        .run();
+    run.assert_success();
+    assert_eq!(run.stdout().trim(), "[{\"pid\":1}]", "{:?}", run.output());
 }

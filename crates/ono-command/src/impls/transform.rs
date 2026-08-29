@@ -197,10 +197,40 @@ fn sort_arguments(
     };
     let scope = Arc::clone(scope);
     let function = move |value: &Value| match &key {
-        Some(key) => evaluate(key, value, &scope),
+        // An enum is a closed set written from least to greatest, so `sort level` orders by
+        // severity exactly as `where level >= error` compares by it (ADR-0222). The rank is the
+        // sort key only; the records themselves are what `sort` emits, unchanged.
+        Some(key) => match enum_rank(key, value) {
+            Some(rank) => Ok(rank),
+            None => evaluate(key, value, &scope),
+        },
         None => Ok(value.clone()),
     };
     Ok((function, descends))
+}
+
+/// The position of a record's enum field among its declared values, as the sort key.
+///
+/// `None` unless `key` is a bare field path, the record declares that field as an enum, and the
+/// value it holds is one of the declared variants — so a null or an undeclared value falls back
+/// to the ordinary key and a sort never mixes ranks with names.
+fn enum_rank(key: &ono_parser::Expr, value: &Value) -> Option<Value> {
+    let ono_parser::Expr::Path(path) = key else {
+        return None;
+    };
+    let Value::Record(record) = value else {
+        return None;
+    };
+    let ono_value::FieldType::Enum(variants) = record
+        .schema()
+        .field(&path.name)
+        .map(ono_value::FieldDef::ty)?
+    else {
+        return None;
+    };
+    let name = record.get(&path.name)?.as_str().ok()?;
+    let rank = variants.iter().position(|variant| &**variant == name)?;
+    Some(Value::Int(rank as i128))
 }
 
 /// A key function over the expression bound to `name`.

@@ -1,0 +1,27 @@
+# Phase J (spec §37, §21; ADR-0050): the remote-link overview is `get link | view table` — not a
+# command of its own. Both halves were proven separately (`049-remote-link` for the link table,
+# `075-adapters-interactive-table` for the renderer) and the composition by nothing, which is
+# the one thing a user actually types. The link is made against this very binary over a pipe
+# pair, so the case needs no network — the suite runs with networking disabled.
+case: the link overview is a table of links, browsed in the view
+pty: true
+columns: 100
+lines: 30
+timeout: 90
+env: NO_COLOR=1
+stdin: |
+  link host testbox --transport local
+  link host otherbox --transport local
+  get link | view table
+  q
+  get link | count
+  exit
+run: |
+  ono
+exit: 0
+stdout-contains: linked testbox (local)
+stdout-contains: [up/down] move
+stdout-matches: testbox +testbox +local
+stdout-matches: otherbox +otherbox +local
+stdout-not-contains: panicked
+stdout-not-contains: Ono-Sendai-E0101

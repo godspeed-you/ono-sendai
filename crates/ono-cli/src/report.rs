@@ -25,6 +25,26 @@ impl Reporter {
         }
     }
 
+    /// Paints with `theme` rather than the default one (spec §44, ADR-0332).
+    #[must_use]
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.theme = theme.clone();
+        self
+    }
+
+    /// Reports a note: something the run counted that a user would otherwise have to guess at.
+    ///
+    /// Not an error and not part of the answer, so it goes to stderr and never to stdout. The
+    /// text is sanitised for the same reason an error's is (ADR-0015 T1).
+    pub fn note(&self, text: &str) {
+        let mut out = std::io::stderr().lock();
+        let label = self
+            .theme
+            .paint("note", Token::ErrorHint, self.presentation);
+        let _ = writeln!(out, "{label}: {}", ono_render::sanitise(text));
+        let _ = out.flush();
+    }
+
     /// Reports a structured error in its terse form (spec §16.2).
     ///
     /// The message is sanitised, not merely the code and the hint. An error message is where
@@ -33,19 +53,53 @@ impl Reporter {
     /// would otherwise retitle the window (ADR-0015 T1).
     pub fn error(&self, error: &ErrorValue) {
         let mut out = std::io::stderr().lock();
-        let code = self
-            .theme
-            .paint(error.code().code(), Token::ErrorCode, self.presentation);
+        // Both halves of the identity spec §43 gives an error are shown: the stable code a
+        // report quotes, and the dotted name a script catches by (`catch e { $e.name }`). v0.4
+        // §40 names its fourteen conditions in that vocabulary — `spatial.no_relation` — and a
+        // condition a user can act on must be readable where the refusal appears (ADR-0148).
+        let code = self.theme.paint(
+            &format!("{} {}", error.code().code(), error.code().name()),
+            Token::ErrorCode,
+            self.presentation,
+        );
         let _ = writeln!(
             out,
             "{}: {code} {}",
             ono_core::SHORT_NAME,
             ono_render::sanitise(error.message())
         );
+        // §29.3's refusals list what they could not choose between, and a list is lines. The
+        // *shell* decided there are several of them, so the structure is carried as data —
+        // `details` — instead of as newlines inside the message, where the render boundary
+        // could not tell them from the ones a filename brought with it (ADR-0211, ADR-0015 T1).
+        // Each entry is still sanitised on its own, so a name cannot forge a line of its own.
+        let listed = details(error);
+        for line in listed.iter().take(SHOWN_DETAILS) {
+            let _ = writeln!(out, "  {}", ono_render::sanitise(line));
+        }
+        if let Some(rest) = listed
+            .len()
+            .checked_sub(SHOWN_DETAILS)
+            .filter(|rest| *rest > 0)
+        {
+            let _ = writeln!(out, "  … {rest} more");
+        }
         if let Some(help) = error.help() {
             let hint = self.theme.paint(help, Token::ErrorHint, self.presentation);
             let _ = writeln!(out, "  {hint}");
         }
+    }
+
+    /// Reports something the shell did, rather than something that went wrong.
+    ///
+    /// Dim, prefixed like every other line the shell writes about itself, and sanitised for the
+    /// same reason an error message is (ADR-0015 T1).
+    pub fn notice(&self, text: &str) {
+        let mut out = std::io::stderr().lock();
+        let body = self
+            .theme
+            .paint(&ono_render::sanitise(text), Token::Dim, self.presentation);
+        let _ = writeln!(out, "{}: {body}", ono_core::SHORT_NAME);
     }
 
     /// Reports a parse diagnostic, showing the line and marking the span (spec §16.3).
@@ -83,6 +137,30 @@ impl Reporter {
             let hint = self.theme.paint(help, Token::ErrorHint, self.presentation);
             let _ = writeln!(out, "  {hint}");
         }
+    }
+}
+
+/// How many of a refusal's listed candidates reach the terminal.
+///
+/// The message already says how many there are, and a diagnostic that fills the screen with
+/// ninety of them is not a diagnostic. The whole list stays on the error value, so a script that
+/// catches it reads every candidate; this bounds only what is painted.
+const SHOWN_DETAILS: usize = 10;
+
+/// The lines a refusal listed under its message, where it listed any (ADR-0211).
+///
+/// The convention is one metadata entry, `details`, holding a list of strings. Anything else in
+/// the metadata is machine detail — an errno, a provider id — and is not shown here.
+fn details(error: &ErrorValue) -> Vec<String> {
+    match error.metadata().get("details") {
+        Some(ono_value::Value::List(items)) => items
+            .iter()
+            .filter_map(|item| match item {
+                ono_value::Value::String(text) => Some(text.to_string()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -139,4 +217,30 @@ fn marker(shown: &str, column: u32, width: u32) -> String {
         .count()
         .max(1);
     format!("{}{}", " ".repeat(start), "^".repeat(width))
+}
+
+/// A note about what the shell did with an answer, on standard error and out of the data.
+///
+/// Spec §33.2 keeps stdout for the answer, so anything the shell says *about* the answer goes to
+/// stderr, where a redirected run does not see it and a person does.
+pub fn notice(text: &str) {
+    let reporter = Reporter::new(Presentation::choose(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        &[],
+    ));
+    reporter.notice(text);
+}
+
+/// Says that a result was retained truncated, and to what (spec §20.2, ADR-0249).
+///
+/// Silence here is the failure mode: `@-1` would come up short of what the screen held, and
+/// nothing would connect the two.
+pub fn retention_notice(dropped: usize, total: usize) {
+    if dropped == 0 {
+        return;
+    }
+    let kept = total.saturating_sub(dropped);
+    notice(&format!(
+        "retained the first {kept} of {total} values for reuse; `@-1` sees {kept} (spec §20.2)"
+    ));
 }

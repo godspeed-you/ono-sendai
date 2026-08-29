@@ -32,5 +32,12 @@ fields:
     type: ref<ono.device/1>
     nullable: true
     doc: The backing device; null for pseudo- and network filesystems.
+  peer_group:
+    type: int
+    nullable: true
+    doc: >-
+      The propagation peer group `mountinfo(5)` gives as `shared:N`. Two mounts with the same
+      group are peers: a mount or unmount under one appears under the other. Null when the
+      mount is private, which is a mount that propagates nothing — not an unknown (ADR-0236).
 default_view:
   columns: [target, source, filesystem, read_only]

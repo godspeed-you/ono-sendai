@@ -1,9 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "xtask"]
+# `fuzz` is a member so the gate compiles, lints and documents it like everything else:
+# a fuzz target nothing builds is a check that never runs (ADR-0313).
+members = ["crates/*", "fuzz", "xtask"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT"
@@ -12,51 +14,65 @@ authors = ["The Ono-Sendai project"]
 
 [workspace.dependencies]
 # Internal crates. Created as a phase needs them (ADR-0001, ADR-0005).
-ono-core = { path = "crates/ono-core", version = "0.3.0" }
-ono-value = { path = "crates/ono-value", version = "0.3.0" }
-ono-parser = { path = "crates/ono-parser", version = "0.3.0" }
-ono-process = { path = "crates/ono-process", version = "0.3.0" }
-ono-pipeline = { path = "crates/ono-pipeline", version = "0.3.0" }
-ono-command = { path = "crates/ono-command", version = "0.3.0" }
-ono-render = { path = "crates/ono-render", version = "0.3.0" }
-ono-provider-api = { path = "crates/ono-provider-api", version = "0.3.0" }
-ono-provider-linux = { path = "crates/ono-provider-linux", version = "0.3.0" }
-ono-provider-net = { path = "crates/ono-provider-net", version = "0.3.0" }
-ono-provider-netlink = { path = "crates/ono-provider-netlink", version = "0.3.0" }
-ono-provider-systemd = { path = "crates/ono-provider-systemd", version = "0.3.0" }
-ono-provider-container = { path = "crates/ono-provider-container", version = "0.3.0" }
-ono-editor = { path = "crates/ono-editor", version = "0.3.0" }
-ono-graph = { path = "crates/ono-graph", version = "0.3.0" }
-ono-adapter = { path = "crates/ono-adapter", version = "0.3.0" }
-ono-history = { path = "crates/ono-history", version = "0.3.0" }
-ono-protocol = { path = "crates/ono-protocol", version = "0.3.0" }
-ono-remote = { path = "crates/ono-remote", version = "0.3.0" }
-ono-kuang-protocol = { path = "crates/ono-kuang-protocol", version = "0.3.0" }
-ono-kuang-supervisor = { path = "crates/ono-kuang-supervisor", version = "0.3.0" }
-ono-kuang-sdk = { path = "crates/ono-kuang-sdk", version = "0.3.0" }
-ono-kuang-testhost = { path = "crates/ono-kuang-testhost", version = "0.3.0" }
-ono-model-broker = { path = "crates/ono-model-broker", version = "0.3.0" }
-ono-testkit = { path = "crates/ono-testkit", version = "0.3.0" }
+ono-core = { path = "crates/ono-core", version = "0.4.0" }
+ono-value = { path = "crates/ono-value", version = "0.4.0" }
+ono-parser = { path = "crates/ono-parser", version = "0.4.0" }
+ono-process = { path = "crates/ono-process", version = "0.4.0" }
+ono-pipeline = { path = "crates/ono-pipeline", version = "0.4.0" }
+ono-command = { path = "crates/ono-command", version = "0.4.0" }
+ono-render = { path = "crates/ono-render", version = "0.4.0" }
+ono-provider-api = { path = "crates/ono-provider-api", version = "0.4.0" }
+ono-provider-linux = { path = "crates/ono-provider-linux", version = "0.4.0" }
+ono-provider-net = { path = "crates/ono-provider-net", version = "0.4.0" }
+ono-provider-netlink = { path = "crates/ono-provider-netlink", version = "0.4.0" }
+ono-provider-systemd = { path = "crates/ono-provider-systemd", version = "0.4.0" }
+ono-provider-container = { path = "crates/ono-provider-container", version = "0.4.0" }
+ono-editor = { path = "crates/ono-editor", version = "0.4.0" }
+ono-graph = { path = "crates/ono-graph", version = "0.4.0" }
+ono-adapter = { path = "crates/ono-adapter", version = "0.4.0" }
+ono-history = { path = "crates/ono-history", version = "0.4.0" }
+ono-protocol = { path = "crates/ono-protocol", version = "0.4.0" }
+ono-remote = { path = "crates/ono-remote", version = "0.4.0" }
+ono-kuang-protocol = { path = "crates/ono-kuang-protocol", version = "0.4.0" }
+ono-kuang-supervisor = { path = "crates/ono-kuang-supervisor", version = "0.4.0" }
+ono-kuang-sdk = { path = "crates/ono-kuang-sdk", version = "0.4.0" }
+ono-kuang-testhost = { path = "crates/ono-kuang-testhost", version = "0.4.0" }
+ono-model-broker = { path = "crates/ono-model-broker", version = "0.4.0" }
+ono-spatial-core = { path = "crates/ono-spatial-core", version = "0.4.0" }
+ono-spatial-events = { path = "crates/ono-spatial-events", version = "0.4.0" }
+ono-spatial-index = { path = "crates/ono-spatial-index", version = "0.4.0" }
+ono-spatial-query = { path = "crates/ono-spatial-query", version = "0.4.0" }
+ono-spatial-render = { path = "crates/ono-spatial-render", version = "0.4.0" }
+ono-testkit = { path = "crates/ono-testkit", version = "0.4.0" }
 
 # Third-party. Choices and rationale: ADR-0005.
 async-trait = "0.1"
 bytes = "1"
 crossterm = "0.29"
 csv = "1"
+# The one asymmetric primitive in the workspace: package signatures (spec §31.36, ADR-0311).
+ed25519-dalek = "3"
 futures = "0.3"
 globset = "0.4"
 jiff = { version = "0.2", features = ["serde"] }
 libc = "0.2"
 nix = "0.31"
 regex = "1"
+# The authenticated transport of spec §21.5 (ADR-0353). rustls with the `ring` provider rather
+# than the default one, so the agent builds with the toolchain a Rust build already needs;
+# `rcgen` writes the self-signed certificate that *is* a host's pinned identity.
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
 rustix = { version = "1", features = ["process"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rustls-pemfile = "2"
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml_ng = "0.10"
 sha2 = "0.11"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "process", "signal", "net", "fs"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging"] }
 toml = "1"
 unicode-width = "0.2"
 

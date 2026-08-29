@@ -1,0 +1,87 @@
+# Spec §44 (semantic tokens, a restrained default and a louder cyberpunk theme, and "no
+# functionality may depend on color alone") and §30 (`theme` is a configuration domain and a theme
+# file lives in `~/.config/ono/themes/*.toml`). ADR-0332.
+#
+# Every measurement gives `ono` a terminal of its own through `script(1)`, because a shell writing
+# into a pipe is painted by no theme at all — which is itself half of what is proved here: with
+# colour refused, every theme prints the same bytes, so no theme file can make output unreadable.
+case: a theme can be chosen and written, and no theme changes what a colourless terminal sees
+timeout: 120
+run: |
+  export ONO_CONFIG_DIR=/tmp/theme-config
+  mkdir -p "$ONO_CONFIG_DIR/themes"
+
+  # `ono` on a terminal of its own, with the escapes made visible.
+  painted() {
+    printf '%s\n' "$1" > /tmp/theme-script.ono
+    script --quiet --return --command "ono /tmp/theme-script.ono" /dev/null 2>/dev/null | cat -v
+  }
+
+  write_theme() {
+    local name="$1"
+    shift
+    : > "$ONO_CONFIG_DIR/themes/$name.toml"
+    for line in "$@"; do printf '%s\n' "$line" >> "$ONO_CONFIG_DIR/themes/$name.toml"; done
+  }
+
+  echo "== the theme domain is configurable =="
+  ono -c 'get config theme.name'
+
+  echo "== the cyberpunk theme of section 44 paints differently from the default =="
+  : > "$ONO_CONFIG_DIR/config.ono"
+  default=$(painted 'get config theme.name')
+  printf 'set config theme.name = "neon"\n' > "$ONO_CONFIG_DIR/config.ono"
+  neon=$(painted 'get config theme.name')
+  printf 'default: %s\nneon: %s\n' "$default" "$neon"
+  if [ "$default" = "$neon" ]; then echo "THEMES-IDENTICAL"; else echo "themes differ"; fi
+
+  echo "== a theme file the user wrote is loaded =="
+  write_theme lab 'extends = "ono"' '[tokens]' '"ui.table.header" = { color = 201, bold = true }'
+  printf 'set config theme.name = "lab"\n' > "$ONO_CONFIG_DIR/config.ono"
+  if painted 'get config theme.name' | grep -q '38;5;201'; then
+    echo "user theme reached the terminal"
+  else
+    echo "USER-THEME-MISSING"
+  fi
+
+  echo "== a theme that cannot be understood is said out loud and costs nobody their shell =="
+  write_theme lab '[tokens]' '"ui.dangerous" = { color = 9 }'
+  ono -c 'get process | take 1 | count' 2>&1 | head -4
+
+  echo "== section 44: with colour refused, every theme prints the same bytes =="
+  write_theme loud '[tokens]' '"ui.fg" = { color = 16 }' '"ui.value.string" = { color = 16 }' \
+    '"ui.table.header" = { color = 16 }'
+  : > "$ONO_CONFIG_DIR/config.ono"
+  plain=""
+  same=yes
+  for theme in ono neon loud; do
+    line=$(NO_COLOR=1 ONO_THEME_NAME="$theme" painted 'get config render.table.max_rows')
+    case "$line" in *'^['*) echo "ESCAPE-WITH-NO-COLOR: $theme";; esac
+    if [ -z "$plain" ]; then plain="$line"; elif [ "$plain" != "$line" ]; then same=no; fi
+  done
+  if [ "$same" = yes ]; then
+    echo "colourless output is theme-independent"
+  else
+    echo "THEMES-DIFFER-WITHOUT-COLOUR"
+  fi
+
+  echo "== a theme may not hide the difference between danger and success =="
+  write_theme unsafe '[tokens]' '"ui.danger" = { color = 9, marker = "ok" }'
+  if ONO_THEME_NAME=unsafe ono -c 'get config theme.name' 2>&1 | grep -q 'ui.danger'; then
+    echo "a colour-only theme is refused"
+  else
+    echo "COLOUR-ONLY-THEME-ACCEPTED"
+  fi
+exit: 0
+stdout-contains: theme.name
+stdout-contains: themes differ
+stdout-contains: user theme reached the terminal
+stdout-contains: ui.dangerous
+stdout-contains: colourless output is theme-independent
+stdout-contains: a colour-only theme is refused
+stdout-not-contains: THEMES-IDENTICAL
+stdout-not-contains: USER-THEME-MISSING
+stdout-not-contains: ESCAPE-WITH-NO-COLOR
+stdout-not-contains: THEMES-DIFFER-WITHOUT-COLOUR
+stdout-not-contains: COLOUR-ONLY-THEME-ACCEPTED
+stdout-not-contains: panicked

@@ -260,6 +260,20 @@ async fn should_refuse_to_put_a_record_on_one_line() {
 }
 
 #[tokio::test]
+async fn should_write_one_line_per_value_when_select_left_one_field() {
+    // The §29.1 bridge: `select` narrows a record to one field, and `to text` writes it as a
+    // line without the `--field` repetition of the name that is already the only one left.
+    let ran = run(
+        "get process | select name | to text",
+        &providers(FixtureProvider::new()),
+    )
+    .await
+    .expect("the pipeline runs");
+
+    assert_eq!(ran.text(), "alpha\nbeta\ngamma\n");
+}
+
+#[tokio::test]
 async fn should_write_raw_bytes_for_a_byte_sink() {
     let ran = run(
         "get process | each name | to bytes",

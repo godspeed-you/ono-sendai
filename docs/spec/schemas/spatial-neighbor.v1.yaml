@@ -1,0 +1,142 @@
+# Canonical SpatialNeighbor schema. Source: v0.4 §6.2 — "`near` returns a `Stream<SpatialNeighbor>`"
+# — with the three columns §6.2's own example prints: the relation, the object, its state. §29.4
+# makes the stream an ordinary object stream, so `near | where relation == "parent" | count` is a
+# v0.2 pipeline and nothing about it is spatial except what it carries.
+#
+# A neighbor is a place plus the edge it was reached by, so every field of `ono.spatial-place/1`
+# that identifies the place appears here too: a script that filters neighbors and a script that
+# filters search results read the same field names (§28, ADR-0140).
+id: ono.spatial-neighbor/1
+name: SpatialNeighbor
+summary: One object in the neighborhood of the current place, with the relation that reaches it.
+identity: [spatial_id]
+fields:
+  relation:
+    type: string
+    required: true
+    doc: >-
+      The word `follow` takes to traverse the edge from here — `parent`, `socket`, `user` — or a
+      collection's label where the neighbour is reached by hierarchy (§3.5, §6.4, §24.2).
+  group:
+    type: string
+    required: true
+    doc: The exit it appeared under, as `look` prints it — §12's `children`, `files`, `sockets`.
+  source:
+    type: string
+    nullable: true
+    doc: >-
+      The `spatial_id` the edge starts at (§11.4). Null where the neighbour is reached by
+      hierarchy rather than by a relationship edge: §2.6 keeps the two apart, and a containment
+      dressed up as an explainable relation would be the confusion it forbids.
+  target:
+    type: string
+    nullable: true
+    doc: The `spatial_id` the edge leads to (§11.4); null for a hierarchical member.
+  direction:
+    type: enum
+    nullable: true
+    values: [outbound, inbound, bidirectional]
+    doc: Which way the edge runs (§11.4, §22); null for a hierarchical member.
+  confidence:
+    type: enum
+    nullable: true
+    values: [exact, strong, inferred, user_declared, unknown]
+    doc: >-
+      How certain the edge is (§11.5). An inferred edge is never labelled exact, whatever the
+      relation registry would admit; null for a hierarchical member.
+  provider:
+    type: string
+    nullable: true
+    doc: >-
+      Who asserted the edge — `linux.open-files`, `linux.process-tree`. The v0.2 relationship
+      provider's own id, because §2.16 forbids the spatial layer from becoming a second source.
+      Null for a hierarchical member.
+  provider_relation:
+    type: string
+    nullable: true
+    doc: >-
+      The word that provider uses for the relation — `reads`, `runs-as`. The same word `trace`
+      prints for the same edge (§31.3); null where the neighbour is reached by hierarchy.
+  evidence:
+    type: record
+    nullable: true
+    doc: >-
+      §11.4's "raw evidence/reference where safe": what the provider actually saw, as it reported
+      it — the descriptor and the access mode of an open file, the inode of a socket. Empty where
+      the provider recorded no detail; null for a hierarchical member, which is containment and
+      has no observation behind it (§2.6, §3.4).
+  provenance:
+    type: record
+    required: true
+    doc: Where the edge was observed, when, and by whom (§11.4, §27.4).
+  observed_at:
+    type: timestamp
+    nullable: true
+    doc: When the edge was last seen (§11.4); null for a hierarchical member.
+  spatial_id:
+    type: string
+    required: true
+    doc: The opaque, stable identity of the neighbour (§3.1).
+  name:
+    type: string
+    required: true
+    doc: What a person calls it. Not identity (§3.1).
+  display_name:
+    type: string
+    required: true
+    doc: The same text under the name §3.1 gives the field.
+  object_type:
+    type: string
+    required: true
+    doc: The v0.2 schema of the object behind the place, such as `ono.process/1`.
+  type:
+    type: string
+    required: true
+    doc: What kind of place it is, in §3.3's vocabulary and the families it belongs to.
+  canonical_ref:
+    type: record
+    nullable: true
+    doc: >-
+      The provider's own reference to the neighbour — its schema and that schema's identity
+      fields. §28.1 makes a selected object a typed value, and a neighbour nobody can name again
+      is not one. Null where the neighbour is a canonical space.
+  identity:
+    type: record
+    nullable: true
+    doc: The named components §3.1 composes its `spatial_id` from (§27.2's disambiguation).
+  spatial_type:
+    type: string
+    required: true
+    doc: The §3.3 type — `process`, `service`, `listener` — lower-cased.
+  state:
+    type: enum
+    required: true
+    values: [available, empty, unknown, permission_denied, unsupported, stale]
+    doc: What the user was told about the group this neighbour came from (§35.2).
+  place_path:
+    type: string
+    required: true
+    doc: Where it sits in the canonical hierarchy, from the host down (§27.2's third column).
+  scope:
+    type: string
+    required: true
+    doc: The §3.2 boundary it belongs to, rendered as `<kind>:<id>`.
+  freshness:
+    type: enum
+    required: true
+    values: [live, fresh, stale, unknown]
+    doc: How current the answer about it is (§27.4, §33.4).
+  sources:
+    type: list<string>
+    required: true
+    doc: >-
+      Every provider that has observed this place, canonical and adapted alike. v0.4 §37.1
+      reconciles an adapted object with its canonical twin into one place and keeps both on the
+      record, so a reader can see that `ip link` and `linux.netlink` agreed about the same
+      interface; the adapter's name is the `adapter:<id>` provenance v0.3 §1.47 gives it.
+  pinned:
+    type: bool
+    required: true
+    doc: Whether the user pinned it (§20.4, §26.4).
+default_view:
+  columns: [relation, display_name, spatial_type, state]

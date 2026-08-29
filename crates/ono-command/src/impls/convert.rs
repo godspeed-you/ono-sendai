@@ -204,9 +204,10 @@ fn serialize(format: &str, values: &[Value], options: &Options) -> Result<Vec<Va
         "csv" => ono_value::to_csv(&rendered)?,
         "text" => ono_value::to_text(&rendered, options.field.as_deref())?,
         "bytes" => {
-            return Ok(vec![Value::Bytes(ono_value::to_bytes(&Value::list(
-                rendered,
-            ))?)]);
+            return Ok(vec![Value::Bytes(ono_value::to_bytes_of(
+                &rendered,
+                options.field.as_deref(),
+            )?)]);
         }
         other => return Err(unknown_format("to", other)),
     };

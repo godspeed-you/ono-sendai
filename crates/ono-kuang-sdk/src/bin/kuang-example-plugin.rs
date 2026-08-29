@@ -99,6 +99,24 @@ fn item_record(seq: i64, label: &str) -> Value {
     Value::Record(std::sync::Arc::new(record))
 }
 
+/// One `ono.spatial-relation/1` edge: the package's own process, and the shell that started it.
+fn relation_record(source: &str, target: &str) -> Value {
+    let schema = ono_value::builtin_schemas()
+        .get(&ono_value::SchemaId::new("ono.spatial-relation", 1))
+        .expect("the spatial relation schema is built in");
+    let schema_id = schema.id().clone();
+    let record = RecordValue::builder(schema, Provenance::local("plugin-self", schema_id))
+        .set("relation", Value::String("runs-under".into()))
+        .and_then(|builder| builder.set("source_type", Value::String("process".into())))
+        .and_then(|builder| builder.set("source_key", Value::String(source.into())))
+        .and_then(|builder| builder.set("target_type", Value::String("process".into())))
+        .and_then(|builder| builder.set("target_key", Value::String(target.into())))
+        .and_then(|builder| builder.set("confidence", Value::String("strong".into())))
+        .expect("the fixture fields exist")
+        .build();
+    Value::Record(std::sync::Arc::new(record))
+}
+
 fn int_argument(ctx: &Ctx<'_>, name: &str, default: i64) -> i64 {
     ctx.arguments()
         .get(name)
@@ -163,14 +181,89 @@ fn honest() -> Plugin {
             "stream<string>",
             &[],
         ))
+        .contribute_command(command(
+            "hog",
+            "Allocate far beyond the declared memory ceiling (a defect, on purpose).",
+            "stream<int>",
+            &[],
+        ))
+        .contribute_command(command(
+            "environment",
+            "Report the environment the host started this instance with.",
+            "stream<string>",
+            &[],
+        ))
+        .contribute_command(CommandContribution {
+            id: format!("{PACKAGE}.command.relations"),
+            verb: "get".to_owned(),
+            // v0.4 §36.1: a package contributes a relationship provider by answering for the
+            // core target `spatial-relation`; the host resolves both ends and draws the edge.
+            target: "spatial-relation".to_owned(),
+            summary: "Assert the relation this package contributes.".to_owned(),
+            input: None,
+            output: "stream<ono.spatial-relation/1>".to_owned(),
+            capabilities: vec!["relation.write".to_owned()],
+            argument_mode: "expression".to_owned(),
+            risk: None,
+            examples: vec!["map --relations dev.example.echo".to_owned()],
+        })
         .optional_feature("tell-time", "clock.read")
+        .command(&format!("{PACKAGE}.command.hog"), |ctx| {
+            // Spec §31.15 requires a per-plugin memory ceiling and §31.34 requires that reaching
+            // it degrades the plugin rather than the shell. This is the package that reaches it:
+            // it allocates in steps and touches every page, so the kernel really has to give it
+            // the memory rather than promising it.
+            let mib = int_argument(ctx, "mib", 512).clamp(1, 8192) as usize;
+            let mut held: Vec<Vec<u8>> = Vec::new();
+            for step in 0..mib {
+                let mut block = vec![0u8; 1024 * 1024];
+                for page in block.chunks_mut(4096) {
+                    page[0] = 1;
+                }
+                held.push(block);
+                if step % 16 == 0 && ctx.emit(&Value::Int(step as i128)).is_err() {
+                    return Outcome::Cancelled;
+                }
+            }
+            Outcome::Completed
+        })
+        .command(&format!("{PACKAGE}.command.environment"), |ctx| {
+            // The instance must see the environment the host built for it and nothing the shell
+            // happened to be holding (spec §31.80). Emitting the names is what makes that
+            // checkable from outside.
+            let mut names: Vec<String> = std::env::vars_os()
+                .map(|(name, _)| name.to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            for name in names {
+                if ctx.emit(&Value::String(name.into())).is_err() {
+                    return Outcome::Cancelled;
+                }
+            }
+            Outcome::Completed
+        })
+        .command(&format!("{PACKAGE}.command.relations"), |ctx| {
+            // The fixture asserts the one relation its manifest declares — `process->process` —
+            // between the two processes it can honestly name: itself and the shell that started
+            // it. Both are real, so the host can resolve both through the process provider; a
+            // package that made them up would contribute nothing, which is the point of §36.2.
+            let me = std::process::id();
+            let parent = std::os::unix::process::parent_id();
+            match ctx.emit(&relation_record(&me.to_string(), &parent.to_string())) {
+                Ok(()) => Outcome::Completed,
+                Err(ono_kuang_sdk::EmitError::Refused(error)) => Outcome::Failed(*error),
+                Err(_) => Outcome::Cancelled,
+            }
+        })
         .command(&format!("{PACKAGE}.command.emit"), |ctx| {
             let count = int_argument(ctx, "count", 3);
             for n in 1..=count {
                 match ctx.emit(&Value::Int(i128::from(n))) {
                     Ok(()) => {}
                     Err(ono_kuang_sdk::EmitError::Cancelled) => return Outcome::Cancelled,
-                    Err(ono_kuang_sdk::EmitError::Refused(error)) => return Outcome::Failed(error),
+                    Err(ono_kuang_sdk::EmitError::Refused(error)) => {
+                        return Outcome::Failed(*error);
+                    }
                     Err(ono_kuang_sdk::EmitError::Transport) => return Outcome::Cancelled,
                 }
             }
@@ -183,7 +276,9 @@ fn honest() -> Plugin {
                 match ctx.emit(&Value::Int(n)) {
                     Ok(()) => {}
                     Err(ono_kuang_sdk::EmitError::Cancelled) => return Outcome::Cancelled,
-                    Err(ono_kuang_sdk::EmitError::Refused(error)) => return Outcome::Failed(error),
+                    Err(ono_kuang_sdk::EmitError::Refused(error)) => {
+                        return Outcome::Failed(*error);
+                    }
                     Err(ono_kuang_sdk::EmitError::Transport) => return Outcome::Cancelled,
                 }
             }
@@ -241,7 +336,7 @@ fn honest() -> Plugin {
             // Declared output is stream<dev.example.echo.item/1>; this emits a bare int.
             match ctx.emit(&Value::Int(42)) {
                 Ok(()) => Outcome::Completed,
-                Err(ono_kuang_sdk::EmitError::Refused(error)) => Outcome::Failed(error),
+                Err(ono_kuang_sdk::EmitError::Refused(error)) => Outcome::Failed(*error),
                 Err(_) => Outcome::Cancelled,
             }
         })
@@ -373,6 +468,20 @@ fn misbehave(mode: Mode) {
                             .unwrap_or(serde_json::Value::Null),
                         };
                         let _ = ono_kuang_protocol::write_frame(&mut writer, &request, limits);
+                        // The invocation is then finished normally. Under `block-upstream` the
+                        // host has already quarantined the instance and never reads this; under
+                        // every other overflow policy of spec §31.15 the stream survives the
+                        // overrun, and a fixture that never ended would hang rather than say so.
+                        let done = Envelope::Response {
+                            seq,
+                            result: serde_json::to_value(InvokeResult {
+                                status: InvokeStatus::Completed,
+                                error: None,
+                            })
+                            .ok(),
+                            error: None,
+                        };
+                        let _ = ono_kuang_protocol::write_frame(&mut writer, &done, limits);
                     }
                     Mode::Garbage => {
                         // A well-formed length declaring a payload that is not an envelope.

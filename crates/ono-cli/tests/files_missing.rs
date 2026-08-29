@@ -340,6 +340,43 @@ fn should_preserve_the_mode_when_preserve_is_given() {
 }
 
 #[test]
+fn should_preserve_the_timestamps_of_a_copied_tree_when_preserve_is_given() {
+    // file.yaml: `--preserve` keeps "the mode, the timestamps and — where permitted — the
+    // ownership of every copied entry". A directory has timestamps like any other entry, and
+    // copying a tree without them turns an archive into something that all happened today
+    // (ADR-0234).
+    let directory = scratch();
+    directory.write("src/inner/deep.txt", "deep");
+    let then = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800);
+    let times = std::fs::FileTimes::new()
+        .set_accessed(then)
+        .set_modified(then);
+    for entry in ["src/inner/deep.txt", "src/inner", "src"] {
+        let path = directory.path().join(entry);
+        let handle = std::fs::File::options()
+            .read(true)
+            .open(&path)
+            .expect("the scratch entry");
+        handle.set_times(times).expect("the fixture timestamps");
+    }
+
+    let run = ono_in(&directory, "copy file src dst --recursive --preserve");
+    run.assert_success();
+
+    for entry in ["dst", "dst/inner", "dst/inner/deep.txt"] {
+        let modified = std::fs::symlink_metadata(directory.path().join(entry))
+            .and_then(|metadata| metadata.modified())
+            .expect("the copied entry");
+        assert_eq!(
+            modified, then,
+            "`--preserve` keeps the modification time of every copied entry, and `{entry}` is \
+             one: a directory is not exempt because its timestamps need a syscall that does not \
+             open it for writing"
+        );
+    }
+}
+
+#[test]
 fn should_refuse_to_copy_over_an_existing_destination_without_overwrite() {
     let directory = scratch();
     directory.write("a.txt", "new");
@@ -697,6 +734,41 @@ fn should_report_a_created_file_as_an_event_when_watching() {
     );
 }
 
+#[test]
+fn should_report_a_created_file_before_the_next_poll_would_have_come() {
+    // ADR-0034 and ADR-0078: `watch file` polled every two seconds, so nothing it reported could
+    // arrive sooner than the next tick of that grid. The file here is created two and a half
+    // seconds in, between the tick that would have missed it and the tick that would have found
+    // it, and the event must arrive before that later tick (ADR-0235). The event also says where
+    // it came from: §18.2 requires the cost of a watch to be explicit, and `source` is where a
+    // consumer reads whether the shell is being told or is asking.
+    let directory = scratch();
+    let watched = directory.path().join("src");
+    std::fs::create_dir(&watched).expect("the watched directory");
+
+    let script = format!(
+        r#"sh -c "sleep 2.5; touch {dir}/new.txt" &; watch file src | where kind != "snapshot" | take 1 | select kind source | to json"#,
+        dir = watched.display()
+    );
+    let started = std::time::Instant::now();
+    let run = ono_in(&directory, &script);
+    let elapsed = started.elapsed();
+    run.assert_success();
+
+    assert_eq!(
+        run.stdout().trim(),
+        r#"[{"kind":"added","source":"subscription"}]"#,
+        "spec §18.2: the file was created, the kernel said so, and the event says the change \
+         came from a subscription rather than from a poll; got {:?}",
+        run.output()
+    );
+    assert!(
+        elapsed < Duration::from_millis(3_500),
+        "the poll grid would not have looked again until four seconds in; an answer in \
+         {elapsed:?} is the kernel's, not a poll's"
+    );
+}
+
 // --- trace file (spec §22.3) --------------------------------------------------------------------
 
 #[test]
@@ -796,5 +868,57 @@ fn should_pop_the_file_frame_when_leaving() {
         1,
         "spec §14: `leave` pops the file frame, got {:?}",
         run.stdout()
+    );
+}
+
+// --- what running the shell showed, pinned so it cannot regress silently (B-harn-6) -------------
+
+#[test]
+fn should_answer_a_large_file_with_one_value_rather_than_a_value_per_chunk() {
+    // Spec §12.1: `read file` answers with *the content*, one value. A reader that emitted a
+    // value per buffer would still print the same bytes, so nothing downstream would notice —
+    // until `| count`, `| each` or `| to json` saw twenty megabytes as thousands of rows. The
+    // file is big enough to force many reads and small enough to cost nothing on a tmpfs.
+    let directory = scratch();
+    directory.write("large.txt", vec![b'x'; 20 * 1024 * 1024]);
+
+    let run = ono_in(
+        &directory,
+        "read file large.txt --encoding utf-8 | count | to json",
+    );
+    run.assert_success();
+    assert_eq!(
+        run.stdout().trim(),
+        "[1]",
+        "spec §12.1: the content of one file is one value however many reads it took, got {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_name_the_files_a_glob_resolved_to_when_explaining_a_removal() {
+    // Spec §17.3: "`remove file *.tmp` knows its exact targets before mutating", and §15.3 says
+    // `explain` reports what the shell would actually do. Together that means the plan names the
+    // resolved files, not the pattern — the one line an operator reads before a destructive
+    // command. Nothing is removed: `explain` never executes its subject.
+    let directory = scratch();
+    directory.write("a.txt", "a");
+    directory.write("b.txt", "b");
+    directory.write("c.md", "c");
+
+    let run = ono_in(&directory, "explain remove file *.txt");
+    run.assert_success();
+    let plan = run.stdout().to_owned();
+    assert!(
+        plan.contains("remove file a.txt b.txt"),
+        "spec §17.3: the plan names the exact targets the glob resolved to, got {plan:?}"
+    );
+    assert!(
+        !plan.contains("*.txt"),
+        "an unexpanded pattern in the plan tells the operator nothing about scope, got {plan:?}"
+    );
+    assert!(
+        directory.exists("a.txt") && directory.exists("b.txt") && directory.exists("c.md"),
+        "spec §15.3: explaining a removal removes nothing"
     );
 }

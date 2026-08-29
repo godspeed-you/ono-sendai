@@ -1,0 +1,168 @@
+# v0.4 §44.7 (identity replacement), with §10.1 (identity tiers), §10.2 (a pid is not an
+# identity), §10.3 (tombstones), §20.3 (dead destinations) and §40 (`spatial.destination_gone`).
+#
+# The restart happens *inside* one spatial session: the walk enters the service, follows it to
+# its process, and then runs the restart as an ordinary external command from the same script,
+# so the shell is standing in the process place at the moment that process dies. That is the
+# situation §44.7 describes and the only one in which `back` can confuse two process identities.
+#
+# The service manager is the `systemctl` fixture, whose MainPID follows the state file the
+# fixture writes, so the manager reports the replacement pid exactly as a real one would. The
+# processes, their deaths and their replacements are real.
+case: a restarted service keeps its place, its old process becomes a tombstone, and history is not confused
+timeout: 240
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  # Only what the last statement printed is asserted on: every navigation statement prints too.
+  place() {
+    ono -c "$1; echo ---PLACE---; $2" 2>&1 | sed -n '/---PLACE---/,$p'
+  }
+
+  mkdir -p /tmp/spatial/bin /tmp/spatial/data
+  cp /opt/ono-fixtures/spatial/systemctl /tmp/spatial/bin/systemctl
+  chmod +x /tmp/spatial/bin/systemctl
+  export PATH=/tmp/spatial/bin:$PATH
+  printf 'fixture payload\n' > /tmp/spatial/data/held.txt
+
+  start_fixture() {
+    rm -f /tmp/fixture-spatial.state
+    setsid /opt/ono-fixtures/spatial/web-service.pl 18080 /tmp/spatial/data/held.txt 1 200 \
+      /tmp/fixture-spatial.state > /tmp/spatial/server.log 2>&1 &
+    for _ in $(seq 40); do [ -s /tmp/fixture-spatial.state ] && break; sleep 0.5; done
+    . /tmp/fixture-spatial.state
+  }
+
+  start_fixture
+  OLD_MAIN=$FIXTURE_WEB_MAIN
+  OLD_WORKERS=$FIXTURE_WEB_WORKERS
+  echo "fixture: first main=$OLD_MAIN"
+
+  # The restart, as the shell will run it from inside the session: the old process really dies
+  # and a new one really takes over the unit.
+  cat > /tmp/spatial/restart.sh <<'SH'
+  #!/bin/bash
+  kill $OLD_MAIN $OLD_WORKERS 2>/dev/null
+  for _ in $(seq 40); do kill -0 "$OLD_MAIN" 2>/dev/null || break; sleep 0.2; done
+  rm -f /tmp/fixture-spatial.state
+  setsid /opt/ono-fixtures/spatial/web-service.pl 18080 /tmp/spatial/data/held.txt 1 200 \
+    /tmp/fixture-spatial.state > /tmp/spatial/server2.log 2>&1 &
+  for _ in $(seq 40); do [ -s /tmp/fixture-spatial.state ] && break; sleep 0.5; done
+  SH
+  chmod +x /tmp/spatial/restart.sh
+  export OLD_MAIN OLD_WORKERS
+
+  # ADR-0193: the spatial layer never runs a tool, so an adapted observation of the service
+  # manager exists only where the operator's own command line produced one. On a host with no
+  # systemd that command is the `systemctl` they already know, and it names no unit.
+  OBSERVE='systemctl list-units | count | to text; systemctl show | count | to text'
+  SERVICE="$OBSERVE; home; enter compute; enter services; find place --where state == \"active\" | take 1 | enter"
+
+  echo "== before the restart: the service place carries the process that serves it (§13) =="
+  prove 44.7a "the service place names its main process (§13, §10.2)" \
+    'place "$SERVICE" "near --type process | to json" | grep -qF "$OLD_MAIN"'
+  prove 44.7b "a process identity is more than a pid: the place carries its lifetime (§10.2)" \
+    'place "enter process $OLD_MAIN" "look --json" | tr "A-Z" "a-z" \
+       | grep -qE "start|since|boot|uptime"'
+
+  echo "== the restart happens while the shell stands in the process place (§44.7) =="
+  # §10.3 and §46: a tombstone is what *this session* saw go away, and §20.1 makes the trail
+  # session state too, so everything about the dead place is asked of the session that watched it
+  # die — which is also the situation §44.7 describes. A fresh shell has never seen the object and
+  # answers `spatial.not_found`, which is the right answer to a different question.
+  # ADR-0193: the spatial layer never runs a tool, so on this container — which has no systemd —
+  # the service manager is only ever observed from the operator's own command line. A real host
+  # answers for a unit through the systemd provider and needs no such line; here the restart is
+  # followed by the `systemctl` the operator would type anyway.
+  ono -c "$SERVICE; follow process $OLD_MAIN; bash /tmp/spatial/restart.sh; $OBSERVE; \
+          echo ---PLACE---; look --json; trail --json; \
+          echo ---TOMB---; enter process $OLD_MAIN; look --json; \
+          echo ---FOLLOW---; follow socket" > /tmp/during-restart.out 2>&1
+  sed -n '/---PLACE---/,/---TOMB---/p' /tmp/during-restart.out > /tmp/after-restart.json
+  sed -n '/---TOMB---/,/---FOLLOW---/p'  /tmp/during-restart.out > /tmp/tombstone.json
+  . /tmp/fixture-spatial.state
+  NEW_MAIN=$FIXTURE_WEB_MAIN
+  echo "fixture: replacement main=$NEW_MAIN"
+  prove 44.7c "the restart really replaced the process (fixture precondition)" \
+    'test -n "$NEW_MAIN" && test "$NEW_MAIN" != "$OLD_MAIN" && kill -0 "$NEW_MAIN" 2>/dev/null'
+  prove 44.7d "the place the shell is standing in becomes a tombstone, not an error page (§10.3)" \
+    'tr "A-Z" "a-z" < /tmp/after-restart.json | grep -qE "tombstone|exited|gone"'
+  # §10.3's two MUSTs are that a tombstone is visually distinct and refuses actions that need a
+  # live object; its example also shows a `replacement:` line. The candidate cannot be known when
+  # the process ends — the unit that controlled it has not been observed since — so it is asked
+  # for when the tombstone is *rendered*, of that one unit, about the one relation that reached
+  # the dead process (ADR-0273). A candidate is offered only where the unit reaches exactly one
+  # live process now; a choice among several would be a guess (§2.17, §53).
+  prove 44.7e "the tombstone says what it is, how long ago, and what took its place (§10.3, §40)" \
+    'tr "," "\n" < /tmp/after-restart.json | grep -qE "\"state\":\"(exited|stopped|gone)[^\"]* ago\"" &&
+     grep -qF "\"removed_at\"" /tmp/after-restart.json &&
+     new=$(place "enter process $NEW_MAIN" "look --json | from json | select place.spatial_id | to text" | tail -1);
+     test -n "$new" &&
+     grep -qF "\"replacement\":\"$new\"" /tmp/after-restart.json &&
+     grep -qF "\"replacement_via\":\"service.controls_process\"" /tmp/after-restart.json'
+  prove 44.7f "the trail keeps the original record of where the user actually went (§20.3)" \
+    'grep -qF "$OLD_MAIN" /tmp/after-restart.json'
+
+  echo "== the service place is stable across the replacement (§10.1 tier A, §44.7) =="
+  prove 44.7g "the service is still the same place, and still active (§10.1)" \
+    'place "$SERVICE" "look --json" > /tmp/service-after.json;
+     grep -qF "fixture-web.service" /tmp/service-after.json'
+  # A pid is matched as the identity field it is (§10.2), not as digits somewhere in a document:
+  # in this container a pid is one or two digits and would match a timestamp or an inode.
+  prove 44.7h "the service now shows the replacement process (§10.2, §44.7)" \
+    'place "$SERVICE" "near --type process | select identity | to json" \
+       | grep -qF "\"pid\":\"$NEW_MAIN\""'
+  # A pid in this container is a one- or two-digit number and matches half the digits in a JSON
+  # document, so the comparison is between identities (§3.1): the tombstone's own `spatial_id`,
+  # read from the session that watched the process die, against the ids the service offers now.
+  prove 44.7i "and no longer offers the dead one as a live process (§10.2)" \
+    'old=$(tr "," "\n" < /tmp/after-restart.json | sed -n "s/.*\"spatial_id\":\"\([^\"]*\)\".*/\1/p" | head -1);
+     new=$(place "enter process $NEW_MAIN" "look --json | from json | select place.spatial_id | to text" | tail -1);
+     place "$SERVICE" "near --type process | select spatial_id | to text" > /tmp/service-procs.txt;
+     test -n "$old" && test -n "$new" && test -s /tmp/service-procs.txt &&
+     grep -qF "$new" /tmp/service-procs.txt && ! grep -qF "$old" /tmp/service-procs.txt'
+  prove 44.7j "following the service reaches the new process, never the old identity (§44.7)" \
+    'old=$(tr "," "\n" < /tmp/after-restart.json | sed -n "s/.*\"spatial_id\":\"\([^\"]*\)\".*/\1/p" | head -1);
+     new=$(place "enter process $NEW_MAIN" "look --json | from json | select place.spatial_id | to text" | tail -1);
+     here=$(place "$SERVICE; follow process $NEW_MAIN" "look --json | from json | select place.spatial_id | to text" | tail -1);
+     test -n "$old" && test -n "$new" && test -n "$here" &&
+     test "$here" = "$new" && test "$here" != "$old"'
+
+  echo "== a tombstone is a record, not a usable destination (§10.3, §20.3, §40) =="
+  prove 44.7k "the dead process place still resolves, and says it is dead (§10.3, §20.3)" \
+    'tr "A-Z" "a-z" < /tmp/tombstone.json | grep -qE "tombstone|exited|gone"'
+  prove 44.7l "a movement that needs a live object is refused on a tombstone (§10.3, §40)" \
+    'sed -n "/---FOLLOW---/,\$p" /tmp/during-restart.out | grep -qF "spatial.destination_gone"'
+  prove 44.7m "the old and the new process are not the same object (§10.2, §43.2 PID reuse)" \
+    'old=$(tr "," "\n" < /tmp/after-restart.json | sed -n "s/.*\"spatial_id\":\"\([^\"]*\)\".*/\1/p" | head -1);
+     new=$(place "enter process $NEW_MAIN" "look --json | from json | select place.spatial_id | to text" | tail -1);
+     test -n "$old" && test -n "$new" && test "$old" != "$new"'
+
+  kill $NEW_MAIN $FIXTURE_WEB_WORKERS 2>/dev/null
+  echo "fixture: stopped"
+exit: 0
+stdout-contains: PROVED 44.7a
+stdout-contains: PROVED 44.7b
+stdout-contains: PROVED 44.7c
+stdout-contains: PROVED 44.7d
+stdout-contains: PROVED 44.7e
+stdout-contains: PROVED 44.7f
+stdout-contains: PROVED 44.7g
+stdout-contains: PROVED 44.7h
+stdout-contains: PROVED 44.7i
+stdout-contains: PROVED 44.7j
+stdout-contains: PROVED 44.7k
+stdout-contains: PROVED 44.7l
+stdout-contains: PROVED 44.7m
+stdout-contains: fixture: stopped
+stdout-not-contains: FAILED
+stdout-not-contains: panicked
