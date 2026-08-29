@@ -403,3 +403,130 @@ fn collect_markdown(dir: &Path, files: &mut Vec<PathBuf>) {
         }
     }
 }
+
+/// Checks the two claims `docs/ACCEPTANCE.md` makes about the work board (ADR-0402).
+///
+/// Three release boxes — §4.5 *Delivery*, §4.6.5 *Delivery* and §4.7.2 *No release-blocking known
+/// defects remain* — are statements about `docs/STATE.md`, and until ADR-0402 nothing read that
+/// file: `scripts/release-check.sh` grepped `docs/ACCEPTANCE.md` for its own unticked boxes and
+/// stopped there. A box whose only proof is that somebody read a document is true at the moment
+/// it is written and unexamined ever after.
+///
+/// Two properties are checked, and they are exactly what the three boxes assert:
+///
+/// * ***In progress* holds no claim.** An agent that has claimed work has unfinished work, and a
+///   shell is not release-ready while somebody is in the middle of changing it (AGENTS.md §9,
+///   §13).
+/// * **Every *Deferred / blocked* entry names an ADR.** §4.7.2 requires each one to say "why it
+///   does not block the release", and AGENTS.md §8 fixes the ADR as the only place that reasoning
+///   may live. An entry without one is deferred work nobody defended.
+///
+/// *Next up* is deliberately **not** required to be empty. `docs/ACCEPTANCE.md` §4.5 calls it the
+/// post-release backlog, so demanding an empty backlog would make the release line unreachable
+/// and would contradict a box in the same file. The stopping rule is `docs/ACCEPTANCE.md` §4:
+/// what must be closed before release is written there, in boxes, and *Next up* is what remains
+/// afterwards.
+///
+/// This runs in `scripts/release-check.sh`, not in the gate: holding a claim mid-run is correct,
+/// and a gate that refused it would forbid the working rhythm of AGENTS.md §7.
+#[must_use]
+pub fn check_release_board(state: &str) -> Vec<Problem> {
+    let mut problems = Vec::new();
+
+    match section(state, "In progress") {
+        None => problems.push(Problem::new(
+            "docs/STATE.md",
+            "has no `## In progress` section, so the release boxes that claim it is empty \
+             (docs/ACCEPTANCE.md §4.5, §4.6.5, §4.7.2) claim it of nothing (AGENTS.md §9)",
+        )),
+        Some(lines) => {
+            let claims: Vec<usize> = lines
+                .iter()
+                .filter(|(_, line)| !line.trim().is_empty())
+                .map(|(number, _)| *number)
+                .collect();
+            if let Some(first) = claims.first() {
+                problems.push(Problem::new(
+                    format!("docs/STATE.md:{first}"),
+                    format!(
+                        "*In progress* is not empty: {} lines of it stand under the heading. \
+                         Work that is claimed is work in flight, and the shell is not \
+                         release-ready while it is (docs/ACCEPTANCE.md §4.5, §4.6.5, §4.7.2). \
+                         Land the claims, then clear the section",
+                        claims.len()
+                    ),
+                ));
+            }
+        }
+    }
+
+    for (number, entry) in entries(state, "Deferred") {
+        if adr_reference(&entry) {
+            continue;
+        }
+        problems.push(Problem::new(
+            format!("docs/STATE.md:{number}"),
+            format!(
+                "the *Deferred* entry {} names no ADR. A deferred item must say why it does not \
+                 block the release, and that reasoning belongs in an ADR (AGENTS.md §8, \
+                 docs/ACCEPTANCE.md §4.7.2)",
+                summary(&entry)
+            ),
+        ));
+    }
+
+    problems
+}
+
+/// The numbered lines of the level-2 section whose heading starts with `title`.
+fn section<'a>(state: &'a str, title: &str) -> Option<Vec<(usize, &'a str)>> {
+    let mut lines = state
+        .lines()
+        .enumerate()
+        .map(|(index, line)| (index + 1, line));
+    lines.find(|(_, line)| {
+        line.strip_prefix("## ")
+            .is_some_and(|heading| heading.trim_start().starts_with(title))
+    })?;
+    Some(
+        lines
+            .take_while(|(_, line)| !line.starts_with("## "))
+            .collect(),
+    )
+}
+
+/// The top-level list items of a section, each as its own text block with the line it starts on.
+fn entries(state: &str, title: &str) -> Vec<(usize, String)> {
+    let Some(lines) = section(state, title) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<(usize, String)> = Vec::new();
+    for (number, line) in lines {
+        if line.starts_with("- ") || line.starts_with("* ") {
+            entries.push((number, line.to_owned()));
+        } else if let Some((_, current)) = entries.last_mut() {
+            current.push('\n');
+            current.push_str(line);
+        }
+    }
+    entries
+}
+
+/// Whether a block of text names an ADR of this repository.
+fn adr_reference(text: &str) -> bool {
+    text.match_indices("ADR-").any(|(at, _)| {
+        text[at + 4..]
+            .chars()
+            .take(4)
+            .filter(|c| c.is_ascii_digit())
+            .count()
+            == 4
+    })
+}
+
+/// The first line of an entry, shortened enough to name it in a message.
+fn summary(entry: &str) -> String {
+    let first = entry.lines().next().unwrap_or_default().trim();
+    let first: String = first.chars().take(72).collect();
+    format!("`{first}`")
+}

@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use ono_testkit::{Scratch, scratch};
-use xtask::scan::{check_acceptance_case_references, check_unfinished_work};
+use xtask::scan::{check_acceptance_case_references, check_release_board, check_unfinished_work};
 
 /// Builds a throwaway repository shaped like this one.
 fn fixture(files: &[(&str, &str)]) -> Scratch {
@@ -323,4 +323,110 @@ fn should_ignore_a_three_digit_measurement_that_is_shaped_like_a_case_name() {
         ),
     ]);
     assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
+}
+
+// --- the release board (ADR-0402) ---------------------------------------------------------------
+
+#[test]
+fn should_accept_a_board_whose_in_progress_is_empty_and_whose_deferred_entries_name_an_adr() {
+    let board = "\
+# STATE
+
+## In progress
+
+## Next up (ordered)
+
+- [ ] C-6 — the model broker
+
+## Deferred / blocked
+
+- **`socket.accepts_connection` cannot be observed.** No kernel interface supplies the link
+  (ADR-0135), so the relation is declared and honestly empty.
+";
+    assert_eq!(check_release_board(board), Vec::new());
+}
+
+#[test]
+fn should_refuse_to_call_the_shell_ready_while_an_agent_holds_a_claim() {
+    let board = "\
+# STATE
+
+## In progress
+
+- [agent-7 | 2026-08-29] the model broker — files: crates/ono-model-broker
+
+## Deferred / blocked
+";
+    let problems = check_release_board(board);
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].location.starts_with("docs/STATE.md"));
+    assert!(
+        problems[0].detail.contains("In progress"),
+        "the reason names the section: {}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_refuse_to_call_the_shell_ready_while_a_claim_is_written_as_a_table_row() {
+    let board = "\
+# STATE
+
+## In progress
+
+| Agent | Worktree | Claim |
+|---|---|---|
+| KUANG/11 | `../wt-k11` | the wasm tier |
+
+## Deferred / blocked
+";
+    let problems = check_release_board(board);
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("In progress"));
+}
+
+#[test]
+fn should_refuse_a_deferred_entry_that_explains_itself_with_no_adr() {
+    let board = "\
+# STATE
+
+## In progress
+
+## Deferred / blocked
+
+- **the thing is blocked.** Nobody wrote down why it does not block the release.
+";
+    let problems = check_release_board(board);
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("ADR"),
+        "the reason asks for the ADR: {}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_ignore_an_unticked_box_under_next_up_when_judging_the_board() {
+    // *Next up* is the deliberate post-release backlog (docs/ACCEPTANCE.md §4.5); a shell with an
+    // empty backlog is not what the stopping rule asks for.
+    let board = "\
+# STATE
+
+## In progress
+
+## Next up (ordered)
+
+- [ ] C-2 — the fuzz targets
+- [ ] C-6 — the model broker
+
+## Deferred / blocked
+";
+    assert_eq!(check_release_board(board), Vec::new());
+}
+
+#[test]
+fn should_refuse_a_board_that_has_no_in_progress_section_at_all() {
+    let problems = check_release_board("# STATE\n\n## Next up\n");
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("In progress"));
 }
