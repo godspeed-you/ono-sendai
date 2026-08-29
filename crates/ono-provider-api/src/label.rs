@@ -1,15 +1,17 @@
-//! What a node is called in a drawing.
+//! What an object is called.
 //!
-//! Spec §22.4 and §33.1 draw objects as `nginx.service`, `process/921 nginx`, `tcp/:443` and
+//! Spec §22.4 and §33.1 write objects as `nginx.service`, `process/921 nginx`, `tcp/:443` and
 //! `/etc/nginx/nginx.conf` — one short form per kind of object, not one generic form for all of
-//! them. The label is therefore chosen per schema here, once, rather than by each renderer.
+//! them. The label is chosen per schema here, once, and every renderer and every
+//! [`ObjectRef`](crate::ObjectRef) uses it, so an object is called the same thing in a graph, in
+//! an `ActionResult` target and wherever else a person reads it (ADR-0226).
 
 use ono_value::{RecordValue, Value, canonical_text};
 
 /// The text spec §22.4 draws for `record`: `nginx.service`, `process/921 nginx`, `tcp/:443`.
 ///
 /// ```
-/// use ono_graph::label_of;
+/// use ono_provider_api::label_of;
 /// use ono_value::{RecordValue, Value, builtin_schemas, Provenance, SchemaId};
 /// use std::sync::Arc;
 ///
@@ -25,7 +27,19 @@ use ono_value::{RecordValue, Value, canonical_text};
 /// ```
 #[must_use]
 pub fn label_of(record: &RecordValue) -> String {
-    match record.schema_id().name() {
+    declared_label(record).unwrap_or_else(|| generic(record))
+}
+
+/// The short form `record`'s schema declares, or `None` where it declares none.
+///
+/// Spec §22.4 and §33.1 give a form for the objects they draw; a schema they do not name — a
+/// plugin's, an adapter's, a remote fixture's — has none, and the caller falls back to whatever
+/// suits the place the label is read: `<kind>/<identity>` for a node that stands alone,
+/// the default view's first distinguishing column for a reference printed beside its identity
+/// (ADR-0226).
+#[must_use]
+pub fn declared_label(record: &RecordValue) -> Option<String> {
+    Some(match record.schema_id().name() {
         "ono.process" => {
             let name = text(record, "name").unwrap_or_else(|| "process".to_owned());
             match text(record, "pid") {
@@ -48,8 +62,8 @@ pub fn label_of(record: &RecordValue) -> String {
         "ono.endpoint" => endpoint_label(record),
         "ono.file" | "ono.dir" => text(record, "path").unwrap_or_else(|| generic(record)),
         "ono.mount" => text(record, "target").unwrap_or_else(|| generic(record)),
-        _ => generic(record),
-    }
+        _ => return None,
+    })
 }
 
 /// The label for an object whose schema this crate has no special form for: the schema's short
@@ -76,15 +90,18 @@ fn generic(record: &RecordValue) -> String {
 
 /// `10.4.2.11:5432`, `:443` for a wildcard bind, or the path of a Unix socket.
 ///
+/// Public because a renderer that draws an endpoint on its own draws it the same way.
+///
 /// A wildcard address renders as nothing at all, because spec §22.4 draws a listening socket as
 /// `tcp/:443`: what matters about it is the port, and `0.0.0.0` is the absence of a restriction
 /// rather than an address anything is reachable at.
-pub(crate) fn endpoint_text(value: &Value) -> String {
+pub fn endpoint_text(value: &Value) -> String {
     value.as_record().map(endpoint_label).unwrap_or_default()
 }
 
 /// The same, for an endpoint already in hand as a record.
-pub(crate) fn endpoint_label(endpoint: &RecordValue) -> String {
+///
+pub fn endpoint_label(endpoint: &RecordValue) -> String {
     if let Some(path) = text(endpoint, "path") {
         return path;
     }

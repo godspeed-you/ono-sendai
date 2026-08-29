@@ -165,15 +165,21 @@ impl ObjectRef {
     #[must_use]
     pub fn of(record: &RecordValue) -> Option<Self> {
         let id = ObjectId::of(record)?;
-        // The label is the first field of the default view that is not part of the identity —
-        // the one a person would use to say which object they mean.
-        let label = record
-            .schema()
-            .default_view()
-            .iter()
-            .find(|column| !record.schema().identity().contains(column))
-            .and_then(|column| record.get(column))
-            .and_then(|value| ono_value::canonical_text(value).ok())
+        // One label rule for an object (ADR-0226): the short form its schema declares, which is
+        // what a person reads wherever the object is shown — a graph node, an `ActionResult`
+        // target, a refusal. A schema that declares none falls back to the first default-view
+        // column outside the identity, because the identity is printed beside this label and
+        // what it must add is the thing the identity does not show.
+        let label = crate::label::declared_label(record)
+            .or_else(|| {
+                record
+                    .schema()
+                    .default_view()
+                    .iter()
+                    .find(|column| !record.schema().identity().contains(column))
+                    .and_then(|column| record.get(column))
+                    .and_then(|value| ono_value::canonical_text(value).ok())
+            })
             .unwrap_or_else(|| id.to_string());
         Some(Self {
             id,

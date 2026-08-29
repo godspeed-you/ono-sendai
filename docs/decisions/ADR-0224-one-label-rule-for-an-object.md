@@ -1,6 +1,6 @@
 # ADR-0224: One label rule for an object
 
-- Status: accepted
+- Status: superseded by ADR-0226
 - Date: 2026-08-29
 - Spec refs: §11.5, §22.4, §27.3
 - Decided by: agent (autonomous, `close-data`)

@@ -268,10 +268,9 @@ impl ProviderMutation {
             let mut objects = Vec::new();
             while let Some(event) = input.recv().await {
                 match event {
-                    // One label rule for an object: `ObjectRef::of` names it by the first
-                    // default-view column outside its identity, which is what a person reads
-                    // beside the identity the row already shows (ADR-0224). A graph node's
-                    // caption stands alone and is `ono_graph::label_of`'s, not this.
+                    // One label rule for an object (ADR-0226): `ObjectRef::of` gives the short
+                    // form the object's schema declares, the same one a graph node draws and the
+                    // same one the selector branch resolves through the provider.
                     StreamEvent::Value(Value::Record(record)) => match ObjectRef::of(&record) {
                         Some(reference) => objects.push(Target {
                             id: reference.id().clone(),

@@ -70,7 +70,6 @@
 
 mod graph;
 mod kernel;
-mod label;
 mod provider;
 mod trace;
 mod tree;
@@ -84,7 +83,7 @@ pub use kernel::{
     ProcessUsers, RemoteHosts, Resolver, RouteInterfaces, ServiceDependencies, ServiceProcesses,
     SocketOwners, UserGroups, UserProcesses, kernel_relationships, rooted_relationships,
 };
-pub use label::label_of;
+pub use ono_provider_api::label_of;
 pub use provider::{Relationship, RelationshipProvider, Relationships};
 pub use trace::{DEFAULT_DEPTH, DEFAULT_MAX_NODES, TraceOptions, Tracer, roots};
 

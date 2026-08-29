@@ -11,7 +11,7 @@ use ono_value::{
     ErrorValue, MapValue, Provenance, RecordValue, Schema, SchemaId, Value, builtin_schemas,
 };
 
-use crate::label::label_of;
+use ono_provider_api::label_of;
 
 /// The provider id a graph assembled by `trace` records in its provenance.
 pub const TRACE_PROVIDER: &str = "ono.trace";
