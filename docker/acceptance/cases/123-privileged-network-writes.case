@@ -68,7 +68,7 @@ run: |
   echo done=ok
 exit: 0
 stdout-contains: dry-run-created-nothing
-stdout-contains: [{"changed":false,"status":"skipped"}]
+stdout-contains: [{"status":"skipped","changed":false}]
 stdout-contains: interface-exists
 stdout-contains: [{"name":"onotest0"}]
 stdout-contains: mtu=1400
