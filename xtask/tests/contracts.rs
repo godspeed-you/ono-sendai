@@ -507,3 +507,77 @@ fn should_reject_a_landmark_threshold_that_disagrees_with_the_setting_that_confi
         spatial_problems(&repo)
     );
 }
+
+// --- fields a command may not omit (B-harn-1) ---------------------------------------------------
+
+#[test]
+fn should_reject_a_command_that_declares_no_verb() {
+    // Before this rule the cross-check read `!verb.is_empty() && !verbs.contains(&verb)`, so a
+    // command with no `verb` was checked against nothing and passed. ADR-0124 makes the point
+    // sharp: the spatial commands take a bare name, and `look` is a verb of `verbs.yaml` exactly
+    // like `get` — the bare spelling is a fact about the parser, never a licence to leave the
+    // registry silent about which verb a command is.
+    let repo = consistent();
+    repo.write(
+        "docs/spec/commands/process.yaml",
+        "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    target: process\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get process\"]\n",
+    );
+    let found = problems(&repo);
+    assert!(
+        found
+            .iter()
+            .any(|p| p.contains("ono.process.get") && p.contains("`verb`")),
+        "a command with no verb must be reported, got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_command_that_declares_no_target() {
+    // A transform writes `target: null` and means it (spec §53, ADR-0012). Omitting the key
+    // means nothing at all, and the difference has to be visible.
+    let repo = consistent();
+    repo.write(
+        "docs/spec/commands/process.yaml",
+        "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get process\"]\n",
+    );
+    let found = problems(&repo);
+    assert!(
+        found
+            .iter()
+            .any(|p| p.contains("ono.process.get") && p.contains("`target`")),
+        "a command with no target must be reported, got {found:?}"
+    );
+}
+
+#[test]
+fn should_accept_a_command_whose_target_is_explicitly_null() {
+    let repo = consistent();
+    repo.write(
+        "docs/spec/commands/data.yaml",
+        "version: 1\nfamily: data\ncommands:\n  - id: ono.data.get\n    verb: get\n    target: null\n    summary: x\n    stability: stable\n    argument_mode: words\n    output: stream<ono.process/1>\n    privilege: none\n    phase: B\n    examples: [\"get\"]\n",
+    );
+    let found = problems(&repo);
+    assert!(
+        !found.iter().any(|p| p.contains("`target`")),
+        "`target: null` is a declaration, not an omission, got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_command_that_declares_no_argument_mode() {
+    // ADR-0009 decides in which mode a head parses, and the check that the registry agrees with
+    // the parser was skipped whenever the field was absent — which is the one case where the
+    // registry says nothing and completion and help have to guess.
+    let repo = consistent();
+    repo.write(
+        "docs/spec/commands/process.yaml",
+        "version: 1\nfamily: process\ncommands:\n  - id: ono.process.get\n    verb: get\n    target: process\n    summary: x\n    stability: stable\n    output: stream<ono.process/1>\n    provider_capability: process.list\n    privilege: none\n    phase: C\n    examples: [\"get process\"]\n",
+    );
+    let found = problems(&repo);
+    assert!(
+        found
+            .iter()
+            .any(|p| p.contains("ono.process.get") && p.contains("`argument_mode`")),
+        "a command with no argument mode must be reported, got {found:?}"
+    );
+}

@@ -455,6 +455,32 @@ fn collect_deferred(
     listed
 }
 
+/// The value of a field every command must declare, reporting the omission when it is absent.
+///
+/// The cross-checks below all used to read `!value.is_empty() && …`, which silently passed any
+/// command that left the field out — the one case where the registry says nothing and `help`,
+/// completion and the parser have to guess. The field is part of the contract, so its absence is
+/// drift like any other (spec §27, ADR-0012).
+fn required(
+    command: &Yaml,
+    field: &str,
+    id: &str,
+    location: &str,
+    problems: &mut Vec<Problem>,
+) -> String {
+    if let Some(value) = string_at(command, field) {
+        return value;
+    }
+    problems.push(Problem {
+        location: location.to_owned(),
+        detail: format!(
+            "`{id}` declares no `{field}`. Every command declares one (ADR-0012); a command that \
+             leaves it out is checked against nothing"
+        ),
+    });
+    String::new()
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "each registry is a distinct input to the cross-check; bundling them into a struct would name the same things twice"
@@ -503,7 +529,7 @@ fn check_commands(
                 });
             }
 
-            let verb = string_at(command, "verb").unwrap_or_default();
+            let verb = required(command, "verb", &id, &location, problems);
             if !verb.is_empty() && !verbs.contains(&verb) {
                 problems.push(Problem {
                     location: location.clone(),
@@ -513,9 +539,10 @@ fn check_commands(
                     ),
                 });
             }
-            let target = string_at(command, "target").unwrap_or_default();
             // A transform operates on whatever the pipeline carries and names no target, which
-            // the registry writes as `target: null` (spec §53, ADR-0012).
+            // the registry writes as `target: null` (spec §53, ADR-0012). Writing nothing at all
+            // is a different thing and is reported: an absent key is a question nobody answered.
+            let target = required(command, "target", &id, &location, problems);
             if !target.is_empty() && target != "null" && !targets.contains(&target) {
                 problems.push(Problem {
                     location: location.clone(),
@@ -557,7 +584,7 @@ fn check_commands(
                 }
             }
 
-            let mode = string_at(command, "argument_mode").unwrap_or_default();
+            let mode = required(command, "argument_mode", &id, &location, problems);
             let should_be_expression = expression_heads.is_some_and(|heads| heads.contains(&verb));
             if !mode.is_empty()
                 && expression_heads.is_some()
