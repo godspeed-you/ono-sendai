@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "xtask"]
+# `fuzz` is a member so the gate compiles, lints and documents it like everything else:
+# a fuzz target nothing builds is a check that never runs (ADR-0313).
+members = ["crates/*", "fuzz", "xtask"]
 
 [workspace.package]
 version = "0.3.0"
@@ -48,6 +50,8 @@ async-trait = "0.1"
 bytes = "1"
 crossterm = "0.29"
 csv = "1"
+# The one asymmetric primitive in the workspace: package signatures (spec §31.36, ADR-0311).
+ed25519-dalek = "3"
 futures = "0.3"
 globset = "0.4"
 jiff = { version = "0.2", features = ["serde"] }

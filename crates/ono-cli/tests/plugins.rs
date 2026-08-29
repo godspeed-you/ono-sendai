@@ -119,6 +119,41 @@ fn adapter_home() -> ono_testkit::Scratch {
     scratch
 }
 
+/// Re-signs the copied example package with the demo key that ships beside it.
+///
+/// The example ships signed (spec §31.36), and a test that edits it is standing in for an author
+/// who edits a package — who re-signs it. Without this the edit would be caught as `K11004`
+/// before the thing under test is reached, which is correct behaviour and a different subject.
+fn resign(home: &ono_testkit::Scratch) {
+    use ono_kuang_protocol::{Manifest, SIGNATURE_FILE, SecretKey, SignedPackage, artifact_files};
+
+    let directory = home.path().join("dev.example.users");
+    let key = SecretKey::parse(
+        &std::fs::read_to_string(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../ono-kuang-sdk/examples/keys/dev.example.key"),
+        )
+        .expect("the demo signing key ships with the example package"),
+    )
+    .expect("the demo key is a signing key");
+    let manifest = Manifest::parse(
+        &std::fs::read_to_string(directory.join("manifest.yaml")).expect("the manifest"),
+    )
+    .expect("the manifest is valid");
+    let described = SignedPackage::new(
+        &manifest.package.id,
+        &manifest.package.version,
+        &manifest.package.publisher,
+        artifact_files(&directory),
+    )
+    .expect("the package is describable");
+    std::fs::write(
+        directory.join(SIGNATURE_FILE),
+        key.sign(&described).to_yaml(),
+    )
+    .expect("the signature is written");
+}
+
 #[test]
 fn should_load_a_declarative_adapter_package_disabled_under_default_deny() {
     // Spec v0.3 §1.22, §2.3: the pack is known but cannot influence structured output until
@@ -188,6 +223,7 @@ fn should_refuse_a_package_whose_adapter_runs_something_its_grant_does_not_name(
         .expect("the manifest")
         .replace("executables: [getent]", "executables: [id]");
     std::fs::write(&manifest, text).expect("rewritten");
+    resign(&home);
     let run = ono(&home, "load plugin dev.example.users --grant process.exec");
     assert_ne!(run.status().code(), 0);
     assert!(
@@ -205,6 +241,7 @@ fn should_keep_an_experimental_pack_out_of_structured_output_unless_allowed() {
         .expect("the pack")
         .replace("tier: community", "tier: experimental");
     std::fs::write(&pack, text).expect("rewritten");
+    resign(&home);
     let held = ono(
         &home,
         "load plugin dev.example.users --grant process.exec; getent passwd root | where uid == 0",

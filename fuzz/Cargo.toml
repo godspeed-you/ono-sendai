@@ -1,0 +1,24 @@
+[package]
+name = "ono-fuzz"
+description = "The fuzz targets of spec §35.6: the parser, the serializers, the remote protocol, the plugin protocol and the procfs/netlink decoders, with a seed corpus and a bounded runner (ADR-0313)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+bytes.workspace = true
+ono-kuang-protocol.workspace = true
+ono-parser.workspace = true
+ono-protocol.workspace = true
+ono-provider-linux.workspace = true
+ono-provider-netlink.workspace = true
+ono-testkit.workspace = true
+ono-value.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

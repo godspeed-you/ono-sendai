@@ -10,30 +10,31 @@ use nix::unistd::{SysconfVar, sysconf};
 
 /// The fields of `/proc/<pid>/stat` this crate uses, in the numbering `proc(5)` gives them.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProcStat {
+pub struct ProcStat {
     /// Field 2: the executable name, without the parentheses the kernel wraps it in.
-    pub(crate) comm: String,
+    pub comm: String,
     /// Field 3: the scheduling state letter.
-    pub(crate) state: char,
+    pub state: char,
     /// Field 4: the parent process id.
-    pub(crate) ppid: i64,
+    pub ppid: i64,
     /// Field 14: user-mode time in clock ticks.
-    pub(crate) utime: u64,
+    pub utime: u64,
     /// Field 15: kernel-mode time in clock ticks.
-    pub(crate) stime: u64,
+    pub stime: u64,
     /// Field 20: the number of threads.
-    pub(crate) threads: i64,
+    pub threads: i64,
     /// Field 22: the start time, in clock ticks since boot.
-    pub(crate) starttime: u64,
+    pub starttime: u64,
     /// Field 23: virtual memory size in bytes.
-    pub(crate) vsize: u64,
+    pub vsize: u64,
     /// Field 24: the resident set size, in pages.
-    pub(crate) rss_pages: i64,
+    pub rss_pages: i64,
 }
 
 impl ProcStat {
     /// The CPU time the process has used, in clock ticks.
-    pub(crate) fn cpu_ticks(&self) -> u64 {
+    #[must_use]
+    pub fn cpu_ticks(&self) -> u64 {
         self.utime.saturating_add(self.stime)
     }
 }
@@ -44,7 +45,8 @@ impl ProcStat {
 /// parentheses — `(a b) c` is a legal `comm` — so the split is on the *last* `)` rather than on
 /// whitespace. Getting this wrong is the classic procfs bug, and a process can be named
 /// deliberately to trigger it.
-pub(crate) fn parse_stat(text: &str) -> Option<ProcStat> {
+#[must_use]
+pub fn parse_stat(text: &str) -> Option<ProcStat> {
     let open = text.find('(')?;
     let close = text.rfind(')')?;
     let comm = text.get(open + 1..close)?.to_owned();
@@ -68,7 +70,8 @@ pub(crate) fn parse_stat(text: &str) -> Option<ProcStat> {
 ///
 /// A letter this provider does not model becomes `unknown` rather than a guess, because spec
 /// §35.3 forbids fabricating what was not observed.
-pub(crate) fn state_name(state: char) -> &'static str {
+#[must_use]
+pub fn state_name(state: char) -> &'static str {
     match state {
         'R' => "running",
         'S' => "sleeping",
@@ -86,7 +89,8 @@ pub(crate) fn state_name(state: char) -> &'static str {
 ///
 /// The `Uid:` and `Gid:` lines carry four ids — real, effective, saved and filesystem — and the
 /// effective one is what a user means by "whose process is this".
-pub(crate) fn parse_status_ids(text: &str) -> (Option<u32>, Option<u32>) {
+#[must_use]
+pub fn parse_status_ids(text: &str) -> (Option<u32>, Option<u32>) {
     let effective = |prefix: &str| {
         text.lines()
             .find_map(|line| line.strip_prefix(prefix))?
@@ -103,7 +107,8 @@ pub(crate) fn parse_status_ids(text: &str) -> (Option<u32>, Option<u32>) {
 /// The line format is `hierarchy:controllers:path`; a service's path ends in `<unit>.service`.
 /// Reading the unit name here costs one file and saves the service provider a reverse lookup;
 /// resolving it to a whole `Service` object is that provider's job, not this one's.
-pub(crate) fn service_unit(text: &str) -> Option<String> {
+#[must_use]
+pub fn service_unit(text: &str) -> Option<String> {
     text.lines()
         .filter_map(|line| line.rsplit(':').next())
         .flat_map(|path| path.rsplit('/'))
@@ -157,7 +162,8 @@ pub(crate) fn page_size() -> u128 {
 }
 
 /// Splits `/proc/<pid>/cmdline`, which separates arguments with NUL and ends with one.
-pub(crate) fn parse_cmdline(bytes: &[u8]) -> Vec<String> {
+#[must_use]
+pub fn parse_cmdline(bytes: &[u8]) -> Vec<String> {
     bytes
         .split(|byte| *byte == 0)
         .filter(|argument| !argument.is_empty())

@@ -1,0 +1,23 @@
+# A KUANG/11 package signature (spec §31.36). What is signed is the canonical
+# description below, not this file: see `signed` for the exact commitment.
+format: kuang-signature/1
+algorithm: ed25519
+key: ed25519:a30f835a0e5a32ed1803e8176dec2fdc2df9968e460cc0f72f22c9b49d0808c8
+signed:
+  package: dev.example.users
+  version: 0.1.0
+  publisher: dev.example
+  files:
+  - path: adapters.yaml
+    sha256: 86cca5388d558dcfe25ae5c57b148c93063a32f585da1a69b24fb4209c590879
+  - path: fixtures/getent-passwd/empty.out
+    sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  - path: fixtures/getent-passwd/empty.yaml
+    sha256: ba198fb7da2307696f73590c41037908b294349aa1132232fa801875f089d24e
+  - path: fixtures/getent-passwd/two-users.out
+    sha256: 4a7c98312c7ec4e33cd7e409dfe59bb92a223dbeca9d53856dbb1db3a10cb84e
+  - path: fixtures/getent-passwd/two-users.yaml
+    sha256: 6b64394a0e2b67b391e1aa22d7832dfd2fec6c1a9cb766b2a9cf98057e0dc254
+  - path: manifest.yaml
+    sha256: b8b7add536cc9126e95afb4e2a18a8f4df4072aa4926a7443df6cc2cd8bdd7fd
+signature: e633514320bf0e476084302aa182b2995572d5bdcb755bc9f4f1fa68aa31954a43bf2292359412d997c1e065bc97cecf40f646cadcfbc81c24f7277906bcf70a

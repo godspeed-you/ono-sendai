@@ -138,6 +138,23 @@ pub fn load_plugin_with(
         ));
     }
 
+    // Integrity, signature and publisher trust are re-checked against what is on disk now, not
+    // against what was on disk at install: a file changed afterwards must not load
+    // (`lifecycle.v1.yaml` verification rules, ADR-0312 §4). No package code has run yet.
+    let resolved = crate::kuang_host::Resolved {
+        source: crate::kuang_host::source_of(&package, &management),
+        package: Ok(package.clone()),
+    };
+    if let Some(failure) = session
+        .with_kuang(|host| host.verify(&resolved))
+        .map_err(Flow::Failed)?
+        .blocking
+        .into_iter()
+        .next()
+    {
+        return Err(Flow::Failed(failure));
+    }
+
     // The policy is default-deny; what the user said on the command line is the only grant
     // (spec §31.18). A grant takes the scope the manifest asked for, never a wider one, and it
     // is recorded on the host so `get capability` and `revoke capability` see it.

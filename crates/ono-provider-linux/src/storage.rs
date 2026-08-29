@@ -38,14 +38,19 @@ pub const PROVIDER_ID: &str = "linux.mountinfo";
 
 /// One line of `/proc/self/mountinfo`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MountInfo {
-    pub(crate) source: String,
-    pub(crate) target: PathBuf,
-    pub(crate) filesystem: String,
-    pub(crate) options: Vec<String>,
-    pub(crate) device: Option<String>,
+pub struct MountInfo {
+    /// What is mounted — a device path, a UUID, or a filesystem's own name for itself.
+    pub source: String,
+    /// Where it is mounted.
+    pub target: PathBuf,
+    /// The filesystem type, after the `-` separator.
+    pub filesystem: String,
+    /// The per-mount options, in the order the kernel lists them.
+    pub options: Vec<String>,
+    /// The `major:minor` of the device backing the mount.
+    pub device: Option<String>,
     /// The propagation peer group of `mountinfo(5)`'s `shared:N`, where the mount is in one.
-    pub(crate) peer_group: Option<i64>,
+    pub peer_group: Option<i64>,
 }
 
 impl MountInfo {
@@ -60,7 +65,8 @@ impl MountInfo {
 /// superoptions`, where the number of optional fields is variable and the `-` is what separates
 /// them from the rest. Splitting on a fixed column count is the bug this function exists to
 /// avoid.
-pub(crate) fn parse_mountinfo(text: &str) -> Vec<MountInfo> {
+#[must_use]
+pub fn parse_mountinfo(text: &str) -> Vec<MountInfo> {
     text.lines().filter_map(parse_mountinfo_line).collect()
 }
 
@@ -907,15 +913,20 @@ fn mount_error(errno: nix::errno::Errno, target: &Path) -> ErrorValue {
 
 /// One line of `fstab(5)`: what is mounted where, with what, and how.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MountDefinition {
-    pub(crate) source: String,
-    pub(crate) target: PathBuf,
-    pub(crate) fs_type: String,
-    pub(crate) options: Vec<String>,
+pub struct MountDefinition {
+    /// What the line says to mount.
+    pub source: String,
+    /// Where it says to mount it.
+    pub target: PathBuf,
+    /// The filesystem type the line declares.
+    pub fs_type: String,
+    /// The comma-separated options, split.
+    pub options: Vec<String>,
 }
 
 /// Decodes `fstab(5)`: whitespace-separated fields, `#` comments, octal escapes for spaces.
-pub(crate) fn parse_fstab(text: &str) -> Vec<MountDefinition> {
+#[must_use]
+pub fn parse_fstab(text: &str) -> Vec<MountDefinition> {
     text.lines()
         .filter_map(|line| {
             let line = line.trim();

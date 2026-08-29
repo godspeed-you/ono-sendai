@@ -1589,8 +1589,21 @@ impl Parser<'_> {
             TokenKind::Ident if token.text(self.source) == "not" => UnaryOp::Not,
             _ => return self.parse_postfix(),
         };
+        // A prefix operator recurses into itself, so it needs the counter the same way nesting
+        // does: `- - - …` reaches no other rule, and unguarded it ran out of stack long before
+        // it ran out of input.
+        if self.depth >= MAX_DEPTH {
+            self.report(Diagnostic::syntax(
+                token.span,
+                "this expression nests more deeply than the parser will follow",
+            ));
+            self.bump(LexMode::ExprOperand);
+            return Expr::Error(Span::at(token.span.start()));
+        }
         self.bump(LexMode::ExprOperand);
+        self.depth += 1;
         let operand = self.parse_unary();
+        self.depth -= 1;
         Expr::Unary(Box::new(UnaryExpr {
             op,
             op_span: token.span,
@@ -1635,7 +1648,14 @@ impl Parser<'_> {
                     self.bump(LexMode::Expr);
                     let saved = self.no_brace;
                     self.no_brace = false;
+                    // The index is one level deeper, and the counter must stay raised while it
+                    // is read. `parse_primary` raises and lowers it around its own body, so by
+                    // the time this loop runs it is back where it started: without this a chain
+                    // of suffixes — `1[1[1[…` — recursed with the counter never rising, and the
+                    // inner `parse_primary` refused nothing until the stack ran out.
+                    self.depth += 1;
                     let index = self.parse_expression();
+                    self.depth -= 1;
                     self.no_brace = saved;
                     let end = self
                         .close(TokenKind::RBracket, token, "`]`")
@@ -1647,7 +1667,10 @@ impl Parser<'_> {
                     }));
                 }
                 TokenKind::LParen if adjacent => {
+                    // The arguments are one level deeper, for the same reason the index is.
+                    self.depth += 1;
                     let (arguments, end) = self.parse_call_arguments(token);
+                    self.depth -= 1;
                     expression = Expr::Call(Box::new(CallExpr {
                         span: expression.span().join(end),
                         callee: expression,

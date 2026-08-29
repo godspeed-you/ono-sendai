@@ -184,3 +184,28 @@ fn should_reproduce_the_same_run_from_the_same_seed_when_a_failure_is_replayed()
     };
     assert_eq!(corpus(1234), corpus(1234));
 }
+
+#[test]
+fn should_refuse_a_nested_yaml_bomb_in_time_proportional_to_its_length() {
+    // Found by the §35.6 serializer fuzz target (ADR-0313): 100 kB of `{e: {e: {…` took seven
+    // seconds to be refused. The YAML parser rejects such a document on its own — it has a
+    // nesting limit of its own — but the work it does before refusing grows with the square of
+    // the depth, so a document a user could paste stalls the shell.
+    //
+    // What must hold is both halves: the answer is still a refusal, and the refusal is quick.
+    for depth in [1_000usize, 10_000, 40_000] {
+        let bomb = format!("{}1{}", "{e: ".repeat(depth), "}".repeat(depth));
+        let started = std::time::Instant::now();
+        let outcome = ono_value::from_yaml(&bomb, registry());
+        let elapsed = started.elapsed();
+        assert!(
+            outcome.is_err(),
+            "a document nested {depth} deep is refused, not decoded"
+        );
+        assert!(
+            elapsed.as_millis() < 250,
+            "refusing a {depth}-deep document took {elapsed:?}; the cost of saying no must not \
+             grow with the bomb (spec §49 T7)"
+        );
+    }
+}

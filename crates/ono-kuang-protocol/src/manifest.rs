@@ -281,6 +281,15 @@ impl Manifest {
             KuangError::new(KuangErrorCode::PackageInvalid, detail)
                 .with_help("`verify plugin <reference>` reports which rule failed (spec §31.7)")
         };
+        let depth = ono_value::yaml_depth(text);
+        if depth > ono_value::MAX_YAML_DEPTH {
+            // Refused before the YAML parser sees it: the parser turns it down too, in time
+            // quadratic in the depth (ADR-0313, spec §49 T7).
+            return Err(invalid(format!(
+                "the manifest nests {depth} collections deep, and {} is the limit",
+                ono_value::MAX_YAML_DEPTH
+            )));
+        }
         let raw: RawManifest = serde_yaml_ng::from_str(text)
             .map_err(|error| invalid(format!("not a valid kuang-package/1 manifest: {error}")))?;
         if raw.format != PACKAGE_FORMAT {
