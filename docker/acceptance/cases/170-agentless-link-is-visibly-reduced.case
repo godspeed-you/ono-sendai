@@ -1,0 +1,42 @@
+# Spec §21.3: a link with no Ono agent on the far side falls back to a limited provider set
+# built from standard commands, and "Fallback MUST be visible because semantics and performance
+# may differ." Visible here is structural, not a sentence: a target that answers under the agent
+# is *refused by name* under the fallback, the link table lists the reduced set beside the mode,
+# every record says which command on which host produced it, and `test host` names the far side
+# for what it is. The far side is this very machine (`--transport local`), so the case needs no
+# network and no second host (ADR-0037 §2, ADR-0351, ADR-0352).
+case: an agentless link answers less, and says exactly how much less
+timeout: 120
+env: NO_COLOR=1
+run: |
+  echo "== the fallback is visible where the link is made =="
+  ono -c 'link host testbox --transport local --agentless'
+
+  echo "== the reduced set really reads the far side =="
+  ono -c 'link host testbox --transport local --agentless; enter link testbox; get process | where pid == 1 | select pid name | to json' | tail -1
+
+  echo "== and every record says which command on which host produced it =="
+  ono -c 'link host testbox --transport local --agentless; enter link testbox; get filesystem | take 1 | inspect | to json' | tail -1
+
+  echo "== the link table names the mode and what the mode can answer =="
+  ono -c 'link host testbox --transport local --agentless; get link | select mode targets | to json' | tail -1
+  ono -c 'link host testbox --transport local; get link | select mode | to json' | tail -1
+
+  echo "== a target the agent answers is refused, not emptied =="
+  ono -c 'link host testbox --transport local; enter link testbox; get env | count | to json' | tail -1
+  ono -c 'link host testbox --transport local --agentless; enter link testbox; try { get env } catch e { $e | select name message | to json }' | tail -1
+
+  echo "== test host names the far side for what it is =="
+  ono -c 'link host testbox --transport local --agentless; test host testbox | select agent protocol_version providers | to json' | tail -1
+exit: 0
+stdout-contains: linked testbox (local, agentless)
+stdout-contains: [{"pid":1,
+stdout-contains: "link":"testbox"
+stdout-contains: "adapter":"org.ono.compat.coreutils.df"
+stdout-contains: [{"mode":"agentless","targets":["process","filesystem"]}]
+stdout-contains: [{"mode":"agent"}]
+stdout-contains: "name":"provider.unavailable"
+stdout-contains: needs the Ono agent of spec
+stdout-contains: "protocol_version":null
+stdout-contains: "providers":["remote.agentless"]
+stdout-not-contains: panicked

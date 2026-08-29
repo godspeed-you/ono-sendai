@@ -214,6 +214,21 @@ fn capture(
     Err(ErrorValue::new(code_of, detail))
 }
 
+/// Whether a failed attempt at the agent means the far side simply has no agent (spec §21.3).
+///
+/// `ssh <host> ono --agent` gives a shell exactly one way to tell "this machine has no Ono on
+/// it" from "this machine was never reached": the exit status. A POSIX shell that cannot find a
+/// command exits **127**, and ssh reserves **255** for its own failures — an unresolvable host, a
+/// refused key, a dropped connection — passing everything else through from the far side. So 127
+/// is the agentless case of §21.3 and nothing else is: falling back on 255 would open a reduced
+/// link to a machine that was never spoken to, which is a worse lie than the failure it hides.
+///
+/// `None` — an end nobody observed — is not evidence either, and answers `false`.
+#[must_use]
+pub fn far_side_lacks_agent(status: Option<std::process::ExitStatus>) -> bool {
+    status.is_some_and(|status| status.code() == Some(127))
+}
+
 /// What the reduced set runs for one target, and which adapter reads what it writes.
 #[derive(Debug)]
 struct Strategy {

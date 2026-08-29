@@ -477,7 +477,7 @@ fn connect_host(session: &mut Session, name: &str, transport: Option<String>) ->
     }
     let transport = transport.unwrap_or_else(|| "ssh".to_owned());
     check_transport(&transport)?;
-    let connection = crate::context::establish(session, name, &transport, None)?;
+    let connection = crate::context::establish(session, name, &transport, None, false)?;
     let link = SessionLink {
         name: name.to_owned(),
         host: name.to_owned(),
@@ -503,17 +503,16 @@ const DEFAULT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 fn negotiated_facts(
     transport: &str,
     connection: &crate::session::LinkConnection,
-) -> (String, u16, String, Vec<Value>) {
-    let negotiated = connection.link.negotiated();
-    let providers: Vec<Value> = negotiated
-        .providers()
+) -> (String, Option<u16>, String, Vec<Value>) {
+    let providers: Vec<Value> = connection
+        .provider_ids()
         .iter()
-        .map(|descriptor| Value::string(descriptor.id()))
+        .map(|id| Value::string(id))
         .collect();
     (
         transport.to_owned(),
-        negotiated.version(),
-        negotiated.peer().agent().to_owned(),
+        connection.protocol_version(),
+        connection.far_end_name(),
         providers,
     )
 }
@@ -540,11 +539,14 @@ fn test_host(
                 || (name.to_owned(), "ssh".to_owned()),
                 |link| (link.host.clone(), link.transport.clone()),
             );
+            // A definition that asked for the reduced set is probed in the reduced set.
+            let agentless = session.link(name).is_some_and(|link| link.agentless);
             let connection = crate::context::establish(
                 session,
                 &host,
                 &transport,
                 Some(timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT)),
+                agentless,
             )
             .map_err(|flow| match flow {
                 Flow::Failed(error) if error.code() != ErrorCode::RemoteUnreachable => {
@@ -586,7 +588,12 @@ fn test_host(
         .and_then(|builder| builder.set("duration", Value::Duration(elapsed)))
         .and_then(|builder| builder.set("error", Value::Null))
         .and_then(|builder| builder.set("transport", Value::string(&transport)))
-        .and_then(|builder| builder.set("protocol_version", Value::Int(i128::from(version))))
+        .and_then(|builder| {
+            builder.set(
+                "protocol_version",
+                version.map_or(Value::Null, |version| Value::Int(i128::from(version))),
+            )
+        })
         .and_then(|builder| builder.set("agent", Value::string(&agent)))
         .and_then(|builder| builder.set("providers", Value::list(providers)))
         .map_err(Flow::Failed)?

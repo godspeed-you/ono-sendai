@@ -320,3 +320,37 @@ fn should_run_the_reduced_set_commands_as_a_child_when_the_far_side_is_this_mach
          fallback provable without a network"
     );
 }
+
+#[tokio::test]
+async fn should_tell_a_far_side_without_ono_from_one_that_cannot_be_reached() {
+    // Spec §21.3's fallback is for "no Ono-Sendai agent exists remotely", and for nothing else.
+    // `ssh <host> ono --agent` reports the two cases differently and a shell must not confuse
+    // them: a shell that cannot find `ono` exits 127, and ssh reserves 255 for its own failures
+    // — an unreachable host, a refused key. Falling back on 255 would answer a host that is not
+    // there.
+    let no_ono = ono_remote::SubprocessTransport::spawn(command("exit 127"))
+        .expect("a child that exits at once still starts");
+    let unreachable = ono_remote::SubprocessTransport::spawn(command("exit 255"))
+        .expect("a child that exits at once still starts");
+
+    assert!(
+        ono_remote::far_side_lacks_agent(no_ono.exited().await),
+        "a far side whose shell could not find `ono` is the agentless case of spec §21.3"
+    );
+    assert!(
+        !ono_remote::far_side_lacks_agent(unreachable.exited().await),
+        "ssh's own 255 means the host was never spoken to; a reduced link would answer for a \
+         machine that is not there"
+    );
+    assert!(
+        !ono_remote::far_side_lacks_agent(None),
+        "a far side whose end was never observed is not evidence of a missing agent"
+    );
+}
+
+/// A child that does nothing but end with the status the far side would have ended with.
+fn command(script: &str) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("/bin/sh");
+    command.arg("-c").arg(script);
+    command
+}

@@ -53,7 +53,8 @@ const ALL_TARGETS: &[&str] = &[
 ///
 /// A package loaded on the far side is a fact about the far side and stays remote; the links
 /// this session holds, the jobs it started and the hosts it knows are not.
-const SESSION_TARGETS: &[&str] = &["job", "link", "host"];
+/// The targets the shell answers about itself: session facts, not observations of a machine.
+pub const SESSION_TARGETS: &[&str] = &["job", "link", "host"];
 
 /// One job as the session publishes it — the fields of `ono.job/1`, before they are a record.
 #[derive(Debug, Clone, PartialEq)]

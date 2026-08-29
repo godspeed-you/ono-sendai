@@ -609,19 +609,15 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
         ));
     };
 
-    let connection = establish(session, &host, &transport, None)?;
+    let connection = establish(session, &host, &transport, None, agentless)?;
     let targets = connection.targets();
+    let reduced = connection.is_agentless();
 
-    // Spec §21.3: the agentless fallback MUST be visible. This build has no agentless provider
-    // set yet, so the mode is recorded and reported wherever the link is described, and the
-    // summary says who actually answers (ADR-0106).
+    // Spec §21.3: the fallback MUST be visible. What is reported is the mode the link is really
+    // in — a link that fell back says so here, even though nobody asked for it (ADR-0106).
     println!(
         "linked {host} ({transport}{}): {}",
-        if agentless {
-            ", agentless requested — served by the agent until the fallback exists"
-        } else {
-            ""
-        },
+        if reduced { ", agentless" } else { "" },
         if targets.is_empty() {
             "no targets negotiated".to_owned()
         } else {
@@ -635,7 +631,7 @@ pub fn link(session: &mut Session, stage: &Stage, source: &str) -> Eval<ExitStat
         name: host.clone(),
         host,
         transport,
-        agentless,
+        agentless: reduced,
         persistent: true,
         connection: Some(connection),
     });
@@ -656,7 +652,119 @@ pub fn establish(
     host: &str,
     transport: &str,
     timeout: Option<std::time::Duration>,
+    agentless: bool,
 ) -> Eval<crate::session::LinkConnection> {
+    if agentless {
+        // Asked for by name: the agent is not tried at all, because the user has said what the
+        // far side is.
+        return connect_agentless(session, host, transport);
+    }
+    match connect_agent(session, host, transport, timeout) {
+        Ok(connection) => Ok(connection),
+        Err(failure) if ono_remote::far_side_lacks_agent(failure.exit) => {
+            // Spec §21.3: no agent over there is a reason to fall back, not to fail. Said on
+            // stderr because it changes what the link can do, and a script reading stdout must
+            // still read only the data it asked for (spec §12.5).
+            eprintln!(
+                "{}: {host} has no `ono --agent`; falling back to agentless mode (spec §21.3)",
+                ono_core::SHORT_NAME
+            );
+            connect_agentless(session, host, transport)
+        }
+        Err(failure) => Err(Flow::Failed(failure.error)),
+    }
+}
+
+/// A refused attempt at the agent, and how the process serving it ended.
+///
+/// The exit status is the evidence spec §21.3's fallback turns on, so it travels with the
+/// refusal rather than being thrown away where the refusal is built.
+struct AgentFailure {
+    error: ErrorValue,
+    exit: Option<std::process::ExitStatus>,
+}
+
+/// Connects to the far side's reduced provider set (spec §21.3, ADR-0351).
+///
+/// The far side is reached with one command per query — over ssh for the `ssh` transport, as a
+/// child of this process for `local`, which is the same path with the network removed.
+fn connect_agentless(
+    session: &mut Session,
+    host: &str,
+    transport: &str,
+) -> Eval<crate::session::LinkConnection> {
+    let far_side: std::sync::Arc<dyn ono_remote::FarSide> = match transport {
+        "ssh" => {
+            let mut target = ono_remote::SshTarget::new(host);
+            if let Some(config) = session
+                .host_sources()
+                .ssh_config
+                .filter(|path| path.is_file())
+            {
+                target = target.with_config(config);
+            }
+            std::sync::Arc::new(ono_remote::SshFarSide::new(target))
+        }
+        "local" => std::sync::Arc::new(ono_remote::LocalFarSide),
+        other => return Err(Flow::Failed(unknown_transport(other))),
+    };
+
+    // What the shell would have been able to ask an agent, which is what the reduced set is
+    // measured against: every one of these is mounted, and the ones without a strategy refuse
+    // by name rather than answering nothing (spec §21.3, §35.3).
+    let served = agent_targets(session);
+    let served: Vec<&str> = served.iter().map(String::as_str).collect();
+    let link = ono_remote::AgentlessLink::open(host, far_side, &served).map_err(Flow::Failed)?;
+
+    let mut registry = ono_provider_api::ProviderRegistry::new();
+    registry.register(std::sync::Arc::new(
+        crate::session_provider::SessionProvider::session_facts(
+            std::sync::Arc::clone(session.tables()),
+            session.host_sources(),
+        ),
+    ));
+    link.register_into(&mut registry);
+    Ok(crate::session::LinkConnection {
+        far_end: crate::session::FarEnd::Agentless(link),
+        registry: std::sync::Arc::new(registry),
+        agent: None,
+    })
+}
+
+/// The targets this shell could ask an agent about: its own provider vocabulary, minus the
+/// session's own facts, which are never observations of a machine (spec §14.4, ADR-0269).
+fn agent_targets(session: &mut Session) -> Vec<String> {
+    let mut targets: Vec<String> = Vec::new();
+    for provider in session.providers().providers() {
+        for target in provider.targets() {
+            let target = (*target).to_owned();
+            if crate::session_provider::SESSION_TARGETS.contains(&target.as_str()) {
+                continue;
+            }
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+    }
+    targets
+}
+
+/// The refusal for a transport word `ono.link/1` does not define.
+fn unknown_transport(other: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::ResolveTargetNotFound,
+        format!("no transport answers to `{other}`"),
+    )
+    .with_help("the transports are `ssh` and `local` (ono.link/1)")
+}
+
+/// Connects to the Ono agent of spec §21.4 over `transport`.
+fn connect_agent(
+    session: &mut Session,
+    host: &str,
+    transport: &str,
+    timeout: Option<std::time::Duration>,
+) -> Result<crate::session::LinkConnection, AgentFailure> {
     let command = match transport {
         // The agent over OpenSSH, which also did the authenticating (ADR-0037).
         "ssh" => {
@@ -682,21 +790,19 @@ pub fn establish(
             command
         }
         other => {
-            return Err(Flow::Failed(
-                ErrorValue::new(
-                    ErrorCode::ResolveTargetNotFound,
-                    format!("no transport answers to `{other}`"),
-                )
-                .with_help("the transports are `ssh` and `local` (ono.link/1)"),
-            ));
+            return Err(AgentFailure {
+                error: unknown_transport(other),
+                exit: None,
+            });
         }
     };
 
-    let runtime = session.runtime().ok_or_else(|| {
-        Flow::Failed(ErrorValue::new(
+    let runtime = session.runtime().ok_or_else(|| AgentFailure {
+        error: ErrorValue::new(
             ErrorCode::IoPermissionDenied,
             "the operating system refused to start the runtime",
-        ))
+        ),
+        exit: None,
     })?;
 
     let schemas = std::sync::Arc::new(ono_value::builtin_schemas().clone());
@@ -733,10 +839,16 @@ pub fn establish(
         Ok(link) => link,
         Err(refusal) => {
             // The child was already started; a handshake that failed must not leave it behind.
-            if let Some(agent) = &agent {
-                runtime.block_on(agent.end(crate::session::AGENT_GRACE));
-            }
-            return Err(Flow::Failed(refusal));
+            // How it ended is the evidence spec §21.3's fallback turns on, so it is kept: a
+            // shell that could not find `ono` over there exits 127, and that is a reduced link,
+            // not a failure (ADR-0352).
+            let exit = agent
+                .as_ref()
+                .and_then(|agent| runtime.block_on(agent.end(crate::session::AGENT_GRACE)));
+            return Err(AgentFailure {
+                error: refusal,
+                exit,
+            });
         }
     };
 
@@ -753,7 +865,7 @@ pub fn establish(
     ));
     link.register_into(&mut registry);
     Ok(crate::session::LinkConnection {
-        link,
+        far_end: crate::session::FarEnd::Agent(link),
         registry: std::sync::Arc::new(registry),
         agent,
     })

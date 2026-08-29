@@ -34,6 +34,7 @@ mod transport;
 pub use agent::{AgentConfig, agent_main, serve_registry};
 pub use agentless::{
     AGENTLESS_PROVIDER, AgentlessLink, AgentlessProvider, FarSide, LocalFarSide, SshFarSide,
+    far_side_lacks_agent,
 };
 pub use client::{RemoteLink, RemoteProvider};
 pub use retag::retag_value;
