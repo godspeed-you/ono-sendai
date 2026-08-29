@@ -1,0 +1,1 @@
+let v = {a: 20, b: 512MiB, c: 7d, d: 95%, e: 0x1f, f: 1.5, g: "a\q", h: 'raw', i: /re/i}

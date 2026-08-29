@@ -781,6 +781,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ono-fuzz"
+version = "0.3.0"
+dependencies = [
+ "bytes",
+ "ono-kuang-protocol",
+ "ono-parser",
+ "ono-protocol",
+ "ono-provider-linux",
+ "ono-provider-netlink",
+ "ono-testkit",
+ "ono-value",
+ "sha2",
+]
+
+[[package]]
 name = "ono-graph"
 version = "0.3.0"
 dependencies = [

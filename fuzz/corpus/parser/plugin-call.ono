@@ -1,0 +1,1 @@
+load plugin dev.example.echo --grant clock.read; echo:clock | to json

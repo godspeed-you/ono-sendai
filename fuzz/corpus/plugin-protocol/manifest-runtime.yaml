@@ -1,0 +1,24 @@
+format: kuang-package/1
+package:
+  id: dev.example.echo
+  name: echo
+  version: 0.1.0
+  description: Emits what it is asked to emit.
+  publisher: dev.example
+  license: MIT
+compatibility:
+  kuang_api: ">=11.1 <12"
+  ono_language: ">=0.2"
+  platforms: [linux-amd64, linux-arm64]
+runtime:
+  kind: native-process
+  entry: runtime/echo
+  memory_max: 64MiB
+  cpu_budget: interactive
+  startup: lazy
+roles: [provider]
+capabilities:
+  optional:
+    - clock.read
+network:
+  outbound: none

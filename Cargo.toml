@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "xtask"]
+# `fuzz` is a member so the gate compiles, lints and documents it like everything else:
+# a fuzz target nothing builds is a check that never runs (ADR-0313).
+members = ["crates/*", "fuzz", "xtask"]
 
 [workspace.package]
 version = "0.3.0"

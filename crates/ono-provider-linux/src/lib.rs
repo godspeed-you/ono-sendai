@@ -64,6 +64,30 @@ use std::sync::Arc;
 
 use ono_provider_api::ProviderRegistry;
 
+/// The pure text decoders of the kernel and system interfaces this crate reads.
+///
+/// Spec §35.6 requires the procfs decoders to be fuzzed, and a decoder a fuzzer cannot call is a
+/// decoder nothing fuzzes: reaching these through a provider means writing a directory tree and
+/// driving an async runtime for every input. They are pure functions from the bytes the kernel
+/// or the administrator wrote to a struct, each with a contract of its own, and they are exposed
+/// here so that contract can be exercised directly (ADR-0313 §5).
+///
+/// ```
+/// let stat = ono_provider_linux::decoders::parse_stat(
+///     "4419 ((weird) name) S 1 0 0 0 -1 4194304 0 0 0 0 1 2 0 0 20 0 3 0 100 4096 64",
+/// )
+/// .expect("a `/proc/<pid>/stat` line");
+/// // The executable name may contain spaces and parentheses, so the split is on the last `)`.
+/// assert_eq!(stat.comm, "(weird) name");
+/// assert_eq!(stat.state, 'S');
+/// ```
+pub mod decoders {
+    pub use crate::procfs::{
+        ProcStat, parse_cmdline, parse_stat, parse_status_ids, service_unit, state_name,
+    };
+    pub use crate::storage::{MountDefinition, MountInfo, parse_fstab, parse_mountinfo};
+}
+
 pub use account_tools::AccountCommand;
 pub use accounts::{Accounts, GroupAccount, NSS_TIMEOUT, NssAccounts, UserAccount};
 pub use device::DeviceProvider;

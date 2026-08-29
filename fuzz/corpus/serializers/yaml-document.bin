@@ -1,0 +1,8 @@
+---
+- &a one
+- *a
+- !!str 2
+- |
+  block
+- >
+  folded

@@ -216,11 +216,23 @@ of processes and paths, slow NSS, high-latency links, huge stdout, unbounded str
       §17.2); and the active remote target replaces `local` in the prompt entirely
       (`049-remote-link`, §14.4).
 - [x] Fuzzers run clean over parser, serializers, remote protocol, plugin protocol and the
-      procfs/netlink decoders — seeded and deterministic per AGENTS.md §11:
-      `ono-parser/tests/robustness.rs` (corpus + hostile walls), `ono-value/tests/codec_fuzzing.rs`,
-      `ono-protocol/tests/{fuzz_protocol,framing}.rs` (length checked before allocation),
+      procfs/netlink decoders — spec §35.6's five areas, one target each, in `fuzz/`
+      (`ono_fuzz::TARGETS`, ADR-0313). Each is a function from arbitrary bytes that must return
+      without panicking; a mutation engine drives them from a committed seed corpus, a bounded
+      run of 400 iterations per target is a step of `scripts/gate.sh`, and every past finding is
+      a committed artifact that `fuzz/tests/corpus.rs` replays on every `cargo test --workspace`.
+      `fuzz/tests/corpus.rs::should_have_one_target_for_every_area_the_specification_names`
+      keeps the list from drifting from §35.6, and
+      `should_find_a_planted_panic_and_write_it_where_it_can_be_reproduced` keeps the harness
+      itself from going quietly deaf. The first campaigns found three defects and fixed them
+      (two parser stack overflows, one quadratic YAML refusal); the fourth is open and named in
+      ADR-0313. The bounded run finds panics, not proofs of absence — ADR-0313 §2 says what it
+      cannot do and what would lift it. The seeded property and robustness suites stay as they
+      are and cover a different thing: `ono-parser/tests/robustness.rs`,
+      `ono-value/tests/codec_fuzzing.rs`, `ono-protocol/tests/{fuzz_protocol,framing}.rs`,
       the kuang conformance garbage/oversize/misframe cases, and
-      `ono-provider-netlink/tests/malformed_messages.rs`.
+      `ono-provider-netlink/tests/malformed_messages.rs` assert *which* answer a hostile input
+      gets, which a fuzz target cannot.
 - [x] The threat model of spec section 49 has a test for each stated risk — the T1–T15 table of
       ADR-0245, which supersedes ADR-0015 by replacing every row's stated *intention* with the
       name of a test function that exists, runs in the gate and is not ignored (T1/T9 render

@@ -1,0 +1,1 @@
+ls -la > out.txt 2> err.txt; cat < in.txt | head -3 2>&1
