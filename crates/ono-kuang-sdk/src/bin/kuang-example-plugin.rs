@@ -422,6 +422,20 @@ fn misbehave(mode: Mode) {
                             .unwrap_or(serde_json::Value::Null),
                         };
                         let _ = ono_kuang_protocol::write_frame(&mut writer, &request, limits);
+                        // The invocation is then finished normally. Under `block-upstream` the
+                        // host has already quarantined the instance and never reads this; under
+                        // every other overflow policy of spec §31.15 the stream survives the
+                        // overrun, and a fixture that never ended would hang rather than say so.
+                        let done = Envelope::Response {
+                            seq,
+                            result: serde_json::to_value(InvokeResult {
+                                status: InvokeStatus::Completed,
+                                error: None,
+                            })
+                            .ok(),
+                            error: None,
+                        };
+                        let _ = ono_kuang_protocol::write_frame(&mut writer, &done, limits);
                     }
                     Mode::Garbage => {
                         // A well-formed length declaring a payload that is not an envelope.

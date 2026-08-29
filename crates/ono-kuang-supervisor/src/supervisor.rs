@@ -11,9 +11,10 @@ use ono_kuang_protocol::{
     CommandContribution, DemandParams, EmitParams, EmitResult, Enforcement, Envelope,
     FilesystemReadParams, FilesystemReadResult, FrameError, FrameLimits, HOST_API, Hello,
     InitParams, InitResult, InvokeParams, InvokeResult, InvokeStatus, KuangError, KuangErrorCode,
-    Lease, Lifecycle, Manifest, PACKAGE_FORMAT, PluginContract, PluginState, ProbeResult,
-    QueryParams, RequestOnceParams, ShutdownParams, ShutdownReason, StateGetResult, StateKeyParams,
-    StateSetParams, TargetContribution, VersionRange, WireError, decode_payload, method,
+    Lease, Lifecycle, Manifest, OverflowPolicy, PACKAGE_FORMAT, PluginContract, PluginState,
+    ProbeResult, QueryParams, RequestOnceParams, ShutdownParams, ShutdownReason, StateGetResult,
+    StateKeyParams, StateSetParams, TargetContribution, VersionRange, WireError, decode_payload,
+    method,
 };
 use ono_value::{SchemaRegistry, Value, from_json, to_json};
 use serde_json::{Map as JsonMap, Value as Json, json};
@@ -1416,24 +1417,67 @@ impl Actor {
     }
 
     async fn host_emit(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
-        let emit: EmitParams = Self::parse_params(params)?;
-        let Some(stream) = self.streams.get_mut(&emit.handle) else {
+        let mut emit: EmitParams = Self::parse_params(params)?;
+        let Some(stream) = self.streams.get(&emit.handle) else {
             return Err(protocol_violation(format!(
                 "an emission into handle {} which is not the plugin's to write",
                 emit.handle
             )));
         };
+        let (credit, cancelled) = (stream.credit, stream.cancelled);
         let count = u32::try_from(emit.values.len())
             .map_err(|_| protocol_violation("an emission too large to count"))?;
-        if count > stream.credit {
-            // Emitting beyond credit is a protocol violation, not a queue (spec §31.15).
-            return Err(protocol_violation(format!(
-                "an emission of {count} values against a credit of {}",
-                stream.credit
-            )));
+        if count > credit {
+            // §31.15: "When a plugin cannot keep up, policy can choose", and the choice is the
+            // one negotiated at load. Only `block-upstream` makes an overrun a protocol
+            // violation: under it the producer was told to wait and did not.
+            let window = credit as usize;
+            match self.contract.overflow {
+                OverflowPolicy::BlockUpstream => {
+                    return Err(protocol_violation(format!(
+                        "an emission of {count} values against a credit of {credit}"
+                    )));
+                }
+                OverflowPolicy::FailStream => {
+                    let error: WireError = KuangError::new(
+                        KuangErrorCode::RuntimeBackpressureFailure,
+                        format!(
+                            "the stream emitted {count} values against a credit of {credit}, and                              its overflow policy is `fail-stream`"
+                        ),
+                    )
+                    .with_help("spec §31.15: `fail-stream` ends the stream rather than lose data")
+                    .into();
+                    if let Some(stream) = self.streams.remove(&emit.handle) {
+                        let _ = stream.tx.send(StreamEvent::Failed(error.clone()));
+                    }
+                    // The producer is told too: it asked to emit and the emission did not
+                    // happen, which is exactly what an error reply says.
+                    self.reply_err(seq, error).await;
+                    return Ok(());
+                }
+                // Explicit only, never inferred: `negotiate` refuses it as a manifest
+                // preference, so it is here because host policy said so.
+                OverflowPolicy::DropNewest => emit.values.truncate(window),
+                OverflowPolicy::DropOldest => {
+                    let excess = emit.values.len() - window;
+                    emit.values.drain(..excess);
+                }
+                OverflowPolicy::Coalesce => {
+                    emit.values = coalesce_by_identity(std::mem::take(&mut emit.values));
+                    if emit.values.len() > window {
+                        let excess = emit.values.len() - window;
+                        emit.values.drain(..excess);
+                    }
+                }
+            }
+            let dropped = count - u32::try_from(emit.values.len()).unwrap_or(credit);
+            self.record_overflow(dropped);
         }
-        stream.credit -= count;
-        if stream.cancelled {
+        let kept = u32::try_from(emit.values.len()).unwrap_or(credit);
+        if let Some(stream) = self.streams.get_mut(&emit.handle) {
+            stream.credit = stream.credit.saturating_sub(kept);
+        }
+        if cancelled {
             // Emissions legitimately in flight after a cancel are dropped, not punished.
             self.reply_ok(
                 seq,
@@ -1489,6 +1533,26 @@ impl Actor {
         )
         .await;
         Ok(())
+    }
+
+    /// Records that an overrun cost the stream values, in the package's own structured log.
+    ///
+    /// §31.33's example is exactly this line — `warn event coalescing dropped=421
+    /// policy=coalesce` — and §2.17's rule applies: data the shell decided to lose is a fact the
+    /// operator has to be able to find, not an absence.
+    fn record_overflow(&mut self, dropped: u32) {
+        let policy = serde_json::to_value(self.contract.overflow)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        let mut fields = JsonMap::new();
+        fields.insert("dropped".to_owned(), Json::from(dropped));
+        fields.insert("policy".to_owned(), Json::String(policy));
+        lock(&self.shared).logs.push(AuditLogParams {
+            level: "warn".to_owned(),
+            message: "stream overflow".to_owned(),
+            fields,
+        });
     }
 
     async fn host_close(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
@@ -1844,4 +1908,35 @@ fn lease_expiry(now: &str) -> String {
         .ok()
         .and_then(|instant| instant.checked_add(jiff::Span::new().seconds(300)).ok())
         .map_or_else(|| now.to_owned(), |instant| instant.to_string())
+}
+
+/// Combines repeated updates by object identity, keeping the newest of each (spec §31.15).
+///
+/// "Requires the schema to declare one": a value whose JSON carries no identifiable key is left
+/// alone rather than folded into its neighbours, because collapsing two things that were never
+/// said to be the same object would lose data while claiming not to.
+fn coalesce_by_identity(values: Vec<Json>) -> Vec<Json> {
+    let mut newest: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut keep: Vec<bool> = vec![true; values.len()];
+    for (index, value) in values.iter().enumerate() {
+        let Some(identity) = coalescing_identity(value) else {
+            continue;
+        };
+        if let Some(previous) = newest.insert(identity, index) {
+            keep[previous] = false;
+        }
+    }
+    values
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(value, keep)| keep.then_some(value))
+        .collect()
+}
+
+/// The identity a coalescing policy folds by: the record's schema and its identity fields.
+fn coalescing_identity(value: &Json) -> Option<String> {
+    let object = value.as_object()?;
+    let schema = object.get("schema")?.as_str()?;
+    let identity = object.get("identity")?.as_object()?;
+    Some(format!("{schema}:{identity:?}"))
 }

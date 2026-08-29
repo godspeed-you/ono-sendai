@@ -19,7 +19,9 @@
 //!   `should_refuse_and_audit_a_path_outside_the_granted_scope`
 //! - cancellation behaviour → `should_stop_cleanly_when_the_host_cancels_a_stream`
 //! - backpressure behaviour → `should_deliver_everything_under_a_small_credit_window`,
-//!   `should_quarantine_a_plugin_that_emits_beyond_credit`
+//!   `should_quarantine_a_plugin_that_emits_beyond_credit`,
+//!   `should_end_the_stream_and_keep_the_instance_when_the_negotiated_overflow_fails_the_stream`,
+//!   `should_keep_the_oldest_values_and_drop_the_rest_when_the_overflow_drops_the_newest`
 //! - resource quota behaviour →
 //!   `should_refuse_a_state_write_beyond_quota_and_keep_state_intact`
 //! - protocol violations → `should_quarantine_a_plugin_that_breaks_framing`,
@@ -39,6 +41,14 @@ use ono_value::Value;
 use serde_json::{Map as JsonMap, Value as Json, json};
 
 const PLUGIN: &str = env!("CARGO_BIN_EXE_kuang-example-plugin");
+
+/// The same manifest with a declared overflow preference (spec §31.15).
+fn manifest_with_overflow(policy: &str) -> String {
+    manifest().replace(
+        "  startup: lazy",
+        &format!("  startup: lazy\n  overflow: {policy}"),
+    )
+}
 
 fn manifest() -> String {
     r#"
@@ -385,6 +395,79 @@ async fn should_quarantine_a_plugin_that_emits_beyond_credit() {
     );
     assert_eq!(plugin.state(), PluginState::Quarantined);
     assert!(plugin.quarantine_reason().is_some());
+}
+
+#[tokio::test]
+async fn should_end_the_stream_and_keep_the_instance_when_the_negotiated_overflow_fails_the_stream()
+{
+    // §31.15: `fail-stream` is "required for correctness-sensitive analyses" — it terminates the
+    // stream with `runtime.backpressure_failure` rather than lose data. Terminating the *package*
+    // instead is a different answer, and §31.34 says plugin failure degrades the plugin, not
+    // more than the plugin.
+    let plugin = TestHost::new(PLUGIN, &manifest_with_overflow("fail-stream"))
+        .args(&["--misbehave=flood"])
+        .load()
+        .await
+        .expect("the flood plugin loads; it misbehaves only when invoked");
+    let invocation = plugin
+        .invoke("dev.example.echo.command.flood", args(&[]))
+        .await
+        .expect("starts");
+    // The fixture speaks the wire directly and reports its own invocation status, so the host's
+    // answer to the overrun is the stream event and the instance's state — not a status the
+    // producer chose for itself.
+    let (events, _) = invocation.collect().await;
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Failed(error)
+                if error.name == "runtime.backpressure_failure")),
+        "§31.15: a `fail-stream` overrun ends the stream with its own condition, got {events:?}"
+    );
+    assert_ne!(
+        plugin.state(),
+        PluginState::Quarantined,
+        "§31.34: the overrun the package declared a policy for degrades the stream, not the package"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_keep_the_oldest_values_and_drop_the_rest_when_the_overflow_drops_the_newest() {
+    // §31.15: the five policies are what "policy can choose" when a plugin cannot keep up, and a
+    // negotiated policy that decides nothing is not a choice. `drop-newest` is explicit only, so
+    // it can come from host policy and never from a manifest preference.
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .args(&["--misbehave=flood"])
+        .limits(HostLimits {
+            queue_depth: 4,
+            overflow: ono_kuang_protocol::OverflowPolicy::DropNewest,
+            ..HostLimits::default()
+        })
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke("dev.example.echo.command.flood", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(
+        values_of(&events),
+        vec![Value::Int(0), Value::Int(1), Value::Int(2), Value::Int(3)],
+        "§31.15: `drop-newest` keeps what fitted and drops what did not, got {events:?}"
+    );
+    assert_eq!(
+        result.status,
+        InvokeStatus::Completed,
+        "the stream is not failed by a policy that says values may be dropped"
+    );
+    assert_ne!(plugin.state(), PluginState::Quarantined);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
 }
 
 // --- resource quotas ---------------------------------------------------------------------------
