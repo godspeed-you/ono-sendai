@@ -85,6 +85,20 @@ impl CommandImpl for Look {
                 now,
             )
             .await?;
+            // §10.3: a tombstone shows what took the old object's place. The candidate cannot be
+            // known when the object ends — no source that reached it has been observed since — so
+            // it is asked for when the tombstone is *rendered*, and therefore after the
+            // observation that discovers the place has gone (ADR-0273).
+            let here = session.current_place().clone();
+            if session.tombstone_of(&here, now).is_some() {
+                crate::spatial::relations::resolve_replacement(
+                    ctx.providers(),
+                    &mut session,
+                    &here,
+                    now,
+                )
+                .await;
+            }
             // §25.4: where no event stream answers, a change is the difference between two
             // observations — and there is one only from the second `look --changes` of a session
             // onwards. The baseline is taken whether or not the caller asked, so the *next* ask

@@ -215,6 +215,9 @@ pub fn configured_flag_or(key: &str, fallback: bool) -> bool {
     }
 }
 
+/// How many of the sources that reached a dead object are asked what took its place (§32.1).
+const INBOUND_SOURCES: usize = 8;
+
 impl SpatialSessionState {
     /// A fresh session: standing at the local SYSTEM root, with an empty trail (§46.1).
     #[must_use]
@@ -465,12 +468,31 @@ impl SpatialSessionState {
         let Some(entry) = self.index.get(id) else {
             return;
         };
-        let tombstone = Tombstone::new(
+        // §10.3's `replacement:` cannot be answered here — no source of a relation that reached
+        // this object has been observed since — but *which sources to ask* is known right now and
+        // is about to be forgotten with the edges. Which of them can answer is decided when the
+        // question is put, not here (ADR-0273).
+        let mut tombstone = Tombstone::new(
             id.clone(),
             entry.object().object_type(),
             entry.object().display_name(),
             at,
         );
+        let mut inbound: Vec<(SpatialId, ono_spatial_core::RelationType)> = entry
+            .edges()
+            .iter()
+            .filter(|edge| edge.target() == id)
+            .map(|edge| (edge.source().clone(), *edge.relation()))
+            .collect();
+        inbound.sort_by(|left, right| {
+            (left.0.to_string(), left.1.as_str().to_owned())
+                .cmp(&(right.0.to_string(), right.1.as_str().to_owned()))
+        });
+        inbound.dedup();
+        // A place a hundred sources reached is not a place with a hundred questions worth
+        // asking; §32.1 bounds what a view may spend, and this is spent on a render.
+        inbound.truncate(INBOUND_SOURCES);
+        tombstone = tombstone.reached_from(inbound);
         self.tombstones.record(tombstone);
         self.index.mark_ended(id, at);
         self.index.forget_edges(id);
@@ -482,6 +504,18 @@ impl SpatialSessionState {
     pub fn liveness(&self, id: &SpatialId, now: Timestamp) -> Liveness {
         self.tombstones
             .resolve(id, !self.tombstones.recorded(id), now)
+    }
+
+    /// Names the object that took a dead place's, once one has been identified (§10.3).
+    ///
+    /// Answers whether the tombstone was there to fill.
+    pub fn fill_replacement(
+        &mut self,
+        id: &SpatialId,
+        replacement: SpatialId,
+        via: ono_spatial_core::RelationType,
+    ) -> bool {
+        self.tombstones.fill_replacement(id, replacement, via)
     }
 
     /// The tombstone of `id`, where one is still held (§10.3).

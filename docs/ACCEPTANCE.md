@@ -892,8 +892,9 @@ the referee.
       the entered service process is restarted, the old place becomes a tombstone that says what
       state it is in and how long ago, the service place stays stable and shows the replacement
       process, the trail record survives, and a movement onto the tombstone is refused. The
-      tombstone's own `replacement:` candidate of §10.3's example is not computed and answers
-      `null`; `docs/STATE.md` → *Next up* carries it with its exit test.
+      tombstone names its `replacement:` candidate and the relation that identifies it — asked of
+      the source that reached the dead object, when the tombstone is rendered, and offered only
+      where that source now reaches exactly one live object of the same kind (ADR-0273).
 - [x] **§44.8 permission honesty** — `097-spatial-permission-honesty.case` (12 assertions): a
       non-root user investigating a restricted process sees `permission_denied` and `unknown` as
       distinct from empty, no escalation is attempted, and a map of a denied place shows the

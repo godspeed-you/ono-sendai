@@ -275,3 +275,68 @@ fn should_stop_calling_a_place_gone_once_a_provider_answers_for_it_again() {
         Liveness::Live
     );
 }
+
+#[test]
+fn should_keep_the_source_that_reached_a_place_so_a_candidate_can_be_asked_for_later() {
+    // §10.3's `replacement:` cannot be answered when the object ends — the source of the relation
+    // that reached it has not been observed since. What is known then is *which source to ask*,
+    // and a tombstone that forgot it could never answer at all (ADR-0273).
+    let dead = object(SpatialType::Process, "gone");
+    let unit = object(SpatialType::Service, "fixture-web.service");
+    let via = RelationType::new("service.controls_process").expect("a declared relation");
+    let tombstone = Tombstone::new(dead.clone(), SpatialType::Process, "web", at(0))
+        .reached_from([(unit.clone(), via)]);
+
+    assert_eq!(tombstone.reached_by(), &[(unit, via)]);
+    assert_eq!(
+        tombstone.replacement(),
+        None,
+        "§2.17: nothing has been observed yet, so there is no candidate to name"
+    );
+}
+
+#[test]
+fn should_name_the_replacement_once_one_has_been_identified() {
+    let dead = object(SpatialType::Process, "gone");
+    let alive = object(SpatialType::Process, "new");
+    let via = RelationType::new("service.controls_process").expect("a declared relation");
+    let mut registry = TombstoneRegistry::new(Span::new().minutes(1));
+    registry.record(Tombstone::new(
+        dead.clone(),
+        SpatialType::Process,
+        "web",
+        at(0),
+    ));
+
+    assert!(registry.fill_replacement(&dead, alive.clone(), via));
+    let tombstone = registry.get(&dead, at(1)).expect("the tombstone is held");
+    assert_eq!(tombstone.replacement(), Some(&alive));
+    assert_eq!(tombstone.replacement_via(), Some(&via));
+}
+
+#[test]
+fn should_keep_the_first_candidate_rather_than_revising_it() {
+    // §53: the replacement is a candidate for continuity, never a claim that the two objects are
+    // one. A candidate that changed under the reader would be worse than none at all.
+    let dead = object(SpatialType::Process, "gone");
+    let first = object(SpatialType::Process, "first");
+    let second = object(SpatialType::Process, "second");
+    let via = RelationType::new("service.controls_process").expect("a declared relation");
+    let mut registry = TombstoneRegistry::new(Span::new().minutes(1));
+    registry.record(Tombstone::new(
+        dead.clone(),
+        SpatialType::Process,
+        "web",
+        at(0),
+    ));
+    assert!(registry.fill_replacement(&dead, first.clone(), via));
+
+    assert!(!registry.fill_replacement(&dead, second, via));
+    assert_eq!(
+        registry
+            .get(&dead, at(1))
+            .expect("the tombstone is held")
+            .replacement(),
+        Some(&first)
+    );
+}

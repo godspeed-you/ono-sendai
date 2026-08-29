@@ -79,7 +79,11 @@ run: |
   # session state too, so everything about the dead place is asked of the session that watched it
   # die — which is also the situation §44.7 describes. A fresh shell has never seen the object and
   # answers `spatial.not_found`, which is the right answer to a different question.
-  ono -c "$SERVICE; follow process $OLD_MAIN; bash /tmp/spatial/restart.sh; \
+  # ADR-0193: the spatial layer never runs a tool, so on this container — which has no systemd —
+  # the service manager is only ever observed from the operator's own command line. A real host
+  # answers for a unit through the systemd provider and needs no such line; here the restart is
+  # followed by the `systemctl` the operator would type anyway.
+  ono -c "$SERVICE; follow process $OLD_MAIN; bash /tmp/spatial/restart.sh; $OBSERVE; \
           echo ---PLACE---; look --json; trail --json; \
           echo ---TOMB---; enter process $OLD_MAIN; look --json; \
           echo ---FOLLOW---; follow socket" > /tmp/during-restart.out 2>&1
@@ -93,16 +97,18 @@ run: |
   prove 44.7d "the place the shell is standing in becomes a tombstone, not an error page (§10.3)" \
     'tr "A-Z" "a-z" < /tmp/after-restart.json | grep -qE "tombstone|exited|gone"'
   # §10.3's two MUSTs are that a tombstone is visually distinct and refuses actions that need a
-  # live object; its example also shows a `replacement:` line, and the field is on the record and
-  # answers `null`. It is honest — §2.17 makes null the word for a candidate nobody identified —
-  # and it is not yet computed: at the moment the old process ends, the unit that controlled it
-  # has not been observed again, so there is nothing in the index to name. `docs/STATE.md`
-  # carries it under *Next up* with its own exit test. What the tombstone does say now is what it
-  # is and when, which is what tells it from a place that never existed (§40).
-  prove 44.7e "the tombstone says what it is and how long ago, distinctly (§10.3, §40)" \
+  # live object; its example also shows a `replacement:` line. The candidate cannot be known when
+  # the process ends — the unit that controlled it has not been observed since — so it is asked
+  # for when the tombstone is *rendered*, of that one unit, about the one relation that reached
+  # the dead process (ADR-0273). A candidate is offered only where the unit reaches exactly one
+  # live process now; a choice among several would be a guess (§2.17, §53).
+  prove 44.7e "the tombstone says what it is, how long ago, and what took its place (§10.3, §40)" \
     'tr "," "\n" < /tmp/after-restart.json | grep -qE "\"state\":\"(exited|stopped|gone)[^\"]* ago\"" &&
      grep -qF "\"removed_at\"" /tmp/after-restart.json &&
-     grep -qF "\"replacement\"" /tmp/after-restart.json'
+     new=$(place "enter process $NEW_MAIN" "look --json | from json | select place.spatial_id | to text" | tail -1);
+     test -n "$new" &&
+     grep -qF "\"replacement\":\"$new\"" /tmp/after-restart.json &&
+     grep -qF "\"replacement_via\":\"service.controls_process\"" /tmp/after-restart.json'
   prove 44.7f "the trail keeps the original record of where the user actually went (§20.3)" \
     'grep -qF "$OLD_MAIN" /tmp/after-restart.json'
 

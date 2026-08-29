@@ -23,6 +23,7 @@ pub struct Tombstone {
     removed_at: Timestamp,
     replacement: Option<SpatialId>,
     replacement_via: Option<RelationType>,
+    reached_from: Vec<(SpatialId, RelationType)>,
 }
 
 impl Tombstone {
@@ -41,7 +42,29 @@ impl Tombstone {
             removed_at,
             replacement: None,
             replacement_via: None,
+            reached_from: Vec::new(),
         }
+    }
+
+    /// Records the places that reached this object, each with the relation it reached it by.
+    ///
+    /// §10.3's `replacement:` cannot be answered when the object ends: no source of a relation
+    /// that reached it has been observed since. What *is* known then is which sources to ask, and
+    /// that is what this keeps — so a later render can put the question to one provider about one
+    /// object, never to a whole target (§32.1, §53).
+    #[must_use]
+    pub fn reached_from(
+        mut self,
+        sources: impl IntoIterator<Item = (SpatialId, RelationType)>,
+    ) -> Self {
+        self.reached_from = sources.into_iter().collect();
+        self
+    }
+
+    /// The sources and relations that reached this object while it was alive.
+    #[must_use]
+    pub fn reached_by(&self) -> &[(SpatialId, RelationType)] {
+        &self.reached_from
     }
 
     /// Records the object that took the old one's place, and the relation that identifies it.
@@ -197,6 +220,28 @@ impl TombstoneRegistry {
     #[must_use]
     pub fn recorded(&self, id: &SpatialId) -> bool {
         self.entries.contains_key(id)
+    }
+
+    /// Names the object that took `id`'s place, once one has been identified (§10.3).
+    ///
+    /// Answers whether a tombstone was there to fill. A candidate is recorded once and not
+    /// revised: §53 makes it a candidate rather than a claim, and a candidate that changed under
+    /// the reader would be worse than none.
+    pub fn fill_replacement(
+        &mut self,
+        id: &SpatialId,
+        replacement: SpatialId,
+        via: RelationType,
+    ) -> bool {
+        let Some(tombstone) = self.entries.get_mut(id) else {
+            return false;
+        };
+        if tombstone.replacement.is_some() {
+            return false;
+        }
+        tombstone.replacement = Some(replacement);
+        tombstone.replacement_via = Some(via);
+        true
     }
 
     /// Drops the tombstone of `id`, because a provider answered for it again.

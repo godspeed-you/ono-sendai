@@ -616,3 +616,86 @@ pub fn edges_by_label(
 pub fn known_labels() -> BTreeSet<&'static str> {
     relation::labels().into_iter().collect()
 }
+
+/// Asks the one source that reached a dead place what it reaches now (spec v0.4 §10.3, §53).
+///
+/// §10.3's example shows a tombstone naming a `replacement:`, and it cannot be answered when the
+/// object ends: the unit that controlled the process has not been observed since, so the index
+/// holds no candidate to name. What the tombstone kept instead is which source to ask
+/// ([`ono_spatial_core::Tombstone::reached_by`]), and this is that question — put to one provider
+/// about one object, never as an enumeration (§32.1).
+///
+/// A candidate is offered only when the source reaches **exactly one** live object of the same
+/// kind by the same relation. A choice among several is a guess, and §2.17 and §53 both refuse
+/// one: the replacement is a candidate for continuity, never a claim that the two are one object.
+///
+/// Answers whether a candidate was recorded.
+pub async fn resolve_replacement(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    id: &SpatialId,
+    now: Timestamp,
+) -> bool {
+    let Some(tombstone) = session.tombstone_of(id, now) else {
+        return false;
+    };
+    if tombstone.replacement().is_some() {
+        return false;
+    }
+    let kind = tombstone.object_type();
+    let asked: Vec<(SpatialId, ono_spatial_core::RelationType)> = tombstone.reached_by().to_vec();
+    if asked.is_empty() {
+        return false;
+    }
+
+    let mut answers: Vec<(SpatialId, ono_spatial_core::RelationType)> = Vec::new();
+    for (source, via) in asked {
+        // The source is asked about itself, along the one relation that reached the dead place.
+        let interest = Interest::here().along(Some(via.as_str().to_owned()));
+        if observe(providers, session, &source, &interest, now)
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        let Some(entry) = session.index().get(&source) else {
+            continue;
+        };
+        let mut candidates: Vec<SpatialId> = entry
+            .edges()
+            .iter()
+            .filter(|edge| edge.relation() == &via)
+            .filter_map(|edge| edge.other_end(&source))
+            .filter(|other| *other != id)
+            .cloned()
+            .collect();
+        candidates.sort_by_key(ToString::to_string);
+        candidates.dedup();
+        candidates.retain(|candidate| {
+            session
+                .index()
+                .get(candidate)
+                .is_some_and(|entry| entry.object().object_type() == kind)
+                // The source is authoritative about what it reaches now, and this session may
+                // still hold a tombstone for something it reached before; a dead candidate is
+                // not one.
+                && !matches!(
+                    session.liveness(candidate, now),
+                    ono_spatial_core::Liveness::Tombstoned(_)
+                )
+        });
+        // A source that now reaches several objects of the dead one's kind has not identified a
+        // successor — it has a list. §2.17 and §53: a choice among several is a guess.
+        if let [candidate] = candidates.as_slice() {
+            answers.push((candidate.clone(), via));
+        }
+    }
+    answers.sort_by_key(|(candidate, via)| (candidate.to_string(), via.as_str().to_owned()));
+    answers.dedup_by_key(|(candidate, _)| candidate.to_string());
+    let [(candidate, via)] = answers.as_slice() else {
+        // Either nothing answered, or two sources named different successors — and two answers
+        // to "what took its place" is not one candidate.
+        return false;
+    };
+    session.fill_replacement(id, candidate.clone(), *via)
+}
