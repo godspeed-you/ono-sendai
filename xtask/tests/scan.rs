@@ -131,3 +131,69 @@ fn should_report_this_repository_as_free_of_unfinished_work_when_scanned() {
             .join("\n")
     );
 }
+
+// --- what the scan is allowed not to look at (B-harn-2) -----------------------------------------
+
+#[test]
+fn should_reject_a_placeholder_in_an_xtask_test_that_is_not_the_scanners_own() {
+    // Only `xtask/tests/scan.rs` has to name the markers, because it asserts on them. Excusing
+    // the whole directory hides a `todo!()` in any other xtask test from the gate.
+    let repo = fixture(&[("xtask/tests/packaging.rs", "fn f() -> u8 { todo!() }\n")]);
+    let problems = check_unfinished_work(repo.path(), "");
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0]
+            .location
+            .starts_with("xtask/tests/packaging.rs:1")
+    );
+}
+
+#[test]
+fn should_accept_the_markers_the_scanners_own_test_has_to_name() {
+    // The two files that necessarily quote every marker: the scanner and the test that drives it.
+    let repo = fixture(&[
+        ("xtask/tests/scan.rs", "// TODO: \"todo!(\" is the marker\n"),
+        ("xtask/src/scan.rs", "const M: &str = \"todo!(\";\n"),
+    ]);
+    assert_eq!(check_unfinished_work(repo.path(), ""), Vec::new());
+}
+
+// --- which trees the scan walks (B-harn-3) ------------------------------------------------------
+
+#[test]
+fn should_scan_every_rust_tree_the_repository_layout_allows() {
+    // AGENTS.md §2 puts cross-crate suites in `tests/` and spec §35.6 puts fuzz targets in
+    // `fuzz/`. Neither exists yet, so nothing proves the scan would look there — and a scan that
+    // silently stops covering a tree the moment it is created is the same dead guard as a check
+    // that is never called.
+    for tree in [
+        "tests/pipeline.rs",
+        "fuzz/fuzz_targets/parser.rs",
+        "examples/demo.rs",
+    ] {
+        let repo = fixture(&[(tree, "fn f() -> u8 { todo!() }\n")]);
+        let problems = check_unfinished_work(repo.path(), "");
+        assert_eq!(problems.len(), 1, "`{tree}` is unscanned: got {problems:?}");
+        assert!(problems[0].location.starts_with(tree), "got {problems:?}");
+    }
+}
+
+#[test]
+fn should_report_a_rust_tree_the_scan_does_not_walk() {
+    // The list of trees is fixed, so the moment Rust appears outside it the scan is quietly
+    // partial. Saying so is the only thing that keeps the list honest.
+    let repo = fixture(&[("benches/parse.rs", "fn f() {}\n")]);
+    let problems = check_unfinished_work(repo.path(), "");
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert_eq!(problems[0].location, "benches");
+    assert!(
+        problems[0].detail.contains("does not walk"),
+        "got {problems:?}"
+    );
+}
+
+#[test]
+fn should_not_report_a_directory_that_holds_no_rust() {
+    let repo = fixture(&[("dist/ono_0.3.0_amd64.deb", "not rust\n")]);
+    assert_eq!(check_unfinished_work(repo.path(), ""), Vec::new());
+}

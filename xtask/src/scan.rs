@@ -45,7 +45,7 @@ const TRACKED_MARKERS: &[&str] = &["TODO", "FIXME", "XXX", "HACK"];
 /// in is named somewhere in that board, which is the cheapest check that cannot be satisfied by
 /// writing the word "TODO" into the board and nothing else.
 pub fn check_unfinished_work(root: &Path, state: &str) -> Vec<Problem> {
-    let mut problems = Vec::new();
+    let mut problems = unwalked_rust_trees(root);
 
     for file in rust_sources(root) {
         let relative = relative(root, &file);
@@ -152,19 +152,62 @@ fn comment_contains_marker(line: &str, marker: &str) -> bool {
         .is_none_or(|next| !next.is_alphanumeric() && next != '_')
 }
 
-/// This file necessarily names every marker it looks for.
+/// The two files that necessarily name every marker: the scanner, and the test that drives it.
+///
+/// Excusing all of `xtask/tests/` would hide a `todo!()` in any other xtask test from the gate,
+/// which is the one thing the scan exists to prevent.
 fn is_scanner_source(relative: &str) -> bool {
-    relative.starts_with("xtask/src/scan.rs") || relative.starts_with("xtask/tests/")
+    relative == "xtask/src/scan.rs" || relative == "xtask/tests/scan.rs"
 }
 
-/// Every `.rs` file under `crates/` and `xtask/`, excluding build output.
+/// The top-level trees that hold Rust: the crates, the automation, and the three the repository
+/// layout of AGENTS.md §2 and spec §35.6 reserve for cross-crate suites, examples and fuzzing.
+const RUST_TREES: &[&str] = &["crates", "xtask", "tests", "examples", "fuzz"];
+
+/// Every `.rs` file under the trees of [`RUST_TREES`], excluding build output.
 fn rust_sources(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    for top in ["crates", "xtask", "tests", "examples", "fuzz"] {
+    for top in RUST_TREES {
         collect_rust(&root.join(top), &mut files);
     }
     files.sort();
     files
+}
+
+/// Reports a top-level directory that holds Rust the scan does not walk.
+///
+/// [`RUST_TREES`] is a fixed list, so a new tree — a `benches/`, a vendored crate — is scanned by
+/// nothing and nobody finds out. The scan cannot decide whether such a tree belongs in the list;
+/// it can insist that somebody decides.
+fn unwalked_rust_trees(root: &Path) -> Vec<Problem> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut problems = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || name == "target" || RUST_TREES.contains(&name.as_str()) {
+            continue;
+        }
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let mut found = Vec::new();
+        collect_rust(&entry.path(), &mut found);
+        if found.is_empty() {
+            continue;
+        }
+        problems.push(Problem::new(
+            name.clone(),
+            format!(
+                "`{name}/` holds Rust the unfinished-work scan does not walk, so a \
+                 `todo!()` there would reach a green tree. Add it to `RUST_TREES` in \
+                 xtask/src/scan.rs, or move the code under `crates/`"
+            ),
+        ));
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
 }
 
 fn collect_rust(dir: &Path, files: &mut Vec<PathBuf>) {
