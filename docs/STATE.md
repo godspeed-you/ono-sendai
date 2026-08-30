@@ -1460,6 +1460,17 @@ was the machine it raced, not a resolver. What proves nothing was dialled is the
 (`spatial.not_found`, never a resolve or connect failure); the budget is only the hang guard, and
 it is 60 s now.
 
+A fifth member, found by CI on 2026-08-30 and fixed the same day (ADR-0417):
+`spatial_navigation_missing.rs::should_stream_places_with_scope_and_provenance_when_find_searches_with_a_predicate`
+spawned a `SleepChild` and then asserted that `find place --where state == "running"` streams at
+least one place. The child it spawned sits in state S, and on an otherwise idle runner the
+sampling instant found zero processes in state R: run 33318207211 (attempt 1, commit `1cee6cb`,
+a README-only change) answered `[]`, attempt 2 of the same commit was green, and three local
+runs in a row were green too. The shell answered correctly both times; the test claimed a host
+premise it had never arranged. The premise is now established by the test itself — a
+`BusyChild` burns CPU for the seconds the test holds it, so a runnable process exists whenever
+the provider samples — and no assertion changed.
+
 
 ## Next up (ordered)
 

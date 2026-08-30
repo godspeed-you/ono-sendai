@@ -234,6 +234,32 @@ impl Drop for SleepChild {
     }
 }
 
+/// A child that burns CPU for as long as the test holds it, so the premise "at least one
+/// process on this host is in state `running`" is one the test establishes itself. A sleeping
+/// child sits in state S, and an otherwise idle CI runner has been observed answering a
+/// `state == running` search with an empty stream.
+struct BusyChild(Child);
+
+impl BusyChild {
+    fn spawn() -> Self {
+        let child = Command::new("sh")
+            .args(["-c", "while :; do :; done"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("`sh` is available on every test host");
+        Self(child)
+    }
+}
+
+impl Drop for BusyChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// A listening TCP socket this test process owns, and the port it listens on.
 fn listener() -> (TcpListener, u16) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
@@ -679,8 +705,11 @@ fn should_stream_places_with_scope_and_provenance_when_find_searches_with_a_pred
     // path/scope information to disambiguate identical names, and MUST come from the index and the
     // provider registries rather than from grepping rendered text. §27.4: a result that may come
     // from a cache carries its freshness/provenance. The predicate is spelled as an ordinary
-    // v0.2 expression — the reading recorded at the top of this file.
-    let _child = SleepChild::spawn();
+    // v0.2 expression — the reading recorded at the top of this file. The busy child
+    // establishes the premise the first assertion states: a sleeping child sits in state S,
+    // and an idle host can pass a sampling instant with zero processes in state R (seen on CI,
+    // run 33318207211, attempt 1; ADR-0417).
+    let _child = BusyChild::spawn();
     let run = ono("find place --where state == \"running\" | take 5 | to json");
     run.assert_success();
     let rows = rows(&run);
