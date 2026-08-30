@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use tokio::sync::mpsc;
+
 use ono_core::ErrorCode;
 use ono_pipeline::{Boundedness, PipelineConfig, StreamSink, ValueStream};
 use ono_provider_api::{
@@ -15,7 +17,7 @@ use ono_provider_api::{
 };
 use ono_value::{ErrorValue, RecordValue, Schema, Value};
 
-use crate::decoded::Decoded;
+use crate::decoded::{Decoded, Item};
 use crate::interface::{InterfaceNames, decode_interfaces};
 use crate::neighbor::decode_neighbors;
 use crate::owners::SocketOwners;
@@ -23,7 +25,9 @@ use crate::route::decode_routes;
 use crate::schema::{
     endpoint_schema, interface_schema, neighbor_schema, route_schema, socket_schema,
 };
-use crate::socket::{SocketProtocol, decode_inet_sockets, decode_unix_sockets};
+use crate::socket::{
+    SocketProtocol, decode_inet_sockets, decode_unix_sockets, inet_sockets, unix_sockets,
+};
 use crate::sys;
 use crate::transport::{
     NetlinkSocket, address_request, inet_diag_request, link_request, neighbour_request,
@@ -247,12 +251,32 @@ impl Provider for SocketProvider {
     }
 
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
-        stream(query.clone(), |query| {
-            read_sockets(
-                option_text(query, "protocol").as_deref(),
-                query.flag("process"),
-            )
-        })
+        let query = query.clone();
+        Ok(ValueStream::spawn(
+            PipelineConfig::new(),
+            Boundedness::Bounded,
+            move |sink| async move {
+                let (sender, mut batches) = mpsc::channel(1);
+                let reader = tokio::task::spawn_blocking(move || stream_sockets(&query, &sender));
+                'reading: while let Some(batch) = batches.recv().await {
+                    for item in batch {
+                        let sent = match item {
+                            Item::Record(record) => {
+                                sink.send(Value::Record(Arc::new(record))).await
+                            }
+                            Item::Failure(error) => sink.fail(error).await,
+                        };
+                        if sent.is_err() {
+                            break 'reading;
+                        }
+                    }
+                }
+                // Dropping the receiver is how the reader is told to stop: its next handover
+                // fails, and the dumps it has not issued yet are never asked for.
+                drop(batches);
+                let _ = reader.await;
+            },
+        ))
     }
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
@@ -267,6 +291,15 @@ impl Provider for SocketProvider {
         act_on_a_blocking_thread(move || crate::act::socket(&action)).await
     }
 }
+
+/// How many objects one handover from the socket reader to its consumer carries.
+///
+/// The handover is the backpressure. The channel holds a single batch, so the reader parks as
+/// soon as one is outstanding, and a pipeline that stops after the first object leaves at most
+/// one batch decoded and one dump issued behind it. Batching rather than sending record by
+/// record keeps the whole table cheap as well: `get socket | count` on a host with thousands
+/// pays one handover per batch (ADR-0418).
+const SOCKET_BATCH: usize = 64;
 
 /// `NETLINK_ROUTE` is readable by any user on any Linux; saying so requires opening it, because
 /// the alternative — assuming — is how a provider ends up returning an empty answer in a sandbox
@@ -598,6 +631,148 @@ fn read_neighbors() -> Result<Decoded, ErrorValue> {
     let names = InterfaceNames::from_links(&socket.dump(sys::RTM_GETLINK, &link_request())?);
     let bytes = socket.dump(sys::RTM_GETNEIGH, &neighbour_request())?;
     Ok(decode_neighbors(&bytes, &names))
+}
+
+/// Reads the socket table for `query` and sends what it finds, one object at a time.
+///
+/// The dumps are issued in order and each one is decoded message by message, so the work stops
+/// where the consumer does: `get socket | take 1` closes the channel after the first object, the
+/// next send fails, and the dumps behind it are never asked for (ADR-0418). That is also why
+/// failures travel in the order they were met rather than ahead of every object — a family this
+/// function never reached has not failed, and one it did reach is reported before anything read
+/// after it (spec §16.5).
+fn stream_sockets(query: &Query, sender: &mpsc::Sender<Vec<Item>>) {
+    let mut batch = Batch::new(sender);
+    let socket = match NetlinkSocket::open_diag() {
+        Ok(socket) => socket,
+        Err(error) => {
+            if batch.push(Item::Failure(error)) {
+                batch.flush();
+            }
+            return;
+        }
+    };
+
+    let mut owners = None;
+    if query.flag("process") {
+        match SocketOwners::from_proc() {
+            Ok(scanned) => owners = Some(scanned),
+            Err(error) => {
+                if !batch.push(Item::Failure(error)) {
+                    return;
+                }
+            }
+        }
+    }
+
+    let protocol = option_text(query, "protocol");
+    let protocol = protocol.as_deref();
+    let mut sent = 0;
+    for transport in [SocketProtocol::Tcp, SocketProtocol::Udp] {
+        if protocol.is_some_and(|wanted| wanted != transport.as_str()) {
+            continue;
+        }
+        for family in [sys::AF_INET, sys::AF_INET6] {
+            let request = inet_diag_request(family, transport.number());
+            match socket.dump(sys::SOCK_DIAG_BY_FAMILY, &request) {
+                Ok(bytes) => {
+                    let items = inet_sockets(&bytes, transport, owners.as_ref());
+                    if !collect(items, query, &mut batch, &mut sent) {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    if !batch.push(Item::Failure(error)) {
+                        return;
+                    }
+                }
+            }
+            if !batch.flush() {
+                return;
+            }
+        }
+    }
+
+    // A Unix socket has no remote endpoint — its peer is an inode, and `remote` is null on every
+    // record this crate builds for one — so it can never answer the `connection` target, and a
+    // dump nothing in the answer can come from is not worth asking the kernel for.
+    if protocol.is_none_or(|wanted| wanted == "unix") && query.target_name() != "connection" {
+        match socket.dump(sys::SOCK_DIAG_BY_FAMILY, &unix_diag_request()) {
+            Ok(bytes) => {
+                let items = unix_sockets(&bytes, owners.as_ref());
+                if !collect(items, query, &mut batch, &mut sent) {
+                    return;
+                }
+            }
+            Err(error) => {
+                if !batch.push(Item::Failure(error)) {
+                    return;
+                }
+            }
+        }
+    }
+    batch.flush();
+}
+
+/// Puts everything one dump decodes to into `batch`, answering whether the caller should keep
+/// going.
+///
+/// `sent` counts the objects that survived the query across every dump, because `--first` is a
+/// bound on the answer rather than on one address family.
+fn collect(
+    items: impl Iterator<Item = Item>,
+    query: &Query,
+    batch: &mut Batch<'_>,
+    sent: &mut usize,
+) -> bool {
+    for item in items {
+        if let Item::Record(record) = &item {
+            if !keep(record, query) {
+                continue;
+            }
+            if query.max().is_some_and(|max| *sent >= max) {
+                batch.flush();
+                return false;
+            }
+            *sent += 1;
+        }
+        if !batch.push(item) {
+            return false;
+        }
+    }
+    true
+}
+
+/// What the socket reader hands to its consumer, and the point at which it hands it over.
+struct Batch<'a> {
+    sender: &'a mpsc::Sender<Vec<Item>>,
+    items: Vec<Item>,
+}
+
+impl<'a> Batch<'a> {
+    fn new(sender: &'a mpsc::Sender<Vec<Item>>) -> Self {
+        Self {
+            sender,
+            items: Vec::new(),
+        }
+    }
+
+    /// Adds one item, handing the batch over when it is full. `false` once the consumer has gone.
+    fn push(&mut self, item: Item) -> bool {
+        self.items.push(item);
+        self.items.len() < SOCKET_BATCH || self.flush()
+    }
+
+    /// Hands over what has been collected, and waits until the consumer has taken it.
+    ///
+    /// An empty batch is handed over too, at the end of every dump: waiting there is what keeps
+    /// the reader one dump ahead of its consumer at most, so `get socket | take 1` does not pay
+    /// for three address families nobody read (ADR-0418). `false` once the consumer has gone.
+    fn flush(&mut self) -> bool {
+        self.sender
+            .blocking_send(std::mem::take(&mut self.items))
+            .is_ok()
+    }
 }
 
 /// One dump per protocol and family, plus the Unix table.

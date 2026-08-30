@@ -191,6 +191,44 @@ async fn should_answer_the_connection_target_with_connected_sockets_only() {
 }
 
 #[tokio::test]
+async fn should_answer_exactly_the_bound_when_a_socket_query_asks_for_one() {
+    // The reader stops where the answer is full (ADR-0418). What a caller can observe of that is
+    // the bound itself: a machine with a socket table answers one socket, not the table.
+    let provider = SocketProvider::new();
+    if !provider.availability().is_available() {
+        return;
+    }
+
+    let (records, _) = snapshot(&provider, &Query::target("socket").limit(1)).await;
+    assert!(
+        records.len() <= 1,
+        "`--first 1` bounds the answer at one socket, got {}",
+        records.len()
+    );
+}
+
+#[tokio::test]
+async fn should_answer_no_unix_socket_when_the_connection_target_is_asked() {
+    // A Unix socket's peer is an inode rather than an address, so `remote` is null on every one
+    // of them and none can be a connection. The provider therefore never asks the kernel for the
+    // Unix table when the target is `connection` (ADR-0418), and the observable half of that is
+    // this: no answer to `connection` is a Unix socket, on a host that has thousands of them.
+    let provider = SocketProvider::new();
+    if !provider.availability().is_available() {
+        return;
+    }
+
+    let (records, _) = snapshot(&provider, &Query::target("connection")).await;
+    for record in &records {
+        assert_ne!(
+            record.get("protocol"),
+            Some(&Value::string("unix")),
+            "a Unix socket has no peer and cannot answer `connection`, got {record:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn should_report_a_provider_that_cannot_answer_rather_than_an_empty_result() {
     // The one case a container reliably reproduces: a netlink family the kernel does not offer.
     let provider = SocketProvider::new();

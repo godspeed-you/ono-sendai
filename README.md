@@ -16,13 +16,11 @@ The command is `ono`. The deck is real this time.
 > **Status: v0.4.0, released.** All ten phases of the specification are implemented, with the
 > External Command Adaptation Layer (v0.3) and the Spatial Systems Interface (v0.4) on top of
 > them, and every box of `docs/ACCEPTANCE.md` is ticked by a named automated proof. The quality
-> gate parses *and executes* the `ono` examples in this file on every run. The containerised
+> gate parses *and executes* the `ono` examples in this file on every run, and the containerised
 > acceptance suite — 107 cases against the real binary installed as a login shell, network cut —
-> stands at 106 green and one red, which keeps the acceptance job in CI red too: case `152`
-> measures `get socket | take 1` at 60 ms on a host with 5 000 sockets, against the 50 ms budget
-> of spec §34. The cause is a performance defect — the socket provider reads the whole table
-> before it yields the first row. It is named on the board in `docs/STATE.md`, and the case
-> stays red until the provider streams.
+> is green, case `152` included: `get socket | take 1` on a host with 5 000 sockets answers
+> inside the 50 ms budget of spec §34, because the socket provider now decodes a dump message by
+> message and stops where its consumer does (ADR-0418).
 
 ---
 
@@ -377,8 +375,7 @@ and pillow.
 
 `scripts/release-check.sh` runs both gates and then the checklist, and prints
 `release-check: the shell is release-ready`. That line is the project's definition of done, and
-v0.4.0 earned it. It stays unprinted while case `152` is red; making the socket provider stream
-is the next thing on the board.
+v0.4.0 earned it.
 
 The specification is the source of truth and deliberately more detailed than a pitch: command
 metadata, object schemas, error taxonomy, grammar and test matrices are all *derivable* from

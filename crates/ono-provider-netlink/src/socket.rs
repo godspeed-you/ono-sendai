@@ -5,9 +5,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ono_core::ErrorCode;
-use ono_value::{ErrorValue, MapValue, Value};
+use ono_value::{ErrorValue, MapValue, RecordValue, Schema, Value};
 
-use crate::decoded::{Decoded, build};
+use crate::decoded::{Decoded, Item, build};
 use crate::interface::{short, unexpected};
 use crate::owners::SocketOwners;
 use crate::schema::{endpoint_schema, socket_schema};
@@ -82,45 +82,79 @@ pub fn decode_inet_sockets(
     protocol: SocketProtocol,
     owners: Option<&SocketOwners>,
 ) -> Decoded {
-    let mut decoded = Decoded::new();
-    let schema = socket_schema();
-    let source = inet_source(protocol);
+    Decoded::from_items(inet_sockets(bytes, protocol, owners))
+}
 
-    for frame in wire::frames(bytes) {
-        let message = match frame {
-            Frame::Message(message) => message,
-            Frame::Malformed(error) => {
-                decoded.fail(error);
-                break;
+/// Walks an `inet_diag` dump one message at a time.
+///
+/// The whole dump is in memory — the kernel answered it in one go — but nothing in it becomes a
+/// record until the caller asks for the next one, so a consumer that wanted three sockets pays
+/// for three (ADR-0418).
+pub(crate) fn inet_sockets<'a>(
+    bytes: &'a [u8],
+    protocol: SocketProtocol,
+    owners: Option<&'a SocketOwners>,
+) -> InetSockets<'a> {
+    InetSockets {
+        frames: wire::frames(bytes),
+        protocol,
+        owners,
+        schema: socket_schema(),
+        source: inet_source(protocol),
+        finished: false,
+    }
+}
+
+/// The iterator [`inet_sockets`] returns.
+pub(crate) struct InetSockets<'a> {
+    frames: wire::Frames<'a>,
+    protocol: SocketProtocol,
+    owners: Option<&'a SocketOwners>,
+    schema: Arc<Schema>,
+    source: String,
+    finished: bool,
+}
+
+impl Iterator for InetSockets<'_> {
+    type Item = Item;
+
+    fn next(&mut self) -> Option<Item> {
+        while !self.finished {
+            let message = match self.frames.next()? {
+                Frame::Message(message) => message,
+                Frame::Malformed(error) => {
+                    self.finished = true;
+                    return Some(Item::Failure(error));
+                }
+            };
+            match message.kind {
+                sys::NLMSG_DONE => {
+                    self.finished = true;
+                    return None;
+                }
+                sys::NLMSG_ERROR => {
+                    return Some(Item::Failure(wire::error_message(message.payload)));
+                }
+                kind if wire::control(kind) => continue,
+                sys::SOCK_DIAG_BY_FAMILY => {}
+                other => return Some(Item::Failure(unexpected(other, "a socket"))),
             }
-        };
-        match message.kind {
-            sys::NLMSG_DONE => break,
-            sys::NLMSG_ERROR => {
-                decoded.fail(wire::error_message(message.payload));
-                continue;
-            }
-            kind if wire::control(kind) => continue,
-            sys::SOCK_DIAG_BY_FAMILY => {}
-            other => {
-                decoded.fail(unexpected(other, "a socket"));
-                continue;
-            }
+            return Some(self.socket(message.payload));
         }
-        if message.payload.len() < sys::INET_DIAG_MSG {
-            decoded.fail(short(
-                "inet_diag_msg",
-                message.payload.len(),
-                sys::INET_DIAG_MSG,
-            ));
-            continue;
+        None
+    }
+}
+
+impl InetSockets<'_> {
+    /// One `inet_diag_msg` as a record, or the reason it could not become one.
+    fn socket(&self, payload: &[u8]) -> Item {
+        if payload.len() < sys::INET_DIAG_MSG {
+            return Item::Failure(short("inet_diag_msg", payload.len(), sys::INET_DIAG_MSG));
         }
 
-        let payload = message.payload;
         let family = wire::u8_at(payload, 0).unwrap_or(0);
         let Some(family_name) = inet_family_name(family) else {
-            decoded.fail(unexpected_family(family));
-            continue;
+            return Item::Failure(unexpected_family(family));
         };
         let state = wire::u8_at(payload, 1).unwrap_or(0);
         let source_port = wire::be16_at(payload, 4).unwrap_or(0);
@@ -133,46 +167,41 @@ pub fn decode_inet_sockets(
         let uid = wire::u32_at(payload, 64).unwrap_or(0);
         let inode = wire::u32_at(payload, 68).unwrap_or(0);
 
-        let local = match endpoint(&mut decoded, source_address, Some(source_port), None) {
-            Some(record) => record,
-            None => continue,
+        let local = match endpoint(source_address, Some(source_port), None) {
+            Ok(record) => record,
+            Err(error) => return Item::Failure(error),
         };
         // A peer of `0.0.0.0:0` is how the kernel says there is no peer, and a listening socket
         // genuinely has none. Reporting an all-zero endpoint would turn "none" into "this one".
         let has_peer = destination_port != 0
             || destination_address.is_some_and(|address| !address.is_unspecified());
         let remote = if has_peer {
-            match endpoint(
-                &mut decoded,
-                destination_address,
-                Some(destination_port),
-                None,
-            ) {
-                Some(record) => record,
-                None => continue,
+            match endpoint(destination_address, Some(destination_port), None) {
+                Ok(record) => record,
+                Err(error) => return Item::Failure(error),
             }
         } else {
             Value::Null
         };
 
-        decoded.record(
-            &schema,
-            &source,
+        item(build(
+            &self.schema,
+            &self.source,
             SOCK_DIAG_PROVIDER,
             vec![
-                ("protocol", Value::string(protocol.as_str())),
+                ("protocol", Value::string(self.protocol.as_str())),
                 ("family", Value::string(family_name)),
                 ("local", local),
                 ("remote", remote),
                 (
                     "state",
-                    if protocol.has_state() {
+                    if self.protocol.has_state() {
                         Value::string(sys::tcp_state(state))
                     } else {
                         Value::Null
                     },
                 ),
-                ("process", owner_of(owners, u64::from(inode))),
+                ("process", owner_of(self.owners, u64::from(inode))),
                 ("user", Value::Int(i128::from(uid))),
                 ("inode", inode_value(inode)),
             ],
@@ -181,9 +210,8 @@ pub fn decode_inet_sockets(
                 ("netlink.tx_queue", Value::Int(i128::from(wqueue))),
                 ("netlink.cookie", Value::Int(i128::from(cookie))),
             ],
-        );
+        ))
     }
-    decoded
 }
 
 /// Decodes a `unix_diag` dump into socket records.
@@ -195,44 +223,70 @@ pub fn decode_inet_sockets(
 /// ```
 #[must_use]
 pub fn decode_unix_sockets(bytes: &[u8], owners: Option<&SocketOwners>) -> Decoded {
-    let mut decoded = Decoded::new();
-    let schema = socket_schema();
+    Decoded::from_items(unix_sockets(bytes, owners))
+}
 
-    for frame in wire::frames(bytes) {
-        let message = match frame {
-            Frame::Message(message) => message,
-            Frame::Malformed(error) => {
-                decoded.fail(error);
-                break;
+/// Walks a `unix_diag` dump one message at a time, on the terms [`inet_sockets`] describes.
+pub(crate) fn unix_sockets<'a>(
+    bytes: &'a [u8],
+    owners: Option<&'a SocketOwners>,
+) -> UnixSockets<'a> {
+    UnixSockets {
+        frames: wire::frames(bytes),
+        owners,
+        schema: socket_schema(),
+        finished: false,
+    }
+}
+
+/// The iterator [`unix_sockets`] returns.
+pub(crate) struct UnixSockets<'a> {
+    frames: wire::Frames<'a>,
+    owners: Option<&'a SocketOwners>,
+    schema: Arc<Schema>,
+    finished: bool,
+}
+
+impl Iterator for UnixSockets<'_> {
+    type Item = Item;
+
+    fn next(&mut self) -> Option<Item> {
+        while !self.finished {
+            let message = match self.frames.next()? {
+                Frame::Message(message) => message,
+                Frame::Malformed(error) => {
+                    self.finished = true;
+                    return Some(Item::Failure(error));
+                }
+            };
+            match message.kind {
+                sys::NLMSG_DONE => {
+                    self.finished = true;
+                    return None;
+                }
+                sys::NLMSG_ERROR => {
+                    return Some(Item::Failure(wire::error_message(message.payload)));
+                }
+                kind if wire::control(kind) => continue,
+                sys::SOCK_DIAG_BY_FAMILY => {}
+                other => return Some(Item::Failure(unexpected(other, "a socket"))),
             }
-        };
-        match message.kind {
-            sys::NLMSG_DONE => break,
-            sys::NLMSG_ERROR => {
-                decoded.fail(wire::error_message(message.payload));
-                continue;
-            }
-            kind if wire::control(kind) => continue,
-            sys::SOCK_DIAG_BY_FAMILY => {}
-            other => {
-                decoded.fail(unexpected(other, "a socket"));
-                continue;
-            }
+            return Some(self.socket(message.payload));
         }
-        if message.payload.len() < sys::UNIX_DIAG_MSG {
-            decoded.fail(short(
-                "unix_diag_msg",
-                message.payload.len(),
-                sys::UNIX_DIAG_MSG,
-            ));
-            continue;
+        None
+    }
+}
+
+impl UnixSockets<'_> {
+    /// One `unix_diag_msg` as a record, or the reason it could not become one.
+    fn socket(&self, payload: &[u8]) -> Item {
+        if payload.len() < sys::UNIX_DIAG_MSG {
+            return Item::Failure(short("unix_diag_msg", payload.len(), sys::UNIX_DIAG_MSG));
         }
 
-        let payload = message.payload;
         let family = wire::u8_at(payload, 0).unwrap_or(0);
         if family != sys::AF_UNIX {
-            decoded.fail(unexpected_family(family));
-            continue;
+            return Item::Failure(unexpected_family(family));
         }
         let kind = wire::u8_at(payload, 1).unwrap_or(0);
         let state = wire::u8_at(payload, 2).unwrap_or(0);
@@ -243,15 +297,15 @@ pub fn decode_unix_sockets(bytes: &[u8], owners: Option<&SocketOwners>) -> Decod
         let path = wire::attribute(attributes, sys::UNIX_DIAG_NAME).and_then(unix_path);
         let local = match path {
             None => Value::Null,
-            Some(path) => match endpoint(&mut decoded, None, None, Some(&path)) {
-                Some(record) => record,
-                None => continue,
+            Some(path) => match endpoint(None, None, Some(&path)) {
+                Ok(record) => record,
+                Err(error) => return Item::Failure(error),
             },
         };
         let peer = wire::attribute_u32(attributes, sys::UNIX_DIAG_PEER);
 
-        decoded.record(
-            &schema,
+        item(build(
+            &self.schema,
             UNIX_SOURCE,
             SOCK_DIAG_PROVIDER,
             vec![
@@ -263,7 +317,7 @@ pub fn decode_unix_sockets(bytes: &[u8], owners: Option<&SocketOwners>) -> Decod
                 // `remote` stays honestly null.
                 ("remote", Value::Null),
                 ("state", Value::string(sys::tcp_state(state))),
-                ("process", owner_of(owners, u64::from(inode))),
+                ("process", owner_of(self.owners, u64::from(inode))),
                 ("user", Value::Null),
                 ("inode", inode_value(inode)),
             ],
@@ -278,18 +332,24 @@ pub fn decode_unix_sockets(bytes: &[u8], owners: Option<&SocketOwners>) -> Decod
                 ),
                 ("netlink.cookie", Value::Int(i128::from(cookie))),
             ],
-        );
+        ))
     }
-    decoded
 }
 
-/// One end of a socket as an `ono.endpoint/1` record, or `None` when it could not be built.
+/// A built record, or the reason it could not be built, as one item.
+fn item(built: Result<RecordValue, ErrorValue>) -> Item {
+    match built {
+        Ok(record) => Item::Record(record),
+        Err(error) => Item::Failure(error),
+    }
+}
+
+/// One end of a socket as an `ono.endpoint/1` record, or the reason it could not be built.
 fn endpoint(
-    decoded: &mut Decoded,
     address: Option<IpAddr>,
     port: Option<u16>,
     path: Option<&Path>,
-) -> Option<Value> {
+) -> Result<Value, ErrorValue> {
     let record = build(
         &endpoint_schema(),
         "NETLINK_SOCK_DIAG inet_diag_sockid",
@@ -307,13 +367,7 @@ fn endpoint(
         ],
         Vec::new(),
     );
-    match record {
-        Ok(record) => Some(Value::Record(Arc::new(record))),
-        Err(error) => {
-            decoded.fail(error);
-            None
-        }
-    }
+    record.map(|record| Value::Record(Arc::new(record)))
 }
 
 /// The owning process as the identity map the `process` field carries.

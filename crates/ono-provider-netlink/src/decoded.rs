@@ -17,11 +17,37 @@ pub struct Decoded {
     errors: Vec<ErrorValue>,
 }
 
+/// One outcome of decoding a single netlink message: an object, or the reason the message could
+/// not become one.
+///
+/// A decoder that yields these one at a time can be stopped after the first object a consumer
+/// wanted, which is what lets `get socket | take 1` cost one record on a host with thousands
+/// (ADR-0418). [`Decoded::from_items`] collects them for a caller that wants the whole table.
+#[derive(Debug)]
+pub(crate) enum Item {
+    /// An object the decoder read.
+    Record(RecordValue),
+    /// Why a message could not become one.
+    Failure(ErrorValue),
+}
+
 impl Decoded {
     /// An empty result.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Collects everything a decoder yielded, keeping the order within each half.
+    pub(crate) fn from_items(items: impl IntoIterator<Item = Item>) -> Self {
+        let mut decoded = Self::new();
+        for item in items {
+            match item {
+                Item::Record(record) => decoded.push(record),
+                Item::Failure(error) => decoded.fail(error),
+            }
+        }
+        decoded
     }
 
     /// The objects that were read.
