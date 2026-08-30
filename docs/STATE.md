@@ -1619,8 +1619,9 @@ know and must not claim.
 
 ### Class B — open and small
 
-Each line says what is wrong, how to reproduce it, and what closes it. Five remain; the other
-thirty-seven are under *Done, reconciled*.
+Each line says what is wrong, how to reproduce it, and what closes it. Five remain from the
+2026-08-29 reconciliation and the other thirty-seven are under *Done, reconciled*; five more were
+found on 2026-08-30 while recording the README figures, in their own block at the end.
 
 #### Data and pipeline
 
@@ -1758,6 +1759,70 @@ thirty-seven are under *Done, reconciled*.
   says a wall-clock assertion "is flaky on shared hardware") and never measured in the container.
   ADR-0252 records why: it needs a completion the container can invoke without a terminal, which
   is new public surface. Exit test: case `060` measures the first completion.
+
+#### Found while recording the README figures (2026-08-30, agent `readme-demo`)
+
+Five defects, each reproduced at `a057be1` — against `target/release/ono` on an ordinary host
+(920 processes), or against the demo image `docker/demo.Dockerfile` (`ono-sendai:demo-recording`,
+4 processes, nginx on 8080, redis on 6379). None is fixed here; §4 keeps the fix out of a `docs:`
+commit. Three of the five were found by composing the recordings in `docs/assets/`, which is the
+argument for keeping that harness: it types what a reader would type.
+
+- [ ] **A nested record renders as its schema id in a table.** `get socket | where state ==
+  "listen" | take 1 | select protocol local state` prints `LOCAL` as `ono.endpoint/1 {}`, where
+  the same field through `| to json` is
+  `{"address":"127.0.0.1","port":631,"path":null,"host":null}`. The data is right and the
+  renderer is not: a record-valued field shows its type and an empty brace pair instead of its
+  content. `ono.user/1 {uid: 0}` in `watch process`'s `USER` column is the same defect with one
+  field surviving. It cost the README a documented example — the file claimed `select protocol
+  local state` printed `:5432`, which no build does; the example now selects `local.port`.
+  Exit test: a render test asserting that a record-valued cell shows the record's own fields, and
+  the README example restored to `local`.
+
+- [ ] **`look` empties the neighbourhood it just described.** In one script, against the demo
+  image:
+
+  ```text
+  ono -c 'enter 0.0.0.0:8080; near --type process'          → owner nginx, owner nginx
+  ono -c 'enter 0.0.0.0:8080; look; near --type process'     → nothing at all
+  ```
+
+  With the `look` in between, `follow owner` also stops working: it answers `Ono-Sendai-E1009
+  spatial.unsupported … available on request` where the same command without the `look` answers
+  `Ono-Sendai-E1002 spatial.ambiguous_selector` and names both nginx lifetimes — the honest
+  refusal §6.4 asks for. So `look` writes a place view whose expensive relations are recorded as
+  *withheld*, and the later `near` reads that view instead of resolving them. Suspected site, not
+  a diagnosis: the two places that mint `available on request`,
+  `crates/ono-cli/src/spatial/view.rs:146` and `crates/ono-cli/src/spatial/relations.rs:534`.
+  This is a correctness defect in the v0.4 surface — a reader who looks before they walk is told
+  the place is empty. Exit test: a spatial test asserting `near --type process` answers the same
+  rows with and without a preceding `look`, plus the acceptance case for the discovery scenario
+  doing the `look` first.
+
+- [ ] **`trace --relations` restricts nothing.** `trace process 8 --relations [child]` against the
+  demo image still answers `parent`, `listens`, `opens` and `writes` edges. Either the option is
+  read and dropped, or it never reaches the traversal. `help trace process` documents it as "the
+  relation names to restrict the trace to", so the contract and the answer disagree. Exit test: a
+  test asserting the answer of `--relations [child]` contains `child` edges and no others.
+
+- [ ] **A float field renders at full precision beside a formatted one.** `get process | where
+  cpu > 1 | take 3 | select pid name cpu` prints `2.4491293271514514`, in the same table where
+  `memory` prints `11.60 MiB`. `watch process` shows it too, which is where it hurts — it is the
+  one view a reader watches rather than reads. The JSON is right (`{"cpu":2.4491289426573135}`),
+  so this is the renderer again, and it belongs to the same increment as the record-cell defect
+  above. Exit test: a render test fixing the human rendering of a percentage-typed field, with the
+  serialisation left untouched.
+
+- [ ] **`map --live --json | take 3 | to json` never returns on a busy host.** At `a057be1`,
+  release build, no config: 30 s wall clock, **zero bytes** of output, 0 % CPU and a flat 4 MiB
+  RSS — it blocks, it does not spin. The same command in the demo container answers in 0.4 s with
+  27 KiB. The difference is the machine, not the build: 920 processes and ~800 neighbours at the
+  root place versus four. Related, and deliberately not claimed as the same defect: two leftover
+  `ono` processes from earlier worktree agents were found sitting on this pipeline shape for over
+  seven hours at ~2.2 GiB RSS each (debug builds, `enter socket <id>; map --live --json | take 3 |
+  to json`); the memory growth did **not** reproduce at HEAD, the hang did. Exit test: a test that
+  bounds `map --live --json | take <n>` in wall clock against a fixture with many neighbours, so
+  the live map is proven to yield before it has seen everything.
 
 ---
 
