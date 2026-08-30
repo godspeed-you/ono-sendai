@@ -6,8 +6,8 @@
 > — William Gibson, *Neuromancer*, 1984
 
 In Gibson's Sprawl, **Ono-Sendai** builds the cyberspace decks — the hardware a console
-cowboy jacks into to see the system as it actually is, instead of squinting at a readout.
-That is the whole idea here, minus the fiction:
+cowboy jacks into to see the system as it actually is. That is the whole idea here, minus
+the fiction:
 
 > **Bash is a command interpreter. PowerShell is an object shell. Ono-Sendai is a systems interface.**
 
@@ -16,31 +16,30 @@ The command is `ono`. The deck is real this time.
 > **Status: v0.4.0, released.** All ten phases of the specification are implemented, with the
 > External Command Adaptation Layer (v0.3) and the Spatial Systems Interface (v0.4) on top of
 > them, and every box of `docs/ACCEPTANCE.md` is ticked by a named automated proof. The quality
-> gate is green — it parses *and executes* the `ono` examples in this file on every run, so every
-> one of them works. The containerised acceptance suite — 107 cases against the real binary
-> installed as a login shell, network cut — stands at 106 green and one red, which is why the
-> acceptance job in CI is red too: case `152` measures `get socket | take 1` on a host with 5 000
-> sockets at 60 ms against the 50 ms budget of spec §34, because the socket provider reads the
-> whole table before it yields the first row. A performance defect, not a correctness one; it is
-> named on the board in `docs/STATE.md`, and the case stays red rather than relaxed.
+> gate parses *and executes* the `ono` examples in this file on every run. The containerised
+> acceptance suite — 107 cases against the real binary installed as a login shell, network cut —
+> stands at 106 green and one red, which keeps the acceptance job in CI red too: case `152`
+> measures `get socket | take 1` at 60 ms on a host with 5 000 sockets, against the 50 ms budget
+> of spec §34. The cause is a performance defect — the socket provider reads the whole table
+> before it yields the first row. It is named on the board in `docs/STATE.md`, and the case
+> stays red until the provider streams.
 
 ---
 
 ## The problem
 
 `ps`, `find`, `tar`, `dd`, `ip`, `systemctl`, `git`, `awk`, `grep` — individually excellent,
-collectively a vocabulary you memorise rather than a language you understand. Each has its own
-grammar, its own flags, its own idea of what a column is.
+and collectively a vocabulary: each has its own grammar, its own flags, its own idea of what a
+column is, and you memorise all of it.
 
 And all of them flatten. The kernel *knows* that a process is a process, a socket is a socket,
 a service is a service. Then it prints characters, and you rebuild the structure that was
 already there with `awk`, `cut`, `sed`, `jq` and regexes that break the day someone adds a
-column. Decades of tooling exist to reconstruct information the machine never should have
-thrown away.
+column. Decades of tooling exist to reconstruct information the machine held a moment earlier.
 
-PowerShell proved the fix — objects survive the pipe — and then wrapped it in a ceremony
-Unix people justifiably bounced off. Ono-Sendai takes the idea seriously and reinterprets it
-for terminal culture: terse, composable, and honest about the Unix underneath.
+PowerShell proved the fix — objects survive the pipe — and wrapped it in a ceremony Unix
+people justifiably bounced off. Ono-Sendai takes the idea seriously and reinterprets it for
+terminal culture: terse, composable, and honest about the Unix underneath.
 
 ## What it feels like
 
@@ -57,11 +56,11 @@ PID      NAME            MEMORY
 
 ![get process sorted by memory, then filtered by name, then the type of the stream itself](docs/assets/typed-pipeline.gif)
 
-Nothing in that recording is drawn: it is the real binary in a clean container, and
-`scripts/demo/make.sh` rebuilds every frame of it on your machine.
+The recording is the real binary in a clean container, and `scripts/demo/make.sh` rebuilds
+every frame of it on your machine.
 
-That table is only a *rendering*. What actually flows is `Stream<Process>` — so the next stage
-doesn't parse columns, it addresses objects:
+That table is a *rendering*. What flows through the pipe is `Stream<Process>`, so the next
+stage addresses objects directly:
 
 ```text
 local://~ > get process | where name == "postgres" | stop process
@@ -73,42 +72,42 @@ Unix stays underneath, unharmed and first-class:
 local://~ > git log --oneline | grep fix
 ```
 
-Text from foreign programs enters as text. Ono-Sendai does not hallucinate schemas out of
-someone's stdout — structure is native where Ono owns the command or where a program explicitly
-speaks a structured protocol, and honest text everywhere else.
+Text from foreign programs enters as text: structure is native where Ono owns the command or
+where a program explicitly speaks a structured protocol, and everything else stays the honest
+bytes it always was.
 
-### The relationships are the kernel's, not a parser's
+### The relationships belong to the kernel
 
-`trace` does not read a tree out of `ps` output. It asks the providers what they can assert about
-one object — its parent, its children, the sockets it listens on, the files it holds — and the
-answer is a graph value that flows through the pipeline like any other:
+`trace` asks the providers what they can assert about one object — its parent, its children,
+the sockets it listens on, the files it holds — and the answer is a graph value that flows
+through the pipeline like any other:
 
 ![trace on a process, showing children, the listening socket and the files it writes](docs/assets/trace.gif)
 
 ### The machine is a place
 
-v0.4 gives the system a geography. You do not need the name of the thing you are looking for; you
-need where it is, or one property of it:
+v0.4 gives the system a geography. Knowing where a thing lives, or one property of it, is
+enough to walk there:
 
 ![find place by port, entering it, and the neighbourhood naming what lives there](docs/assets/spatial.gif)
 
-That recording finds a web server without anyone typing `nginx` — the two acceptance scenarios
-behind it carry that as a house rule: no case may name the object it discovers. Fourteen commands
-carry the model — `look`, `near`, `enter`, `follow`, `jump`, `back`, `up`, `home`, `trail`,
-`find place`, `map`, `map links`, `pin`, `unpin` — and they keep apart three things other tools
-blur:
+That recording finds a web server before anyone types `nginx` — the two acceptance scenarios
+behind it carry that as a house rule: every case must discover its object cold, by place and
+property alone. Fourteen commands carry the model — `look`, `near`, `enter`, `follow`, `jump`,
+`back`, `up`, `home`, `trail`, `find place`, `map`, `map links`, `pin`, `unpin` — and they keep
+three things apart that other tools blur:
 
-- **Hierarchy is not the graph.** `up` walks where a thing belongs, `back` walks where *you* have
-  been, `follow` walks a relationship an observer asserted. An object names one canonical parent
-  and keeps every relationship parent, so "where does this belong" and "what is it connected to"
-  stay different questions.
-- **Identity is not the pid.** A process is a lifetime descriptor. That is why the recording's
-  `follow owner` refuses instead of guessing when two processes answer, and names them both. A
-  process you visited that then exits becomes a **tombstone**: visibly dead, still reachable
-  through `back`, and never silently impersonated by whoever inherits its pid.
-- **Denied is not empty.** Every group of neighbours carries one of six defined states, so "you
-  may not read this" never renders as "there is nothing here", and a reference field a provider
-  left null is not an exit with zero things behind it.
+- **Hierarchy and graph stay separate.** `up` walks where a thing belongs, `back` walks where
+  *you* have been, `follow` walks a relationship an observer asserted. An object names one
+  canonical parent and keeps every relationship parent, so "where does this belong" and "what
+  is it connected to" stay different questions.
+- **Identity outlives the pid.** A process is a lifetime descriptor. When two processes answer
+  `follow owner`, the shell stops and names them both — you choose. A process you visited that
+  then exits becomes a **tombstone**: visibly dead, still reachable through `back`, safe from
+  whoever inherits its pid.
+- **Denied says denied.** Every group of neighbours carries one of six defined states, so a
+  door you may not open renders as a locked door, an empty room renders as an empty room, and
+  a reference field a provider left null renders as exactly that.
 
 ```ono
 look
@@ -117,11 +116,11 @@ find place --where local.port == 8080
 trail
 ```
 
-`map` renders the neighbourhood as text into a pipe, as a bounded JSON document with no terminal
-at all, or as a full-screen view at a real PTY — where `map --live` shows an edge appear when a
-connection opens. Moving the focus never moves the shell: only Enter does.
+`map` renders the neighbourhood as text into a pipe, as a bounded JSON document when there is
+no terminal at all, or as a full-screen view at a real PTY — where `map --live` shows an edge
+appear when a connection opens. The focus moves freely; the shell moves on Enter.
 
-### Remote hosts become places, not subprocesses
+### Remote hosts become places
 
 ```text
 local://~ > link host prod-db
@@ -144,27 +143,25 @@ process/1 systemd
 
 The prompt is a location URI because you are, in a real sense, somewhere. Inside the frame,
 `get process` answers from the other side with provenance saying which host; `leave` brings you
-home. `link`, `enter`, `trace`, `watch` are not costume jewellery — each names exactly what it
-does. And every one of the pieces above — the agent on the far end, the negotiation, the
-mounted providers, the refusals when a host key changes — is proven offline against a real
-second process, no network required.
+home. `link`, `enter`, `trace`, `watch` — each names exactly what it does. And every one of the
+pieces above — the agent on the far end, the negotiation, the mounted providers, the refusals
+when a host key changes — is proven offline against a real second process.
 
 ## Core ideas
 
 - **Structured by default, text by choice.** Native commands emit typed values; rendering is a
   separate concern from data.
 - **Unix remains underneath.** Running an arbitrary executable stays trivial. Always.
-- **A predictable language, not a pile of syntax.** A small grammar and a controlled verb
-  registry — `get`, `set`, `where`, `sort`, `enter`, `trace`, `watch`, `link` — instead of
-  fifty bespoke command dialects.
-- **Discoverability is speed.** Completion and help expose the *language*, not just filenames.
+- **A predictable language.** A small grammar and a controlled verb registry — `get`, `set`,
+  `where`, `sort`, `enter`, `trace`, `watch`, `link` — one dialect for everything.
+- **Discoverability is speed.** Completion and help expose the *language*, all the way down.
 - **Objects are transparent.** Field names, types, origin and raw values are always inspectable.
 - **Errors are values.** Structured, typed, inspectable — with a human rendering on top.
 - **Local and remote share one mental model.** The active context is always visible.
-- **The machine has a geography.** Places, exits, a trail and an identity that outlives a pid —
-  and a search that finds a thing by what it does, not by what it is called.
+- **The machine has a geography.** Places, exits, a trail, an identity that outlives a pid —
+  and a search that finds a thing by what it does.
 - **Danger is visible before damage.** Privilege, remote targets and destructive scope announce
-  themselves in the prompt, not in the post-mortem.
+  themselves in the prompt, while there is still time to stop.
 - **No fake intelligence.** The shell never guesses destructive intent from vague text.
 
 ## KUANG/11
@@ -179,7 +176,7 @@ a deterministic test host every package must pass.
 
 Extensions contribute real objects and real relationships to the same typed pipeline as native
 commands. A plugin that inspects Postgres internals produces `Stream<T>` you can filter, sort
-and pipe like anything else — not a wall of text with a nicer banner.
+and pipe like anything else, on equal footing with the native providers.
 
 ## House rules for the aesthetic
 
@@ -191,7 +188,7 @@ prompt that expresses real location; dark, restrained themes.
 rain. Random glitches. Boot animations. Hexadecimal noise. Artificial keystroke delay. Sound
 effects. Failure messages written like a video game.
 
-> **The machine is already strange enough. Reveal it. Do not decorate it.**
+> **The machine is already strange enough. Reveal it.**
 
 A live object stream looks alive because processes are dying in it. A dependency trace feels
 like walking into a machine because the edges came from the kernel. The prompt creates a sense
@@ -201,8 +198,8 @@ screensaver.
 
 ## What was built
 
-The build order was dependency-respecting, not MVP-then-maybe-finish — and it ran to the end.
-Each phase is tagged in git (`phase-a` … `phase-j`) with the acceptance case that proves it.
+The build order respected the dependencies, and it ran to the end. Each phase is tagged in git
+(`phase-a` … `phase-j`) with the acceptance case that proves it.
 
 | Phase | Delivered |
 |---|---|
@@ -219,10 +216,10 @@ Each phase is tagged in git (`phase-a` … `phase-j`) with the acceptance case t
 | **v0.3** ✓ | External command adapters — `ps`, `ip`, `ss`, `lsblk`, `findmnt`, `lsns`, `stat`, `df`, `find`, `git`, `lsof`, `curl`, `systemctl`, `journalctl` become typed when a typed consumer follows, and stay raw otherwise |
 | **v0.4** ✓ | Spatial systems interface — fourteen commands that give the machine a geography: `look`, `near`, `find place`, `enter`, `follow`, `jump`, `back`, `up`, `home`, `trail`, `map`, `map links`, `pin`, `unpin`. Places have an identity that survives pid reuse, a denied neighbourhood is reported as denied, and a linked host is a place with its own root |
 
-Written in Rust — 30 crates, ~2 900 outcome tests, 256 architecture decision records. Latency is treated as a product feature and
-*measured* like one, in the container, on every acceptance run: cold start, parse, and the
-first rows of `get process` all inside their spec §34 budgets, with the keystroke-to-render
-path bounded in the editor's own suite.
+Written in Rust — 30 crates, ~2 900 outcome tests, 256 architecture decision records. Latency
+is treated as a product feature and *measured* like one, in the container, on every acceptance
+run: cold start, parse, and the first rows of `get process` all inside their spec §34 budgets,
+with the keystroke-to-render path bounded in the editor's own suite.
 
 ## Installing it
 
@@ -244,9 +241,9 @@ chsh -s /usr/bin/ono                             # make it your login shell
 
 Every release is installed into fresh Debian and Fedora containers on both architectures
 before it is published, as root and as an unprivileged user whose login shell is `ono`
-(`scripts/package-check.sh`), so this path is tested, not aspirational. Removing the package
-(`apt remove ono`, `dnf remove ono`) unregisters the shell again but never edits anyone's
-account: `chsh` back to another shell first if `ono` is yours.
+(`scripts/package-check.sh`). Removing the package (`apt remove ono`, `dnf remove ono`)
+unregisters the shell again and leaves every account untouched: `chsh` back to another shell
+first if `ono` is yours.
 
 To build from source you need Rust 1.94+ (the pinned toolchain in `rust-toolchain.toml` is
 picked up automatically):
@@ -293,11 +290,11 @@ link host prod-db                       remote hosts become places; the prompt s
 
 ### The Unix tools you already know become typed
 
-An external program is never trapped: `ps aux | grep foo` gives you the bytes `ps` writes,
-byte for byte. But when a *typed* consumer follows — `where`, `select`, `sort`, `count`, a
-table at the terminal — a first-party adapter rewrites the invocation to the tool's own
-machine-readable form and decodes it into the same schemas the native providers use, with the
-provenance to prove it. Nothing new to learn, and `explain` shows every step:
+`ps aux | grep foo` gives you the bytes `ps` writes, byte for byte. When a *typed* consumer
+follows — `where`, `select`, `sort`, `count`, a table at the terminal — a first-party adapter
+rewrites the invocation to the tool's own machine-readable form and decodes it into the same
+schemas the native providers use, with the provenance to prove it. There is nothing new to
+learn, and `explain` shows every step:
 
 ![ps aux raw, then the same command feeding a typed consumer, then explain showing the rewrite](docs/assets/adapters.gif)
 
@@ -312,8 +309,8 @@ raw ps aux | head -3
 ```
 
 `raw <command>` bypasses the layer unconditionally; `adapt <command>` demands structure and
-fails visibly rather than degrading to text. Which tools adapt, at which versions, through which
-invocations — and what each adapter deliberately does not carry — is generated from the
+fails visibly the moment it would have to guess. Which tools adapt, at which versions, through
+which invocations — and what each adapter deliberately leaves behind — is generated from the
 contracts into [`docs/reference/adapters/`](docs/reference/adapters/README.md). Text tools
 (`grep`, `sed`, `awk`, `less`, editors) stay raw by design.
 
@@ -340,7 +337,8 @@ the same registries the shell answers `help` from, so they cannot drift:
 | `docs/assets/` | the recordings in this file, and `scripts/demo/` the tapes that produce them |
 
 And inside the shell itself: `help`, `help <command>`, `type <pipeline>`, `inspect`, and
-`explain <pipeline>` — all answered from the registries, never from prose that can rot.
+`explain <pipeline>` — all answered from the same registries the reference pages are generated
+from.
 
 ## Development
 
@@ -357,15 +355,14 @@ login shell of an unprivileged user, cuts the network, and asks the binary to pr
 advertised capability against a process table nobody tuned for the test — 107 cases, from "a
 person can do ordinary work in ono instead of bash" to hostile filenames, live watches, remote
 links against a real child agent, and a KUANG/11 package loaded under the broker. A feature
-that has not survived that is not a feature yet.
+counts as a feature once it has survived that.
 
 ### The recordings
 
-The GIFs above are not screenshots of a good day. `scripts/demo/make.sh` builds the demo image
-(`docker/demo.Dockerfile`: the acceptance runtime, plus one nginx on 8080 and one redis that
-nobody tuned for the camera), drives the real binary through the tapes in `scripts/demo/tapes/`
-over a pty, and renders exactly what the terminal received — a small VT emulator in
-`scripts/demo/render.py`, not a screen recorder pointed at a good take.
+`scripts/demo/make.sh` builds the demo image (`docker/demo.Dockerfile`: the acceptance runtime,
+plus one nginx on 8080 and one redis that nobody tuned for the camera), drives the real binary
+through the tapes in `scripts/demo/tapes/` over a pty, and renders exactly what the terminal
+received, frame by frame, through a small VT emulator in `scripts/demo/render.py`.
 
 ```bash
 scripts/demo/make.sh                 # every tape, into docs/assets/
@@ -375,24 +372,24 @@ scripts/demo/make.sh --local         # against target/release/ono, on this machi
 
 A tape is the demo's script and nothing else: `run <pipeline>` types a line and waits for the
 prompt to come back. What appears between those lines is whatever the shell answered on the
-machine it ran on, which is the only way a recording can be evidence rather than marketing.
-It needs docker, python3 and pillow.
+machine it ran on, which is what lets a recording stand as evidence. It needs docker, python3
+and pillow.
 
 `scripts/release-check.sh` runs both gates and then the checklist, and prints
 `release-check: the shell is release-ready`. That line is the project's definition of done, and
-it was reached — not declared — for v0.4.0. It is not printed again while case `152` is red, and
-making the socket provider stream is the next thing on the board.
+v0.4.0 earned it. It stays unprinted while case `152` is red; making the socket provider stream
+is the next thing on the board.
 
-The specification is the source of truth and is deliberately more detailed than a pitch:
-command metadata, object schemas, error taxonomy, grammar and test matrices are *derivable*
-from it rather than reinvented per feature. It is immutable and checksummed — where it was
-ambiguous or wrong, the deviation is recorded in an ADR and the document stays exactly as
-written, so the complete list of divergences is one grep away.
+The specification is the source of truth and deliberately more detailed than a pitch: command
+metadata, object schemas, error taxonomy, grammar and test matrices are all *derivable* from
+it. It is immutable and checksummed — where it was ambiguous or wrong, the deviation is
+recorded in an ADR and the document stays exactly as written, so the complete list of
+divergences is one grep away.
 
 Development is strictly test-driven and largely agent-driven. `AGENTS.md` is the contract the
 agents work under — tests are the referee for whether a goal is reached, and every decision the
-spec does not fix is made autonomously and recorded as an ADR. If you are an agent reading
-this: `AGENTS.md` is your entry point, not this file.
+spec leaves open is made autonomously and recorded as an ADR. If you are an agent reading this:
+your entry point is `AGENTS.md`.
 
 `main` carries the released product together with the specification and the verification
 harness; each finished phase is tagged `phase-a` … `phase-j`, and releases are tagged from
