@@ -1738,6 +1738,29 @@ found on 2026-08-30 while recording the README figures, in their own block at th
 
 #### Providers, remote and KUANG/11
 
+- [ ] **`set package --version` cannot move a Red Hat package backwards.** ADR-0422 §3 runs
+  `dnf install -y <name>-<version>` for a named version, and dnf refuses an older one — the
+  documented spelling for that direction is `dnf downgrade`, and knowing which direction a
+  version string points needs rpm's own EVR comparison rather than a string test. zypper is given
+  `--oldpackage` and does both directions in one command, so this is a Red Hat gap only, and it
+  surfaces as dnf's own message in a `failed` row rather than as a wrong outcome. Exit test:
+  `set package <name> --version <older>` on a Red Hat machine reports `changed: true` and rpm
+  reports the older version afterwards.
+- [ ] **A package record is routed to the first available provider, not to the one its identity
+  names.** `ono.package/1` is identified by `provider + name`, and both package providers read
+  only the name out of it (`packages.rs::package_name`). On a machine carrying both databases —
+  Debian with `rpm` installed is the real case — a record the rpm provider made and a pipeline
+  handed to `remove package` would be acted on by dpkg, because `ProviderRegistry::act` resolves
+  the target to the first available provider and nothing consults the identity's first field.
+  Found while writing ADR-0422 and deliberately left out of it (AGENTS.md §4): the fix belongs in
+  the registry, not in either provider, and it is the same question for every target two
+  providers can claim. Exit test: a record whose `provider` field names a provider that is not
+  the first available one is acted on by the provider it names, or refused by name.
+- [ ] **Nothing refreshes a repository index.** `apt update`, `dnf makecache` and `zypper refresh`
+  have no spelling: spec §9.1 names `get`, `find`, `add`, `remove` and `set package` and no verb
+  for the index, so `sudo apt update` stays an external command on every distribution. Both
+  package providers have the front end that would do it. Exit test: an `ono` spelling refreshes
+  the index and reports what changed, or an ADR records why the shell deliberately has none.
 - [ ] **B-remote-2 — host-key pinning is dead code on the only production transport.** The trust
   store is complete and proven at unit level (`ono-protocol/tests/trust.rs` and
   `ono-remote/tests/trust.rs::should_refuse_a_changed_host_key_with_the_stable_safety_code`,
@@ -2489,6 +2512,28 @@ records. It was removed from this board rather than carried as an open box.
 ---
 
 ## Done
+
+**The rpm database answers too (2026-08-31, agent `rpm`, ADR-0422).** `get/find/add/remove/set
+package` worked on Debian and refused honestly everywhere else, which is half the Linux machines
+in the world answering E0401. `linux.packages.rpm` is now registered beside `linux.packages` and
+claims the same target, so the registry's existing rule decides which answers: dpkg where
+`dpkg-query` is on `PATH`, rpm where `rpm` is, and where neither is present the two refusals name
+both databases. It is one provider per *database* rather than per distribution, because
+`ono.package/1` is identified by `provider + name` and Fedora, RHEL, openSUSE and SLES keep one
+database between them — every record it makes says `provider: rpm`. The front end is whichever of
+`zypper`, `dnf` and `yum` is on `PATH`, in that order: a machine carrying zypper is a SUSE machine
+whatever else it has, while dnf installs anywhere. Machine formats only (AGENTS.md §6):
+`rpm -qa --queryformat`, `dnf repoquery --queryformat`, and `zypper --xmlout search`, whose
+`solvable` elements are read with the workspace's first XML reader (`quick-xml`) because
+`--xmlout` is the machine interface zypper documents. `rpm` alone is enough to be available — the
+listing is complete without a front end — and `find`/`add`/`remove`/`set` then refuse with E0402
+naming the three programs looked for. `--purge` is E0402 on rpm rather than a quiet ordinary
+removal, because rpm has no purge. Fifteen outcome tests
+(`crates/ono-cli/tests/packages_rpm.rs`), seven decoder unit tests, the generated conformance
+cases and acceptance case `046-rpm-packages` (three faked machines, and dpkg still answering on
+the Debian container) prove it. One defect fell out of having two providers for one target and is
+fixed in the same increment: `explain` named the first provider *claiming* a target, which on a
+Red Hat machine is a plan for a different machine; it now names the first *available* one.
 
 **The orphaned-shell leak is fixed (2026-08-28, agent `leak`, ADR-0160).** The 160 shells were
 not spinning and not deadlocked on a lock: every one of them held the *master* side of its own

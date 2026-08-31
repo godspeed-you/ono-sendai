@@ -19,6 +19,7 @@ async-trait.workspace = true
 jiff.workspace = true
 globset.workspace = true
 nix = { workspace = true, features = ["dir", "feature", "fs", "inotify", "mount", "poll", "process", "signal", "user"] }
+quick-xml.workspace = true
 rustix.workspace = true
 tokio.workspace = true
 

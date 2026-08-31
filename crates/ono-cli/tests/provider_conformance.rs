@@ -26,6 +26,7 @@ async fn should_register_exactly_the_providers_the_declarations_name() {
         ("linux.netlink", &["neighbor"]),
         ("linux.sock-diag", &["socket", "connection"]),
         ("linux.packages", &["package"]),
+        ("linux.packages.rpm", &["package"]),
         ("linux.procfs", &["process", "signal"]),
         ("linux.fs", &["file", "dir"]),
         ("linux.nss", &["user", "group"]),
@@ -395,6 +396,54 @@ async fn should_shape_ono_package_1_the_way_linux_packages_declares_it() {
 async fn should_answer_for_package_within_its_contract_when_linux_packages_is_asked() {
     harness::assert_target_conforms(&harness::TargetCase {
         provider: "linux.packages",
+        targets: &["package"],
+        target: "package",
+        exercise: harness::Exercise::Enumerable,
+        schemas: &["ono.package/1"],
+        identity_strategy: None,
+    }).await;
+}
+
+/// Packages, from the rpm database — `rpm -qa --queryformat` for what is installed, and dnf, yum or zypper for what the repositories carry and for changes. The records name `rpm` as their provider on both Red Hat and SUSE, because that is the one database both families keep.
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_advertise_exactly_what_linux_packages_rpm_declares() {
+    harness::assert_surface(&harness::Surface {
+        provider: "linux.packages.rpm",
+        targets: &["package"],
+        capabilities: &[
+            harness::CapabilityClaim { id: "package.list", risk: "read", elevation: "none" },
+            harness::CapabilityClaim { id: "package.search", risk: "read", elevation: "none" },
+            harness::CapabilityClaim { id: "package.manage", risk: "mutate", elevation: "required" },
+        ],
+        schemas: &["ono.package/1"],
+    }).await;
+}
+
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_shape_ono_package_1_the_way_linux_packages_rpm_declares_it() {
+    harness::assert_schema_contract(&harness::SchemaContract {
+        provider: "linux.packages.rpm",
+        targets: &["package"],
+        schema: "ono.package/1",
+        identity: &["provider", "name"],
+        default_view: &["name", "version", "installed", "description"],
+        fields: &[
+            harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "version", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "installed", ty: "bool", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "description", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "provider", ty: "string", required: true, nullable: false, unit: None },
+        ],
+    }).await;
+}
+
+#[rustfmt::skip]
+#[tokio::test]
+async fn should_answer_for_package_within_its_contract_when_linux_packages_rpm_is_asked() {
+    harness::assert_target_conforms(&harness::TargetCase {
+        provider: "linux.packages.rpm",
         targets: &["package"],
         target: "package",
         exercise: harness::Exercise::Enumerable,
@@ -1650,6 +1699,9 @@ async fn should_account_for_every_capability_the_declarations_name() {
         harness::Account { provider: "linux.packages", targets: &["package"], capability: "package.list", risk: "read", through: harness::Through::Snapshot("package") },
         harness::Account { provider: "linux.packages", targets: &["package"], capability: "package.search", risk: "read", through: harness::Through::Snapshot("package") },
         harness::Account { provider: "linux.packages", targets: &["package"], capability: "package.manage", risk: "mutate", through: harness::Through::Command(&["ono.package.add", "ono.package.remove", "ono.package.set"]) },
+        harness::Account { provider: "linux.packages.rpm", targets: &["package"], capability: "package.list", risk: "read", through: harness::Through::Snapshot("package") },
+        harness::Account { provider: "linux.packages.rpm", targets: &["package"], capability: "package.search", risk: "read", through: harness::Through::Snapshot("package") },
+        harness::Account { provider: "linux.packages.rpm", targets: &["package"], capability: "package.manage", risk: "mutate", through: harness::Through::Command(&["ono.package.add", "ono.package.remove", "ono.package.set"]) },
         harness::Account { provider: "linux.procfs", targets: &["process", "signal"], capability: "process.list", risk: "read", through: harness::Through::Snapshot("process") },
         harness::Account { provider: "linux.procfs", targets: &["process", "signal"], capability: "process.inspect", risk: "read", through: harness::Through::Snapshot("process") },
         harness::Account { provider: "linux.procfs", targets: &["process", "signal"], capability: "process.signal", risk: "mutate", through: harness::Through::Command(&["ono.process.kill", "ono.process.stop", "ono.signal.send"]) },

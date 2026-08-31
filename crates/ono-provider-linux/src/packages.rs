@@ -80,7 +80,7 @@ pub(crate) struct Dpkg {
 ///
 /// let provider = PackageProvider::with_path(Some("/nonexistent".into()));
 /// let reason = provider.availability().reason().map(str::to_owned);
-/// assert!(reason.is_some_and(|reason| reason.contains("dpkg") && reason.contains("rpm")));
+/// assert!(reason.is_some_and(|reason| reason.contains("dpkg")));
 /// ```
 #[derive(Debug)]
 pub struct PackageProvider {
@@ -103,13 +103,7 @@ impl PackageProvider {
     /// A provider over the managers found on `path`, or none.
     #[must_use]
     pub fn with_path(path: Option<OsString>) -> Self {
-        let find = |name: &str| {
-            path.as_ref().and_then(|path| {
-                std::env::split_paths(path)
-                    .map(|directory| directory.join(name))
-                    .find(|candidate| candidate.is_file())
-            })
-        };
+        let find = |name: &str| on_path(path.as_ref(), name);
         let manager = find("dpkg-query").map(|dpkg_query| Dpkg {
             dpkg_query,
             apt_cache: find("apt-cache"),
@@ -130,10 +124,21 @@ impl PackageProvider {
     }
 }
 
+/// The first `name` on `path`, which is how every manager is discovered: a package manager at an
+/// absolute path is an assumption about a distribution, and `PATH` is the answer the machine
+/// itself gives (ADR-0115).
+pub(crate) fn on_path(path: Option<&OsString>, name: &str) -> Option<PathBuf> {
+    path.and_then(|path| {
+        std::env::split_paths(path)
+            .map(|directory| directory.join(name))
+            .find(|candidate| candidate.is_file())
+    })
+}
+
 fn unavailable_reason() -> String {
-    "no supported package manager is on PATH: looked for `dpkg-query` (dpkg/apt); rpm-based \
-     systems are not served by this build"
-        .to_owned()
+    // What this provider looked for, and only that: the rpm database has a provider of its own
+    // (ADR-0422), and the registry states both refusals when neither is here.
+    "no supported package manager is on PATH: looked for `dpkg-query` (dpkg/apt)".to_owned()
 }
 
 /// One line of the `dpkg-query -W -f` listing.
@@ -244,15 +249,20 @@ pub(crate) fn parse_search(bytes: &[u8]) -> Result<Vec<(String, String)>, ErrorV
 }
 
 /// The `ono.package/1` record for one package.
+///
+/// `database` is the manager that answered — the first half of the record's identity — and
+/// `provider_id` the provider that asked it, which is what provenance names (ADR-0422).
 pub(crate) fn package_record(
     name: &str,
     version: Option<&str>,
     installed: Option<bool>,
     description: Option<&str>,
+    database: &str,
+    provider_id: &str,
     source: &str,
 ) -> Result<RecordValue, ErrorValue> {
     let schema = package_schema();
-    let provenance = Provenance::local(PACKAGE_PROVIDER_ID, schema.id().clone())
+    let provenance = Provenance::local(provider_id, schema.id().clone())
         .from_source(source)
         .observed_at(Timestamp::now());
     Ok(RecordValue::builder(schema, provenance)
@@ -263,7 +273,7 @@ pub(crate) fn package_record(
             "description",
             description.map_or(Value::Null, Value::string),
         )?
-        .set("provider", Value::string(DPKG))?
+        .set("provider", Value::string(database))?
         .build())
 }
 
@@ -320,19 +330,20 @@ pub(crate) async fn installed(dpkg: &Dpkg, names: &[String]) -> Result<Vec<Liste
     }
 }
 
-/// How a query is answered.
-struct Plan {
+/// How a query is answered. Shared by every package provider: the selectors of
+/// `docs/spec/commands/package.yaml` mean the same thing whichever database answers them.
+pub(crate) struct Plan {
     /// One package asked for by name.
-    named: Option<String>,
+    pub(crate) named: Option<String>,
     /// A repository search.
-    search: Option<String>,
+    pub(crate) search: Option<String>,
     /// `--installed`, when written.
-    installed: Option<bool>,
+    pub(crate) installed: Option<bool>,
     remaining: Vec<Selector>,
 }
 
 impl Plan {
-    fn of(query: &Query) -> Self {
+    pub(crate) fn of(query: &Query) -> Self {
         let mut plan = Self {
             named: None,
             search: None,
@@ -371,7 +382,7 @@ impl Plan {
         plan
     }
 
-    fn keeps(&self, record: &RecordValue) -> bool {
+    pub(crate) fn keeps(&self, record: &RecordValue) -> bool {
         let installed_matches = match self.installed {
             Some(wanted) => record.get("installed") == Some(&Value::Bool(wanted)),
             None => true,
@@ -446,6 +457,8 @@ async fn answer(dpkg: &Dpkg, plan: &Plan) -> Result<Vec<RecordValue>, ErrorValue
                     entry.and_then(|entry| entry.version.as_deref()),
                     Some(entry.is_some_and(|entry| entry.installed)),
                     Some(description),
+                    DPKG,
+                    PACKAGE_PROVIDER_ID,
                     "apt-cache search",
                 )
             })
@@ -468,6 +481,8 @@ async fn answer(dpkg: &Dpkg, plan: &Plan) -> Result<Vec<RecordValue>, ErrorValue
                 entry.version.as_deref(),
                 Some(entry.installed),
                 None,
+                DPKG,
+                PACKAGE_PROVIDER_ID,
                 "dpkg-query -W -f",
             )
         })
@@ -475,13 +490,13 @@ async fn answer(dpkg: &Dpkg, plan: &Plan) -> Result<Vec<RecordValue>, ErrorValue
 }
 
 /// The manager invocations a `package` action asks for (ADR-0115 §5).
-struct Mutation {
+pub(crate) struct Mutation {
     /// Each `(program, arguments)`, run in order; the action succeeds when all did.
-    commands: Vec<(PathBuf, Vec<String>)>,
+    pub(crate) commands: Vec<(PathBuf, Vec<String>)>,
     /// What is being asked, for a dry run's answer and the refusal's wording.
-    described: String,
-    /// Whether the outcome can be read from dpkg's version afterwards; a hold cannot.
-    versioned: bool,
+    pub(crate) described: String,
+    /// Whether the outcome can be read from the database's version afterwards; a hold cannot.
+    pub(crate) versioned: bool,
 }
 
 impl Mutation {
@@ -595,9 +610,10 @@ async fn installed_version(dpkg: &Dpkg, name: &str) -> Result<Option<String>, Er
         .and_then(|entry| entry.version))
 }
 
-/// The error a failed manager run is: apt's "cannot locate" is `io.not_found`, anything else
-/// is the manager's exit with its own words.
-fn manager_failure(program: &Path, answer: &Answer) -> ErrorValue {
+/// The error a failed manager run is: apt's "cannot locate" is `io.not_found`, anything else —
+/// including the words dnf and zypper use for the same thing — is the manager's exit with its own
+/// message.
+pub(crate) fn manager_failure(program: &Path, answer: &Answer) -> ErrorValue {
     let said = String::from_utf8_lossy(&answer.stderr).trim().to_owned();
     let code = if said.contains("Unable to locate package")
         || said.contains("is not installed, so not removed")
@@ -709,7 +725,15 @@ impl Provider for PackageProvider {
             && let Ok(text) = value.as_str()
             && is_package_name(text)
         {
-            let record = package_record(text, None, Some(false), None, "dpkg-query -W -f")?;
+            let record = package_record(
+                text,
+                None,
+                Some(false),
+                None,
+                DPKG,
+                PACKAGE_PROVIDER_ID,
+                "dpkg-query -W -f",
+            )?;
             return Ok(ObjectRef::of(&record).into_iter().collect());
         }
         Ok(Vec::new())

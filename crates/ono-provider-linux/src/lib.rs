@@ -55,6 +55,7 @@ mod file_mutations;
 mod file_watch;
 mod identity;
 mod packages;
+mod packages_rpm;
 mod process;
 mod procfs;
 pub mod schemas;
@@ -95,6 +96,7 @@ pub use env::{EnvBinding, EnvProvider, EnvSource};
 pub use file::FileProvider;
 pub use identity::IdentityProvider;
 pub use packages::{PACKAGE_PROVIDER_ID, PackageProvider, package_schema};
+pub use packages_rpm::{RPM_PROVIDER_ID, RpmPackageProvider};
 pub use process::{
     Clock, KernelPriorities, KernelSignals, Priorities, ProcessProvider, Signals, SystemClock,
 };
@@ -121,5 +123,10 @@ pub fn register_with_env(registry: &mut ProviderRegistry, env: Arc<EnvProvider>)
     registry.register(env);
     registry.register(Arc::new(StorageProvider::new()));
     registry.register(Arc::new(DeviceProvider::new()));
+    // Both package databases are registered on every machine, and the registry answers with
+    // the first that is available: dpkg on Debian, rpm on Red Hat and SUSE, and where neither is
+    // present each says what it looked for rather than either claiming there are no packages
+    // (spec §35.3, ADR-0422).
     registry.register(Arc::new(PackageProvider::new()));
+    registry.register(Arc::new(RpmPackageProvider::new()));
 }

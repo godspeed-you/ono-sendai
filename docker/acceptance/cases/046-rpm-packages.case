@@ -1,0 +1,110 @@
+# The package family on rpm-based systems (spec §9.1, ADR-0422). This container is a Debian one,
+# so the rpm database is faked at the boundary the provider actually uses — programs on `PATH`,
+# answering in the machine formats rpm, dnf and zypper document — and each `PATH` below is one
+# machine: a Red Hat one with `rpm` and `dnf`, a SUSE one with `rpm` and `zypper`, and one that
+# has the database and nothing that can reach a repository. What is proven is what a user on
+# those machines sees: the records name `rpm` as their provider, a search goes through the front
+# end that is there, a source package is not a package, an unprivileged install is one failed row
+# with E0302 (spec §16.5, §17.2), and rpm has no purge (E0402). The last block proves the
+# registry still answers with dpkg on this machine, which is a Debian one: two providers claim
+# `package` and the available one answers (spec §35.3).
+case: packages answer from the rpm database on Red Hat and on SUSE systems
+timeout: 120
+run: |
+  mkdir -p /tmp/redhat /tmp/suse /tmp/bare
+
+  cat > /tmp/redhat/rpm <<'SHIM'
+  #!/bin/sh
+  case "$*" in
+    *-qa*) printf 'curl\t8.6.0-8.el9\n'; printf 'nginx\t1.20.1-14.el9\n'; exit 0;;
+  esac
+  eval name="\${$#}"
+  case "$name" in
+    curl) printf 'curl\t8.6.0-8.el9\n'; exit 0;;
+  esac
+  echo "package $name is not installed"
+  exit 1
+  SHIM
+  cat > /tmp/redhat/dnf <<'SHIM'
+  #!/bin/sh
+  case "$*" in
+    *repoquery*) printf 'curl\tA utility for getting files from servers\n'; exit 0;;
+  esac
+  echo 'Error: This command has to be run with superuser privileges' >&2
+  exit 1
+  SHIM
+  cat > /tmp/suse/zypper <<'SHIM'
+  #!/bin/sh
+  case "$*" in
+    *search*)
+    printf '<?xml version="1.0"?>\n'
+    printf '<stream><search-result version="0.0"><solvable-list>\n'
+    printf '<solvable status="not-installed" name="curl" kind="package"/>\n'
+    printf '<solvable name="curl-source" kind="srcpackage"/>\n'
+    printf '</solvable-list></search-result></stream>\n'
+    exit 0;;
+  esac
+  echo 'Root privileges are required for installing packages.' >&2
+  exit 4
+  SHIM
+  cp /tmp/redhat/rpm /tmp/suse/rpm
+  cp /tmp/redhat/rpm /tmp/bare/rpm
+  chmod +x /tmp/redhat/rpm /tmp/redhat/dnf /tmp/suse/rpm /tmp/suse/zypper /tmp/bare/rpm
+  ONO=/usr/local/bin/ono
+
+  # --- a Red Hat machine: rpm for what is installed, dnf for the repositories ---------------
+  out=$(PATH=/tmp/redhat $ONO -c 'get package curl | select name provider installed | to json')
+  if [ "$out" = '[{"name":"curl","provider":"rpm","installed":true}]' ]; then
+    echo "rpm-record"
+  else
+    echo "WRONG rpm record: $out"
+  fi
+  PATH=/tmp/redhat $ONO -c 'get package | count | to json' | grep -q '2' && echo "rpm-lists-both"
+  PATH=/tmp/redhat $ONO -c 'get package absent | count | to json' | grep -q '0' && echo "absent-is-empty"
+  PATH=/tmp/redhat $ONO -c 'find package curl | select name | to json' | grep -q '"curl"' && echo "dnf-search"
+  PATH=/tmp/redhat $ONO -c 'find package curl | to json' | grep -q 'getting files' && echo "dnf-summary"
+  PATH=/tmp/redhat $ONO -c 'add package foo | to json' | grep -q 'Ono-Sendai-E0302' && echo "install-denied-structured"
+  PATH=/tmp/redhat $ONO -c 'add package foo | to json' > /dev/null; echo "install-status=$?"
+  PATH=/tmp/redhat $ONO -c 'remove package curl --purge true | to json' | grep -q 'Ono-Sendai-E0402' && echo "no-purge-on-rpm"
+  PATH=/tmp/redhat $ONO -c 'explain add package foo' | grep -q 'linux.packages.rpm' && echo "explain-names-rpm-provider"
+  PATH=/tmp/redhat $ONO -c 'explain add package foo' | grep -q 'elevated' && echo "explain-shows-elevated"
+
+  # --- a SUSE machine: the same database, zypper in front of it ------------------------------
+  PATH=/tmp/suse $ONO -c 'find package curl | select name | to json' | grep -q '"curl"' && echo "zypper-search"
+  PATH=/tmp/suse $ONO -c 'find package curl | to json' | grep -q 'curl-source' || echo "srcpackage-is-not-a-package"
+  PATH=/tmp/suse $ONO -c 'find package curl | to json' | grep -q '"description":null' && echo "no-summary-is-null"
+  PATH=/tmp/suse $ONO -c 'get package | count | to json' | grep -q '2' && echo "suse-lists-from-rpm"
+
+  # --- the database with nothing in front of it ----------------------------------------------
+  PATH=/tmp/bare $ONO -c 'find package curl | to json' 2>&1 | grep -q 'Ono-Sendai-E0402' && echo "search-refused"
+  PATH=/tmp/bare $ONO -c 'find package curl | to json' 2>&1 | grep -q 'zypper' && echo "names-the-front-ends"
+  PATH=/tmp/bare $ONO -c 'get package | count | to json' | grep -q '2' && echo "listing-still-works"
+
+  # --- and this machine is a Debian one, so dpkg is what answers here ------------------------
+  $ONO -c 'get package bash | to json' | grep -q '"provider":"dpkg"' && echo "dpkg-answers-here"
+  $ONO -c 'explain get package' | grep -q 'linux.packages' && echo "explain-names-a-package-provider"
+  $ONO -c 'explain get package' | grep -q 'linux.packages.rpm' || echo "explain-names-the-available-provider"
+  echo "done"
+exit: 0
+stdout-contains: rpm-record
+stdout-contains: rpm-lists-both
+stdout-contains: absent-is-empty
+stdout-contains: dnf-search
+stdout-contains: dnf-summary
+stdout-contains: install-denied-structured
+stdout-contains: install-status=1
+stdout-contains: no-purge-on-rpm
+stdout-contains: explain-names-rpm-provider
+stdout-contains: explain-shows-elevated
+stdout-contains: zypper-search
+stdout-contains: srcpackage-is-not-a-package
+stdout-contains: no-summary-is-null
+stdout-contains: suse-lists-from-rpm
+stdout-contains: search-refused
+stdout-contains: names-the-front-ends
+stdout-contains: listing-still-works
+stdout-contains: dpkg-answers-here
+stdout-contains: explain-names-a-package-provider
+stdout-contains: explain-names-the-available-provider
+stdout-contains: done
+stdout-not-contains: WRONG

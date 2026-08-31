@@ -57,6 +57,9 @@ globset = "0.4"
 jiff = { version = "0.2", features = ["serde"] }
 libc = "0.2"
 nix = "0.31"
+# The one XML reader in the workspace: zypper documents `--xmlout` as its machine mode, and
+# a SUSE machine has no other way to be asked what its repositories carry (ADR-0422).
+quick-xml = "0.42"
 regex = "1"
 # The authenticated transport of spec §21.5 (ADR-0353). rustls with the `ring` provider rather
 # than the default one, so the agent builds with the toolchain a Rust build already needs;

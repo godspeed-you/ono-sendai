@@ -932,10 +932,15 @@ fn plan_stage(
     let capability = contract
         .provider_capability()
         .and_then(|id| registry.capability(id));
+    // The provider that would answer, which is the first one that can: two providers claim
+    // `package` — one per package database — and naming the one this machine does not have would
+    // be a plan for a different machine (spec §27, ADR-0422). Where none can answer, the plan
+    // still names what would, because that is what the reader is asking about.
     let provider = match (providers, contract.target()) {
         (Some(registered), Some(target)) => registered
-            .for_target(target)
-            .first()
+            .provider_for(target)
+            .ok()
+            .or_else(|| registered.for_target(target).first().copied())
             .map(|provider| provider.id().to_owned()),
         _ => None,
     };

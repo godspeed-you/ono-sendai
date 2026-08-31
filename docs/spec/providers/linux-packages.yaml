@@ -1,14 +1,34 @@
-# The provider that answers from the package manager found on PATH, through its machine formats
-# only (spec §31.58, ADR-0115): `dpkg-query -W -f` for the installed set, `apt-cache search` for
-# the repositories, `apt-get` and `apt-mark` for changes. Registered even where no manager is
-# on PATH: unavailability naming what was looked for is a different answer from "there are no
-# packages" (spec §35.3). See linux-procfs.yaml for what this registry is and what enforces it.
+# The providers that answer from the package manager found on PATH, through its machine formats
+# only (spec §31.58, ADR-0115, ADR-0422). One per package database, because a package name is
+# unique inside a database and nowhere else:
+#
+#   linux.packages       dpkg's database, with apt in front of it — Debian, Ubuntu and their kin;
+#   linux.packages.rpm   the rpm database, with dnf, yum or zypper in front of it — Fedora, RHEL,
+#                        their rebuilds, openSUSE and SLES.
+#
+# Both are registered on every machine, and `provider_for` answers with the first one that is
+# available: on a Debian machine that is dpkg, on a Red Hat or SUSE machine it is rpm, and where
+# neither database is present each says what it looked for. Unavailability naming what was
+# looked for is a different answer from "there are no packages" (spec §35.3). See
+# linux-procfs.yaml for what this registry is and what enforces it.
 
 providers:
   - id: linux.packages
     doc: >-
       Packages, from dpkg and apt. A listing that is not in the declared machine format is a
       provider defect (E0403), never a source of invented records.
+    targets: [package]
+    capabilities: [package.list, package.search, package.manage]
+    schemas: [ono.package/1]
+    conformance:
+      package: enumerable
+
+  - id: linux.packages.rpm
+    doc: >-
+      Packages, from the rpm database — `rpm -qa --queryformat` for what is installed, and dnf,
+      yum or zypper for what the repositories carry and for changes. The records name `rpm` as
+      their provider on both Red Hat and SUSE, because that is the one database both families
+      keep.
     targets: [package]
     capabilities: [package.list, package.search, package.manage]
     schemas: [ono.package/1]
