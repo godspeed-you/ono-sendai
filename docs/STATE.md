@@ -2283,11 +2283,12 @@ replaced each with the case that actually covers the capability.
 - [x] C8 — `service` over the systemd D-Bus API — spec §23.3, §28.3 —
       acceptance `038-services-set-and-journal.case`;
       `services_logs_missing.rs::should_trace_a_service_to_the_processes_it_owns`
-- [ ] C9 — Generated provider conformance suite from `docs/spec/providers/*.yaml` — spec §35.3 —
-      **open, and it is C-1 above.** What exists is a runtime drift check
-      (`ono-cli/tests/providers.rs`) plus hand-written per-provider schema tests
-      (`ono-provider-linux/tests/schemas.rs`); no generator exists — confirmed at `b904327`, where
-      `xtask/src/` holds no generator but `reference.rs`. An agent is on it (see *In progress*).
+- [x] C9 — Generated provider conformance suite from `docs/spec/providers/*.yaml` — spec §35.3 —
+      done 2026-08-29, `33b6e10` + `a595c4f` + `81edc7c`, ADR-0331. `cargo xtask conformance`
+      generates `crates/ono-cli/tests/provider_conformance.rs` from the declarations and
+      `spec-check` fails on drift: **87 generated tests over 18 provider entries, 30 schemas and
+      35 targets**, where 4 providers and 2 schemas were covered before. Generation refuses rather
+      than emitting a hole, and found four contract violations that `81edc7c` fixed.
 
 ### Phase D — Language consistency and discoverability (spec §15, §27, §36, §47)
 
@@ -2558,10 +2559,12 @@ records. It was removed from this board rather than carried as an open box.
       with the same fifteen threats and a *Proven by* column that names test functions, and
       `xtask/tests/spatial_evidence.rs::should_find_every_test_the_threat_model_names` turns the
       gate red when a named proof goes missing.
-- [ ] Theme and semantic visual tokens — spec §44 — the 24 tokens are delivered and fully tested
-      (`crates/ono-render/tests/presentation.rs`); **no theme is loadable**, which is C-7 above.
-      Re-checked at `b904327`: no source names `themes/`, no `docs/spec/*.yaml` declares a `theme`
-      key. An agent is on it (see *In progress*).
+- [x] Theme and semantic visual tokens — spec §44 — the 24 tokens are delivered and fully tested
+      (`crates/ono-render/tests/presentation.rs`), and a theme is loadable since 2026-08-29,
+      `1c4866b`, ADR-0332: `theme.name` joins the ADR-0094 catalogue, resolution is built-in →
+      `/etc/ono/themes/<name>.toml` → `<config dir>/themes/<name>.toml`, two themes ship (`ono`,
+      `neon`), and an unknown token, key or value is refused rather than half-applied. 19 tests,
+      acceptance case `150`.
 - [x] The per-capability quality bar of spec §50 for every advertised command —
       `docs/ACCEPTANCE.md` §4.2, nine boxes, each proven by a registry-wide sweep rather than a
       sample: `ono-command/tests/help.rs` iterates every command, completion candidates are
