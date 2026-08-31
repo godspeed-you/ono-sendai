@@ -37,7 +37,14 @@ impl CommandImpl for TraceCommand {
 
     fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
-            let query = ctx.contract().query(ctx.arguments())?;
+            // A words-mode argument written as an expression — `trace process $p`, and the
+            // `--relations ["child"]` that spells a `list<string>` the way the language spells a
+            // list — is still an expression here (ADR-0009). `trace` reads values: which subject,
+            // how deep, along which relations. So it resolves them once, against the invocation's
+            // scope, before it asks anything (ADR-0219). Reading them unevaluated left an option
+            // the user wrote silently unread, and the walk ran unrestricted.
+            let written = ctx.arguments().evaluated(ctx.scope())?;
+            let query = ctx.contract().query(&written)?;
             let target = ctx.contract().target().unwrap_or_default().to_owned();
 
             // The subject comes through the pipeline or resolves from the selectors; either
@@ -87,15 +94,14 @@ impl CommandImpl for TraceCommand {
                 })?;
 
             let mut options = TraceOptions::from_query(&query);
-            if let Some(depth) = ctx
-                .arguments()
+            if let Some(depth) = written
                 .option("depth")
                 .and_then(|value| value.as_int().ok())
                 .and_then(|depth| usize::try_from(depth).ok())
             {
                 options = options.depth(depth);
             }
-            if let Some(relations) = ctx.arguments().option("relations")
+            if let Some(relations) = written.option("relations")
                 && let Ok(list) = relations.as_list()
             {
                 options = options.only_relations(
@@ -109,8 +115,7 @@ impl CommandImpl for TraceCommand {
                 .with_options(options)
                 .with_all(kernel_relationships(Arc::clone(&providers)));
             // Spec §22.3: `--users` adds the people behind the processes the trace reaches.
-            if ctx
-                .arguments()
+            if written
                 .option("users")
                 .is_some_and(|value| matches!(value, Value::Bool(true)))
             {

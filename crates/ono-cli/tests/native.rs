@@ -572,3 +572,70 @@ fn should_still_carry_a_whole_document_across_the_boundary_into_a_parser() {
         run.output()
     );
 }
+
+/// The relation names on the edges of a `trace ... | to json` answer.
+fn traced_relations(script: &str) -> Vec<String> {
+    let run = ono(script);
+    run.assert_success();
+    let text = run.stdout();
+    // The answer is one `ono.graph/1` document; its edges each name the relation they assert.
+    text.split("\"relation\":\"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next().map(str::to_owned))
+        .collect()
+}
+
+#[test]
+fn should_restrict_a_trace_to_the_relations_a_list_names() {
+    // Spec §22.3 declares `--relations` as "the relation names to restrict the trace to", and
+    // `docs/spec/commands/process.yaml` types it `list<string>`. A list is how the language
+    // spells a list, so writing one must restrict the walk — an option that is read and dropped
+    // makes the contract and the answer disagree.
+    let unrestricted = traced_relations("trace process 1 --depth 2 | to json");
+    assert!(
+        unrestricted.iter().any(|relation| relation != "child"),
+        "this test needs a trace that reaches more than one relation to restrict, got \
+         {unrestricted:?}"
+    );
+
+    let restricted =
+        traced_relations(r#"trace process 1 --depth 2 --relations ["child"] | to json"#);
+    assert!(
+        !restricted.is_empty(),
+        "restricting to a relation the trace does reach must keep its edges"
+    );
+    assert!(
+        restricted.iter().all(|relation| relation == "child"),
+        "`--relations [\"child\"]` must answer child edges and no others, got {restricted:?}"
+    );
+}
+
+#[test]
+fn should_restrict_a_trace_to_the_relations_a_word_names() {
+    // The same option written the way a words-mode command usually takes one. Both spellings
+    // reach the same walk, so both restrict it.
+    let restricted = traced_relations("trace process 1 --depth 2 --relations child | to json");
+    assert!(
+        !restricted.is_empty() && restricted.iter().all(|relation| relation == "child"),
+        "`--relations child` must answer child edges and no others, got {restricted:?}"
+    );
+}
+
+#[test]
+fn should_refuse_a_relation_list_that_names_something_undefined() {
+    // `[child]` is a list holding a bare name, and a bare name is a variable the language has
+    // never been given. Answering the *unrestricted* graph to that is the worst of the three
+    // possible outcomes: the reader asked a narrower question and was handed a wider answer with
+    // nothing said about it (spec §10.5's discipline, applied to arguments).
+    let run = ono("trace process 1 --depth 2 --relations [child] | to json");
+    assert!(
+        !run.status().is_success(),
+        "an argument that cannot be evaluated must refuse, got {:?}",
+        run.stdout()
+    );
+    assert!(
+        run.stderr().contains("Ono-Sendai-E"),
+        "the refusal is structured (spec §43), got {:?}",
+        run.stderr()
+    );
+}
