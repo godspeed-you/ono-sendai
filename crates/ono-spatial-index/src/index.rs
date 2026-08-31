@@ -354,6 +354,22 @@ impl SpatialIndex {
         }
     }
 
+    /// Forgets what was recorded about one exit of `id`, because it is being read now.
+    ///
+    /// A withheld record is a statement about a *past* attempt: this exit was refused, or §32.1
+    /// kept a view from paying for it. Both stop being true the moment something asks the
+    /// question again, and a statement that outlives its answer is worse than none — the reader
+    /// is told "available on request" about the request they just made (§32.2, §35.2).
+    /// Whatever the new attempt finds is recorded in its place: edges, a fresh refusal, or a
+    /// fresh decline.
+    ///
+    /// Returns whether a record was there to forget.
+    pub fn clear_withheld(&mut self, id: &SpatialId, label: &str) -> bool {
+        self.entries
+            .get_mut(id)
+            .is_some_and(|entry| entry.withheld.remove(label).is_some())
+    }
+
     /// What the user was told about each exit that could not be read (§35.2).
     #[must_use]
     pub fn withheld(&self, id: &SpatialId) -> Vec<(&str, PermissionState, &str)> {

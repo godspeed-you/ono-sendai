@@ -715,6 +715,71 @@ fn exit_group(view: &Value, label: &str) -> Value {
     )
 }
 
+/// The neighbour display names the last `| to json` on stdout answered with, sorted so two
+/// answers compare. The last document is what is read because a script may print a place view
+/// before it, and that view is for a human rather than for this assertion.
+fn neighbour_names(run: &ono_testkit::Run) -> Vec<String> {
+    let stdout = run.stdout();
+    let document = stdout
+        .lines()
+        .rev()
+        .find(|line| line.trim_start().starts_with('['))
+        .unwrap_or_else(|| {
+            panic!("spec §29.4: `near | to json` prints a document, got {stdout:?}")
+        });
+    let parsed: Value = serde_yaml_ng::from_str(document)
+        .unwrap_or_else(|error| panic!("`near | to json` prints JSON: {error} in {document:?}"));
+    let mut names: Vec<String> = parsed
+        .as_sequence()
+        .unwrap_or_else(|| panic!("spec §29.4: `near` is an ordinary stream, got {document:?}"))
+        .iter()
+        .filter_map(|row| {
+            row.get("display_name")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn should_answer_the_same_neighbours_whether_or_not_a_look_came_first() {
+    // §32.2's "available on request" is a statement about what this session has *paid for*, not
+    // about what is there. `look` declines the expensive owner scan and records that decline;
+    // the `near --type process` after it asks for exactly that scan, and must get the answer.
+    //
+    // What this fixes: the decline was recorded on the place and never lifted, so the answer the
+    // scan produced was hidden behind it. A reader who looked before they walked was told the
+    // place was empty — with status 0, and with nothing on stderr. §35.2 and §42.4 forbid a
+    // false empty; this was the same fault reached through a stale statement rather than a
+    // refusal.
+    let (listening, port) = listener();
+
+    let direct = ono(&format!(
+        "enter 127.0.0.1:{port}; near --type process | to json"
+    ));
+    let walked = neighbour_names(&direct);
+    assert!(
+        !walked.is_empty(),
+        "this test needs the socket it holds to have an owner to find, got {:?}",
+        direct.stdout()
+    );
+
+    let after_look = ono(&format!(
+        "enter 127.0.0.1:{port}; look; near --type process | to json"
+    ));
+    let looked = neighbour_names(&after_look);
+    assert_eq!(
+        looked, walked,
+        "spec v0.4 §6.2/§32.2: `near --type process` answers the same neighbours whether or not \
+         a `look` came first, got {:?} after a look and {:?} without one",
+        looked, walked
+    );
+
+    drop(listening);
+}
+
 #[test]
 fn should_not_report_the_owner_of_a_socket_nobody_looked_up_as_no_owner() {
     // §35.2, §2.17 and §32.2. Joining a socket to the process holding it means reading every

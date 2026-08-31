@@ -422,6 +422,20 @@ pub async fn observe(
         ) {
             continue;
         }
+        // This run is paying for the relations this provider serves, so whatever the last run
+        // said about them stops being true here. §32.2's "available on request" is a statement
+        // about what has been paid for, and a `look` that declined the owner scan records it —
+        // leaving it in place hid the answer the very next `near --type process` went and got,
+        // and the reader was told the place was empty (ADR-0421).
+        {
+            let (index, _) = session.absorb_with();
+            for label in labels_of(provider.id()) {
+                if relation::resolve_label(object_type, label).is_empty() {
+                    continue;
+                }
+                index.clear_withheld(id, label);
+            }
+        }
         let found = provider.relationships(&node).await;
         let (relationships, failures) = (found.found().to_vec(), found.failures().to_vec());
 
