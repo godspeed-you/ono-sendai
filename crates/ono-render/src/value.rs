@@ -12,7 +12,7 @@
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use ono_value::{RecordValue, Schema, Value, canonical_text};
+use ono_value::{FieldDef, FieldType, RecordValue, Schema, Unit, Value, canonical_text};
 
 use crate::table::{Align, Cell, Column, Table};
 use crate::theme::{Token, sanitise};
@@ -194,19 +194,7 @@ impl Renderer {
     }
 
     fn record_table(&self, schema: &Schema, values: &[Value]) -> Table {
-        let columns: Vec<String> = if schema.default_view().is_empty() {
-            schema
-                .fields()
-                .iter()
-                .map(|field| field.name().to_owned())
-                .collect()
-        } else {
-            schema
-                .default_view()
-                .iter()
-                .map(|column| column.to_string())
-                .collect()
-        };
+        let columns = columns_of(schema);
 
         let mut table = Table::new(
             columns
@@ -237,7 +225,54 @@ impl Renderer {
     fn field_cell(&self, record: &RecordValue, name: &str) -> Cell {
         // A field the schema does not declare renders as unknown rather than as a blank: the
         // default view is a rendering hint and a stale one must not silently produce empty cells.
-        self.cell(record.get(name).unwrap_or(&Value::Null))
+        let value = record.get(name).unwrap_or(&Value::Null);
+        match record.schema().field(name) {
+            Some(field) => self.declared_cell(field, value),
+            None => self.cell(value),
+        }
+    }
+
+    /// The cell of a value read through the field that declares it (spec §13.1 point 1).
+    ///
+    /// Two things a value cannot say about itself live on its declaration, and spec §13.2 prints
+    /// both: `cpu` is a bare `float` whose *meaning* is a percentage, and `user` is a reference to
+    /// an account rather than a copy of it. A field with neither renders exactly as it would
+    /// anywhere else, so a cell never depends on the declaration for anything the value knows.
+    fn declared_cell(&self, field: &FieldDef, value: &Value) -> Cell {
+        // Only `percent`. `bytes` and `seconds` have a value type of their own — `rx_bytes` is a
+        // `bytesize` and renders as `1.20 GiB` without help — and where a field carries the unit
+        // over a plain integer it is because the number is the point: an MTU reads as `1500`,
+        // never as `1.46 KiB`. `percent` is the one unit with no other spelling.
+        if field.unit() == Some(Unit::Percent)
+            && let Some(number) = percent_number(value)
+        {
+            return Cell::new(sanitise(&percentage(number))).with_token(Token::ValueUnit);
+        }
+        if matches!(field.ty(), FieldType::Ref(_))
+            && let Ok(target) = value.as_record()
+        {
+            return Cell::new(sanitise(&reference_text(target))).with_token(Token::ValueString);
+        }
+        self.cell(value)
+    }
+
+    /// A record as one line: the fields of its default view, spelled the way a record literal is.
+    ///
+    /// A nested record is data a reader asked for. Showing its schema id instead would be the
+    /// conflation spec §10.5 exists to prevent — `ono.endpoint/1 {}` and an endpoint that really
+    /// is empty would read identically. Which fields is the same question the table already
+    /// answers for columns, so it is the same answer: the default view, or every field when the
+    /// schema declares none.
+    fn record_text(&self, record: &RecordValue) -> String {
+        let fields = columns_of(record.schema())
+            .into_iter()
+            .map(|name| {
+                let value = record.get(&name).unwrap_or(&Value::Null);
+                format!("{name}: {}", self.text(value))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{{{fields}}}")
     }
 
     fn map_table(&self, keys: &[String], values: &[Value]) -> Table {
@@ -269,10 +304,11 @@ impl Renderer {
         match value {
             Value::ByteSize(size) => size.to_string(),
             Value::Duration(span) => span.to_string(),
-            Value::Percent(percent) => percent.to_string(),
+            Value::Percent(percent) => percentage(percent.value()),
             Value::Timestamp(instant) => self.timestamp(*instant),
             Value::Error(error) => format!("{}: {}", error.code().name(), error.message()),
             Value::Path(path) => path.display().to_string(),
+            Value::Record(record) => self.record_text(record),
             other => canonical_text(other).unwrap_or_else(|_| other.to_string()),
         }
     }
@@ -349,6 +385,72 @@ impl Shape {
             }
         }
     }
+}
+
+/// The fields a schema puts on show: its default view, or every field when it declares none.
+///
+/// A table's columns and a nested record's inline fields are the same question asked twice, so
+/// they get the same answer — a schema that names its readable fields names them once.
+fn columns_of(schema: &Schema) -> Vec<String> {
+    if schema.default_view().is_empty() {
+        schema
+            .fields()
+            .iter()
+            .map(|field| field.name().to_owned())
+            .collect()
+    } else {
+        schema
+            .default_view()
+            .iter()
+            .map(|column| column.to_string())
+            .collect()
+    }
+}
+
+/// A percentage as spec §13.2 prints it: `24.8%`, one decimal.
+///
+/// The digits a `f64` happens to carry are an artifact of the arithmetic that produced them, and
+/// printing all seventeen of them says "this is exact" about a sampled quantity that is not.
+/// Spec §33.5 keeps the exact number reachable — `to json` and `inspect` are unaffected, because
+/// they use the canonical form and this is the human one.
+fn percentage(value: f64) -> String {
+    format!("{value:.1}%")
+}
+
+/// The number in a value a field declares as a percentage, if the value is one at all.
+///
+/// A null, a string or an error in a percent-typed field renders as itself: spec §10.5 makes
+/// unknown and failed distinct from a value, and a unit must not turn either into `0.0%`.
+fn percent_number(value: &Value) -> Option<f64> {
+    match value {
+        Value::Float(number) => Some(*number),
+        Value::Percent(percent) => Some(percent.value()),
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a percentage past 2^53 is a broken measurement, not a rendering problem"
+        )]
+        Value::Int(number) => Some(*number as f64),
+        _ => None,
+    }
+}
+
+/// What a reference names: the object on the other end, as a person says it.
+///
+/// Spec §13.2 prints `postgres` in the `USER` column of the process table — a reference stands
+/// for an object the reader already knows how to name, so spelling out its whole record would
+/// bury the row it sits in. Where nothing resolved, spec §23.6 keeps the numeric identity, and
+/// that identity is what shows: `{uid: 0}` says which account this is, and an empty cell would
+/// not.
+fn reference_text(record: &RecordValue) -> String {
+    if let Some(Ok(name)) = record
+        .get("name")
+        .filter(|value| !value.is_null())
+        .map(canonical_text)
+        && !name.is_empty()
+    {
+        return name;
+    }
+    record.identity().to_string()
 }
 
 /// The label the `TYPE` column of a heterogeneous table shows.
