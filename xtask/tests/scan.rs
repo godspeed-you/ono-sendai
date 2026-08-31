@@ -299,9 +299,9 @@ fn should_ignore_the_board_and_the_narrative_specifications_when_scanning_case_r
 
 #[test]
 fn should_ignore_a_narrative_specification_whose_name_omits_the_shell_infix() {
-    // The v0.5 Temporal & Causal Systems Interface is named `ono_sendai_spec_v0.5_...`, without
-    // the `shell_spec` infix the earlier three carry. It is immutable all the same, so a name it
-    // records is no more fixable than one in the base (ADR-0423).
+    // The v0.5 Temporal & Causal Systems Interface arrived as `ono_sendai_spec_v0.5_...`, without
+    // the `shell_spec` infix the earlier three carry. A specification is immutable however it is
+    // named, so a name it records is no more fixable than one in the base (ADR-0423).
     let repo = fixture(&[
         ("docker/acceptance/cases/000-binary-runs.case", "run\n"),
         ("docker/acceptance/cases/040-object-pipeline.case", "run\n"),

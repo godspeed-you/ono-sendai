@@ -19,7 +19,7 @@ testing for the prefix `docs/ono_sendai_shell_spec_`. Both matched the shape of 
 that existed rather than the thing being named.
 
 On 2026-08-31 the user added `docs/ono_sendai_spec_v0.5_temporal_causal_systems_interface.md` —
-the Temporal & Causal Systems Interface, 4 147 lines. The name drops the `shell_` element. The
+the Temporal & Causal Systems Interface, 4 147 lines. The name dropped the `shell_` element. The
 consequences were exactly the two ADR-0026 was written to prevent:
 
 - the document had no checksum line, so nothing would notice it being edited;
@@ -35,6 +35,12 @@ The v0.4 document arrived the same way and was *renamed* on `main` to add the in
 fix nobody can rely on and one no agent may perform — AGENTS.md §5.1 forbids renaming a
 narrative specification, so the harness cannot depend on the user having named it a particular
 way.
+
+**Postscript, same day.** While this decision was being written the user renamed v0.5 on `main`
+too (`c4ca548`, content untouched), so all four documents carry `shell_spec` again and
+`docs/spec.sha256` follows the new path. That does not restore the old rule. It is the second
+time in two enhancements that the harness was made correct by hand after the fact, which is the
+argument for a rule that does not need the hand.
 
 ## Decision
 

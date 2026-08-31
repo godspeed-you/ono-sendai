@@ -94,9 +94,10 @@ fn should_accept_a_repository_whose_only_specification_is_the_base() {
     assert_eq!(check(repo.path()), Vec::new());
 }
 
-/// The v0.5 Temporal & Causal Systems Interface, named without the `shell_spec` infix its three
-/// predecessors carry. Discovery keyed on that infix, so this document was neither checksummed
-/// nor enumerated and the gate stayed green (ADR-0423).
+/// The name the v0.5 Temporal & Causal Systems Interface arrived under: no `shell_spec` infix.
+/// Discovery keyed on that infix, so the document was neither checksummed nor enumerated and the
+/// gate stayed green. The file has been renamed since; the shape has not stopped being possible,
+/// which is what this fixture holds (ADR-0423).
 const TEMPORAL: &str = "docs/ono_sendai_spec_v0.5_temporal_causal_systems_interface.md";
 
 #[test]

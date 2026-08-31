@@ -61,13 +61,14 @@ pub fn narrative_specs(root: &Path) -> Vec<String> {
 
 /// Whether a file name in `docs/` is a narrative specification.
 ///
-/// The user names these documents, and the shape has already changed once: v0.2, v0.3 and v0.4
-/// are `ono_sendai_shell_spec_v<version>…`, while the v0.5 Temporal & Causal Systems Interface
-/// arrived as `ono_sendai_spec_v0.5_temporal_causal_systems_interface.md`. Keying discovery on
-/// the `shell_spec` infix meant that document was neither covered by the checksum file nor
-/// enumerated in the instructions, and the gate stayed green while both guarantees were absent —
-/// the exact failure this module exists to prevent from repeating. What every one of them does
-/// carry is the product name and a version, so that is what the rule matches (ADR-0423).
+/// The user names these documents, and the shape is not stable: the v0.5 Temporal & Causal
+/// Systems Interface arrived as `ono_sendai_spec_v0.5_temporal_causal_systems_interface.md`,
+/// without the `shell_spec` infix v0.2 to v0.4 carry. Keying discovery on that infix meant the
+/// document was neither covered by the checksum file nor enumerated in the instructions, and the
+/// gate stayed green while both guarantees were absent — the exact failure this module exists to
+/// prevent from repeating. The user has since renamed it to carry the infix, which is a
+/// correction by hand and not a rule. What every one of these documents does carry is the
+/// product name and a version, so that is what this matches (ADR-0423).
 #[must_use]
 pub fn is_narrative_spec(name: &str) -> bool {
     name.starts_with("ono_sendai_") && name.contains("spec_v") && name.ends_with(".md")

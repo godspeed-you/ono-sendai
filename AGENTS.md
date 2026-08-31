@@ -53,7 +53,7 @@ ono-sendai/
     │                             enhancement spec, layered on the base (§5.2)
     ├── ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
     │                             enhancement spec, layered on the base (§5.2)
-    ├── ono_sendai_spec_v0.5_temporal_causal_systems_interface.md
+    ├── ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
     │                             enhancement spec, layered on the base (§5.2)
     ├── STATE.md                  progress board (§9)
     ├── ACCEPTANCE.md             definition of release-ready + stopping rule (§15)
@@ -145,7 +145,7 @@ Concretely:
 ## 5. Authority Order (what wins when sources disagree)
 
 ```
-0. docs/ono_sendai_spec_v0.5_temporal_causal_systems_interface.md
+0. docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
 0. docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
 0. docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md
                                    the enhancement specs share level 0 (IMMUTABLE, read-only);
@@ -171,10 +171,11 @@ specifications beside it — any `docs/ono_sendai_*spec_v<version>*.md` — and 
 everything the enhancement does not speak about; where they overlap, **the later version wins**,
 and the ADR implementing that part cites both.
 
-The user names these files, and the name is not a shape to rely on: v0.2 to v0.4 carry
-`shell_spec`, v0.5 carries `spec`. What every one of them carries is the product name and a
-version, so that is what discovery matches on and how the base is identified — the lowest
-version, never whatever sorts first (ADR-0423).
+The user names these files, and the name is not a shape to rely on. v0.4 and v0.5 each arrived
+without the `shell_spec` infix the harness matched on, and each was renamed afterwards to restore
+it — a correction only the user may make (§5.1) and one no gate can require. What every one of
+them carries is the product name and a version, so that is what discovery matches on and how the
+base is identified — the lowest version, never whatever sorts first (ADR-0423).
 
 Every one of them is immutable under §5.1, without exception, and `spec-check` enforces two
 things on every gate run (ADR-0026):
@@ -185,7 +186,7 @@ things on every gate run (ADR-0026):
 
 The enhancements present, newest first:
 
-- `docs/ono_sendai_spec_v0.5_temporal_causal_systems_interface.md` — the Temporal & Causal
+- `docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md` — the Temporal & Causal
   Systems Interface: time as a coordinate, an evidence-backed event ledger, state reconstruction,
   timelines and causal explanation. Added 2026-08-31, **not implemented**; `docs/STATE.md`
   records it as the next tranche.

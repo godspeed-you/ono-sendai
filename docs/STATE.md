@@ -51,7 +51,7 @@ is an **enhancement layered on it** — the External Command Adaptation Layer �
 immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a checksum line in
 `docs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
-**v0.5 arrived on `main` on 2026-08-31** as `docs/ono_sendai_spec_v0.5_temporal_causal_systems_interface.md`
+**v0.5 arrived on `main` on 2026-08-31** as `docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md`
 — the Temporal & Causal Systems Interface, 4 147 lines: time as a session coordinate, a canonical
 event model, an evidence ledger with explicit coverage and gaps, state reconstruction, `timeline`,
 `changes`, `why`, historical spatial navigation, and the rule that correlation is never presented
@@ -63,7 +63,9 @@ the two guards that were supposed to notice an unguarded specification both matc
 — so the gate stayed green with the document neither checksummed nor enumerated. ADR-0423 records
 the widened rule; `xtask/tests/narrative.rs::should_find_an_enhancement_whose_name_omits_the_shell_infix`
 and `xtask/tests/scan.rs::should_ignore_a_narrative_specification_whose_name_omits_the_shell_infix`
-hold it. **The v0.5 tranche has no `docs/ACCEPTANCE.md` checklist yet**; writing §4.8 from v0.5
+hold it. The user then renamed the file on `main` (`c4ca548`, content untouched) to carry the
+infix after all, and `docs/spec.sha256` follows the new path. The widened rule stays: it is what
+made the document visible in the first place, and the next one may arrive misnamed too. **The v0.5 tranche has no `docs/ACCEPTANCE.md` checklist yet**; writing §4.8 from v0.5
 §48 and §56, the way §4.7 was written from v0.4, is the first task of that tranche.
 
 **The v0.3 tranche is complete** (started 2026-08-27, delivered by ADR-0052 … ADR-0067; all 39
