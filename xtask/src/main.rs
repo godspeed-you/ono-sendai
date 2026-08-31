@@ -255,8 +255,8 @@ fn check_spec_is_untouched(root: &Path) -> Vec<String> {
         Ok(status) if status.success() => Vec::new(),
         Ok(_) => vec![
             "the narrative specification has been modified. It is IMMUTABLE (AGENTS.md \
-             section 5.1): restore it with `git checkout -- docs/*_shell_spec_*.md` and record \
-             the decision in an ADR instead. If the user replaced the specification \
+             section 5.1): restore it with `git checkout -- docs/ono_sendai_*spec_v*.md` and \
+             record the decision in an ADR instead. If the user replaced the specification \
              deliberately, they update docs/spec.sha256"
                 .to_owned(),
         ],

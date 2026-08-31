@@ -327,7 +327,7 @@ the same registries the shell answers `help` from, so they cannot drift:
 | `docs/reference/` | generated reference: every command, verb, target, schema, error, capability |
 | `docs/reference/adapters/` | generated: the compatibility matrix and a page per adapter pack — invocations, schemas, limits |
 | `docs/ono_sendai_shell_spec_v0.2.md` | the immutable base specification — product, language, KUANG/11 |
-| `docs/*_shell_spec_*.md` | enhancement specifications, layered on the base (AGENTS.md §5.2) |
+| `docs/ono_sendai_*spec_v*.md` | the base and the enhancement specifications layered on it (AGENTS.md §5.2) |
 | `docs/spec/` | machine-readable contracts: commands, schemas, verbs, errors, providers |
 | `docs/ACCEPTANCE.md` | what "finished" means, in boxes a script can check — all ticked |
 | `docs/decisions/` | 40+ architecture decision records, including every deliberate spec deviation |

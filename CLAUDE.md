@@ -29,9 +29,10 @@ duplicate rules here — if a rule needs to change, change it in `AGENTS.md`.
 - **Autonomy:** every decision not fixed by the spec is yours. Decide, write an ADR in
   `docs/decisions/`, continue. Do not ask the user; do not idle (AGENTS.md §8).
 - **The spec is immutable.** Never edit, reformat, rename or regenerate
-  `docs/ono_sendai_shell_spec_v0.2.md` — not even a typo. Ambiguous, inconsistent or wrong? ADR
-  with a `Spec deviation` heading, then implement your decision. `spec-check` verifies its
-  checksum on every gate run (AGENTS.md §5.1).
+  `docs/ono_sendai_shell_spec_v0.2.md` or any enhancement beside it — not even a typo.
+  Ambiguous, inconsistent or wrong? ADR with a `Spec deviation` heading, then implement your
+  decision. `spec-check` verifies every one of their checksums on every gate run (AGENTS.md
+  §5.1, §5.2).
 - **Referee:** `scripts/gate.sh` decides whether an increment is sound; `scripts/acceptance.sh`
   decides whether the product exists, by running the real `ono` binary in a container as an
   unprivileged user (AGENTS.md §10). A capability without an acceptance case is not delivered.

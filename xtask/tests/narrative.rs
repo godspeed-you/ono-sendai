@@ -93,3 +93,50 @@ fn should_accept_a_repository_whose_only_specification_is_the_base() {
     }
     assert_eq!(check(repo.path()), Vec::new());
 }
+
+/// The v0.5 Temporal & Causal Systems Interface, named without the `shell_spec` infix its three
+/// predecessors carry. Discovery keyed on that infix, so this document was neither checksummed
+/// nor enumerated and the gate stayed green (ADR-0423).
+const TEMPORAL: &str = "docs/ono_sendai_spec_v0.5_temporal_causal_systems_interface.md";
+
+#[test]
+fn should_find_an_enhancement_whose_name_omits_the_shell_infix() {
+    let repo = sound();
+    repo.write(TEMPORAL, "# temporal\n");
+    let problems = check(repo.path());
+    assert_eq!(problems.len(), 2, "got {problems:?}");
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.location.contains("spec.sha256")
+                && problem.detail.contains(TEMPORAL)),
+        "an unguarded specification must be reported however it is named, got {problems:?}"
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.location.contains("AGENTS.md")
+                && problem.detail.contains(TEMPORAL)),
+        "an unenumerated specification must be reported however it is named, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_take_the_lowest_version_as_the_base_whatever_the_later_names_look_like() {
+    let repo = sound();
+    repo.write(TEMPORAL, "# temporal\n");
+    repo.write(
+        "docs/spec.sha256",
+        format!("0000  {BASE}\n1111  {ENHANCEMENT}\n2222  {TEMPORAL}\n"),
+    );
+    // Only AGENTS.md carries the enhancements; CLAUDE.md and README.md carry the base alone. If
+    // the base were taken to be whatever sorts first, those two would be reported instead.
+    repo.write(
+        "AGENTS.md",
+        format!("the specs are {BASE}, {ENHANCEMENT} and {TEMPORAL}\n"),
+    );
+    for file in ["CLAUDE.md", "README.md"] {
+        repo.write(file, format!("the base is {BASE}\n"));
+    }
+    assert_eq!(check(repo.path()), Vec::new());
+}

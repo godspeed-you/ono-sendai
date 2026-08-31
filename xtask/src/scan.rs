@@ -344,7 +344,9 @@ fn dangling_case_detail(name: &str, existing: &[String]) -> String {
 /// The documents whose case references are not claims about this repository's referee.
 fn is_out_of_scope_for_case_references(relative: &str) -> bool {
     relative == "docs/STATE.md"
-        || (relative.starts_with("docs/ono_sendai_shell_spec_") && relative.ends_with(".md"))
+        || relative
+            .strip_prefix("docs/")
+            .is_some_and(crate::narrative::is_narrative_spec)
 }
 
 /// The backticked `NNN-kebab-case` tokens of one line.

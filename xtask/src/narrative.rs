@@ -36,7 +36,7 @@ pub fn check(root: &Path) -> Vec<Problem> {
     problems
 }
 
-/// The narrative specifications, sorted, so the base comes first.
+/// The narrative specifications, ordered by version, so the base comes first.
 #[must_use]
 pub fn narrative_specs(root: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(root.join("docs")) else {
@@ -45,10 +45,44 @@ pub fn narrative_specs(root: &Path) -> Vec<String> {
     let mut found: Vec<String> = entries
         .flatten()
         .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.contains("shell_spec") && name.ends_with(".md"))
+        .filter(|name| is_narrative_spec(name))
         .collect();
-    found.sort();
+    // By version rather than by name: the names no longer share a shape, so sorting them as text
+    // decides which document is the base by an accident of spelling (ADR-0423). A name carrying
+    // no version sorts last, because nothing unversioned can be the base.
+    found.sort_by_key(|name| {
+        (
+            version_of(name).unwrap_or((u32::MAX, u32::MAX)),
+            name.clone(),
+        )
+    });
     found
+}
+
+/// Whether a file name in `docs/` is a narrative specification.
+///
+/// The user names these documents, and the shape has already changed once: v0.2, v0.3 and v0.4
+/// are `ono_sendai_shell_spec_v<version>…`, while the v0.5 Temporal & Causal Systems Interface
+/// arrived as `ono_sendai_spec_v0.5_temporal_causal_systems_interface.md`. Keying discovery on
+/// the `shell_spec` infix meant that document was neither covered by the checksum file nor
+/// enumerated in the instructions, and the gate stayed green while both guarantees were absent —
+/// the exact failure this module exists to prevent from repeating. What every one of them does
+/// carry is the product name and a version, so that is what the rule matches (ADR-0423).
+#[must_use]
+pub fn is_narrative_spec(name: &str) -> bool {
+    name.starts_with("ono_sendai_") && name.contains("spec_v") && name.ends_with(".md")
+}
+
+/// The `(major, minor)` version a specification's file name announces.
+fn version_of(name: &str) -> Option<(u32, u32)> {
+    let mut parts = name.split("spec_v").nth(1)?.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor: String = parts
+        .next()?
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    Some((major, minor.parse().ok()?))
 }
 
 /// Every specification must be covered by `docs/spec.sha256`, or nothing proves it untouched.

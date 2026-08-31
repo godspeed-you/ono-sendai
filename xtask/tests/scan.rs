@@ -280,15 +280,34 @@ fn should_ignore_a_case_name_inside_a_fenced_code_block() {
 fn should_ignore_the_board_and_the_narrative_specifications_when_scanning_case_references() {
     // The board records names that never existed on purpose, and the specifications are
     // immutable (AGENTS.md §5.1), so a name in either is not a claim this check could close.
+    // Every name here is inside the range the suite uses, or the check would skip it as prose
+    // and the exemptions would go unexercised.
     let repo = fixture(&[
         ("docker/acceptance/cases/000-binary-runs.case", "run\n"),
+        ("docker/acceptance/cases/040-object-pipeline.case", "run\n"),
         (
             "docs/STATE.md",
             "The seven names these boxes carried — `040-process-provider` — never existed.\n",
         ),
         (
             "docs/ono_sendai_shell_spec_v0.2.md",
-            "See `999-imaginary-case`.\n",
+            "See `001-imaginary-case`.\n",
+        ),
+    ]);
+    assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_ignore_a_narrative_specification_whose_name_omits_the_shell_infix() {
+    // The v0.5 Temporal & Causal Systems Interface is named `ono_sendai_spec_v0.5_...`, without
+    // the `shell_spec` infix the earlier three carry. It is immutable all the same, so a name it
+    // records is no more fixable than one in the base (ADR-0423).
+    let repo = fixture(&[
+        ("docker/acceptance/cases/000-binary-runs.case", "run\n"),
+        ("docker/acceptance/cases/040-object-pipeline.case", "run\n"),
+        (
+            "docs/ono_sendai_spec_v0.5_temporal_causal_systems_interface.md",
+            "See `001-imaginary-case`.\n",
         ),
     ]);
     assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
