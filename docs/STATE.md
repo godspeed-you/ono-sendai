@@ -68,6 +68,18 @@ infix after all, and `docs/spec.sha256` follows the new path. The widened rule s
 made the document visible in the first place, and the next one may arrive misnamed too. **The v0.5 tranche has no `docs/ACCEPTANCE.md` checklist yet**; writing §4.8 from v0.5
 §48 and §56, the way §4.7 was written from v0.4, is the first task of that tranche.
 
+**v0.6 arrived on `main` the same day** (`9c49bb9`) as
+`docs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective Change,
+Protection & Recovery, 4 473 lines. It makes a proposed mutation a first-class object, the
+`ChangePlan`, so an operator can inspect what a change would do and how recoverable it is before
+it becomes real; v0.6 §0.1 places it after v0.5 in the progression and leaves the earlier
+documents authoritative for what they define. Checksummed and enumerated, **not implemented**,
+and **behind v0.5**: v0.6 reasons about consequences and recoverability, which is the evidence
+and causality v0.5 builds. Nothing in it should be started before v0.5's §4.8 exists.
+
+This one the gate caught by itself, on the first `spec-check` after the merge — the widened rule
+of ADR-0423 working as intended, unlike the silent arrival of v0.5 the day before.
+
 **The v0.3 tranche is complete** (started 2026-08-27, delivered by ADR-0052 … ADR-0067; all 39
 boxes of `docs/ACCEPTANCE.md` §4.6 are ticked, cases `070`–`089`). **The v0.4 tranche is complete**
 (delivered 2026-08-28/29, ADR-0124 … ADR-0212 and the S11c session below; §4.7's boxes are ticked,

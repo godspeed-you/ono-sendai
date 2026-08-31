@@ -55,6 +55,8 @@ ono-sendai/
     │                             enhancement spec, layered on the base (§5.2)
     ├── ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
     │                             enhancement spec, layered on the base (§5.2)
+    ├── ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
+    │                             enhancement spec, layered on the base (§5.2)
     ├── STATE.md                  progress board (§9)
     ├── ACCEPTANCE.md             definition of release-ready + stopping rule (§15)
     ├── decisions/ADR-*.md        recorded agent decisions (§8)
@@ -145,6 +147,7 @@ Concretely:
 ## 5. Authority Order (what wins when sources disagree)
 
 ```
+0. docs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
 0. docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
 0. docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
 0. docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md
@@ -186,6 +189,10 @@ things on every gate run (ADR-0026):
 
 The enhancements present, newest first:
 
+- `docs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective
+  Change, Protection & Recovery: the `ChangePlan` as a first-class object, so a mutation can be
+  inspected for its consequences and its recoverability before it is made real. Added 2026-08-31,
+  **not implemented**; `docs/STATE.md` records it behind v0.5.
 - `docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md` — the Temporal & Causal
   Systems Interface: time as a coordinate, an evidence-backed event ledger, state reconstruction,
   timelines and causal explanation. Added 2026-08-31, **not implemented**; `docs/STATE.md`
