@@ -40,18 +40,46 @@ this session has **paid for**, and the session had just paid.
 **A withheld record is forgotten when something asks that question again.**
 
 `SpatialIndex::clear_withheld(id, label)` removes the record for one exit.
-`relations::observe` calls it for every label of a relationship provider **it is about to
-consult**, immediately before consulting it. Whatever that attempt learns is then recorded in the
+`relations::observe` calls it for the labels of a relationship provider **this interest asked for
+by name**, immediately before consulting it. Whatever that attempt learns is then recorded in the
 cleared place: edges, a fresh refusal via the existing failure path, or a fresh decline.
 
-Where the clearing sits is the decision, and it is deliberate on both sides:
+Where the clearing sits is the decision, and it is deliberate on three counts:
 
-- **Only for a provider that is actually consulted.** A provider this interest declines is not
-  asked, so nothing it might have said is disturbed, and the decline recorded by the previous
-  `look` stays true.
+- **Only for a provider the interest asked for.** Only a *broad* provider — one that answers about
+  an object by enumerating a whole target, §32.1's expensive class — can be declined, so only a
+  broad provider can be asked for. `near --type process`, `follow <relation>` and `--all` are the
+  three spellings that ask; a default observation asks for none of them, and what its decline said
+  stays true until something does ask.
+- **Including `--all`.** Verified rather than assumed: under this rule
+  `enter <socket>; look; look --all` answers `process 1`, and without `complete` in the asking set
+  it would answer `unknown — available on request` — the original defect, one spelling over.
 - **Before the attempt, not after.** A provider that answers with a refusal re-records it in the
   same run; a provider that answers with edges leaves the exit clean. Clearing afterwards would
   have to distinguish "answered with nothing" from "refused" a second time, in a second place.
+
+**The first version of this decision cleared for every provider `observe` consulted, and it was a
+regression.** On a host with 780 processes and 556 services,
+`spatial_interactive_missing::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
+— a liveness bound on a full-screen COMPUTE map — went from a pre-existing flake to a frequent
+failure. Measured, A/B, on the same tree:
+
+| variant | failures |
+|---|---|
+| no clearing at all | 0/12 on a quiet machine, 1/10 on a loaded one |
+| clearing for every consulted provider | 9/23 |
+| clearing only where the interest asked | 1/12 on a quiet machine |
+
+The statistics were noisy enough not to decide it, so the decision rests on a count instead:
+instrumented, **the whole interactive suite makes zero `clear_withheld` calls under the rule as
+written, and five under the first version**, one of which removes a record. The narrowed rule
+cannot reach that code path, so it cannot be what fails there; the residual 1/12 is the flake the
+board tracks under B-spat-6.
+
+*Why* one effective removal per suite cost that test its liveness bound is **not** established
+here, and this ADR does not claim it. What is established is which rule touches the path and which
+does not. It is the reason the rule reads "asked for" and not "consulted": a decline is cheap to
+keep and evidently not cheap to lift, so it is lifted only where someone paid for the answer.
 
 `relation_summary` is untouched. Its rule — a refusal outranks a count — is right, and the fault
 was never that it honoured a withheld record; it was that the record was stale.

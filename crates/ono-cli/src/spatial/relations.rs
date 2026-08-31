@@ -410,24 +410,36 @@ pub async fn observe(
         // §32.2: an exit nobody asked about stays a discoverable but unloaded one. §35.2 has a
         // word for that, and it is not `unsupported`: the provider is there and was not asked
         // because §32.1 forbids a default `look` from spending a whole-target enumeration.
-        if let Some(reaches) = broad(provider.id())
-            && !interest.wants(labels_of(provider.id()), reaches)
-        {
-            declined.extend(labels_of(provider.id()).iter().copied());
-            continue;
-        }
+        // Whether this interest named the provider's relations rather than merely not excluding
+        // them: `near --type process`, `follow <relation>`, `--all`. Only a broad provider can be
+        // declined, so only a broad provider can be asked for (§32.1, §32.2).
+        let asked_for = match broad(provider.id()) {
+            Some(reaches) => {
+                if !interest.wants(labels_of(provider.id()), reaches) {
+                    declined.extend(labels_of(provider.id()).iter().copied());
+                    continue;
+                }
+                true
+            }
+            None => false,
+        };
         if !matches!(
             provider.availability(),
             ono_provider_api::Availability::Available
         ) {
             continue;
         }
-        // This run is paying for the relations this provider serves, so whatever the last run
-        // said about them stops being true here. §32.2's "available on request" is a statement
-        // about what has been paid for, and a `look` that declined the owner scan records it —
-        // leaving it in place hid the answer the very next `near --type process` went and got,
-        // and the reader was told the place was empty (ADR-0421).
-        {
+        // The request is being made, so whatever a previous decline said about these relations
+        // stops being true here. §32.2's "available on request" is a statement about what has
+        // been paid for, and a `look` that declined the owner scan records it — leaving it in
+        // place hid the answer the very next `near --type process` went and got, and the reader
+        // was told the place was empty (ADR-0421).
+        //
+        // Only for a provider this interest asked for by name. A default observation runs on
+        // every repaint of a full-screen view, and clearing there made the view re-render the
+        // groups a decline had been summarising — 780 processes and 556 services per frame, past
+        // §34.2's budget. What a decline says stays true until something asks.
+        if asked_for {
             let (index, _) = session.absorb_with();
             for label in labels_of(provider.id()) {
                 if relation::resolve_label(object_type, label).is_empty() {

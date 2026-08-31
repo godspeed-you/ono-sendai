@@ -1763,7 +1763,13 @@ found on 2026-08-30 while recording the README figures, in their own block at th
 #### Spatial
 
 - [ ] **B-spat-6 — a full-screen map of COMPUTE is unresponsive while one projection is in
-  flight.** Measured by S11c on a 500-process host; §34.2's view budget will eventually have to
+  flight.** **Its test is flaky on a large host, and that was measured on 2026-08-31**:
+  `spatial_interactive_missing::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
+  fails its liveness bound roughly 1 run in 10 on a 780-process, 556-service machine, and a failing
+  run takes the full 50 s bound where a green one takes 7 s. It does not reproduce in the container
+  — CI has never seen it — so this is a defect that only a real desktop shows, which is what
+  B-spat-6 has said all along. ADR-0421's measurement table is the data.
+  The original report: measured by S11c on a 500-process host; §34.2's view budget will eventually have to
   answer for it. `98fa9ce` (ADR-0263) fixed the *neighbouring* defect — the index grew by one
   population per observation, so the view got monotonically slower for as long as it stayed open —
   and did not make the first projection concurrent with the repaint, which is what this asks for.
