@@ -396,8 +396,3 @@ by the user, deliberately, when the release gate passes.
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
----
-
-*A modern shell inspired by PowerShell and Neuromancer. The time has come to bring our fiction
-into life.*
