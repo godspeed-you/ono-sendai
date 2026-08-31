@@ -1787,23 +1787,46 @@ found on 2026-08-30 while recording the README figures, in their own block at th
 
 Five defects, each reproduced at `a057be1` — against `target/release/ono` on an ordinary host
 (920 processes), or against the demo image `docker/demo.Dockerfile` (`ono-sendai:demo-recording`,
-4 processes, nginx on 8080, redis on 6379). None is fixed here; §4 keeps the fix out of a `docs:`
-commit. Three of the five were found by composing the recordings in `docs/assets/`, which is the
-argument for keeping that harness: it types what a reader would type.
+4 processes, nginx on 8080, redis on 6379). None was fixed there; §4 keeps the fix out of a
+`docs:` commit. Three of the five were found by composing the recordings in `docs/assets/`, which
+is the argument for keeping that harness: it types what a reader would type.
 
-- [ ] **A nested record renders as its schema id in a table.** `get socket | where state ==
-  "listen" | take 1 | select protocol local state` prints `LOCAL` as `ono.endpoint/1 {}`, where
-  the same field through `| to json` is
-  `{"address":"127.0.0.1","port":631,"path":null,"host":null}`. The data is right and the
-  renderer is not: a record-valued field shows its type and an empty brace pair instead of its
-  content. `ono.user/1 {uid: 0}` in `watch process`'s `USER` column is the same defect with one
-  field surviving. It cost the README a documented example — the file claimed `select protocol
-  local state` printed `:5432`, which no build does; the example now selects `local.port`.
-  Exit test: a render test asserting that a record-valued cell shows the record's own fields, and
-  the README example restored to `local`.
+**Four of the five are closed as of 2026-08-31** (`f8e0fb6`, `e8426e5`, `41e9688`;
+ADR-0419/0420/0421). The `map --live` hang is the one that remains. Fixing the four turned up five
+more, in their own block below; two of them are halves of these boxes that were reported as one
+defect and are not — `select`'s share of the float rendering, and `follow owner`.
 
-- [ ] **`look` empties the neighbourhood it just described.** In one script, against the demo
-  image:
+- [x] **A nested record renders as its schema id in a table** — fixed 2026-08-31, `f8e0fb6`,
+  ADR-0419, in one increment with the float box below. One cause under both: `Renderer::text`
+  matched on the value alone, and two of the things §13 prints are not in the value. `field_cell`
+  now reads the field's declaration (§13.1 point 1) — a record-valued cell renders the record
+  (`{address: 127.0.0.1, port: 631}`), a `ref<S>` renders what a person calls that object (`root`,
+  or its identity where none resolved, §23.6), and `unit: percent` renders `2.1%`. Verified
+  against `target/release/ono`: `get process 1` prints `2.1%` and `root` where it printed
+  `2.085903083563699` and `ono.user/1 {uid: 0}`; `| to json` is byte-identical. Eleven tests in
+  `crates/ono-render/tests/value_nested.rs`, two of which hold the line the other way (an
+  undeclared float keeps its precision, a `unit: bytes` integer stays `65536`).
+  **The README was left on `local.port` deliberately.** The line reads better than the restored
+  `local` would (`{address: 0.0.0.0, port: 5432}` in a narrow block) and it shows field-path
+  projection, which nothing else in that section does. The reason the box asked for the restore
+  was that `local` was broken; it is not any more.
+
+- [x] **`look` empties the neighbourhood it just described** — fixed 2026-08-31, `41e9688`,
+  ADR-0421. **It reproduces on an ordinary host too**, against a listener the caller owns, so the
+  demo image was not the condition. The diagnosis: §32.1 forbids a default `look` from paying for
+  the `/proc/<pid>/fd` scan, so it records `process: unknown — available on request` (§32.2);
+  `relation_summary` puts a refusal ahead of a count (§35.2, §42.4) and reads that record first;
+  and the `near --type process` after it *does* pay for the scan and *does* record the owner edge,
+  which nothing ever reached. The record was written once and never removed, so it outlived the
+  statement it recorded. `SpatialIndex::clear_withheld` now forgets one exit's record, and
+  `relations::observe` calls it for the labels of every provider it is about to consult, before
+  consulting it. `relation_summary` is untouched — its rule was right, the record was stale.
+  Exit test:
+  `spatial_relationships_missing.rs::should_answer_the_same_neighbours_whether_or_not_a_look_came_first`,
+  which compares the two answers rather than asserting either, so both being empty cannot satisfy
+  it. **The `follow owner` half of the box was mis-attributed** and is now its own line below: on
+  an ordinary host it answers E1009 with *and* without the `look`.
+  The original report, kept for its reproduction:
 
   ```text
   ono -c 'enter 0.0.0.0:8080; near --type process'          → owner nginx, owner nginx
@@ -1822,13 +1845,22 @@ argument for keeping that harness: it types what a reader would type.
   rows with and without a preceding `look`, plus the acceptance case for the discovery scenario
   doing the `look` first.
 
-- [ ] **`trace --relations` restricts nothing.** `trace process 8 --relations [child]` against the
-  demo image still answers `parent`, `listens`, `opens` and `writes` edges. Either the option is
-  read and dropped, or it never reaches the traversal. `help trace process` documents it as "the
-  relation names to restrict the trace to", so the contract and the answer disagree. Exit test: a
-  test asserting the answer of `--relations [child]` contains `child` edges and no others.
+- [x] **`trace --relations` restricts nothing** — fixed 2026-08-31, `e8426e5`, ADR-0420. The
+  filter was never at fault: `TraceOptions::wants` is correct, and `--relations child`, written as
+  a word, restricted the walk all along. A bracketed list is an *expression*, ADR-0009 keeps it
+  unevaluated, and both `BoundArguments::option` and `CommandContract::query` answer for value
+  bindings only — by design, and documented. `trace` read the absence as "not written" and walked
+  unrestricted in silence. It now evaluates its bound arguments against the invocation's scope
+  first (ADR-0219, as `mutate` already did), so `--relations ["child"]` restricts and
+  `--relations [child]` refuses — `child` names no variable. `trace process $p` narrows at the
+  provider as a by-product. Three tests in `crates/ono-cli/tests/native.rs`; the list one derives
+  its precondition from the unrestricted answer, so two empty answers cannot satisfy it.
 
-- [ ] **A float field renders at full precision beside a formatted one.** `get process | where
+- [x] **A float field renders at full precision beside a formatted one** — fixed 2026-08-31,
+  `f8e0fb6`, ADR-0419, the same increment as the record-cell box above. `get process` and
+  `watch process` print `2.1%`. **`select` still does not**, and that half is its own line below:
+  the projection erases the declaration the renderer now reads. The original report:
+  `get process | where
   cpu > 1 | take 3 | select pid name cpu` prints `2.4491293271514514`, in the same table where
   `memory` prints `11.60 MiB`. `watch process` shows it too, which is where it hurts — it is the
   one view a reader watches rather than reads. The JSON is right (`{"cpu":2.4491289426573135}`),
@@ -1846,6 +1878,68 @@ argument for keeping that harness: it types what a reader would type.
   to json`); the memory growth did **not** reproduce at HEAD, the hang did. Exit test: a test that
   bounds `map --live --json | take <n>` in wall clock against a fixture with many neighbours, so
   the live map is proven to yield before it has seen everything.
+
+**`scripts/acceptance.sh` stands at 107 passed, 0 failed at `41e9688`** (2026-08-31), and
+`scripts/gate.sh` printed `gate: green` on the same tree. One measurement is worth recording
+beside it: case `152` **failed** on a first run of the same tree and passed on a second. It was
+not the tree. The first run went out while a `cargo test --workspace` and a container build were
+on the same eight cores at load 18–68, and the case reported its *baseline* — the ordinary host,
+two sockets — at 52 ms against §34's 50 ms budget, with the pathological host only 6 ms above it.
+A budget measured under that load says nothing, which is what the §34 box under *Class B* has
+said all along. The second run, on a quiet machine, was green. Read it as one more reason that
+box stays open: these five cases need a machine nobody else is using.
+
+#### Found while fixing three of the README-figure defects (2026-08-31)
+
+Each was reproduced against `target/debug/ono` or `target/release/ono` on an ordinary host at
+`41e9688`, and each was deliberately left out of the fix that found it (AGENTS.md §4).
+
+- [ ] **`select` erases the declaration the renderer reads.** `get process 1` prints `CPU 2.1%`
+  since ADR-0419; `get process 1 | select cpu` still prints `2.0859030835636990`. Cause:
+  `ono-pipeline/src/schemas.rs::selection_schema` types every projected field `FieldType::Any`
+  with no unit, and it is built once in `Select::new` before any record is seen, so the source
+  field's declaration cannot be copied where it stands. Nothing else in the tree carries a unit
+  the value does not — `unit: percent` on `process.cpu` and `process-detail.cpu`, and
+  `unit: bytes` on `interface.{mtu,rx_bytes,tx_bytes}` where the value is already a `bytesize` or
+  wants to stay a number — so this is one field's worth of visible damage and a general hole.
+  Scale: a per-source-schema derived projection schema, memoised by `SchemaId` because most
+  streams are homogeneous; ~1 increment in `ono-pipeline`. Exit test:
+  `get process | select cpu` renders the same cell as `get process`, with `to json` unchanged.
+
+- [ ] **A words-mode command that reads `option()` without evaluating drops an argument written
+  as an expression.** This is what ADR-0420 fixed in `trace`, and the same call shape is open in
+  three more places: `ono-command/src/impls/meta.rs` (`help`'s subject, `get command --verb`,
+  `--target`, `--stability`), `ono-command/src/impls/convert.rs` (`to text --field`,
+  `format table --columns`, `--max-rows`) and `ono-cli/src/spatial/commands.rs` (`near --type`,
+  `--limit`, `--changed`, `follow`'s relation). `BoundArguments::evaluated(scope)` is the
+  resolution point ADR-0219 named and `mutate` and now `trace` are the only callers. Each site
+  needs its own reproduction and its own increment; the general form — evaluating in the
+  dispatcher for every `ArgumentMode::Words` command — is the shape to reach for, and ADR-0420
+  §Alternatives says why it was not taken along a one-command fix.
+
+- [ ] **`follow owner` never pays for an expensive relation.** `enter 127.0.0.1:<port>;
+  follow owner` on a socket the caller owns answers `Ono-Sendai-E1009 spatial.unsupported the
+  `owner` of this place is not answered here: available on request` — **with and without** a
+  preceding `look`, so this is not the ADR-0421 defect seen from another side. `near --type
+  process` at the same place names the owner, so the scan is reachable and `follow` is the
+  spelling that cannot reach it. §6.4 wants a `follow` along a named exit to traverse it or to
+  refuse honestly; "available on request" is neither, because nothing `follow` accepts makes the
+  request. Exit test: `follow owner` on a socket whose owner this session can read enters the
+  owning process, or refuses for a reason that is not "ask again".
+
+- [ ] **`near --type X` answers a withheld group with nothing, at status 0.** ADR-0271 fixed
+  exactly this for `near <relation>` — `withheld_exit` turns a refused group into a structured
+  refusal — and the guard is written `if named_relation.is_some()`, so the `--type` spelling still
+  falls through to an empty stream. §42.4's false empty survives on one of the two spellings.
+  Exit test: `near --type process` on a place whose `process` exit is refused answers the refusal,
+  not an empty stream.
+
+- [ ] **`ono-process::should_run_a_text_script_without_a_shebang_through_the_shell` is flaky.**
+  Seen once at `41e9688` under a `cargo test --workspace` with a container build beside it: exit
+  126 where 0 was expected, green on the immediately following run and on every run since. 126 is
+  "found and not executable", which for a script the test writes itself points at a race between
+  writing it, marking it executable and spawning it. Not investigated further. Exit test: the same
+  test green under repetition on a loaded machine.
 
 ---
 
