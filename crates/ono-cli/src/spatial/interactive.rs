@@ -17,6 +17,8 @@
 //!   values are being shown to a person at a terminal (§29.1), and [`pick`] is false in the same
 //!   places, because §29.3 forbids a script from ever opening a picker.
 
+use std::collections::VecDeque;
+use std::future::Future;
 use std::time::Duration;
 
 use jiff::Timestamp;
@@ -25,7 +27,7 @@ use ono_core::ErrorCode;
 use ono_editor::{AlternateScreen, KeyCode, KeyPress, RawMode, TerminalEvent};
 use ono_spatial_core::{Movement, NavigationStep, SpatialId};
 use ono_spatial_query::{Candidate, MapRequest};
-use ono_spatial_render::{Effect, Key, Keymap, MapView};
+use ono_spatial_render::{Action, Effect, Key, Keymap, MapView};
 use ono_value::ErrorValue;
 
 use crate::spatial::session::SpatialSessionState;
@@ -40,6 +42,95 @@ const IDLE_TICK: Duration = Duration::from_millis(200);
 
 /// How often a live view asks the providers again (§25.1's explicit polling source).
 const LIVE_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How often work the view is waiting for comes up for air to answer a key.
+///
+/// v0.4 §34 gives "focus/navigation inside rendered map" a 16 ms frame target, so that is the
+/// longest a key should wait for a slice of the loop's attention.
+const ANSWER_SLICE: Duration = Duration::from_millis(16);
+
+/// The most keys drained in one [`ANSWER_SLICE`], so a held-down key cannot starve the work.
+const KEYS_PER_SLICE: usize = 64;
+
+/// How many keys may wait for the loop before draining stops and the terminal keeps the rest.
+const KEY_BACKLOG: usize = 1024;
+
+/// What came back from work the view waited for while it kept answering keys.
+#[derive(Debug, PartialEq, Eq)]
+enum Awaited<T> {
+    /// The work finished, and this is what it said.
+    Done(T),
+    /// The user closed the view before the work finished, so its answer is not wanted.
+    Left,
+}
+
+/// Awaits `work` without the view going deaf while it runs.
+///
+/// v0.4 §34: "the shell MUST remain interactive and progressively update rather than block
+/// unnecessarily." Re-observing a space asks every provider that answers for it, and a provider
+/// is allowed to be slow — the systemd bus alone gives each call ten seconds, and one
+/// re-observation makes several. Awaiting that on the loop's own thread read no key at all while
+/// it ran, so `Esc` could not close a map that was busy: the one key whose whole purpose is to
+/// get out was the one key that stopped working, and the view held a terminal nobody could take
+/// back (ADR-0424).
+///
+/// `keys` must not block; it is polled every [`ANSWER_SLICE`] and returns `None` when the
+/// terminal has nothing more to say. Keys go on `waiting` **in the order they were typed**, for
+/// the loop to answer when the work is done: someone who types `Enter` and then `Backspace`
+/// without pausing meant both, and a view that swallowed the second would lose a keystroke the
+/// user made.
+///
+/// The one key that does not wait is [`Action::Close`] with nothing queued ahead of it. That is
+/// the case this exists for — a user watching a view that has stopped answering — and it is the
+/// only case where leaving cannot overtake an instruction the user gave first.
+///
+/// Draining stops at [`KEY_BACKLOG`]; what is left stays in the terminal's own buffer, which is
+/// where unread input belongs.
+async fn while_answering<T>(
+    work: impl Future<Output = T>,
+    mut keys: impl FnMut() -> Option<Key>,
+    keymap: &Keymap,
+    waiting: &mut VecDeque<Key>,
+) -> Awaited<T> {
+    let mut work = std::pin::pin!(work);
+    loop {
+        tokio::select! {
+            biased;
+            value = &mut work => return Awaited::Done(value),
+            () = tokio::time::sleep(ANSWER_SLICE) => {
+                for _ in 0..KEYS_PER_SLICE {
+                    if waiting.len() >= KEY_BACKLOG {
+                        break;
+                    }
+                    let Some(key) = keys() else { break };
+                    if keymap.action(key) == Some(Action::Close) && waiting.is_empty() {
+                        return Awaited::Left;
+                    }
+                    waiting.push_back(key);
+                }
+            }
+        }
+    }
+}
+
+/// What a redraw needs from the terminal side, kept together: how to draw, what the keys mean,
+/// and where a key pressed while it runs waits for its turn.
+struct Ui<'a> {
+    /// The character set the view draws with (§39.2).
+    charset: ono_spatial_render::Charset,
+    /// What a key means, so the one that closes the view is recognised while a provider is slow.
+    keymap: &'a Keymap,
+    /// Keys typed during the observation, answered by the loop once it is done.
+    waiting: &'a mut VecDeque<Key>,
+}
+
+/// The next key the terminal has ready, without waiting for one.
+fn ready_key() -> Option<Key> {
+    match ono_editor::read_event_timeout(Duration::ZERO) {
+        Ok(Some(TerminalEvent::Key(press))) => translate(press),
+        _ => None,
+    }
+}
 
 /// Whether the full-screen view may take this terminal (§23.3, §29.1, §47's `spatial.map.mode`).
 ///
@@ -95,7 +186,8 @@ pub async fn run_map_view(
     let mut record = crate::spatial::map::projection(ctx, session, &center, &request, now).await?;
 
     let (columns, rows) = ono_editor::terminal_size().unwrap_or((80, 24));
-    let mut view = MapView::new(&record, columns, rows, charset, configured_keymap());
+    let keymap = configured_keymap();
+    let mut view = MapView::new(&record, columns, rows, charset, keymap.clone());
     view.set_live(live, "polled");
     view.set_place(place_path(session, &center));
 
@@ -106,6 +198,9 @@ pub async fn run_map_view(
 
     let mut refreshed = std::time::Instant::now();
     let mut painted: Vec<String> = Vec::new();
+    // Keys typed while an observation was running. They are answered in order once it is done,
+    // so nothing a user pressed is lost to a slow provider (ADR-0424).
+    let mut waiting: VecDeque<Key> = VecDeque::new();
     loop {
         // §25.2 forbids motion that is not a state change, and §39.4 asks that a reduced-motion
         // setting leave nothing moving. A frame identical to the one already on the screen is
@@ -116,36 +211,69 @@ pub async fn run_map_view(
             painted = frame;
         }
 
-        let patience = if view.is_live() { LIVE_TICK } else { IDLE_TICK };
-        let event = ono_editor::read_event_timeout(patience).map_err(terminal_refused)?;
+        // A key typed while an observation was running is answered before the terminal is asked
+        // for a new one, so the view acts in the order the user typed (ADR-0424).
+        let key = match waiting.pop_front() {
+            Some(waited) => waited,
+            None => {
+                let patience = if view.is_live() { LIVE_TICK } else { IDLE_TICK };
+                let event = ono_editor::read_event_timeout(patience).map_err(terminal_refused)?;
 
-        let Some(event) = event else {
-            // A live view has a second reason to redraw: the machine changed. §25.1 allows an
-            // explicit polling source where no event stream exists, and §25.3 makes the view say
-            // so — the freshness word beside the heading is `polled`, never `event driven`.
-            if view.is_live() && refreshed.elapsed() >= LIVE_INTERVAL {
-                record = redraw(ctx, session, &mut view, &center, &request, charset, record).await;
-                refreshed = std::time::Instant::now();
-            }
-            continue;
-        };
+                let Some(event) = event else {
+                    // A live view has a second reason to redraw: the machine changed. §25.1 allows an
+                    // explicit polling source where no event stream exists, and §25.3 makes the view say
+                    // so — the freshness word beside the heading is `polled`, never `event driven`.
+                    if view.is_live() && refreshed.elapsed() >= LIVE_INTERVAL {
+                        record = match redraw(
+                            ctx,
+                            session,
+                            &mut view,
+                            &center,
+                            &request,
+                            record,
+                            Ui {
+                                charset,
+                                keymap: &keymap,
+                                waiting: &mut waiting,
+                            },
+                        )
+                        .await
+                        {
+                            Awaited::Done(drawn) => drawn,
+                            Awaited::Left => return Ok(()),
+                        };
+                        refreshed = std::time::Instant::now();
+                    }
+                    continue;
+                };
 
-        let press = match event {
-            TerminalEvent::Resize(columns, rows) => {
-                // §43.4: a resize preserves the current place and the focus. Neither is touched
-                // here; only the width the projection is drawn at and the viewport are (§39.3).
-                let at = Timestamp::now();
-                record = crate::spatial::map::projection(ctx, session, &center, &request, at)
-                    .await
-                    .unwrap_or(record);
-                view.set_place(place_path(session, &center));
-                view.resize(&record, columns, rows, charset);
-                continue;
+                let press = match event {
+                    TerminalEvent::Resize(columns, rows) => {
+                        // §43.4: a resize preserves the current place and the focus. Neither is touched
+                        // here; only the width the projection is drawn at and the viewport are (§39.3).
+                        let at = Timestamp::now();
+                        let observed = while_answering(
+                            crate::spatial::map::projection(ctx, session, &center, &request, at),
+                            ready_key,
+                            &keymap,
+                            &mut waiting,
+                        )
+                        .await;
+                        match observed {
+                            Awaited::Done(drawn) => record = drawn.unwrap_or(record),
+                            Awaited::Left => return Ok(()),
+                        }
+                        view.set_place(place_path(session, &center));
+                        view.resize(&record, columns, rows, charset);
+                        continue;
+                    }
+                    TerminalEvent::Key(press) => press,
+                };
+                let Some(key) = translate(press) else {
+                    continue;
+                };
+                key
             }
-            TerminalEvent::Key(press) => press,
-        };
-        let Some(key) = translate(press) else {
-            continue;
         };
 
         match view.apply(key) {
@@ -167,15 +295,48 @@ pub async fn run_map_view(
                     // the view; the place does not move.
                     None => request = request.clone().expand(vec![node]),
                 }
-                record = redraw(ctx, session, &mut view, &center, &request, charset, record).await;
+                record = match redraw(
+                    ctx,
+                    session,
+                    &mut view,
+                    &center,
+                    &request,
+                    record,
+                    Ui {
+                        charset,
+                        keymap: &keymap,
+                        waiting: &mut waiting,
+                    },
+                )
+                .await
+                {
+                    Awaited::Done(drawn) => drawn,
+                    Awaited::Left => return Ok(()),
+                };
             }
             Effect::Follow { relation, node } => match SpatialId::parse(&node) {
                 Some(there) => {
                     follow(session, &relation, &there, Timestamp::now());
                     center = there;
                     request = MapRequest::new();
-                    record =
-                        redraw(ctx, session, &mut view, &center, &request, charset, record).await;
+                    record = match redraw(
+                        ctx,
+                        session,
+                        &mut view,
+                        &center,
+                        &request,
+                        record,
+                        Ui {
+                            charset,
+                            keymap: &keymap,
+                            waiting: &mut waiting,
+                        },
+                    )
+                    .await
+                    {
+                        Awaited::Done(drawn) => drawn,
+                        Awaited::Left => return Ok(()),
+                    };
                 }
                 None => view.say("that edge points at a cluster, not at one place"),
             },
@@ -193,9 +354,24 @@ pub async fn run_map_view(
                     Ok(()) => {
                         center = session.current_place().clone();
                         request = MapRequest::new();
-                        record =
-                            redraw(ctx, session, &mut view, &center, &request, charset, record)
-                                .await;
+                        record = match redraw(
+                            ctx,
+                            session,
+                            &mut view,
+                            &center,
+                            &request,
+                            record,
+                            Ui {
+                                charset,
+                                keymap: &keymap,
+                                waiting: &mut waiting,
+                            },
+                        )
+                        .await
+                        {
+                            Awaited::Done(drawn) => drawn,
+                            Awaited::Left => return Ok(()),
+                        };
                     }
                     // A refusal from a movement is an answer to a key press, not a reason to
                     // take the screen away: `back` at the start of the trail says so and stays.
@@ -203,7 +379,24 @@ pub async fn run_map_view(
                 }
             }
             Effect::Refresh => {
-                record = redraw(ctx, session, &mut view, &center, &request, charset, record).await;
+                record = match redraw(
+                    ctx,
+                    session,
+                    &mut view,
+                    &center,
+                    &request,
+                    record,
+                    Ui {
+                        charset,
+                        keymap: &keymap,
+                        waiting: &mut waiting,
+                    },
+                )
+                .await
+                {
+                    Awaited::Done(drawn) => drawn,
+                    Awaited::Left => return Ok(()),
+                };
             }
             Effect::ToggleLive => {
                 let live = !view.is_live();
@@ -212,7 +405,24 @@ pub async fn run_map_view(
             }
             Effect::Zoom(level) => {
                 request = request.clone().zoom(level);
-                record = redraw(ctx, session, &mut view, &center, &request, charset, record).await;
+                record = match redraw(
+                    ctx,
+                    session,
+                    &mut view,
+                    &center,
+                    &request,
+                    record,
+                    Ui {
+                        charset,
+                        keymap: &keymap,
+                        waiting: &mut waiting,
+                    },
+                )
+                .await
+                {
+                    Awaited::Done(drawn) => drawn,
+                    Awaited::Left => return Ok(()),
+                };
             }
             Effect::Inspect(node) => view.show_detail(detail(session, &node)),
             Effect::Pin(node) => {
@@ -231,11 +441,21 @@ async fn redraw(
     view: &mut MapView,
     center: &SpatialId,
     request: &MapRequest,
-    charset: ono_spatial_render::Charset,
     previous: ono_value::RecordValue,
-) -> ono_value::RecordValue {
+    ui: Ui<'_>,
+) -> Awaited<ono_value::RecordValue> {
     let at = Timestamp::now();
-    let record = match crate::spatial::map::projection(ctx, session, center, request, at).await {
+    let observed = while_answering(
+        crate::spatial::map::projection(ctx, session, center, request, at),
+        ready_key,
+        ui.keymap,
+        ui.waiting,
+    )
+    .await;
+    let Awaited::Done(observed) = observed else {
+        return Awaited::Left;
+    };
+    let record = match observed {
         Ok(record) => record,
         Err(error) => {
             view.say(error.message().to_owned());
@@ -243,8 +463,8 @@ async fn redraw(
         }
     };
     view.set_place(place_path(session, center));
-    view.redraw(&record, charset);
-    record
+    view.redraw(&record, ui.charset);
+    Awaited::Done(record)
 }
 
 /// Where the view is, as §21.2 spells a place: `local`, `local/compute`, `local/process/nginx`.
@@ -475,4 +695,95 @@ fn setting_text(key: &str) -> Option<String> {
 
 fn setting_flag(key: &str) -> bool {
     crate::spatial::session::configured_flag(key)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+
+    /// v0.4 §34: a slow provider may not cost the user the key that gets them out. Without the
+    /// race this never returns, which is what the timeout turns into a failure rather than a hang.
+    #[tokio::test]
+    async fn should_leave_the_view_when_the_closing_key_arrives_while_work_is_still_running() {
+        let keymap = Keymap::default_bindings();
+        let mut pressed = false;
+        let answered = tokio::time::timeout(
+            Duration::from_secs(2),
+            while_answering(
+                std::future::pending::<u8>(),
+                || {
+                    if pressed {
+                        return None;
+                    }
+                    pressed = true;
+                    Some(Key::Esc)
+                },
+                &keymap,
+                &mut VecDeque::new(),
+            ),
+        )
+        .await;
+        assert_eq!(
+            answered,
+            Ok(Awaited::Left),
+            "Esc must close a view whose observation never finishes"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_answer_with_the_work_when_no_key_interrupts_it() {
+        let keymap = Keymap::default_bindings();
+        assert_eq!(
+            while_answering(async { 7_u8 }, || None, &keymap, &mut VecDeque::new()).await,
+            Awaited::Done(7)
+        );
+    }
+
+    #[tokio::test]
+    async fn should_not_let_leaving_overtake_a_key_the_user_pressed_first() {
+        // `Enter`, `Backspace`, `Esc` typed without pausing: the map goes back and *then* closes.
+        // Closing first would drop the movement the user asked for (v0.4 §43.4).
+        let keymap = Keymap::default_bindings();
+        let mut typed = [Key::Backspace, Key::Esc].into_iter();
+        let mut waiting = VecDeque::new();
+        let work = async {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            1_u8
+        };
+        assert_eq!(
+            while_answering(work, || typed.next(), &keymap, &mut waiting).await,
+            Awaited::Done(1)
+        );
+        assert_eq!(
+            waiting.into_iter().collect::<Vec<_>>(),
+            vec![Key::Backspace, Key::Esc]
+        );
+    }
+
+    #[tokio::test]
+    async fn should_keep_a_key_that_does_not_close_the_view_for_the_loop_to_answer() {
+        // Typing `Enter` and then `Backspace` without pausing means both. The observation the
+        // first one started must not swallow the second: it waits, in the order it was typed.
+        let keymap = Keymap::default_bindings();
+        let mut typed = [Key::Enter, Key::Backspace].into_iter();
+        let mut waiting = VecDeque::new();
+        let work = async {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            3_u8
+        };
+        assert_eq!(
+            while_answering(work, || typed.next(), &keymap, &mut waiting).await,
+            Awaited::Done(3)
+        );
+        assert_eq!(
+            waiting.into_iter().collect::<Vec<_>>(),
+            vec![Key::Enter, Key::Backspace],
+            "a key pressed during an observation is answered after it, not lost"
+        );
+    }
 }

@@ -1666,22 +1666,36 @@ was found on 2026-08-31 and stands first, because it is the gate that is red.
 
 #### Interactive
 
-- [ ] **B-tui-1 — `Esc` does not close the map after a resize when other suites run beside it.**
-  `crates/ono-cli/tests/spatial_interactive_missing.rs::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
-  fails at its last assertion — the view never emits `\x1b[?1049l` — and burns the whole 45 s
-  `BUDGET`. Reproduce with `cargo test -p ono-cli --all-features`; that is enough, the whole
-  workspace is not needed. It **passes** run as a file (`--test spatial_interactive_missing`, 13
-  tests, ~7 s) and passes under heavy synthetic CPU load, so the trigger is the other `ono-cli`
-  test binaries running concurrently, not the machine being busy.
+- [x] **B-tui-1 — the map answered no key while it re-observed** — done 2026-08-31, ADR-0424.
+  Not a flaky test: the hung `ono` was caught twice in `/proc` with its main thread in `ep_poll`
+  and its CPU time unchanged across 24 seconds, so it was parked in an `.await` and reading the
+  terminal not at all. A `Resize` re-observes, a re-observation asks every provider, and
+  `ono-provider-systemd` alone allows ten seconds per bus call — under a full `-p ono-cli` run a
+  dozen `ono` processes hit the same buses at once. `Esc` could not close the view, which v0.4
+  §34 forbids ("MUST remain interactive ... rather than block unnecessarily"). Every await in the
+  map loop now runs through `while_answering`, polling the terminal every 16 ms; keys typed
+  during an observation queue and are answered in order, and leaving does not overtake a key
+  pressed before it. Proven by `crates/ono-cli/src/spatial/interactive.rs`'s four unit tests —
+  `::should_leave_the_view_when_the_closing_key_arrives_while_work_is_still_running` returns
+  `Err(Elapsed)` against the old behaviour — and by four consecutive green
+  `cargo test -p ono-cli --all-features --no-fail-fast` runs.
 
-  Not caused by the v0.5 reconciliation of 2026-08-31: the same run on the tree with those
-  changes stashed fails identically. The earlier steps of the test — opening the map, `Down`, and
-  the resize redraw, which each cost a full projection — all complete quickly, so a slow
-  projection does not explain it; the `Esc` looks lost rather than late. Suspect the interaction
-  between `SIGWINCH` and the lone-`\x1b` disambiguation inside `read_event_timeout`
-  (`crates/ono-editor/src/terminal.rs`), which cannot decide `Esc` from a CSI prefix until it
-  knows no further byte is coming. Closes when the test passes in a full `-p ono-cli` run and a
-  named regression test covers the resize-then-`Esc` order.
+  Ruled out along the way, each by experiment: CPU load (passes under sixteen busy loops), the
+  number of processes drawn (passes with 1 686 on the host), and crossterm's lone-`Esc`
+  ambiguity (`input_available` is false for a one-byte read, so `Esc` is delivered at once).
+
+- [ ] **B-tui-2 — the resize assertion can pass without a resize.** In
+  `should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`, the check
+  after `session.resize(...)` waits only for new output containing `compute`, and the repaint the
+  earlier `Down` causes satisfies it. Tracing the map loop during a green run showed sessions
+  whose whole key history was `Down`, `Esc` with **no `Resize` event at all** — the test passed
+  regardless. So §43.4 is not actually held by this test today. Two things to settle: why the
+  `SIGWINCH` sometimes does not reach the shell, and an assertion that names something only a
+  resize can produce (the frame at the new row count). Found 2026-08-31 while closing B-tui-1.
+
+- [ ] **B-tui-3 — `should_report_a_failing_streamed_child_after_its_records` failed once.** One
+  `cargo test -p ono-cli` run on 2026-08-31; not reproduced in the eight runs since, and not
+  investigated. Recorded so a second sighting is a pattern rather than a surprise.
 
 #### Data and pipeline
 
