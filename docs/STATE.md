@@ -1647,7 +1647,27 @@ know and must not claim.
 
 Each line says what is wrong, how to reproduce it, and what closes it. Five remain from the
 2026-08-29 reconciliation and the other thirty-seven are under *Done, reconciled*; five more were
-found on 2026-08-30 while recording the README figures, in their own block at the end.
+found on 2026-08-30 while recording the README figures, in their own block at the end. One more
+was found on 2026-08-31 and stands first, because it is the gate that is red.
+
+#### Interactive
+
+- [ ] **B-tui-1 — `Esc` does not close the map after a resize when other suites run beside it.**
+  `crates/ono-cli/tests/spatial_interactive_missing.rs::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
+  fails at its last assertion — the view never emits `\x1b[?1049l` — and burns the whole 45 s
+  `BUDGET`. Reproduce with `cargo test -p ono-cli --all-features`; that is enough, the whole
+  workspace is not needed. It **passes** run as a file (`--test spatial_interactive_missing`, 13
+  tests, ~7 s) and passes under heavy synthetic CPU load, so the trigger is the other `ono-cli`
+  test binaries running concurrently, not the machine being busy.
+
+  Not caused by the v0.5 reconciliation of 2026-08-31: the same run on the tree with those
+  changes stashed fails identically. The earlier steps of the test — opening the map, `Down`, and
+  the resize redraw, which each cost a full projection — all complete quickly, so a slow
+  projection does not explain it; the `Esc` looks lost rather than late. Suspect the interaction
+  between `SIGWINCH` and the lone-`\x1b` disambiguation inside `read_event_timeout`
+  (`crates/ono-editor/src/terminal.rs`), which cannot decide `Esc` from a CSI prefix until it
+  knows no further byte is coming. Closes when the test passes in a full `-p ono-cli` run and a
+  named regression test covers the resize-then-`Esc` order.
 
 #### Data and pipeline
 
