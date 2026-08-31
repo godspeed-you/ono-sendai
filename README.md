@@ -285,7 +285,8 @@ Linux (x86_64 and aarch64). Two further enhancement specifications — the Tempo
 Systems Interface (v0.5) and Prospective Change, Protection & Recovery (v0.6) — are specified but
 not yet implemented.
 
-→ Detailed implementation status, known issues and the backlog: [`docs/STATE.md`](docs/STATE.md) ·
+→ Known issues and the backlog: [open issues](https://github.com/godspeed-you/ono-sendai/issues) ·
+detailed implementation status: [`docs/STATE.md`](docs/STATE.md) ·
 [What Is Not Built Yet](https://github.com/godspeed-you/ono-sendai/wiki/What-Is-Not-Built-Yet) ·
 [release notes](docs/releases/)
 

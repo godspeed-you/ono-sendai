@@ -133,11 +133,13 @@ NOT share a commit or a change:
 Concretely:
 
 - Fixing a bug? Fix **that** bug. Do not reformat the file, rename neighbours, tidy imports or
-  "improve while you're there". Note improvement ideas in `docs/STATE.md` → *Next up*.
+  "improve while you're there". Note improvement ideas in `docs/STATE.md` → *Found, not yet
+  filed*.
 - Refactoring? Change no behaviour. If the tests need editing, it is not a refactor — split it.
-- Found a real problem outside your current increment? Write it into `docs/STATE.md` (or add a
-  failing, `#[ignore]`d test with a `// REASON:` comment) and continue your task. Fix it in its
-  own increment.
+- Found a real problem outside your current increment? Write it into `docs/STATE.md` →
+  *Found, not yet filed* (or add a failing, `#[ignore]`d test with a `// REASON:` comment) and
+  continue your task. Do not open an issue for it yourself — the user triages that section (§9).
+  Fix it in its own increment.
 - Reviews follow the same discipline: report defects as defects and preferences as preferences,
   and state which of the categories above a finding belongs to. A stylistic preference never
   blocks a correct, tested change.
@@ -355,8 +357,33 @@ Even then: state your chosen default, proceed with it, and flag it — do not id
 
 ## 9. Task Selection and Progress State
 
-`docs/STATE.md` is the shared, machine- and human-readable progress board. **Read it first,
-update it last, in every session.** If it does not exist, create it from this template:
+**The backlog is the GitHub issue tracker** (ADR-0425). One problem is one issue, and its
+evidence — reproduction, files, measurements, ADRs, exit test — lives in the issue body. Read it
+with `gh`:
+
+```bash
+gh issue list --limit 100                  # the backlog
+gh issue view <NN>                         # the evidence for one problem
+gh issue list --label class-c              # the large ones, a tranche each
+```
+
+Task ordering rules, applied to open issues:
+
+1. Follow the phase sequence of spec §37 (A → J). Do not start Phase C work while Phase B
+   exit criteria are unmet, unless the item is strictly independent.
+2. Within a phase, prefer the task that unblocks the most other tasks.
+3. Prefer the machine-readable contract (`docs/spec/*.yaml`) before its implementation.
+4. Repairing the gate or the acceptance harness (§14) outranks features whenever either
+   cannot run — a broken referee makes every later claim of progress worthless.
+5. A phase is complete only when its success criterion in spec §37 is demonstrated by an
+   automated test — write that test explicitly and name it in `docs/ACCEPTANCE.md`.
+
+The commit that closes an issue says so in its body: `Closes #NN`. Do not edit an issue to
+record progress — the commit and the ADR are the record, and an issue nobody has closed is a
+problem nobody has fixed.
+
+`docs/STATE.md` is the shared progress board for everything the tracker cannot hold. **Read it
+first, update it last, in every session.** If it does not exist, create it from this template:
 
 ```markdown
 # STATE
@@ -367,8 +394,8 @@ Phase exit criterion: <copied from spec §37>
 ## In progress
 - [agent-id | timestamp] <task> — files: <paths>
 
-## Next up (ordered)
-- [ ] <task> — spec §X — exit test: <test name/path>
+## Found, not yet filed
+- **<what is wrong>.** <reproduction> — <what closes it>
 
 ## Done
 - [x] <task> — commit <sha>
@@ -377,16 +404,12 @@ Phase exit criterion: <copied from spec §37>
 - <task> — reason — ignored test: <path::name> — ADR: <id>
 ```
 
-Task ordering rules:
-
-1. Follow the phase sequence of spec §37 (A → J). Do not start Phase C work while Phase B
-   exit criteria are unmet, unless the item is strictly independent.
-2. Within a phase, prefer the task that unblocks the most other tasks.
-3. Prefer the machine-readable contract (`docs/spec/*.yaml`) before its implementation.
-4. Repairing the gate or the acceptance harness (§14) outranks features whenever either
-   cannot run — a broken referee makes every later claim of progress worthless.
-5. A phase is complete only when its success criterion in spec §37 is demonstrated by an
-   automated test — write that test explicitly and name it in `docs/STATE.md`.
+**Found, not yet filed** is the one section that feeds the backlog, and it is a staging area
+rather than a queue. A defect you run into while doing something else goes here, because §4
+forbids fixing it in the commit that found it — with the same evidence an issue would need, so
+that filing it is a copy and not an investigation. **Nothing here is work you may pick up**, and
+you do not open the issue yourself: the user triages this section, and filing an entry removes it
+from the board. A problem is on exactly one of the two surfaces, never both.
 
 ---
 
@@ -530,7 +553,7 @@ When several agents work in parallel:
 
 - Claim work by writing your entry into `docs/STATE.md` → *In progress* **before** editing code;
   include agent id, timestamp and the file paths you will touch.
-- **Never** edit files another agent has claimed. Pick a different task from *Next up*.
+- **Never** edit files another agent has claimed. Pick a different issue.
 - Prefer decomposition along crate boundaries — one crate per agent — to avoid conflicts.
 - Shared documents (`docs/spec/*`, `docs/STATE.md`) are edited in short, single-purpose commits;
   re-read the file immediately before editing it.
@@ -559,7 +582,7 @@ edit so a later red gate is unambiguously yours.
 Rules for the harness itself:
 
 - **The referee outranks the feature.** If the gate or the acceptance harness cannot run, fixing
-  it is the next task, ahead of anything in *Next up*.
+  it is the next task, ahead of any issue.
 - Never weaken the harness to get a green result: not by deleting a case, not by loosening a
   regex, not by removing `-D warnings`, not by adding `--no-verify`. If a case is wrong, fix the
   case in its own `test:` commit and say why in the body.
@@ -627,6 +650,7 @@ is routine is the one failure mode this project cannot absorb.
 ADR for anything architectural; an acceptance case for anything a user can see.
 
 **End:** gate green → acceptance green if a capability changed → `docs/STATE.md` updated
-(In progress cleared, Done/Next up accurate, boxes ticked in `docs/ACCEPTANCE.md` only where
-proven) → committed → then run `scripts/release-check.sh`. If it does not print
+(In progress cleared, Done accurate, anything found on the way written into *Found, not yet
+filed*, boxes ticked in `docs/ACCEPTANCE.md` only where proven) → committed, with `Closes #NN`
+in the body if an issue is done → then run `scripts/release-check.sh`. If it does not print
 `release-check: the shell is release-ready`, take the next task and keep going (§15).

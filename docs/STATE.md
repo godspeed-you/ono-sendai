@@ -1,8 +1,13 @@
 # STATE
 
 The shared work board. **Read it first, update it last, every session** (AGENTS.md section 9).
-The stopping rule lives in `docs/ACCEPTANCE.md`: the run ends when `scripts/release-check.sh`
-passes, not when this file looks tidy.
+
+**The backlog is not here — it is the GitHub issue tracker** (ADR-0425). One problem is one
+issue, and its evidence lives in the issue body: `gh issue list`. This file holds what a tracker
+cannot — the claims in flight, the problems found and not yet filed, what is deferred and why,
+the session records, the phase checklists and the history. The stopping rule lives in
+`docs/ACCEPTANCE.md`: the run ends when `scripts/release-check.sh` passes, not when this file
+looks tidy.
 
 Working branch: **`implementation`** — never commit to `main` (AGENTS.md section 12.1)
 
@@ -32,8 +37,8 @@ ten phases of spec §37 are complete, proven and tagged; all 143 boxes in docs/A
 ticked by a named automated proof, and the 2026-08-29 reconciliation traced every one of the 168
 test names and every acceptance case they cite to something that exists and runs in the gate. The
 containerised suite stands at **96 cases** in `docker/acceptance/cases/` and the workspace at
-~2 600 outcome tests across **30 crates**. What remains under Next up is post-release deepening —
-every item deliberate, none blocking the deliverable. Promoting `implementation` to `main` is the
+~2 600 outcome tests across **30 crates**. What remains in the issue tracker is post-release
+deepening — every item deliberate, none blocking the deliverable. Promoting `implementation` to `main` is the
 user's decision and the user's action (AGENTS.md §12.1).
 
 Phases A–D are complete and tagged. B/C/D landed as: native commands wired into the evaluator
@@ -132,8 +137,8 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 ## Session records (2026-08-27 … 2026-08-29)
 
 Every session below is complete. They are kept because each carries the reasoning behind a
-decision the code no longer shows, and because several open lines under *Next up* were first
-observed here.
+decision the code no longer shows, and because several of the problems now in the tracker were
+first observed here.
 
 **The five parallel tranches have landed (2026-08-29).** The board carried them as claims while
 they ran; every one of their branches is now an ancestor of `implementation`, every worktree is
@@ -184,7 +189,7 @@ shell was wrong and the three tests were right; none of them changed. What that 
 runs `get process | count`, and on a busy machine a process listed by the enumerator exits before
 its `/proc/<pid>/stat` can be read, so v0.2 §9's partial-failure semantics give the run exit 1 —
 correct behaviour, and a test premise that only holds on a quiet host. Seen in one gate run and
-one `release-check` run; green on the next of each. Filed under *Next up*.
+one `release-check` run; green on the next of each. Filed on the board, and an issue since.
 
 The four findings, and the one that was offered as a bonus:
 
@@ -192,7 +197,7 @@ The four findings, and the one that was offered as a bonus:
 - [x] finding 3 — `find place --where` swallows unknown fields and evaluation errors (ADR-0210)
 - [x] finding 4 — a multi-line diagnostic prints `\u{a}` instead of its line breaks (ADR-0211)
 - [x] finding 1 — `look`'s hidden count does not describe the list above it (ADR-0212)
-- [x] `help here` (§38.2, a SHOULD) — filed under *Next up* by S11c and **delivered on the same
+- [x] `help here` (§38.2, a SHOULD) — filed on the board by S11c and **delivered on the same
   day by `13b6157` (ADR-0271)**, with the help metadata, the completion and the acceptance case it
   needed: `enter process 1; help here` names every exit with what is behind it and the spelling
   that traverses it, and says `permission_denied` where the provider gave one rather than a count
@@ -1438,7 +1443,7 @@ The startup figure is measured **against a baseline of the same harness running 
 does, to the millisecond — so an absolute figure would be a measurement of the harness. A whole
 non-interactive `ono -c true` run takes 18.5 ms there.
 
-**Found by dogfooding (`docs/dogfood/v0.4-2026-08-28.md`), one fixed, the rest under *Next up*.**
+**Found by dogfooding (`docs/dogfood/v0.4-2026-08-28.md`), one fixed, the rest filed.**
 The honest verdict on §52.3's statement is in that file: it holds for orientation and hierarchy
 and breaks at the first permission boundary, because a group the provider answered `null` for is
 rendered as `0` rather than as unknown.
@@ -1501,15 +1506,40 @@ premise it had never arranged. The premise is now established by the test itself
 the provider samples — and no assertion changed.
 
 
-## Next up (ordered)
+## Found, not yet filed
+
+Problems found while working, before they are issues. **The backlog is the GitHub issue tracker**
+(ADR-0425): one problem is one issue, and its evidence — reproduction, files, measurements, ADRs,
+exit test — lives in the issue body. This section is the staging area in front of it. A defect you
+run into while doing something else goes here, because AGENTS.md §4 forbids fixing it in the
+commit that found it, and it goes here with the same evidence an issue would need, so that filing
+it is a copy rather than a fresh investigation.
+
+**Nothing here is work anybody may pick up**, and no agent opens the issue itself: the user
+triages this section, and filing an entry removes it from the board. A problem is on exactly one
+of the two surfaces, never both.
+
+```bash
+gh issue list --limit 100        # the backlog
+gh issue view <NN>               # the evidence for one problem
+gh issue list --label class-c    # the large ones, a tranche each
+```
+
+*Empty.* The twenty-seven entries that stood here on 2026-08-31 were filed as issues **#1–#27** —
+five class C, twenty-two class B — and what follows is the record of the triage that produced
+them.
+
+---
+
+## The 2026-08-29 triage, and what it closed
 
 **Rebuilt from evidence on 2026-08-29 (agent `triage`), and reconciled with the tree at
 `b904327` on 2026-08-29 (agent `STATE-recon`).** The triage pass was written against `ed923ee`.
 The fifty-nine commits between `ed923ee` and `b904327` closed **fifty-five** of its boxes and were
 never written back, because the agents that produced them were deliberately kept out of this file
-so they would not collide in it. Everything they closed now stands under *Done, reconciled* below
-with the commit and the proof; what stands here is what a reproduction against the built binary,
-or a check of the named evidence, still finds open at `b904327`.
+so they would not collide in it. Everything they closed stands under *Done, reconciled* below
+with the commit and the proof; everything a reproduction against the built binary still found
+open at `b904327` was filed as an issue on 2026-08-31 and is no longer repeated here.
 
 Method of the reconciliation, per box: find the evidence the entry names, check it exists at HEAD
 and says what the entry claims, and — wherever the behaviour is observable from the command line —
@@ -1529,19 +1559,22 @@ Baseline: workspace suite at `ed923ee` — 2 572 passed, 1 failed, 0 ignored (th
 B-prov-1, closed since by `4e53ee4`); 96 containerised cases in `docker/acceptance/cases/`;
 `release-check: the shell is release-ready` last printed at `21b37d9`.
 
-| Class | Meaning | Boxes |
-|---|---|---:|
-| **C — open, large** | a spec requirement that is its own tranche; four have an agent on them now | **7** |
-| **B — open, small** | a concrete defect with a reproduction and an exit test | **5** |
-| **closed since `ed923ee`** | listed under *Done, reconciled* with the commit that closed it | **55** |
+| Class | Meaning | Boxes | Where they went |
+|---|---|---:|---|
+| **C — large** | a spec requirement that is its own tranche | **7** | 2 closed below, 5 filed as issues |
+| **B — small** | a concrete defect with a reproduction and an exit test | **27** | 5 closed below, 22 filed as issues |
+| **closed since `ed923ee`** | listed under *Done, reconciled* with the commit that closed it | **55** | — |
+
+The class B count grew from the 5 the triage found to 27 as later work turned up more: five while
+recording the README figures on 2026-08-30, five more while fixing four of those on 2026-08-31,
+and the rest from the class-C tranches. All of it is in the tracker now.
 
 ---
 
-### Class C — open and large (one tranche each)
+### Class C — the large tranches, and the two that closed
 
-Four of the seven have an agent working them right now (see *In progress*). Their entries below
-describe the tree at `b904327` — **not** what those agents have reached, which this board does not
-know and must not claim.
+What remains here is the two entries the triage opened and later sessions closed. The five that
+were still open on 2026-08-31 are issues #1–#5.
 
 - [x] **C-1 — the generated provider conformance suite (spec §35.3, phase C9)** — done
   2026-08-29, `33b6e10` + `a595c4f` + `81edc7c`, ADR-0331 (supersedes ADR-0248's decision *not* to
@@ -1557,83 +1590,6 @@ know and must not claim.
   stop it. The declarations gained a `conformance:` block, because how a bare snapshot behaves is
   not derivable from anything else. `docs/ACCEPTANCE.md` §4.1 C and D say "generated from" again,
   and it is true now. Four contract violations found by the new suite and fixed in `81edc7c`.
-
-- [ ] **C-2 — the §35.6 fuzz targets.** There is still no `fuzz/` directory and no `cargo-fuzz` /
-  `libfuzzer` reference in any manifest. Seeded property and robustness suites stand in and are
-  what `docs/ACCEPTANCE.md` §4.4 ticks: `ono-parser/tests/robustness.rs`,
-  `ono-value/tests/{codec_fuzzing,codec_properties}.rs`,
-  `ono-protocol/tests/{fuzz_protocol,framing}.rs`,
-  `ono-provider-netlink/tests/malformed_messages.rs`, the kuang garbage/oversize/misframe cases,
-  and the seeded generator `ono-testkit/tests/fuzz_support.rs`. **No ADR records the
-  substitution, and ADR-0245 standing rule 3 says the opposite** ("A decoder without a fuzz
-  target is not finished"), so this is an undocumented deviation. **Scale:** either an ADR
-  recording the substitution (1 increment) or five `cargo-fuzz` targets, a corpus, and a CI
-  budget; `xtask::scan::rust_sources` walks a top-level `fuzz/` and, since `80c8cb7`, is pinned by
-  a fixture that proves it would — ~4 increments.
-- [ ] **C-3 — agentless mode (spec §21.3, phase H3).** `--agentless` is parsed and *visible*
-  (`remote_missing.rs::should_keep_the_agentless_mode_visible_in_the_link_table`, case `044`'s
-  `[{"mode":"agentless"}]`), but `crates/ono-cli/src/context.rs:615` still says it plainly: "this
-  build has no agentless provider — served by the agent until the fallback exists", and
-  `establish()` has two transports, both spawning `ono --agent`. ADR-0037 §6 states "This is not
-  spec §21.3 agentless mode". **What it takes:** a probe in `establish()` that falls back rather
-  than failing; a reduced provider set answering plain POSIX over `ssh <host> <cmd>` decoded by the
-  v0.3 adapter layer; `Availability::Unavailable(reason)` per target the reduced set cannot
-  answer, so "visibly reduced" is structural and not a string; `explain` and `get link` reading
-  the real reduced set; an acceptance assertion that a target available under the agent is
-  honestly refused under agentless. **Scale:** `ono-remote` + `ono-cli` + `ono-adapter`,
-  ~5 increments.
-- [ ] **C-4 — the rest of KUANG/11 (spec §31, ADR-0040).** Three things, down from four:
-  (a) **isolation** — `ono-kuang-supervisor/src/supervisor.rs:140` is a bare `Command` with piped
-  stdio; a grep of the crate for `setrlimit`, `seccomp`, `cgroup` and `unshare` finds nothing, and
-  the manifest's `memory_max`/`cpu_budget` are parsed and never enforced. (b) **the
-  wasm-component tier** — `RuntimeKind::WasmComponent` exists in `manifest.rs:47` and is never
-  spawned; `native-process` is the only tier. (c) **ten of the sixteen host API domains of
-  §31.12** — objects, schemas, commands, relations (as host calls), views, context, history,
-  network, process, secrets, models are absent, and streams/filesystem/state/clock are partial.
-  **(d) is closed:** grants, leases and the audit trail now survive a session
-  (`a5be21b`, ADR-0264/0265 — `<config>/kuang/policy.yaml`, `<state>/kuang/audit.jsonl`).
-  **Scale:** still the largest remaining tranche; ~3 crates, 8+ increments, and it is what
-  §31.74's conformance suite would have to grow to cover.
-- [ ] **C-5 — package signature verification (spec §31.9, §31.36).** `verify plugin` still always
-  answers `signature: absent` (`kuang_host.rs:1167`) and case `045` asserts exactly that.
-  `KuangErrorCode::PackageSignatureInvalid` (K11004, `ono-kuang-protocol/src/error.rs:68`) is
-  defined and **constructed nowhere**. There is no signing key handling, no detached-signature
-  parsing, no trust root; the workspace has no crypto dependency beyond `sha2` for the content
-  digest. **Scale:** a signature format decision (ADR), a verifier, a trust root,
-  `ono-kuang-protocol` + `ono-cli`, ~3 increments.
-- [ ] **C-6 — `ono-model-broker` (spec §31.12, phase I11).** The crate does not exist. **Designed
-  2026-08-29 by `close-last`; no file written.** The design is the resume point:
-  - **Surface today stays honest.** `session_provider.rs:178` answers `assistant | model | finding`
-    with an empty list; the operator writes the config, and no file means `[]`.
-  - **The contracts are already complete and normative**, which is most of the design:
-    `docs/spec/schemas/model-provider.v1.yaml`, `docs/spec/kuang/assistants.v1.yaml`
-    (`model_broker_protocol: ono-model/1` — *named* and undefined, so defining it is the tranche's),
-    `capabilities.v1.yaml`'s `model.infer` with scope keys `providers` (broker-enforced) and
-    `data_class` (explicitly **advisory** — must be labelled as such everywhere), and `K11601`
-    `model.provider_unavailable` / `K11602` `model.policy_denied` in both error registries.
-  - **Approval composes, no second vocabulary** (this is the ADR §31.12 asks for first): operator
-    approval for inference **is** a `model.infer` grant with `--scope providers=…` and
-    `--duration`, exactly as ADR-0264–0268 built it. §31.82's privacy plan is a *disclosure* shown
-    before the first remote inference, not a second prompt — separating "who approved" (the grant)
-    from "what leaves" (the plan) is what keeps one vocabulary.
-  - **Transport:** a `command` transport only — the operator configures an executable speaking
-    `ono-model/1`, one JSON document in, one out (structured, never scraped, the discipline of the
-    adapters and the remote agent). No HTTP client, so nothing untested ships. A `kind: remote`
-    provider is a local bridge process; `kind` declares *where* inference happens, which is what
-    the data policy hangs on.
-  - **The structural guard for "no LLM in a privileged path":** `ono-model-broker` takes an
-    already-decided `Grant` as a parameter, has no function returning a grant or a decision, and
-    does not depend on the policy crate — so no model output can sit between a check and the
-    operation it guards. Provable by the fixture `assistants.v1.yaml` itself names: an answer whose
-    text demands an escalation changes no grant and is audited.
-  - **Shape, 3 increments:** (1) contracts + crate + `get model` reading a real catalogue at
-    `<config>/kuang/models.yaml`, sibling of ADR-0265's `policy.yaml`; (2) `models.list` /
-    `models.infer` in `ono-kuang-protocol::method` and `supervisor::dispatch_host_call`, gated
-    through the existing `broker_check`, with `kuang-example-plugin` gaining the calls as it
-    already has `read-file` for `filesystem.read`; (3) privacy plan, prompt-injection fixture,
-    acceptance case 190.
-  - Resume in `../ono-sendai-wt-last` on `close-last` at `37ce5c3`; ADRs 0377–0400 and cases 190+
-    are free.
 
 - [x] **C-7 — the §34 pathological fixtures, and the theme system of §44** — done 2026-08-29.
   **Themes** (`1c4866b`, ADR-0332): `theme.name` joins the ADR-0094 catalogue; resolution is
@@ -1657,12 +1613,12 @@ know and must not claim.
 
 ---
 
-### Class B — open and small
+### Class B — the small defects, and the five that closed
 
-Each line says what is wrong, how to reproduce it, and what closes it. Five remain from the
-2026-08-29 reconciliation and the other thirty-seven are under *Done, reconciled*; five more were
-found on 2026-08-30 while recording the README figures, in their own block at the end. One more
-was found on 2026-08-31 and stands first, because it is the gate that is red.
+Each line said what was wrong, how to reproduce it, and what closed it. Five stood open after the
+2026-08-29 reconciliation and thirty-seven were already under *Done, reconciled*; later sessions
+added more, and by 2026-08-31 twenty-two were open and became issues #6–#27. The five kept here
+are the ones a session closed on its way past, and they are kept for the diagnosis each carries.
 
 #### Interactive
 
@@ -1683,19 +1639,6 @@ was found on 2026-08-31 and stands first, because it is the gate that is red.
   Ruled out along the way, each by experiment: CPU load (passes under sixteen busy loops), the
   number of processes drawn (passes with 1 686 on the host), and crossterm's lone-`Esc`
   ambiguity (`input_available` is false for a one-byte read, so `Esc` is delivered at once).
-
-- [ ] **B-tui-2 — the resize assertion can pass without a resize.** In
-  `should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`, the check
-  after `session.resize(...)` waits only for new output containing `compute`, and the repaint the
-  earlier `Down` causes satisfies it. Tracing the map loop during a green run showed sessions
-  whose whole key history was `Down`, `Esc` with **no `Resize` event at all** — the test passed
-  regardless. So §43.4 is not actually held by this test today. Two things to settle: why the
-  `SIGWINCH` sometimes does not reach the shell, and an assertion that names something only a
-  resize can produce (the frame at the new row count). Found 2026-08-31 while closing B-tui-1.
-
-- [ ] **B-tui-3 — `should_report_a_failing_streamed_child_after_its_records` failed once.** One
-  `cargo test -p ono-cli` run on 2026-08-31; not reproduced in the eight runs since, and not
-  investigated. Recorded so a second sighting is a pattern rather than a surprise.
 
 #### Data and pipeline
 
@@ -1733,21 +1676,7 @@ was found on 2026-08-31 and stands first, because it is the gate that is red.
   budget**, and the correction matters: §34's 50 ms figures are for `look` and `near` *cached*
   (0.10 s and below here), and §34 says in as many words that "Cold provider discovery MAY exceed
   these targets". A one-shot `ono -c` is cold discovery.
-- [ ] **A miss sweeps everything a hit never touches.** What remains after ADR-0416: a selector
-  that resolves stops at the first step of §27.1, and one that does not runs to the last, which
-  consults the whole index and so projects all six domains. 1.40 s in release, of which only
-  0.27 s is CPU — the rest is reading 920 processes and their sockets, files and mounts. Allowed
-  by §34, but it is the reason a miss is ten times a hit. A design question, not a defect: a
-  persistent index across processes, or a bounded last step. §34's real obligation here is the
-  other sentence — the shell MUST stay interactive and update progressively — and that belongs to
-  the interactive path, which a one-shot `ono -c` never exercised. Measure it there.
-- [ ] **`get service` costs 3.0 s to enumerate, and two tests that call it concurrently exceed the
-  testkit's 10 s bound.** `get service | count` 3.01 s vs `get service <unit> | to json` 0.15 s and
-  `get process | count` 0.40 s (debug, 920 processes), so the cost is in enumerating all units, not
-  in any one of them. `trace service systemd-journald.service` is 4.49 s debug / 1.42 s release.
-  `services_logs_missing.rs` is 20/20 green with `--test-threads=1` and fails two tests when they
-  run in parallel — both invoke that same command. Exit test: the file green under the default
-  test parallelism, by making the enumeration cheaper rather than by raising a bound.
+
 - [x] **§34's socket budget is missed by ~20 %, measured — fixed 2026-08-30 (ADR-0418).**
   Acceptance case `152` ran for the first time on 2026-08-29 and failed honestly:
 
@@ -1777,103 +1706,9 @@ was found on 2026-08-31 and stands first, because it is the gate that is red.
   `::should_answer_no_unix_socket_when_the_connection_target_is_asked`; the decoding fidelity of
   the new iterators is held unchanged by `socket_decoding` and `malformed_messages`.
 
-- [ ] **`ono.socket/1` identifies a socket by `inode` alone, and `TIME_WAIT` has none.**
-  3 of 16 connections in a live snapshot carried a wholly-null identity. The user-visible
-  consequence was found and its symptom fixed (`8db67f2`: `trace` now roots at the first record it
-  can relate to, instead of refusing the whole answer with `Ono-Sendai-E0201 this record declares
-  no identity`; it fails at HEAD too, verified by `git stash`, and the fix carries a test that
-  leaves a `TIME_WAIT` connection behind on purpose). What remains is the identity itself: a
-  fallback to `(protocol, local, remote)` — a schema-identity change with its own increment.
-- [ ] **`ono.filesystem/1` identifies by `(uuid, source)`, and two `source: none` pseudo
-  filesystems share one identity.** Needs a device-number field the schema does not have.
-- [ ] **No renderer emits the theme markers.** ADR-0332 requires every theme to carry distinct
-  markers for `ui.danger`/`ui.warning`/`ui.success`, but tables and the error renderer print plain
-  text where colour is off, so the guarantee is enforced on the theme and unused by the output.
-  A rendering change with its own snapshot consequences.
-- [ ] **§34's numbers are unmeasured.** Cases `151`–`154` (and `060`, `100` beside them for
-  comparison) were built but never measured, because the machine ran at load 27–49 throughout and
-  a budget measured under that load is worthless. Needs one quiet container run.
-- [ ] **Five acceptance cases have never run in the container**: `150`–`154`. Case `150`'s script
-  was executed end-to-end outside the container against every assertion, and every command in
-  `151`–`154` plus both Perl fixtures was validated at small size — which is how a `use strict`
-  error that made `many-sockets.pl` open nothing, and an off-by-one `tail -3` in case `150`, were
-  found and fixed (`43f35e8`). They still need the real run.
-
-#### Providers, remote and KUANG/11
-
-- [ ] **`set package --version` cannot move a Red Hat package backwards.** ADR-0422 §3 runs
-  `dnf install -y <name>-<version>` for a named version, and dnf refuses an older one — the
-  documented spelling for that direction is `dnf downgrade`, and knowing which direction a
-  version string points needs rpm's own EVR comparison rather than a string test. zypper is given
-  `--oldpackage` and does both directions in one command, so this is a Red Hat gap only, and it
-  surfaces as dnf's own message in a `failed` row rather than as a wrong outcome. Exit test:
-  `set package <name> --version <older>` on a Red Hat machine reports `changed: true` and rpm
-  reports the older version afterwards.
-- [ ] **A package record is routed to the first available provider, not to the one its identity
-  names.** `ono.package/1` is identified by `provider + name`, and both package providers read
-  only the name out of it (`packages.rs::package_name`). On a machine carrying both databases —
-  Debian with `rpm` installed is the real case — a record the rpm provider made and a pipeline
-  handed to `remove package` would be acted on by dpkg, because `ProviderRegistry::act` resolves
-  the target to the first available provider and nothing consults the identity's first field.
-  Found while writing ADR-0422 and deliberately left out of it (AGENTS.md §4): the fix belongs in
-  the registry, not in either provider, and it is the same question for every target two
-  providers can claim. Exit test: a record whose `provider` field names a provider that is not
-  the first available one is acted on by the provider it names, or refused by name.
-- [ ] **Nothing refreshes a repository index.** `apt update`, `dnf makecache` and `zypper refresh`
-  have no spelling: spec §9.1 names `get`, `find`, `add`, `remove` and `set package` and no verb
-  for the index, so `sudo apt update` stays an external command on every distribution. Both
-  package providers have the front end that would do it. Exit test: an `ono` spelling refreshes
-  the index and reports what changed, or an ADR records why the shell deliberately has none.
-- [ ] **B-remote-2 — host-key pinning is dead code on the only production transport.** The trust
-  store is complete and proven at unit level (`ono-protocol/tests/trust.rs` and
-  `ono-remote/tests/trust.rs::should_refuse_a_changed_host_key_with_the_stable_safety_code`,
-  thirteen tests including the E0603 refusal), but ADR-0037 §4 has ssh links use
-  `TrustPolicy::Unauthenticated`, so the pin store is never consulted in production and no
-  acceptance case asserts E0603. **ADR-0274 (`593baee`) now records why the exit test cannot be
-  written yet**: both `ssh` and `local` go through `SubprocessTransport`, whose `peer_key` is
-  truthfully `None`, because OpenSSH authenticates the host in its own `known_hosts` and offers
-  the parent no way to learn which key it accepted. What must exist first is a transport that
-  certifies its peer to this process — an Ono-native authenticated TCP transport (TLS or Noise,
-  where the peer's key *is* the `HostKey`), or an ssh implementation inside Ono. Two things are
-  ruled out in the meantime: copying `known_hosts` into the store, and adding a trust-store
-  command surface while nothing writes to the store on any production path. This subsumes **F12**.
-  Exit test: an acceptance case in which a changed key refuses with E0603, over a transport that
-  authenticates.
-- [ ] **B-kuang-3 — a lazily loaded package's contributions have no registry origin.** §31.64
-  wants `get command` to answer for a contributed command with origin `plugin(id, version)`;
-  nothing in the command schema or `ono-command` carries an origin — a grep of
-  `ono-command/src/{registry,invoke}.rs` for `origin` finds nothing, and `plugin(id` appears
-  nowhere in `crates/` or `docs/decisions/`. Exit test: `get command` names the package a
-  contributed command came from, before that package is loaded.
-
-#### Spatial
-
-- [ ] **B-spat-6 — a full-screen map of COMPUTE is unresponsive while one projection is in
-  flight.** **Its test is flaky on a large host, and that was measured on 2026-08-31**:
-  `spatial_interactive_missing::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
-  fails its liveness bound roughly 1 run in 10 on a 780-process, 556-service machine, and a failing
-  run takes the full 50 s bound where a green one takes 7 s. It does not reproduce in the container
-  — CI has never seen it — so this is a defect that only a real desktop shows, which is what
-  B-spat-6 has said all along. ADR-0421's measurement table is the data.
-  The original report: measured by S11c on a 500-process host; §34.2's view budget will eventually have to
-  answer for it. `98fa9ce` (ADR-0263) fixed the *neighbouring* defect — the index grew by one
-  population per observation, so the view got monotonically slower for as long as it stayed open —
-  and did not make the first projection concurrent with the repaint, which is what this asks for.
-  No ADR covers it. Exit test: opening a full-screen map of COMPUTE on a 500-process host repaints
-  within the §34.2 frame budget throughout, not only once the projection lands.
-
-#### Harness and bookkeeping
-
-- [ ] **B-split-D4 — the first-completion budget is still measured by a proxy.** The other half of
-  this box is closed: `4a91ec8` (ADR-0252) installs `ono_cli::complete::ProviderValues` in the
-  `ValueCompleter` seam, so `get user <TAB>` offers this machine's accounts, bounded by a 40 ms
-  deadline on its own thread, a five-second cache and the synchronous registry only
-  (`completion.rs::should_offer_this_machines_users_when_completing_a_user_selector`, case `044`).
-  What remains is spec §34's < 50 ms first-result budget, asserted as a 1 000-iteration in-process
-  proxy (`completion.rs::should_stay_far_inside_the_first_completion_budget`, whose own comment
-  says a wall-clock assertion "is flaky on shared hardware") and never measured in the container.
-  ADR-0252 records why: it needs a completion the container can invoke without a terminal, which
-  is new public surface. Exit test: case `060` measures the first completion.
+Three subsections stood here — *Providers, remote and KUANG/11*, *Spatial*, and *Harness and
+bookkeeping*. Every entry in all three was still open on 2026-08-31, so all of them are issues
+and the headings are gone with them.
 
 #### Found while recording the README figures (2026-08-30, agent `readme-demo`)
 
@@ -1883,10 +1718,11 @@ Five defects, each reproduced at `a057be1` — against `target/release/ono` on a
 `docs:` commit. Three of the five were found by composing the recordings in `docs/assets/`, which
 is the argument for keeping that harness: it types what a reader would type.
 
-**Four of the five are closed as of 2026-08-31** (`f8e0fb6`, `e8426e5`, `41e9688`;
-ADR-0419/0420/0421). The `map --live` hang is the one that remains. Fixing the four turned up five
-more, in their own block below; two of them are halves of these boxes that were reported as one
-defect and are not — `select`'s share of the float rendering, and `follow owner`.
+**Four of the five were closed on 2026-08-31** (`f8e0fb6`, `e8426e5`, `41e9688`;
+ADR-0419/0420/0421) and are below. The fifth, the `map --live` hang, is issue #22. Fixing the four
+turned up five more, in their own block below; two of them are halves of these boxes that were
+reported as one defect and are not — `select`'s share of the float rendering (#23), and
+`follow owner` (#25).
 
 - [x] **A nested record renders as its schema id in a table** — fixed 2026-08-31, `f8e0fb6`,
   ADR-0419, in one increment with the float box below. One cause under both: `Renderer::text`
@@ -1960,78 +1796,21 @@ defect and are not — `select`'s share of the float rendering, and `follow owne
   above. Exit test: a render test fixing the human rendering of a percentage-typed field, with the
   serialisation left untouched.
 
-- [ ] **`map --live --json | take 3 | to json` never returns on a busy host.** At `a057be1`,
-  release build, no config: 30 s wall clock, **zero bytes** of output, 0 % CPU and a flat 4 MiB
-  RSS — it blocks, it does not spin. The same command in the demo container answers in 0.4 s with
-  27 KiB. The difference is the machine, not the build: 920 processes and ~800 neighbours at the
-  root place versus four. Related, and deliberately not claimed as the same defect: two leftover
-  `ono` processes from earlier worktree agents were found sitting on this pipeline shape for over
-  seven hours at ~2.2 GiB RSS each (debug builds, `enter socket <id>; map --live --json | take 3 |
-  to json`); the memory growth did **not** reproduce at HEAD, the hang did. Exit test: a test that
-  bounds `map --live --json | take <n>` in wall clock against a fixture with many neighbours, so
-  the live map is proven to yield before it has seen everything.
-
 **`scripts/acceptance.sh` stands at 107 passed, 0 failed at `41e9688`** (2026-08-31), and
 `scripts/gate.sh` printed `gate: green` on the same tree. One measurement is worth recording
 beside it: case `152` **failed** on a first run of the same tree and passed on a second. It was
 not the tree. The first run went out while a `cargo test --workspace` and a container build were
 on the same eight cores at load 18–68, and the case reported its *baseline* — the ordinary host,
 two sockets — at 52 ms against §34's 50 ms budget, with the pathological host only 6 ms above it.
-A budget measured under that load says nothing, which is what the §34 box under *Class B* has
-said all along. The second run, on a quiet machine, was green. Read it as one more reason that
-box stays open: these five cases need a machine nobody else is using.
+A budget measured under that load says nothing, which is what the §34 box said all along. The
+second run, on a quiet machine, was green. Read it as one more reason issue #13 stays open: these
+five cases need a machine nobody else is using.
 
 #### Found while fixing three of the README-figure defects (2026-08-31)
 
-Each was reproduced against `target/debug/ono` or `target/release/ono` on an ordinary host at
-`41e9688`, and each was deliberately left out of the fix that found it (AGENTS.md §4).
-
-- [ ] **`select` erases the declaration the renderer reads.** `get process 1` prints `CPU 2.1%`
-  since ADR-0419; `get process 1 | select cpu` still prints `2.0859030835636990`. Cause:
-  `ono-pipeline/src/schemas.rs::selection_schema` types every projected field `FieldType::Any`
-  with no unit, and it is built once in `Select::new` before any record is seen, so the source
-  field's declaration cannot be copied where it stands. Nothing else in the tree carries a unit
-  the value does not — `unit: percent` on `process.cpu` and `process-detail.cpu`, and
-  `unit: bytes` on `interface.{mtu,rx_bytes,tx_bytes}` where the value is already a `bytesize` or
-  wants to stay a number — so this is one field's worth of visible damage and a general hole.
-  Scale: a per-source-schema derived projection schema, memoised by `SchemaId` because most
-  streams are homogeneous; ~1 increment in `ono-pipeline`. Exit test:
-  `get process | select cpu` renders the same cell as `get process`, with `to json` unchanged.
-
-- [ ] **A words-mode command that reads `option()` without evaluating drops an argument written
-  as an expression.** This is what ADR-0420 fixed in `trace`, and the same call shape is open in
-  three more places: `ono-command/src/impls/meta.rs` (`help`'s subject, `get command --verb`,
-  `--target`, `--stability`), `ono-command/src/impls/convert.rs` (`to text --field`,
-  `format table --columns`, `--max-rows`) and `ono-cli/src/spatial/commands.rs` (`near --type`,
-  `--limit`, `--changed`, `follow`'s relation). `BoundArguments::evaluated(scope)` is the
-  resolution point ADR-0219 named and `mutate` and now `trace` are the only callers. Each site
-  needs its own reproduction and its own increment; the general form — evaluating in the
-  dispatcher for every `ArgumentMode::Words` command — is the shape to reach for, and ADR-0420
-  §Alternatives says why it was not taken along a one-command fix.
-
-- [ ] **`follow owner` never pays for an expensive relation.** `enter 127.0.0.1:<port>;
-  follow owner` on a socket the caller owns answers `Ono-Sendai-E1009 spatial.unsupported the
-  `owner` of this place is not answered here: available on request` — **with and without** a
-  preceding `look`, so this is not the ADR-0421 defect seen from another side. `near --type
-  process` at the same place names the owner, so the scan is reachable and `follow` is the
-  spelling that cannot reach it. §6.4 wants a `follow` along a named exit to traverse it or to
-  refuse honestly; "available on request" is neither, because nothing `follow` accepts makes the
-  request. Exit test: `follow owner` on a socket whose owner this session can read enters the
-  owning process, or refuses for a reason that is not "ask again".
-
-- [ ] **`near --type X` answers a withheld group with nothing, at status 0.** ADR-0271 fixed
-  exactly this for `near <relation>` — `withheld_exit` turns a refused group into a structured
-  refusal — and the guard is written `if named_relation.is_some()`, so the `--type` spelling still
-  falls through to an empty stream. §42.4's false empty survives on one of the two spellings.
-  Exit test: `near --type process` on a place whose `process` exit is refused answers the refusal,
-  not an empty stream.
-
-- [ ] **`ono-process::should_run_a_text_script_without_a_shebang_through_the_shell` is flaky.**
-  Seen once at `41e9688` under a `cargo test --workspace` with a container build beside it: exit
-  126 where 0 was expected, green on the immediately following run and on every run since. 126 is
-  "found and not executable", which for a script the test writes itself points at a race between
-  writing it, marking it executable and spawning it. Not investigated further. Exit test: the same
-  test green under repetition on a loaded machine.
+Five defects, each reproduced against `target/debug/ono` or `target/release/ono` on an ordinary
+host at `41e9688`, and each deliberately left out of the fix that found it (AGENTS.md §4). All
+five were still open when the board was filed and are issues now.
 
 ---
 
@@ -2180,6 +1959,12 @@ test at the time; `5f683e0` gave each one, so **B-harn-6 is closed**.
 Phase A is decomposed to increment level. Later phases are listed at their coarse shape and are
 decomposed by the agent that starts them — decomposing early would invent detail the spec does
 not fix yet.
+
+## Phase checklists (spec §37)
+
+The ten phases of spec §37, each box naming the automated proof that ticks it. All ten are
+complete and tagged `phase-a` … `phase-j`; the boxes that remain open name the issue that
+carries them.
 
 ### Phase A — Language and Unix shell foundation
 
@@ -2423,9 +2208,8 @@ replaced each with the case that actually covers the capability.
       `crates/ono-remote/src/agent.rs` reached as `ono --agent` (ADR-0036 §1) —
       `crates/ono-remote/tests/agent.rs::should_negotiate_the_registry_providers_with_their_availability`,
       `tests/subprocess.rs::should_run_a_query_against_an_agent_in_a_child_process`; case `049`
-- [ ] H3 — Agentless SSH fallback — §21.3 — **open, and it is C-3 above.** `--agentless` is
-      parsed and visible; `context.rs:615` still says the fallback does not exist, and ADR-0037 §6
-      agrees. An agent is on it (see *In progress*).
+- [ ] H3 — Agentless SSH fallback — §21.3 — **open: issue #2.** `--agentless` is parsed and
+      visible; `context.rs:615` still says the fallback does not exist, and ADR-0037 §6 agrees.
 - [x] H4 — Provider negotiation and capability discovery — §21.2 —
       `crates/ono-remote/tests/agent.rs::should_announce_capabilities_with_the_risk_the_provider_declares`,
       `crates/ono-protocol/tests/handshake.rs::should_negotiate_the_intersection_of_the_two_capability_sets`,
@@ -2510,9 +2294,9 @@ replaced each with the case that actually covers the capability.
       (ADR-0040 §1); the example plugin ships into the container
 - [x] I10 — Plugin conformance suite — §31.74 — `crates/ono-kuang-sdk/tests/conformance.rs`,
       seventeen tests over every area ADR-0040 enumerates; case `050-kuang-plugin.case`
-- [ ] I11 — `ono-model-broker` — §31.12 — **open, and it is C-6 above.** The crate does not
-      exist; `model_broker` is a manifest field nothing reads and `Capability::ModelInfer` is a
-      capability nothing checks. **Nobody is on this one** — it is the next task for a free agent.
+- [ ] I11 — `ono-model-broker` — §31.12 — **open: issue #5.** The crate does not exist;
+      `model_broker` is a manifest field nothing reads and `Capability::ModelInfer` is a
+      capability nothing checks. The design is in the issue body; no file is written.
 
 ### Phase J — Advanced TUI views (spec §37 Phase J, §13.6, ADR-0050)
 
@@ -2550,9 +2334,8 @@ records. It was removed from this board rather than carried as an open box.
       **Split:** four of spec §34's five pathological environments are still absent — C-7, which
       an agent holds (see *In progress*).
 - [ ] Fuzzers over parser, serializers, remote protocol, plugin protocol, procfs/netlink
-      decoders — spec §35.6 — **open, and it is C-2 above.** No `fuzz/` directory at `b904327`;
-      since `80c8cb7` the unfinished-work scan is pinned to walk one the day it appears. An agent
-      is on it (see *In progress*).
+      decoders — spec §35.6 — **open: issue #1.** No `fuzz/` directory; since `80c8cb7` the
+      unfinished-work scan is pinned to walk one the day it appears.
 - [x] A test for each risk in the threat model of spec §49 — every T1–T15 row of ADR-0015 has a
       passing test, enumerated in `docs/ACCEPTANCE.md` §4.4's final bullet; ADR-0203 adds seven
       spatial rows the same way. **Split closed** by `9d7f16a`: **ADR-0245 supersedes ADR-0015**
@@ -3117,7 +2900,7 @@ Should-fix:
       Previously: **one open descriptor per pending directory.**
 - [ ] **F12 — the trust store's default policy is trust-on-first-use**, which contradicts ADR-0015
       T5's "an unknown key is refused, not prompted past". `crates/ono-protocol/src/trust.rs`.
-      Either the ADR or the default has to move. Tracked under *Next up* as **B-remote-2**, and
+      Either the ADR or the default has to move. Tracked as **issue #18**, and
       **ADR-0274 (`593baee`, 2026-08-29) now records why it cannot be settled yet**: both `ssh`
       and `local` go through `SubprocessTransport`, whose `peer_key` is truthfully `None`, so the
       pin store is never consulted in production and which default is right depends on whether
@@ -3201,9 +2984,8 @@ security review — and because re-testing these later costs nothing if they are
 
 ## Deferred / blocked
 
-*Deferred* means blocked on something outside this repository. Work that is merely unfinished
-belongs under *Next up*, and the 2026-08-29 triage moved everything that was really work out of
-here. The workspace holds **no `#[ignore]`d test at all** (`cargo xtask spec-check`'s
+*Deferred* means blocked on something outside this repository. Work that is merely unfinished is
+an issue, and the 2026-08-29 triage moved everything that was really work out of here. The workspace holds **no `#[ignore]`d test at all** (`cargo xtask spec-check`'s
 unfinished-work scan keeps that true), so nothing below is a silenced requirement.
 
 **One entry, and it is blocked on the kernel.**
@@ -3217,7 +2999,7 @@ unfinished-work scan keeps that true), so nothing below is a silenced requiremen
 
 Two entries left this section on 2026-08-29:
 
-- **`service.depends_on`** moved to *Next up* as **B-prov-5**, and was **delivered the same day**
+- **`service.depends_on`** moved onto the board as **B-prov-5**, and was **delivered the same day**
   by `bf25291` (ADR-0239). It was never blocked: the provider already called
   `GetAll(org.freedesktop.systemd1.Unit)` for every unit it emitted, and that reply carries
   `Requires`, `Requisite`, `BindsTo` and `Wants`. `ono.service/1` now has `dependencies`;

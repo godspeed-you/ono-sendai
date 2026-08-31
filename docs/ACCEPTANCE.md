@@ -285,8 +285,9 @@ huge stdout and an endless stream) build the rest (ADR-0333):
 - [x] `docs/STATE.md` has an empty *In progress* section and no unexplained *Deferred* entries —
       `scripts/release-check.sh` reads the board and refuses the release line while a claim
       stands under *In progress* or a *Deferred* entry names no ADR (`cargo xtask state-check`,
-      ADR-0402, driven by `xtask/tests/scan.rs`). *Next up* is deliberately outside that rule:
-      §4 is the stopping rule, and *Next up* is the post-release backlog that remains after it.
+      ADR-0402, driven by `xtask/tests/scan.rs`). The rest of the board is deliberately outside
+      that rule: §4 is the stopping rule, and the post-release backlog that remains after it is
+      the issue tracker (ADR-0425), which no gate reads.
 - [x] Every `#[ignore]`d test is either removed or justified in *Deferred* with an ADR — the
       workspace holds none at all, which `cargo xtask spec-check`'s unfinished-work scan keeps
       true.
@@ -617,7 +618,7 @@ Two conventions this subsection relies on:
 The v0.4 tranche is finished when this subsection has no unticked box and
 `scripts/release-check.sh` prints the release line again. Every box was ticked on 2026-08-28 by
 agent `S11b`, from the evidence each one names; what that session found and could not close is
-in `docs/dogfood/v0.4-2026-08-28.md` and in `docs/STATE.md` under *Next up*.
+in `docs/dogfood/v0.4-2026-08-28.md`, and in the issue tracker (ADR-0425).
 
 #### 4.7.1 Functional release criteria (v0.4 §52.1)
 

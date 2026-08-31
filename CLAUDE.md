@@ -40,7 +40,11 @@ duplicate rules here — if a rule needs to change, change it in `AGENTS.md`.
   release-ready` — never earlier. No MVP exit (AGENTS.md §15, `docs/ACCEPTANCE.md`).
 - **Branch:** all implementation goes on `implementation`, never on `main`, so the whole run
   stays disposable. `scripts/gate.sh` refuses to run on `main` (AGENTS.md §12.1).
-- **State board:** `docs/STATE.md` — read first, update last, every session (AGENTS.md §9).
+- **Backlog:** the GitHub issue tracker — `gh issue list`. One problem is one issue, and the
+  commit that closes it says `Closes #NN` (AGENTS.md §9, ADR-0425).
+- **State board:** `docs/STATE.md` — read first, update last, every session (AGENTS.md §9). It
+  holds claims in flight, *Found, not yet filed*, deferred work, session records and history —
+  not the backlog. A problem you find on the way goes there; you do not file the issue yourself.
 - **Repo language is English** (code, tests, docs, commits). Talk to the user in their language.
 
 ```bash

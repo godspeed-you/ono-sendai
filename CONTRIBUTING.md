@@ -75,7 +75,8 @@ it: `scripts/demo/make.sh` (see [`scripts/demo/README.md`](scripts/demo/README.m
 | | |
 |---|---|
 | [`AGENTS.md`](AGENTS.md) | the authoritative development contract — read it before your first change |
-| [`docs/STATE.md`](docs/STATE.md) | the work board: what is in progress, next up, deferred |
+| [open issues](https://github.com/godspeed-you/ono-sendai/issues) | the backlog: one problem, one issue, with the evidence that closes it |
+| [`docs/STATE.md`](docs/STATE.md) | the work board: what is in progress, what is found but not yet filed, what is deferred |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | what "finished" means, in boxes a script can check |
 | [`docs/spec/`](docs/spec/) | the machine-readable public contract |
 | [`docs/decisions/`](docs/decisions/) | every recorded decision and deliberate spec deviation |
