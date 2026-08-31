@@ -1529,6 +1529,14 @@ gh issue list --label class-c    # the large ones, a tranche each
 five class C, twenty-two class B — and what follows is the record of the triage that produced
 them.
 
+**Six of the twenty-seven were closed the same day as already done**, and the reason is the
+argument for this whole arrangement: the entries described the tree at `b904327`, eighty commits
+back, and said so in as many words while nobody re-read them. #1 (fuzz targets, `669c172`), #2
+(agentless, `bbb29e4`), #4 (signature verification), #19 (`Origin::plugin`), #13 and #14 (the §34
+cases had run at `41e9688`). #3 lost its isolation half to `1e76009` the same way. Every claim in
+the remaining twenty was checked against HEAD — statically, or by running
+`target/release/ono` — before it was left open.
+
 ---
 
 ## The 2026-08-29 triage, and what it closed
