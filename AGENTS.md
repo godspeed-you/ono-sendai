@@ -53,6 +53,8 @@ ono-sendai/
     │                             enhancement spec, layered on the base (§5.2)
     ├── ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
     │                             enhancement spec, layered on the base (§5.2)
+    ├── ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md
+    │                             enhancement spec, layered on the base (§5.2)
     ├── ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
     │                             enhancement spec, layered on the base (§5.2)
     ├── ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
@@ -151,6 +153,7 @@ Concretely:
 ```
 0. docs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
 0. docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
+0. docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md
 0. docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md
 0. docs/ono_sendai_shell_spec_v0.3_external_command_adapters.md
                                    the enhancement specs share level 0 (IMMUTABLE, read-only);
@@ -199,6 +202,13 @@ The enhancements present, newest first:
   Systems Interface: time as a coordinate, an evidence-backed event ledger, state reconstruction,
   timelines and causal explanation. Added 2026-08-31, **not implemented**; `docs/STATE.md`
   records it as the next tranche.
+- `docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` — Hardening, Trust &
+  Release Integrity: a maintenance layer over the implemented v0.4 substrate — security
+  boundaries, remote trust, KUANG/11 confinement, resource boundedness, streaming correctness,
+  performance stability, test truthfulness and release provenance. Added 2026-09-01, **not
+  implemented**. The spec states its own place in the sequence: a prerequisite hardening pass
+  that v0.5 and v0.6 implementation MUST inherit rather than re-solve, so it is listed here
+  ahead of them despite arriving later; `docs/STATE.md` should schedule it before v0.5.
 - `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — the Spatial Systems
   Interface. Added 2026-08-27, implemented 2026-08-28/29 (ADR-0124 … ADR-0402) and released as
   0.4.0; `docs/ACCEPTANCE.md` §4.7 holds its checklist.
