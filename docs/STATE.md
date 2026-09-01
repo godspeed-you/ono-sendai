@@ -56,6 +56,27 @@ is an **enhancement layered on it** — the External Command Adaptation Layer �
 immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a checksum line in
 `docs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
+**Build order for the enhancements now on `implementation`, next tranche first: v0.4.1, then
+v0.5, then v0.6** — v0.4.1 because its own spec text (§0.1–§0.2, below) says the v0.5/v0.6
+feature work must inherit its hardened guarantees rather than re-solve them; v0.6 because its
+own §0.1 places it behind v0.5's evidence and causality model, already noted below.
+
+**v0.4.1 arrived on `implementation` on 2026-09-01** as
+`docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` — Hardening, Trust &
+Release Integrity, a maintenance layer over the already-implemented v0.4 substrate: security
+boundaries, remote trust, KUANG/11 confinement, resource boundedness, streaming correctness,
+performance stability, test truthfulness and release provenance (spec §0.1–§0.2). It is merged,
+checksummed (`docs/spec.sha256`) and enumerated (AGENTS.md §5/§5.2), and **not implemented**.
+
+The spec places itself explicitly: §0.1's layering diagram stacks it directly on v0.4 as the
+"stable implementation base for the future v0.5 and v0.6 feature tranches", and §0.2 says later
+feature work MUST inherit its hardened guarantees rather than re-solve them. It therefore
+precedes v0.5 in build order despite arriving on disk after v0.6 — **v0.4.1 is the next tranche
+to pick up**, ahead of the v0.5 work below. It has no `docs/ACCEPTANCE.md` checklist yet either;
+writing one from spec §0.1–§0.2 and whichever sections carry its MUST/SHOULD boundaries, the way
+§4.7 was written from v0.4, is that tranche's first task, and it claims **§4.8** — pushing v0.5's
+future checklist to §4.9.
+
 **v0.5 arrived on `main` on 2026-08-31** as `docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md`
 — the Temporal & Causal Systems Interface, 4 147 lines: time as a session coordinate, a canonical
 event model, an evidence ledger with explicit coverage and gaps, state reconstruction, `timeline`,
@@ -70,8 +91,10 @@ the widened rule; `xtask/tests/narrative.rs::should_find_an_enhancement_whose_na
 and `xtask/tests/scan.rs::should_ignore_a_narrative_specification_whose_name_omits_the_shell_infix`
 hold it. The user then renamed the file on `main` (`c4ca548`, content untouched) to carry the
 infix after all, and `docs/spec.sha256` follows the new path. The widened rule stays: it is what
-made the document visible in the first place, and the next one may arrive misnamed too. **The v0.5 tranche has no `docs/ACCEPTANCE.md` checklist yet**; writing §4.8 from v0.5
-§48 and §56, the way §4.7 was written from v0.4, is the first task of that tranche.
+made the document visible in the first place, and the next one may arrive misnamed too. **The
+v0.5 tranche has no `docs/ACCEPTANCE.md` checklist yet, and it is not the next tranche**: v0.4.1
+(above) precedes it in build order and claims §4.8, so v0.5's checklist — written from v0.5 §48
+and §56, the way §4.7 was written from v0.4 — becomes **§4.9** once its tranche starts.
 
 **v0.6 arrived on `main` the same day** (`9c49bb9`) as
 `docs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective Change,
@@ -80,7 +103,8 @@ Protection & Recovery, 4 473 lines. It makes a proposed mutation a first-class o
 it becomes real; v0.6 §0.1 places it after v0.5 in the progression and leaves the earlier
 documents authoritative for what they define. Checksummed and enumerated, **not implemented**,
 and **behind v0.5**: v0.6 reasons about consequences and recoverability, which is the evidence
-and causality v0.5 builds. Nothing in it should be started before v0.5's §4.8 exists.
+and causality v0.5 builds. Nothing in it should be started before v0.5's §4.9 exists — itself
+behind v0.4.1's §4.8 (above) in build order.
 
 This one the gate caught by itself, on the first `spec-check` after the merge — the widened rule
 of ADR-0423 working as intended, unlike the silent arrival of v0.5 the day before.
