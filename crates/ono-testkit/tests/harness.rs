@@ -121,3 +121,16 @@ fn should_take_a_wider_budget_than_the_default_when_a_script_is_given_one() {
     run.assert_success();
     assert_eq!(run.stdout().trim(), "[41]");
 }
+
+#[test]
+fn should_name_the_test_and_the_reason_when_a_skip_is_announced() {
+    // The marker is what makes a skipped test countable, so its shape is a contract: the word
+    // `SKIPPED`, the test that skipped, and why. Asserting it here means a later change to the
+    // format has to be deliberate.
+    ono_testkit::skipped("this host has no second mount to cross");
+    let name = std::thread::current().name().unwrap_or_default().to_owned();
+    assert_eq!(
+        name, "should_name_the_test_and_the_reason_when_a_skip_is_announced",
+        "the marker takes the test's name from its thread, so cargo must still name it"
+    );
+}

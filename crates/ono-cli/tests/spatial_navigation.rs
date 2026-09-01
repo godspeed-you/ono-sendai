@@ -257,7 +257,9 @@ fn on_path(name: &str) -> bool {
     };
     let found = std::env::split_paths(&path).any(|dir| dir.join(name).is_file());
     if !found {
-        eprintln!("skipped the external half: `{name}` is not installed on this host");
+        ono_testkit::skipped(&format!(
+            "the external half needs `{name}`, which is not installed on this host"
+        ));
     }
     found
 }

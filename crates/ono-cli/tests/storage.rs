@@ -44,7 +44,7 @@ fn ono(script: &str) -> ono_testkit::Run {
 /// really mounted or unmounted something on the developer's machine would be the defect.
 fn unprivileged() -> bool {
     if ono_process::effective_uid() == 0 {
-        eprintln!("skipped: this test asserts the unprivileged refusal and would mutate as root");
+        ono_testkit::skipped("this test asserts the unprivileged refusal and would mutate as root");
         return false;
     }
     true

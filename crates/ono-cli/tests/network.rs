@@ -80,7 +80,7 @@ fn unprivileged() -> bool {
         .and_then(|rest| rest.split_whitespace().next())
         .expect("the Uid line of /proc/self/status");
     if uid == "0" {
-        eprintln!("skipped: the network write paths must not be exercised as root");
+        ono_testkit::skipped("the network write paths must not be exercised as root");
         return false;
     }
     true

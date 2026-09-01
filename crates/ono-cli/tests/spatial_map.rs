@@ -815,7 +815,7 @@ fn should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expande
             "spec §8.2: a processes collection larger than the {TEXT_MAP_NODE_BUDGET}-node view \
              budget is clustered, got {collapsed:?}"
         );
-        eprintln!("skipped: the host is smaller than the view budget, so nothing is clustered");
+        ono_testkit::skipped("the host is smaller than the view budget, so nothing is clustered");
         return;
     };
     let cluster_id = text(&cluster, "id", "§22");

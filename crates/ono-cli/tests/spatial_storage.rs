@@ -489,7 +489,7 @@ fn should_list_the_mounts_the_providers_report_when_walking_into_the_storage_dom
     // mount place it shows must be one `get mount` also reports, and the root mount must be
     // among them.
     let Some(boundary) = boundary_mount() else {
-        eprintln!("skipped: this host reports no mount below `/` to discover");
+        ono_testkit::skipped("this host reports no mount below `/` to discover");
         return;
     };
     let run = ono("home; enter storage; enter mounts; near --all | to json");
@@ -562,7 +562,7 @@ fn should_show_the_source_device_and_filesystem_when_the_place_is_a_mount_bounda
     // carries the local path, the filesystem and the source. The expected values come from
     // `get mount` at runtime, so the test names no device of the developer's machine.
     let Some(mount) = boundary_mount() else {
-        eprintln!("skipped: this host reports no mount below `/` to enter");
+        ono_testkit::skipped("this host reports no mount below `/` to enter");
         return;
     };
     let run = ono(&format!("enter {}; look --json", mount.target));
@@ -592,7 +592,7 @@ fn should_record_the_boundary_crossing_when_traversing_from_the_root_into_a_moun
     // observable in the navigation trail and prompt/HUD" — and invariant 18 repeats it for mount
     // boundaries. So the step from `/` into the mount is a trail step that names the crossing.
     let Some(mount) = boundary_mount() else {
-        eprintln!("skipped: this host reports no mount below `/` to traverse into");
+        ono_testkit::skipped("this host reports no mount below `/` to traverse into");
         return;
     };
     let run = ono(&format!("enter /; enter {}; trail --json", mount.target));

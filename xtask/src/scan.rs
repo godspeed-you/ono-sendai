@@ -236,6 +236,66 @@ fn relative(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// Checks that a test which gives up on its precondition says so through the shared helper.
+///
+/// A test that cannot meet its precondition on this host has to return early, and `cargo test`
+/// has no outcome for that: it counts as `ok`, beside the tests that actually asserted
+/// something. The suite then reports coverage it does not have, which is the same class of
+/// defect as a box ticked by nothing.
+///
+/// There is no way to add a third outcome to the harness, so the rule is that the skip has to be
+/// visible: `ono_testkit::skipped` prints one marker naming the test and the reason, and that
+/// marker is greppable in a log. A hand-written `eprintln!("skipped …")` is the same information
+/// in a shape nothing can count, and each one drifts a little from the last — which is how eight
+/// of them came to have eight formats.
+///
+/// The rule is deliberately narrow. It fires on a test announcing a skip its own way, not on a
+/// test *deciding* to skip: choosing to return early is the test's business, and no scanner
+/// could tell a precondition from ordinary control flow. What the gate can insist on is that the
+/// decision leaves a record.
+#[must_use]
+pub fn check_silent_skips(root: &Path) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    for file in rust_sources(root) {
+        let relative = relative(root, &file);
+        if !relative.contains("/tests/") || is_scanner_source(&relative) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        for (number, line) in text.lines().enumerate() {
+            if !announces_a_skip(line) {
+                continue;
+            }
+            problems.push(Problem::new(
+                format!("{relative}:{}", number + 1),
+                "announces a skip with its own `eprintln!`. A skip that nothing can count is a                  test the summary reports as `ok` without asserting anything; call                  `ono_testkit::skipped(reason)` instead, which prints the one marker a log can                  be grepped for (ADR-0428)"
+                    .to_owned(),
+            ));
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// Whether `line` prints a skip notice by hand.
+///
+/// Matched on the printed text rather than on the macro, because the defect is the announcement:
+/// `println!` reaches the same reader, and a test that writes "skipping" says the same thing as
+/// one that writes "skipped".
+fn announces_a_skip(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if !(trimmed.starts_with("eprintln!(") || trimmed.starts_with("println!(")) {
+        return false;
+    }
+    let Some(quoted) = trimmed.split('"').nth(1) else {
+        return false;
+    };
+    let lowered = quoted.trim_start().to_ascii_lowercase();
+    lowered.starts_with("skip")
+}
+
 /// Checks that every acceptance case a document names actually exists (ADR-0401).
 ///
 /// `docs/ACCEPTANCE.md` closes a box by naming the case that proves it, and an ADR records the

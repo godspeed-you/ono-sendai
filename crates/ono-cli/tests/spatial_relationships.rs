@@ -55,7 +55,7 @@ fn ono(script: &str) -> ono_testkit::Run {
 /// when the kernel refuses; as root the kernel would answer and there would be nothing to assert.
 fn unprivileged() -> bool {
     if ono_process::effective_uid() == 0 {
-        eprintln!("skipped: this test asserts what an unprivileged user is refused");
+        ono_testkit::skipped("this test asserts what an unprivileged user is refused");
         return false;
     }
     true

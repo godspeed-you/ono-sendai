@@ -4,7 +4,10 @@
 use std::path::Path;
 
 use ono_testkit::{Scratch, scratch};
-use xtask::scan::{check_acceptance_case_references, check_release_board, check_unfinished_work};
+use xtask::scan::{
+    check_acceptance_case_references, check_release_board, check_silent_skips,
+    check_unfinished_work,
+};
 
 /// Builds a throwaway repository shaped like this one.
 fn fixture(files: &[(&str, &str)]) -> Scratch {
@@ -448,4 +451,64 @@ fn should_refuse_a_board_that_has_no_in_progress_section_at_all() {
     let problems = check_release_board("# STATE\n\n## Next up\n");
     assert_eq!(problems.len(), 1, "got {problems:?}");
     assert!(problems[0].detail.contains("In progress"));
+}
+
+#[test]
+fn should_reject_a_test_that_announces_a_skip_with_its_own_print() {
+    let repo = fixture(&[(
+        "crates/a/tests/thing.rs",
+        "#[test]\nfn should_do_it() {\n    eprintln!(\"skipped: no mount here\");\n}\n",
+    )]);
+    let problems = check_silent_skips(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0]
+            .location
+            .starts_with("crates/a/tests/thing.rs:3")
+    );
+    assert!(
+        problems[0].detail.contains("ono_testkit::skipped"),
+        "the complaint names the helper to use, got {:?}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_accept_a_test_that_announces_a_skip_through_the_helper() {
+    let repo = fixture(&[(
+        "crates/a/tests/thing.rs",
+        "#[test]\nfn should_do_it() {\n    ono_testkit::skipped(\"no mount here\");\n}\n",
+    )]);
+    assert_eq!(check_silent_skips(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_leave_a_print_that_is_not_a_skip_notice_alone_when_scanning() {
+    // The rule is about the announcement, not about printing: a test that reports what it saw is
+    // doing its job.
+    let repo = fixture(&[(
+        "crates/a/tests/thing.rs",
+        "#[test]\nfn should_do_it() {\n    eprintln!(\"the host answered {answer:?}\");\n}\n",
+    )]);
+    assert_eq!(check_silent_skips(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_leave_a_skip_notice_in_crate_sources_alone_when_scanning() {
+    // `ono-testkit` prints the marker itself, and a library is not a test.
+    let repo = fixture(&[(
+        "crates/a/src/lib.rs",
+        "pub fn skipped(why: &str) {\n    eprintln!(\"skipped: {why}\");\n}\n",
+    )]);
+    assert_eq!(check_silent_skips(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_report_this_repository_as_announcing_every_skip_through_the_helper() {
+    let problems = check_silent_skips(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("root"),
+    );
+    assert_eq!(problems, Vec::new(), "got {problems:?}");
 }

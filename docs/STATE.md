@@ -2370,6 +2370,18 @@ records. It was removed from this board rather than carried as an open box.
 
 ## Done
 
+**A skip is visible or it is not a skip (2026-09-01, ADR-0428).** Eight hand-written
+`eprintln!("skipped: …")` lines in six suites, in eight formats, each followed by an early return.
+`cargo test` has no outcome for "could not run here", so all of them counted as `ok` — around
+thirty tests on a host that cannot meet their preconditions (no second mount, running as root, no
+`git` on `PATH`). They now go through `ono_testkit::skipped(reason)`, which prints one marker
+naming the test and the reason, so `cargo test 2>&1 | grep -c SKIPPED` answers how much of a run
+was real. `xtask spec-check` refuses any other spelling
+(`scan::check_silent_skips`), and checks the whole repository for it, so a new silent skip fails
+the gate where it lands. The rule catches the *announcement*, never the early return itself: a
+precondition guard and an ordinary `return` are the same Rust, and a check that guessed would
+either cry wolf or teach people to phrase guards so it looks away.
+
 **One helper per behaviour, not per file (2026-09-01, ADR-0427).** `fn ono` was declared by hand
 in 24 suites — in eleven different implementations; `rows` in fifteen suites and thirteen
 implementations. Same name, different behaviour, which is how two tests of one contract come to

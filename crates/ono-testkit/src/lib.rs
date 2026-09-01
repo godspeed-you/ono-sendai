@@ -51,6 +51,31 @@ pub fn ono_within(script: &str, budget: Duration) -> Run {
     Shell::new().args(["-c", script]).timeout(budget).run()
 }
 
+/// Announces that a test could not exercise its subject on this host, and why.
+///
+/// `cargo test` knows two outcomes. A test whose precondition this host cannot meet — no second
+/// mount to cross, no `git` on `PATH`, running as root where the assertion is what a normal user
+/// is refused — is neither of them: it returns early, the summary counts it as `ok`, and the
+/// suite reports coverage it did not have. That is the one failure mode a green suite must not
+/// hide.
+///
+/// There is no third outcome to return, so the honesty is in the record: every skip prints the
+/// same marker, naming the test and its reason, on the stream a test harness shows. `SKIPPED` is
+/// greppable in a CI log, and `xtask spec-check` refuses a skip announced any other way, so the
+/// count of them is a number somebody can look up rather than a thing nobody knows.
+///
+/// A skip is a last resort. Prefer arranging the precondition — spawning the child, binding the
+/// listener, creating the file — over asking the host for it (ADR-0417).
+pub fn skipped(reason: &str) {
+    // `cargo test` names each test's thread after the test, which makes the marker self-locating
+    // without the caller repeating a name that could go stale.
+    let test = std::thread::current()
+        .name()
+        .unwrap_or("<unnamed>")
+        .to_owned();
+    eprintln!("SKIPPED {test}: {reason}");
+}
+
 /// Absolute path of the `ono` binary belonging to the current build profile.
 ///
 /// # Panics
