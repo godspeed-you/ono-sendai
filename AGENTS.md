@@ -151,6 +151,9 @@ Concretely:
 ## 5. Authority Order (what wins when sources disagree)
 
 ```
+0. docs/ono_sendai_shell_spec_v0.9_live_view_integration.md
+0. docs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md
+0. docs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md
 0. docs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md
 0. docs/ono_sendai_shell_spec_v0.5_temporal_causal_systems_interface.md
 0. docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md
@@ -194,6 +197,21 @@ things on every gate run (ADR-0026):
 
 The enhancements present, newest first:
 
+- `docs/ono_sendai_shell_spec_v0.9_live_view_integration.md` — Live View Integration &
+  Long-Running Workspace Ergonomics: small, bounded presentation-local bindings that keep the
+  v0.8 Deck's live views — streams, `watch`, spatial `--live`, the v0.5 temporal cursor — usable,
+  honest and responsive over minutes or hours, without a second live-data model. Added
+  2026-09-01, **not implemented**; `docs/STATE.md` records it behind v0.8.
+- `docs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md` — Deck Workspace Composition &
+  Terminal Ownership: a persistent Deck host that composes the existing views, history and
+  context around the shell editor, plus a generic terminal-ownership contract shared with
+  full-screen views and foreground external programs. Added 2026-09-01, **not implemented**;
+  `docs/STATE.md` records it behind v0.7.
+- `docs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md` — Presentation
+  Consolidation & Rich TTY Interface: one deterministic policy that unifies the existing v0.2
+  render hints, presentation profiles and constrained view tree into a production-quality rich
+  terminal path, ahead of the Deck workspace v0.8 later composes. Added 2026-09-01, **not
+  implemented**; `docs/STATE.md` records it behind v0.6.
 - `docs/ono_sendai_shell_spec_v0.6_prospective_change_protection_recovery.md` — Prospective
   Change, Protection & Recovery: the `ChangePlan` as a first-class object, so a mutation can be
   inspected for its consequences and its recoverability before it is made real. Added 2026-08-31,

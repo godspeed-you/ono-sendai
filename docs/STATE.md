@@ -57,9 +57,12 @@ immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if either is missing a
 `docs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
 **Build order for the enhancements now on `implementation`, next tranche first: v0.4.1, then
-v0.5, then v0.6** — v0.4.1 because its own spec text (§0.1–§0.2, below) says the v0.5/v0.6
-feature work must inherit its hardened guarantees rather than re-solve them; v0.6 because its
-own §0.1 places it behind v0.5's evidence and causality model, already noted below.
+v0.5, then v0.6, then v0.7, then v0.8, then v0.9** — v0.4.1 because its own spec text (§0.1–§0.2,
+below) says the v0.5/v0.6 feature work must inherit its hardened guarantees rather than re-solve
+them; v0.6 because its own §0.1 places it behind v0.5's evidence and causality model, already
+noted below; v0.7, v0.8 and v0.9 because each one's own §0.1 progression diagram names the
+tranche directly before it as its prerequisite — v0.8 stacks on v0.7, v0.9 on v0.8 — so for these
+three, unlike v0.4.1, arrival order and build order coincide.
 
 **v0.4.1 arrived on `implementation` on 2026-09-01** as
 `docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` — Hardening, Trust &
@@ -108,6 +111,36 @@ behind v0.4.1's §4.8 (above) in build order.
 
 This one the gate caught by itself, on the first `spec-check` after the merge — the widened rule
 of ADR-0423 working as intended, unlike the silent arrival of v0.5 the day before.
+
+**v0.7 arrived on `main` on 2026-09-01** as
+`docs/ono_sendai_shell_spec_v0.7_presentation_consolidation_rich_tty.md` — Presentation
+Consolidation & Rich TTY Interface, 2 616 lines. It is a consolidation release, not a new
+surface: one deterministic policy for resolving the existing v0.2 render hints, presentation
+profiles and constrained view tree into a production-quality rich terminal path, with
+`HistoryEntry`/`ResultRef` and the v0.4–v0.6 context surfaced consistently near the prompt. Its
+own §0.5 states it exists so a later Deck workspace has something solid to compose, and must
+stay valuable even if that workspace is never built. Merged into `implementation`, checksummed
+(`docs/spec.sha256`) and enumerated (AGENTS.md §5/§5.2), **not implemented**, and **behind
+v0.6** in build order.
+
+**v0.8 arrived on `main` the same day** as
+`docs/ono_sendai_shell_spec_v0.8_deck_workspace_composition.md` — Deck Workspace Composition &
+Terminal Ownership, 2 897 lines. It adds a persistent Deck host that composes the views,
+history, context and safety state v0.2–v0.7 already define around the shell editor, plus one
+generic terminal-ownership contract shared by the Deck, existing full-screen Ono views and
+foreground external programs; its own §0.1 places it directly on v0.7, and §0.6 bounds it
+explicitly against becoming a second type system, history store, context model or window
+manager. Merged, checksummed and enumerated, **not implemented**, and **behind v0.7**.
+
+**v0.9 arrived on `main` the same day** as
+`docs/ono_sendai_shell_spec_v0.9_live_view_integration.md` — Live View Integration &
+Long-Running Workspace Ergonomics, 3 538 lines. Its own §0.2 explicitly rejects an earlier,
+abandoned design direction for v0.9 (`Live<T>`, `StateObservation<T>`, a new watermark/
+backpressure model) in favour of small, bounded, presentation-local bindings that keep
+`Stream<T>`, `watch`, spatial `--live` and the v0.5 temporal cursor usable, honest and
+responsive inside the v0.8 Deck over minutes or hours, without a second live-data model. Merged,
+checksummed and enumerated, **not implemented**, and **behind v0.8** — the last tranche in the
+current build order.
 
 **The v0.3 tranche is complete** (started 2026-08-27, delivered by ADR-0052 … ADR-0067; all 39
 boxes of `docs/ACCEPTANCE.md` §4.6 are ticked, cases `070`–`089`). **The v0.4 tranche is complete**
