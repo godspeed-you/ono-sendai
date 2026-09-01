@@ -15,8 +15,6 @@
 //! `crates/ono-cli/tests/provider_conformance.rs` is the model for the drift tests: a declaration no
 //! implementation serves is a promise nobody keeps, and a served thing no declaration names is
 //! undocumented surface. Both fail here rather than waiting for a user to notice.
-//!
-//! Every test is `#[ignore]`d until the increment that delivers v0.4 un-ignores it.
 
 #![allow(
     clippy::expect_used,

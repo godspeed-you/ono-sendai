@@ -1,4 +1,4 @@
-//! The process family the contract declares and the shell does not yet deliver, plus the one
+//! The process family the contract declares, plus the one
 //! contract behaviour every mutation owes: a failed row makes the exit status non-zero.
 //!
 //! Contracts: `docs/spec/commands/process.yaml` (`ono.process.inspect`, `ono.job.get`,

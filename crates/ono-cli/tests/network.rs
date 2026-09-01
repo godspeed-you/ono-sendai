@@ -1,4 +1,4 @@
-//! Outcome tests for the network family the contract declares but this build does not deliver:
+//! Outcome tests for the network family the contract declares:
 //! `resolve dns`, `test port`, `watch interface`, `watch route`, `trace route`, `trace interface`,
 //! `enter interface`, `enter socket`, and the write paths `add/remove/set route`,
 //! `set/start/stop/add/remove interface` and `stop socket`.

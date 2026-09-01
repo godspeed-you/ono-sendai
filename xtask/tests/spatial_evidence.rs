@@ -386,13 +386,12 @@ fn should_keep_every_scenario_from_typing_the_name_of_what_it_discovers() {
 #[test]
 fn should_report_a_checklist_proof_that_no_longer_exists() {
     // The guard's own guard: a renamed proof must be found, not silently accepted.
-    let passage =
-        "- [ ] **A box** — `spatial_navigation_missing.rs::should_never_have_been_written`.";
+    let passage = "- [ ] **A box** — `spatial_navigation.rs::should_never_have_been_written`.";
     let found = named_tests(passage);
     assert_eq!(
         found,
         vec![(
-            "spatial_navigation_missing.rs".to_owned(),
+            "spatial_navigation.rs".to_owned(),
             "should_never_have_been_written".to_owned()
         )],
         "the harvester reads a box's named proof"

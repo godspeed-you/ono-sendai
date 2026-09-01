@@ -12,9 +12,6 @@
 //! not reopen). The v0.2 base contributes the pipeline these streams compose with (v0.2 §33.5)
 //! and the native-before-external resolution order (v0.2 §6.5).
 //!
-//! A test still carries `#[ignore]` with the section that governs it until the increment that
-//! implements that section removes the line; the tree stays green in the meantime.
-//!
 //! Everything runs offline and unprivileged, on fixtures the test itself creates: `sleep`
 //! children it spawns and kills, a TCP listener it binds on `127.0.0.1:0`, and scratch
 //! directories. No test depends on a service, mount or process name that only exists on the

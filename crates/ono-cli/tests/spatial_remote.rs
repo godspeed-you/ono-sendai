@@ -14,11 +14,9 @@
 //!
 //! The fixture is the one that already works: `link host testbox --transport local` spawns this
 //! very binary as `ono --agent` over a pipe pair (ADR-0037), so every test here is offline,
-//! unprivileged and deterministic. `crates/ono-cli/tests/remote.rs` and `remote_missing.rs`
+//! unprivileged and deterministic. `crates/ono-cli/tests/remote.rs` and `remote_commands.rs`
 //! prove the v0.2/v0.3 link family; nothing here repeats it — this file is about the *place*
 //! a link becomes.
-//!
-//! Every test is `#[ignore]`d until the increment that delivers v0.4 un-ignores it.
 
 #![allow(
     clippy::expect_used,

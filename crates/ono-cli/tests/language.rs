@@ -1,4 +1,4 @@
-//! RED outcome tests for the language features the shell declares but does not run yet: pipeline
+//! Outcome tests for the language features the shell declares: pipeline
 //! capture by `let` (spec §19.2), nested-pipeline values and `$( … )` interpolation (ADR-0009,
 //! `docs/spec/grammar.ebnf` `paren_value`, `interpolation`), callable functions (spec §19.3,
 //! §6.5 step 2, ADR-0011), aliases (spec §6.5, §30 `aliases`, ADR-0011 step 3), `now()` and the
@@ -7,9 +7,8 @@
 //! string arithmetic (spec §6.3), keyless `sort` (`ono.data.sort`) and `kill %N` on the job table
 //! (spec §18.1, §18.4).
 //!
-//! Every test fails today because the behaviour is missing, and passes once it is built. They
-//! assert what a user observes at the CLI boundary — stdout through `to json`, stderr, exit
-//! status — never how the interpreter gets there (AGENTS.md §11).
+//! Every test asserts what a user observes at the CLI boundary — stdout through `to json`,
+//! stderr, exit status — never how the interpreter gets there (AGENTS.md §11).
 
 #![allow(
     clippy::expect_used,

@@ -3,7 +3,7 @@
 //!
 //! §43.5 is explicit that these are **presentation tests and MUST NOT become semantic
 //! contracts**. Nothing here asserts what a place *is*; the data contract lives in
-//! `crates/ono-spatial-query` and in the `spatial_map_missing` suite. What these snapshots hold
+//! `crates/ono-spatial-query` and in the `spatial_map` suite. What these snapshots hold
 //! is that the drawing stays inside the terminal it was given, that the same nodes are drawn at
 //! every width (§2.19: the user's place survives rendering changes), and that a change of layout
 //! is visible in a diff rather than silent.

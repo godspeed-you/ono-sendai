@@ -10,10 +10,8 @@
 //! full-screen TUI) and §53 (the map default is bounded, relevance-ranked, semantically
 //! clustered — never the entire graph).
 //!
-//! Everything here is a RED suite for a subsystem that does not exist yet: today `map` is not a
-//! command at all (`Ono-Sendai-E0101 command not found: map`, exit 127) and `look` resolves to
-//! `/usr/bin/look`, the Unix word-list tool. Each test therefore carries `#[ignore]` naming the
-//! section that governs it, and the increment that delivers that section removes the ignore.
+//! `map` and `look` are native commands, and `look` shadows `/usr/bin/look`, the Unix
+//! word-list tool (ADR-0124).
 //!
 //! Readings this suite fixes where the specification leaves a choice (each is repeated at the
 //! test that depends on it, so the implementing increment can turn it into an ADR):

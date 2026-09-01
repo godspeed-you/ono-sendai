@@ -12,12 +12,12 @@
 //! reaches into an endpoint), §33.5 (canonical values unless a human form is requested).
 //!
 //! Every test asserts what the user sees through `| to json` or on stdout — never which stage
-//! honoured the option (AGENTS.md §11). Each one fails today because the option is parsed and
-//! then dropped, or because the selector matches nothing; none fails for want of a fixture.
+//! honoured the option (AGENTS.md §11). Each one pins an option the shell honours or a
+//! selector that resolves; none depends on a fixture.
 //!
-//! Not covered here, because the behaviour already exists: `get route --table/--family` and
-//! `format table --max-rows` are honoured by this build (verified against the binary), so a test
-//! for them would be green on day one and prove nothing about the gap.
+//! Not covered here: `get route --table/--family` and `format table --max-rows`, which were
+//! already honoured when this suite was written, so a test for them would have proved nothing
+//! about the two failure classes above.
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,

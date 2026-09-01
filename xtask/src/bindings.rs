@@ -11,10 +11,10 @@
 //! because their implementation lives somewhere the library cannot reach: a provider, the
 //! evaluator, or `ono-cli` itself. `BOUND_ELSEWHERE` below names every one of them together with what
 //! does bind it, and each group is exercised end to end by the suite that owns it —
-//! `crates/ono-cli/tests/files_missing.rs`, `storage_missing.rs`,
-//! `containers_packages_missing.rs`, `processes_missing.rs` for the provider-bound verbs,
-//! `context.rs` for `enter`/`leave`, `meta_config_missing.rs` for configuration, `plugins.rs`
-//! and `plugins_missing.rs` for KUANG/11, `remote_missing.rs` for the link table, and the
+//! `crates/ono-cli/tests/files.rs`, `storage.rs`,
+//! `containers_packages.rs`, `processes.rs` for the provider-bound verbs,
+//! `context.rs` for `enter`/`leave`, `meta_config.rs` for configuration, `plugins.rs`
+//! and `plugin_commands.rs` for KUANG/11, `remote_commands.rs` for the link table, and the
 //! `spatial_*` suites for the fourteen spatial verbs.
 
 use std::collections::BTreeSet;

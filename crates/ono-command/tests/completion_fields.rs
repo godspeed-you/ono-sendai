@@ -1,6 +1,5 @@
-//! RED tests for schema-aware completion (spec §15.1): after `where` and `select` the shell
-//! offers the fields of the schema the pipeline carries at that point. Today it completes
-//! names and paths only — the wiki row "completion offers schema fields after `where`".
+//! Tests for schema-aware completion (spec §15.1): after `where` and `select` the shell
+//! offers the fields of the schema the pipeline carries at that point.
 //!
 //! The candidates are looked up from `docs/spec/commands/*.yaml` (the command's output schema)
 //! and `docs/spec/schemas/*.v1.yaml` (its fields); nothing here runs a provider.

@@ -1,4 +1,4 @@
-//! Outcome tests for the remote family the contract declares but this build does not deliver:
+//! Outcome tests for the remote family the contract declares:
 //! `get host`, `test host`, `connect host`, `trace host`, `watch host`, `add/set/remove host`,
 //! `get link | to json`, `detach link`, `add/set/rename/remove link`, `watch link`, `trace link`,
 //! the `--agentless` mode of `link host`, and the honesty of mutations across a link.

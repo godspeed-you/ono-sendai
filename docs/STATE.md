@@ -2370,6 +2370,21 @@ records. It was removed from this board rather than carried as an open box.
 
 ## Done
 
+**The RED suites are named for their subject (2026-09-01, ADR-0426).** Twenty-three suites still
+carried the `_missing` names and the RED-phase prose they were written with on 2026-08-27 —
+21 231 lines and 597 tests, 69 % of the `ono-cli` test code, asserting in the present tense that
+the shell cannot do what it does. The debt was recorded under *Deferred* on 2026-08-29 and is now
+paid. Twenty suites drop the suffix; three that would have collided with an existing plain name
+are named for what distinguishes them (`plugin_commands.rs`, `remote_commands.rs`,
+`completion_fields.rs`) rather than merged into it, because merging two same-named local helpers
+would change which implementation a test runs (AGENTS.md §11). Module documentation moved to the
+present tense. The evidence tables of `docs/ACCEPTANCE.md` §4.7, ADR-0203 and ADR-0245 are live
+indexes the gate resolves, so their pointer cells were rewritten with the rename, exactly as
+`xtask/tests/spatial_evidence.rs` instructs; the other 121 ADRs and the session records above keep
+the names they used, because they record what was true when they were written and the test
+function names they cite are unchanged. No test body, assertion or helper changed —
+`cargo test` runs the same 2 729 tests it ran before.
+
 **The rpm database answers too (2026-08-31, agent `rpm`, ADR-0422).** `get/find/add/remove/set
 package` worked on Debian and refused honestly everywhere else, which is half the Linux machines
 in the world answering E0401. `linux.packages.rpm` is now registered beside `linux.packages` and

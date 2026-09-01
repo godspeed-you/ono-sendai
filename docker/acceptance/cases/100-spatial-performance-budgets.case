@@ -1,6 +1,6 @@
 # v0.4 §34 (performance budgets), measured in the container on the fixtures of §43.3, as
 # `docs/ACCEPTANCE.md` §4.7.5 requires. The two in-suite timing tests
-# (`spatial_contracts_missing::should_answer_repeated_looks_far_inside_the_look_budget` and
+# (`spatial_contracts::should_answer_repeated_looks_far_inside_the_look_budget` and
 # `::should_bound_the_default_map_to_its_node_budget`) deliberately use a ten-times tolerance so
 # the gate is not flaky; this case is where the real figures are asserted.
 #

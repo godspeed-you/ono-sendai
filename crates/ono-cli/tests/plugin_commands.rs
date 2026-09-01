@@ -1,5 +1,5 @@
-//! RED outcome tests for the KUANG/11 surface the contract declares and the shell does not yet
-//! deliver: `ono.plugin/1` records that compose (spec §31.8), `find`/`inspect`/`install`/`remove`/
+//! Outcome tests for the KUANG/11 command surface the contract declares: `ono.plugin/1`
+//! records that compose (spec §31.8), `find`/`inspect`/`install`/`remove`/
 //! `unload`/`set`/`verify plugin` (spec §31.8, §31.9, §31.36, §31.81, `lifecycle.v1.yaml`), the
 //! capability commands (spec §31.16–§31.19), the audit trail (spec §31.37), hot reload
 //! (spec §31.72), and the assistant, model, finding and audit streams (spec §31.41–§31.52) —

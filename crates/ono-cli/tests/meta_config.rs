@@ -1,5 +1,5 @@
-//! Outcome tests for the meta family the wiki lists as missing: `resolve command`, `get config`
-//! and `set config`, and the settings that nothing reads yet.
+//! Outcome tests for the meta family: `resolve command`, `get config` and `set config`, and
+//! the settings behind them.
 //!
 //! Contracts: `docs/spec/commands/meta.yaml` (`ono.command.resolve`, `ono.config.get`,
 //! `ono.config.set`), `docs/spec/schemas/config-setting.v1.yaml`, spec §6.5 (resolution order),

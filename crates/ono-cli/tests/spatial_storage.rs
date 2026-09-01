@@ -10,10 +10,9 @@
 //! "Entering a directory changes cwd; entering other object types does not" and "Does `cd` always
 //! change spatial place? No. Default `storage-only` synchronization").
 //!
-//! None of this exists in this build: `look`, `find` and `map` are answered by the external
-//! programs of the same name or not at all, `home`/`near`/`trail` are unknown commands, and
-//! `enter <path>` is refused with `Ono-Sendai-E0102`. Every helper therefore refuses those
-//! answers first, so a missing spatial command can never be mistaken for a spatial one.
+//! `look`, `find` and `map` shadow the external programs of the same name (ADR-0124), so every
+//! helper refuses an external answer first: a missing spatial command can never be mistaken
+//! for a spatial one.
 //!
 //! What the tests know about the machine they run on, they learn from the shell itself: the
 //! mounts and filesystems come from the v0.2 providers (`get mount`, `get filesystem`) at

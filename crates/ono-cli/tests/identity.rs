@@ -1,4 +1,4 @@
-//! The identity family the contract declares and this build does not yet deliver: sessions
+//! The identity family the contract declares: sessions
 //! (spec §9.1, `docs/spec/commands/identity.yaml` `ono.session.get`), account management
 //! (`add`/`remove`/`set` on `user` and `group`, spec §52), the live streams `watch user` and
 //! `watch group` (spec §18.2, ADR-0024, ADR-0034), `trace user` (spec §22.3) and the context
@@ -70,7 +70,7 @@ fn require_unprivileged() {
     assert_ne!(
         my_uid(),
         0,
-        "identity_missing tests must run unprivileged (BRIEF: unprivileged, offline)"
+        "identity tests must run unprivileged (BRIEF: unprivileged, offline)"
     );
 }
 

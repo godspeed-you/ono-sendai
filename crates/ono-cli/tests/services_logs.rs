@@ -1,5 +1,5 @@
-//! Outcome tests for the service-family commands the contract declares and this build does not
-//! yet deliver: `set service` (spec §52 row `service/set`), and the log and journal queries
+//! Outcome tests for the service-family commands the contract declares: `set service` (spec
+//! §52 row `service/set`), and the log and journal queries
 //! `get log`, `get journal`, `tail journal` (spec §8.1 targets `log` and `journal`, §7.1 `tail`
 //! over `journal`, §33.2 and §41.4 `get log --service`).
 //!
@@ -12,7 +12,7 @@
 //! journal and a live systemd; the acceptance container has neither. So a query asserts the
 //! *shape* of the records when they come back and accepts exactly `Ono-Sendai-E0401
 //! provider.unavailable` (non-zero exit) when the backing system is absent — never an
-//! "implements nothing" answer (E0101/E0102), which is the gap these tests exist to close.
+//! "implements nothing" answer (E0101/E0102), which is what these tests forbid.
 //! Everything here asserts outcomes at the command line, nothing about how they are produced
 //! (AGENTS.md §11).
 

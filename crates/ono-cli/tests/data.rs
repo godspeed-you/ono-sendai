@@ -1,12 +1,10 @@
-//! RED outcome tests for the data transforms the contract declares but this build does not run:
+//! Outcome tests for the data transforms the contract declares:
 //! `tail`, `join` and `diff` (`docs/spec/commands/data.yaml`, spec §53 Appendix B, §11.1), and
 //! for the one rendering rule the wiki lists as differing from the contract: a narrow terminal
 //! switches to stacked records instead of keeping a table it has to mutilate (spec §13.2, §13.3).
 //!
 //! Every test asserts what a user observes — `to json` output, exit status, structured error
-//! codes, the rendered screen — never how a stage is implemented (AGENTS.md §11). They fail
-//! today because the shell answers `Ono-Sendai-E0101 … implements nothing for it` with exit 127,
-//! and they pass once the transform exists.
+//! codes, the rendered screen — never how a stage is implemented (AGENTS.md §11).
 
 #![allow(
     clippy::expect_used,

@@ -1,4 +1,4 @@
-//! Outcome tests for the storage family the contract declares but this build does not deliver:
+//! Outcome tests for the storage family the contract declares:
 //! `get device`, `mount filesystem`, `unmount filesystem`, `set`/`add`/`remove`/`start`/`stop
 //! mount`, `watch mount`, `trace mount` and `enter mount`.
 //!

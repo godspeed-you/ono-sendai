@@ -1,6 +1,5 @@
 //! The canonical spatial topology and discovery-before-naming, from
-//! `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md` — none of it exists in this
-//! build, so every test here is `#[ignore]`d until the increment that delivers it.
+//! `docs/ono_sendai_shell_spec_v0.4_spatial_systems_interface.md`.
 //!
 //! Sections covered: §2 (core spatial invariants), §3 (`SpatialObject`, `SpatialScope`, `Place`,
 //! `HierarchicalEdge`, `RelationshipEdge`, `Neighborhood`, `Landmark`), §4 (canonical system

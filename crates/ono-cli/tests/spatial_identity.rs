@@ -14,11 +14,9 @@
 //! process tombstones; stable service remains; new process has new identity"* and
 //! *"Unknown/denied data? Distinct from empty."*
 //!
-//! None of this exists today. The whole spatial verb set (`look`, `near`, `map`, `up`, `back`,
-//! `jump`, `trail`, `follow`, `home`) is absent — `look` and `find` currently resolve to the
-//! external `/usr/bin/look` and `/usr/bin/find`, the rest to `Ono-Sendai-E0101 command not
-//! found`. Every test below therefore fails on the missing spatial surface, not on its own
-//! scaffolding, and each carries the section that governs it.
+//! The spatial verbs are native and shadow the external programs of the same name (ADR-0124),
+//! so a test below fails on the spatial surface, never on `/usr/bin/look` or `/usr/bin/find`
+//! answering in its place. Each carries the section that governs it.
 //!
 //! ## Spellings these tests pin, and why
 //!

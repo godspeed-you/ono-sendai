@@ -11,10 +11,9 @@
 //! (permission states stay distinct from empty), §40 (structured spatial errors), §43.6 (a live
 //! test must be caused by a real change), §44.4/§44.5/§44.6/§44.9 (acceptance scenarios).
 //!
-//! None of these commands exist in this build: `follow`, `near`, `map`, `home`, `back`, `up` and
-//! `trail` are not commands at all, and `look`/`find` are answered by the external programs of
-//! the same name. Every test therefore begins by refusing that answer — a spatial assertion may
-//! never be satisfied by `/usr/bin/look`, and a missing command must fail as a missing command.
+//! `look` and `find` shadow the external programs of the same name (ADR-0124), so every test
+//! begins by refusing an external answer — a spatial assertion may never be satisfied by
+//! `/usr/bin/look`, and a missing command must fail as a missing command.
 //!
 //! The fixture is built by the test itself (§43.3, as far as an unprivileged offline run
 //! reaches): a `sh` child holding a scratch file open, a `sleep` child that owns no socket, a TCP

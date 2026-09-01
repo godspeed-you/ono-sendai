@@ -1,4 +1,4 @@
-//! Outcome tests for the filesystem family the contract declares but this build does not deliver:
+//! Outcome tests for the filesystem family the contract declares:
 //! `read`, `write`, `copy`, `move`, `remove`, `set`, `open`, `tail`, `watch`, `trace` and `enter`
 //! over `file`, plus `remove dir` and `set dir`, and glob resolution for native selectors.
 //!

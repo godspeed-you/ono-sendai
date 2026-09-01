@@ -1,4 +1,4 @@
-//! Outcome tests for the two families the registry marks `phase: planned` in full: containers
+//! Outcome tests for the two phase-C families in full: containers
 //! (`get/start/stop/restart/enter/trace/watch/remove/set container`, `get image`) and packages
 //! (`get/find/add/remove/set package`).
 //!
