@@ -88,3 +88,36 @@ fn should_report_the_signal_that_killed_the_program_as_128_plus_it_when_it_is_si
     assert_eq!(run.status().code(), 143);
     assert_eq!(run.status().signal(), Some(15));
 }
+
+#[test]
+fn should_run_a_script_through_the_shell_when_asked_for_one() {
+    // The helper 21 suites re-declared by hand: `ono -c <script>`, captured the way a user sees
+    // it. A test that spells it itself is a test that can spell it differently.
+    let run = ono_testkit::ono("let n = 41; $n | to json");
+    run.assert_success();
+    assert_eq!(run.stdout().trim(), "[41]", "got {:?}", run.stdout());
+}
+
+#[test]
+fn should_keep_the_streams_apart_when_a_script_fails() {
+    let run = ono_testkit::ono("definitely-not-a-command");
+    assert!(!run.status().is_success(), "got {:?}", run.output());
+    assert_eq!(run.stdout(), "", "a diagnostic belongs on stderr");
+    assert!(
+        run.stderr().contains("Ono-Sendai-E0101"),
+        "got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_take_a_wider_budget_than_the_default_when_a_script_is_given_one() {
+    // A suite that spawns real children needs longer than the default; asking for the budget by
+    // name keeps the number in one place instead of in every file that needs it.
+    let run = ono_testkit::ono_within(
+        "let n = 41; $n | to json",
+        std::time::Duration::from_secs(30),
+    );
+    run.assert_success();
+    assert_eq!(run.stdout().trim(), "[41]");
+}

@@ -10,11 +10,8 @@
 
 use std::time::{Duration, Instant};
 
+use ono_testkit::ono;
 use ono_testkit::{Scratch, Shell, scratch};
-
-fn ono(source: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", source]).run()
-}
 
 /// A directory holding a fake `lsblk` that answers the version probe like util-linux and
 /// otherwise runs `body`.

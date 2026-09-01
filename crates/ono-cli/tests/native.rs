@@ -4,12 +4,9 @@
 //! is scheduled or which crate implements it (AGENTS.md §11).
 
 use ono_testkit::Shell;
+use ono_testkit::ono;
 
 /// Runs a one-liner and returns the finished run.
-fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", script]).run()
-}
-
 #[test]
 fn should_run_a_native_pipeline_and_serialise_the_result() {
     let run = ono("get process | count | to json");

@@ -9,14 +9,12 @@
               body does (AGENTS.md section 16)"
 )]
 
-use ono_command::CommandRegistry;
 use ono_core::ErrorCode;
 use ono_parser::{Stage, Statement};
 use ono_value::{Duration, ErrorValue, Value};
 
-fn registry() -> &'static CommandRegistry {
-    CommandRegistry::embedded().expect("the embedded command contracts must parse")
-}
+mod support;
+use support::registry;
 
 /// The first stage of `source`, which must parse without diagnostics.
 fn stage(source: &str) -> Stage {

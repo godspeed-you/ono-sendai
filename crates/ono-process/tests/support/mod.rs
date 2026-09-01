@@ -15,6 +15,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use ono_process::Command;
+
 /// Serialises tests that observe a property of the whole process rather than of their own work.
 ///
 /// `cargo test` runs the tests in one binary on parallel threads, so a test that counts the
@@ -64,4 +66,10 @@ pub const DEADLINE: Duration = Duration::from_secs(30);
 /// Renders captured bytes for an assertion message.
 pub fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// A `/bin/sh -c` command: the reference shell, for a test that asserts what the process layer
+/// does with a program rather than what the program does.
+pub fn sh(script: &str) -> Command {
+    Command::new("/bin/sh").arg("-c").arg(script)
 }

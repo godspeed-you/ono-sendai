@@ -32,22 +32,23 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use ono_testkit::ono_within;
 use ono_testkit::{Scratch, Shell, scratch};
 use serde_yaml_ng::Value;
+
+mod support;
+use support::listener;
 
 /// Runs a one-liner with a generous budget: nothing here may hang, and a run that does is a
 /// failure of the shell, not of the test.
 fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .args(["-c", script])
-        .timeout(Duration::from_secs(30))
-        .run()
+    ono_within(script, Duration::from_secs(30))
 }
 
 /// Whether the run is unprivileged. The permission-honesty test asserts what a normal user sees
@@ -357,12 +358,6 @@ impl Drop for SleepChild {
 
 /// A listening TCP socket the test process owns, so the shell can attribute it to a pid the test
 /// knows without any privilege.
-fn listener() -> (TcpListener, u16) {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
-    let port = listener.local_addr().expect("the bound address").port();
-    (listener, port)
-}
-
 #[test]
 fn should_enter_the_open_file_when_following_it_from_the_holding_process() {
     // §44.4: `process -> follow file -> file`. The edge is the one the kernel already reports

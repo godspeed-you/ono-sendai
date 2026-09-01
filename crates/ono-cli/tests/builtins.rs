@@ -1,10 +1,7 @@
 //! The commands the shell must implement itself, because no child process can.
 
+use ono_testkit::ono;
 use ono_testkit::{Shell, scratch};
-
-fn ono(source: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", source]).run()
-}
 
 #[test]
 fn should_change_the_working_directory_for_the_commands_that_follow() {

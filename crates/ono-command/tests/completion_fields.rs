@@ -12,11 +12,10 @@
               body does (AGENTS.md section 16)"
 )]
 
-use ono_command::{Candidate, CommandRegistry, StageContext};
+use ono_command::{Candidate, StageContext};
 
-fn registry() -> &'static CommandRegistry {
-    CommandRegistry::embedded().expect("the embedded command contracts must parse")
-}
+mod support;
+use support::registry;
 
 fn complete(line: &str) -> Vec<Candidate> {
     let cursor = line.len();

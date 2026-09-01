@@ -25,38 +25,23 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
 use ono_testkit::Shell;
+use ono_testkit::ono_within;
 use serde_yaml_ng::Value;
+
+mod support;
+use support::{listener, rows, text};
 
 /// Runs a one-liner with a generous budget: nothing here may hang, and a run that does is a
 /// failure of the shell, not of the test.
 fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .args(["-c", script])
-        .timeout(Duration::from_secs(30))
-        .run()
+    ono_within(script, Duration::from_secs(30))
 }
 
 /// Parses the JSON document `to json` wrote as the stream's values.
-fn rows(run: &ono_testkit::Run) -> Vec<Value> {
-    let text = run.stdout().trim().to_owned();
-    let stderr = run.stderr();
-    let document: Value = serde_yaml_ng::from_str(&text).unwrap_or_else(|error| {
-        panic!("`to json` must emit a JSON document, got {text:?} ({error}); stderr: {stderr:?}")
-    });
-    document
-        .as_sequence()
-        .unwrap_or_else(|| {
-            panic!(
-                "spec §33.5: `to json` emits the stream as an array, got {text:?}; stderr: {stderr:?}"
-            )
-        })
-        .clone()
-}
-
 /// The one value a single-object command emits: one ActionResult, one graph, one probe result.
 fn single(run: &ono_testkit::Run) -> Value {
     let mut rows = rows(run);
@@ -69,20 +54,7 @@ fn single(run: &ono_testkit::Run) -> Value {
     rows.remove(0)
 }
 
-fn text(row: &Value, field: &str) -> String {
-    row[field]
-        .as_str()
-        .unwrap_or_else(|| panic!("field `{field}` must be a string, got {row:?}"))
-        .to_owned()
-}
-
 /// A listening socket the test owns for as long as it holds the value.
-fn listener() -> (TcpListener, u16) {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
-    let port = listener.local_addr().expect("the bound address").port();
-    (listener, port)
-}
-
 /// A loopback port that nothing listens on: bound, read, released.
 fn closed_port() -> u16 {
     let (listener, port) = listener();

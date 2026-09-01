@@ -11,12 +11,15 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ono_command::{CommandRegistry, ExecutionPlan, Resolution};
+use ono_command::{ExecutionPlan, Resolution};
 use ono_pipeline::ValueStream;
 use ono_provider_api::{
     Action, ActionOutcome, Capability, ObjectRef, Provider, ProviderRegistry, Query, Risk, Selector,
 };
 use ono_value::{ErrorValue, Schema, SchemaId};
+
+mod support;
+use support::registry;
 
 /// A provider that records every time anybody asks it to do real work.
 #[derive(Debug, Default)]
@@ -56,10 +59,6 @@ impl Provider for CountingProvider {
         self.touched.fetch_add(1, Ordering::SeqCst);
         Ok(ActionOutcome::succeeded(action, true))
     }
-}
-
-fn registry() -> &'static CommandRegistry {
-    CommandRegistry::embedded().expect("the embedded command contracts must parse")
 }
 
 fn plan_of(source: &str, providers: Option<&ProviderRegistry>) -> ExecutionPlan {

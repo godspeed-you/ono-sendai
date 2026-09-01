@@ -2370,6 +2370,16 @@ records. It was removed from this board rather than carried as an open box.
 
 ## Done
 
+**One helper per behaviour, not per file (2026-09-01, ADR-0427).** `fn ono` was declared by hand
+in 24 suites — in eleven different implementations; `rows` in fifteen suites and thirteen
+implementations. Same name, different behaviour, which is how two tests of one contract come to
+disagree about it. Every byte-for-byte identical helper moved to the nearest shared home
+(`ono_testkit::{ono, ono_within}`, and a `tests/support/mod.rs` for `ono-cli` and `ono-command`
+beside the ten crates that already had one); every genuine variant stayed where it was, because
+unifying it would change which implementation a test runs (AGENTS.md §11). Net −97 lines, and the
+identical-helper duplication drops from 394 lines to 152.
+
+
 **The RED suites are named for their subject (2026-09-01, ADR-0426).** Twenty-three suites still
 carried the `_missing` names and the RED-phase prose they were written with on 2026-08-27 —
 21 231 lines and 597 tests, 69 % of the `ono-cli` test code, asserting in the present tense that

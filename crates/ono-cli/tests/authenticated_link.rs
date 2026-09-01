@@ -21,6 +21,9 @@ use std::process::{Child, Command, Stdio};
 
 use ono_testkit::{Scratch, Shell, scratch};
 
+mod support;
+use support::last_line;
+
 /// A listening agent, and how to reach and pin it.
 struct Agent {
     process: Child,
@@ -96,15 +99,6 @@ fn ono(home: &Scratch, script: &str) -> ono_testkit::Run {
         )
         .args(["-c", script])
         .run()
-}
-
-fn last_line(run: &ono_testkit::Run) -> String {
-    run.stdout()
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or_default()
-        .to_owned()
 }
 
 #[test]

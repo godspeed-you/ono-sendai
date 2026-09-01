@@ -65,7 +65,8 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use ono_testkit::{Shell, scratch};
+use ono_testkit::ono_within;
+use ono_testkit::scratch;
 use serde_yaml_ng::Value;
 
 /// The six neighborhood-group states of spec §35.2. They "MUST remain distinct".
@@ -85,10 +86,7 @@ const CONFIDENCES: [&str; 5] = ["exact", "strong", "inferred", "user_declared", 
 const FRESHNESS: [&str; 5] = ["event_driven", "polled", "cached", "stale", "partial"];
 
 fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .args(["-c", script])
-        .timeout(Duration::from_secs(30))
-        .run()
+    ono_within(script, Duration::from_secs(30))
 }
 
 /// The uid this test runs as, read from the kernel rather than from the environment.

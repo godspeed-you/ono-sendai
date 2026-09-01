@@ -61,25 +61,12 @@ use std::time::Duration;
 use ono_testkit::{Scratch, Shell, scratch};
 use serde_yaml_ng::Value;
 
+mod support;
+use support::{rows, text};
+
 // --- shared helpers ---------------------------------------------------------------------------
 
 /// Parses the JSON document `to json` wrote as the stream's values.
-fn rows(run: &ono_testkit::Run) -> Vec<Value> {
-    let text = run.stdout().trim().to_owned();
-    let stderr = run.stderr();
-    let document: Value = serde_yaml_ng::from_str(&text).unwrap_or_else(|error| {
-        panic!("`to json` must emit a JSON document, got {text:?} ({error}); stderr: {stderr:?}")
-    });
-    document
-        .as_sequence()
-        .unwrap_or_else(|| {
-            panic!(
-                "spec §33.5: `to json` emits the stream as an array, got {text:?}; stderr: {stderr:?}"
-            )
-        })
-        .clone()
-}
-
 /// The one `ono.action-result/1` row a single-target mutation emits.
 fn single_result(run: &ono_testkit::Run) -> Value {
     let mut rows = rows(run);
@@ -90,13 +77,6 @@ fn single_result(run: &ono_testkit::Run) -> Value {
         run.stdout()
     );
     rows.remove(0)
-}
-
-fn text(row: &Value, field: &str) -> String {
-    row[field]
-        .as_str()
-        .unwrap_or_else(|| panic!("field `{field}` must be a string, got {row:?}"))
-        .to_owned()
 }
 
 fn assert_success_row(row: &Value, operation: &str) {

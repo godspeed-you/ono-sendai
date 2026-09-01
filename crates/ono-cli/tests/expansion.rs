@@ -1,10 +1,7 @@
 //! Word expansion, exactly as ADR-0019 fixes it.
 
+use ono_testkit::ono;
 use ono_testkit::{Shell, scratch};
-
-fn ono(source: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", source]).run()
-}
 
 fn ono_in(dir: &std::path::Path, source: &str) -> ono_testkit::Run {
     Shell::new().args(["-c", source]).cwd(dir).run()

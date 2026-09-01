@@ -1,11 +1,7 @@
 //! The context stack of spec §14: `enter` pushes, `leave` pops, and nothing about it is magic —
 //! every effect is visible and every narrowed query is expressible without the context.
 
-use ono_testkit::Shell;
-
-fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", script]).run()
-}
+use ono_testkit::ono;
 
 #[test]
 fn should_enter_a_directory_and_leave_back_out_of_it() {

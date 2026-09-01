@@ -37,6 +37,9 @@ use std::time::Duration;
 use ono_testkit::{Scratch, Shell, scratch};
 use serde_yaml_ng::Value;
 
+mod support;
+use support::text;
+
 // --- helpers ------------------------------------------------------------------------------------
 
 /// Parses the JSON document `to json` wrote as the stream's values.
@@ -50,13 +53,6 @@ fn rows(run: &ono_testkit::Run) -> Vec<Value> {
         .as_sequence()
         .unwrap_or_else(|| panic!("spec §33.5: `to json` emits the stream as an array, got {text:?}; stderr: {stderr:?}"))
         .clone()
-}
-
-fn text(row: &Value, field: &str) -> String {
-    row[field]
-        .as_str()
-        .unwrap_or_else(|| panic!("field `{field}` must be a string, got {row:?}"))
-        .to_owned()
 }
 
 /// The names of the records a listing or a search produced, sorted.

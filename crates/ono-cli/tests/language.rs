@@ -17,11 +17,8 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
+use ono_testkit::ono;
 use ono_testkit::{Shell, scratch};
-
-fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", script]).run()
-}
 
 // --- let captures a pipeline (spec §19.2) --------------------------------------------------
 

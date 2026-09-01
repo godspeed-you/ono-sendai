@@ -13,9 +13,10 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use std::time::Duration;
+use ono_testkit::scratch;
 
-use ono_testkit::{Scratch, Shell, scratch};
+mod support;
+use support::isolated;
 
 /// The verbs §38.1 lists in its overview, each with what it is for.
 const OVERVIEW: [(&str, &str); 11] = [
@@ -31,25 +32,6 @@ const OVERVIEW: [(&str, &str); 11] = [
     ("find", "search"),
     ("trail", "where you moved"),
 ];
-
-fn isolated(dir: &Scratch) -> Shell {
-    Shell::new()
-        .env("HOME", dir.path().display().to_string())
-        .env(
-            "XDG_CONFIG_HOME",
-            dir.path().join("xdg").display().to_string(),
-        )
-        .env(
-            "XDG_STATE_HOME",
-            dir.path().join("state").display().to_string(),
-        )
-        .env(
-            "ONO_CONFIG_DIR",
-            dir.path().join("ono").display().to_string(),
-        )
-        .env_remove("ONO_CONFIG")
-        .timeout(Duration::from_secs(30))
-}
 
 fn ono(script: &str) -> ono_testkit::Run {
     let dir = scratch();

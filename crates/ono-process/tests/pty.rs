@@ -10,12 +10,8 @@ mod support;
 use std::fs::{self, File, OpenOptions};
 use std::time::{Duration, Instant};
 
-use ono_process::{Command, Executor, Output, PtySession, WindowSize};
-use support::{DEADLINE, text, within};
-
-fn sh(script: &str) -> Command {
-    Command::new("/bin/sh").arg("-c").arg(script)
-}
+use ono_process::{Executor, Output, PtySession, WindowSize};
+use support::{DEADLINE, sh, text, within};
 
 /// Reads from the pty until `needle` appears or the deadline passes.
 fn read_until(session: &mut PtySession, needle: &str, timeout: Duration) -> String {

@@ -26,14 +26,14 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use ono_testkit::ono;
 use ono_testkit::{Scratch, Shell, scratch};
 use serde_yaml_ng::Value;
 
-const LINK: &str = "link host testbox --transport local";
+mod support;
+use support::{last_line, text};
 
-fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", script]).run()
-}
+const LINK: &str = "link host testbox --transport local";
 
 /// Runs with the scratch directory as the home and config directory, so the host sources the
 /// shell consults are the test's own and never the developer machine's.
@@ -50,15 +50,6 @@ fn ono_at_home(home: &Scratch, script: &str) -> ono_testkit::Run {
 
 /// The last non-empty line of stdout: what `to json` wrote for the final statement. Earlier
 /// statements (`link host` prints its summary line) are allowed to write before it.
-fn last_line(run: &ono_testkit::Run) -> String {
-    run.stdout()
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or_default()
-        .to_owned()
-}
-
 /// Parses the last line of stdout as the JSON document `to json` wrote for the final statement.
 fn last_json(run: &ono_testkit::Run) -> Value {
     let stderr = run.stderr();
@@ -93,13 +84,6 @@ fn single_row(run: &ono_testkit::Run) -> Value {
         run.stderr()
     );
     rows.remove(0)
-}
-
-fn text(row: &Value, field: &str) -> String {
-    row[field]
-        .as_str()
-        .unwrap_or_else(|| panic!("field `{field}` must be a string, got {row:?}"))
-        .to_owned()
 }
 
 fn names(rows: &[Value]) -> Vec<String> {

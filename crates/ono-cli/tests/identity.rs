@@ -21,14 +21,11 @@
 use std::os::unix::fs::MetadataExt;
 use std::time::Duration;
 
-use ono_testkit::Shell;
+use ono_testkit::ono_within;
 use serde_yaml_ng::Value;
 
 fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .args(["-c", script])
-        .timeout(Duration::from_secs(30))
-        .run()
+    ono_within(script, Duration::from_secs(30))
 }
 
 /// Parses one line of `to json` output. JSON is YAML, so the workspace's YAML parser reads it.

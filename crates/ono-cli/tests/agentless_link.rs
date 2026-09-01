@@ -17,26 +17,16 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_testkit::Shell;
+use ono_testkit::ono;
 use serde_yaml_ng::Value;
+
+mod support;
+use support::last_line;
 
 const AGENTLESS: &str = "link host testbox --transport local --agentless";
 const AGENT: &str = "link host testbox --transport local";
 
-fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", script]).run()
-}
-
 /// The last non-empty line of stdout: what `to json` wrote for the final statement.
-fn last_line(run: &ono_testkit::Run) -> String {
-    run.stdout()
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or_default()
-        .to_owned()
-}
-
 fn parsed(run: &ono_testkit::Run) -> Value {
     serde_yaml_ng::from_str(&last_line(run)).unwrap_or_else(|error| {
         panic!(

@@ -27,6 +27,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use ono_testkit::ono;
 use ono_testkit::{Scratch, Shell, scratch};
 use serde_yaml_ng::Value;
 
@@ -82,10 +83,6 @@ const SPATIAL_SETTINGS: [(&str, &str); 11] = [
     ("spatial.remote_search", "explicit"),
     ("spatial.trail.persist", "false"),
 ];
-
-fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", script]).run()
-}
 
 /// Runs with the scratch directory as home and config home, so nothing this machine's real
 /// configuration says can reach the test.

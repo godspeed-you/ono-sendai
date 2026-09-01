@@ -12,13 +12,12 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use ono_command::{ArgumentMode, CommandRegistry, Origin, Privilege, Stability};
+use ono_command::{ArgumentMode, Origin, Privilege, Stability};
 use ono_parser::ArgMode;
 use ono_value::SchemaId;
 
-fn registry() -> &'static CommandRegistry {
-    CommandRegistry::embedded().expect("the embedded command contracts must parse")
-}
+mod support;
+use support::registry;
 
 fn contract_directory() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/commands")

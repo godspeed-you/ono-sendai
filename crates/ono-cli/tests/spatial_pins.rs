@@ -24,8 +24,11 @@ use jiff::Timestamp;
 use ono_cli::spatial::PinStore;
 use ono_spatial_core::{SpatialId, SpatialType};
 use ono_spatial_index::{Pin, PinRegistry};
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::scratch;
 use serde_yaml_ng::Value;
+
+mod support;
+use support::isolated;
 
 /// A pin on a place that is not there, so only its selector can answer for it.
 fn pin(name: &str, selector: &str, object_type: SpatialType) -> Pin {
@@ -181,25 +184,6 @@ impl Drop for SleepChild {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
-}
-
-fn isolated(dir: &Scratch) -> Shell {
-    Shell::new()
-        .env("HOME", dir.path().display().to_string())
-        .env(
-            "XDG_CONFIG_HOME",
-            dir.path().join("xdg").display().to_string(),
-        )
-        .env(
-            "XDG_STATE_HOME",
-            dir.path().join("state").display().to_string(),
-        )
-        .env(
-            "ONO_CONFIG_DIR",
-            dir.path().join("ono").display().to_string(),
-        )
-        .env_remove("ONO_CONFIG")
-        .timeout(Duration::from_secs(30))
 }
 
 #[test]

@@ -10,14 +10,13 @@
 
 use std::sync::Arc;
 
-use ono_command::{CommandImpl, CommandRegistry, CommandTable, Invocation, Outcome, Stability};
+use ono_command::{CommandImpl, CommandTable, Invocation, Outcome, Stability};
 use ono_pipeline::{CancelToken, ValueStream};
 use ono_provider_api::{Action, ActionOutcome, ObjectId, ProviderRegistry};
 use ono_value::{ErrorValue, SchemaId, Value};
 
-fn registry() -> &'static CommandRegistry {
-    CommandRegistry::embedded().expect("the embedded command contracts must parse")
-}
+mod support;
+use support::registry;
 
 /// An implementation that answers with the selector it was given, so a test can observe that the
 /// bound arguments reached it.

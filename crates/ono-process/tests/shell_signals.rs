@@ -9,12 +9,8 @@ mod support;
 
 use std::time::Duration;
 
-use ono_process::{Command, Executor, Output};
-use support::{DEADLINE, exclusive, poll_until, text, within};
-
-fn sh(script: &str) -> Command {
-    Command::new("/bin/sh").arg("-c").arg(script)
-}
+use ono_process::{Executor, Output};
+use support::{DEADLINE, exclusive, poll_until, sh, text, within};
 
 #[test]
 fn should_reset_the_child_signal_dispositions_even_when_the_shell_ignores_them() {

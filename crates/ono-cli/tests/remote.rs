@@ -5,11 +5,7 @@
 //! whole path — handshake, negotiation, mounted providers, provenance re-tagging — runs against
 //! a real second process without a network.
 
-use ono_testkit::Shell;
-
-fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", script]).run()
-}
+use ono_testkit::ono;
 
 #[test]
 fn should_link_a_host_and_answer_queries_from_the_other_side() {

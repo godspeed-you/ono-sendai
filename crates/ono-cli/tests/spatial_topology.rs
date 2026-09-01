@@ -47,7 +47,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use ono_process::{Command as PtyCommand, Executor, PtySession, WindowSize};
-use ono_testkit::Shell;
+use ono_testkit::ono_within;
 use serde_yaml_ng::Value;
 
 /// The six canonical domains, in the order spec §4 draws them.
@@ -90,10 +90,7 @@ const RUNNING_SERVICE: &str = r#"state == "active" and substate == "running""#;
 
 /// Runs one spatial script with `ono -c`, which is the non-interactive surface §29.1 governs.
 fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .args(["-c", script])
-        .timeout(Duration::from_secs(30))
-        .run()
+    ono_within(script, Duration::from_secs(30))
 }
 
 /// The JSON document a `--json` spatial command printed.

@@ -43,12 +43,13 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
 
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::scratch;
 use serde_yaml_ng::Value;
+
+mod support;
+use support::{isolated, listener};
 
 /// The canonical domains of §7 / §53 ("Six canonical domains"), lower-cased as a selector spells
 /// them.
@@ -67,25 +68,6 @@ const NODE_BUDGET: usize = 100;
 /// A shell whose configuration and state tree live entirely in `dir`, so no setting of the
 /// machine running the suite reaches the run and nothing the run persists survives it
 /// (ADR-0010; §46.1 makes spatial session state configurable, and a test must see the default).
-fn isolated(dir: &Scratch) -> Shell {
-    Shell::new()
-        .env("HOME", dir.path().display().to_string())
-        .env(
-            "XDG_CONFIG_HOME",
-            dir.path().join("xdg").display().to_string(),
-        )
-        .env(
-            "XDG_STATE_HOME",
-            dir.path().join("state").display().to_string(),
-        )
-        .env(
-            "ONO_CONFIG_DIR",
-            dir.path().join("ono").display().to_string(),
-        )
-        .env_remove("ONO_CONFIG")
-        .timeout(Duration::from_secs(30))
-}
-
 /// Runs a script in a shell that sees no configuration but its built-in defaults, and no
 /// terminal: `-c` is exactly the non-interactive surface §29 makes normative.
 fn ono(script: &str) -> ono_testkit::Run {
@@ -258,12 +240,6 @@ impl Drop for BusyChild {
 }
 
 /// A listening TCP socket this test process owns, and the port it listens on.
-fn listener() -> (TcpListener, u16) {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
-    let port = listener.local_addr().expect("the bound address").port();
-    (listener, port)
-}
-
 /// The navigation of §44.6, spelled with objects the test owns: down the canonical hierarchy to
 /// this process, then along a relationship edge to the socket it is listening on.
 fn path_to_the_listening_socket(port: u16) -> String {

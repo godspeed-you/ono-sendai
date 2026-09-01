@@ -11,11 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 use ono_process::{Command, Executor, ForegroundOutcome, JobState, Output, Signal};
-use support::{DEADLINE, poll_until, text, within};
-
-fn sh(script: &str) -> Command {
-    Command::new("/bin/sh").arg("-c").arg(script)
-}
+use support::{DEADLINE, poll_until, sh, text, within};
 
 #[test]
 fn should_record_a_background_job_and_report_its_final_status() {

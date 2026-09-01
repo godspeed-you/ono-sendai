@@ -24,6 +24,9 @@ use std::time::Duration;
 use ono_testkit::{Scratch, Shell, scratch};
 use serde_yaml_ng::Value;
 
+mod support;
+use support::rows;
+
 /// Runs a one-liner with the scratch directory as the working directory.
 fn ono_in(directory: &Scratch, script: &str) -> ono_testkit::Run {
     Shell::new()
@@ -34,22 +37,6 @@ fn ono_in(directory: &Scratch, script: &str) -> ono_testkit::Run {
 }
 
 /// Parses the JSON document `to json` wrote as the stream's values.
-fn rows(run: &ono_testkit::Run) -> Vec<Value> {
-    let text = run.stdout().trim().to_owned();
-    let stderr = run.stderr();
-    let document: Value = serde_yaml_ng::from_str(&text).unwrap_or_else(|error| {
-        panic!("`to json` must emit a JSON document, got {text:?} ({error}); stderr: {stderr:?}")
-    });
-    document
-        .as_sequence()
-        .unwrap_or_else(|| {
-            panic!(
-                "spec §33.5: `to json` emits the stream as an array, got {text:?}; stderr: {stderr:?}"
-            )
-        })
-        .clone()
-}
-
 /// The one `ono.action-result/1` row a single-target mutation emits.
 fn single_result(run: &ono_testkit::Run) -> Value {
     let mut rows = rows(run);

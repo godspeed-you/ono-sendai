@@ -9,12 +9,11 @@
               body does (AGENTS.md section 16)"
 )]
 
-use ono_command::{CommandRegistry, HelpPage};
+use ono_command::HelpPage;
 use ono_core::ErrorCode;
 
-fn registry() -> &'static CommandRegistry {
-    CommandRegistry::embedded().expect("the embedded command contracts must parse")
-}
+mod support;
+use support::registry;
 
 fn help(topic: &str) -> HelpPage {
     ono_command::help(registry(), None, topic)

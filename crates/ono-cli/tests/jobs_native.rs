@@ -2,11 +2,7 @@
 //! or stop would be the worst kind of background work — so `&` makes a job, the same table as
 //! an external command.
 
-use ono_testkit::Shell;
-
-fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", script]).run()
-}
+use ono_testkit::ono;
 
 #[test]
 fn should_background_a_watch_as_a_job_the_shell_lists() {

@@ -31,6 +31,9 @@ use std::time::Duration;
 use ono_testkit::{Scratch, Shell, scratch};
 use serde_yaml_ng::Value;
 
+mod support;
+use support::text;
+
 /// Runs a one-liner and returns the finished run.
 fn ono(script: &str) -> ono_testkit::Run {
     Shell::new()
@@ -70,13 +73,6 @@ fn count(script: &str) -> i64 {
             run.stdout()
         )
     })
-}
-
-fn text(row: &Value, field: &str) -> String {
-    row[field]
-        .as_str()
-        .unwrap_or_else(|| panic!("field `{field}` must be a string, got {row:?}"))
-        .to_owned()
 }
 
 /// The login name of the user running the tests, from the system rather than an env var that a

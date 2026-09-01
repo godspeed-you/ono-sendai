@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+use ono_testkit::ono_within;
 use ono_testkit::{Shell, scratch};
 use serde_yaml_ng::Value;
 
@@ -44,10 +45,7 @@ fn ono_in(directory: &Path, script: &str) -> ono_testkit::Run {
 
 /// Runs a one-liner wherever the suite runs, for the queries that do not touch the cwd.
 fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .args(["-c", script])
-        .timeout(Duration::from_secs(30))
-        .run()
+    ono_within(script, Duration::from_secs(30))
 }
 
 /// Fails when the shell did not answer as the owner of the spatial command: a missing command,

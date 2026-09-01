@@ -12,7 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use ono_core::ErrorCode;
 use ono_process::{Command, Executor, Fd, ForegroundOutcome, Output, PipelineOutcome, Redirect};
-use support::{DEADLINE, text, within};
+use support::{DEADLINE, sh, text, within};
 
 fn run(command: Command) -> PipelineOutcome {
     let outcome = within(DEADLINE, move || {
@@ -24,10 +24,6 @@ fn run(command: Command) -> PipelineOutcome {
         ForegroundOutcome::Completed(outcome) => outcome,
         ForegroundOutcome::Stopped { signal, .. } => panic!("unexpectedly stopped by {signal}"),
     }
-}
-
-fn sh(script: &str) -> Command {
-    Command::new("/bin/sh").arg("-c").arg(script)
 }
 
 #[test]

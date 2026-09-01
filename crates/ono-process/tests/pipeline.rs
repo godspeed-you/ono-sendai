@@ -13,11 +13,7 @@ use std::time::Duration;
 use ono_process::{
     Command, Executor, Fd, ForegroundOutcome, Output, Pipeline, PipelineOutcome, Redirect,
 };
-use support::{DEADLINE, text, within};
-
-fn sh(script: &str) -> Command {
-    Command::new("/bin/sh").arg("-c").arg(script)
-}
+use support::{DEADLINE, sh, text, within};
 
 fn run(pipeline: Pipeline) -> PipelineOutcome {
     run_within(DEADLINE, pipeline)

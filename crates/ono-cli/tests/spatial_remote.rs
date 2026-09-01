@@ -29,6 +29,7 @@ use std::time::Duration;
 
 use ono_process::{Command, Executor, PtySession, WindowSize};
 use ono_testkit::Shell;
+use ono_testkit::ono;
 use serde_yaml_ng::Value;
 
 /// The link every test in this file navigates to. `local` spawns this binary as `ono --agent`.
@@ -36,10 +37,6 @@ const LINK: &str = "link host testbox --transport local";
 
 /// The §11.5 confidence vocabulary. A relation that carries anything else is not explainable.
 const CONFIDENCE: [&str; 5] = ["exact", "strong", "inferred", "user_declared", "unknown"];
-
-fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", script]).run()
-}
 
 /// Runs with colour switched off, so an assertion about a visible boundary marker is about the
 /// text and not about an escape sequence (§21.3: "MUST be visually recognizable even in minimal

@@ -19,6 +19,9 @@ use std::time::{Duration, Instant};
 
 use ono_process::{Command, Executor, PtySession, Signal, WindowSize};
 
+mod support;
+use support::read_until;
+
 /// Starts `ono` interactively on a pseudo-terminal of a known size.
 fn interactive_shell() -> PtySession {
     let mut executor = Executor::detached();
@@ -37,25 +40,6 @@ fn interactive_shell() -> PtySession {
 /// needle taken from the command text appears in the stream long before the command has run.
 /// Every needle here is therefore something only the *output* can contain — `alive-$?` is typed
 /// and `alive-130` comes back.
-fn read_until(session: &mut PtySession, needle: &str, budget: Duration) -> String {
-    let deadline = Instant::now() + budget;
-    let mut seen = String::new();
-    let mut buffer = [0u8; 4096];
-    while Instant::now() < deadline {
-        match session.read_timeout(&mut buffer, Duration::from_millis(200)) {
-            Ok(Some(0)) | Err(_) => break,
-            Ok(Some(count)) => {
-                seen.push_str(&String::from_utf8_lossy(&buffer[..count]));
-                if seen.contains(needle) {
-                    return seen;
-                }
-            }
-            Ok(None) => {}
-        }
-    }
-    seen
-}
-
 #[test]
 fn should_interrupt_the_running_command_and_leave_the_prompt_standing() {
     let mut shell = interactive_shell();

@@ -24,8 +24,12 @@
 
 use std::time::Duration;
 
+use ono_testkit::ono_within;
 use ono_testkit::{Shell, scratch};
 use serde_yaml_ng::Value;
+
+mod support;
+use support::text;
 
 const PERMISSION_DENIED: &str = "Ono-Sendai-E0302";
 const NOT_FOUND: &str = "Ono-Sendai-E0301";
@@ -33,10 +37,7 @@ const PROVIDER_UNAVAILABLE: &str = "Ono-Sendai-E0401";
 
 /// Runs a one-liner and returns the finished run.
 fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .args(["-c", script])
-        .timeout(Duration::from_secs(30))
-        .run()
+    ono_within(script, Duration::from_secs(30))
 }
 
 /// Mutations that root would actually perform are only attempted unprivileged: a test that
@@ -79,13 +80,6 @@ fn single_result(run: &ono_testkit::Run) -> Value {
         run.stdout()
     );
     rows.remove(0)
-}
-
-fn text(row: &Value, field: &str) -> String {
-    row[field]
-        .as_str()
-        .unwrap_or_else(|| panic!("field `{field}` must be a string, got {row:?}"))
-        .to_owned()
 }
 
 fn error_code(row: &Value) -> String {

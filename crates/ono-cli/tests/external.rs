@@ -3,11 +3,8 @@
 //! AUTONOMOUS_IMPLEMENTATION.md §12 is explicit that invoking `echo` is not evidence of shell
 //! compatibility, so these run real programs and observe real files.
 
+use ono_testkit::ono;
 use ono_testkit::{Shell, scratch};
-
-fn ono(source: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", source]).run()
-}
 
 #[test]
 fn should_pass_arguments_to_an_external_command_exactly_as_typed() {

@@ -26,12 +26,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use ono_testkit::Shell;
+use ono_testkit::ono;
 use serde_yaml_ng::Value;
-
-fn ono(script: &str) -> ono_testkit::Run {
-    Shell::new().args(["-c", script]).run()
-}
 
 /// A `sleep` child the test owns: its pid is a target nobody else will touch, and it is killed
 /// when the test ends whether or not the shell got to it first.

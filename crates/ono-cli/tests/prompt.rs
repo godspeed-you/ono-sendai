@@ -10,10 +10,13 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ono_process::{Command, Executor, PtySession, WindowSize};
 use ono_testkit::{Scratch, scratch};
+
+mod support;
+use support::read_until;
 
 /// Starts `ono` interactively on a pseudo-terminal, in `directory`.
 fn interactive_shell_in(directory: &Scratch) -> PtySession {
@@ -29,25 +32,6 @@ fn interactive_shell_in(directory: &Scratch) -> PtySession {
 }
 
 /// Reads from the terminal until `needle` appears or `budget` runs out.
-fn read_until(session: &mut PtySession, needle: &str, budget: Duration) -> String {
-    let deadline = Instant::now() + budget;
-    let mut seen = String::new();
-    let mut buffer = [0u8; 4096];
-    while Instant::now() < deadline {
-        match session.read_timeout(&mut buffer, Duration::from_millis(200)) {
-            Ok(Some(0)) | Err(_) => break,
-            Ok(Some(count)) => {
-                seen.push_str(&String::from_utf8_lossy(&buffer[..count]));
-                if seen.contains(needle) {
-                    return seen;
-                }
-            }
-            Ok(None) => {}
-        }
-    }
-    seen
-}
-
 #[test]
 fn should_name_the_branch_in_the_prompt_when_the_working_directory_is_a_checkout() {
     // Spec §4.2's optional `vcs` segment, `git:main`. The branch is read from the checkout's own
