@@ -393,3 +393,50 @@ fn should_measure_every_time_to_first_result_target_of_the_reference_targets_tab
         );
     }
 }
+
+#[test]
+fn should_measure_the_completion_budget_directly_rather_than_through_a_proxy() {
+    // Issue #21: v0.4.1 §36.2's first-completion budget "is asserted as a 1 000-iteration
+    // in-process proxy … and never measured". The proxy is
+    // `ono-command/tests/completion.rs::should_stay_far_inside_the_first_completion_budget`, which
+    // passes `None` where the value completer goes — so it measures registry lookups and touches
+    // no provider at all, which is the half §36.2 budgets.
+    //
+    // What replaces it is a call to the completer the line editor actually installs, one cold
+    // sample per process, twenty processes, recorded on the reference environment.
+    let baseline =
+        Baseline::parse(&std::fs::read_to_string(baseline_path()).expect("the baseline exists"))
+            .expect("the baseline parses");
+
+    let record = baseline
+        .record(xtask::perf::COMPLETION_BENCHMARK, "S")
+        .unwrap_or_else(|| {
+            panic!(
+                "v0.4.1 §36.2's completion budget has no measurement on `{}`; \
+                 `cargo xtask perf` is what records one",
+                baseline.environment
+            )
+        });
+
+    assert!(
+        record.values > 0.0,
+        "a completion that offered no candidate consulted no provider, which is the proxy issue \
+         #21 is about, not a measurement of §36.2"
+    );
+    assert!(
+        record.iterations >= xtask::perf::MIN_ITERATIONS,
+        "§37.4 wants at least {} iterations, and this figure has {}",
+        xtask::perf::MIN_ITERATIONS,
+        record.iterations
+    );
+
+    // Appendix A and §36.2: `completion.hard_budget = 150 ms`. The figure is the p95 of the first
+    // completion, which is the moment the budget is about.
+    assert!(
+        record.p95_ms < 150.0,
+        "v0.4.1 §36.2 gives interactive completion a hard budget of 150 ms, and the first \
+         completion measured {:.1} ms p95 on `{}`",
+        record.p95_ms,
+        baseline.environment
+    );
+}

@@ -27,8 +27,13 @@ use std::time::{Duration, Instant};
 use ono_command::{Candidate, CommandContract, ParameterSpec, ValueCompleter};
 use ono_provider_api::{ProviderRegistry, Query};
 
-/// How long a keystroke waits for a provider before answering without it.
-const BUDGET: Duration = Duration::from_millis(40);
+/// The budgets v0.4.1 §36.2 states, where nobody supplied the shell's own.
+///
+/// `ProviderValues` is constructed from the settings in the running shell, so these are only what
+/// a caller with no settings gets — a test, or a completer built before the configuration was
+/// read. They are the specification's numbers rather than a third opinion (Appendix A).
+const DEFAULT_SOFT: Duration = Duration::from_millis(50);
+const DEFAULT_HARD: Duration = Duration::from_millis(150);
 
 /// How long what a provider said is good enough to complete from.
 ///
@@ -48,6 +53,10 @@ const OFFERED: usize = 50;
 #[derive(Debug, Clone)]
 pub struct ProviderValues {
     environment: Vec<(String, String)>,
+    /// When a keystroke stops waiting and answers with what it has (§36.2).
+    soft: Duration,
+    /// When discovery stops, whatever it has found (§36.2).
+    hard: Duration,
 }
 
 impl ProviderValues {
@@ -66,9 +75,36 @@ impl ProviderValues {
             // account database is consulted. That cost is process-wide, not target-specific, so
             // paying it once here — on the cheapest purely local read there is — is what makes
             // the *first* Tab of any target as fast as the ones after it.
-            let _ = read(&warm, "user", &["name".to_owned()]);
+            let _ = read(
+                &warm,
+                "user",
+                &["name".to_owned()],
+                Instant::now() + DEFAULT_HARD,
+            );
         });
-        Self { environment }
+        Self {
+            environment,
+            soft: DEFAULT_SOFT,
+            hard: DEFAULT_HARD,
+        }
+    }
+
+    /// The same completer, budgeted by what the shell's configuration says (§36.2, Appendix A).
+    ///
+    /// The soft budget is when a keystroke stops waiting; the hard one is when discovery stops.
+    /// A hard budget below the soft one is raised to it, because "stop discovering before you may
+    /// answer" is not a budget anybody meant.
+    #[must_use]
+    pub fn budgeted(mut self, soft: Duration, hard: Duration) -> Self {
+        self.soft = soft;
+        self.hard = hard.max(soft);
+        self
+    }
+
+    /// The two budgets it is working to, soft first.
+    #[must_use]
+    pub fn budgets(&self) -> (Duration, Duration) {
+        (self.soft, self.hard)
     }
 }
 
@@ -97,7 +133,7 @@ impl ValueCompleter for ProviderValues {
             fields.push(parameter.name().to_owned());
         }
 
-        let known = objects(&self.environment, target, &fields);
+        let known = objects(&self.environment, target, &fields, self.soft, self.hard);
         known
             .into_iter()
             .filter(|value| value.starts_with(prefix))
@@ -109,7 +145,13 @@ impl ValueCompleter for ProviderValues {
 
 /// What is known about `target`'s objects: from the cache when it is fresh, otherwise from the
 /// providers, within the budget.
-fn objects(environment: &[(String, String)], target: &str, fields: &[String]) -> Vec<String> {
+fn objects(
+    environment: &[(String, String)],
+    target: &str,
+    fields: &[String],
+    soft: Duration,
+    hard: Duration,
+) -> Vec<String> {
     if let Some(cached) = cached(target) {
         return cached;
     }
@@ -118,20 +160,28 @@ fn objects(environment: &[(String, String)], target: &str, fields: &[String]) ->
     let environment = environment.to_vec();
     let owned_target = target.to_owned();
     let owned_fields = fields.to_vec();
-    // Detached on purpose: if the provider is slower than the budget the keystroke is already
-    // answered, and the thread ends by itself when the query does — leaving what it read in the
-    // cache, which is what makes the next keystroke instant.
+    let deadline = Instant::now() + hard;
+    // Detached on purpose: if the provider is slower than the *soft* budget the keystroke is
+    // already answered, and the thread ends by itself when the query does — leaving what it read
+    // in the cache, which is what makes the next keystroke instant. The hard budget is where it
+    // stops looking for more, which is §36.2's "at the hard budget it MUST stop additional
+    // discovery work and return what it has".
     std::thread::spawn(move || {
-        let values = read(&environment, &owned_target, &owned_fields);
+        let values = read(&environment, &owned_target, &owned_fields, deadline);
         remember(&owned_target, &values);
         let _ = answer.send(values);
     });
 
-    wait.recv_timeout(BUDGET).unwrap_or_default()
+    wait.recv_timeout(soft).unwrap_or_default()
 }
 
 /// The values of `fields` that the providers for `target` report.
-fn read(environment: &[(String, String)], target: &str, fields: &[String]) -> Vec<String> {
+fn read(
+    environment: &[(String, String)],
+    target: &str,
+    fields: &[String],
+    deadline: Instant,
+) -> Vec<String> {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -142,6 +192,13 @@ fn read(environment: &[(String, String)], target: &str, fields: &[String]) -> Ve
     runtime.block_on(async {
         let mut found: Vec<String> = Vec::new();
         for provider in registry.for_target(target) {
+            // §36.2: "At the hard budget it MUST stop additional discovery work and return what
+            // it has." One provider that has begun is allowed to finish — a read cannot be
+            // interrupted halfway without leaving the value half-read — and no further provider
+            // is asked.
+            if Instant::now() >= deadline {
+                break;
+            }
             if !provider.availability().is_available() {
                 continue;
             }

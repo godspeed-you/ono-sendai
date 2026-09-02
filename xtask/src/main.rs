@@ -132,6 +132,7 @@ fn perf(args: &[String]) -> ExitCode {
     let mut iterations = perf::MIN_ITERATIONS;
     let mut compare: Option<PathBuf> = None;
     let mut write = false;
+    let mut sample_completion = false;
 
     let mut rest = args.iter();
     while let Some(argument) = rest.next() {
@@ -149,8 +150,18 @@ fn perf(args: &[String]) -> ExitCode {
                 None => return usage_error("perf: --compare needs a path"),
             },
             "--write-baseline" => write = true,
+            // One cold completion, printed for the parent that spawned this process. §36.2's
+            // budget is about the *first* completion, and a completer caches what it read, so a
+            // second sample in the same process would be a different measurement (§37.3).
+            "--sample-completion" => sample_completion = true,
             other => return usage_error(&format!("perf: unknown argument `{other}`")),
         }
+    }
+
+    if sample_completion {
+        let (milliseconds, offered) = perf::sample_completion();
+        println!("{milliseconds} {offered}");
+        return ExitCode::SUCCESS;
     }
 
     let root = repo_root();
@@ -243,6 +254,21 @@ fn perf(args: &[String]) -> ExitCode {
         );
         measurements.push(measured);
     }
+
+    // §36.2's completion budget, measured by calling the completer rather than by timing a
+    // thousand registry lookups beside it (issue #21, ADR-0498). One cold sample per process, so
+    // the samples are re-runs of this executable rather than iterations in it.
+    let measured = runner.run_completion();
+    println!(
+        "  {:<28} {:<3} {:<9} first {:>9.3} ms  p95 {:>9.3} ms  candidates {}",
+        measured.benchmark,
+        measured.profile,
+        measured.temperature.as_str(),
+        measured.metric("time_to_first_ms").unwrap_or_default(),
+        measured.p95_ms,
+        measured.values,
+    );
+    measurements.push(measured);
 
     let mut failed = false;
     if let Some(path) = compare {

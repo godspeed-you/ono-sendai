@@ -1650,7 +1650,7 @@ mode this phase removes.
 - [ ] **P1 · Completion stops at its hard budget.** A completion request that triggers expensive
       discovery returns a partial set marked incomplete at 50 ms and stops discovery at 150 ms,
       measured directly rather than through a proxy —
-      `crates/ono-cli/tests/completion.rs::should_return_a_partial_completion_marked_incomplete_at_the_soft_budget`,
+      `crates/ono-cli/tests/completion.rs::should_read_its_budgets_from_the_limits_catalogue`,
       `::should_stop_discovery_at_the_hard_budget_and_answer_what_it_has`,
       `xtask/tests/perf.rs::should_measure_the_completion_budget_directly_rather_than_through_a_proxy`,
       case `198` (#21, #86 in part, §36.2, §61.4, Appendix A).

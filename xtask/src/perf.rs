@@ -1292,3 +1292,124 @@ const NOTE: &str = "The regression baseline of v0.4.1 §32.4. Every record carri
                     a warm figure (§37.3). Written by `cargo xtask perf --write-baseline`; a \
                     figure edited by hand is a figure nobody measured. `cargo xtask spec-check` \
                     refuses a record that is not a complete §32.3 result.";
+
+// ------------------------------------------------------------------------------------------
+// §36.2's completion budget, measured directly (issue #21).
+// ------------------------------------------------------------------------------------------
+
+/// The benchmark id §36.2's first-completion budget is recorded under.
+pub const COMPLETION_BENCHMARK: &str = "completion.first_candidate";
+
+/// How long one cold provider-backed completion takes, in milliseconds, and how many candidates
+/// it offered.
+///
+/// This is the *thing* v0.4.1 §36.2 budgets, called directly: `ono_cli::complete::ProviderValues`
+/// in the seam the line editor installs it in, asked the question `get user <TAB>` asks. ADR-0252
+/// accepted a thousand-iteration proxy over `ono_command::complete` with **no value completer at
+/// all**, which measures registry lookups and touches no provider; issue #21 has been open on
+/// that ever since.
+///
+/// It is deliberately one sample per process. The completer caches what a provider said for five
+/// seconds, so the second call in a process is a cache hit and a different measurement (§37.3);
+/// twenty *cold* samples are twenty processes, which is what the runner arranges.
+#[must_use]
+pub fn sample_completion() -> (f64, usize) {
+    use ono_command::ValueCompleter as _;
+
+    let Ok(registry) = ono_command::CommandRegistry::embedded() else {
+        return (0.0, 0);
+    };
+    let Some(command) = registry
+        .commands()
+        .iter()
+        .find(|command| command.id() == "ono.user.get")
+    else {
+        return (0.0, 0);
+    };
+    let Some(parameter) = command.selectors().first() else {
+        return (0.0, 0);
+    };
+    let environment: Vec<(String, String)> = std::env::vars().collect();
+    let completer = ono_cli::complete::ProviderValues::new(environment);
+
+    let started = std::time::Instant::now();
+    let offered = completer.complete(command, parameter, "");
+    let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+    (elapsed, offered.len())
+}
+
+impl Runner {
+    /// Measures §36.2's first completion, one cold sample per process.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this executable cannot be located, which means nothing can be re-run.
+    #[allow(
+        clippy::expect_used,
+        reason = "a benchmark that cannot find the executable it re-runs has nothing to measure"
+    )]
+    #[must_use]
+    pub fn run_completion(&self) -> Measurement {
+        let me = std::env::current_exe().expect("the running xtask must have a path");
+        let mut latencies = Vec::new();
+        let mut candidates = Vec::new();
+        for _ in 0..self.iterations {
+            let Ok(output) = std::process::Command::new(&me)
+                .args(["perf", "--sample-completion"])
+                .output()
+            else {
+                continue;
+            };
+            let text = String::from_utf8_lossy(&output.stdout);
+            let mut parts = text.split_whitespace();
+            let (Some(ms), Some(offered)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            if let (Ok(ms), Ok(offered)) = (ms.parse::<f64>(), offered.parse::<f64>()) {
+                latencies.push(ms);
+                candidates.push(offered);
+            }
+        }
+
+        let complete_ms = median(&latencies);
+        let values = median(&candidates);
+        Measurement {
+            benchmark: COMPLETION_BENCHMARK.to_owned(),
+            profile: "S".to_owned(),
+            commit: self.commit.clone(),
+            environment: self.environment.clone(),
+            temperature: Temperature::Cold,
+            iterations: u32::try_from(latencies.len()).unwrap_or(0),
+            build: self.build.clone(),
+            values: round3(values),
+            p95_ms: round3(percentile(&latencies, 95.0)),
+            metrics: vec![
+                ("time_to_first_ms", Some(round3(complete_ms))),
+                ("time_to_complete_ms", Some(round3(complete_ms))),
+                ("peak_rss_bytes", None),
+                (
+                    "values_per_second",
+                    Some(round3(if complete_ms > 0.0 {
+                        values * 1000.0 / complete_ms
+                    } else {
+                        0.0
+                    })),
+                ),
+                (
+                    "estimated_bytes",
+                    Some(round3(values * AVERAGE_CANDIDATE_BYTES)),
+                ),
+                // A completion is not cancellable: it answers at its own budget, which is what
+                // §36.2 asks of it instead (§2.6 keeps the unknown unknown).
+                ("cancel_ms", None),
+            ],
+        }
+    }
+}
+
+/// What one candidate is estimated to weigh, for §32.3's byte metric.
+///
+/// An account name and the doc string a candidate carries. Approximate on purpose — §21.2 makes
+/// value-size estimation deterministic and approximate, and a benchmark that serialized every
+/// candidate to count its bytes would be measuring the counter.
+const AVERAGE_CANDIDATE_BYTES: f64 = 64.0;

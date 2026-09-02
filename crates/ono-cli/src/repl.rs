@@ -328,18 +328,22 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
         .with_highlighter(ParserHighlighter)
         .with_completer(ShellCompleter {
             commands: resolve::candidates(session, ""),
-            values: Some(crate::complete::ProviderValues::new(
-                session
-                    .env()
-                    .iter()
-                    .map(|(name, value)| {
-                        (
-                            name.to_string_lossy().into_owned(),
-                            value.to_string_lossy().into_owned(),
-                        )
-                    })
-                    .collect(),
-            )),
+            values: Some({
+                let (soft, hard) = crate::limits::completion(session.settings());
+                crate::complete::ProviderValues::new(
+                    session
+                        .env()
+                        .iter()
+                        .map(|(name, value)| {
+                            (
+                                name.to_string_lossy().into_owned(),
+                                value.to_string_lossy().into_owned(),
+                            )
+                        })
+                        .collect(),
+                )
+                .budgeted(soft, hard)
+            }),
             adapters: Some(session.shared_adapters()),
             resolver: Some(resolve::resolver(session)),
         });

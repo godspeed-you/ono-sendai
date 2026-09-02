@@ -445,14 +445,14 @@ pub const CATALOGUE: &[SettingSpec] = &[
     SettingSpec {
         key: "limits.completion_soft_ms",
         ty: SettingType::Int,
-        description: "When completion may begin answering with what it has, in milliseconds (v0.4.1 §36.2, Appendix A). Recorded; the completion budget is phase H7's.",
+        description: "When completion stops waiting for a provider and answers with what it has, in milliseconds (v0.4.1 §36.2, Appendix A).",
         default: DefaultValue::Int(50),
         range: Some(Range { min: 1, max: 60000 }),
     },
     SettingSpec {
         key: "limits.completion_hard_ms",
         ty: SettingType::Int,
-        description: "When completion stops discovering, in milliseconds (v0.4.1 §36.2, Appendix A). Recorded; the completion budget is phase H7's.",
+        description: "When completion stops asking further providers, whatever it has found, in milliseconds (v0.4.1 §36.2, Appendix A).",
         default: DefaultValue::Int(150),
         range: Some(Range { min: 1, max: 60000 }),
     },

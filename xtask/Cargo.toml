@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 ono-adapter.workspace = true
 ono-command.workspace = true
+ono-cli.workspace = true
 ono-core.workspace = true
 ono-kuang-protocol.workspace = true
 ono-value.workspace = true
