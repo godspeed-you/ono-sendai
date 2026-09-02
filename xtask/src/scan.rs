@@ -1457,6 +1457,10 @@ pub struct ExpectedSkips {
     /// The test ids §38.2 expects the canonical CI environment to skip. §38.2 prefers this
     /// empty; §38.3 makes anything outside it a failure in both directions.
     pub canonical_ci: Vec<String>,
+    /// The test ids whose skip depends on a host capability the repository does not control, each
+    /// with the condition that decides it. Neither required nor forbidden — but listed with its
+    /// reason, which is what §38.2 asks of an intentional skip.
+    pub permitted: Vec<String>,
 }
 
 impl ExpectedSkips {
@@ -1509,10 +1513,25 @@ impl ExpectedSkips {
             .iter()
             .filter_map(|entry| entry.as_str().map(ToOwned::to_owned))
             .collect();
+        let permitted = document
+            .get("canonical_ci")
+            .and_then(|section| section.get("permitted_skips"))
+            .and_then(serde_yaml_ng::Value::as_sequence)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        row.get("id")
+                            .and_then(serde_yaml_ng::Value::as_str)
+                            .map(ToOwned::to_owned)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         declared.sort();
         Ok(Self {
             declared,
             canonical_ci,
+            permitted,
         })
     }
 }
@@ -1711,12 +1730,16 @@ pub fn check_expected_skips(root: &Path) -> Vec<Problem> {
             ));
         }
     }
-    for id in &expected.canonical_ci {
+    for id in expected
+        .canonical_ci
+        .iter()
+        .chain(expected.permitted.iter())
+    {
         if !expected.declared.iter().any(|site| &site.id == id) {
             problems.push(Problem::new(
                 id.clone(),
                 format!(
-                    "is expected to skip in canonical CI and is not in `{EXPECTED_TEST_SKIPS}`'s \
+                    "is named under `canonical_ci` and is not in `{EXPECTED_TEST_SKIPS}`'s \
                      `declared:` list, so its reason is undeclared (v0.4.1 §38.2)"
                 ),
             ));
@@ -1740,11 +1763,13 @@ pub fn verify_observed_skips(expected: &ExpectedSkips, log: &str) -> Vec<Problem
     let observed = observed_skips(log);
     let mut problems = Vec::new();
     for (test, category) in &observed {
-        if !expected
+        let suffix = format!("::{test}");
+        let known = expected
             .canonical_ci
             .iter()
-            .any(|id| id.ends_with(&format!("::{test}")))
-        {
+            .chain(expected.permitted.iter())
+            .any(|id| id.ends_with(&suffix));
+        if !known {
             problems.push(Problem::new(
                 test.clone(),
                 format!(

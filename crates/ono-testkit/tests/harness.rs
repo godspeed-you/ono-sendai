@@ -2,7 +2,7 @@
 //! actually see, so a harness that quietly stopped capturing stderr would make the whole suite
 //! meaningless (AGENTS.md section 14).
 
-use ono_testkit::{Shell, SkipReason, require};
+use ono_testkit::{Shell, SkipReason, require, require_descriptors};
 
 #[test]
 fn should_report_the_version_on_standard_output_when_asked() {
@@ -222,4 +222,75 @@ fn should_offer_a_require_helper_that_records_an_unmet_prerequisite() {
         "an unsatisfied prerequisite tells the caller to return"
     );
     assert!(!unmet.met());
+}
+
+#[test]
+fn should_report_a_descriptor_limit_the_host_cannot_reach_rather_than_failing() {
+    // A machine that cannot supply the descriptors a fixture needs has not found a defect in the
+    // product. v0.4.1 §38.1 says a test reports execution truth, and a red result meaning "this
+    // runner has a lower rlimit" is §65.10's skip-as-pass inverted — it is fail-as-defect
+    // (ADR-0517).
+    let plenty = require_descriptors(64);
+    assert!(
+        plenty.is_ok(),
+        "every host allows sixty-four open descriptors, got {plenty:?}"
+    );
+
+    let impossible =
+        require_descriptors(u64::MAX).expect_err("no host allows every descriptor a u64 can count");
+    assert!(
+        impossible.needed > impossible.hard,
+        "the shortfall names what was needed and what the host would give, got {impossible:?}"
+    );
+    let told = impossible.to_string();
+    assert!(
+        told.contains(&impossible.hard.to_string()) && told.contains("hard limit"),
+        "the reason names the hard limit an unprivileged process cannot raise, got {told:?}"
+    );
+}
+
+#[test]
+fn should_raise_its_own_soft_descriptor_limit_before_reporting_a_shortfall() {
+    // Raising the soft limit toward the hard one changes nothing about what a fixture measures —
+    // the descriptors were always allowed and the process was simply not asking for them — so it
+    // happens before anything is reported (ADR-0517).
+    let (soft, hard) = nix::sys::resource::getrlimit(nix::sys::resource::Resource::RLIMIT_NOFILE)
+        .expect("the descriptor limit is readable");
+    if require(
+        hard > soft,
+        SkipReason::FixtureNotApplicable,
+        "this process already runs at its hard descriptor limit, so there is no room to raise it",
+    )
+    .unmet()
+    {
+        return;
+    }
+    let asked = soft + 1;
+    require_descriptors(asked).expect("a limit below the hard one is reachable");
+    let (raised, _) = nix::sys::resource::getrlimit(nix::sys::resource::Resource::RLIMIT_NOFILE)
+        .expect("the descriptor limit is readable");
+    assert!(
+        raised >= asked,
+        "the soft limit was raised to at least {asked}, got {raised}"
+    );
+}
+
+#[test]
+fn should_stretch_a_watchdog_for_the_load_the_test_does_not_control() {
+    // A `Shell` budget is a watchdog, not an assertion: nothing asserts that a command answered
+    // within twenty seconds, and the number exists so a hung test fails instead of stalling the
+    // suite. Measuring a fixed wall clock against a machine whose load the test does not control
+    // is not measuring the product — on 2026-09-02 two such failures were each first reported as
+    // a product hang (ADR-0517).
+    let run = Shell::program("/bin/sh")
+        .args(["-c", "sleep 30"])
+        .timeout(std::time::Duration::from_millis(200))
+        .try_run();
+    let error = run.expect_err("a thirty-second sleep overruns a two-hundred-millisecond watchdog");
+    let told = error.to_string();
+    assert!(
+        told.contains("load average of") && told.contains("200ms"),
+        "an overrun says what it was scaled against and what the caller asked for, so a reader \
+         can tell a busy machine from a hang, got {told:?}"
+    );
 }

@@ -28,12 +28,15 @@ mod skip;
 pub use bounded::{Bounded, run_bounded};
 pub use profile::{
     BuiltBy, PROFILE_L, PROFILE_M, PROFILE_S, PayloadDeclaration, ProcessPopulation, Profile,
-    ProfileDeclaration, SocketPopulation, declared_payloads, declared_profiles, payload,
+    ProfileDeclaration, SocketPopulation, declared_payloads, declared_profiles, descriptors_for,
+    payload,
 };
 pub use rng::Rng;
-pub use run::{Run, RunError, Shell};
+pub use run::{Run, RunError, Shell, under_load};
 pub use scratch::{Scratch, scratch};
-pub use skip::{SkipReason, TestPrerequisite, require, skipped};
+pub use skip::{
+    DescriptorShortfall, SkipReason, TestPrerequisite, require, require_descriptors, skipped,
+};
 
 use std::path::PathBuf;
 use std::time::Duration;

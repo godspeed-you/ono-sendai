@@ -120,6 +120,9 @@ declared:
   - id: "crates/ono-cli/tests/services_logs.rs::should_trace_a_service_to_the_processes_it_owns"
     category: external_tool_unavailable
     prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture"
+    category: missing_privilege
+    prerequisite: "the host allows the 101 024 open descriptors `performance_profiles.yaml` declares for Profile L's socket axis"
   - id: "crates/ono-cli/tests/spatial_identity.rs::should_keep_the_working_directory_usable_when_a_denied_directory_is_named"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
@@ -231,12 +234,18 @@ declared:
   - id: "crates/ono-provider-systemd/tests/service.rs::should_agree_with_the_running_service_manager_when_one_is_present"
     category: fixture_not_applicable
     prerequisite: "at least one active `.service` unit is loaded"
+  - id: "crates/ono-spatial-query/tests/profiles.rs::should_build_every_declared_profile_at_the_cardinality_the_registry_states"
+    category: missing_privilege
+    prerequisite: "the host allows the open descriptors `performance_profiles.yaml` declares for each profile's socket axis"
   - id: "crates/ono-testkit/tests/harness.rs::should_name_the_test_the_reason_and_the_category_when_a_skip_is_announced"
     category: fixture_not_applicable
     prerequisite: "none: the helper's own suite emits the marker in order to prove its shape"
   - id: "crates/ono-testkit/tests/harness.rs::should_offer_a_require_helper_that_records_an_unmet_prerequisite"
     category: external_tool_unavailable
     prerequisite: "none: the helper's own suite emits the marker in order to prove its shape"
+  - id: "crates/ono-testkit/tests/harness.rs::should_raise_its_own_soft_descriptor_limit_before_reporting_a_shortfall"
+    category: fixture_not_applicable
+    prerequisite: "this process runs below its hard descriptor limit, so there is room to raise the soft one"
   - id: "xtask/tests/packaging.rs::should_stamp_the_workspace_before_building_when_the_image_caches_its_target_directory"
     category: fixture_not_applicable
     prerequisite: "the acceptance Dockerfile mounts a build cache there is staleness to guard against"
@@ -266,3 +275,27 @@ canonical_ci:
     # The re-exec entry point the PTY tests drive. `cargo test` runs it once with no role in the
     # environment, and that run has nothing to act as.
     - "crates/ono-process/tests/terminal_control.rs::acts_as_the_shell_when_a_role_is_requested"
+
+  # Skips whose outcome is a property of the host rather than of this repository, each with the
+  # condition that decides it. `skip-check` neither requires nor forbids these — it would be a
+  # coin toss in both directions — but §38.2 asks that an intentional skip be listed with its
+  # reason, and that is what these rows are. Nothing goes here for being awkward: an entry names
+  # a capability the runner either has or has not, and a reader can check it in one command.
+  permitted_skips:
+    - id: "crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture"
+      condition: "`ulimit -Hn` is at least 101024"
+      doc: >-
+        Profile L's socket axis needs 101 024 open descriptors. `SocketPopulation::try_of` raises
+        the soft limit toward the hard one first, so this skips only where the *hard* limit is
+        short — which the development machine's 524 288 is not and the GitHub runner's may be.
+        Reported as `missing_privilege` because only a privileged process can raise a hard limit.
+    - id: "crates/ono-spatial-query/tests/profiles.rs::should_build_every_declared_profile_at_the_cardinality_the_registry_states"
+      condition: "`ulimit -Hn` is at least 101024"
+      doc: >-
+        The same limit, reached from the registry side: this test builds every profile whose
+        socket axis declares itself gate-buildable, and skips the ones the host cannot hold.
+    - id: "crates/ono-testkit/tests/harness.rs::should_raise_its_own_soft_descriptor_limit_before_reporting_a_shortfall"
+      condition: "`ulimit -Sn` is below `ulimit -Hn`"
+      doc: >-
+        The proof that the soft limit is raised before a shortfall is reported has nothing to
+        prove on a process already running at its hard limit.

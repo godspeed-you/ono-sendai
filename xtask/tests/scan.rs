@@ -1200,3 +1200,32 @@ fn should_report_this_repository_as_using_the_canonical_helper_everywhere() {
         "every job a test helper does has one definition (v0.4.1 §39.1, §39.2)"
     );
 }
+
+#[test]
+fn should_neither_require_nor_forbid_a_skip_the_host_capability_decides() {
+    // A descriptor limit is a property of the runner, not of this repository. Requiring the skip
+    // would be red on a machine that can supply the descriptors, and forbidding it red on one
+    // that cannot — so the registry lists it with the condition that decides it, which is what
+    // §38.2 asks of an intentional skip (ADR-0517).
+    let expected = ExpectedSkips::parse(
+        "version: 1\ndeclared:\n  - id: \"crates/a/tests/thing.rs::should_place_a_hundred_thousand_sockets\"\n    category: missing_privilege\ncanonical_ci:\n  expected_skips: []\n  permitted_skips:\n    - id: \"crates/a/tests/thing.rs::should_place_a_hundred_thousand_sockets\"\n      condition: \"`ulimit -Hn` is at least 101024\"\n",
+    )
+    .expect("the fixture registry parses");
+
+    assert_eq!(
+        verify_observed_skips(
+            &expected,
+            "SKIPPED should_place_a_hundred_thousand_sockets: missing_privilege: the host allows 65536\n"
+        ),
+        Vec::new(),
+        "a host that cannot supply the capability may skip"
+    );
+    assert_eq!(
+        verify_observed_skips(
+            &expected,
+            "test should_place_a_hundred_thousand_sockets ... ok\n"
+        ),
+        Vec::new(),
+        "and a host that can must not be told it should have skipped"
+    );
+}

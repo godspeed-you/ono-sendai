@@ -1748,9 +1748,16 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       categories against it, and a skip nobody declared turns the run red —
       `xtask/tests/scan.rs::should_fail_on_a_skip_the_expectation_does_not_declare`,
       `::should_fail_when_a_declared_skip_no_longer_happens`,
-      `::should_report_this_repositorys_observed_skips_as_exactly_the_declared_set` (ADR-0514;
+      `::should_report_this_repositorys_observed_skips_as_exactly_the_declared_set` and
+      `::should_neither_require_nor_forbid_a_skip_the_host_capability_decides` (ADR-0514;
       `cargo xtask skip-check` is the §38.3 verification step, run by `scripts/gate.sh` where
-      `ONO_CANONICAL_CI=1`) (#89, §38.2, §38.3, §65.10).
+      `ONO_CANONICAL_CI=1`). ADR-0517 settles the two cases that made a red run mean something
+      other than a defect — a host that cannot supply a capability skips rather than fails, and a
+      watchdog scales with the load the test does not control:
+      `crates/ono-testkit/tests/harness.rs::should_report_a_descriptor_limit_the_host_cannot_reach_rather_than_failing`,
+      `::should_raise_its_own_soft_descriptor_limit_before_reporting_a_shortfall`,
+      `::should_stretch_a_watchdog_for_the_load_the_test_does_not_control` (#89, §38.2, §38.3,
+      §65.10).
 - [x] **P2 · The shared test helpers are canonical.** One helper per job, used by every suite that
       needs it, with the divergence that ADR-0427 already forbids asserted over the whole tree —
       `xtask/tests/scan.rs::should_report_two_test_helpers_that_do_the_same_job_under_different_names`,

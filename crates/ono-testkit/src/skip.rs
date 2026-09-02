@@ -154,3 +154,62 @@ pub fn require(condition: bool, reason: SkipReason, detail: &str) -> TestPrerequ
         TestPrerequisite::Unmet
     }
 }
+
+/// What a fixture needed from the host and what the host would give it.
+///
+/// A machine that cannot supply a hundred thousand file descriptors has not found a defect in the
+/// product, and a red result meaning "this runner has a lower rlimit" is the inverse of
+/// v0.4.1 §65.10's skip-as-pass: it is fail-as-defect, and §38 forbids both. A shortfall is
+/// therefore a prerequisite the test reports with [`skipped`], never a panic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DescriptorShortfall {
+    /// What the fixture needed open at once, including its headroom.
+    pub needed: u64,
+    /// The soft limit after the fixture raised it as far as it may.
+    pub soft: u64,
+    /// The hard limit, which only a privileged process can raise.
+    pub hard: u64,
+}
+
+impl fmt::Display for DescriptorShortfall {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "the fixture needs {} open file descriptors and this host allows {} (hard limit {}, \
+             which only a privileged process can raise)",
+            self.needed, self.soft, self.hard
+        )
+    }
+}
+
+/// Raises this process's soft descriptor limit as far as the hard limit allows, and reports what
+/// it reached against `needed`.
+///
+/// Raising the soft limit changes nothing about what a fixture measures — the descriptors were
+/// always allowed, the process was simply not asking for them — so it is tried first and without
+/// ceremony. Only when the *hard* limit is too low has the host genuinely refused.
+///
+/// # Errors
+///
+/// Returns the shortfall when the host cannot supply `needed` descriptors.
+pub fn require_descriptors(needed: u64) -> Result<(), DescriptorShortfall> {
+    use nix::sys::resource::{Resource, getrlimit, setrlimit};
+
+    let (soft, hard) = getrlimit(Resource::RLIMIT_NOFILE).unwrap_or((0, 0));
+    let mut reached = soft;
+    if soft < needed && hard > soft {
+        let want = needed.min(hard);
+        if setrlimit(Resource::RLIMIT_NOFILE, want, hard).is_ok() {
+            reached = want;
+        }
+    }
+    if reached >= needed {
+        Ok(())
+    } else {
+        Err(DescriptorShortfall {
+            needed,
+            soft: reached,
+            hard,
+        })
+    }
+}

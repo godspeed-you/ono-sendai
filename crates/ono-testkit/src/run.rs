@@ -15,6 +15,12 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 /// How often the deadline is checked while a run is in flight.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+/// The most a busy machine may stretch a watchdog.
+///
+/// Without a ceiling a runaway load would turn the watchdog off, and a watchdog that never fires
+/// is the hang it exists to catch.
+const MAX_LOAD_FACTOR: u32 = 8;
+
 /// A shell invocation under construction.
 #[derive(Debug, Clone)]
 pub struct Shell {
@@ -171,7 +177,9 @@ impl Shell {
         // Reporting the overrun is only half of it: a sweep on 2026-09-02 found 331 leaked test
         // followers on the development machine, the oldest five days old, and a helper that walks
         // away from a child it started is how they got there (v0.4.1 §2.4).
-        let deadline = Instant::now() + self.timeout;
+        let load = load_average();
+        let budget = scaled(self.timeout, load);
+        let deadline = Instant::now() + budget;
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break Some(status),
@@ -193,7 +201,9 @@ impl Shell {
             return Err(RunError::Timeout {
                 program: self.program.clone(),
                 args: self.args.clone(),
-                timeout: self.timeout,
+                timeout: budget,
+                nominal: self.timeout,
+                load,
             });
         };
         let output = std::process::Output {
@@ -357,10 +367,14 @@ pub enum RunError {
     Timeout {
         /// The program that overran.
         program: PathBuf,
+        /// The budget it exceeded, after scaling.
+        timeout: Duration,
         /// The arguments it was given.
         args: Vec<String>,
-        /// The budget it exceeded.
-        timeout: Duration,
+        /// The budget before scaling — what the caller asked for.
+        nominal: Duration,
+        /// The one-minute load average the budget was scaled against.
+        load: f64,
     },
 }
 
@@ -374,11 +388,17 @@ impl fmt::Display for RunError {
                 program,
                 args,
                 timeout,
+                nominal,
+                load,
             } => write!(
                 f,
-                "`{} {}` did not finish within {timeout:?}",
+                "`{} {}` did not finish within {timeout:?} (a {nominal:?} watchdog scaled for a \
+                 load average of {load:.2} on {} processors). A watchdog carries no assertion: \
+                 what fired here is either the program hanging or a machine this run does not \
+                 control — re-run it on a quiet one before reading it as a defect (v0.4.1 §38.1)",
                 program.display(),
-                args.join(" ")
+                args.join(" "),
+                processors()
             ),
         }
     }
@@ -400,4 +420,52 @@ fn drain(mut pipe: impl std::io::Read + Send + 'static) -> std::thread::JoinHand
         let _ = pipe.read_to_end(&mut buffer);
         buffer
     })
+}
+
+/// The one-minute load average, or zero where the kernel does not report one.
+///
+/// Read on every run rather than once per process: a `cargo test --workspace` starts quiet and is
+/// at load twenty by the time the shell suites run, and a factor decided at process start would
+/// describe a machine that no longer exists.
+fn load_average() -> f64 {
+    std::fs::read_to_string("/proc/loadavg")
+        .ok()
+        .and_then(|text| text.split_whitespace().next()?.parse().ok())
+        .unwrap_or(0.0)
+}
+
+/// How many processors the load is spread across.
+fn processors() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+}
+
+/// `nominal` stretched for the load this machine is under.
+///
+/// A watchdog budget stretched for the load this machine is under.
+///
+/// A `Shell` budget is a **watchdog, not an assertion**: nothing in this repository asserts that a
+/// command answered within twenty seconds, and the number exists so a hung test fails instead of
+/// stalling the suite. Measuring a fixed wall-clock ceiling against a machine whose load the test
+/// does not control is therefore not measuring the product — on 2026-09-02 two such failures were
+/// each first reported as a product hang, and both commands answer in under five seconds on a
+/// quiet machine.
+///
+/// So the watchdog scales with the load per processor, to a stated ceiling. Scaling cannot weaken
+/// anything, because the budget carries no claim; what it changes is how long a busy machine waits
+/// before calling something a hang (v0.4.1 §38.1, ADR-0517).
+#[must_use]
+pub fn under_load(nominal: Duration) -> Duration {
+    scaled(nominal, load_average())
+}
+
+/// `nominal` stretched by `load`, which [`under_load`] reads from the machine.
+fn scaled(nominal: Duration, load: f64) -> Duration {
+    let per_processor = load / processors() as f64;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the load per processor is clamped into 1..=MAX_LOAD_FACTOR before it is cast"
+    )]
+    let factor = (per_processor.ceil().max(1.0) as u64).min(u64::from(MAX_LOAD_FACTOR));
+    nominal.saturating_mul(u32::try_from(factor).unwrap_or(1))
 }

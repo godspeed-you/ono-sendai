@@ -44,7 +44,8 @@ mod support;
 use std::time::Duration;
 
 use ono_testkit::{
-    PROFILE_L, PROFILE_M, PROFILE_S, ProcessPopulation, Profile, SocketPopulation, scratch,
+    PROFILE_L, PROFILE_M, PROFILE_S, ProcessPopulation, Profile, SkipReason, SocketPopulation,
+    scratch, skipped,
 };
 
 use support::{Bounded, run_bounded};
@@ -264,8 +265,22 @@ fn should_hold_every_time_to_first_result_target_of_the_reference_targets_table(
 #[test]
 fn should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture() {
     // Profile L's ten thousand processes belong to the container; its hundred thousand listening
-    // sockets bind in two seconds and are built here (ADR-0488).
-    let sockets = SocketPopulation::of(PROFILE_L);
+    // sockets bind in two seconds and are built here (ADR-0488). A host whose hard descriptor
+    // limit is below the profile's cardinality — the GitHub runner's is about 65 536 — has not
+    // found a defect in the product, so that is a skip and not a failure (ADR-0517).
+    let sockets = match SocketPopulation::try_of(PROFILE_L) {
+        Ok(sockets) => sockets,
+        Err(shortfall) => {
+            skipped(
+                SkipReason::MissingPrivilege,
+                &format!(
+                    "Profile L places {} listening sockets and {shortfall}",
+                    PROFILE_L.sockets
+                ),
+            );
+            return;
+        }
+    };
     let home = scratch();
 
     let run = run_bounded(
