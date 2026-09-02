@@ -25,13 +25,11 @@ ono-kuang-protocol.workspace = true
 ono-value.workspace = true
 ono-parser.workspace = true
 ono-spatial-core.workspace = true
+ono-testkit.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 toml.workspace = true
-
-[dev-dependencies]
-ono-testkit.workspace = true
 
 [lints]
 workspace = true

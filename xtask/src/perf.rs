@@ -111,6 +111,12 @@ pub struct Measurement {
     pub commit: String,
     /// The named reference environment it was measured on (§32.4, §37.2).
     pub environment: String,
+    /// Whether the figure is cold, warm or a cache hit (§37.3).
+    pub temperature: Temperature,
+    /// How many iterations produced it (§37.4).
+    pub iterations: u32,
+    /// Which build profile produced the binary, so a debug figure cannot pass as a release one.
+    pub build: String,
     /// How many values the run produced.
     pub values: f64,
     /// The p95 of the run's own distribution (§37.4).
@@ -137,8 +143,53 @@ impl Measurement {
 
     /// How a record names itself in a message.
     fn label(&self) -> String {
-        format!("{} at Profile {}", self.benchmark, self.profile)
+        format!(
+            "{} at Profile {} ({})",
+            self.benchmark,
+            self.profile,
+            self.temperature.as_str()
+        )
     }
+
+    /// The record as Appendix F.4's document.
+    #[must_use]
+    pub fn to_json(&self) -> Json {
+        let mut row = serde_json::Map::new();
+        row.insert("benchmark".to_owned(), Json::from(self.benchmark.clone()));
+        row.insert("profile".to_owned(), Json::from(self.profile.clone()));
+        row.insert("commit".to_owned(), Json::from(self.commit.clone()));
+        row.insert(
+            "environment".to_owned(),
+            Json::from(self.environment.clone()),
+        );
+        row.insert(
+            "temperature".to_owned(),
+            Json::from(self.temperature.as_str()),
+        );
+        row.insert("iterations".to_owned(), Json::from(self.iterations));
+        row.insert("build".to_owned(), Json::from(self.build.clone()));
+        row.insert("values".to_owned(), rounded(self.values));
+        row.insert("p95_ms".to_owned(), rounded(self.p95_ms));
+        for (field, value) in &self.metrics {
+            row.insert((*field).to_owned(), value.map_or(Json::Null, rounded));
+        }
+        Json::Object(row)
+    }
+}
+
+/// A figure at three decimal places, so a record does not carry noise it cannot justify.
+fn rounded(value: f64) -> Json {
+    serde_json::Number::from_f64(round3(value)).map_or(Json::Null, Json::Number)
+}
+
+/// A figure at three decimal places.
+///
+/// Applied where a measurement is *made*, not only where it is written, so the record a runner
+/// hands back and the record the baseline holds are the same record. A microsecond of a
+/// millisecond is below the noise floor of anything measured through a process boundary; keeping
+/// it would make two equal runs compare unequal.
+fn round3(value: f64) -> f64 {
+    (value * 1000.0).round() / 1000.0
 }
 
 /// The checked-in baseline of §32.4.
@@ -205,6 +256,13 @@ pub enum Comparison {
     Regressed(Vec<Regression>),
     /// The baseline holds no record for this benchmark at this profile.
     Unmeasured,
+    /// The result ran too few iterations to qualify a release (§37.4).
+    Underpowered {
+        /// How many iterations it ran.
+        iterations: u32,
+        /// How many §37.4 requires.
+        required: u32,
+    },
     /// The result was measured somewhere the baseline does not describe.
     ForeignEnvironment {
         /// The environment the baseline names.
@@ -278,6 +336,25 @@ impl Baseline {
             .find(|record| record.benchmark == benchmark && record.profile == profile)
     }
 
+    /// The record for one benchmark at one profile and one temperature.
+    ///
+    /// §37.3: *"A warm-cache number MUST not be advertised as cold performance."* Temperature is
+    /// therefore part of the key rather than a field beside it, so a warm figure simply has no
+    /// cold baseline to be held against.
+    #[must_use]
+    pub fn record_at(
+        &self,
+        benchmark: &str,
+        profile: &str,
+        temperature: Temperature,
+    ) -> Option<&Measurement> {
+        self.measurements.iter().find(|record| {
+            record.benchmark == benchmark
+                && record.profile == profile
+                && record.temperature == temperature
+        })
+    }
+
     /// What `measured` says about this baseline, at `tolerance`.
     #[must_use]
     pub fn compare(&self, measured: &Measurement, tolerance: Tolerance) -> Comparison {
@@ -287,7 +364,17 @@ impl Baseline {
                 measured: measured.environment.clone(),
             };
         }
-        let Some(baseline) = self.record(&measured.benchmark, &measured.profile) else {
+        if tolerance == Tolerance::Absolute && measured.iterations < MIN_ITERATIONS {
+            // §37.4: "Single-run best-case timings MUST NOT define release success." Absolute
+            // tolerance is release qualification, and a record below the floor cannot supply it.
+            return Comparison::Underpowered {
+                iterations: measured.iterations,
+                required: MIN_ITERATIONS,
+            };
+        }
+        let Some(baseline) =
+            self.record_at(&measured.benchmark, &measured.profile, measured.temperature)
+        else {
             return Comparison::Unmeasured;
         };
 
@@ -388,6 +475,43 @@ fn measurement(row: &Json) -> Result<Measurement, Vec<Problem>> {
 
     let values = required_number(row, "values", &label, &mut problems);
     let p95_ms = required_number(row, "p95_ms", &label, &mut problems);
+    let build = required_string(row, "build", &mut problems);
+    let iterations = u32::try_from(row.get("iterations").and_then(Json::as_u64).unwrap_or_else(
+        || {
+            problems.push(Problem::new(
+                BASELINE,
+                format!(
+                    "{label} does not state how many iterations produced it; v0.4.1 §37.4 wants \
+                     at least {MIN_ITERATIONS} for a short benchmark, and \"single-run best-case \
+                     timings MUST NOT define release success\""
+                ),
+            ));
+            0
+        },
+    ))
+    .unwrap_or(0);
+    let temperature = match row.get("temperature").and_then(Json::as_str) {
+        Some(name) => Temperature::from_name(name).unwrap_or_else(|| {
+            problems.push(Problem::new(
+                BASELINE,
+                format!(
+                    "{label} declares the temperature `{name}`; v0.4.1 §37.3 distinguishes cold, \
+                     warm and cache_hit"
+                ),
+            ));
+            Temperature::Cold
+        }),
+        None => {
+            problems.push(Problem::new(
+                BASELINE,
+                format!(
+                    "{label} does not say whether it is a cold or a warm figure; v0.4.1 §37.3: \
+                     \"A warm-cache number MUST not be advertised as cold performance\""
+                ),
+            ));
+            Temperature::Cold
+        }
+    };
 
     if problems.is_empty() {
         Ok(Measurement {
@@ -395,6 +519,9 @@ fn measurement(row: &Json) -> Result<Measurement, Vec<Problem>> {
             profile,
             commit,
             environment,
+            temperature,
+            iterations,
+            build,
             values,
             p95_ms,
             metrics,
@@ -431,3 +558,553 @@ fn required_number(row: &Json, field: &str, label: &str, problems: &mut Vec<Prob
         }
     }
 }
+
+// ------------------------------------------------------------------------------------------
+// §37: the benchmark command, the reference environment, warm and cold.
+// ------------------------------------------------------------------------------------------
+
+/// Where the reference environment is declared, relative to the repository root.
+pub const ENVIRONMENT: &str = "docs/spec/hardening/performance_environment.yaml";
+
+/// The iteration floor of v0.4.1 §37.4.
+///
+/// > Performance acceptance SHOULD use at least 20 iterations for short benchmarks and report
+/// > median plus p95. Single-run best-case timings MUST NOT define release success.
+///
+/// The second sentence is a MUST, so it is enforced rather than recommended: a record below this
+/// floor cannot qualify a release, whatever its figures say.
+pub const MIN_ITERATIONS: u32 = 20;
+
+/// §37.2's six facts about the machine absolute performance gates are measured on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceEnvironment {
+    /// How a record names it.
+    pub id: String,
+    /// Every declared field, so a missing one can be reported by name.
+    fields: std::collections::BTreeMap<String, String>,
+}
+
+impl ReferenceEnvironment {
+    /// Whether `field` is stated and non-empty.
+    #[must_use]
+    pub fn states(&self, field: &str) -> bool {
+        self.fields
+            .get(field)
+            .is_some_and(|value| !value.trim().is_empty())
+    }
+
+    /// What `field` says, if it is stated.
+    #[must_use]
+    pub fn field(&self, field: &str) -> Option<&str> {
+        self.fields.get(field).map(String::as_str)
+    }
+}
+
+/// The reference environment of §37.2, as the registry declares it.
+///
+/// # Errors
+///
+/// Returns the reason the registry could not be read, so a caller can report it rather than
+/// silently measuring against an unnamed machine.
+pub fn reference_environment(root: &std::path::Path) -> Result<ReferenceEnvironment, String> {
+    let path = root.join(ENVIRONMENT);
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text)
+        .map_err(|error| format!("{} is not valid YAML: {error}", path.display()))?;
+    let row = document
+        .get("environment")
+        .ok_or_else(|| format!("{} declares no `environment`", path.display()))?;
+    let mapping = row
+        .as_mapping()
+        .ok_or_else(|| format!("{}'s `environment` is not a mapping", path.display()))?;
+
+    let mut fields = std::collections::BTreeMap::new();
+    for (key, value) in mapping {
+        let Some(name) = key.as_str() else { continue };
+        let stated = match value {
+            serde_yaml_ng::Value::String(text) => text.trim().to_owned(),
+            serde_yaml_ng::Value::Number(number) => number.to_string(),
+            _ => continue,
+        };
+        fields.insert(name.to_owned(), stated);
+    }
+    let id = fields
+        .get("id")
+        .cloned()
+        .ok_or_else(|| format!("{} declares no environment `id`", path.display()))?;
+    Ok(ReferenceEnvironment { id, fields })
+}
+
+/// Whether a run measured a cold process, a warm one, or a cache hit (v0.4.1 §37.3).
+///
+/// > Benchmarks MUST distinguish: cold startup / uncached query; warm process with provider
+/// > initialized; cache-hit behavior where caches are part of product semantics. A warm-cache
+/// > number MUST not be advertised as cold performance.
+///
+/// The last sentence is why this is part of a record's identity rather than a note on it: a warm
+/// figure has no cold baseline to be compared against, and the comparison says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Temperature {
+    /// A fresh process answering a query nothing has answered before.
+    Cold,
+    /// A process whose providers are already initialised, answering again.
+    Warm,
+    /// A query answered from a cache that is part of the product's semantics.
+    CacheHit,
+}
+
+impl Temperature {
+    /// The word a record uses.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cold => "cold",
+            Self::Warm => "warm",
+            Self::CacheHit => "cache_hit",
+        }
+    }
+
+    /// The temperature that word names.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "cold" => Some(Self::Cold),
+            "warm" => Some(Self::Warm),
+            "cache_hit" => Some(Self::CacheHit),
+            _ => None,
+        }
+    }
+}
+
+/// One declared benchmark: what to run, at what cardinality, at what temperature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Benchmark {
+    /// What it measures — `spatial.map_first_frame`, `spatial.selector_miss`.
+    pub id: &'static str,
+    /// The reference cardinality profile the host is held at (§32.2, ADR-0488).
+    pub profile: &'static str,
+    /// Cold, warm or cache hit (§37.3).
+    pub temperature: Temperature,
+    /// What runs before the measured script, in the same process, for a warm measurement.
+    pub warmup: Option<&'static str>,
+    /// The script the figure is about.
+    pub script: &'static str,
+}
+
+/// The marker a warm benchmark prints between its warm-up and the script being measured.
+///
+/// A warm figure has to be measured from the moment the process is warm, and the only place that
+/// moment is observable from outside is the output stream. So the warm-up ends by printing this,
+/// and the clock starts on the byte that carries it.
+const MARK: &str = "ONO-PERF-MARK";
+
+/// The benchmarks `cargo xtask perf` runs (§37.1).
+///
+/// Every one of them runs the real binary against a real host held at a declared profile: §32.2's
+/// rule is that "provider/planner code exercised by the benchmark MUST match production logic",
+/// and the shortest way to obey it is to measure the product rather than a harness around it.
+pub const BENCHMARKS: &[Benchmark] = &[
+    Benchmark {
+        id: "shell.cold_start",
+        profile: "S",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "echo ready",
+    },
+    Benchmark {
+        id: "spatial.look",
+        profile: "S",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "look --json",
+    },
+    Benchmark {
+        id: "spatial.look",
+        profile: "S",
+        temperature: Temperature::Warm,
+        warmup: Some("look --json | count"),
+        script: "look --json",
+    },
+    Benchmark {
+        id: "spatial.map_first_frame",
+        profile: "S",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "map --live --json | take 1 | to json",
+    },
+    Benchmark {
+        id: "spatial.selector_miss",
+        profile: "S",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "enter no-such-place-1a2b3c",
+    },
+    Benchmark {
+        id: "process.enumeration",
+        profile: "S",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "get process | to json",
+    },
+];
+
+impl Benchmark {
+    /// A benchmark that measures the harness rather than the product.
+    ///
+    /// The runner has to be exercised by a test, and the declared set builds populations and
+    /// takes minutes. This one starts the binary, prints one value and exits, so what it proves
+    /// is that a record comes out complete — which is the runner's contract.
+    #[must_use]
+    pub fn probe() -> Self {
+        Self {
+            id: "harness.probe",
+            profile: "S",
+            temperature: Temperature::Cold,
+            warmup: None,
+            script: "echo ready",
+        }
+    }
+
+    /// The script the runner actually gives the shell.
+    fn full_script(&self) -> String {
+        match self.warmup {
+            Some(warmup) => format!("{warmup} | count; echo {MARK}; {}", self.script),
+            None => self.script.to_owned(),
+        }
+    }
+}
+
+/// One run of one benchmark, measured from outside the process.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Sample {
+    /// Milliseconds from spawn (or from the warm-up marker) to the first byte of a value.
+    to_first_ms: f64,
+    /// Milliseconds from spawn to exit.
+    to_complete_ms: f64,
+    /// Peak resident set the kernel reported while it ran, when it could be sampled.
+    peak_rss_bytes: Option<u64>,
+    /// How many values it produced.
+    values: f64,
+    /// How many bytes of output it produced.
+    bytes: u64,
+}
+
+/// Runs the declared benchmarks against a built binary (§37.1).
+#[derive(Debug, Clone)]
+pub struct Runner {
+    binary: std::path::PathBuf,
+    environment: String,
+    commit: String,
+    iterations: u32,
+    build: String,
+}
+
+impl Runner {
+    /// A runner that measures `binary` and files its records under `environment`.
+    #[must_use]
+    pub fn new(
+        binary: impl Into<std::path::PathBuf>,
+        environment: impl Into<String>,
+        commit: impl Into<String>,
+    ) -> Self {
+        Self {
+            binary: binary.into(),
+            environment: environment.into(),
+            commit: commit.into(),
+            iterations: MIN_ITERATIONS,
+            build: "release".to_owned(),
+        }
+    }
+
+    /// How many iterations each benchmark runs (§37.4).
+    #[must_use]
+    pub fn iterations(mut self, iterations: u32) -> Self {
+        self.iterations = iterations;
+        self
+    }
+
+    /// Which build profile produced the binary, recorded so a debug figure cannot be read as a
+    /// release one (§37.2's release build flags).
+    #[must_use]
+    pub fn build(mut self, build: impl Into<String>) -> Self {
+        self.build = build.into();
+        self
+    }
+
+    /// Measures one benchmark and returns its §32.3 record.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the binary cannot be spawned at all, which means there is nothing to measure.
+    #[must_use]
+    pub fn run(&self, benchmark: &Benchmark) -> Measurement {
+        let script = benchmark.full_script();
+        let measured = benchmark.warmup.is_some();
+        let samples: Vec<Sample> = (0..self.iterations)
+            .map(|_| self.sample(&script, measured))
+            .collect();
+
+        let firsts: Vec<f64> = samples.iter().map(|sample| sample.to_first_ms).collect();
+        let completes: Vec<f64> = samples.iter().map(|sample| sample.to_complete_ms).collect();
+        let values = median(
+            &samples
+                .iter()
+                .map(|sample| sample.values)
+                .collect::<Vec<_>>(),
+        );
+        let complete_ms = median(&completes);
+        let per_second = if complete_ms > 0.0 {
+            values * 1000.0 / complete_ms
+        } else {
+            0.0
+        };
+
+        Measurement {
+            benchmark: benchmark.id.to_owned(),
+            profile: benchmark.profile.to_owned(),
+            commit: self.commit.clone(),
+            environment: self.environment.clone(),
+            temperature: benchmark.temperature,
+            iterations: self.iterations,
+            build: self.build.clone(),
+            values: round3(values),
+            p95_ms: round3(percentile(&firsts, 95.0)),
+            metrics: vec![
+                ("time_to_first_ms", Some(round3(median(&firsts)))),
+                ("time_to_complete_ms", Some(round3(complete_ms))),
+                (
+                    "peak_rss_bytes",
+                    samples
+                        .iter()
+                        .filter_map(|sample| sample.peak_rss_bytes)
+                        .max()
+                        .map(|bytes| bytes as f64),
+                ),
+                ("values_per_second", Some(round3(per_second))),
+                (
+                    "estimated_bytes",
+                    Some(round3(median(
+                        &samples
+                            .iter()
+                            .map(|sample| sample.bytes as f64)
+                            .collect::<Vec<_>>(),
+                    ))),
+                ),
+                ("cancel_ms", self.cancellation(&script).map(round3)),
+            ],
+        }
+    }
+
+    /// One iteration.
+    #[allow(
+        clippy::expect_used,
+        reason = "a benchmark whose binary will not start or whose pipe was not piped has \
+                  nothing to measure, and reporting a zero for it would be worse (v0.4.1 §2.6)"
+    )]
+    fn sample(&self, script: &str, from_marker: bool) -> Sample {
+        use std::io::Read;
+        use std::time::Instant;
+
+        let started = Instant::now();
+        let mut child = std::process::Command::new(&self.binary)
+            .args(["-c", script])
+            .env("NO_COLOR", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the ono binary must be built before a benchmark runs it");
+        let pid = child.id();
+
+        // Read stdout on a worker that timestamps the first byte that is not the warm-up's, so
+        // "time to first value" is what a user would have waited for rather than what the whole
+        // pipeline took.
+        let mut stdout = child.stdout.take().expect("stdout was piped");
+        let reader = std::thread::spawn(move || {
+            let mut text = String::new();
+            let mut buffer = [0u8; 8192];
+            let mut first: Option<Instant> = None;
+            let mut clock: Option<Instant> = None;
+            loop {
+                match stdout.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => {
+                        let chunk = String::from_utf8_lossy(&buffer[..count]);
+                        let at = Instant::now();
+                        if from_marker {
+                            if clock.is_none() && (text.contains(MARK) || chunk.contains(MARK)) {
+                                clock = Some(at);
+                            } else if clock.is_some() && first.is_none() && !chunk.trim().is_empty()
+                            {
+                                first = Some(at);
+                            }
+                        } else if first.is_none() && !chunk.trim().is_empty() {
+                            first = Some(at);
+                        }
+                        text.push_str(&chunk);
+                    }
+                }
+            }
+            (text, clock, first)
+        });
+
+        let mut peak = None;
+        loop {
+            if let Some(rss) = peak_rss(pid) {
+                peak = Some(peak.map_or(rss, |seen: u64| seen.max(rss)));
+            }
+            match child.try_wait() {
+                Ok(Some(_)) | Err(_) => break,
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(2)),
+            }
+        }
+        let finished = Instant::now();
+        let _ = child.wait();
+        let (text, clock, first) = reader.join().unwrap_or_default();
+
+        let zero = clock.unwrap_or(started);
+        Sample {
+            to_first_ms: first.map_or_else(
+                || finished.saturating_duration_since(zero).as_secs_f64() * 1000.0,
+                |at| at.saturating_duration_since(zero).as_secs_f64() * 1000.0,
+            ),
+            to_complete_ms: finished.saturating_duration_since(started).as_secs_f64() * 1000.0,
+            peak_rss_bytes: peak,
+            values: count_values(&text, from_marker),
+            bytes: text.len() as u64,
+        }
+    }
+
+    /// Milliseconds from an interrupt to the process being gone (§32.3's cancellation latency).
+    ///
+    /// A benchmark that finishes before it can be interrupted has no cancellation latency to
+    /// report, and `None` says so rather than reporting a zero nobody measured (§2.6).
+    fn cancellation(&self, script: &str) -> Option<f64> {
+        use std::time::Instant;
+
+        let mut child = std::process::Command::new(&self.binary)
+            .args(["-c", script])
+            .env("NO_COLOR", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            let _ = child.wait();
+            return None;
+        }
+
+        let signalled = Instant::now();
+        let _ = std::process::Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status();
+        let deadline = signalled + std::time::Duration::from_secs(10);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) | Err(_) => break,
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(1)),
+            }
+        }
+        let stopped = Instant::now();
+        let _ = child.wait();
+        Some(stopped.saturating_duration_since(signalled).as_secs_f64() * 1000.0)
+    }
+}
+
+/// The peak resident set of a live process, from `/proc`.
+fn peak_rss(pid: u32) -> Option<u64> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|value| value.split_whitespace().next()?.parse::<u64>().ok())
+        .map(|kib| kib * 1024)
+}
+
+/// How many values a run produced.
+///
+/// A `to json` stage prints the stream as one array, so its length is the count; anything else
+/// prints a line per value. Neither is a guess about the implementation — both are what the
+/// output says.
+fn count_values(text: &str, after_marker: bool) -> f64 {
+    let body = if after_marker {
+        text.split_once(MARK).map_or(text, |(_, rest)| rest)
+    } else {
+        text
+    };
+    let trimmed = body.trim();
+    if let Ok(serde_json::Value::Array(values)) = serde_json::from_str::<Json>(trimmed) {
+        return values.len() as f64;
+    }
+    trimmed
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count() as f64
+}
+
+/// The median of a sample, or zero for an empty one.
+fn median(samples: &[f64]) -> f64 {
+    percentile(samples, 50.0)
+}
+
+/// The `percent`th percentile of a sample, by nearest rank.
+fn percentile(samples: &[f64], percent: f64) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let rank = ((percent / 100.0) * sorted.len() as f64).ceil() as usize;
+    sorted[rank.clamp(1, sorted.len()) - 1]
+}
+
+/// Writes a baseline document (§32.4, Appendix F.4).
+///
+/// # Errors
+///
+/// Returns the reason the file could not be written.
+pub fn write_baseline(
+    path: &std::path::Path,
+    environment: impl Into<String>,
+    measurements: &[Measurement],
+) -> Result<(), String> {
+    let environment = environment.into();
+    let document = serde_json::json!({
+        "version": 1,
+        "note": NOTE,
+        "environment": environment,
+        // The reference environment is a virtualised slice of a shared machine (§37.2's `notes`),
+        // so what else it was doing is part of what a figure means. Recorded rather than assumed
+        // away, because §32.4's absolute targets are read off this file by a later run.
+        "load_average": load_average(),
+        "measurements": measurements.iter().map(Measurement::to_json).collect::<Vec<_>>(),
+    });
+    let text = serde_json::to_string_pretty(&document)
+        .map_err(|error| format!("cannot render the baseline: {error}"))?;
+    std::fs::write(path, format!("{text}\n"))
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
+/// The machine's one-minute load average, or `null` where it cannot be read.
+fn load_average() -> Json {
+    std::fs::read_to_string("/proc/loadavg")
+        .ok()
+        .and_then(|text| text.split_whitespace().next()?.parse::<f64>().ok())
+        .map_or(Json::Null, rounded)
+}
+
+/// What the baseline file says about itself.
+const NOTE: &str = "The regression baseline of v0.4.1 §32.4. Every record carries the six \
+                    metrics of §32.3 in the shape of Appendix F.4, names the reference \
+                    environment of §37.2 it was measured on, and states whether it is a cold or \
+                    a warm figure (§37.3). Written by `cargo xtask perf --write-baseline`; a \
+                    figure edited by hand is a figure nobody measured. `cargo xtask spec-check` \
+                    refuses a record that is not a complete §32.3 result.";

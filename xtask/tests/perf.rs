@@ -24,7 +24,7 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use xtask::perf::{Baseline, Comparison, Tolerance};
+use xtask::perf::{Baseline, Benchmark, Comparison, Runner, Tolerance};
 
 /// A record carrying everything §32.3 and Appendix F.4 require.
 fn complete_record(benchmark: &str) -> String {
@@ -34,6 +34,9 @@ fn complete_record(benchmark: &str) -> String {
           "profile": "M",
           "commit": "0000000000000000000000000000000000000000",
           "environment": "reference-2026-09",
+          "temperature": "cold",
+          "iterations": 20,
+          "build": "release",
           "time_to_first_ms": 120.0,
           "time_to_complete_ms": 900.0,
           "p95_ms": 1000.0,
@@ -191,5 +194,152 @@ fn baseline_path() -> std::path::PathBuf {
     let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.pop();
     path.push("docs/spec/hardening/performance_baseline.json");
+    path
+}
+
+// --- §37: the benchmark command, the reference environment, warm and cold --------------------
+
+#[test]
+fn should_run_the_declared_benchmarks_and_write_their_records() {
+    // §37.1: "benchmark execution must be discoverable and reproducible". The runner is what
+    // `cargo xtask perf` calls, so exercising it here exercises the command; what this test may
+    // not do is run the real declared set, which builds populations and takes minutes.
+    let home = ono_testkit::scratch();
+    let runner = Runner::new(ono_testkit::ono_binary(), environment(), "0".repeat(40))
+        .iterations(3)
+        .build("debug");
+
+    let measured = runner.run(&Benchmark::probe());
+
+    assert_eq!(
+        measured.iterations, 3,
+        "a record states how many iterations produced it (§37.4)"
+    );
+    assert!(
+        measured
+            .metric("time_to_first_ms")
+            .is_some_and(|ms| ms > 0.0),
+        "a benchmark that produced output has a time to first value, got {:?}",
+        measured.metric("time_to_first_ms")
+    );
+    assert!(
+        measured.metric("values_per_second").is_some(),
+        "§32.3 requires values per second of every benchmark"
+    );
+
+    // And the record round-trips through the baseline file the runner writes.
+    let path = home.path().join("baseline.json");
+    xtask::perf::write_baseline(&path, environment(), std::slice::from_ref(&measured))
+        .expect("the runner writes its records");
+    let written =
+        Baseline::parse(&std::fs::read_to_string(&path).expect("the baseline was written"))
+            .expect("what the runner writes is a valid baseline");
+    assert_eq!(
+        written.measurements,
+        vec![measured],
+        "a record written and read back is the record that was measured"
+    );
+}
+
+#[test]
+fn should_name_the_reference_environment_on_every_recorded_figure() {
+    // §37.2: the release documentation names CPU, cores, RAM, kernel, image, toolchain and
+    // release build flags. The registry is where those live, and a figure that did not name one
+    // of them is a figure about an unknown machine (§32.4).
+    let declared = xtask::perf::reference_environment(&repository_root())
+        .expect("docs/spec/hardening/performance_environment.yaml names the environment of §37.2");
+    for field in [
+        "cpu_model",
+        "cpu_cores",
+        "ram_bytes",
+        "kernel",
+        "distribution",
+        "rust_toolchain",
+        "release_build_flags",
+    ] {
+        assert!(
+            declared.states(field),
+            "v0.4.1 §37.2 requires the reference environment to name `{field}`"
+        );
+    }
+
+    let baseline =
+        Baseline::parse(&std::fs::read_to_string(baseline_path()).expect("the baseline exists"))
+            .expect("the baseline parses");
+    assert_eq!(
+        baseline.environment, declared.id,
+        "the baseline is tied to the environment the registry names (§32.4)"
+    );
+    for record in &baseline.measurements {
+        assert_eq!(
+            record.environment, declared.id,
+            "`{}` was measured on `{}` and filed in a baseline for `{}`",
+            record.benchmark, record.environment, declared.id
+        );
+    }
+}
+
+#[test]
+fn should_distinguish_a_warm_measurement_from_a_cold_one() {
+    // §37.3: "A warm-cache number MUST not be advertised as cold performance." So temperature is
+    // part of a record's identity, and comparing across it is not a comparison at all.
+    let cold = complete_record("spatial.look");
+    let warm = complete_record("spatial.look")
+        .replace(r#""temperature": "cold""#, r#""temperature": "warm""#);
+    assert_ne!(cold, warm, "the fixture must actually differ");
+
+    let baseline = Baseline::parse(&baseline_of(&[cold])).expect("the baseline parses");
+    let measured = Baseline::parse(&baseline_of(&[warm]))
+        .expect("the measurement parses")
+        .measurements
+        .remove(0);
+
+    assert!(
+        matches!(
+            baseline.compare(&measured, Tolerance::percent(10.0)),
+            Comparison::Unmeasured
+        ),
+        "a warm figure has no cold baseline to be held against; §37.3 forbids advertising one as \
+         the other"
+    );
+
+    // The declared set carries both, so the distinction is measured rather than merely possible.
+    let temperatures: std::collections::BTreeSet<_> = xtask::perf::BENCHMARKS
+        .iter()
+        .map(|benchmark| benchmark.temperature)
+        .collect();
+    assert!(
+        temperatures.len() >= 2,
+        "§37.3 requires benchmarks to distinguish cold from warm, and the declared set is all \
+         {temperatures:?}"
+    );
+
+    // §37.4: "Single-run best-case timings MUST NOT define release success."
+    let single = Baseline::parse(&baseline_of(&[
+        complete_record("spatial.look").replace(r#""iterations": 20"#, r#""iterations": 1"#)
+    ]))
+    .expect("the measurement parses")
+    .measurements
+    .remove(0);
+    assert!(
+        matches!(
+            baseline.compare(&single, Tolerance::Absolute),
+            Comparison::Underpowered { .. }
+        ),
+        "one iteration cannot qualify a release (§37.4)"
+    );
+}
+
+/// The environment the checked-in baseline is tied to.
+fn environment() -> String {
+    xtask::perf::reference_environment(&repository_root())
+        .expect("the reference environment is declared")
+        .id
+}
+
+/// The repository root.
+fn repository_root() -> std::path::PathBuf {
+    let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.pop();
     path
 }
