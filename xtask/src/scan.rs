@@ -1432,3 +1432,358 @@ fn brace_delta(line: &str) -> (usize, usize) {
     }
     (opens, closes)
 }
+
+// --- v0.4.1 §38.2 and §38.3: the declared skip set, and the two ways a run may break it --------
+
+/// The path, below the repository root, of the `expected_test_skips` registry of §52.1.
+pub const EXPECTED_TEST_SKIPS: &str = "docs/spec/hardening/expected_test_skips.yaml";
+
+/// A test that can announce a skip, and the §38.4 category it announces.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SkipSite {
+    /// `crates/<crate>/tests/<file>.rs::<test>` — the form `docs/ACCEPTANCE.md` names a proof by.
+    pub id: String,
+    /// The §38.4 category, as `SkipReason::category` spells it.
+    pub category: String,
+}
+
+/// The `expected_test_skips` registry: every skip the tree can take, and the ones the canonical
+/// CI environment is expected to take.
+#[derive(Debug, Clone, Default)]
+pub struct ExpectedSkips {
+    /// Every test that can announce a skip, with its category.
+    pub declared: Vec<SkipSite>,
+    /// The test ids §38.2 expects the canonical CI environment to skip. §38.2 prefers this
+    /// empty; §38.3 makes anything outside it a failure in both directions.
+    pub canonical_ci: Vec<String>,
+}
+
+impl ExpectedSkips {
+    /// Reads the registry from `root`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the file when it is missing or does not hold the two lists.
+    pub fn read(root: &Path) -> Result<Self, String> {
+        let path = root.join(EXPECTED_TEST_SKIPS);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("{EXPECTED_TEST_SKIPS}: {error}"))?;
+        Self::parse(&text)
+    }
+
+    /// Reads the registry from its text.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the document does not hold the two lists in the declared shape.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(text)
+            .map_err(|error| format!("{EXPECTED_TEST_SKIPS} is not readable YAML: {error}"))?;
+        let mut declared = Vec::new();
+        let rows = document
+            .get("declared")
+            .and_then(serde_yaml_ng::Value::as_sequence)
+            .ok_or_else(|| format!("{EXPECTED_TEST_SKIPS} declares no `declared:` list"))?;
+        for row in rows {
+            let id = row
+                .get("id")
+                .and_then(serde_yaml_ng::Value::as_str)
+                .ok_or_else(|| format!("{EXPECTED_TEST_SKIPS}: a declared skip has no `id`"))?;
+            let category = row
+                .get("category")
+                .and_then(serde_yaml_ng::Value::as_str)
+                .ok_or_else(|| format!("{EXPECTED_TEST_SKIPS}: `{id}` declares no `category`"))?;
+            declared.push(SkipSite {
+                id: id.to_owned(),
+                category: category.to_owned(),
+            });
+        }
+        let canonical_ci = document
+            .get("canonical_ci")
+            .and_then(|section| section.get("expected_skips"))
+            .and_then(serde_yaml_ng::Value::as_sequence)
+            .ok_or_else(|| {
+                format!("{EXPECTED_TEST_SKIPS} declares no `canonical_ci.expected_skips:` list")
+            })?
+            .iter()
+            .filter_map(|entry| entry.as_str().map(ToOwned::to_owned))
+            .collect();
+        declared.sort();
+        Ok(Self {
+            declared,
+            canonical_ci,
+        })
+    }
+}
+
+/// Every test in the tree that can announce a skip, with the category it announces.
+///
+/// A test announces directly when its body names a [`SkipReason`](ono_testkit::SkipReason), and
+/// indirectly when a guard calls a helper in the same file that does — the shape `unprivileged()`
+/// gives twenty-one callers. Both are read here, because §38.2's registry has to hold what a run
+/// can actually produce rather than what is written at one of the two places.
+#[must_use]
+pub fn skip_sites(root: &Path) -> Vec<SkipSite> {
+    let mut sites = Vec::new();
+    for file in rust_sources(root) {
+        let relative = relative(root, &file);
+        if !relative.contains("/tests/") || is_scanner_source(&relative) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        sites.extend(skip_sites_in(&relative, &text));
+    }
+    sites.sort();
+    sites.dedup();
+    sites
+}
+
+/// The skip sites of one file's text.
+fn skip_sites_in(relative: &str, text: &str) -> Vec<SkipSite> {
+    let helpers = announcing_helper_categories(text);
+    let mut sites = Vec::new();
+    let mut current: Option<(String, Vec<String>)> = None;
+    let mut depth = 0usize;
+    let mut pending_test = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if current.is_none() {
+            if is_test_attribute(trimmed) {
+                pending_test = true;
+            } else if pending_test && let Some(name) = function_name(trimmed) {
+                current = Some((name, Vec::new()));
+                pending_test = false;
+                depth = 0;
+            }
+        }
+        if let Some((_, categories)) = current.as_mut() {
+            categories.extend(categories_named_on(line));
+            for (helper, category) in &helpers {
+                if line.contains(&format!("{helper}(")) {
+                    categories.push(category.clone());
+                }
+            }
+        }
+        let (opens, closes) = brace_delta(line);
+        depth += opens;
+        depth = depth.saturating_sub(closes);
+        if current.is_some()
+            && depth == 0
+            && (opens > 0 || closes > 0)
+            && let Some((name, mut categories)) = current.take()
+        {
+            categories.sort();
+            categories.dedup();
+            for category in categories {
+                sites.push(SkipSite {
+                    id: format!("{relative}::{name}"),
+                    category,
+                });
+            }
+        }
+    }
+    sites
+}
+
+/// The six categories of v0.4.1 §38.4, as `SkipReason::category` spells them.
+pub const SKIP_CATEGORIES: [&str; 6] = [
+    "missing_kernel_feature",
+    "missing_privilege",
+    "unsupported_arch",
+    "unsupported_distribution",
+    "external_tool_unavailable",
+    "fixture_not_applicable",
+];
+
+/// The §38.4 categories a line names, as `SkipReason::MissingPrivilege` names one.
+///
+/// Only the six count: `SkipReason::ALL` and `SkipReason::from_category` are the type's own
+/// surface rather than a category, and a taxonomy that grew whatever an identifier happened to
+/// spell would not be a taxonomy.
+fn categories_named_on(line: &str) -> Vec<String> {
+    let mut categories = Vec::new();
+    for (index, _) in line.match_indices("SkipReason::") {
+        let variant: String = line[index + "SkipReason::".len()..]
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .collect();
+        let category = snake_case(&variant);
+        if SKIP_CATEGORIES.contains(&category.as_str()) {
+            categories.push(category);
+        }
+    }
+    categories
+}
+
+/// `MissingKernelFeature` as `missing_kernel_feature`, the token §38.4 fixes.
+fn snake_case(variant: &str) -> String {
+    let mut out = String::new();
+    for (index, character) in variant.chars().enumerate() {
+        if character.is_uppercase() && index > 0 {
+            out.push('_');
+        }
+        out.extend(character.to_lowercase());
+    }
+    out
+}
+
+/// The functions in `text` that announce a skip, and the category each announces.
+///
+/// A helper announces when its body calls `skipped` or `require`; the category is the first
+/// `SkipReason::…` its body names, which is where rustfmt puts it whether the call fits on one
+/// line or not.
+fn announcing_helper_categories(text: &str) -> Vec<(String, String)> {
+    let mut helpers = Vec::new();
+    let mut current: Option<(String, bool, Option<String>)> = None;
+    let mut depth = 0usize;
+    for line in text.lines() {
+        if current.is_none()
+            && let Some(name) = function_name(line)
+        {
+            current = Some((name, false, None));
+            depth = 0;
+        }
+        if let Some((_, announces, category)) = current.as_mut() {
+            if line.contains("skipped(") || line.contains("require(") {
+                *announces = true;
+            }
+            if category.is_none() {
+                *category = categories_named_on(line).into_iter().next();
+            }
+        }
+        let (opens, closes) = brace_delta(line);
+        depth += opens;
+        depth = depth.saturating_sub(closes);
+        if current.is_some()
+            && depth == 0
+            && (opens > 0 || closes > 0)
+            && let Some((name, announces, Some(category))) = current.take()
+            && announces
+        {
+            helpers.push((name, category));
+        }
+    }
+    helpers
+}
+
+/// Checks that the `expected_test_skips` registry names exactly the skips the tree can take.
+///
+/// §38.2 requires the expected skip set to be declared and its reasons listed in a
+/// machine-readable file. A registry that has fallen behind the tree cannot do that: a skip
+/// nobody declared is one nobody decided to permit, and a declaration whose test no longer skips
+/// is a permission granted to nothing.
+#[must_use]
+pub fn check_expected_skips(root: &Path) -> Vec<Problem> {
+    let expected = match ExpectedSkips::read(root) {
+        Ok(expected) => expected,
+        Err(message) => {
+            return vec![Problem::new(EXPECTED_TEST_SKIPS, message)];
+        }
+    };
+    let observed = skip_sites(root);
+    let mut problems = Vec::new();
+    for site in &observed {
+        if !expected.declared.contains(site) {
+            problems.push(Problem::new(
+                site.id.clone(),
+                format!(
+                    "announces a `{}` skip that `{EXPECTED_TEST_SKIPS}` does not declare. A skip \
+                     nobody declared is a skip nobody decided to permit (v0.4.1 §38.2)",
+                    site.category
+                ),
+            ));
+        }
+    }
+    for site in &expected.declared {
+        if !observed.contains(site) {
+            problems.push(Problem::new(
+                site.id.clone(),
+                format!(
+                    "is declared in `{EXPECTED_TEST_SKIPS}` as a `{}` skip, and no test of that \
+                     name announces one. Delete the row, or restore the skip it permits (v0.4.1 \
+                     §38.2)",
+                    site.category
+                ),
+            ));
+        }
+    }
+    for id in &expected.canonical_ci {
+        if !expected.declared.iter().any(|site| &site.id == id) {
+            problems.push(Problem::new(
+                id.clone(),
+                format!(
+                    "is expected to skip in canonical CI and is not in `{EXPECTED_TEST_SKIPS}`'s \
+                     `declared:` list, so its reason is undeclared (v0.4.1 §38.2)"
+                ),
+            ));
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// Compares the skips a run actually took against the ones the canonical CI environment declares.
+///
+/// §38.3 is bidirectional and this is both halves of it: a skip outside the declared set fails,
+/// *and* a declared skip that did not happen fails. The second is the one #14 needed — five
+/// acceptance cases that had never run were green for as long as nobody counted them.
+///
+/// `log` is the output of a test run. The marker `ono_testkit::skipped` writes is
+/// `SKIPPED <test>: <category>: <detail>`, so the run's own output is the observation and no
+/// second mechanism has to agree with it.
+#[must_use]
+pub fn verify_observed_skips(expected: &ExpectedSkips, log: &str) -> Vec<Problem> {
+    let observed = observed_skips(log);
+    let mut problems = Vec::new();
+    for (test, category) in &observed {
+        if !expected
+            .canonical_ci
+            .iter()
+            .any(|id| id.ends_with(&format!("::{test}")))
+        {
+            problems.push(Problem::new(
+                test.clone(),
+                format!(
+                    "skipped with `{category}` and is not in `{EXPECTED_TEST_SKIPS}`'s \
+                     `canonical_ci.expected_skips:` list. Either the environment stopped \
+                     supplying a prerequisite, or the skip is intended and belongs in the list \
+                     with its reason (v0.4.1 §38.2, §38.3)"
+                ),
+            ));
+        }
+    }
+    for id in &expected.canonical_ci {
+        let test = id.rsplit("::").next().unwrap_or(id);
+        if !observed.iter().any(|(name, _)| name == test) {
+            problems.push(Problem::new(
+                id.clone(),
+                "is expected to skip in this environment and did not. A test that starts \
+                 running again is good news, and the expectation has to say so — remove the row \
+                 (v0.4.1 §38.3)",
+            ));
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// The `SKIPPED <test>: <category>: <detail>` markers a run left in `log`.
+fn observed_skips(log: &str) -> Vec<(String, String)> {
+    let mut observed = Vec::new();
+    for line in log.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("SKIPPED ") else {
+            continue;
+        };
+        let Some((test, rest)) = rest.split_once(": ") else {
+            continue;
+        };
+        let category = rest.split(':').next().unwrap_or_default().trim();
+        observed.push((test.trim().to_owned(), category.to_owned()));
+    }
+    observed.sort();
+    observed.dedup();
+    observed
+}

@@ -32,7 +32,27 @@ step "lint"
 cargo clippy --all-targets --all-features -- -D warnings
 
 step "test"
-cargo test --workspace --all-features
+# The run's output is kept, because v0.4.1 §38.3 needs an observation: the static half of the
+# rule refuses a skip `docs/spec/hardening/expected_test_skips.yaml` does not declare, and only a
+# run can say which of the declared ones actually happened. `ono_testkit::skipped` writes its
+# marker to the real standard error rather than through the captured macros, so a passing test's
+# skip reaches this file (ADR-0513, ADR-0514).
+TEST_LOG="${ONO_TEST_LOG:-target/gate-test.log}"
+mkdir -p "$(dirname "$TEST_LOG")"
+cargo test --workspace --all-features 2>&1 | tee "$TEST_LOG"
+
+# §38.3: "A test that becomes skipped when it was expected to run MUST fail the CI gate or an
+# explicit skip-verification step." The expectation is declared for the canonical CI environment,
+# so it is enforced there and reported everywhere else — a developer machine without systemd
+# legitimately skips what CI does not, and a gate that failed on it would teach people to skip
+# the gate.
+if [[ "${ONO_CANONICAL_CI:-0}" == "1" ]]; then
+  step "skip verification"
+  cargo run --quiet --package xtask -- skip-check "$TEST_LOG"
+else
+  observed="$(grep -c '^SKIPPED ' "$TEST_LOG" || true)"
+  printf 'gate: %s test(s) announced a skip on this host; the declared expectation is enforced in CI (spec section 38.3)\n' "$observed"
+fi
 
 # Spec §35.6: the parser, the serializers, the remote protocol, the plugin protocol and the
 # procfs/netlink decoders, each hammered from its seed corpus. Bounded by a fixed number of

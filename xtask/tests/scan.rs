@@ -1,12 +1,18 @@
 //! The gate's anti-fake-completion rules. These decide whether "green" means anything, so they
 //! are tested against fixtures rather than trusted.
 
+#![allow(
+    clippy::expect_used,
+    reason = "AGENTS.md §16: a test states its preconditions directly"
+)]
+
 use std::path::Path;
 
 use ono_testkit::{Scratch, scratch};
 use xtask::scan::{
-    check_acceptance_case_references, check_authentication_flags, check_release_board,
-    check_silent_skips, check_unannounced_skips, check_unfinished_work,
+    ExpectedSkips, check_acceptance_case_references, check_authentication_flags,
+    check_expected_skips, check_release_board, check_silent_skips, check_unannounced_skips,
+    check_unfinished_work, verify_observed_skips,
 };
 
 /// Builds a throwaway repository shaped like this one.
@@ -1015,5 +1021,89 @@ fn should_report_this_repository_as_announcing_every_skip_it_takes() {
         check_unannounced_skips(root),
         Vec::new(),
         "every test that gives up on a precondition says so (v0.4.1 §38.1, §65.10)"
+    );
+}
+
+// --- v0.4.1 §38.2 and §38.3: the declared skip set ---------------------------------------------
+
+/// A registry naming one expected skip, so a fixture reads like the real file.
+fn expectation(declared: &str, expected: &str) -> ExpectedSkips {
+    ExpectedSkips::parse(&format!(
+        "version: 1\ndeclared:\n{declared}canonical_ci:\n  expected_skips:\n{expected}"
+    ))
+    .expect("the fixture registry parses")
+}
+
+#[test]
+fn should_fail_on_a_skip_the_expectation_does_not_declare() {
+    // §38.3's forward half: a run that skipped something nobody declared is a run whose green
+    // summary covers less than it says.
+    let expected = expectation(
+        "  - id: \"crates/a/tests/thing.rs::should_cross_a_mount\"\n    category: fixture_not_applicable\n",
+        "    - \"crates/a/tests/thing.rs::should_cross_a_mount\"\n",
+    );
+    let problems = verify_observed_skips(
+        &expected,
+        "running 2 tests\nSKIPPED should_cross_a_mount: fixture_not_applicable: no second mount\nSKIPPED should_read_the_journal: external_tool_unavailable: no journald here\n",
+    );
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert_eq!(problems[0].location, "should_read_the_journal");
+    assert!(
+        problems[0].detail.contains("expected_test_skips.yaml"),
+        "the complaint names the registry to declare it in, got {:?}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_fail_when_a_declared_skip_no_longer_happens() {
+    // §38.3's reverse half, and the one #14 needed: five acceptance cases that had never run were
+    // green for as long as nobody counted them.
+    let expected = expectation(
+        "  - id: \"crates/a/tests/thing.rs::should_cross_a_mount\"\n    category: fixture_not_applicable\n",
+        "    - \"crates/a/tests/thing.rs::should_cross_a_mount\"\n",
+    );
+    let problems = verify_observed_skips(
+        &expected,
+        "running 1 test\ntest should_cross_a_mount ... ok\n",
+    );
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert_eq!(
+        problems[0].location,
+        "crates/a/tests/thing.rs::should_cross_a_mount"
+    );
+    assert!(
+        problems[0].detail.contains("did not"),
+        "got {:?}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_accept_a_run_whose_skips_are_exactly_the_declared_ones() {
+    let expected = expectation(
+        "  - id: \"crates/a/tests/thing.rs::should_cross_a_mount\"\n    category: fixture_not_applicable\n",
+        "    - \"crates/a/tests/thing.rs::should_cross_a_mount\"\n",
+    );
+    assert_eq!(
+        verify_observed_skips(
+            &expected,
+            "SKIPPED should_cross_a_mount: fixture_not_applicable: no second mount\n"
+        ),
+        Vec::new()
+    );
+}
+
+#[test]
+fn should_report_this_repositorys_observed_skips_as_exactly_the_declared_set() {
+    // The registry against the tree, in both directions: a skip the tree can take and the file
+    // does not declare, and a row whose test no longer skips, are both failures (§38.2).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the workspace root is the parent of xtask/");
+    assert_eq!(
+        check_expected_skips(root),
+        Vec::new(),
+        "docs/spec/hardening/expected_test_skips.yaml declares exactly the skips this tree takes"
     );
 }

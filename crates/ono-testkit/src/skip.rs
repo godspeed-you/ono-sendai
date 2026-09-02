@@ -11,6 +11,7 @@
 //! shows.
 
 use std::fmt;
+use std::io::Write;
 
 /// Why a test could not exercise its subject on this host — the stable categories of v0.4.1
 /// §38.4.
@@ -118,7 +119,12 @@ pub fn skipped(reason: SkipReason, detail: &str) {
         .name()
         .unwrap_or("<unnamed>")
         .to_owned();
-    eprintln!("SKIPPED {test}: {}: {detail}", reason.category());
+    // Written to the real standard error rather than through `eprintln!`, because the test
+    // harness captures the macros and prints them only for tests that *failed*. A skip belongs to
+    // a test that passed, so through the macro the marker would exist and never be seen — and
+    // §38.1 asks for the skip to be visible in the harness output, not merely emitted.
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "SKIPPED {test}: {}: {detail}", reason.category());
 }
 
 /// The prerequisite helper of v0.4.1 Appendix G: `require(condition, category, detail)`.

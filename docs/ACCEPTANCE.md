@@ -1743,13 +1743,14 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       `::should_reject_a_test_that_returns_before_its_assertion_path_without_a_skip` and
       `::should_report_this_repository_as_announcing_every_skip_it_takes`, which held the
       forty-one silent returns the rule found (#88, §38.1, §38.4).
-- [ ] **P2 · An unexpected skip fails the gate.** The expected skip set is checked in as
+- [x] **P2 · An unexpected skip fails the gate.** The expected skip set is checked in as
       `docs/spec/hardening/expected_test_skips.yaml`, the verifier compares observed skip IDs and
       categories against it, and a skip nobody declared turns the run red —
       `xtask/tests/scan.rs::should_fail_on_a_skip_the_expectation_does_not_declare`,
       `::should_fail_when_a_declared_skip_no_longer_happens`,
-      `::should_report_this_repositorys_observed_skips_as_exactly_the_declared_set` (#89, §38.2,
-      §38.3, §65.10).
+      `::should_report_this_repositorys_observed_skips_as_exactly_the_declared_set` (ADR-0514;
+      `cargo xtask skip-check` is the §38.3 verification step, run by `scripts/gate.sh` where
+      `ONO_CANONICAL_CI=1`) (#89, §38.2, §38.3, §65.10).
 - [ ] **P2 · The shared test helpers are canonical.** One helper per job, used by every suite that
       needs it, with the divergence that ADR-0427 already forbids asserted over the whole tree —
       `xtask/tests/scan.rs::should_report_two_test_helpers_that_do_the_same_job_under_different_names`,
