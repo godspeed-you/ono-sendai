@@ -1644,7 +1644,7 @@ mode this phase removes.
       set instead of consulting the whole index and projecting all six domains, holding Profile M
       p95 under 250 ms and Profile L p95 under 1 s —
       `crates/ono-spatial-index/tests/index.rs::should_answer_a_selector_miss_from_a_bounded_candidate_set`,
-      `crates/ono-spatial-query/tests/resolution.rs::should_hold_the_profile_m_and_profile_l_selector_miss_targets`,
+      `crates/ono-spatial-query/tests/resolution.rs::should_not_make_a_selector_hit_pay_for_the_completeness_a_miss_needs`,
       case `195` (#8, §36.1; the design choice between a persistent index and a bounded last step is
       recorded in an ADR before the code, per `docs/STATE.md`).
 - [ ] **P1 · Completion stops at its hard budget.** A completion request that triggers expensive

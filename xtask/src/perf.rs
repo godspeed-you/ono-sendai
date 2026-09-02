@@ -793,6 +793,16 @@ pub const BENCHMARKS: &[Benchmark] = &[
         warmup: None,
         script: "enter no-such-place-1a2b3c",
     },
+    // The other half of §36.1's sentence: a selector that resolves *through* the sweep. The
+    // Profile M fixture places a thousand `sleep` children, so this one always has an answer, and
+    // the difference between the two rows is how complete the sweep had to be.
+    Benchmark {
+        id: "spatial.selector_hit_by_sweep",
+        profile: "M",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "enter sleep",
+    },
     // Profile L on the axis this repository can build: a hundred thousand listening sockets, in
     // NETWORK where they are. The process axis at Profile L is the container's
     // (`docs/spec/hardening/performance_profiles.yaml`, ADR-0488).

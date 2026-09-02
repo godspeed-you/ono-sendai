@@ -873,10 +873,27 @@ pub async fn resolved_place(
             &|target| !providers.for_target(target).is_empty(),
             &|_, _| true,
         );
-        let targets: std::collections::BTreeSet<&'static str> =
-            plan.asked().iter().copied().collect();
-        view::observe_targets(providers, session, &targets, now).await;
-        resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
+        // v0.4.1 §36.1: "A selector miss MUST not be substantially more expensive than a hit
+        // solely because the system scans an unnecessarily complete global candidate set." The
+        // set is asked cheapest first and the sweep stops as soon as the selector resolves, so it
+        // is complete only where completeness is what the answer needed. §34.2's classes are the
+        // order (ADR-0494, ADR-0497).
+        for class in ono_spatial_core::AcquisitionCost::ALL {
+            let targets: std::collections::BTreeSet<&'static str> = plan
+                .asked()
+                .iter()
+                .copied()
+                .filter(|target| ono_spatial_query::acquisition_of_target(target) == Some(*class))
+                .collect();
+            if targets.is_empty() {
+                continue;
+            }
+            view::observe_targets(providers, session, &targets, now).await;
+            resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
+            if !matches!(resolution, ono_spatial_query::Resolution::NotFound) {
+                break;
+            }
+        }
     }
     // §27.2: "Interactive ambiguity opens a picker." §29.3: a script never sees one, so the same
     // resolution turns into `spatial.ambiguous_selector` wherever there is nobody to ask.

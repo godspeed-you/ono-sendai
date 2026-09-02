@@ -28,6 +28,7 @@ pub mod place;
 pub mod resolve;
 
 pub use cost::{CostEstimate, INTERACTIVE_BUDGET};
+pub use discovery::acquisition_of_target;
 pub use discovery::{SpaceSource, TargetPlan, source_of_space, targets_for};
 pub use find::{FindRequest, FoundPlace, find_places};
 pub use landmark::{LandmarkThresholds, landmarks_of as landmarks_of_object};

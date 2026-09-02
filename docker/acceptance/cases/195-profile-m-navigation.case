@@ -59,10 +59,18 @@ run: |
 
   echo "== a selector that resolves, and one that does not (§36.1) =="
   measure selector-hit 5000 10 'enter compute; enter processes'
+  # The row §36.1 is really about: a selector that resolves only through the provider sweep. The
+  # fixture forks this interpreter a thousand times, so `perl` always has an answer.
+  measure selector-hit-by-sweep 5000 10 'enter perl'
   measure selector-miss 10000 10 'enter no-such-place-1a2b3c'
-  hit=$(cat /tmp/figure-selector-hit)
+  hit=$(cat /tmp/figure-selector-hit-by-sweep)
   miss=$(cat /tmp/figure-selector-miss)
-  echo "selector: hit ${hit}ms, miss ${miss}ms — §36.1 asks that a miss not be substantially more expensive than a hit"
+  echo "selector: hit-by-sweep ${hit}ms, miss ${miss}ms"
+  if [ "$hit" -le "$miss" ]; then
+    echo "PROVED 36.1a: a selector that resolves does not pay for the completeness a miss needs"
+  else
+    echo "FAILED 36.1a: hit-by-sweep ${hit}ms is not below miss ${miss}ms"
+  fi
 
   kill %1 2>/dev/null || true
   wait 2>/dev/null || true
@@ -74,6 +82,8 @@ stdout-contains: look-in-compute: within ceiling
 stdout-contains: near-in-compute: within ceiling
 stdout-contains: map-in-compute: within ceiling
 stdout-contains: selector-hit: within ceiling
+stdout-contains: selector-hit-by-sweep: within ceiling
+stdout-contains: PROVED 36.1a
 stdout-contains: selector-miss: within ceiling
 stdout-contains: fixture: stopped
 stdout-not-contains: OVER CEILING
