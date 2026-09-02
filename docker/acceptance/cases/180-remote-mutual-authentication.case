@@ -1,0 +1,94 @@
+# v0.4.1 §40.3's first acceptance family: direct mutual TLS client/server authentication, at the
+# product. §7.1 makes transport identity symmetric — "both ends of a direct link MUST prove
+# possession of a persistent key" — and §0.5.1 is the defect it replaces: a listening TLS agent
+# that authenticated itself to the client and accepted clients presenting no certificate at all.
+#
+# Four claims, none of which can be made by reading code:
+#
+#   1. both ends have a *persistent* key, so the fingerprint an operator pins today is the one
+#      the peer presents tomorrow (§8.1, §8.4);
+#   2. an established link says of itself that this process verified the far side's key and that
+#      the far side's policy admitted this one — `authenticated` and `authorized` are separate
+#      questions and both are answered (§7.3, §19.1);
+#   3. a peer that opens the port and speaks no TLS reaches no Ono protocol frame (§13.1);
+#   4. a different machine answering for the same host is refused with Ono-Sendai-E0603, which is
+#      the pin store consulted on the transport a user actually gets (ADR-0274, #18).
+#
+# Everything is loopback: the container runs with networking disabled, and §40.2's isolated
+# network for a remote case is the container itself.
+case: both ends of a direct link prove possession of a persistent key
+timeout: 180
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+
+  echo "== the client identity is persistent: the same fingerprint on every invocation =="
+  FIRST=$(ono --print-peer-key)
+  SECOND=$(ono --print-peer-key)
+  test "$FIRST" = "$SECOND" && echo "the client presents one identity across invocations"
+  test -f "$HOME/ono/link_identity.pem" && echo "and it is a file the operator owns"
+  stat -c '%a' "$HOME/ono/link_identity.pem"
+
+  echo "== so is the agent's, and it is a different key =="
+  HOSTA=$(ono --agent --host-key "$HOME/a.pem" --print-host-key)
+  test "$HOSTA" = "$(ono --agent --host-key "$HOME/a.pem" --print-host-key)" \
+    && echo "the agent presents one identity across invocations"
+  test "$HOSTA" != "$FIRST" && echo "the two ends are two keys"
+
+  ono --agent --listen 127.0.0.1:7739 --host-key "$HOME/a.pem" 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/agent.log" && break; sleep 0.2; done
+
+  echo "== a peer that opens the port and speaks no TLS reaches no protocol frame =="
+  exec 3<>/dev/tcp/127.0.0.1/7739
+  printf 'ono/2 hello\n' >&3
+  head -c 16 <&3 > "$HOME/raw" 2>/dev/null || true
+  exec 3<&-
+  # Whatever comes back is a TLS record — an alert, or nothing at all. What it may never be is an
+  # Ono protocol frame, because §13.1 puts the authentication before the `Hello`.
+  if LC_ALL=C grep -aq 'ono' "$HOME/raw"; then
+    echo "the unauthenticated peer received an ono protocol frame"
+  else
+    echo "the unauthenticated peer was given no protocol frame"
+  fi
+  echo "it received $(wc -c < "$HOME/raw") bytes, of which the first is:"
+  od -An -tx1 -N1 "$HOME/raw" | tr -d ' \n'; echo
+
+  echo "== pinned and authorized at both ends, the link is made =="
+  ono -c "add host-key 127.0.0.1 --fingerprint $HOSTA | select status | to json"
+  ono -c "add client-key $FIRST --label suite | select status | to json"
+  ono -c 'link host 127.0.0.1:7739 --transport tcp; get link | select transport authenticated authorized transport_trust | to json' | tail -1
+
+  echo "== and the link names the key the far side proved it holds =="
+  ono -c "link host 127.0.0.1:7739 --transport tcp; get link | select transport_fingerprint | to json" | tail -1 | grep -q "$HOSTA" \
+    && echo "the fingerprint on the link is the host key the operator pinned"
+
+  echo "== a different machine answering for the same host is refused =="
+  kill "$AGENT" 2>/dev/null || true
+  wait "$AGENT" 2>/dev/null || true
+  HOSTB=$(ono --agent --host-key "$HOME/b.pem" --print-host-key)
+  test "$HOSTA" != "$HOSTB" && echo "the impostor holds a different key"
+  ono --agent --listen 127.0.0.1:7739 --host-key "$HOME/b.pem" 2> "$HOME/impostor.log" &
+  IMPOSTOR=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/impostor.log" && break; sleep 0.2; done
+  ono -c 'try { link host 127.0.0.1:7739 --transport tcp } catch e { $e | select code name retryable | to json }'
+  kill "$IMPOSTOR" 2>/dev/null || true
+exit: 0
+stdout-contains: the client presents one identity across invocations
+stdout-contains: and it is a file the operator owns
+stdout-contains: 600
+stdout-contains: the agent presents one identity across invocations
+stdout-contains: the two ends are two keys
+stdout-contains: the unauthenticated peer was given no protocol frame
+stdout-contains: "authenticated":true
+stdout-contains: "authorized":true
+stdout-contains: "transport_trust":"pinned"
+stdout-contains: the fingerprint on the link is the host key the operator pinned
+stdout-contains: the impostor holds a different key
+stdout-contains: "code":"Ono-Sendai-E0603"
+stdout-contains: "name":"remote.host_key_changed"
+stdout-not-contains: the unauthenticated peer received an ono protocol frame
+stdout-not-contains: "retryable":true
+stdout-not-contains: panicked

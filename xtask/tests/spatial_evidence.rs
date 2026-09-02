@@ -27,12 +27,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 mod support;
-use support::repo;
-
-fn read(relative: &str) -> String {
-    let path = repo().join(relative);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{relative} is readable: {error}"))
-}
+use support::{read, repo};
 
 /// The text of `docs/ACCEPTANCE.md` §4.7, which is the v0.4 definition of done.
 ///

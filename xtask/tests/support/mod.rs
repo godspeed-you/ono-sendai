@@ -14,3 +14,9 @@ pub fn repo() -> std::path::PathBuf {
         .expect("xtask sits in the workspace")
         .to_path_buf()
 }
+
+/// The text of a repository file, or a panic naming the one that would not open.
+pub fn read(relative: &str) -> String {
+    let path = repo().join(relative);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{relative} is readable: {error}"))
+}

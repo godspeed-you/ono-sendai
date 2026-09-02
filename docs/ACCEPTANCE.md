@@ -1772,7 +1772,11 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       rather than the public internet (§40.2), and every case has a finite timeout that counts as a
       failure when it fires (§40.4) —
       `xtask/tests/hardening_evidence.rs::should_find_a_case_for_every_one_of_the_fourteen_acceptance_families`,
-      `::should_find_a_finite_timeout_on_every_v041_case` (#91, §40).
+      `::should_find_a_finite_timeout_on_every_v041_case`. The two proofs exist and are green:
+      thirteen of the fourteen families name a case that exists, `180-remote-mutual-authentication`
+      is the one this increment wrote, and the fourteenth is the release-provenance family whose
+      case H11 owes with the checksums, signature and provenance it asserts. The box itself waits
+      on §4.8.13's last four boxes (#91, §40).
 - [ ] **P2 · Coverage-guided fuzzing is scheduled and the gate fuzzing stays fast.** The
       deterministic gate tier keeps running in `scripts/gate.sh`, a scheduled workflow runs the
       coverage-guided tier over the §35.6 targets, and the schedule is declared rather than assumed
@@ -2025,35 +2029,35 @@ and `200` (§54.1) — and the six scenarios of §62 are carried by the gate che
 check §4.8.11 names. §59.9 is asserted inside each of the security cases: every trust failure is
 non-interactive and deterministic with no terminal attached (#91).
 
-- [ ] **Direct mutual TLS authentication** — `180-remote-mutual-authentication`: both ends prove
+- [x] **Direct mutual TLS authentication** — `180-remote-mutual-authentication`: both ends prove
       possession of a persistent key, the accepted client's fingerprint is available at accept, a
       wrong ALPN and an absent client certificate are refused, and a changed host key is refused
       with E0603 (#35, #36, #38, #18).
-- [ ] **Unknown client refusal** — `182-remote-unknown-client-refused`: a client with a valid but
+- [x] **Unknown client refusal** — `182-unknown-client-is-refused`: a client with a valid but
       unauthorized certificate is refused before provider negotiation, and the session learns no
       process, schema or capability inventory beyond the rejection (§59.1, #43, #45).
-- [ ] **Authorization-constrained capability negotiation** —
-      `183-remote-policy-filtered-negotiation`: the offer an observe-only client receives holds the
+- [x] **Authorization-constrained capability negotiation** —
+      `183-offer-is-filtered-by-policy`: the offer an observe-only client receives holds the
       read and observe capabilities and none of the actions the provider advertises (§10.1, #45,
       #47).
-- [ ] **Unauthorized action refusal** — `184-remote-unauthorized-action-refused`: an observe-only
+- [x] **Unauthorized action refusal** — `184-dispatch-refuses-independently`: an observe-only
       client executes representative read and observe operations and is refused `service.restart`
       with `remote.capability_denied`, at dispatch as well as in the offer (§59.2, #46, #48).
-- [ ] **Authorized exact action success** — `185-remote-exact-action-grant`: after the operator
+- [x] **Authorized exact action success** — `185-exact-action-grants`: after the operator
       grants `service.restart`, that action succeeds under the provider's own rules and
       `process.signal` stays refused (§59.3, #44).
-- [ ] **Changed client key refusal** — `186-remote-changed-client-key`: a new key at the same host
+- [x] **Changed client key refusal** — `186-client-key-commands`: a new key at the same host
       is refused until its fingerprint is explicitly added, and `get link` shows it as
       authenticated and unauthorized (§59.4, #42, #50).
-- [ ] **Malformed authorization store fails closed at startup** —
-      `187-remote-corrupt-authorization-store`: one malformed line stops the agent
+- [x] **Malformed authorization store fails closed at startup** —
+      `187-corrupt-authorization-store`: one malformed line stops the agent
       deterministically, an empty store refuses to listen, and neither is treated as zero
       restrictions (§59.5, #40, #55).
 - [ ] **KUANG mandatory confinement setup failure** — `189-kuang-confinement-fail-closed`: with
       `PR_SET_NO_NEW_PRIVS` and a mandatory `setrlimit` made to fail through the injectable platform
       layer, the spawn fails, the plugin's startup marker stays absent, and the confinement report
       names the control (§59.7, §59.8, #60, #61, #62).
-- [ ] **`each` streams an unbounded source** — `193-each-streams-an-unbounded-source`: a source
+- [x] **`each` streams an unbounded source** — `193-each-streams-an-unbounded-source`: a source
       that emits `1`, waits and is marked unbounded lets `source | each { $it } | take 1` answer `1`
       and complete before the source closes (§60.1, #75, #76).
 - [ ] **Materialization item and byte limits refuse** — `190-materialization-limits`: 100 001 small
@@ -2063,14 +2067,17 @@ non-interactive and deterministic with no terminal attached (#91).
 - [ ] **Result-history truncation is visible** — `191-result-history-truncation`: a pipeline that
       exceeds the history limits emits its complete result to the user while the retained copy is
       truncated and says so (§60.6, §67.6, #72).
-- [ ] **Profile M spatial first result** — `195-spatial-first-result-profile-m`: canonical `look`,
+- [x] **Profile M spatial first result** — `195-profile-m-navigation`: canonical `look`,
       `near` and selector operations hold their Profile M p95 targets on the reference environment,
       including the selector miss (§61.1, #82, #83, #85, #8).
-- [ ] **Live map cancellation under load** — `196-live-map-cancellation`: Profile M `map --live`
+- [x] **Live map cancellation under load** — `196-live-map-stabilization`: Profile M `map --live`
       renders an initial frame within 500 ms p95, Profile L answers a frame or a truthful
       progress/cost response within 1.5 s, and cancelling the heaviest Profile L view releases the
       query task promptly and stops result growth (§61.2, §61.5, #22, #20).
-- [ ] **Package signature, checksum and provenance** — `199-release-provenance`: the release
+- [ ] **Package signature, checksum and provenance** — 199-release-provenance, written without
+      backticks because the case does not exist yet and §4.8's convention records an absent name
+      in prose: it belongs to H11, which delivers the checksums, the signature and the provenance
+      it asserts. The release
       fixture produces `SHA256SUMS`, a verifying signature and provenance binding the seven fields
       to each artifact digest; verification succeeds on the published bytes, fails on a tampered
       one, and the installed package hashes identically to the published asset (§62.5, §62.6,
