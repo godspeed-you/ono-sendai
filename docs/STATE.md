@@ -312,6 +312,24 @@ Delivered so far in the tranche:
   (#22); and issue **#20**'s instance measures 29.7 s at Profile M, inside §33.3's thirty-second
   budget by 0.3 s and sixty times outside §33.2's target, so it needs a phase-H7 frame-budget
   proof under a terminal rather than a watchdog that would be a coin toss (ADR-0252, #21).
+- **H3 complete (2026-09-02), #51–#57.** One central `Limits` contract whose every setter clamps
+  into the range `limits.yaml` declares, so an unlimited instance cannot be written down;
+  `docs/spec/hardening/remote_limits.yaml` created as §52.1's registry holding **no numbers** — one
+  row per ceiling pointing at its `limit_key`, its refusal, its audit class and its enforcement
+  stage. A `ConnectionRegistry` behind a real 32-connection ceiling, a pending-handshake semaphore
+  that gates *TCP accept* (so nothing is spent on the peer and §13.1 is not violated by sending a
+  refusal frame), a 10 s timeout wrapping both TLS and the opening `Hello`, a per-fingerprint limit
+  keyed on the authenticated fingerprint rather than the address, and TLS moved off the accept loop
+  onto a per-connection task. `AuditKind::ConnectionLimitDenied` — declared by H2, unreachable
+  until now — is raised. `E1501`, `E1502`. ADR-0501 … ADR-0505, case 188, §4.8.4 ticked.
+
+  **Live revocation landed rather than being deferred a second time.** ADR-0470 deferred it on one
+  stated condition — that H3 would build the registry — and the agent treated the expiry of that
+  condition as binding: a one-second sweep re-reads the store and closes every session whose
+  fingerprint it no longer lists, well inside §12.5's five seconds, with ADR-0470's immutable
+  per-connection `AuthorizationContext` untouched. The *grant* is still fixed for the life of the
+  connection; only the connection's existence changes.
+
 - **H6 complete (2026-09-02), #75–#81.** `each` streams. `eval.rs::run_each_block` and its second
   `StageList` are gone: `each { … }` is bound and assembled as a stage of its own pipeline, and the
   stage asks the evaluator over a bounded channel of one while a driver loop answers and drains at
@@ -1771,6 +1789,47 @@ This is **work for phase H3** (#54, one central `Limits` contract): if
 `docs/spec/hardening/remote_limits.yaml` is still wanted, it should reference these keys rather
 than restate the numbers. **Exit test:** changing a remote ceiling in the catalogue changes what
 the listener enforces.
+
+**`ono_testkit`'s fixed wall-clock budgets fail under parallel load, and the failure reads like a
+product defect (2026-09-02).** Two instances on one day, and both were first reported as hangs:
+
+- `crates/ono-cli/tests/storage.rs::should_trace_a_mount_to_what_it_sits_on_and_who_uses_it`
+  overran its 30 s budget while three cargo builds held the load average at 19–24. The command it
+  runs, `trace mount / | to json`, answers in **2.79 s and 4.34 s** at load 1.97 — exit 0, 461 KB
+  of JSON, 54 mounts and 342 processes.
+- `crates/ono-cli/tests/processes.rs::should_trace_the_entered_process_without_a_selector` overran
+  `ono_testkit`'s 20 s budget during a gate run that shared the machine with a worktree build. The
+  whole suite passes in **1.70 s** at load 3.27, and the command answers in **1 s** in both a debug
+  and a release build.
+
+Neither command hangs. What fails is a **20 s or 30 s constant measured against wall clock on a
+machine whose load the test does not control**, which is the trap ADR-0252 and issue #21 already
+recorded for the completion budget — and which §38 calls a test that does not report execution
+truth: a red result here means "the machine was busy", and nothing else.
+
+This belongs to **H8** (#88, #89: three visible outcomes, and an unexpected skip fails the gate).
+The two candidate answers are a budget that scales with observed load, or a `SKIP(reason)` when the
+machine cannot meet it — §38.4's skip taxonomy exists for exactly this. **Exit test:** a full
+`cargo test --workspace` under a load average above 15 produces no failure attributable to the
+budget alone.
+
+**Four stale setting descriptions (2026-09-02).** `crates/ono-cli/src/settings.rs`'s
+`limits.remote_*` rows still say *"Declared and validated; enforcement is phase H3's"*. H3 is
+delivered and the rows are enforced by `ono-remote`. User-visible through `get config` and
+`inspect limits`. One line each. **Exit test:** the description matches `enforced_by`.
+
+**Agent mode honours only the environment layer of `limits.remote_*` (2026-09-02).**
+`configured_limits()` in `crates/ono-cli/src/main.rs` reads `Settings::new()` plus
+`apply_environment`; `config.ono` is not read, because `config::load` needs a `Session` an agent
+does not have. ADR-0504. **Exit test:** a ceiling set in `config.ono` changes what `--listen`
+enforces.
+
+**`remote_limits.yaml` is not validated by `xtask spec-check` (2026-09-02).** §52.3 asks the gate
+to validate every machine-readable contract; today only `crates/ono-remote/tests/limits.rs` checks
+its cross-references, from the crate that enforces them. Also in the same corner:
+`crates/ono-cli/src/limits.rs`'s doc comment claims `unit` and `enforced_by` come from the settings
+catalogue, and `SettingSpec` has neither field. Owed by **#117**. **Exit test:** the gate rejects a
+`limit_key` that names nothing.
 
 **A function cannot be invoked between two pipeline stages (2026-09-02).** `get process | mine |
 take 1` resolves `mine` as an external program; `call_function` is reached only for
@@ -3411,11 +3470,6 @@ opposite of a silenced requirement: they are the requirement, written down befor
   carries the measurement. **No ignored test exists for this.** Owed by **#83** and **#84**;
   §4.8.6's box stays unticked and says so.
 
-- **Live revocation of an established connection.** `remove client-key` refuses the *next*
-  connection and says so in its message; an already-open connection keeps the authorization it was
-  admitted with, because §12.5's registry of live connections is what H3 builds. ADR-0470 records
-  the deferral, as §12.5 asks. Owed by **H3**.
-
 - **The §6.1 boundary-inventory gate check has nothing to check against.**
   `docs/spec/hardening/security_boundaries.yaml` does not exist — no phase has written it — so
   `xtask` cannot cross-check that every declared dispatch path carries an authorization check.
@@ -3427,9 +3481,6 @@ opposite of a silenced requirement: they are the requirement, written down befor
   `ActionGrant` refuses a malformed id at construction, so `*` and `process.` cannot be stored at
   all; a *well-formed* id naming nothing (`process.invented`) is denied at dispatch but does not
   fail the gate. Needs a validator in `xtask/`, which H2 did not own. Owed by **#117**.
-
-- **`AuditKind::ConnectionLimitDenied` is declared and raised by nobody** until H3's connection
-  semaphore exists (#51, #52, #53). Seven of §14.1's eight classes are emitted today. ADR-0474.
 
 The H0 failure proofs, red by design (issue #31, ADR-0430):
 

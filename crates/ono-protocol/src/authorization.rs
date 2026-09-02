@@ -37,7 +37,9 @@
 //! the peer, and immutable for the life of the connection. It has no `&mut self` method and no
 //! setter, so a request handler cannot widen the policy it was handed, and nothing re-reads the
 //! file per request. Authorization changes therefore reach the next connection, never the one
-//! already running.
+//! already running — a running connection's *grant* is fixed. Whether the connection continues to
+//! exist is a different question, and §12.5's answer to it lives in `ono-remote`'s listening
+//! agent: removing a client key ends the sessions that key holds (ADR-0505).
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -778,6 +780,17 @@ pub fn refusal_guidance(code: ErrorCode) -> Option<&'static str> {
             "grants name exact capability ids (v0.4.1 section 9.5). On the agent's host, `set \
              client-key <fingerprint> --allow <capability>` grants exactly the one named and \
              leaves every other action refused.",
+        ),
+        ErrorCode::RemoteConnectionLimit => Some(
+            "a listening agent bounds concurrent connections globally and per client key \
+             (v0.4.1 section 12.1, section 12.3). Nothing about this client was refused: wait \
+             for a session to end, or raise `limits.remote_connections` / \
+             `limits.remote_connections_per_client` on the agent's host.",
+        ),
+        ErrorCode::RemoteHandshakeTimeout => Some(
+            "TLS and Ono negotiation together have a deadline on the agent's side (v0.4.1 \
+             section 12.2), configured with `limits.remote_handshake_timeout_ms` on its host. A \
+             link dropped this way is worth trying again.",
         ),
         _ => None,
     }

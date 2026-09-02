@@ -148,15 +148,18 @@ limits:
   # --- the listening agent, §12 ----------------------------------------------------------------
   # Declared, typed and range-checked here because §55.2's binding sentence is about the
   # *configuration* layer: "A security-sensitive agent limit MUST NOT silently become unlimited
-  # because a value failed to parse." Enforcement is `ono-remote`'s and arrives with phase H3;
-  # `enforced_by: pending` says so rather than letting the key imply an effect it does not have.
+  # because a value failed to parse." Enforcement is `ono-remote`'s and arrived with phase H3
+  # (ADR-0501): `ono_protocol::Limits` carries all four as fields, clamps every setter into the
+  # range declared below, and `ono_remote::ListeningAgent` applies them at the two moments
+  # `docs/spec/hardening/remote_limits.yaml` names. That file describes the enforcement and
+  # references these keys; the numbers stay here, once (§52.2).
   - key: limits.remote_connections
     type: int
     default: 32
     min: 1
     max: 65536
     unit: connections
-    enforced_by: pending
+    enforced_by: ono-remote
     spec: "v0.4.1 §12.1, Appendix A"
     doc: >-
       Concurrent authenticated connections one agent accepts. One rather than zero: a ceiling of
@@ -167,7 +170,7 @@ limits:
     min: 1
     max: 65536
     unit: handshakes
-    enforced_by: pending
+    enforced_by: ono-remote
     spec: "v0.4.1 §12.2, Appendix A"
     doc: >-
       Connections that may be mid-negotiation at once, before any of them is authenticated.
@@ -177,7 +180,7 @@ limits:
     min: 1
     max: 65536
     unit: connections
-    enforced_by: pending
+    enforced_by: ono-remote
     spec: "v0.4.1 §12.3, Appendix A"
     doc: >-
       Concurrent connections one authenticated fingerprint may hold, so one client cannot fill
@@ -188,7 +191,7 @@ limits:
     min: 100
     max: 600000
     unit: milliseconds
-    enforced_by: pending
+    enforced_by: ono-remote
     spec: "v0.4.1 §12.2, Appendix A"
     doc: >-
       How long TLS and protocol negotiation may take before the connection is dropped. The floor

@@ -69,6 +69,14 @@ use crate::identity::{ALGORITHM, PeerIdentity};
 /// an address takes a port with it.
 pub const DEFAULT_PORT: u16 = 7734;
 
+/// Where an agent binds when `--listen` names no address (v0.4.1 §11.1, §11.2).
+///
+/// The loopback interface on [`DEFAULT_PORT`]. §11.2 leaves the address to the implementation and
+/// §11.3 forbids reading anything into it: this is the narrowest exposure that is still a
+/// listening agent, not a statement that a peer on this machine is trusted. Every client is
+/// authenticated and authorized here exactly as one dialling from another continent would be.
+pub const DEFAULT_LISTEN_ADDRESS: &str = "127.0.0.1:7734";
+
 /// The application the two ends agree they are speaking, negotiated in the TLS handshake.
 ///
 /// A peer that speaks something else is refused before a frame crosses, rather than confusing
@@ -476,15 +484,42 @@ impl TlsListener {
         &self,
     ) -> Result<TlsTransport<tokio_rustls::server::TlsStream<TcpStream>>, ErrorValue> {
         let (stream, from) = self
-            .listener
-            .accept()
+            .accept_tcp()
             .await
             .map_err(|error| unreachable_error("a peer", &error.to_string()))?;
+        self.handshake(stream, &from.to_string()).await
+    }
+
+    /// Waits for one peer's TCP connection, without spending anything on it yet.
+    ///
+    /// Separate from [`handshake`](Self::handshake) because the two are bounded differently:
+    /// v0.4.1 §12.2 gives the handshake a deadline and a ceiling of its own, and a listener that
+    /// could only do both at once would have to hold the accept loop for the length of every
+    /// peer's negotiation — which is the accept-path exhaustion §12.2 exists to prevent.
+    ///
+    /// # Errors
+    ///
+    /// The operating system's own error. §12.6 distinguishes an error about one peer from the
+    /// listening socket becoming unusable, and that distinction lives in the `io::ErrorKind`
+    /// rather than in a message, so this reports the error unwrapped.
+    pub async fn accept_tcp(&self) -> io::Result<(TcpStream, SocketAddr)> {
+        self.listener.accept().await
+    }
+
+    /// Completes the mutual TLS handshake with a peer this listener accepted.
+    ///
+    /// # Errors
+    ///
+    /// `remote.unreachable` (E0601) when the handshake fails — a peer speaking something other
+    /// than this protocol, or one that cannot prove it holds the key it presented.
+    pub async fn handshake(
+        &self,
+        stream: TcpStream,
+        from: &str,
+    ) -> Result<TlsTransport<tokio_rustls::server::TlsStream<TcpStream>>, ErrorValue> {
+        let peer_address = stream.peer_addr().ok();
         let stream = self.acceptor.accept(stream).await.map_err(|error| {
-            unreachable_error(
-                &from.to_string(),
-                &format!("the TLS handshake failed: {error}"),
-            )
+            unreachable_error(from, &format!("the TLS handshake failed: {error}"))
         })?;
         // The handshake completed, so the client presented a certificate and signed this
         // handshake's transcript with the key inside it (v0.4.1 §7.1). That is what the peer key
@@ -493,7 +528,7 @@ impl TlsListener {
         Ok(TlsTransport {
             stream,
             peer_key,
-            peer_address: Some(from),
+            peer_address,
         })
     }
 }

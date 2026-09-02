@@ -84,12 +84,20 @@ impl Invocation {
                     let mut agent = AgentOptions::default();
                     while let Some(argument) = rest.next() {
                         match argument.as_str() {
-                            "--listen" => match rest.next() {
-                                Some(address) => agent.listen = Some(address),
-                                None => {
-                                    return Self::Usage("--listen needs an address".to_owned());
-                                }
-                            },
+                            // v0.4.1 §11.1: the socket is opened by this flag and by nothing
+                            // else. The address is optional because a first `--listen` on a
+                            // machine should reach the machine rather than the building, and
+                            // `DEFAULT_LISTEN_ADDRESS` is that — never a trust decision, which
+                            // §11.3 forbids a loopback address from being.
+                            "--listen" => {
+                                let given = match rest.peek() {
+                                    Some(next) if !next.starts_with('-') => rest.next(),
+                                    _ => None,
+                                };
+                                agent.listen = Some(given.unwrap_or_else(|| {
+                                    ono_remote::DEFAULT_LISTEN_ADDRESS.to_owned()
+                                }));
+                            }
                             "--host-key" => match rest.next() {
                                 Some(path) => agent.host_key = Some(PathBuf::from(path)),
                                 None => return Self::Usage("--host-key needs a path".to_owned()),

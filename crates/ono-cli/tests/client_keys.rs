@@ -300,3 +300,152 @@ fn should_carry_help_and_completion_for_every_client_key_command() {
         listed.stdout()
     );
 }
+
+// --- what removing a client key does, and what it says it does (§12.5) ------------------------
+
+/// A listening agent for the one command whose effect reaches past the store (v0.4.1 §12.5).
+struct Agent {
+    process: std::process::Child,
+    address: String,
+    fingerprint: String,
+}
+
+impl Drop for Agent {
+    /// Killed and reaped by the test that started it: a leaked agent outlives the suite.
+    fn drop(&mut self) {
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+    }
+}
+
+fn binary() -> std::path::PathBuf {
+    let mut path = std::env::current_exe().expect("the test binary knows where it is");
+    path.pop();
+    if path.ends_with("deps") {
+        path.pop();
+    }
+    path.join("ono")
+}
+
+/// Starts `ono --agent --listen 127.0.0.1:0` and reads back the port and the fingerprint to pin.
+fn agent(home: &Scratch) -> Agent {
+    use std::io::{BufRead as _, BufReader};
+
+    let mut process = std::process::Command::new(binary())
+        .args(["--agent", "--listen", "127.0.0.1:0"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the agent starts");
+    let stderr = process.stderr.take().expect("stderr was piped");
+    let (sender, lines) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
+            if sender.send(line.trim_end().to_owned()).is_err() {
+                return;
+            }
+        }
+    });
+    let (mut address, mut fingerprint) = (None, None);
+    while address.is_none() || fingerprint.is_none() {
+        let line = lines
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("the agent ended before it said where it listens");
+        if let Some(bound) = line.strip_prefix("ono: listening on ") {
+            address = Some(bound.trim().to_owned());
+        } else if let Some(printed) = line.strip_prefix("ono: host key ") {
+            fingerprint = Some(printed.trim().to_owned());
+        }
+    }
+    Agent {
+        process,
+        address: address.unwrap_or_default(),
+        fingerprint: fingerprint.unwrap_or_default(),
+    }
+}
+
+#[test]
+fn should_refuse_the_next_connection_after_a_client_key_is_removed() {
+    // §12.5: "Removing an authorized client MUST prevent all new connections immediately." And
+    // the sentence after it is about this command's *words*: whichever behaviour is chosen for a
+    // session already running, `remove client-key` has to say which one it is, because that is
+    // where an operator forms the expectation.
+    let home = scratch();
+    let agent = agent(&home);
+    ono(
+        &home,
+        &format!(
+            "add host-key 127.0.0.1 --fingerprint {} | select status",
+            agent.fingerprint
+        ),
+    )
+    .assert_success();
+    let client = String::from_utf8_lossy(
+        &std::process::Command::new(binary())
+            .arg("--print-peer-key")
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .output()
+            .expect("the peer key is printable")
+            .stdout,
+    )
+    .trim()
+    .to_owned();
+    ono(&home, &format!("add client-key {client} --label suite")).assert_success();
+
+    let linked = ono(
+        &home,
+        &format!(
+            "link host {} --transport tcp; get link | select state | to json",
+            agent.address
+        ),
+    );
+    assert_eq!(
+        last_line(&linked),
+        "[{\"state\":\"connected\"}]",
+        "the authorized client links before anything is revoked, got {:?} / {:?}",
+        linked.stdout(),
+        linked.stderr()
+    );
+
+    let removed = ono(
+        &home,
+        &format!("remove client-key {client} | select message | to json"),
+    );
+    removed.assert_success();
+    let said = removed.stdout().to_lowercase();
+    assert!(
+        said.contains("next connection"),
+        "§12.5: the command says that new connections are refused, got {:?}",
+        removed.stdout()
+    );
+    assert!(
+        said.contains("closed") || said.contains("close"),
+        "§12.5: whichever behaviour is chosen for a session already running, the command says \
+         which one it is rather than leaving an operator to find out, got {:?}",
+        removed.stdout()
+    );
+
+    let refused = ono(
+        &home,
+        &format!(
+            "try {{ link host {} --transport tcp }} catch e {{ $e | select code name | to json }}",
+            agent.address
+        ),
+    );
+    refused.assert_success();
+    assert!(
+        last_line(&refused).contains("Ono-Sendai-E1202"),
+        "§12.5: removing a client key prevents all new connections immediately, got {:?}",
+        refused.stdout()
+    );
+}

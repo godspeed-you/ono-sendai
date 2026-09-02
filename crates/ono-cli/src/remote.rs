@@ -408,9 +408,16 @@ fn act(
         }
         Request::RemoveClientKey => {
             crate::trust::revoke_client(&session.host_sources(), name).map_err(Flow::Failed)?;
+            // §12.5 requires the command to say what happens to a session already running, and
+            // since ADR-0505 the answer is that it is closed: the listening agent re-reads the
+            // store on a fixed interval and ends every connection this key still holds, well
+            // inside the five seconds §12.5 names.
             (
                 true,
-                format!("{name} is revoked; its next connection is refused"),
+                format!(
+                    "{name} is revoked; its next connection is refused and any session it holds \
+                     is closed"
+                ),
             )
         }
     };

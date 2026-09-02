@@ -271,6 +271,13 @@ error_codes! {
     RemoteAuthorizationStoreInvalid => "Ono-Sendai-E1204", "remote.authorization_store_invalid", Safety,
         "The authorization store could not be loaded, so nothing is authorized.";
 
+    // --- listening-agent resource limits, v0.4.1 §12: the ceilings an exposed agent enforces on
+    // everyone who reaches it (ADR-0502). E15xx, the block H3 reserved.
+    RemoteConnectionLimit => "Ono-Sendai-E1501", "remote.connection_limit", Resource,
+        "The listening agent is already holding as many connections as it may.";
+    RemoteHandshakeTimeout => "Ono-Sendai-E1502", "remote.handshake_timeout", Timeout,
+        "The peer did not complete TLS and Ono negotiation within the time a handshake is given.";
+
     // --- KUANG/11, spec §31.79: the K11 family of docs/spec/kuang/errors.v1.yaml, folded into
     // the global model (ADR-0108). Numbering follows §31.79's families.
     KuangPackageInvalid => "Ono-Sendai-K11001", "package.invalid", Parse,

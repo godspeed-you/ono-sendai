@@ -492,6 +492,42 @@ fn with_streams<T>(
     body(&mut guard)
 }
 
+/// Refuses a connection that completed the cryptographic handshake, saying why (§54.1, §12.1).
+///
+/// The peer has an authenticated channel, so it can be told which boundary decided rather than
+/// meeting a socket that closes for no stated reason. It is told that and nothing else: no
+/// provider, no schema, no capability, no target, which is §59.1's rule for a refusal made before
+/// negotiation.
+///
+/// The caller's opening `Hello` is read and discarded first. A refusal written into a connection
+/// whose other direction is still full would race the peer's own write into a reset, and the
+/// reason for the refusal would be the thing that got lost.
+///
+/// # Errors
+///
+/// `remote.protocol_mismatch` when the refusal cannot be encoded, which is a defect on this side.
+pub async fn refuse<T: Transport>(
+    transport: T,
+    refusal: &ErrorValue,
+    limits: &Limits,
+) -> Result<(), ErrorValue> {
+    let (reader, writer) = tokio::io::split(transport);
+    let mut reader = FrameReader::new(reader, limits.clone());
+    let frames = spawn_writer(writer, limits.clone());
+    let _ = tokio::time::timeout(limits.handshake_timeout(), reader.next()).await;
+    let reject = Reject::new(refusal.code(), refusal.message().to_owned());
+    let payload = encode_message(&Message::Reject(reject), limits).map_err(ErrorValue::from)?;
+    let _ = frames.send(Frame::new(FrameKind::Reject, 0, payload));
+    frames.hangup();
+    // Waiting for the peer to go is what makes the refusal observable rather than a race with
+    // the socket closing under it.
+    let _ = tokio::time::timeout(limits.handshake_timeout(), async {
+        while matches!(reader.next().await, Ok(Some(_))) {}
+    })
+    .await;
+    Ok(())
+}
+
 /// Answers one link with `service` until the caller disconnects.
 ///
 /// The handshake happens first (spec §21.2); a caller that shares no protocol version is refused
@@ -516,9 +552,21 @@ where
     let mut reader = FrameReader::new(reader, limits.clone());
     let frames = spawn_writer(writer, limits.clone());
 
-    let opening = reader
-        .next()
-        .await?
+    // §12.2: TLS and *Ono protocol negotiation* together have a deadline. TLS is bounded by the
+    // listener that accepted the socket; this is the other half — a peer that completed the
+    // cryptographic handshake and then says nothing must not hold the connection open for ever.
+    let opening = tokio::time::timeout(limits.handshake_timeout(), reader.next())
+        .await
+        .map_err(|_| {
+            ErrorValue::new(
+                ErrorCode::RemoteHandshakeTimeout,
+                format!(
+                    "the caller did not say hello within {} seconds",
+                    limits.handshake_timeout().as_secs_f64()
+                ),
+            )
+            .with_retryable(true)
+        })??
         .ok_or_else(|| unreachable("the caller closed the link before saying hello"))?;
     let Message::Hello(hello) =
         decode_message(opening.kind(), opening.payload(), &schemas, &limits)

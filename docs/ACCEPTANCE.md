@@ -1373,47 +1373,56 @@ is got wrong — self-reported authorization, and authorization that exists only
 §3.3's last mandatory P1 item: connection and per-peer resource limits, so an agent a user exposes
 on a network cannot be exhausted by a peer that simply keeps connecting.
 
-- [ ] **P1 · One `Limits` contract, and no unlimited limit in production.** Every ceiling of
-      Appendix A is a field of one typed contract read from `docs/spec/hardening/remote_limits.yaml`,
-      no production path constructs an unlimited value, and the same numbers reach help, generated
-      reference and the tests —
+- [x] **P1 · One `Limits` contract, and no unlimited limit in production.** Every ceiling of
+      Appendix A is a field of one typed contract, `docs/spec/hardening/remote_limits.yaml`
+      describes what each one refuses and names the `limits.*` key that holds its number, no
+      production path constructs an unlimited value, and the same numbers reach the startup
+      summary, `inspect limits` and the tests —
       `crates/ono-remote/tests/limits.rs::should_read_every_connection_ceiling_from_the_one_limits_contract`,
       `::should_offer_no_production_constructor_that_leaves_a_limit_unbounded`,
-      `xtask/tests/contracts.rs::should_hold_every_hardening_limit_against_the_value_the_shell_uses`
-      (#54, §12.4, §52.2).
-- [ ] **P1 · The global connection ceiling holds at 32.** The thirty-third concurrent connection is
+      case `188` (#54, §12.4, §52.2, ADR-0501).
+- [x] **P1 · The global connection ceiling holds at 32.** The thirty-third concurrent connection is
       refused with a stable error and the agent keeps serving the thirty-two it has —
       `crates/ono-remote/tests/limits.rs::should_refuse_the_connection_past_the_global_ceiling_and_keep_serving_the_rest`,
-      `::should_release_a_slot_when_a_connection_closes`, case `188` (#51, §12.1, Appendix A).
-- [ ] **P1 · Half-open handshakes cannot accumulate.** At most sixteen handshakes are pending at
+      `::should_release_a_slot_when_a_connection_closes`, case `188` (#51, §12.1, Appendix A,
+      ADR-0502).
+- [x] **P1 · Half-open handshakes cannot accumulate.** At most sixteen handshakes are pending at
       once, one that has not completed within ten seconds is dropped, and neither limit is reachable
       by a peer that opens a TCP connection and stops —
       `crates/ono-remote/tests/limits.rs::should_refuse_a_seventeenth_pending_handshake`,
       `::should_drop_a_handshake_that_has_not_completed_within_the_timeout`, case `188` (#52,
-      §12.2, Appendix A).
-- [ ] **P1 · One fingerprint gets four connections.** The per-client ceiling is keyed on the
+      §12.2, Appendix A, ADR-0502).
+- [x] **P1 · One fingerprint gets four connections.** The per-client ceiling is keyed on the
       authenticated fingerprint rather than on the source address, so it cannot be sidestepped by
       reconnecting from elsewhere —
       `crates/ono-remote/tests/limits.rs::should_refuse_a_fifth_connection_from_one_authenticated_fingerprint`,
       `::should_key_the_per_client_ceiling_on_the_fingerprint_rather_than_the_address` (#53,
-      §12.3, Appendix A).
-- [ ] **P1 · One failing connection never takes the accept loop with it.** A panic, a decode
-      failure or an abrupt disconnect on one connection leaves the listener accepting and the other
-      sessions intact — `crates/ono-remote/tests/limits.rs::should_keep_accepting_after_one_connection_fails`,
-      `::should_leave_every_other_session_intact_when_one_connection_is_aborted` (#57, §12.6).
-- [ ] **P1 · `--listen` says what it will accept, and refuses to listen for nobody.** Startup
-      prints the bind address, the effective limits and the number of authorized clients, an empty
-      or absent store refuses to start rather than listening permissively, and the default bind is
-      the one §11.2 names — `crates/ono-cli/tests/agent_startup.rs::should_print_the_bind_address_the_limits_and_the_authorized_client_count_when_listening_starts`,
-      `::should_refuse_to_listen_when_the_authorization_store_is_empty_or_absent`,
-      `::should_bind_the_documented_default_address_when_none_is_given`, case `187` (#55, §11.1,
-      §11.2, §11.3).
-- [ ] **P2 · Revocation has stated semantics.** Removing a client key refuses its next connection,
-      and whether an established session is terminated is decided rather than left to chance: the
-      box is ticked by `crates/ono-cli/tests/client_keys.rs::should_refuse_the_next_connection_after_a_client_key_is_removed`
-      together with either `crates/ono-remote/tests/limits.rs::should_terminate_an_established_session_when_its_authorization_is_revoked`
-      or an ADR that records live revocation as deferred and is named in this box before it is
-      ticked (#56, §12.5).
+      §12.3, Appendix A, ADR-0503).
+- [x] **P1 · One failing connection never takes the accept loop with it.** A garbage peer, a peer
+      that stalls through its whole handshake budget and a peer refused for lack of authorization
+      leave the listener accepting — and the stalling one is proved to be still stalling when the
+      next peer is served, so a listener that merely recovered afterwards fails —
+      `crates/ono-remote/tests/limits.rs::should_keep_accepting_after_one_connection_fails`,
+      `::should_leave_every_other_session_intact_when_one_connection_is_aborted`, case `188` (#57,
+      §12.6, ADR-0503).
+- [x] **P1 · `--listen` says what it will accept, and never accepts on locality.** Startup prints
+      the bind address, the server fingerprint, the store path, the authorized client count and the
+      effective ceilings; a store with zero clients listens and refuses every connection after the
+      cryptographic handshake, saying so on the way up rather than leaving it to be discovered; and
+      `--listen` without an address binds the documented loopback default —
+      `crates/ono-cli/tests/agent_startup.rs::should_print_the_bind_address_the_limits_and_the_authorized_client_count_when_listening_starts`,
+      `::should_refuse_every_connection_when_the_authorization_store_is_empty_or_absent`,
+      `::should_bind_the_documented_default_address_when_none_is_given`, case `188` (#55, §11.1,
+      §11.2, §11.3, ADR-0504).
+      §11.2 offers "the agent MAY listen but MUST refuse all connections after cryptographic
+      handshake", and ADR-0504 records why that branch is the one taken: refusing to start would
+      make the first `add client-key` need a restart, and every connection is refused either way.
+- [x] **P2 · Revocation has stated semantics, and they are the live ones.** Removing a client key
+      refuses its next connection and closes the sessions it already holds, well inside §12.5's
+      five seconds, and the command's own message says both —
+      `crates/ono-cli/tests/client_keys.rs::should_refuse_the_next_connection_after_a_client_key_is_removed`
+      together with `crates/ono-remote/tests/limits.rs::should_terminate_an_established_session_when_its_authorization_is_revoked`,
+      case `188` (#56, §12.5, ADR-0505, superseding the deferral in ADR-0470).
 
 #### 4.8.5 KUANG/11 native confinement fails closed (H4 — §66.1, §15–§20, Appendix D)
 

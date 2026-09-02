@@ -258,13 +258,25 @@ fn authorization_store() -> Result<ono_protocol::AuthorizedClients, ono_value::E
     ono_cli::trust::open_authorized_clients(&sources)
 }
 
+/// Where a listening agent reads the clients it may serve (v0.4.1 §9.2).
+fn authorization_store_path() -> Option<std::path::PathBuf> {
+    let environment: Vec<(String, String)> = std::env::vars().collect();
+    let sources = ono_cli::hosts::HostSources::from_environment(
+        environment
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+    );
+    ono_cli::trust::authorized_clients_path(&sources)
+}
+
 /// Serves links over Ono's own authenticated transport (spec §21.5): one TLS 1.3 endpoint,
-/// one agent per peer.
+/// one agent per peer, under the ceilings of v0.4.1 §12.
 ///
-/// The address actually bound and the fingerprint peers must pin are written to stderr before
-/// the first peer is accepted, so an operator can read the fingerprint off the host's own
-/// console — which is the one channel that makes a first pin worth anything — and so a caller
-/// that asked for port 0 learns which port the system chose.
+/// Before the first peer is accepted the agent prints the startup summary §11.2 requires — the
+/// bound address, the fingerprint peers must pin, the store that decides who is served, how many
+/// clients that store holds and the ceilings the agent will enforce. An operator reads that block
+/// to know what they have just put on a network, and the host's own console is the one channel
+/// that makes a first pin worth anything.
 async fn serve_authenticated(
     address: &str,
     identity: &ono_remote::PeerIdentity,
@@ -272,16 +284,8 @@ async fn serve_authenticated(
 ) -> ExitCode {
     // Before the socket, not after: an agent that bound first and then discovered it had no
     // usable policy would have been reachable while it decided (§2.3, §59.5).
-    match authorization_store() {
-        Ok(store) => {
-            if !store.is_present() {
-                eprintln!(
-                    "{}: no client is authorized yet; `add client-key <fingerprint>` authorizes \
-                     one to observe (v0.4.1 section 9.4)",
-                    ono_core::SHORT_NAME
-                );
-            }
-        }
+    let store = match authorization_store() {
+        Ok(store) => store,
         Err(error) => {
             eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
             if let Some(help) = error.help() {
@@ -289,7 +293,7 @@ async fn serve_authenticated(
             }
             return ExitCode::from(ExitStatus::FAILURE);
         }
-    }
+    };
 
     let listener = match ono_remote::TlsListener::bind(address, identity).await {
         Ok(listener) => listener,
@@ -298,58 +302,99 @@ async fn serve_authenticated(
             return ExitCode::from(ExitStatus::FAILURE);
         }
     };
-    match listener.local_addr() {
-        Ok(bound) => eprintln!("{}: listening on {bound}", ono_core::SHORT_NAME),
+    let bound = match listener.local_addr() {
+        Ok(bound) => bound,
         Err(error) => {
             eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
             return ExitCode::from(ExitStatus::FAILURE);
         }
-    }
+    };
+
+    // The agent enforces the ceilings the configuration layer declares, so a figure an operator
+    // set is the figure the summary prints and the listener applies (§12.4, §52.2, ADR-0501).
+    let limits = configured_limits();
+    print_startup_summary(bound, identity, store.entries().len(), &limits);
+
+    let agent = ono_remote::ListeningAgent::new(listener, config)
+        .with_limits(limits)
+        .with_audit(std::sync::Arc::new(ono_remote::StderrAudit))
+        // Read once per accepted connection, so `add client-key` on this host reaches the next
+        // connection without a restart, and read again by the revocation sweep of §12.5.
+        .with_authorization_source(authorization_store);
+    let error = agent.run().await;
+    eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+    ExitCode::from(ExitStatus::FAILURE)
+}
+
+/// The block v0.4.1 §11.2 requires a listening agent to print before it accepts anybody.
+///
+/// Five fields, in §11.2's order, on stderr: an agent carried over stdio owns stdout for the wire
+/// and never writes diagnostics there, and a listening one keeps the same discipline so the two
+/// modes are not two contracts (§14.1).
+fn print_startup_summary(
+    bound: std::net::SocketAddr,
+    identity: &ono_remote::PeerIdentity,
+    authorized: usize,
+    limits: &ono_protocol::Limits,
+) {
+    let name = ono_core::SHORT_NAME;
+    eprintln!("{name}: listening on {bound}");
+    eprintln!("{name}: host key {}", identity.fingerprint());
     eprintln!(
-        "{}: host key {}",
-        ono_core::SHORT_NAME,
-        identity.fingerprint()
+        "{name}: authorization store {}",
+        authorization_store_path().map_or_else(
+            || "none — this shell keeps no configuration directory".to_owned(),
+            |path| path.display().to_string()
+        )
     );
-    let audit: ono_protocol::Audit = std::sync::Arc::new(ono_remote::StderrAudit);
-    loop {
-        match listener.accept().await {
-            Ok(transport) => {
-                // The store is read once per accepted connection, and the policy it yields is
-                // then fixed for that connection's life (§10.3). Re-reading it per *request*
-                // would be the TOCTOU §10.3 rules out; never re-reading it would mean an
-                // operator's revocation reached nobody until the agent restarted (§12.5).
-                let store = match authorization_store() {
-                    Ok(store) => std::sync::Arc::new(store),
-                    // §2.3: the control could not be applied, so the connection does not start.
-                    // The listener stays up, because the next connection may find a repaired
-                    // file, and every connection meanwhile is refused rather than admitted.
-                    Err(error) => {
-                        eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
-                        continue;
-                    }
-                };
-                let peer = transport
-                    .peer_address()
-                    .map_or_else(|| "unknown".to_owned(), |address| address.to_string());
-                let config = config
-                    .clone()
-                    .with_authorization(ono_protocol::ServerAuthorization::Store(store))
-                    .with_audit(std::sync::Arc::clone(&audit))
-                    .with_source_address(peer);
-                tokio::spawn(async move {
-                    let _ = ono_remote::serve_registry(transport, config).await;
-                });
-            }
-            // One peer that could not complete a handshake is not a reason to stop serving the
-            // rest: it is reported and the listener stays up (spec §16.5).
-            Err(error) => {
-                audit.record(&ono_protocol::AuditEvent::new(
-                    ono_protocol::AuditKind::ClientVerificationFailed,
-                    "unaccepted",
-                    "denied",
-                ));
-                eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
-            }
-        }
+    eprintln!("{name}: authorized clients {authorized}");
+    if authorized == 0 {
+        // §11.2 lets an agent listen for nobody and requires it to refuse everybody; §54.1 and
+        // §2.3 say it must be legible rather than discovered from a refused client (ADR-0504).
+        eprintln!(
+            "{name}: no client is authorized yet, so every connection will be refused after the \
+             cryptographic handshake (v0.4.1 section 11.2). `add client-key <fingerprint>` \
+             authorizes one to observe (section 9.4)"
+        );
     }
+    eprintln!("{name}: maximum connections {}", limits.max_connections());
+    eprintln!(
+        "{name}: maximum connections per client {}",
+        limits.max_connections_per_client()
+    );
+    eprintln!(
+        "{name}: maximum pending handshakes {}",
+        limits.max_pending_handshakes()
+    );
+    eprintln!("{name}: handshake timeout {:?}", limits.handshake_timeout());
+}
+
+/// The ceilings this agent will enforce, from the one place they are declared (§12.4, §55.1).
+///
+/// `ono_protocol::Limits::default()` is Appendix A, and every `limits.remote_*` key an operator
+/// set moves it — through the same catalogue `Settings::assign` range-checks and `inspect limits`
+/// reports, so the figure a user reads is the figure the listener applies (ADR-0456, ADR-0461).
+///
+/// Agent mode reads the environment layer and no file, which is what agent mode does for every
+/// other setting: `ono --agent` is a protocol endpoint and has never had a configuration file
+/// execution surface. Honouring `config.ono` here as well is recorded for the board.
+fn configured_limits() -> ono_protocol::Limits {
+    let mut settings = ono_cli::settings::Settings::new();
+    let variables: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> =
+        std::env::vars_os().collect();
+    settings.apply_environment(&variables, &mut |error| {
+        // §55.2: a security-sensitive agent limit never silently becomes unlimited because a
+        // value failed to parse. Nothing was stored, so the declared default stays in force, and
+        // the operator is told which variable they have to fix.
+        eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+    });
+    let read =
+        |key: &str| u32::try_from(ono_cli::limits::magnitude(&settings, key)).unwrap_or(u32::MAX);
+    ono_protocol::Limits::default()
+        .with_max_connections(read("limits.remote_connections"))
+        .with_max_pending_handshakes(read("limits.remote_pending_handshakes"))
+        .with_max_connections_per_client(read("limits.remote_connections_per_client"))
+        .with_handshake_timeout(std::time::Duration::from_millis(
+            ono_cli::limits::magnitude(&settings, "limits.remote_handshake_timeout_ms"),
+        ))
 }

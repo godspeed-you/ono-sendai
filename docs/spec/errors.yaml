@@ -510,6 +510,28 @@ errors:
       (v0.4.1 section 9.2, section 59.5). The diagnostic names the file and the line; repair that
       line, or remove the file to authorize nobody deliberately.
 
+  # --- listening-agent resource limits (v0.4.1 §12, §53.1, ADR-0502) -----------------------
+  - code: Ono-Sendai-E1501
+    name: remote.connection_limit
+    kind: resource
+    summary: The listening agent is already holding as many connections as it may.
+    help: >-
+      A listening agent has a hard ceiling on concurrent connections and a second one per
+      authenticated client key (v0.4.1 section 12.1, section 12.3). The metadata names which of
+      the two was reached and the figure it was set to. The refusal is retryable: a slot is
+      released whenever a session ends. `limits.remote_connections` and
+      `limits.remote_connections_per_client` configure the two ceilings on the agent's host.
+  - code: Ono-Sendai-E1502
+    name: remote.handshake_timeout
+    kind: timeout
+    summary: The peer did not complete TLS and Ono negotiation within the time a handshake is given.
+    help: >-
+      A peer that opens a connection and then says nothing holds a slot in the agent's
+      pre-negotiation ceiling for free, so the handshake has a deadline (v0.4.1 section 12.2).
+      Ten seconds by default, configured on the agent's host with
+      `limits.remote_handshake_timeout_ms`. A link dropped this way is worth retrying: nothing
+      about the client was refused.
+
   # --- KUANG/11, spec §31.79 (folded into the global model by ADR-0108) ---------------------
   - code: Ono-Sendai-K11001
     name: package.invalid

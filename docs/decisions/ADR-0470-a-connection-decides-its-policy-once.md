@@ -1,6 +1,6 @@
 # ADR-0470: A connection decides its policy once, and cannot widen it afterwards
 
-- Status: accepted
+- Status: accepted; the live-revocation deferral is superseded by ADR-0505
 - Date: 2026-09-02
 - Spec refs: v0.4.1 §2.2, §9.2, §10.3, §12.5, §14.2, §65.2; ADR-0437, ADR-0438, ADR-0466
 - Decided by: agent (autonomous)
