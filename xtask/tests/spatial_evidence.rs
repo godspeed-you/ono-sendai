@@ -39,13 +39,20 @@ fn read(relative: &str) -> String {
 }
 
 /// The text of `docs/ACCEPTANCE.md` §4.7, which is the v0.4 definition of done.
+///
+/// The passage ends where the next tranche begins. §4.8 is the v0.4.1 checklist and names proofs
+/// its own delivering increments have still to write; reading them here would hold the v0.4
+/// evidence against tests that do not exist yet, and would say §4.7 was rotten when it is whole.
+/// The v0.4.1 boxes are held by their own harvester (`xtask/tests/hardening_evidence.rs`,
+/// `docs/ACCEPTANCE.md` §4.8.1), which is the box that closes that tranche.
 fn checklist() -> String {
     let acceptance = read("docs/ACCEPTANCE.md");
     let start = acceptance
         .find("### 4.7 The v0.4 tranche")
         .expect("docs/ACCEPTANCE.md carries §4.7, the v0.4 tranche");
-    let end = acceptance[start..]
-        .find("\n## 5. Stopping rule")
+    let end = ["\n### 4.8", "\n## 5. Stopping rule"]
+        .iter()
+        .find_map(|marker| acceptance[start..].find(marker))
         .map_or(acceptance.len(), |offset| start + offset);
     acceptance[start..end].to_owned()
 }

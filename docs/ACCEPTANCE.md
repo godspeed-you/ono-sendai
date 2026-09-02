@@ -1103,6 +1103,909 @@ documents it is named in the box before it may be ticked.
       `spatial_storage.rs::should_summarize_a_large_directory_instead_of_enumerating_it`;
       cases `090` and `092` (shared with §2.9).
 
+### 4.8 The v0.4.1 tranche — Hardening, Trust & Release Integrity
+
+`docs/ono_sendai_shell_spec_v0.4.1_hardening_trust_release_integrity.md` is a maintenance layer
+over the released v0.4 substrate: boundaries that enforce what they claim, resources that stay
+bounded in bytes as well as in counts, streams that stream, performance measured as a curve
+instead of at one small point, tests that report execution truth, and a release whose published
+bytes can be traced to the inputs that produced them. This subsection is its definition of done —
+the Release Definition of v0.4.1 §66.1–§66.9 and the fourteen acceptance families of §40.3, in
+boxes a script can check.
+
+The tranche is 101 GitHub issues carrying the milestones **H0 … H12**, one per phase of §57, and
+every box below names the issues that deliver it; `docs/STATE.md` holds the intended order inside
+each phase. **Nothing here is delivered yet.** Every box is open, so `scripts/release-check.sh`
+stops at the first of them — which is what a tranche that has just started looks like, and is the
+reason this subsection is written before the work rather than after it (#29). §4.9 is reserved
+for the v0.5 Temporal & Causal Systems Interface.
+
+**A box is ticked by a named automated proof** — a test that runs un-ignored in `scripts/gate.sh`,
+or a case that runs in `scripts/acceptance.sh` — never by judgement, never by reading code, and
+never because a phase of §57 is reported complete. That is §3's rule for every subsection and
+§4.7's practice for the tranche before this one. Where the proving test does not exist yet, the
+box names the file and the test name the delivering increment must create; writing it belongs to
+that increment. Where a criterion of §66 is a document rather than a behaviour, the box names the
+document *and* the gate check that fails when the document and the tree disagree, so no box is
+closed by someone having read something.
+
+Four conventions this subsection relies on:
+
+- **Priorities decide what may stay open, never what may be judged.** Each box carries its
+  priority class from §3.1. P0 (a boundary can claim safety without enforcing it) and P1 (realistic
+  use can hang or grow without bound) are the mandatory scope of §3.2 and §3.3 and MUST be ticked.
+  P2 and P3 are part of the complete product contract as well (§3.4): a release candidate MAY be
+  cut with P2/P3 work in flight, and the final release satisfies all of §66. §4.8.14 holds the one
+  rule that governs the whole subsection.
+- **The case numbers 180–200 belong to this tranche**, and they ascend with the phase sequence, so
+  a case that lands early leaves no lower number pointing at a file nobody wrote. An increment that
+  has to deliver out of that order writes the case name in prose without backticks until its file
+  exists — `xtask`'s reference check reads a backticked `NNN-kebab-name` as a claim and a plain one
+  as a name recorded absent (`xtask/src/scan.rs::check_acceptance_case_references`, ADR-0401).
+- **Appendix A is the source of every default a box asserts.** A limit box names the figure it
+  measures against, and the figure comes from the contract registry rather than from a constant
+  typed into the test (§52.2, #117).
+- **§4.7's evidence harvester stops at this heading.** `xtask/tests/spatial_evidence.rs` reads
+  `docs/ACCEPTANCE.md` §4.7 and resolves every proof it names; its passage now ends at `### 4.8`,
+  so the two checklists are read apart and this one is held by its own harvester
+  (`xtask/tests/hardening_evidence.rs`, the first box of §4.8.1).
+
+#### 4.8.1 Baseline and guardrails (H0 — §57 H0, §0.5, §6, §52)
+
+- [ ] **P0 · Every proof this subsection names resolves.** `xtask/tests/hardening_evidence.rs`
+      holds §4.8 the way `xtask/tests/spatial_evidence.rs` holds §4.7 —
+      `hardening_evidence.rs::should_find_every_test_the_v041_checklist_names_as_a_proof` (each
+      `file.rs::name` exists, lives under a crate's `tests/` or under `xtask/tests/`, and carries
+      no `#[ignore]`), `::should_find_every_acceptance_case_the_v041_checklist_names` (each case
+      number is a `*.case` file `scripts/acceptance.sh` collects) and
+      `::should_read_the_v041_checklist_apart_from_the_v04_one` (the §4.7 passage ends at this
+      heading, so neither harvester can silently read the other's boxes). This box closes last: it
+      is the mechanical statement that no other box here is ticked by nothing (#29, §3).
+- [ ] **P0 · The four failing proofs of §57 H0 exist and are green.** §57 requires the failure
+      before the fix, and §0.5 names the four defects the tranche is built around: the
+      unauthenticated TLS client that reaches the protocol handshake (§0.5.1), the plugin that
+      execs although a mandatory confinement control failed (§0.5.3), the `each` that emits nothing
+      until its source closes (§0.5.5), and the high-cardinality spatial fixture that produces
+      neither output nor progress (§0.5.7). Each was committed red — `#[ignore]`d with a
+      `// REASON:` and a *Deferred* entry — by #31, and each is inverted by the phase that closes
+      it: `crates/ono-remote/tests/authentication.rs::should_refuse_the_tls_handshake_when_the_client_presents_no_certificate`,
+      `crates/ono-kuang-supervisor/tests/confinement.rs::should_never_exec_the_plugin_when_a_mandatory_control_cannot_be_installed`,
+      `crates/ono-cli/tests/streaming.rs::should_emit_the_first_value_before_the_source_closes`,
+      `crates/ono-spatial-query/tests/profiles.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture`.
+      The box is ticked when all four run un-ignored and green, and `docs/STATE.md` records that
+      each was red first (#31).
+- [ ] **P2 · The frozen baseline exists and is readable by the gate.** `docs/baselines/v0.4.1.json`
+      records the tranche's starting point — test counts by outcome, the six §32.3 metrics for
+      every benchmark of §37.1, and the release artifact hashes and workflow inputs of Appendix H —
+      so a later regression has something to be a regression against (§32.4) —
+      `xtask/tests/perf.rs::should_read_the_frozen_v041_baseline_and_find_every_metric_it_declares`
+      and `::should_compare_a_benchmark_result_against_the_baseline_for_its_reference_environment`
+      (#30).
+- [ ] **P2 · The hardening policy data lives in machine-readable registries.** The seven contract
+      domains of §52.1 — `security_boundaries`, `remote_limits`, `materialization_limits`,
+      `kuang_confinement_controls`, `performance_profiles`, `expected_test_skips`, `release_inputs`
+      — exist under `docs/spec/hardening/`, and runtime defaults, generated reference and tests read
+      the same source (§52.2), so `max_connections = 32` is typed once —
+      `xtask/tests/contracts.rs::should_hold_every_hardening_limit_against_the_value_the_shell_uses`,
+      `::should_reject_an_unknown_capability_id_in_an_authorization_fixture`,
+      `::should_reject_an_unknown_control_id_in_a_kuang_tier_definition` (§52.3) and
+      `cargo run -p xtask -- spec-check` on every gate run (#117).
+- [ ] **P2 · The security boundary inventory is generated and owned.** The twelve boundaries of
+      §6.1 — from `remote.tcp.transport` to `release.publish` — are declared with their input
+      trust, their required enforcement and the one crate that owns each (§6.2), and the page under
+      `docs/reference/` is produced by `cargo xtask docs` rather than maintained by hand —
+      `xtask/tests/reference.rs::should_render_a_boundary_page_that_matches_the_inventory` and
+      `xtask/tests/contracts.rs::should_name_an_owning_crate_and_a_security_test_for_every_declared_boundary`,
+      which is what makes §20's acceptance principle checkable: a boundary with no test naming it
+      fails the gate (#118).
+
+#### 4.8.2 The direct link authenticates both ends (H1 — §66.1, §7, §8, §13)
+
+§66.1's first, fifth and sixth bullets. A directly listening TLS agent authenticates itself to the
+client today and accepts clients that present no certificate (§0.5.1); the protocol-level
+`Identity` is self-reported metadata (§65.1). Every box here is P0 because a boundary that claims
+authentication without performing it is exactly §3.1's release blocker.
+
+- [ ] **P0 · Transport identity is symmetric and transport-neutral.** `HostKey` becomes a
+      `PeerIdentity` that names either end of a link, the runtime user of a session stays a
+      separate field from the transport credential (§7.3), and the SSH-carried stdio agent keeps
+      its existing external authentication (§4.3) —
+      `crates/ono-protocol/tests/trust.rs::should_carry_the_peer_identity_of_either_end_of_a_link`,
+      `::should_keep_the_runtime_user_separate_from_the_transport_credential`,
+      `crates/ono-remote/tests/agentless.rs` still green over the ssh path (#32, §7.2, §56.1).
+- [ ] **P0 · A client has a persistent identity of its own.** `~/.config/ono/link_identity.pem`
+      is created on first use with `0600`, is reused across invocations so the fingerprint an
+      operator authorizes stays the same, and an existing `host_key.pem` migrates without a manual
+      step (§8.2) — `crates/ono-cli/tests/link_identity.rs::should_create_a_client_identity_with_owner_only_permissions_on_first_use`,
+      `::should_present_the_same_fingerprint_on_every_later_invocation`,
+      `::should_migrate_an_existing_host_key_file_into_the_canonical_identity_path` (#33, §8.1,
+      §8.4).
+- [ ] **P0 · A readable private key is refused, and the diagnostic prints no key material.** A
+      `link_identity.pem` that is group- or world-readable stops the operation and names the path
+      and the required mode —
+      `crates/ono-cli/tests/link_identity.rs::should_refuse_an_identity_file_that_is_group_or_world_readable`,
+      `::should_name_the_path_and_the_required_permissions_without_printing_key_material`, and the
+      §59.6 half of case `181` (#34, §8.3).
+- [ ] **P0 · The listener requires an authenticated client certificate.** No protocol byte from an
+      unauthenticated TCP client reaches the agent, and `peer_key()` is `Some` for every accepted
+      network client — `crates/ono-remote/tests/authentication.rs::should_refuse_the_tls_handshake_when_the_client_presents_no_certificate`,
+      `::should_refuse_a_malformed_client_certificate`,
+      `::should_refuse_a_client_certificate_whose_signature_proof_fails`,
+      `::should_expose_the_authenticated_fingerprint_of_every_accepted_client`, and
+      `crates/ono-remote/tests/agent.rs::should_reach_no_protocol_frame_from_an_unauthenticated_tcp_client`
+      (#35, the work package written out in §58.1; §2.1, §2.2, §7, §13.1).
+- [ ] **P0 · The client verifies the server the same way the server verifies the client.** Both
+      ends prove possession of a persistent key, and a client that cannot verify the server's
+      identity refuses the link rather than continuing —
+      `crates/ono-remote/tests/authentication.rs::should_prove_possession_of_a_persistent_key_at_both_ends_of_a_link`,
+      `::should_refuse_the_link_when_the_server_identity_cannot_be_verified`, case `180` (#36,
+      §7.1, §7.3).
+- [ ] **P0 · Downgrade is impossible and never automatic.** ALPN is `ono/2`, the negotiated
+      protocol version is bound to the authenticated handshake, a wrong ALPN is refused, and no
+      code path falls back to the legacy unauthenticated direct protocol on failure —
+      `crates/ono-remote/tests/authentication.rs::should_refuse_a_client_that_offers_the_wrong_alpn_protocol`,
+      `::should_never_retry_a_failed_authenticated_link_as_an_unauthenticated_one`,
+      `crates/ono-protocol/tests/handshake.rs::should_bind_the_negotiated_version_to_the_authenticated_handshake`
+      (#38, §13.2, §13.3, §13.4).
+- [ ] **P0 · No unauthenticated network mode is reachable from the CLI.** No flag, config key or
+      environment variable turns the canonical agent into an unauthenticated listener, and the
+      attempt is refused with a stable error rather than ignored —
+      `crates/ono-cli/tests/agent_startup.rs::should_offer_no_flag_that_starts_an_unauthenticated_network_listener`,
+      `::should_refuse_a_configuration_that_asks_for_an_unauthenticated_network_mode`, and
+      `xtask/tests/contracts.rs::should_declare_no_unauthenticated_transport_for_the_tcp_boundary`
+      against the §6.1 inventory (#39, §7.4).
+- [ ] **P1 · The fingerprint an operator has to compare is printable at both ends.**
+      `ono --print-peer-key` prints the client fingerprint in the §8.5 display form, and
+      `ono --agent --print-host-key` keeps working for the agent —
+      `crates/ono-cli/tests/link_identity.rs::should_print_the_client_fingerprint_in_the_documented_display_form`,
+      `::should_keep_printing_the_agent_host_key_under_the_existing_flag`, case `181` (#37, §8.5).
+- [ ] **P0 · Host-key pinning is live on the production transport.** ADR-0037 §4 left ssh links on
+      `TrustPolicy::Unauthenticated`, so the complete trust store of
+      `crates/ono-remote/tests/trust.rs` was never consulted in production and no case asserted the
+      E0603 refusal. The authenticated TCP transport this phase builds is what its exit test needs
+      (ADR-0274) — `crates/ono-remote/tests/trust.rs::should_refuse_a_changed_host_key_with_the_stable_safety_code`
+      reached through the production path by
+      `crates/ono-cli/tests/authenticated_link.rs::should_consult_the_pin_store_on_the_transport_a_user_actually_gets`,
+      and case `180` asserting E0603 in the container (#18).
+
+#### 4.8.3 Authorization derives from the authenticated identity (H2 — §66.1, §9, §10, §14)
+
+§66.1's second, third and fourth bullets. Authentication proves possession of a key; it does not
+prove the operator wants that key to see the system (§9.1). §65.2 and §65.3 name the two ways this
+is got wrong — self-reported authorization, and authorization that exists only in the negotiation.
+
+- [ ] **P0 · The authorization store is explicit and strictly parsed.**
+      `~/.config/ono/authorized_clients` is line-oriented and human-readable, its entry model is
+      the §9.3 record (fingerprint, optional label, `observe`, exact `actions`), an unknown field is
+      rejected, and a malformed non-comment line fails the load —
+      `crates/ono-cli/tests/authorized_clients.rs::should_parse_the_documented_entry_model_including_an_empty_action_set`,
+      `::should_reject_an_unknown_field_in_an_authorization_entry`,
+      `::should_fail_to_load_the_store_when_one_non_comment_line_is_malformed`,
+      `::should_never_treat_a_malformed_store_as_an_empty_one`, case `187` (#40, §9.2, §9.3,
+      §59.5, §65.2, §65.4).
+- [ ] **P1 · Store updates are atomic.** A concurrent reader sees the old file or the new one, an
+      interrupted write leaves the previous store intact, and the file's permissions survive the
+      update — `crates/ono-cli/tests/authorized_clients.rs::should_replace_the_store_atomically_so_a_reader_never_sees_a_partial_file`,
+      `::should_leave_the_previous_store_intact_when_a_write_is_interrupted`,
+      `::should_keep_the_owner_only_permissions_of_the_store_across_an_update` (#41, §9.8).
+- [ ] **P0 · The operator manages client keys through the command registry.**
+      `get client-key`, `add client-key`, `set client-key` and `remove client-key` answer as
+      objects, are declared in `docs/spec/commands/`, and carry help and completion —
+      `crates/ono-cli/tests/client_keys.rs::should_list_every_authorized_client_as_an_object_when_get_client_key_runs`,
+      `::should_add_a_client_key_and_show_it_in_the_next_listing`,
+      `::should_change_exactly_the_grants_named_when_set_client_key_runs`,
+      `::should_remove_a_client_key_and_refuse_the_next_connection_from_it`, case `186`, and
+      `cargo run -p xtask -- spec-check` for the registry half (#42, §9.7).
+- [ ] **P0 · A newly added client observes and nothing more.** The default grant is
+      `observe=true` with an empty action set, an unlisted client is refused before negotiation, and
+      neither state is reachable by an accident of parsing —
+      `crates/ono-cli/tests/client_keys.rs::should_grant_observe_only_when_a_client_key_is_added_without_grants`,
+      `crates/ono-protocol/tests/authorization.rs::should_refuse_an_unlisted_client_before_provider_negotiation`,
+      `::should_disclose_no_process_schema_or_capability_inventory_to_an_unlisted_client`, cases
+      `182` and `184` (#43, §9.4, §59.1, §59.2).
+- [ ] **P0 · An action grant is an exact capability ID.** A grant names one capability, no wildcard
+      or risk-class pattern is accepted by the parser, an unknown capability ID is denied, and
+      `service.restart` being granted leaves `process.signal` refused —
+      `crates/ono-cli/tests/authorized_clients.rs::should_refuse_a_wildcard_or_risk_class_pattern_in_an_action_grant`,
+      `crates/ono-protocol/tests/authorization.rs::should_deny_an_action_whose_capability_id_is_unknown`,
+      `::should_leave_every_ungranted_action_refused_when_one_action_is_granted`, case `185`
+      (#44, §9.5, §9.6, §59.3, Appendix C).
+- [ ] **P1 · The policy for a connection is decided once and cannot change under it.** The
+      `AuthorizationContext` is built from the authenticated fingerprint at accept, is immutable
+      for the life of the connection, and carries no self-reported field from the peer —
+      `crates/ono-protocol/tests/authorization.rs::should_build_the_authorization_context_from_the_authenticated_fingerprint_alone`,
+      `::should_keep_the_authorization_context_immutable_for_the_life_of_the_connection` (#47,
+      §10.3).
+- [ ] **P0 · The offer a client receives is filtered by its policy.** A capability the client may
+      not use is absent from the negotiated offer, so the inventory itself carries no information
+      the policy withholds — `crates/ono-protocol/tests/authorization.rs::should_offer_only_the_capabilities_the_clients_policy_allows`,
+      `::should_leave_an_ungranted_action_capability_out_of_the_offer_the_provider_advertises`,
+      case `183` (#45, §10.1).
+- [ ] **P0 · Dispatch refuses independently of the offer.** A request for a capability the offer
+      omitted is refused at dispatch as well, on every dispatch path, so a client that constructs
+      the request by hand gains nothing (§65.3) —
+      `crates/ono-protocol/tests/authorization.rs::should_refuse_a_request_for_a_capability_the_offer_omitted`,
+      `::should_refuse_it_on_every_dispatch_path_the_server_exposes`, and
+      `xtask/tests/contracts.rs::should_find_the_authorization_check_on_every_declared_dispatch_path`
+      against the §6.1 boundary inventory, case `184` (#46, §10.2, §20).
+- [ ] **P0 · Refusals are stable, structured and non-interactive.**
+      `remote.unauthenticated`, `remote.unauthorized` and `remote.capability_denied` are declared
+      in `docs/spec/errors.yaml`, carry the deciding boundary in structured details, and never
+      prompt — `crates/ono-value/tests/errors.rs::should_declare_the_three_remote_refusal_codes_with_their_details`,
+      `crates/ono-protocol/tests/authorization.rs::should_answer_the_same_stable_code_for_the_same_refusal_every_time`,
+      `::should_refuse_without_prompting_when_no_terminal_is_attached` (§59.9), cases `182`, `184`
+      and `186` (#48, §10.4, §53.1, §53.2, §53.3).
+- [ ] **P1 · The agent records who connected and what was decided.** Accept, authentication
+      outcome, authorization outcome, capability decisions and disconnect are structured audit
+      events carrying the §14.2 fields, and no key material or payload appears in one —
+      `crates/ono-remote/tests/audit.rs::should_emit_a_structured_event_for_every_connection_lifecycle_step`,
+      `::should_carry_the_fingerprint_and_the_decision_on_every_authorization_event`,
+      `::should_never_write_key_material_or_payload_bytes_into_an_audit_event` (#49, §14.1, §14.2).
+- [ ] **P1 · `get link` distinguishes the six trust concepts.** Authenticated, authorized, pinned
+      and self-reported are separate fields with separate values, so a reader can tell a proved
+      identity from a claimed one —
+      `crates/ono-cli/tests/remote_commands.rs::should_distinguish_authenticated_authorized_pinned_and_self_reported_on_a_link`,
+      `::should_report_an_authenticated_but_unauthorized_link_as_exactly_that`, case `186`
+      (#50, §14.3, §19.1).
+
+#### 4.8.4 The listening agent stays bounded (H3 — §3.3, §11, §12)
+
+§3.3's last mandatory P1 item: connection and per-peer resource limits, so an agent a user exposes
+on a network cannot be exhausted by a peer that simply keeps connecting.
+
+- [ ] **P1 · One `Limits` contract, and no unlimited limit in production.** Every ceiling of
+      Appendix A is a field of one typed contract read from `docs/spec/hardening/remote_limits.yaml`,
+      no production path constructs an unlimited value, and the same numbers reach help, generated
+      reference and the tests —
+      `crates/ono-remote/tests/limits.rs::should_read_every_connection_ceiling_from_the_one_limits_contract`,
+      `::should_offer_no_production_constructor_that_leaves_a_limit_unbounded`,
+      `xtask/tests/contracts.rs::should_hold_every_hardening_limit_against_the_value_the_shell_uses`
+      (#54, §12.4, §52.2).
+- [ ] **P1 · The global connection ceiling holds at 32.** The thirty-third concurrent connection is
+      refused with a stable error and the agent keeps serving the thirty-two it has —
+      `crates/ono-remote/tests/limits.rs::should_refuse_the_connection_past_the_global_ceiling_and_keep_serving_the_rest`,
+      `::should_release_a_slot_when_a_connection_closes`, case `188` (#51, §12.1, Appendix A).
+- [ ] **P1 · Half-open handshakes cannot accumulate.** At most sixteen handshakes are pending at
+      once, one that has not completed within ten seconds is dropped, and neither limit is reachable
+      by a peer that opens a TCP connection and stops —
+      `crates/ono-remote/tests/limits.rs::should_refuse_a_seventeenth_pending_handshake`,
+      `::should_drop_a_handshake_that_has_not_completed_within_the_timeout`, case `188` (#52,
+      §12.2, Appendix A).
+- [ ] **P1 · One fingerprint gets four connections.** The per-client ceiling is keyed on the
+      authenticated fingerprint rather than on the source address, so it cannot be sidestepped by
+      reconnecting from elsewhere —
+      `crates/ono-remote/tests/limits.rs::should_refuse_a_fifth_connection_from_one_authenticated_fingerprint`,
+      `::should_key_the_per_client_ceiling_on_the_fingerprint_rather_than_the_address` (#53,
+      §12.3, Appendix A).
+- [ ] **P1 · One failing connection never takes the accept loop with it.** A panic, a decode
+      failure or an abrupt disconnect on one connection leaves the listener accepting and the other
+      sessions intact — `crates/ono-remote/tests/limits.rs::should_keep_accepting_after_one_connection_fails`,
+      `::should_leave_every_other_session_intact_when_one_connection_is_aborted` (#57, §12.6).
+- [ ] **P1 · `--listen` says what it will accept, and refuses to listen for nobody.** Startup
+      prints the bind address, the effective limits and the number of authorized clients, an empty
+      or absent store refuses to start rather than listening permissively, and the default bind is
+      the one §11.2 names — `crates/ono-cli/tests/agent_startup.rs::should_print_the_bind_address_the_limits_and_the_authorized_client_count_when_listening_starts`,
+      `::should_refuse_to_listen_when_the_authorization_store_is_empty_or_absent`,
+      `::should_bind_the_documented_default_address_when_none_is_given`, case `187` (#55, §11.1,
+      §11.2, §11.3).
+- [ ] **P2 · Revocation has stated semantics.** Removing a client key refuses its next connection,
+      and whether an established session is terminated is decided rather than left to chance: the
+      box is ticked by `crates/ono-cli/tests/client_keys.rs::should_refuse_the_next_connection_after_a_client_key_is_removed`
+      together with either `crates/ono-remote/tests/limits.rs::should_terminate_an_established_session_when_its_authorization_is_revoked`
+      or an ADR that records live revocation as deferred and is named in this box before it is
+      ticked (#56, §12.5).
+
+#### 4.8.5 KUANG/11 native confinement fails closed (H4 — §66.1, §15–§20, Appendix D)
+
+§66.1's seventh and eighth bullets. §0.5.3 found confinement syscalls whose return values were
+ignored, and §65.5 names the documentation failure that travels with it: calling the native tier a
+sandbox when it provides no filesystem or network isolation.
+
+- [ ] **P0 · Mandatory and best-effort controls are one table, not scattered constants.** Appendix
+      D's eleven rows exist in `docs/spec/hardening/kuang_confinement_controls.yaml` with their tier
+      and their failure behaviour, the supervisor reads that table, and an unknown control ID fails
+      the gate — `crates/ono-kuang-supervisor/tests/confinement.rs::should_classify_every_control_the_confinement_table_declares`,
+      `::should_treat_a_control_the_table_calls_mandatory_as_mandatory`,
+      `xtask/tests/contracts.rs::should_reject_an_unknown_control_id_in_a_kuang_tier_definition`
+      (#58, §16.1, §16.4, §52.3).
+- [ ] **P0 · Every security-relevant syscall return value is checked.** No confinement call
+      discards its result, and the check is asserted mechanically rather than by review —
+      `crates/ono-kuang-supervisor/tests/confinement.rs::should_report_the_failing_control_when_a_confinement_syscall_returns_an_error`,
+      `::should_check_the_result_of_every_control_the_table_marks_mandatory`, and
+      `xtask/tests/scan.rs::should_report_an_unchecked_confinement_syscall_result` over the
+      supervisor's process-setup code (#59, §16.2, §0.5.3).
+- [ ] **P0 · A pre-exec failure prevents the exec.** With an injected failure of
+      `PR_SET_NO_NEW_PRIVS` or of a mandatory `setrlimit`, the spawn fails, the caller receives
+      `plugin.no_new_privs_failed` / `plugin.resource_limit_failed` / `plugin.confinement_failed`
+      naming the control, and a marker the plugin would create on startup stays absent —
+      `crates/ono-kuang-supervisor/tests/confinement.rs::should_never_exec_the_plugin_when_a_mandatory_control_cannot_be_installed`,
+      `::should_leave_the_plugins_startup_marker_absent_after_a_failed_confinement_setup`,
+      `::should_name_the_control_that_could_not_be_installed_in_the_structured_error`, case `189`
+      (#60, §16.3, §59.7, §59.8, §65.4).
+- [ ] **P1 · Every spawn carries a confinement report.** The report states, per control, whether it
+      was applied, skipped as best-effort or refused, and it is available to the operator without
+      `RUST_LOG=debug` — `crates/ono-kuang-supervisor/tests/confinement.rs::should_report_the_state_of_every_control_after_a_successful_spawn`,
+      `::should_mark_a_best_effort_control_that_was_not_available_as_skipped_rather_than_applied`,
+      case `189` (#61, §16.5).
+- [ ] **P1 · The four plugin failure classes are distinguishable.** Launch failure, protocol
+      quarantine, resource-limit termination and crash are separate outcomes with separate codes,
+      and a crash of one plugin leaves the shell and the other plugins running —
+      `crates/ono-kuang-supervisor/tests/failure_classes.rs::should_distinguish_a_launch_failure_from_a_quarantine_a_resource_kill_and_a_crash`,
+      `::should_keep_the_shell_and_the_other_plugins_running_when_one_plugin_crashes`, case `189`
+      (#62, §18).
+- [ ] **P0 · The documentation states the native tier honestly.** README, Wiki, `help` and the
+      generated reference use the §19.1 terms, say that the native tier provides no filesystem and
+      no network isolation, and never call it a sandbox — `xtask/tests/terminology.rs::should_reject_a_document_that_calls_the_native_tier_a_sandbox`,
+      `::should_find_the_native_isolation_disclaimer_in_every_document_that_describes_the_kuang_tier`
+      running over the repository on every gate run (#63, §15.1, §15.2, §51.2, §0.5.4, §65.5).
+- [ ] **P2 · The execution tier is a name, not a boolean.** The `sandboxed: bool` field is replaced
+      by a named tier that says which controls are in force, and no UI infers filesystem or network
+      isolation from the presence of the other controls —
+      `crates/ono-kuang-supervisor/tests/confinement.rs::should_report_a_named_execution_tier_rather_than_a_sandboxed_boolean`,
+      `crates/ono-cli/tests/plugins.rs::should_show_the_execution_tier_and_its_controls_when_a_plugin_is_inspected`,
+      and `cargo run -p xtask -- spec-check` for the `docs/spec/kuang/` contract change (#64,
+      §17.2, §17.3).
+
+#### 4.8.6 Resource correctness (H5 — §66.2, §21–§24, Appendix A)
+
+§66.2's four bullets. §65.6 names the shape of the defect: a limit counted in items while the
+bytes behind them are unbounded.
+
+- [ ] **P1 · A value's retained size is estimable, deterministically.** The estimator answers the
+      same figure for the same value on every run, is defined for every `Value` variant, and stays
+      within a documented tolerance of the real retained size —
+      `crates/ono-value/tests/size_estimate.rs::should_answer_the_same_estimate_for_the_same_value_on_every_run`,
+      `::should_define_an_estimate_for_every_value_variant`,
+      `::should_stay_within_the_documented_tolerance_of_the_measured_retained_size` (#65, §21.2,
+      §56.6).
+- [ ] **P1 · One `Budget` type, with no unlimited default.** Materialization, captures and history
+      share one abstraction, constructing a budget requires stating both ceilings, and exceeding
+      one is a refusal rather than a truncation —
+      `crates/ono-pipeline/tests/budget.rs::should_require_both_an_item_and_a_byte_ceiling_when_a_budget_is_constructed`,
+      `::should_offer_no_default_that_leaves_a_budget_unlimited`,
+      `::should_refuse_rather_than_truncate_when_a_budget_is_exceeded` (#66, §21.1, §21.3).
+- [ ] **P1 · Materialization is bounded in items and in bytes.** The default global materializer
+      refuses past 100 000 values and past 128 MiB, the byte ceiling triggers on a few large values
+      while the item count stays far below its own, and one helper owns the enforcement so no caller
+      recreates it — `crates/ono-pipeline/tests/budget.rs::should_refuse_the_hundred_thousand_and_first_value_a_global_operation_collects`,
+      `::should_refuse_on_the_byte_ceiling_when_a_few_large_values_exceed_it`,
+      `crates/ono-cli/tests/resource_limits.rs::should_route_every_global_collection_through_the_budget_aware_helper`,
+      case `190` (#67, §22.1, §22.2, §30.2, §60.4, §60.5, Appendix A).
+- [ ] **P1 · An operation that needs finite input refuses an unbounded one immediately.** `sort`
+      and its kind answer a stable refusal naming the requirement when the upstream is declared
+      unbounded, before waiting —
+      `crates/ono-pipeline/tests/boundedness.rs::should_refuse_an_unbounded_upstream_before_waiting_when_the_operation_requires_finite_input`,
+      `crates/ono-cli/tests/resource_limits.rs::should_name_the_finiteness_requirement_and_the_declaring_stage_in_the_refusal`,
+      and `xtask/tests/contracts.rs::should_place_every_pipeline_operation_in_the_streaming_classification_matrix`
+      for Appendix E, which §65.8 makes a release requirement (#68, §22.3).
+- [ ] **P1 · `explain` shows what will be materialized.** A plan says which stages materialize,
+      which require finite input and which budget applies, before the pipeline runs —
+      `crates/ono-command/tests/explain.rs::should_mark_every_materializing_stage_in_the_plan`,
+      `::should_name_the_finiteness_requirement_and_the_budget_of_each_materializing_stage`,
+      case `192` (#69, §22.4).
+- [ ] **P1 · Capture buffers go through the same budget.** A nested command capture is charged
+      against a budget with a 256 MiB aggregate ceiling per command, nesting accumulates against
+      that ceiling rather than resetting it, and exceeding it refuses —
+      `crates/ono-cli/tests/resource_limits.rs::should_charge_a_nested_command_capture_against_the_shared_budget`,
+      `::should_accumulate_nested_captures_against_the_one_per_command_ceiling`,
+      `::should_refuse_a_capture_that_would_exceed_the_command_ceiling` (#70, §23.1, §23.2, §23.4,
+      Appendix A).
+- [ ] **P1 · Cancellation stops a capture growing.** Cancelling a command whose capture is filling
+      releases it within p95 < 100 ms and p99 < 250 ms, measured as a distribution rather than a
+      single run — `crates/ono-cli/tests/resource_limits.rs::should_stop_capture_growth_within_the_cancellation_budget`,
+      `crates/ono-pipeline/tests/cancellation.rs::should_meet_the_p95_and_p99_cancellation_targets_over_repeated_runs`
+      (#71, §23.3, Appendix A).
+- [ ] **P1 · Retained history is bounded and says when it truncated.** Sixteen slots, 10 000 values
+      and 16 MiB per result, 64 MiB in total with oldest-first eviction, a truthful marker on any
+      truncated entry, and — the invariant that matters — the pipeline's own output is unaffected by
+      any of it — `crates/ono-history/tests/history.rs::should_evict_the_oldest_result_when_the_total_byte_ceiling_is_reached`,
+      `::should_mark_a_result_it_kept_only_in_part_and_say_how_much_it_kept`,
+      `::should_leave_the_emitted_output_complete_when_the_retained_copy_is_truncated`, case `191`
+      (#72, §24, §60.6, §67.6, Appendix A).
+- [ ] **P1 · The refusals are stable error codes.** `resource.item_limit`, `resource.byte_limit`
+      and `resource.materialization_limit` are declared in `docs/spec/errors.yaml` with the details
+      §53.3 requires — the limit, the observed figure and the stage that enforced it — so automation
+      reads a code instead of a message (§53.2) —
+      `crates/ono-value/tests/errors.rs::should_declare_the_three_resource_refusal_codes_with_their_details`,
+      `crates/ono-cli/tests/resource_limits.rs::should_answer_the_same_resource_code_for_the_same_refusal_every_time`,
+      case `190` (#73, §21.4, §53.1).
+- [ ] **P2 · The limits are configurable within validated ranges.** `limits.*` keys exist for the
+      Appendix A defaults, a value outside the permitted range is refused at load with the range in
+      the message, and the environment overrides of §55.4 behave as documented —
+      `crates/ono-cli/tests/meta_config.rs::should_accept_every_documented_limits_key_and_reject_an_unknown_one`,
+      `::should_refuse_a_limits_value_outside_its_permitted_range_and_name_the_range`,
+      `::should_apply_the_documented_environment_override_for_a_limits_key` (#74, §55.1–§55.4).
+- [ ] **P3 · The effective limits are inspectable.** `inspect limits` answers the non-secret
+      runtime limits in force as objects, so a test and a user read the same figures the shell uses
+      — `crates/ono-cli/tests/resource_limits.rs::should_answer_the_effective_non_secret_limits_when_inspect_limits_runs`,
+      `::should_answer_the_same_figures_inspect_limits_shows_from_the_contract_registry`, case
+      `192` (#120, §54.3).
+
+#### 4.8.7 Streaming (H6 — §66.3, §25–§28, Appendix E)
+
+§66.3's five bullets. §0.5.5 found `each` collecting its complete input before running its block,
+which §65.7 names as streaming implemented by background collection.
+
+- [ ] **P1 · `each` consumes and emits incrementally.** `source | each { $it } | take 1` completes
+      while the source is still waiting, the block runs for the first value before the second is
+      required, order and seriality are unchanged, and no complete-input `Vec<Value>` capture
+      remains in the path — `crates/ono-cli/tests/streaming.rs::should_emit_the_first_value_before_the_source_closes`,
+      `::should_run_the_block_for_one_item_before_the_next_item_is_required`,
+      `::should_keep_the_input_order_and_the_serial_execution_of_the_block`,
+      `crates/ono-pipeline/tests/streaming_transforms.rs::should_hold_no_more_than_the_bounded_channel_and_one_in_flight_frame`
+      (#75, the work package written out in §58.2; §25.1–§25.4, §60.1).
+- [ ] **P1 · `each` accepts an unbounded source.** A source declared unbounded is a legal input,
+      the time to first output does not depend on how much the source will eventually produce, and
+      memory stays flat while it runs —
+      `crates/ono-cli/tests/streaming.rs::should_accept_a_source_declared_unbounded_without_refusing_it`,
+      `::should_keep_memory_flat_while_an_unbounded_source_is_consumed`, case `193` (#76, §25.6,
+      §25.7, §60.1).
+- [ ] **P1 · Control flow survives the streamed `each`.** `break`, `continue`, `return`, an error
+      and `exit` behave as they did, `break` stops upstream consumption promptly, and the `Flow`
+      representation stays explicit —
+      `crates/ono-cli/tests/streaming.rs::should_stop_upstream_consumption_promptly_when_the_block_breaks`,
+      `::should_skip_exactly_one_item_when_the_block_continues`,
+      `::should_return_from_the_enclosing_function_when_the_block_returns`,
+      `::should_propagate_a_block_error_with_the_status_it_had_before_the_rewrite`,
+      case `194` (#77, §25.5, §30.3, §60.3).
+- [ ] **P1 · Every remaining capture is classified and justified.** An inventory names every
+      `Vec<Value>` collection in the evaluator with the class of Appendix E it belongs to, each one
+      is either removed or bounded by a budget, and a new unclassified capture fails the gate —
+      `xtask/tests/scan.rs::should_report_an_evaluator_capture_the_streaming_inventory_does_not_classify`,
+      `::should_report_this_repository_as_classifying_every_evaluator_capture`, with the inventory
+      in `docs/spec/hardening/streaming.yaml` (#78, §26.1, §65.7).
+- [ ] **P1 · A function is a pipeline stage.** A function invoked in a pipeline forwards values as
+      it produces them, its scope lives exactly as long as its invocation, and a function in the
+      middle of a pipeline does not turn the pipeline into a two-phase collection —
+      `crates/ono-cli/tests/streaming.rs::should_forward_values_from_a_function_as_it_produces_them`,
+      `::should_drop_the_invocation_scope_when_the_function_call_ends`,
+      `::should_keep_a_pipeline_streaming_when_a_function_sits_in_the_middle_of_it` (#79, §26.2,
+      §26.3).
+- [ ] **P1 · Backpressure and cancellation survived the rewrite.** A fast source feeding a slow
+      block grows no queue beyond the bounded channel plus the documented in-flight values,
+      cancellation wins over an in-flight block, and a cancelled child process is reaped —
+      `crates/ono-pipeline/tests/backpressure.rs::should_keep_the_retained_queue_within_the_bounded_channel_when_the_consumer_is_slow`,
+      `crates/ono-pipeline/tests/cancellation.rs::should_stop_an_in_flight_block_when_the_pipeline_is_cancelled`,
+      `crates/ono-cli/tests/streaming.rs::should_reap_the_child_process_of_a_cancelled_stage`,
+      case `194` (#81, §28.1–§28.4, §60.2).
+- [ ] **P2 · Cross-kind stream ordering is documented and tested.** Per-channel order is total,
+      the ordering guarantee between values, diagnostics and status is stated in one place, and the
+      way to obtain a total order where a caller needs one is exercised —
+      `crates/ono-pipeline/tests/ordering.rs::should_deliver_every_event_of_one_channel_in_the_order_it_was_produced`,
+      `::should_hold_the_documented_guarantee_between_values_diagnostics_and_status`,
+      `::should_produce_a_total_order_when_the_caller_asks_for_one`, with the contract in
+      `docs/reference/` and held by `xtask/tests/reference.rs::should_render_the_stream_ordering_contract_from_the_registry`
+      (#80, §27.1–§27.4).
+
+#### 4.8.8 Performance (H7 — §66.4, §32–§37, Appendix F)
+
+§66.4's five bullets. §32.1 is the premise: one small fixture inside a latency budget proves
+nothing about a real host, and §65.9 names progress-free interactive computation as the failure
+mode this phase removes.
+
+- [ ] **P1 · Profile S, M and L fixtures exist and are reproducible.** The process, graph and
+      socket cardinalities of Appendix F.1 and F.2 are built by the harness rather than borrowed
+      from the developer's machine, the payload profiles of F.3 exist for the byte budgets, and the
+      same fixture is reconstructible from the registry —
+      `crates/ono-spatial-query/tests/profiles.rs::should_build_every_declared_profile_at_the_cardinality_the_registry_states`,
+      `::should_rebuild_the_same_profile_from_the_same_declaration`, with the declarations in
+      `docs/spec/hardening/performance_profiles.yaml` and the fixture under
+      `docker/acceptance/fixtures/performance/` (#82, §32.1, §32.2).
+- [ ] **P1 · Six metrics per benchmark, against a machine-readable baseline.** Time to first value,
+      time to completion, sampled RSS, values per second, estimated bytes and cancellation latency
+      are recorded for every benchmark, and a result is compared against the baseline for its named
+      reference environment rather than against a number in a test —
+      `xtask/tests/perf.rs::should_record_all_six_required_metrics_for_every_benchmark`,
+      `::should_compare_a_benchmark_result_against_the_baseline_for_its_reference_environment`,
+      `::should_fail_when_a_benchmark_reports_only_a_total_runtime` (#83, §32.3, §32.4,
+      Appendix F.4).
+- [ ] **P2 · The benchmarks are invocable and the environment is named.** `cargo xtask perf` runs
+      them, writes the §32.3 records, and states which reference environment produced a figure;
+      warm and cold measurements are distinguished, and the statistical rule of §37.4 decides a
+      pass — `xtask/tests/perf.rs::should_run_the_declared_benchmarks_and_write_their_records`,
+      `::should_name_the_reference_environment_on_every_recorded_figure`,
+      `::should_distinguish_a_warm_measurement_from_a_cold_one` (#84, §37.1–§37.4).
+- [ ] **P1 · Time to first result is measured, and a blank hang fails.** The §33.2 targets hold on
+      the reference environment — cached `look`/`near` first result under 50 ms p95, Profile M
+      spatial query under 150 ms p95, Profile M `map --live` first frame under 500 ms p95, Profile L
+      initial progress or a deterministic cost refusal under 1.5 s — and a supported interactive
+      command that produces neither result nor progress inside the hard budget fails the suite —
+      `crates/ono-spatial-query/tests/profiles.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture`,
+      `xtask/tests/perf.rs::should_hold_every_time_to_first_result_target_of_the_reference_targets_table`,
+      cases `195` and `197`, the watchdog case being the one that fails on silence (#85, §33.1–§33.3,
+      §61.1, §61.3).
+- [ ] **P1 · `map --live` produces a first frame and can be cancelled.** The reproduced hang —
+      `map --live --json | take 3 | to json` returning nothing for 30 s at 0 % CPU — is gone: the
+      initial projection is bounded, updates are incremental, backpressure holds and Ctrl-C releases
+      the query task promptly —
+      `crates/ono-cli/tests/watch_live.rs::should_answer_a_bounded_first_projection_before_any_update_arrives`,
+      `::should_complete_a_live_map_pipeline_that_takes_the_first_three_frames`,
+      `::should_release_the_query_task_promptly_when_a_live_map_is_cancelled`, case `196` (#22,
+      §35.1–§35.5, §61.2, §61.5).
+- [ ] **P1 · A full-screen map stays responsive while a projection is in flight.** Focus movement
+      and Ctrl-C are answered at a real PTY while COMPUTE is being projected, inside the 16 ms frame
+      budget §4.7.5 already holds for focus —
+      `crates/ono-cli/tests/spatial_interactive.rs::should_answer_focus_movement_while_a_projection_is_still_running`,
+      `::should_close_the_full_screen_map_promptly_while_a_projection_is_in_flight`, case `196`
+      (#20, §35.4, §61.5).
+- [ ] **P1 · A selector miss costs about what a hit costs.** A miss stops at a bounded candidate
+      set instead of consulting the whole index and projecting all six domains, holding Profile M
+      p95 under 250 ms and Profile L p95 under 1 s —
+      `crates/ono-spatial-index/tests/index.rs::should_answer_a_selector_miss_from_a_bounded_candidate_set`,
+      `crates/ono-spatial-query/tests/resolution.rs::should_hold_the_profile_m_and_profile_l_selector_miss_targets`,
+      case `195` (#8, §36.1; the design choice between a persistent index and a bounded last step is
+      recorded in an ADR before the code, per `docs/STATE.md`).
+- [ ] **P1 · Completion stops at its hard budget.** A completion request that triggers expensive
+      discovery returns a partial set marked incomplete at 50 ms and stops discovery at 150 ms,
+      measured directly rather than through a proxy —
+      `crates/ono-cli/tests/completion.rs::should_return_a_partial_completion_marked_incomplete_at_the_soft_budget`,
+      `::should_stop_discovery_at_the_hard_budget_and_answer_what_it_has`,
+      `xtask/tests/perf.rs::should_measure_the_completion_budget_directly_rather_than_through_a_proxy`,
+      case `198` (#21, #86 in part, §36.2, §61.4, Appendix A).
+- [ ] **P2 · Cost is estimated, and an expensive relation is requestable.** Every canonical query
+      carries a machine-readable cost class, `follow owner` and its kind either pay for the
+      expensive relation when asked or refuse with the cost they estimated, and an advertised
+      expensive relation is genuinely obtainable —
+      `crates/ono-spatial-query/tests/cost.rs::should_assign_a_declared_cost_class_to_every_canonical_query`,
+      `::should_pay_for_an_expensive_relation_when_it_is_explicitly_requested`,
+      `::should_refuse_with_the_estimated_cost_when_the_estimate_exceeds_the_interactive_budget`,
+      `crates/ono-cli/tests/spatial_relationships.rs::should_follow_the_owner_relation_when_it_is_requested_explicitly`
+      (#86, #25, §34.1–§34.3).
+- [ ] **P2 · A local question builds no global graph.** Asking for one place's neighbourhood
+      touches a bounded part of the index, and the work it does is asserted as an observable cost
+      rather than by inspecting the call path —
+      `crates/ono-spatial-query/tests/cost.rs::should_keep_the_work_of_a_neighborhood_question_within_its_declared_cost_class`,
+      `::should_answer_a_local_neighborhood_question_without_projecting_every_domain` (#87, §34.4).
+
+#### 4.8.9 Verification (H8 — §66.5, §38–§42, Appendix G)
+
+§66.5's six bullets. §65.10 names the defect this phase removes: a skip that reaches the summary as
+a pass. ADR-0428 already made every skip announce itself; this phase makes an unexpected one fail.
+
+- [ ] **P2 · A test run has three visible outcomes.** PASS, FAIL and SKIP with a reason category
+      from the §38.4 taxonomy, emitted through the canonical helper of Appendix G, with the raw
+      early-return form rejected by the gate —
+      `crates/ono-testkit/tests/harness.rs::should_name_the_test_the_reason_and_the_category_when_a_skip_is_announced`,
+      `::should_offer_a_require_helper_that_records_an_unmet_prerequisite`,
+      `xtask/tests/scan.rs::should_reject_a_test_that_announces_a_skip_with_its_own_print` (ADR-0428,
+      extended to carry the category) (#88, §38.1, §38.4).
+- [ ] **P2 · An unexpected skip fails the gate.** The expected skip set is checked in as
+      `docs/spec/hardening/expected_test_skips.yaml`, the verifier compares observed skip IDs and
+      categories against it, and a skip nobody declared turns the run red —
+      `xtask/tests/scan.rs::should_fail_on_a_skip_the_expectation_does_not_declare`,
+      `::should_fail_when_a_declared_skip_no_longer_happens`,
+      `::should_report_this_repositorys_observed_skips_as_exactly_the_declared_set` (#89, §38.2,
+      §38.3, §65.10).
+- [ ] **P2 · The shared test helpers are canonical.** One helper per job, used by every suite that
+      needs it, with the divergence that ADR-0427 already forbids asserted over the whole tree —
+      `xtask/tests/scan.rs::should_report_two_test_helpers_that_do_the_same_job_under_different_names`,
+      `::should_report_this_repository_as_using_the_canonical_helper_everywhere` (#90, §39.1–§39.4).
+- [ ] **P1 · The fourteen acceptance families exist and run.** Every box of §4.8.13 is ticked, the
+      cases execute the real `ono` binary (§40.1), remote cases use an isolated container network
+      rather than the public internet (§40.2), and every case has a finite timeout that counts as a
+      failure when it fires (§40.4) —
+      `xtask/tests/hardening_evidence.rs::should_find_a_case_for_every_one_of_the_fourteen_acceptance_families`,
+      `::should_find_a_finite_timeout_on_every_v041_case` (#91, §40).
+- [ ] **P2 · Coverage-guided fuzzing is scheduled and the gate fuzzing stays fast.** The
+      deterministic gate tier keeps running in `scripts/gate.sh`, a scheduled workflow runs the
+      coverage-guided tier over the §35.6 targets, and the schedule is declared rather than assumed
+      — `xtask/tests/supply_chain.rs::should_declare_a_scheduled_coverage_guided_fuzzing_job_for_every_declared_target`,
+      `::should_keep_the_deterministic_fuzz_tier_inside_the_gate` (#92, §41.1–§41.3).
+- [ ] **P2 · Corpora persist and a hang is a failure.** Fuzz corpora are stored and reloaded
+      between runs, each input has a timeout, and an input that exceeds it is recorded as a hang
+      rather than silently dropped — `fuzz/tests/corpus.rs::should_reload_the_persisted_corpus_for_every_target`,
+      `::should_record_an_input_that_exceeds_its_timeout_as_a_hang` (#93, §41.4, §41.5).
+- [ ] **P2 · Miri and the sanitizers run on the unsafe boundary.** The targeted jobs exist, cover
+      the `unsafe` code §42.1 names, and are green for the release commit —
+      `xtask/tests/supply_chain.rs::should_declare_a_miri_job_covering_every_unsafe_boundary_module`,
+      `::should_declare_an_address_and_undefined_behaviour_sanitizer_job_for_the_release_commit`,
+      with the result recorded in the release evidence of §4.8.11 (#94, §42.1–§42.4).
+- [ ] **P2 · The resize assertion needs a resize.** `should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
+      is satisfied only by output that the resize itself produced, so an earlier repaint cannot
+      close it — `crates/ono-cli/tests/spatial_interactive.rs::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
+      rewritten to wait on a resize-specific observation, and
+      `xtask/tests/scan.rs::should_report_a_pty_assertion_that_an_earlier_repaint_can_satisfy`
+      (#6, §65.10 — a test that can pass without exercising its subject is the skip-as-pass defect
+      in a different costume).
+- [ ] **P2 · The two known flaky tests are deterministic.**
+      `should_report_a_failing_streamed_child_after_its_records` (#7) and
+      `ono-process::should_run_a_text_script_without_a_shebang_through_the_shell` (#27) are made
+      deterministic or their non-determinism is fixed at its source, and each is proven by the
+      test's own repeated execution —
+      `crates/ono-cli/tests/adapters.rs::should_report_a_failing_streamed_child_after_its_records`,
+      `crates/ono-process/tests/external_command.rs::should_run_a_text_script_without_a_shebang_through_the_shell`,
+      both named in the expected-skip and flake declarations of #89 so a recurrence is visible
+      (#7, #27, §38.3).
+
+#### 4.8.10 Maintainability (H9 — §66.6, §29–§31, Appendix I)
+
+§66.6's four bullets. §65.12 governs the whole subsubsection: a refactor and a semantic redesign
+never travel together, so every box here is closed with the test suite unchanged (AGENTS.md §11).
+
+- [ ] **P2 · The parser is navigable by responsibility.** The seven responsibilities of §29.2 —
+      state and token access, statements, expressions and precedence, pipelines and commands, blocks
+      and control constructs, recovery and incomplete input, diagnostic construction — are separately
+      navigable modules, and the recursive-descent strategy, recovery behaviour, depth guard and AST
+      contracts are unchanged — `xtask/tests/architecture.rs::should_find_every_parser_responsibility_in_its_own_module`,
+      with `crates/ono-parser/tests/` green and unedited across the change and the fuzz seeds of
+      Appendix I.1 replayed (#95, §29.1–§29.4).
+- [ ] **P2 · The evaluator is navigable by responsibility.** Statement, expression, pipeline, block,
+      function, control, native execution and materialization are separate modules, `materialize`
+      owns the budget-aware collection helpers so no caller recreates them, `Flow` stays an explicit
+      representation, and no domain logic moved up into `ono-cli` to reduce a file's size —
+      `xtask/tests/architecture.rs::should_find_every_evaluator_responsibility_in_its_own_module`,
+      `::should_find_no_domain_logic_moved_up_into_the_composition_root`, with the control-flow,
+      cancellation and job suites of Appendix I.2 green and unedited (#96, §30.1–§30.4).
+- [ ] **P2 · Session state has owners.** The eight state groups of §31.2 exist, result-history
+      budget enforcement lives in the history group rather than at evaluator call sites, and none of
+      the five behaviours Appendix I.3 protects changed — config precedence, environment mutation,
+      job reaping, navigation trail semantics, result-history identifiers —
+      `xtask/tests/architecture.rs::should_find_every_session_state_group_the_specification_names`,
+      `crates/ono-cli/tests/session_lifetime.rs` green and unedited, and
+      `crates/ono-history/tests/history.rs::should_enforce_the_history_budget_inside_the_history_state_group`
+      (#97, §31.1–§31.4).
+- [ ] **P2 · No cross-crate dependency inversion was introduced.** The crate graph after the
+      refactor holds the boundaries §56 states, and a new edge that inverts one fails the gate —
+      `xtask/tests/architecture.rs::should_hold_the_crate_graph_against_the_declared_layering`,
+      `::should_report_a_new_dependency_edge_that_inverts_a_declared_boundary` (§66.6's fourth
+      bullet, closing #95, #96 and #97 together).
+
+#### 4.8.11 Supply chain and release (H10, H11 — §66.7, §43–§49, Appendices H and J)
+
+§66.7's nine bullets, which together answer one question: what exactly was trusted to produce
+these bytes (Appendix H). §65.11 names the failure this phase removes — a release built from
+mutable inputs.
+
+- [ ] **P2 · Every required Action is pinned by commit SHA.** No third-party `uses:` reference in a
+      required workflow carries a tag or a branch, repository-local actions are the stated
+      exception, and the scanner runs in the gate rather than in a review —
+      `xtask/tests/supply_chain.rs::should_reject_an_action_referenced_by_a_floating_tag`,
+      `::should_reject_an_action_referenced_by_a_branch_name`,
+      `::should_reject_a_forty_character_reference_that_is_not_a_commit_sha`,
+      `::should_reject_an_unpinned_action_inside_a_composite_action`,
+      `::should_accept_an_action_that_lives_in_this_repository`,
+      `::should_report_this_repository_as_pinning_every_action_it_uses` (#98, §43.1, §62.1,
+      ADR-0433).
+- [ ] **P2 · Every release-critical image is pinned by digest.** A container reference without a
+      digest in a release-critical script or workflow fails policy, an image this repository builds
+      itself is the stated exception, and a digest hidden behind a shell variable is found —
+      `xtask/tests/supply_chain.rs::should_reject_a_build_image_pulled_by_tag_alone`,
+      `::should_reject_a_package_validation_image_named_by_a_shell_variable_without_a_digest`,
+      `::should_reject_a_workflow_job_running_in_a_container_image_without_a_digest`,
+      `::should_accept_an_image_this_repository_builds_itself`,
+      `::should_report_this_repository_as_pinning_every_release_critical_image` (#99, §44.1,
+      §62.2, ADR-0433).
+- [ ] **P2 · Workflows hold least privilege, and an untrusted pull request is isolated.** Each
+      workflow declares the narrowest `permissions` it needs, a pull request from a fork reaches no
+      secret and no write token, and a publishing workflow carries a concurrency guard —
+      `xtask/tests/supply_chain.rs::should_reject_a_workflow_that_declares_no_permissions_at_all`,
+      `::should_reject_a_workflow_that_grants_write_access_to_every_job`,
+      `::should_reject_a_workflow_triggered_by_pull_request_target`,
+      `::should_reject_a_secret_reachable_from_an_untrusted_pull_request`,
+      `::should_reject_a_publishing_job_a_pull_request_can_reach`,
+      `::should_reject_a_publishing_workflow_without_a_concurrency_guard`,
+      `::should_report_this_repository_as_granting_least_privilege_in_every_workflow` (#100,
+      §43.3–§43.5, ADR-0433).
+- [ ] **P2 · The dependency policy is enforced and provably fails.** Advisory, license and source
+      policy run in the gate, a git dependency and a new cryptographic dependency each need the
+      recorded justification §45.3 and §45.4 require, and a controlled fixture proves the check
+      fails on a denied condition rather than being assumed to —
+      `xtask/tests/contracts.rs::should_fail_the_dependency_policy_on_a_denied_advisory_fixture`,
+      `::should_fail_the_dependency_policy_on_a_denied_license_fixture`,
+      `::should_fail_the_dependency_policy_on_an_unjustified_git_dependency` (#101, §45.1–§45.4,
+      §62.3).
+- [ ] **P2 · Tools and toolchain are exact, and the fetch is reproducible.** The Rust toolchain
+      stays pinned, packaging tool versions are exact rather than floating, `Cargo.lock` is
+      committed and release builds are `--locked`, and dependency fetching is deterministic —
+      `xtask/tests/supply_chain.rs::should_find_an_exact_version_for_every_release_tool`,
+      `::should_build_the_release_with_a_locked_dependency_graph`,
+      `xtask/tests/packaging.rs::should_refuse_a_release_build_whose_lockfile_would_change` (#102,
+      §44.2–§44.4).
+- [ ] **P2 · The build inputs are written down.** The release workflow emits the Appendix H
+      manifest — source commit and tag, toolchain, `Cargo.lock` hash, build and package-test
+      container digests, Action SHAs, packaging tool versions, `SOURCE_DATE_EPOCH`, workflow run
+      identity — and the manifest is an input to provenance rather than a summary written afterwards
+      — `xtask/tests/provenance.rs::should_emit_a_build_input_manifest_carrying_every_field_appendix_h_requires`,
+      `::should_bind_the_build_input_manifest_to_the_release_it_describes` (#103, §43.2, §57 H10).
+- [ ] **P2 · The determinism inputs are fixed.** `SOURCE_DATE_EPOCH`, locale, timezone, file
+      ordering, ownership and mode are set by the workflow rather than inherited from the runner,
+      and a build that omits one is refused —
+      `xtask/tests/packaging.rs::should_set_every_determinism_input_before_a_release_build`,
+      `::should_normalize_file_ownership_and_mode_in_every_produced_package`,
+      `::should_refuse_a_release_build_that_leaves_a_determinism_input_unset` (#104, §46.2–§46.4).
+- [ ] **P2 · Two clean builds produce identical packages.** Every published artifact is built twice
+      in fresh environments from one commit and compared, a mismatch fails the release check with a
+      diagnostic naming the differing member, and each supported architecture satisfies this on its
+      own — `xtask/tests/packaging.rs::should_produce_identical_hashes_for_two_clean_builds_of_one_commit`,
+      `::should_name_the_differing_archive_member_when_a_seeded_difference_is_introduced`,
+      `::should_require_reproducibility_of_every_supported_architecture_separately`, run by
+      `scripts/release-check.sh` (#105, §46.1, §46.5, §46.6, §62.4).
+- [ ] **P2 · `SHA256SUMS` covers every downloadable artifact, deterministically ordered.** The
+      manifest lists every published executable and package, its ordering is stable across runs, and
+      an artifact missing from it fails the release check —
+      `xtask/tests/provenance.rs::should_list_every_downloadable_artifact_in_the_checksum_manifest`,
+      `::should_order_the_checksum_manifest_deterministically`,
+      `::should_fail_the_release_check_when_an_artifact_is_absent_from_the_manifest` (#106, §47.1,
+      §47.2).
+- [ ] **P2 · The manifest is signed and the signature verifies.** A verifiable signature is
+      published beside `SHA256SUMS`, verification succeeds against the published identity, a
+      tampered manifest fails verification, and the signing model is keyless or else an ADR defines
+      custody, rotation, revocation and offline verification and is named in this box —
+      `xtask/tests/provenance.rs::should_verify_the_published_signature_over_the_checksum_manifest`,
+      `::should_fail_verification_when_the_checksum_manifest_is_altered` (#107, §47.3).
+- [ ] **P2 · Provenance binds seven fields to every artifact digest.** Repository, source commit,
+      release tag, workflow identity, builder and toolchain version, artifact digest and build
+      timestamp are bound by provenance the trusted workflow produces, and the release check
+      verifies each digest appears in both the checksum manifest and the provenance before
+      publication — `xtask/tests/provenance.rs::should_bind_all_seven_required_fields_to_every_artifact_digest`,
+      `::should_verify_every_artifact_digest_against_the_checksum_manifest_and_the_provenance_before_publication`,
+      case `199` (#108, §47.4, §62.5).
+- [ ] **P2 · Package validation covers the nine new checks.** Version equality, the installed path,
+      ownership and mode, absent private build paths, metadata matching the filename, uninstall
+      leaving user configuration, reinstall, the login-shell smoke behaviour and the checksum match
+      all run in `scripts/package-check.sh`, on the oldest supported baseline as well as a current
+      distribution — `xtask/tests/packaging.rs::should_run_every_new_package_check_the_specification_lists`,
+      `::should_run_package_validation_on_the_oldest_supported_baseline_as_well_as_a_current_one`
+      (#109, §48.1–§48.3).
+- [ ] **P2 · The tested bytes are the published bytes.** The artifact package validation installed
+      hashes identically to the asset later uploaded, the workflow builds once and promotes after
+      proof, a public release needs no undocumented local step, final publication reruns the
+      complete check on the final tag, and a failed step leaves no partially populated release —
+      `xtask/tests/packaging.rs::should_publish_the_same_bytes_package_validation_installed`,
+      `xtask/tests/supply_chain.rs::should_promote_an_already_tested_artifact_rather_than_rebuilding_it`,
+      `::should_publish_the_release_only_after_the_asset_inventory_verifies`, case `199` (#110,
+      §48.4, §49.1–§49.4).
+
+#### 4.8.12 Documentation (H12 — §66.8, §19, §50, §51, §54, §63)
+
+§66.8's five bullets. A document is closed here by the gate check that fails when the document and
+the tree disagree, so no box in this subsubsection is ticked by someone having read something.
+
+- [ ] **P1 · A refusal names the boundary that decided it.** The four examples of §54.1 — the
+      authenticated client that is not authorized for an action, the plugin whose mandatory control
+      could not be installed, the finite-input requirement against an unbounded upstream, the
+      history budget that kept part of a result — appear in ordinary structured errors, with no
+      `RUST_LOG=debug` needed to see them —
+      `crates/ono-cli/tests/resource_limits.rs::should_name_the_deciding_boundary_in_every_hardening_refusal`,
+      `crates/ono-protocol/tests/authorization.rs::should_say_which_policy_refused_an_authenticated_client`,
+      `crates/ono-kuang-supervisor/tests/confinement.rs::should_name_the_control_that_could_not_be_installed_in_the_structured_error`,
+      `xtask/tests/contracts.rs::should_find_a_deciding_boundary_on_every_declared_hardening_error`,
+      case `200` (#119, §54.1, §54.2).
+- [ ] **P2 · The security terminology contract holds across every document.** README, Wiki, `help`
+      and the generated reference use the §19.1 canonical terms, a document that overstates a
+      boundary fails the gate, and the generated pages carry the terms rather than a hand-written
+      paraphrase — `xtask/tests/terminology.rs::should_report_a_document_that_overstates_a_security_boundary`,
+      `::should_report_this_repositorys_documents_as_using_the_canonical_terms`,
+      `xtask/tests/reference.rs::should_render_the_security_terms_into_the_generated_reference`
+      (#112, §19.1, §19.2, §51.1).
+- [ ] **P2 · Verification instructions exist and work.** The install documentation shows a short
+      copyable sequence that verifies `SHA256SUMS` and its signature before installation, needs no
+      proprietary service, and is executed rather than merely printed —
+      `xtask/tests/provenance.rs::should_execute_the_documented_verification_sequence_against_a_release_fixture`,
+      `::should_fail_the_documented_verification_sequence_on_a_tampered_artifact`, case `199`
+      (#115, §47.5, §67.7).
+- [ ] **P2 · The migration path is written down.** §63's five migrations — existing users, existing
+      direct listening-agent users, an existing host identity, existing KUANG plugins, existing test
+      infrastructure — are documented with the commands an operator runs, and the commands are
+      checked against the command registry so a renamed flag turns the gate red —
+      `xtask/tests/reference.rs::should_resolve_every_command_the_migration_guide_prints_against_the_registry`,
+      `crates/ono-cli/tests/client_keys.rs::should_accept_the_migration_sequence_the_documentation_prints`
+      (#116, §63.1–§63.5).
+- [ ] **P3 · The repository metrics are computed, not typed.** Crate, test, acceptance-case, ADR and
+      command-contract counts come from `cargo xtask metrics`, the gate fails when README disagrees
+      with it, and an executed test is distinguished from a skip so no count claims proof it does
+      not have — `xtask/tests/metrics.rs::should_compute_every_metric_the_readme_states`,
+      `::should_fail_when_the_readme_disagrees_with_the_computed_metrics`,
+      `::should_count_executed_tests_apart_from_skipped_ones` (#111, §50.1–§50.4).
+- [ ] **P3 · The remote documentation separates the six trust concepts.** Transport encryption,
+      transport authentication, host pinning, client authorization, self-reported identity and
+      runtime user are described as six distinct things, and the page is held against the §6.1
+      boundary inventory — `xtask/tests/terminology.rs::should_find_all_six_remote_trust_concepts_described_separately`,
+      `xtask/tests/reference.rs::should_hold_the_remote_documentation_against_the_boundary_inventory`
+      (#113, §51.3).
+- [ ] **P3 · `SECURITY.md` states the model and the reporting path.** Supported versions, the
+      reporting channel, the response expectation and the boundaries §5 protects are stated, and the
+      file is held against the boundary inventory so a new boundary cannot be added without
+      appearing there — `xtask/tests/terminology.rs::should_find_every_protected_asset_of_the_threat_model_in_the_security_document`,
+      `::should_find_a_reporting_channel_and_a_response_expectation_in_the_security_document`
+      (#114, §51.4, §5.1).
+- [ ] **P2 · The status documents agree.** `docs/STATE.md`, this checklist and the release notes
+      state the same thing about what is done: *In progress* is empty, the workspace holds no
+      `#[ignore]`d test, every *Deferred* entry names an ADR saying why it does not block the
+      release, and the release notes name the same tranche state — the bar §4.5, §4.6.5 and §4.7.2
+      already set, checked by `cargo xtask state-check` on every `scripts/release-check.sh` run
+      (ADR-0402, `xtask/tests/scan.rs`), extended by
+      `xtask/tests/scan.rs::should_report_release_notes_that_disagree_with_the_checklist` (§66.8's
+      fifth bullet).
+
+#### 4.8.13 The fourteen acceptance families (§40.3) and the scenarios they carry
+
+One box per family of §40.3, in the order the specification lists them. A box is ticked when the
+case exists under `docker/acceptance/cases/`, runs the real `ono` binary (§40.1) inside the
+timeout every case has (§40.4), and is green in `scripts/acceptance.sh`. The remote families use
+an isolated container network created for the case (§40.2). Every scenario of §59, §60 and §61 is
+carried by one of these cases or by one of the seven the tranche adds beside them — `181`
+(§59.6), `188` (§12), `192` (§22.4, §54.3), `194` (§60.2, §60.3), `197` (§61.3), `198` (§61.4)
+and `200` (§54.1) — and the six scenarios of §62 are carried by the gate checks and the release
+check §4.8.11 names. §59.9 is asserted inside each of the security cases: every trust failure is
+non-interactive and deterministic with no terminal attached (#91).
+
+- [ ] **Direct mutual TLS authentication** — `180-remote-mutual-authentication`: both ends prove
+      possession of a persistent key, the accepted client's fingerprint is available at accept, a
+      wrong ALPN and an absent client certificate are refused, and a changed host key is refused
+      with E0603 (#35, #36, #38, #18).
+- [ ] **Unknown client refusal** — `182-remote-unknown-client-refused`: a client with a valid but
+      unauthorized certificate is refused before provider negotiation, and the session learns no
+      process, schema or capability inventory beyond the rejection (§59.1, #43, #45).
+- [ ] **Authorization-constrained capability negotiation** —
+      `183-remote-policy-filtered-negotiation`: the offer an observe-only client receives holds the
+      read and observe capabilities and none of the actions the provider advertises (§10.1, #45,
+      #47).
+- [ ] **Unauthorized action refusal** — `184-remote-unauthorized-action-refused`: an observe-only
+      client executes representative read and observe operations and is refused `service.restart`
+      with `remote.capability_denied`, at dispatch as well as in the offer (§59.2, #46, #48).
+- [ ] **Authorized exact action success** — `185-remote-exact-action-grant`: after the operator
+      grants `service.restart`, that action succeeds under the provider's own rules and
+      `process.signal` stays refused (§59.3, #44).
+- [ ] **Changed client key refusal** — `186-remote-changed-client-key`: a new key at the same host
+      is refused until its fingerprint is explicitly added, and `get link` shows it as
+      authenticated and unauthorized (§59.4, #42, #50).
+- [ ] **Malformed authorization store fails closed at startup** —
+      `187-remote-corrupt-authorization-store`: one malformed line stops the agent
+      deterministically, an empty store refuses to listen, and neither is treated as zero
+      restrictions (§59.5, #40, #55).
+- [ ] **KUANG mandatory confinement setup failure** — `189-kuang-confinement-fail-closed`: with
+      `PR_SET_NO_NEW_PRIVS` and a mandatory `setrlimit` made to fail through the injectable platform
+      layer, the spawn fails, the plugin's startup marker stays absent, and the confinement report
+      names the control (§59.7, §59.8, #60, #61, #62).
+- [ ] **`each` streams an unbounded source** — `193-each-streams-an-unbounded-source`: a source
+      that emits `1`, waits and is marked unbounded lets `source | each { $it } | take 1` answer `1`
+      and complete before the source closes (§60.1, #75, #76).
+- [ ] **Materialization item and byte limits refuse** — `190-materialization-limits`: 100 001 small
+      values hit the item limit, and a handful of large values hit the 128 MiB byte limit while the
+      item count stays far below its own, both with `resource.materialization_limit` semantics
+      (§60.4, §60.5, #67, #73).
+- [ ] **Result-history truncation is visible** — `191-result-history-truncation`: a pipeline that
+      exceeds the history limits emits its complete result to the user while the retained copy is
+      truncated and says so (§60.6, §67.6, #72).
+- [ ] **Profile M spatial first result** — `195-spatial-first-result-profile-m`: canonical `look`,
+      `near` and selector operations hold their Profile M p95 targets on the reference environment,
+      including the selector miss (§61.1, #82, #83, #85, #8).
+- [ ] **Live map cancellation under load** — `196-live-map-cancellation`: Profile M `map --live`
+      renders an initial frame within 500 ms p95, Profile L answers a frame or a truthful
+      progress/cost response within 1.5 s, and cancelling the heaviest Profile L view releases the
+      query task promptly and stops result growth (§61.2, §61.5, #22, #20).
+- [ ] **Package signature, checksum and provenance** — `199-release-provenance`: the release
+      fixture produces `SHA256SUMS`, a verifying signature and provenance binding the seven fields
+      to each artifact digest; verification succeeds on the published bytes, fails on a tampered
+      one, and the installed package hashes identically to the published asset (§62.5, §62.6,
+      #106, #107, #108, #110, #115).
+
+#### 4.8.14 Zero unresolved P0/P1, and what may be excluded (§66.9)
+
+§66.9 is the binding release criterion of this tranche, and it governs every box above.
+
+- [ ] **No known unresolved P0 or P1 issue in v0.4.1 scope remains at final release.** Every issue
+      of the tranche labelled `p0` or `p1` is closed, and closure means the commit that closed it
+      said `Closes #NN` and the box that names its proof is ticked here —
+      `xtask/tests/hardening_evidence.rs::should_find_every_p0_and_p1_box_of_the_v041_checklist_ticked`
+      run by `scripts/release-check.sh`, together with `cargo xtask state-check`, which already
+      refuses a release-ready verdict while *In progress* holds a claim or a *Deferred* entry names
+      no ADR (ADR-0402). This box is ticked last of all, after §4.8.1's first box proves that every
+      proof named here resolves.
+- [ ] **Every P2 or P3 exclusion is an ADR written before release-candidate freeze.** An excluded
+      item is recorded in an ADR that states what is excluded, why, and what the user-visible
+      consequence is; the ADR predates the freeze; and it is named in the box it leaves open, so an
+      exclusion is readable from the checklist rather than from the tracker —
+      `xtask/tests/hardening_evidence.rs::should_find_a_dated_adr_for_every_box_the_checklist_leaves_open`,
+      `::should_refuse_an_exclusion_adr_dated_after_the_release_candidate_freeze` (§3.4, §66.9).
+- [ ] **No exclusion waives a §66 criterion.** An ADR may remove a P2 or P3 item from the tranche's
+      scope, and it may not remove a bullet of §66.1–§66.8: every criterion of §66 has at least one
+      ticked box in §4.8.1–§4.8.13 naming its proof —
+      `xtask/tests/hardening_evidence.rs::should_find_a_box_for_every_bullet_of_the_release_definition`,
+      which reads §66 from the specification and this subsection from this file, so a criterion that
+      lost its box fails the gate rather than passing unnoticed (§66.9's second paragraph).
+
 ## 5. Stopping rule
 
 An agent stops when `scripts/release-check.sh` prints `release-check: the shell is
@@ -1114,9 +2017,11 @@ section 4 is unticked, the work is unfinished, and the next increment starts.
 
 **Every subsection of section 4 counts, including the tranches.** The checklist grew with the
 specification: sections 4.1–4.5 are the v0.2 shell, section 4.6 is the v0.3 External Command
-Adaptation Layer, and section 4.7 is the v0.4 Spatial Systems Interface. A tranche whose
-subsection still holds an unticked box is an unfinished product, however green the gate and the
-acceptance suite are on their own, and the run continues into it.
+Adaptation Layer, section 4.7 is the v0.4 Spatial Systems Interface, and section 4.8 is the v0.4.1
+Hardening, Trust & Release Integrity tranche — open in full, because that tranche has just
+started. Section 4.9 is reserved for v0.5. A tranche whose subsection still holds an unticked box
+is an unfinished product, however green the gate and the acceptance suite are on their own, and
+the run continues into it.
 
 `scripts/release-check.sh` reads the checklist generically — it greps this file for lines
 beginning `- [ ]` and fails on the first one — so a new subsection is seen the moment it is

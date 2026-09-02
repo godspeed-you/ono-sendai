@@ -273,6 +273,21 @@ are recorded above; H0 is being delivered now:
   way v0.4's RED suites did (ADR-0426).
 - **#30**, **#117**, **#118** — baseline snapshot and the contract registries, behind the two above.
 
+Delivered so far in the tranche:
+
+- **#29 closed (2026-09-02).** `docs/ACCEPTANCE.md` §4.8 is the v0.4.1 definition of done: 118
+  unticked boxes in fourteen subsubsections following the H0–H12 phase sequence, every one of the
+  tranche's 101 issues cited by the box that closes it, and every bullet of §66.1–§66.9 covered.
+  ADR-0429 records the five decisions behind the form. Acceptance-case numbers **180–200** are
+  reserved for the tranche and ascend with the phase order.
+  `xtask/tests/spatial_evidence.rs` now reads §4.7 up to `### 4.8`, so §4.7's evidence harvester
+  stops at the tranche boundary instead of sweeping 257 not-yet-written test names into itself;
+  the v0.4.1 counterpart `xtask/tests/hardening_evidence.rs` is §4.8.1's first box and the last
+  box of the tranche to close. From here `scripts/release-check.sh` fails on §4.8's first open
+  box, and that is the correct state for a tranche that has just started.
+- **#31 half-delivered (2026-09-02).** Failure proofs 1 and 2 are in, red by design, tracked under
+  *Deferred* above; proofs 3 and 4 are in flight.
+
 ## Session records (2026-08-27 … 2026-08-29)
 
 Every session below is complete. They are kept because each carries the reasoning behind a
