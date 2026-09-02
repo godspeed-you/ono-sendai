@@ -254,24 +254,26 @@ fn should_raise_its_own_soft_descriptor_limit_before_reporting_a_shortfall() {
     // Raising the soft limit toward the hard one changes nothing about what a fixture measures —
     // the descriptors were always allowed and the process was simply not asking for them — so it
     // happens before anything is reported (ADR-0517).
-    let (soft, hard) = nix::sys::resource::getrlimit(nix::sys::resource::Resource::RLIMIT_NOFILE)
-        .expect("the descriptor limit is readable");
-    if require(
-        hard > soft,
-        SkipReason::FixtureNotApplicable,
-        "this process already runs at its hard descriptor limit, so there is no room to raise it",
-    )
-    .unmet()
-    {
-        return;
-    }
-    let asked = soft + 1;
-    require_descriptors(asked).expect("a limit below the hard one is reachable");
-    let (raised, _) = nix::sys::resource::getrlimit(nix::sys::resource::Resource::RLIMIT_NOFILE)
-        .expect("the descriptor limit is readable");
+    //
+    // The room to raise it is made rather than hoped for. A sibling test in this binary asks for
+    // more descriptors than any host has, which leaves the soft limit at the hard one; a test
+    // that skipped whenever that had already run would be a test that almost never ran.
+    use nix::sys::resource::{Resource, getrlimit, setrlimit};
+
+    let (soft, hard) = getrlimit(Resource::RLIMIT_NOFILE).expect("the limit is readable");
+    let lowered = 1024.min(hard);
+    setrlimit(Resource::RLIMIT_NOFILE, lowered, hard).expect("a soft limit may always be lowered");
+
+    let asked = lowered + 1;
+    let reached = require_descriptors(asked);
+    let (raised, _) = getrlimit(Resource::RLIMIT_NOFILE).expect("the limit is readable");
+    setrlimit(Resource::RLIMIT_NOFILE, soft.max(raised), hard)
+        .expect("the limit this test found is restored");
+
+    reached.expect("a limit below the hard one is reachable without privilege");
     assert!(
         raised >= asked,
-        "the soft limit was raised to at least {asked}, got {raised}"
+        "the soft limit was raised from {lowered} to at least {asked}, got {raised}"
     );
 }
 

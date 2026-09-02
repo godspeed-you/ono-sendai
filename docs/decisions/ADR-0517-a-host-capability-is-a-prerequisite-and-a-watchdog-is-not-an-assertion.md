@@ -100,7 +100,11 @@ load would measure nothing.
 `expected_test_skips.yaml` gains a third list. `canonical_ci.permitted_skips` holds a skip whose
 outcome is a property of the host rather than of this repository, each with the condition that
 decides it: `ulimit -Hn` at least 101 024, for the two socket fixtures. `skip-check` neither
-requires nor forbids these.
+requires nor forbids these. There are two entries and there is a reason there are not three —
+`should_raise_its_own_soft_descriptor_limit_before_reporting_a_shortfall` was one until it stopped
+hoping for room to raise the limit and made some, which is the answer wherever it is available: a
+permitted skip is for a capability the repository cannot arrange, not for a fixture it did not
+arrange.
 
 That is not a loophole and the shape is what keeps it from becoming one. Requiring the skip would
 be red on a machine that *can* supply the descriptors; forbidding it would be red on one that

@@ -1858,7 +1858,7 @@ struct Helper {
 /// is the same defect from the other end — one behaviour under two names is a helper somebody
 /// could not find, so they wrote it again.
 ///
-/// A body under [`TRIVIAL_HELPER_BODY`] normalised characters is left alone. A two-line accessor
+/// A body under eighty normalised characters is left alone. A two-line accessor
 /// is not a helper anybody consolidates, and a rule that reported it would be a rule people turn
 /// off.
 #[must_use]
@@ -2058,7 +2058,7 @@ const RESIZE_ASSERTION_WINDOW: usize = 30;
 /// The rule is narrow enough to be mechanical. A resize is written
 /// `resize(WindowSize::new(<rows>, <columns>))`, and the assertion that follows it must name the
 /// row count it resized to — or the resize itself, as the signal it delivers or the size the
-/// terminal now reports — within [`RESIZE_ASSERTION_WINDOW`] lines. A frame at a stated row count
+/// terminal now reports — within thirty lines. A frame at a stated row count
 /// is something only a resize produces; "new output" is not.
 ///
 /// What it cannot check is whether the assertion is a *good* one — a scanner cannot tell a frame

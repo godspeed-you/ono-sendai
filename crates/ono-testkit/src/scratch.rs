@@ -119,7 +119,7 @@ pub fn executable_script(directory: &std::path::Path, name: &str, body: &str) ->
 /// The retry is bounded and it is not a blanket one. `busy` is asked whether *this* answer is the
 /// machine reporting a busy file — the diagnostic says so in as many words — so every other
 /// failure is returned on the first attempt, unretried. A file that stays busy for
-/// [`BUSY_PATIENCE`] is a finding and is answered as one.
+/// one second is a finding and is answered as one.
 pub fn while_text_file_busy<T>(busy: impl Fn(&T) -> bool, mut attempt: impl FnMut() -> T) -> T {
     let deadline = std::time::Instant::now() + BUSY_PATIENCE;
     loop {
