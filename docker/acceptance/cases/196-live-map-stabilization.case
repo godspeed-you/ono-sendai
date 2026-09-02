@@ -77,10 +77,30 @@ run: |
   prove 35.5b "and no ono process is left holding the pipeline open" \
     '! pgrep -x ono > /dev/null'
 
+  echo "== the full-screen map takes the terminal before it has a picture (§33.1, issue #20) =="
+  # A full-screen map of COMPUTE was unresponsive while its first projection was in flight: the
+  # terminal was still cooked, no key was read and nothing was drawn until the whole place had
+  # been observed. The nested `script(1)` gives `ono` a real controlling terminal while the case
+  # still generates the keystrokes, which is the only way to see what the screen did.
+  {
+    printf 'enter compute\n'; sleep 1
+    printf 'map\n'; sleep 4
+    printf '\033'; sleep 2
+    printf 'echo shell-survived-the-map\n'; sleep 1
+    printf 'exit\n'; sleep 1
+  } | script --quiet --return --command 'stty rows 30 cols 100 2>/dev/null; ono --no-config' /dev/null \
+      > /tmp/mappty.out 2>&1
+  prove 33.1a "the view says the picture is still coming rather than showing a blank screen" \
+    'grep -qi "projecting" /tmp/mappty.out'
+  prove 33.1b "and the shell is still there after the view closes (§49.8)" \
+    'grep -qF "shell-survived-the-map" /tmp/mappty.out'
+
   kill %1 2>/dev/null || true
   wait 2>/dev/null || true
   echo "fixture: stopped"
 exit: 0
+stdout-contains: PROVED 33.1a
+stdout-contains: PROVED 33.1b
 stdout-contains: the host is at Profile M
 stdout-contains: PROVED 35.2a
 stdout-contains: PROVED 35.2b
