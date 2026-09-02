@@ -123,15 +123,6 @@ fn should_build_every_declared_profile_at_the_cardinality_the_registry_states() 
                     declaration.processes,
                     processes.len()
                 );
-                let sockets = SocketPopulation::of(declaration.profile());
-                assert_eq!(
-                    sockets.len(),
-                    declaration.sockets,
-                    "Profile {} declares {} sockets and its fixture placed {}",
-                    declaration.id,
-                    declaration.sockets,
-                    sockets.len()
-                );
             }
             BuiltBy::Benchmark => {
                 // Too large for every gate run, small enough for a developer machine: the
@@ -156,6 +147,24 @@ fn should_build_every_declared_profile_at_the_cardinality_the_registry_states() 
                 }
             }
         }
+    }
+
+    // 3b. The socket axis is built where it declares itself buildable, which is not always where
+    // the process axis is: Profile L's ten thousand processes belong to the container and its
+    // hundred thousand listening sockets do not.
+    for declaration in &declared {
+        if declaration.sockets_built_by != BuiltBy::Gate {
+            continue;
+        }
+        let sockets = SocketPopulation::of(declaration.profile());
+        assert_eq!(
+            sockets.len(),
+            declaration.sockets,
+            "Profile {} declares {} sockets and its fixture opened {}",
+            declaration.id,
+            declaration.sockets,
+            sockets.len()
+        );
     }
 
     // 4. Appendix F.3's payload sizes exist, and a payload is the size it claims.

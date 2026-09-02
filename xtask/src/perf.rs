@@ -747,7 +747,116 @@ pub const BENCHMARKS: &[Benchmark] = &[
         warmup: None,
         script: "get process | to json",
     },
+    Benchmark {
+        id: "service.enumeration",
+        profile: "S",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "get service | count",
+    },
+    // Profile M, and at the place the cardinality actually lives: a thousand processes are in
+    // COMPUTE, and a benchmark that measures the root measures the geography rather than the
+    // system (§32.1).
+    Benchmark {
+        id: "spatial.query",
+        profile: "M",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "enter compute; look --json",
+    },
+    Benchmark {
+        id: "spatial.query",
+        profile: "M",
+        temperature: Temperature::Warm,
+        warmup: Some("enter compute; look --json"),
+        script: "look --json",
+    },
+    Benchmark {
+        id: "spatial.map_first_frame",
+        profile: "M",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "enter compute; map --live --json | take 1 | to json",
+    },
+    Benchmark {
+        id: "spatial.selector_miss",
+        profile: "M",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "enter no-such-place-1a2b3c",
+    },
+    // Profile L on the axis this repository can build: a hundred thousand listening sockets, in
+    // NETWORK where they are. The process axis at Profile L is the container's
+    // (`docs/spec/hardening/performance_profiles.yaml`, ADR-0488).
+    Benchmark {
+        id: "spatial.map_first_frame",
+        profile: "L",
+        temperature: Temperature::Cold,
+        warmup: None,
+        script: "enter network; map --live --json | take 1 | to json",
+    },
 ];
+
+/// v0.4.1 §33.2's reference targets, as data.
+///
+/// > On the release reference environment:
+/// >
+/// > ```text
+/// > basic cached look/near first result            < 50 ms p95
+/// > spatial query Profile M first result           < 150 ms p95
+/// > map live Profile M initial visible frame       < 500 ms p95
+/// > map live Profile L initial progress/summary    < 1.5 s p95
+/// > ```
+///
+/// Each row names the record it is a target for, so a target with no measurement behind it is a
+/// missing measurement rather than a silent pass. "Basic cached" is the warm row of §37.3: a
+/// cached `look` is one whose providers have already answered, which is exactly what a warm
+/// measurement is.
+pub const TARGETS: &[Target] = &[
+    Target {
+        spec: "basic cached look/near first result",
+        benchmark: "spatial.look",
+        profile: "S",
+        temperature: Temperature::Warm,
+        budget_ms: 50.0,
+    },
+    Target {
+        spec: "spatial query Profile M first result",
+        benchmark: "spatial.query",
+        profile: "M",
+        temperature: Temperature::Cold,
+        budget_ms: 150.0,
+    },
+    Target {
+        spec: "map live Profile M initial visible frame",
+        benchmark: "spatial.map_first_frame",
+        profile: "M",
+        temperature: Temperature::Cold,
+        budget_ms: 500.0,
+    },
+    Target {
+        spec: "map live Profile L initial progress/summary",
+        benchmark: "spatial.map_first_frame",
+        profile: "L",
+        temperature: Temperature::Cold,
+        budget_ms: 1_500.0,
+    },
+];
+
+/// One row of §33.2's reference targets table.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Target {
+    /// How §33.2 words the row.
+    pub spec: &'static str,
+    /// The benchmark whose p95 answers for it.
+    pub benchmark: &'static str,
+    /// The profile it is stated at.
+    pub profile: &'static str,
+    /// The temperature it is stated at (§37.3).
+    pub temperature: Temperature,
+    /// The p95 the first result must stay inside.
+    pub budget_ms: f64,
+}
 
 impl Benchmark {
     /// A benchmark that measures the harness rather than the product.

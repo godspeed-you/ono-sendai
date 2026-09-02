@@ -1056,6 +1056,7 @@ name = "ono-provider-systemd"
 version = "0.4.0"
 dependencies = [
  "async-trait",
+ "futures",
  "jiff",
  "ono-adapter",
  "ono-core",

@@ -214,12 +214,20 @@ fn perf(args: &[String]) -> ExitCode {
     for benchmark in wanted {
         // The host is held at the declared cardinality for the whole of the benchmark, and the
         // population is dropped — killed and reaped — before the next one starts.
-        let Some(at) = ono_testkit::Profile::named(benchmark.profile) else {
-            eprintln!("perf: no profile is named `{}`", benchmark.profile);
+        let Some(declaration) = ono_testkit::declared_profiles()
+            .into_iter()
+            .find(|declaration| declaration.id == benchmark.profile)
+        else {
+            eprintln!("perf: no profile is declared as `{}`", benchmark.profile);
             return ExitCode::FAILURE;
         };
-        let processes = ono_testkit::ProcessPopulation::of(at);
-        let sockets = ono_testkit::SocketPopulation::of(at);
+        let at = declaration.profile();
+        // Each axis is built where its declaration says it can be: Profile L's ten thousand
+        // processes are the container's and its hundred thousand sockets are not (ADR-0488).
+        let processes = (declaration.built_by != ono_testkit::BuiltBy::Container)
+            .then(|| ono_testkit::ProcessPopulation::of(at));
+        let sockets = (declaration.sockets_built_by != ono_testkit::BuiltBy::Container)
+            .then(|| ono_testkit::SocketPopulation::of(at));
         let measured = runner.run(benchmark);
         drop(sockets);
         drop(processes);

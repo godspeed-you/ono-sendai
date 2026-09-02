@@ -218,6 +218,8 @@ pub struct ProfileDeclaration {
     pub sockets: usize,
     /// Where a fixture of this size is built.
     pub built_by: BuiltBy,
+    /// Where the socket axis alone is built, when that differs from `built_by`.
+    pub sockets_built_by: BuiltBy,
     /// The scripts that build it, for a `container` profile.
     fixtures: Vec<String>,
 }
@@ -318,6 +320,21 @@ fn declaration(row: &serde_yaml_ng::Value) -> ProfileDeclaration {
         sockets: count(row, "sockets"),
         built_by: BuiltBy::from_name(&built)
             .unwrap_or_else(|| panic!("profile `{id}` declares an unknown `built_by`: {built}")),
+        sockets_built_by: row
+            .get("sockets_built_by")
+            .and_then(serde_yaml_ng::Value::as_str)
+            .map_or_else(
+                || {
+                    BuiltBy::from_name(&built).unwrap_or_else(|| {
+                        panic!("profile `{id}` declares an unknown `built_by`: {built}")
+                    })
+                },
+                |name| {
+                    BuiltBy::from_name(name).unwrap_or_else(|| {
+                        panic!("profile `{id}` declares an unknown `sockets_built_by`: {name}")
+                    })
+                },
+            ),
         fixtures: ["fixture", "socket_fixture"]
             .iter()
             .filter_map(|field| row.get(field).and_then(serde_yaml_ng::Value::as_str))

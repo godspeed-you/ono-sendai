@@ -15,6 +15,14 @@ use crate::{BusError, JobKind, SystemdBus, UnitProperties};
 
 /// The id this provider signs its records with, and the value of their `provider` field.
 ///
+/// How many unit reads are in flight at once while enumerating (§33.2).
+///
+/// Bounded rather than unbounded: D-Bus multiplexes, but a machine with thousands of units should
+/// not open thousands of concurrent calls, and §28.1 keeps every queue in this shell bounded. The
+/// window is wide enough that the round-trip latency of one unit is hidden by the others and
+/// narrow enough that the bus is never the thing under load.
+const UNITS_IN_FLIGHT: usize = 32;
+
 /// `ono.service/1` is identified by `provider + name` (spec §28.3), because a machine can run
 /// more than one service manager and a unit name alone does not say which one answered. Spec
 /// §33.4 names this one `systemd` in a link's provider list, so that is what it is called here.
@@ -288,12 +296,28 @@ impl Provider for SystemdProvider {
                     },
                 };
 
+                // One unit costs three D-Bus round trips — `LoadUnit`, then `GetAll` for the
+                // Unit and Service interfaces — and a machine has hundreds of units. Read
+                // sequentially that is over a second of pure latency before the first record,
+                // which is what made `look` inside COMPUTE cost 0.9 s whatever the host was
+                // running (v0.4.1 §33.2). The reads are independent and D-Bus multiplexes them,
+                // so they are issued in a bounded window and consumed in order: the emission
+                // order is still `ListUnits` order, and a slow unit no longer delays the ones
+                // behind it.
+                use futures::StreamExt as _;
+                let reads = futures::stream::iter(names.into_iter().map(|name| {
+                    let bus = Arc::clone(&bus);
+                    async move { bus.unit_properties(&name).await }
+                }))
+                .buffered(UNITS_IN_FLIGHT);
+                futures::pin_mut!(reads);
+
                 let mut emitted = 0usize;
-                for name in names {
+                while let Some(read) = reads.next().await {
                     if limit.is_some_and(|limit| emitted >= limit) {
                         return;
                     }
-                    let properties = match bus.unit_properties(&name).await {
+                    let properties = match read {
                         // `ListUnits` enumerates a `not-found` stub for as long as some other
                         // unit references a name whose file is gone. The by-name path refuses
                         // such stubs as fabricated objects, and the listing must agree with it

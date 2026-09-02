@@ -38,6 +38,13 @@
 #                   benchmark  — `cargo xtask perf` and `--ignored` proofs build it; too large
 #                                for every gate run, small enough for a developer machine.
 #                   container  — only the acceptance image builds it, through `fixture`.
+#   sockets_built_by
+#                 the same question asked of the socket axis alone, where the answer differs.
+#                 Profile L's ten thousand processes cost about 13 GB and belong to the
+#                 container; its hundred thousand listening sockets bind in two seconds and cost
+#                 about 26 MB, so that axis is built by the gate. A profile is two cardinalities
+#                 and they are not equally expensive; saying so is cheaper than pretending the
+#                 more expensive one decides both.
 #   fixture       the script that creates it, for a `container` profile.
 #   spec          the section that fixes the numbers.
 #
@@ -79,6 +86,7 @@ profiles:
     edges: 250000
     sockets: 100000
     built_by: container
+    sockets_built_by: gate
     fixture: docker/acceptance/fixtures/perf/many-processes.pl
     socket_fixture: docker/acceptance/fixtures/perf/many-sockets.pl
     spec: "v0.4.1 §32.2, Appendix F.1, F.2"
