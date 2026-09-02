@@ -791,6 +791,25 @@ Default view: `name`, `reason`, `evidence`
 | `evidence` | `string` | — | required | The observation that made the rule fire — the number, the state, the pin (§26.1). |
 | `source` | `string` | — | required | Who claimed it — a built-in rule, the user's pin, or a plugin id (§26.5, §35.5). |
 
+## Limit — `ono.limit/1`
+
+One effective runtime limit, with the range it must lie in and the layer that set it.
+
+Identity: `key`
+
+Default view: `key`, `value`, `layer`, `min`, `max`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `key` | `string` | — | required | The dotted configuration key, as v0.4.1 §55.1 spells it, e.g. `limits.materialize_bytes`. |
+| `value` | `value` | — | required | The figure in force, in its own type — a byte ceiling is a bytesize, a count and a duration are ints. This is what the shell enforces, not what a default says it would. |
+| `bytes` | `int` | — | nullable | The same figure in base units, for a limit counted in bytes; null for one counted in values, results or milliseconds, which are already base units (Appendix A). |
+| `type` | `string` | — | required | The declared type of the setting, so a caller knows how to read `value`. |
+| `layer` | `enum` | — | required | Which of ADR-0010's five layers supplied the figure. `default` means Appendix A's own value is what the shell will enforce. |
+| `min` | `value` | — | nullable | The smallest permitted value, in the setting's own type (v0.4.1 §55.2). Null for a setting that is not range-checked. |
+| `max` | `value` | — | nullable | The largest permitted value, in the setting's own type; null where `min` is null. |
+| `description` | `string` | — | nullable | One line describing what the limit bounds, and which section fixes its default. |
+
 ## LinkEvent — `ono.link-event/1`
 
 One change to one link this session holds, as a live stream emits it.
@@ -844,6 +863,11 @@ Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 | `targets` | `list<string>` | — | required | The targets the remote negotiated (spec §21.2), which is what its context can answer. Empty for a link that was never established: nothing was negotiated. |
 | `protocol` | `int` | — | nullable | The link protocol version the handshake settled on (spec §21.2); null until it did. |
 | `providers` | `list<string>` | — | nullable | The ids of the providers the remote offers (spec §21.2), which keep their ids across the link (ADR-0036); null until the handshake settled them. |
+| `transport_fingerprint` | `string` | — | nullable | The `sha256:` fingerprint of the key the far side proved it holds, during this link's own handshake (v0.4.1 §7.3). Null where the transport authenticated nobody to this process — `ssh`, where OpenSSH did the authenticating in its own `known_hosts` and will not say which key it accepted (§4.3), and `local`, where the far side is this shell's own child. Null is the honest answer there and not a missing value. |
+| `transport_trust` | `enum` | — | nullable | What the trust store concluded about that key (v0.4.1 §7.3): `pinned` for a key already recorded for this host, `newly_pinned` for one recorded on first contact, and `unauthenticated` for a transport that proved nothing and a policy that said so by name. Null until a handshake settled it. |
+| `runtime_user` | `string` | — | nullable | The user the far side reports it is running as. v0.4.1 §7.3: "the runtime identity is useful context but MUST NOT grant authority" — it is what the peer said about itself, and `transport_fingerprint` is what it proved. |
+| `runtime_uid` | `int` | — | nullable | The numeric user id the far side reports, where it reports one. Context, not authority. |
+| `runtime_elevated` | `bool` | — | nullable | Whether the far side reports it is running with elevated privilege (spec §17.2). Self- reported, and §2.1 forbids it from satisfying the word authenticated. |
 
 ## LogRecord — `ono.log-record/1`
 
@@ -1257,7 +1281,7 @@ The contract negotiated when a package was loaded — what it may do, and within
 
 Identity: `instance`
 
-Default view: `plugin`, `host_api`, `isolation`, `degraded`, `started_at`
+Default view: `plugin`, `host_api`, `execution_tier`, `degraded`, `started_at`
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
@@ -1265,7 +1289,10 @@ Default view: `plugin`, `host_api`, `isolation`, `degraded`, `started_at`
 | `plugin` | `ref<ono.plugin/1>` | — | required | The installed package version this instance runs. |
 | `host_api` | `string` | — | required | The negotiated host API version, e.g. `kuang-host/11.1` — one version, not the range the package asked for (spec §31.63). |
 | `value_protocol` | `string` | — | required | The negotiated value protocol, e.g. `ono-value/1` (spec §31.62). |
-| `isolation` | `enum` | — | required | The tier this instance actually runs in (spec §31.10). |
+| `isolation` | `enum` | — | required | The tier the package's manifest declares, in spec §31.10's own vocabulary. It says what kind of thing the artifact is; `execution_tier` says what was actually installed around it, and the two are different questions (v0.4.1 §17.2). |
+| `execution_tier` | `enum` | — | required | The named execution tier this instance ran in (v0.4.1 §17.2). A name rather than a boolean, because `sandboxed: true` cannot distinguish a process under resource ceilings and no-new-privileges from one behind a kernel filesystem allowlist, and v0.4.1 §17.3 forbids calling either "sandboxed" without saying which boundary is meant. `native-confined` is what this build runs native packages in: capability mediation and process confinement, and no kernel isolation of the filesystem or the network. `native-isolated` and `wasm` are names the model can express and this build does not offer. |
+| `execution_boundary` | `string` | — | required | One sentence saying what the tier is and what it is not, from `docs/spec/hardening/kuang_confinement_controls.yaml` (v0.4.1 §15.2, §19.2). Generated from the tier rather than written beside it, so the record and the documentation cannot drift. |
+| `confinement` | `list<record>` | — | required | The confinement report of v0.4.1 §16.5, one row per control the tier claimed: `{control, required, attempted, result, platform_detail}`. `result` is `applied`, `failed`, `skipped` or `not_attempted`, and a successful spawn implies every `required` row reads `applied` — a load for which that did not hold produced no instance at all (§2.3). The control ids are the ones `docs/spec/hardening/kuang_confinement_controls.yaml` declares. |
 | `granted` | `list<record>` | — | required | Every granted capability as `{capability, class, scope, enforcement}`. `enforcement` is `broker` or `advisory` per `capabilities.v1.yaml`, so an advisory scope is visible as one in the contract and not only in the prompt. |
 | `denied` | `list<record>` | — | required | Every requested capability that was not granted, as `{capability, class, reason}`. Empty when everything was granted. A denied `required` capability means the load failed and no instance exists, so entries here are always `optional` or `runtime-requested`. |
 | `disabled_features` | `list<string>` | — | required | The features the package switched off because of a denial — spec §31.63's `model.infer denied -> feature disabled: explain-flow`. Empty when nothing was disabled. The package supplies this in its `lifecycle.init` answer; it is the plugin's own account of what it gave up. |
@@ -1293,7 +1320,8 @@ Default view: `id`, `version`, `state`, `trust`, `jobs`, `memory`
 | `publisher` | `string` | — | required | The publisher namespace `id` begins with. |
 | `state` | `enum` | — | required | The lifecycle state of spec §31.8. `installed` and `enabled` mean no code of this package has run. See `docs/spec/kuang/lifecycle.v1.yaml` for the transitions. |
 | `trust` | `enum` | — | required | What is known about who produced the artifact (spec §31.8's table, §31.36). `signed` means a valid signature from a key this system does not vouch for; `verified` means a valid signature from a trusted publisher; `local` is an unsigned development package; `untrusted` is a package quarantined on trust grounds. It is a separate question from `isolation`, deliberately (spec §31.36). |
-| `isolation` | `enum` | — | required | What the code can do even if it is not trusted — the tiers of spec §31.10. A package cannot declare `core-built-in`. |
+| `isolation` | `enum` | — | required | What kind of thing the artifact is — the tiers of spec §31.10, as the manifest declares them. A package cannot declare `core-built-in`. It is not a statement about what is installed around the artifact; `execution_tier` is. |
+| `execution_tier` | `enum` | — | required | The named tier a loaded instance of this package runs in (v0.4.1 §17.2), and the name that reaches audit, diagnostics and documentation. A name rather than a boolean: v0.4.1 §17.3 forbids describing a tier as "sandboxed" without stating the boundary, and `native-confined` states it — capability mediation and process confinement, no kernel isolation of the filesystem or the network. `inspect plugin` shows the controls that name stands for. |
 | `roles` | `list<string>` | — | required | The extension roles of spec §31.4 the package declares, at least one. |
 | `enabled` | `bool` | — | required | Whether policy makes it eligible for loading. Distinct from `state`, which says what is happening now: a package can be enabled and unloaded, which is the normal resting state under lazy loading (spec §31.68). |
 | `active_version` | `bool` | — | required | Whether this is the version contributions currently resolve to. During an upgrade two versions are installed and exactly one is active (spec §31.35). |

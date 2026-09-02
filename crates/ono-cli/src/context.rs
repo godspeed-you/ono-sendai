@@ -784,7 +784,11 @@ fn connect_over_tcp(
     timeout: Option<std::time::Duration>,
 ) -> Result<crate::session::LinkConnection, AgentFailure> {
     let failed = |error: ErrorValue| AgentFailure { error, exit: None };
-    let store = crate::trust::open(&session.host_sources()).map_err(failed)?;
+    let sources = session.host_sources();
+    let store = crate::trust::open(&sources).map_err(failed)?;
+    // v0.4.1 §7.1: both ends present a certificate. This shell's is the persistent identity of
+    // §8.1, so the agent on the far side can authorize the same peer across connections.
+    let identity = crate::trust::identity(&sources).map_err(failed)?;
     let (name, _) = ono_remote::split_address(address);
     let schemas = std::sync::Arc::new(ono_value::builtin_schemas().clone());
     let config = ono_protocol::ClientConfig::new(&name)
@@ -803,7 +807,7 @@ fn connect_over_tcp(
     let address = address.to_owned();
     let connected = runtime.block_on(async {
         let connect = async {
-            let transport = ono_remote::tls_connect(&address).await?;
+            let transport = ono_remote::tls_connect(&address, &identity).await?;
             ono_remote::RemoteLink::connect(transport, config).await
         };
         match timeout {

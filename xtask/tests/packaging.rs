@@ -18,6 +18,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use ono_testkit::scratch;
+
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -368,5 +370,75 @@ fn should_stamp_the_workspace_before_building_when_the_image_caches_its_target_d
     assert!(
         stamp < compile,
         "the sources are stamped after the build, which stamps nothing that mattered"
+    );
+}
+
+/// Spec §44.4: a release build fails when lockfile resolution would change.
+///
+/// `--locked` is one word in `scripts/package.sh` and in `docker/Dockerfile`, and the whole
+/// reproducibility contract of §46 rests on it: without it cargo silently re-resolves, and the
+/// same commit built a month apart is built against different code. This arranges the failure
+/// from outside — a workspace whose lockfile no longer describes its manifest — and proves the
+/// build refuses rather than repairs, and that `--locked` is what refuses it.
+///
+/// What it pins is cargo's half of the contract, so it was green the day it was written. The
+/// repository's half — that every release build actually passes the flag — is
+/// `xtask/tests/supply_chain.rs::should_build_the_release_with_a_locked_dependency_graph`, and
+/// that one was not (ADR-0450).
+#[test]
+fn should_refuse_a_release_build_whose_lockfile_would_change() {
+    let workspace = scratch();
+    workspace.write(
+        "Cargo.toml",
+        "[workspace]\n\n[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n\
+         edition = \"2021\"\n\n[dependencies]\nlate = { path = \"late\" }\n",
+    );
+    workspace.write("src/lib.rs", "");
+    workspace.write(
+        "late/Cargo.toml",
+        "[package]\nname = \"late\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    workspace.write("late/src/lib.rs", "");
+    // A lockfile from before `late` was depended on: resolution would have to change to build.
+    workspace.write(
+        "Cargo.lock",
+        "version = 4\n\n[[package]]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+    );
+
+    let build = |locked: bool| {
+        let mut command = Command::new("cargo");
+        command
+            .arg("build")
+            .arg("--offline")
+            .current_dir(workspace.path())
+            .env("CARGO_TARGET_DIR", workspace.path().join("target"));
+        if locked {
+            command.arg("--locked");
+        }
+        let output = command
+            .output()
+            .unwrap_or_else(|error| panic!("cargo must be runnable in the gate: {error}"));
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (built, complaint) = build(true);
+    assert!(
+        !built,
+        "a build with a stale lockfile succeeded under --locked, so nothing stops a release \
+         from re-resolving its dependency graph (spec §44.4):\n{complaint}"
+    );
+    assert!(
+        complaint.contains("lock file") && complaint.contains("--locked"),
+        "the refusal does not say the lockfile is what stopped it:\n{complaint}"
+    );
+
+    let (built, complaint) = build(false);
+    assert!(
+        built,
+        "the same workspace does not build without --locked either, so the fixture proves \
+         nothing about the flag:\n{complaint}"
     );
 }

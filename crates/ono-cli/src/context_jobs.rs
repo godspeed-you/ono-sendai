@@ -108,8 +108,7 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
         values
     };
     if !shown.is_empty() {
-        let dropped = session.retain_result(shown.clone());
-        crate::report::retention_notice(dropped, shown.len());
+        crate::report::retention_notice(session.retain(&shown));
         let environment: Vec<(String, String)> = session
             .env()
             .iter()

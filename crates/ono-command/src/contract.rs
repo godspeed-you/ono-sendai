@@ -656,10 +656,109 @@ pub struct CommandContract {
     options: Vec<ParameterSpec>,
     privilege: Privilege,
     streaming: bool,
+    execution: Option<ExecutionClass>,
     phase: Phase,
     examples: Vec<String>,
     origin: Origin,
     required_capabilities: Vec<String>,
+}
+
+/// Where a pipeline operation sits in the streaming classification matrix of v0.4.1 Appendix E.
+///
+/// The matrix is `docs/spec/hardening/streaming_classification.yaml`, and Appendix E's closing
+/// sentence is what makes it a contract rather than a note: *"If a command cannot be placed in
+/// this matrix, its execution semantics are underspecified and MUST be resolved before release."*
+/// `cargo xtask spec-check` refuses a stream-consuming command that names no class.
+///
+/// The two properties are what the rest of the hardening layer acts on: whether the stage refuses
+/// a declared-unbounded upstream (§22.3), and whether it may hold its input within the budget of
+/// §22.2. `explain` derives what it shows from these rather than restating them (§22.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ExecutionClass {
+    /// One value in, zero or more out, with no state that grows.
+    ItemTransform,
+    /// A test applied to each value in turn.
+    Predicate,
+    /// Answers from a bounded prefix and then stops reading.
+    Prefix,
+    /// Folds into state of a fixed or explicitly bounded size.
+    IncrementalAggregate,
+    /// Emits the same values in an order it can only know once it has them all.
+    GlobalReorder,
+    /// Emits one value per group, which it can only close once the input has ended.
+    GlobalGrouping,
+    /// Holds a collection because its answer is defined over the whole of it.
+    ExplicitCollect,
+    /// Maintains a bounded model of current state and repaints it.
+    LiveView,
+}
+
+impl ExecutionClass {
+    /// Every class of Appendix E, in its own order.
+    pub const ALL: &'static [ExecutionClass] = &[
+        ExecutionClass::ItemTransform,
+        ExecutionClass::Predicate,
+        ExecutionClass::Prefix,
+        ExecutionClass::IncrementalAggregate,
+        ExecutionClass::GlobalReorder,
+        ExecutionClass::GlobalGrouping,
+        ExecutionClass::ExplicitCollect,
+        ExecutionClass::LiveView,
+    ];
+
+    /// The id the registry spells it with.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            ExecutionClass::ItemTransform => "item_transform",
+            ExecutionClass::Predicate => "predicate",
+            ExecutionClass::Prefix => "prefix",
+            ExecutionClass::IncrementalAggregate => "incremental_aggregate",
+            ExecutionClass::GlobalReorder => "global_reorder",
+            ExecutionClass::GlobalGrouping => "global_grouping",
+            ExecutionClass::ExplicitCollect => "explicit_collect",
+            ExecutionClass::LiveView => "live_view",
+        }
+    }
+
+    /// Resolves a class from its id.
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|class| class.id() == id)
+    }
+
+    /// Whether the stage refuses a declared-unbounded upstream immediately (§22.3).
+    #[must_use]
+    pub const fn requires_finite_input(self) -> bool {
+        matches!(
+            self,
+            ExecutionClass::GlobalReorder
+                | ExecutionClass::GlobalGrouping
+                | ExecutionClass::ExplicitCollect
+        )
+    }
+
+    /// Whether the stage may hold its input, within the budget of §22.2.
+    #[must_use]
+    pub const fn may_materialize(self) -> bool {
+        self.requires_finite_input()
+    }
+
+    /// How `explain` names the execution mode (§22.4).
+    #[must_use]
+    pub const fn execution_mode(self) -> &'static str {
+        if self.may_materialize() {
+            "global materialization"
+        } else {
+            "streaming"
+        }
+    }
+}
+
+impl std::fmt::Display for ExecutionClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.id())
+    }
 }
 
 impl CommandContract {
@@ -801,6 +900,28 @@ impl CommandContract {
         self.streaming
     }
 
+    /// Where the command sits in the streaming classification matrix of v0.4.1 Appendix E.
+    ///
+    /// `None` for a command that consumes no stream, which is most of them: Appendix E classifies
+    /// *pipeline operations*, and a producer that reads a provider is not one.
+    #[must_use]
+    pub const fn execution(&self) -> Option<ExecutionClass> {
+        self.execution
+    }
+
+    /// Whether the command refuses a declared-unbounded upstream immediately (§22.3).
+    #[must_use]
+    pub fn requires_finite_input(&self) -> bool {
+        self.execution
+            .is_some_and(ExecutionClass::requires_finite_input)
+    }
+
+    /// Whether the command may hold its input within the materialization budget (§22.1, §22.2).
+    #[must_use]
+    pub fn materializes(&self) -> bool {
+        self.execution.is_some_and(ExecutionClass::may_materialize)
+    }
+
     /// The spec §37 phase that delivers it.
     #[must_use]
     pub fn phase(&self) -> Phase {
@@ -854,6 +975,8 @@ pub(crate) struct RawCommand {
     options: Vec<RawParameter>,
     privilege: String,
     streaming: bool,
+    #[serde(default)]
+    execution: Option<String>,
     phase: String,
     #[serde(default)]
     examples: Vec<RawExample>,
@@ -988,6 +1111,18 @@ impl RawCommand {
         };
         let selectors = parameters(&id, self.selectors)?;
         let options = parameters(&id, self.options)?;
+        let execution = match self.execution.as_deref() {
+            None => None,
+            Some(name) => Some(ExecutionClass::from_id(name).ok_or_else(|| {
+                contract_error(
+                    &id,
+                    format!(
+                        "unknown execution class `{name}`; v0.4.1 Appendix E has eight, and \
+                         docs/spec/hardening/streaming_classification.yaml lists them"
+                    ),
+                )
+            })?),
+        };
 
         Ok(CommandContract {
             id: self.id,
@@ -1007,6 +1142,7 @@ impl RawCommand {
             options,
             privilege,
             streaming: self.streaming,
+            execution,
             phase,
             examples: self.examples.iter().map(RawExample::text).collect(),
             // A contract file under `docs/spec/commands/` is the core's own declaration. A
@@ -1114,6 +1250,12 @@ impl ContributedCommand {
             // Whether the command emits incrementally is not a separate claim: it is what the
             // declared output type says.
             streaming: output.text.starts_with("stream<") || output.text.starts_with("stream "),
+            // A contribution declares no execution class: v0.4.1 Appendix E classifies the core's
+            // pipeline operations, and a plugin command runs inside the KUANG/11 supervisor with
+            // its own quotas (spec §31.15) rather than under the evaluator's materialization
+            // budget. `explain` therefore shows it as it shows any other stage, without a
+            // materialization line it cannot substantiate.
+            execution: None,
             output,
             // `provider_capability` names an entry of `docs/spec/capabilities.yaml`, which is the
             // core's provider vocabulary. A package's authority is its KUANG/11 capabilities,

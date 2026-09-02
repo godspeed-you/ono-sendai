@@ -456,6 +456,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     // Everything a frame contributes has an explicit spelling, and `explain` is where it is
     // written (spec §14.5, ADR-0023, ADR-0225).
     let frames = session.context();
+    let limits = crate::limits::materialization(session.settings());
     let (providers, adapters) = session.registries();
     let adapters = remote_host.is_none().then_some(adapters);
     let plan = ono_command::plan_with(
@@ -468,6 +469,9 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             adapters,
             executables: Some(&executables),
             context: &frames,
+            // v0.4.1 §22.4: the plan shows the budget the pipeline would really run under, so a
+            // user who narrowed `limits.materialize_bytes` sees their own figure.
+            limits,
         },
     );
     // The plan quotes the source it was given and the paths it resolved, both of which are

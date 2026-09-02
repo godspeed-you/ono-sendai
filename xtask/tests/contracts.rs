@@ -738,3 +738,186 @@ fn copy_kuang_contracts(repo: &Scratch) {
         repo.write(format!("docs/spec/kuang/{name}"), &text);
     }
 }
+
+/// Copies the hardening registries into a fixture, so a test can break one row of them.
+fn copy_hardening_contracts(repo: &Scratch) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("docs/spec/hardening");
+    for entry in std::fs::read_dir(&root).expect("the hardening contracts") {
+        let path = entry.expect("a directory entry").path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let text = std::fs::read_to_string(&path).expect("a contract");
+        repo.write(format!("docs/spec/hardening/{name}"), &text);
+    }
+}
+
+#[test]
+fn should_match_the_confinement_control_table_against_the_runtime_that_serves_it() {
+    // v0.4.1 §16.4 asks for *one* central table, and §52.2 for one source of truth behind the
+    // runtime, the report and the documentation. Two copies that agree today are one copy that
+    // will not, so the gate compares them on every run.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let found = xtask::contracts::check_hardening_contracts(root);
+    assert!(
+        found.is_empty(),
+        "the confinement control table and the runtime disagree:\n{}",
+        found
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_reject_an_unknown_control_id_in_a_kuang_tier_definition() {
+    // v0.4.1 §52.3, verbatim: "Unknown capability IDs in an authorization fixture or unknown
+    // control IDs in a KUANG tier definition MUST fail the gate." A tier row naming a control
+    // nothing installs is a confinement claim with no code behind it.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let path = repo
+        .path()
+        .join("docs/spec/hardening/kuang_confinement_controls.yaml");
+    let text = std::fs::read_to_string(&path).expect("the control table");
+    let text = text.replace(
+        "      - {control: no_new_privs, requirement: mandatory, failure: spawn_fails}",
+        "      - {control: no_new_privleges, requirement: mandatory, failure: spawn_fails}",
+    );
+    repo.write("docs/spec/hardening/kuang_confinement_controls.yaml", &text);
+    let found = xtask::contracts::check_hardening_contracts(repo.path());
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.detail.contains("no_new_privleges")),
+        "a tier naming a control the supervisor cannot install is reported, got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_tier_row_whose_requirement_disagrees_with_the_supervisor() {
+    // The drift that matters most: the table says a control is mandatory, the code treats it as
+    // best-effort, and §2.3's guarantee quietly becomes a preference.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let path = repo
+        .path()
+        .join("docs/spec/hardening/kuang_confinement_controls.yaml");
+    let text = std::fs::read_to_string(&path).expect("the control table");
+    let text = text.replace(
+        "      - {control: no_new_privs, requirement: mandatory, failure: spawn_fails}",
+        "      - {control: no_new_privs, requirement: best_effort, failure: recorded}",
+    );
+    repo.write("docs/spec/hardening/kuang_confinement_controls.yaml", &text);
+    let found = xtask::contracts::check_hardening_contracts(repo.path());
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.detail.contains("no_new_privs")),
+        "a requirement the runtime does not honour is reported, got {found:?}"
+    );
+}
+
+// --- v0.4.1 Appendix E: every pipeline operation has stated execution semantics (issue #68) ----
+
+/// The repository's own registries, as `spec-check` reads them.
+fn repository() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+}
+
+#[test]
+fn should_place_every_pipeline_operation_in_the_streaming_classification_matrix() {
+    // Appendix E: "If a command cannot be placed in this matrix, its execution semantics are
+    // underspecified and MUST be resolved before release." The matrix is
+    // `docs/spec/hardening/streaming_classification.yaml`; this asserts that it really covers
+    // every command that consumes a stream, and that each one's contract says the same thing.
+    let document = std::fs::read_to_string(
+        repository().join("docs/spec/hardening/streaming_classification.yaml"),
+    )
+    .expect("v0.4.1 Appendix E's matrix is a machine-readable contract");
+    let matrix: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&document).expect("the matrix is YAML");
+
+    let classes: Vec<String> = matrix["classes"]
+        .as_sequence()
+        .expect("the matrix declares its classes")
+        .iter()
+        .filter_map(|class| class["id"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(
+        classes.len(),
+        8,
+        "Appendix E has eight rows and the matrix declares {}: {classes:?}",
+        classes.len()
+    );
+
+    // Every command whose declared input is a stream is placed, with its two properties agreeing
+    // between the registry, its contract and `ono_command::ExecutionClass`.
+    let problems = xtask::contracts::check_hardening_contracts(repository());
+    assert!(
+        problems.is_empty(),
+        "the hardening registries do not agree with the implementation:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    // And the classification really reaches the shell: `sort` requires finite input and may
+    // materialize, `where` does neither, which is what §22.3 and §22.4 act on.
+    let registry = ono_command::CommandRegistry::embedded().expect("the embedded registry loads");
+    let sort = registry
+        .get("ono.data.sort")
+        .expect("`sort` is a stable command");
+    assert!(sort.requires_finite_input() && sort.materializes());
+    let filter = registry
+        .get("ono.data.where")
+        .expect("`where` is a stable command");
+    assert!(!filter.requires_finite_input() && !filter.materializes());
+}
+
+#[test]
+fn should_reject_a_stream_consuming_command_the_matrix_does_not_place() {
+    let repo = consistent();
+    repo.write(
+        "docs/spec/hardening/streaming_classification.yaml",
+        "version: 1\nclasses: []\noperations: []\n",
+    );
+    repo.write(
+        "docs/spec/commands/data.yaml",
+        "version: 1\nfamily: data\ncommands:\n  - id: ono.data.invent\n    verb: invent\n    target: null\n    summary: Invent.\n    stability: stable\n    argument_mode: words\n    input: \"stream<any>\"\n    output: \"stream<any>\"\n    provider_capability: null\n    privilege: none\n    streaming: false\n    phase: B\n    examples: [\"invent\"]\n",
+    );
+    let problems = xtask::contracts::check_hardening_contracts(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("ono.data.invent")
+                && problem.detail.contains("does not place it")),
+        "Appendix E requires every stream-consuming command to be placeable: {problems:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_limit_whose_default_lies_outside_its_own_range() {
+    let repo = consistent();
+    repo.write(
+        "docs/spec/hardening/limits.yaml",
+        "version: 1\nlimits:\n  - key: limits.materialize_items\n    type: int\n    default: 5\n    min: 10\n    max: 20\n    unit: values\n    enforced_by: ono-pipeline\n",
+    );
+    let problems = xtask::contracts::check_hardening_contracts(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("outside its own permitted range")),
+        "v0.4.1 §55.2: a default a user cannot restore is not a default: {problems:?}"
+    );
+}

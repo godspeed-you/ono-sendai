@@ -227,10 +227,19 @@ proven offline against a real second process.
 
 The extension runtime is named after the icebreaker Case rides through Straylight's ICE. It loads
 analysis programs, providers, lenses, automations and AI assistants into the shell under an
-explicit capability and isolation model: manifests, declared capabilities, sandboxed execution, an
-audit trail, and a deterministic test host every package must pass. Extensions contribute real
-objects and real relationships to the same typed pipeline as native commands — a plugin that
-inspects Postgres internals produces `Stream<T>` you can filter and sort like anything else.
+explicit capability model: manifests, declared capabilities, brokered host calls, process
+confinement, an audit trail, and a deterministic test host every package must pass. Extensions
+contribute real objects and real relationships to the same typed pipeline as native commands — a
+plugin that inspects Postgres internals produces `Stream<T>` you can filter and sort like anything
+else.
+
+**What the native tier is, exactly.** A native KUANG/11 plugin executes as a process of the Ono
+user. Ono limits its brokered capabilities and applies process confinement — resource ceilings,
+no-new-privileges, its own session, a sanitized environment, a private working directory, each one
+installed before the plugin's first instruction and each one able to refuse the launch. It is not
+a complete filesystem or network sandbox: kernel isolation is not part of this tier, so a native
+plugin can reach whatever your user account can reach without asking Ono for it. Install native
+plugins only from sources you are willing to run as your user account.
 
 > **Ono is the deck. KUANG/11 is the software you load into it.**
 

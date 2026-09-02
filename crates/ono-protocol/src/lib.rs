@@ -38,10 +38,10 @@
 //! # Driving a link
 //!
 //! ```no_run
-//! use ono_protocol::{ClientConfig, Link, PlainTransport, RemoteMessage, RemoteQuery};
+//! use ono_protocol::{ClientConfig, Link, UnauthenticatedTransport, RemoteMessage, RemoteQuery};
 //!
 //! # async fn example(stream: tokio::io::DuplexStream) -> Result<(), ono_value::ErrorValue> {
-//! let link = Link::connect(PlainTransport::new(stream), ClientConfig::new("db.example.com")).await?;
+//! let link = Link::connect(UnauthenticatedTransport::new(stream), ClientConfig::new("db.example.com")).await?;
 //! let mut processes = link.query(&RemoteQuery::target("process").limit(10))?;
 //! while let Some(message) = processes.recv().await {
 //!     if let RemoteMessage::Value(value) = message {
@@ -78,5 +78,5 @@ pub use limits::{
 pub use link::{ClientConfig, Link, RemoteMessage, RemoteStream};
 pub use message::{ActRequest, AdaptRequest, Message, RemoteQuery, decode_message, encode_message};
 pub use service::{RemoteService, ServerConfig, StreamResponder, serve};
-pub use transport::{PlainTransport, Transport};
+pub use transport::{Transport, UnauthenticatedTransport};
 pub use trust::{Fingerprint, HostKey, TrustDecision, TrustEntry, TrustPolicy, TrustStore};

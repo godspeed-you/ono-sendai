@@ -19,6 +19,11 @@ pub enum Invocation {
     /// Serve this machine's providers (spec §21.2): the remote end of a link, over stdin/stdout
     /// or over the authenticated transport of §21.5 when `--listen` says where.
     Agent(Options, AgentOptions),
+    /// Print this shell's own peer fingerprint and exit (v0.4.1 §8.5).
+    ///
+    /// The non-secret half of the identity of §8.1, and the canonical spelling: the same
+    /// fingerprint `--agent --print-host-key` prints, asked for without claiming to be an agent.
+    PrintPeerKey,
     /// Print the version and exit.
     Version,
     /// Print usage and exit.
@@ -69,6 +74,10 @@ impl Invocation {
                 "--help" | "-h" => {
                     rest.next();
                     return Self::Help;
+                }
+                "--print-peer-key" => {
+                    rest.next();
+                    return Self::PrintPeerKey;
                 }
                 "--agent" => {
                     rest.next();

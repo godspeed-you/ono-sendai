@@ -113,6 +113,12 @@ kuang_error_codes! {
         "The remote agent cannot run the requested extension component.";
     RemotePolicyDenied => "Ono-Sendai-K11702", "remote.policy_denied", Safety,
         "The remote host's policy denies the capability, whatever the local grant says.";
+    PluginConfinementFailed => "Ono-Sendai-K11801", "plugin.confinement_failed", Safety,
+        "A mandatory confinement control could not be installed, so the plugin was not started.";
+    PluginResourceLimitFailed => "Ono-Sendai-K11802", "plugin.resource_limit_failed", Safety,
+        "A mandatory resource limit could not be installed, so the plugin was not started.";
+    PluginNoNewPrivsFailed => "Ono-Sendai-K11803", "plugin.no_new_privs_failed", Safety,
+        "`PR_SET_NO_NEW_PRIVS` could not be installed, so the plugin was not started.";
 }
 
 impl KuangErrorCode {
@@ -324,7 +330,19 @@ mod tests {
 
     #[test]
     fn should_expose_all_27_codes_of_spec_31_79_when_enumerated() {
-        assert_eq!(KuangErrorCode::ALL.len(), 27);
+        // §31.79's families are closed: nothing here is renumbered, removed or re-pointed.
+        let inherited = KuangErrorCode::ALL
+            .iter()
+            .filter(|code| !code.name().starts_with("plugin."))
+            .count();
+        assert_eq!(inherited, 27);
+        // v0.4.1 §16.3 adds a family §31.79 does not have, and names all three of its codes
+        // verbatim: a confinement control that could not be installed (ADR-0444).
+        let confinement = KuangErrorCode::ALL
+            .iter()
+            .filter(|code| code.name().starts_with("plugin."))
+            .count();
+        assert_eq!(confinement, 3);
     }
 
     #[test]

@@ -29,6 +29,24 @@ fn main() -> ExitCode {
             eprintln!("try `{} --help`", ono_core::SHORT_NAME);
             ExitStatus::USAGE
         }
+        Invocation::PrintPeerKey => {
+            // What a person pins this machine by, on stdout so it can be read by a script or
+            // copied into `add host-key` on the machine that will link here (v0.4.1 §8.5). The
+            // fingerprint is the public contract of §7.2; the key it names never leaves the file.
+            match default_identity() {
+                Ok(identity) => {
+                    println!("{}", identity.fingerprint());
+                    ExitStatus::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+                    if let Some(help) = error.help() {
+                        eprintln!("{}: {help}", ono_core::SHORT_NAME);
+                    }
+                    ExitStatus::FAILURE
+                }
+            }
+        }
         Invocation::Agent(_, agent_options) => {
             // The remote end of a link (spec §21.2): serve this machine's providers over
             // stdin/stdout. The transport already carried authentication (ADR-0037), and the
@@ -171,32 +189,29 @@ fn start(interactive: bool, options: &Options) -> (Session, Reporter) {
 ///
 /// It is generated on first use and kept, because a host whose identity changed on every start
 /// would be refused by everyone who pinned it (spec §21.5, ADR-0353).
+///
+/// Without `--host-key` this is the same identity a direct link presents, resolved through the
+/// same ladder: v0.4.1 §8.5 requires `--agent --print-host-key` and `--print-peer-key` to print
+/// the same fingerprint when the default path is used, and they do because there is one default
+/// path (§8.1, §8.2, ADR-0435).
 fn agent_identity(
     options: &ono_cli::invocation::AgentOptions,
-) -> Result<ono_remote::HostIdentity, ono_value::ErrorValue> {
-    let path = match &options.host_key {
-        Some(path) => path.clone(),
-        None => {
-            let environment: Vec<(String, String)> = std::env::vars().collect();
-            let directory = ono_cli::config::config_dir_from_environment(
-                environment
-                    .iter()
-                    .map(|(name, value)| (name.as_str(), value.as_str())),
-            )
-            .ok_or_else(|| {
-                ono_value::ErrorValue::new(
-                    ono_core::ErrorCode::IoNotFound,
-                    "this account has no configuration directory to keep a host identity in",
-                )
-                .with_help(
-                    "set `HOME`, `XDG_CONFIG_HOME` or `ONO_CONFIG_DIR`, or name the file with \
-                     `--host-key` (ADR-0010)",
-                )
-            })?;
-            directory.join(ono_cli::trust::HOST_KEY_FILE)
-        }
-    };
-    ono_remote::HostIdentity::open_or_create(&path)
+) -> Result<ono_remote::PeerIdentity, ono_value::ErrorValue> {
+    match &options.host_key {
+        Some(path) => ono_remote::PeerIdentity::open_or_create(path),
+        None => default_identity(),
+    }
+}
+
+/// This shell's own peer identity, from the configuration directory of ADR-0010 (v0.4.1 §8.1).
+fn default_identity() -> Result<ono_remote::PeerIdentity, ono_value::ErrorValue> {
+    let environment: Vec<(String, String)> = std::env::vars().collect();
+    let sources = ono_cli::hosts::HostSources::from_environment(
+        environment
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+    );
+    ono_cli::trust::identity(&sources)
 }
 
 /// Serves links over Ono's own authenticated transport (spec §21.5): one TLS 1.3 endpoint,
@@ -208,7 +223,7 @@ fn agent_identity(
 /// that asked for port 0 learns which port the system chose.
 async fn serve_authenticated(
     address: &str,
-    identity: &ono_remote::HostIdentity,
+    identity: &ono_remote::PeerIdentity,
     config: ono_remote::AgentConfig,
 ) -> ExitCode {
     let listener = match ono_remote::TlsListener::bind(address, identity).await {

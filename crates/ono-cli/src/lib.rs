@@ -18,6 +18,7 @@ pub mod hosts;
 pub mod invocation;
 pub mod kuang_host;
 pub mod kuang_trust;
+pub mod limits;
 pub mod live;
 pub mod meta;
 pub mod native;
@@ -50,6 +51,7 @@ pub fn usage_text() -> String {
          \x20 -c <source>      run <source>, then exit with its status\n\
          \x20 -                read a script from standard input\n\
          \x20 --config <path>  read this configuration file instead of the usual layers\n\
+         \x20 --print-peer-key print this shell's own link fingerprint and exit\n\
          \x20 --no-config      read no configuration at all\n\
          \x20 -V, --version    print the version and exit\n\
          \x20 -h, --help       print this help and exit\n\

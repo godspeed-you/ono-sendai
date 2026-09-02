@@ -1,0 +1,78 @@
+# v0.4.1 §2.3, §16.2–§16.5, §18.1, §59.7, §59.8, §67.3, Appendix D: a mandatory confinement
+# control that cannot be installed stops the launch. The plugin never execs, the operator is told
+# which control failed and which tier promised it, the package is *not* quarantined because it
+# never started (§18.1), and a load that does succeed carries a report saying what is actually in
+# force. ADR-0443, ADR-0444, ADR-0445, ADR-0446.
+#
+# The failure is arranged from outside the process, with no test hook in the shipped binary: a
+# hard `RLIMIT_NOFILE` below the 256 descriptors the native tier configures makes the child's
+# `setrlimit` return EPERM, which is exactly the §59.8 scenario — "when mandatory `setrlimit`
+# installation fails, plugin execution MUST not proceed". A hard limit cannot be raised by an
+# unprivileged process, so the refusal is a kernel guarantee rather than a contrivance.
+case: a mandatory confinement control that cannot be installed stops the launch
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== the tier is a name, and the report says what it stands for (v0.4.1 17.2, 16.5) =="
+  ono -c 'load plugin dev.example.echo; inspect plugin dev.example.echo | select runtime | to json' \
+    | grep -o '"execution_tier":"[^"]*"'
+  ono -c 'load plugin dev.example.echo; inspect plugin dev.example.echo | select runtime | to json' \
+    | grep -o '"control":"no_new_privs","required":true,"attempted":true,"result":"applied"'
+
+  echo "== and it says which boundary it does not have (v0.4.1 15.2, 17.3) =="
+  ono -c 'load plugin dev.example.echo; inspect plugin dev.example.echo | select runtime | to json' \
+    | grep -o 'not a complete filesystem or network sandbox'
+
+  echo "== help says the same thing, in the same words (v0.4.1 19.1) =="
+  ono -c 'help plugin-trust' | grep -o 'not a complete filesystem or network sandbox'
+
+  echo "== a mandatory setrlimit the kernel refuses stops the launch (v0.4.1 59.8) =="
+  # The hard ceiling is below the 256 descriptors the native-confined tier configures, and an
+  # unprivileged process cannot raise a hard limit — so the child's `setrlimit` is refused.
+  # The soft limit comes down first: a hard limit below the current soft one is refused.
+  ( ulimit -n 64 && ulimit -H -n 64 && \
+    ono -c 'try { load plugin dev.example.echo } catch e { $e | to json }' ) 2>&1
+
+  echo "== and the package is not quarantined, because it never started (v0.4.1 18.1) =="
+  ono -c 'get plugin | select state | to json'
+
+  echo "== the shell is still the shell =="
+  ono -c 'get plugin | count'
+exit: 0
+stdout-contains: "execution_tier":"native-confined"
+stdout-contains: "control":"no_new_privs","required":true,"attempted":true,"result":"applied"
+stdout-contains: not a complete filesystem or network sandbox
+stdout-contains: Ono-Sendai-K11802
+stdout-contains: rlimit_open_files
+stdout-contains: {"state":"installed"}
+stdout-not-contains: quarantined
+stdout-not-contains: panicked

@@ -1,6 +1,6 @@
 # ADR-0274: What host-key pinning needs before it can be live
 
-- Status: accepted
+- Status: superseded by ADR-0441
 - Date: 2026-08-29
 - Spec refs: §21.2, §21.5, §49; ADR-0015 T5/T6, ADR-0037 §4, ADR-0245
 - Decided by: agent (autonomous, `close-spat`)

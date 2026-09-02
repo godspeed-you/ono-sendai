@@ -51,6 +51,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `links` | system | `ono.spatial-map/1` | S | The federated map of this host and the hosts it holds links to (v0.4 §19.3). |
 | `context` | system | `—` | E | An entry on the context stack. |
 | `config` | system | `ono.config-setting/1` | A | A resolved configuration setting with its provenance. |
+| `limits` | system | `ono.limit/1` | A | An effective runtime resource limit. |
 | `repo` | development | `—` | planned | A source repository. |
 | `branch` | development | `—` | planned | A branch within a repository. |
 | `commit` | development | `—` | planned | A commit within a repository. |

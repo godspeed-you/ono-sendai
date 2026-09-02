@@ -46,6 +46,18 @@ cargo test --workspace --all-features
 step "fuzz"
 cargo run --quiet --package ono-fuzz --all-features -- run --iterations 400 --per-input-ms 10000
 
+# Spec §45: the dependency policy of deny.toml — is anything here known to be vulnerable, is
+# every licence one this project may ship, is the graph free of what we refuse, and did every
+# crate come from a source we approved. It runs here rather than only in CI because a dependency
+# is chosen on a developer machine, and an advisory found after the push is an advisory found
+# after the decision (ADR-0449).
+step "supply chain"
+if ! command -v cargo-deny >/dev/null 2>&1; then
+  echo "gate: cargo-deny is not installed — cargo install --locked cargo-deny@0.20.2" >&2
+  exit 127
+fi
+cargo deny --locked --all-features check
+
 step "contracts"
 cargo run --quiet --package xtask -- spec-check
 

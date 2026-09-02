@@ -6,7 +6,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use xtask::{bindings, conformance, contracts, narrative, reference, scan, supply_chain};
+use xtask::{
+    bindings, conformance, contracts, narrative, provenance, reference, scan, supply_chain,
+    terminology,
+};
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -17,6 +20,7 @@ fn main() -> ExitCode {
         Some("acceptance") => run_script("acceptance.sh", &rest),
         Some("spec-check") => spec_check(),
         Some("state-check") => state_check(),
+        Some("build-manifest") => build_manifest(&rest),
         Some("docs") => generate_docs(),
         Some("conformance") => generate_conformance(),
         Some("release-check") => run_script("release-check.sh", &rest),
@@ -39,6 +43,7 @@ fn usage() {
     eprintln!("  gate           format, lint, test, contract check, docs (AGENTS.md section 10)");
     eprintln!("  spec-check     contract drift between docs/spec and the implementation");
     eprintln!("  state-check    the claims docs/ACCEPTANCE.md makes about docs/STATE.md");
+    eprintln!("  build-manifest write the release input manifest of Appendix H [--output <path>]");
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!(
         "  conformance    regenerate the provider conformance suite from docs/spec (spec section 35.3)"
@@ -65,6 +70,43 @@ fn run_script(name: &str, args: &[String]) -> ExitCode {
         }
         Err(error) => {
             eprintln!("xtask: cannot run {}: {error}", script.display());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Writes the release input manifest of Appendix H (spec section 43.2, ADR-0451).
+///
+/// The release workflow runs this before it publishes anything, so the file states what the
+/// build was given rather than what the artifacts turned out to be.
+fn build_manifest(args: &[String]) -> ExitCode {
+    let mut output = None;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--output" => match rest.next() {
+                Some(path) => output = Some(PathBuf::from(path)),
+                None => {
+                    eprintln!("build-manifest: --output needs a path");
+                    return ExitCode::FAILURE;
+                }
+            },
+            other => match other.strip_prefix("--output=") {
+                Some(path) => output = Some(PathBuf::from(path)),
+                None => {
+                    eprintln!("build-manifest: unknown argument `{other}`");
+                    return ExitCode::FAILURE;
+                }
+            },
+        }
+    }
+    match provenance::write(&repo_root(), output.as_deref()) {
+        Ok(path) => {
+            println!("build-manifest: wrote {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("build-manifest: {error}");
             ExitCode::FAILURE
         }
     }
@@ -129,6 +171,9 @@ fn spec_check() -> ExitCode {
             .into_iter()
             .chain(scan::check_acceptance_case_references(&root))
             .chain(scan::check_silent_skips(&root))
+            .chain(scan::check_confinement_syscalls(&root))
+            .chain(scan::check_authentication_flags(&root))
+            .chain(terminology::check_documents(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 
@@ -137,6 +182,11 @@ fn spec_check() -> ExitCode {
             .into_iter()
             .chain(supply_chain::check_image_digests(&root))
             .chain(supply_chain::check_workflow_permissions(&root))
+            .chain(supply_chain::check_dependency_policy(&root))
+            .chain(supply_chain::check_dependency_justifications(&root))
+            .chain(supply_chain::check_tool_versions(&root))
+            .chain(supply_chain::check_locked_builds(&root))
+            .chain(provenance::check_manifest_is_emitted(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 

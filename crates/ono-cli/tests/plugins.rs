@@ -538,6 +538,41 @@ fn should_run_a_package_in_a_private_directory_rather_than_the_users() {
 }
 
 #[test]
+fn should_show_the_execution_tier_and_its_controls_when_a_plugin_is_inspected() {
+    // v0.4.1 §17.2 and §17.3: the tier is a name, the name is what reaches diagnostics, and it
+    // carries the boundary it does *not* have rather than leaving a reader to infer one from the
+    // controls that are listed (Appendix D's closing sentence). §54.2: no `RUST_LOG=debug`.
+    let home = plugin_home();
+    let state = ono_testkit::scratch();
+    let run = ono_with_state(
+        &home,
+        &state,
+        "load plugin dev.example.echo; \
+         inspect plugin dev.example.echo | select runtime | to json",
+    );
+
+    run.assert_success();
+    let seen = run.stdout();
+    assert!(
+        seen.contains(r#""execution_tier":"native-confined""#),
+        "v0.4.1 §17.2: the tier is a name a reader can look up, not a boolean: {seen:?}"
+    );
+    assert!(
+        seen.contains("not a complete filesystem or network sandbox"),
+        "v0.4.1 §15.2: the security meaning travels with the tier wherever it is shown: {seen:?}"
+    );
+    assert!(
+        seen.contains(r#""control":"no_new_privs""#) && seen.contains(r#""result":"applied""#),
+        "v0.4.1 §16.5: the report says, per control, what was actually installed: {seen:?}"
+    );
+    assert!(
+        !seen.contains("filesystem_isolation"),
+        "Appendix D: the rows the tier does not provide are a statement about the tier, not an \
+         outcome of a spawn, and listing them here would invite the inference it forbids: {seen:?}"
+    );
+}
+
+#[test]
 fn should_report_what_a_running_instance_has_allocated_and_used() {
     let home = plugin_home();
     let state = ono_testkit::scratch();

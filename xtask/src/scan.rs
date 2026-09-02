@@ -17,7 +17,8 @@ pub struct Problem {
 }
 
 impl Problem {
-    fn new(location: impl Into<String>, detail: impl Into<String>) -> Self {
+    /// A problem at `location`, phrased so the reader knows what to do about it.
+    pub(crate) fn new(location: impl Into<String>, detail: impl Into<String>) -> Self {
         Self {
             location: location.into(),
             detail: detail.into(),
@@ -296,6 +297,103 @@ fn announces_a_skip(line: &str) -> bool {
     lowered.starts_with("skip")
 }
 
+/// Checks that no command-line flag could switch client authentication off (v0.4.1 §7.4).
+///
+/// §7.4 leaves the canonical agent one listening mode and it authenticates: *"No unauthenticated
+/// network mode reachable from the CLI."* `crates/ono-cli/tests/listening_agent.rs` proves the
+/// absence today by enumerating fourteen spellings and asserting each is a usage error, and
+/// ADR-0440 records why that test is worth having while it is green — the day somebody adds
+/// `--allow-anonymous` for one awkward deployment, it goes red. This is the other half ADR-0440
+/// left open: the test sees a flag that reaches `Invocation`, and this sees one written anywhere
+/// in a crate's source.
+///
+/// A *flag* is a string literal beginning with `--`, which is how every one of them is written.
+/// Reading only literals is what keeps the rule from firing on the word "authenticated" in a doc
+/// comment, and there is no other way to spell a flag, so nothing escapes by being written
+/// differently.
+///
+/// A flag is refused when its name carries `insecure`, `anonymous`, `unauthenticated` or
+/// `noauth`, or when it turns something off: `no-…-auth`, `disable-…-auth`, `no-…-verify`,
+/// `skip-…-verify`. `--print-peer-key` and `--host-key` are not caught, and neither is
+/// `--no-config`, because none of them says *whether* to authenticate.
+///
+/// `tests/` is out of scope. The guard of ADR-0440 has to name the flags it refuses, and a rule
+/// that caught the guard would delete it.
+#[must_use]
+pub fn check_authentication_flags(root: &Path) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    for file in rust_sources(root) {
+        let location = relative(root, &file);
+        if location.contains("/tests/") || location.starts_with("tests/") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        for (number, line) in text.lines().enumerate() {
+            for flag in flag_literals(line) {
+                if !disables_authentication(&flag) {
+                    continue;
+                }
+                problems.push(Problem::new(
+                    format!("{location}:{}", number + 1),
+                    format!(
+                        "names the flag `--{flag}`. v0.4.1 §7.4 leaves the canonical agent one \
+                         listening mode and it authenticates, so a flag that says whether to \
+                         authenticate is an unauthenticated network mode reachable from the \
+                         CLI (§65.1, ADR-0440). Adding one needs an ADR that supersedes that \
+                         decision, and this check with it."
+                    ),
+                ));
+            }
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// Every `"--…"` string literal on a line, without its quotes or leading dashes.
+fn flag_literals(line: &str) -> Vec<String> {
+    let mut flags = Vec::new();
+    let bytes: Vec<char> = line.chars().collect();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != '"' {
+            index += 1;
+            continue;
+        }
+        let start = index + 1;
+        let mut end = start;
+        while end < bytes.len() && bytes[end] != '"' {
+            end += 1;
+        }
+        if end < bytes.len() {
+            let literal: String = bytes[start..end].iter().collect();
+            if let Some(name) = literal.strip_prefix("--")
+                && !name.is_empty()
+            {
+                flags.push(name.to_owned());
+            }
+        }
+        index = end + 1;
+    }
+    flags
+}
+
+/// Whether a flag name says *whether* to authenticate rather than where or which.
+fn disables_authentication(flag: &str) -> bool {
+    let name = flag.to_ascii_lowercase();
+    if ["insecure", "anonymous", "unauthenticated", "noauth"]
+        .iter()
+        .any(|word| name.contains(word))
+    {
+        return true;
+    }
+    let turns_off =
+        name.starts_with("no-") || name.starts_with("disable") || name.starts_with("skip");
+    turns_off && (name.contains("auth") || name.contains("verify"))
+}
+
 /// Checks that every acceptance case a document names actually exists (ADR-0401).
 ///
 /// `docs/ACCEPTANCE.md` closes a box by naming the case that proves it, and an ADR records the
@@ -311,6 +409,13 @@ fn announces_a_skip(line: &str) -> bool {
 /// output rather than a claim. The range separates a case number from a number: a `200-column`
 /// terminal and a `512-byte` frame are shaped exactly like case names and are not cases, and no
 /// wording rule could tell them apart.
+///
+/// An **unticked box names what its increment must write**, so its references are not resolved.
+/// `docs/ACCEPTANCE.md` §4.7 established the convention and §4.8 depends on it: a checklist is
+/// written from the specification before the work, and every case it promises is by definition
+/// absent. Ticking the box is what turns the sentence from a plan into evidence, and from that
+/// moment the pointer is resolved like any other. The box's continuation lines are part of it —
+/// a box in this file runs over several indented lines and names its proofs on the last one.
 ///
 /// Two documents are out of scope, for reasons that are not conveniences:
 ///
@@ -352,12 +457,17 @@ pub fn check_acceptance_case_references(root: &Path) -> Vec<Problem> {
             continue;
         };
         let mut fenced = false;
+        let mut open_box = false;
         for (number, line) in text.lines().enumerate() {
             if line.trim_start().starts_with("```") {
                 fenced = !fenced;
                 continue;
             }
             if fenced {
+                continue;
+            }
+            open_box = continues_an_open_box(line, open_box);
+            if open_box {
                 continue;
             }
             for name in case_references(line) {
@@ -373,6 +483,23 @@ pub fn check_acceptance_case_references(root: &Path) -> Vec<Problem> {
     }
     problems.sort_by(|left, right| left.location.cmp(&right.location));
     problems
+}
+
+/// Whether this line is inside an unticked checklist box, given whether the previous one was.
+///
+/// A box starts at `- [ ]` and runs over the indented lines that continue it, which is how every
+/// box in `docs/ACCEPTANCE.md` is written. It ends at the first line that is not such a
+/// continuation: a blank line, the next box, or prose returning to the left margin. `- [x]` ends
+/// one too, so a ticked box is read like ordinary text and its pointers are resolved.
+fn continues_an_open_box(line: &str, was_open: bool) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("- [ ]") {
+        return true;
+    }
+    if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+        return false;
+    }
+    was_open && !trimmed.is_empty() && line.starts_with(char::is_whitespace)
 }
 
 /// Explains a dangling reference, naming the case that carries the number where there is one.
@@ -591,4 +718,200 @@ fn summary(entry: &str) -> String {
     let first = entry.lines().next().unwrap_or_default().trim();
     let first: String = first.chars().take(72).collect();
     format!("`{first}`")
+}
+
+/// The crate whose sources establish process confinement (v0.4.1 §56.5).
+const CONFINEMENT_SOURCES: &str = "crates/ono-kuang-supervisor/src";
+
+/// Reports a confinement syscall whose return value is thrown away (v0.4.1 §16.2, §65.4).
+///
+/// §16.2 requires *every* syscall used to establish a mandatory security or resource control to
+/// have its return value checked, and §65.4 names the opposite as a failure mode of this release:
+/// *"Calling a confinement syscall, discarding its result and executing the plugin anyway is
+/// forbidden."* §0.5.3 found seven of them in one closure.
+///
+/// A rule about every member of an open set is a rule a review cannot hold, because the next
+/// member is added by someone who has not read §16.2. So the gate holds it instead, and it holds
+/// it on the *defect* rather than on the shape of correct code: a `libc::` call in statement
+/// position, or bound to a discarded name, is a call whose result nothing can have looked at.
+/// Everything else — an argument to `checked(…)`, a named binding, a `match` scrutinee — leaves
+/// the value somewhere a reader can follow.
+///
+/// The scan is deliberately narrow. It runs over one crate, the one §56.5 makes responsible for
+/// fail-closed pre-exec setup, because a dropped `libc::close` in an unrelated file is a
+/// different question and a scanner that reports both would be turned off.
+#[must_use]
+pub fn check_confinement_syscalls(root: &Path) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let mut files = Vec::new();
+    collect_rust(&root.join(CONFINEMENT_SOURCES), &mut files);
+    files.sort();
+
+    for file in files {
+        let relative = relative(root, &file);
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        for (line, call) in dropped_syscalls(&text) {
+            problems.push(Problem::new(
+                format!("{relative}:{line}"),
+                format!(
+                    "`libc::{call}` is called and its result thrown away. v0.4.1 §16.2 requires \
+                     every syscall that establishes a security or resource control to have its \
+                     return value checked, and §65.4 names discarding one a forbidden failure \
+                     mode. Hand it to `checked(…)`, or bind it to a name something reads."
+                ),
+            ));
+        }
+    }
+    problems
+}
+
+/// Every `libc::` call in `text` whose value is dropped, as `(line number, function name)`.
+///
+/// Comments and string literals are blanked first, so the rule does not fire on prose that
+/// mentions a call. What remains is decided by reading backwards from the call: see
+/// [`value_is_dropped`].
+fn dropped_syscalls(text: &str) -> Vec<(usize, String)> {
+    let code = without_comments_and_strings(text);
+    let mut found = Vec::new();
+    let mut search = 0_usize;
+
+    while let Some(offset) = code[search..].find("libc::") {
+        let at = search + offset;
+        search = at + "libc::".len();
+        let Some(name) = call_name(&code[search..]) else {
+            continue;
+        };
+        if value_is_dropped(&code, at) {
+            found.push((code[..at].lines().count().max(1), name));
+        }
+    }
+    found
+}
+
+/// Whether the call at `at` stands where its value goes nowhere.
+///
+/// Decided by reading backwards over what carries a value through unchanged — whitespace, and an
+/// `unsafe { … }` block, whose value is the value of its last expression. What is found first
+/// after that answers the question:
+///
+/// - a `;`, a `}`, a block-opening `{`, or the start of the file: the call is a statement, and a
+///   statement's value is discarded;
+/// - an `=` whose left-hand name begins with `_`: bound to a name nothing can read, which is the
+///   same discard with a signature on it;
+/// - anything else — an argument's `(` or `,`, an ordinary binding, a `return`: the value is
+///   somewhere a reader can follow, and this scan has no opinion about it.
+fn value_is_dropped(code: &str, at: usize) -> bool {
+    let bytes = code.as_bytes();
+    let mut index = at;
+    loop {
+        index = trim_back(code, index);
+        if index == 0 {
+            return true;
+        }
+        match bytes[index - 1] {
+            b'{' => {
+                let before_brace = trim_back(code, index - 1);
+                if code[..before_brace].ends_with("unsafe") {
+                    index = before_brace - "unsafe".len();
+                    continue;
+                }
+                return true;
+            }
+            b';' | b'}' => return true,
+            b'=' => {
+                let name_end = trim_back(code, index - 1);
+                let name_start = code[..name_end]
+                    .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .map_or(0, |boundary| boundary + 1);
+                return code[name_start..name_end].starts_with('_');
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// The byte index of the first non-whitespace character before `index`.
+fn trim_back(code: &str, index: usize) -> usize {
+    code[..index].trim_end().len()
+}
+
+/// The function name in `setsid()`.
+///
+/// `None` when what follows `libc::` is not a call, which is how a constant such as
+/// `libc::RLIMIT_DATA` and a type such as `libc::rlimit { … }` are left alone.
+fn call_name(rest: &str) -> Option<String> {
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
+        .collect();
+    if name.is_empty() {
+        return None;
+    }
+    rest[name.len()..]
+        .trim_start()
+        .starts_with('(')
+        .then_some(name)
+}
+
+/// Replaces every comment and string literal with spaces, so offsets and line numbers survive.
+fn without_comments_and_strings(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while let Some(c) = chars.next() {
+        if in_line_comment {
+            if c == '\n' {
+                in_line_comment = false;
+                out.push('\n');
+            } else {
+                out.push(' ');
+            }
+            continue;
+        }
+        if in_block_comment {
+            if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                in_block_comment = false;
+                out.push_str("  ");
+            } else {
+                out.push(if c == '\n' { '\n' } else { ' ' });
+            }
+            continue;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            out.push(if c == '\n' { '\n' } else { ' ' });
+            continue;
+        }
+        match c {
+            '/' if chars.peek() == Some(&'/') => {
+                chars.next();
+                in_line_comment = true;
+                out.push_str("  ");
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                in_block_comment = true;
+                out.push_str("  ");
+            }
+            '"' => {
+                in_string = true;
+                out.push(' ');
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }

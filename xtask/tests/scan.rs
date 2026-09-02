@@ -5,8 +5,8 @@ use std::path::Path;
 
 use ono_testkit::{Scratch, scratch};
 use xtask::scan::{
-    check_acceptance_case_references, check_release_board, check_silent_skips,
-    check_unfinished_work,
+    check_acceptance_case_references, check_authentication_flags, check_release_board,
+    check_silent_skips, check_unfinished_work,
 };
 
 /// Builds a throwaway repository shaped like this one.
@@ -347,6 +347,140 @@ fn should_ignore_a_three_digit_measurement_that_is_shaped_like_a_case_name() {
     assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
 }
 
+#[test]
+fn should_let_an_open_box_name_the_case_the_delivering_increment_must_write() {
+    // An unticked box is a commitment, not a claim: docs/ACCEPTANCE.md §4.7 established that a
+    // box may name the proof its increment has to create. The case does not exist yet by
+    // definition, so resolving the pointer would make writing a checklist ahead of the work
+    // impossible — which is the one thing a checklist is for.
+    let repo = fixture(&[
+        ("docker/acceptance/cases/040-object-pipeline.case", "run\n"),
+        (
+            "docs/ACCEPTANCE.md",
+            "- [ ] **The link authenticates both ends** — case `038-remote-mutual-auth`.\n",
+        ),
+    ]);
+    assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_still_resolve_the_case_a_ticked_box_claims_as_its_proof() {
+    // The moment the box is ticked the same sentence stops being a plan and becomes evidence,
+    // and evidence that points at nothing is the defect this check exists for.
+    let repo = fixture(&[
+        ("docker/acceptance/cases/040-object-pipeline.case", "run\n"),
+        (
+            "docs/ACCEPTANCE.md",
+            "- [x] **The link authenticates both ends** — case `038-remote-mutual-auth`.\n",
+        ),
+    ]);
+    let problems = check_acceptance_case_references(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("038-remote-mutual-auth"));
+}
+
+#[test]
+fn should_read_an_open_box_to_the_end_of_the_lines_that_continue_it() {
+    // A box in this repository runs over several indented lines and names its proofs on the
+    // last of them. A rule that only looked at the line carrying the bracket would police the
+    // continuation and let the first line through, which is exactly backwards.
+    let repo = fixture(&[
+        ("docker/acceptance/cases/040-object-pipeline.case", "run\n"),
+        (
+            "docs/ACCEPTANCE.md",
+            "- [ ] **The link authenticates both ends.** The listener refuses an anonymous\n                   client before a frame crosses —\n      case `038-remote-mutual-auth`.\n\n             Prose after the box names `039-remote-authorization`.\n",
+        ),
+    ]);
+    let problems = check_acceptance_case_references(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("039-remote-authorization"),
+        "the prose reference is still resolved: {}",
+        problems[0].detail
+    );
+}
+
+// --- no flag turns authentication off (v0.4.1 §7.4, ADR-0440) -----------------------------------
+
+#[test]
+fn should_report_a_command_line_flag_that_would_switch_client_authentication_off() {
+    let repo = fixture(&[(
+        "crates/ono-cli/src/invocation.rs",
+        "match argument {\n    \"--allow-anonymous\" => agent.anonymous = true,\n}\n",
+    )]);
+    let problems = check_authentication_flags(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("--allow-anonymous"),
+        "the reason names the flag: {}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_report_every_spelling_of_the_flag_the_spec_forbids() {
+    for flag in [
+        "--insecure",
+        "--no-client-auth",
+        "--noauth",
+        "--unauthenticated",
+        "--disable-client-authentication",
+        "--skip-peer-verify",
+        "--no-verify-peer",
+    ] {
+        let repo = fixture(&[(
+            "crates/ono-cli/src/invocation.rs",
+            &format!("match argument {{\n    \"{flag}\" => todo!(),\n}}\n"),
+        )]);
+        assert_eq!(
+            check_authentication_flags(repo.path()).len(),
+            1,
+            "`{flag}` should be refused"
+        );
+    }
+}
+
+#[test]
+fn should_accept_the_flags_a_listening_agent_actually_has() {
+    // §7.4 leaves one listening form, and every flag it takes says where or which — never
+    // whether. `--print-peer-key` carries `auth` in no part of it and must not be caught by a
+    // rule aimed at `no-client-auth`.
+    let repo = fixture(&[(
+        "crates/ono-cli/src/invocation.rs",
+        "match argument {\n    \"--agent\" | \"--listen\" | \"--host-key\" \
+         | \"--print-peer-key\" | \"--print-host-key\" | \"--config\" => todo!(),\n}\n",
+    )]);
+    assert_eq!(check_authentication_flags(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_let_the_test_that_proves_the_absence_name_the_flags_it_refuses() {
+    // crates/ono-cli/tests/listening_agent.rs enumerates the forbidden spellings and asserts each
+    // is a usage error (ADR-0440). A rule that caught the guard would delete the guard.
+    let repo = fixture(&[(
+        "crates/ono-cli/tests/listening_agent.rs",
+        "for flag in [\"--insecure\", \"--allow-anonymous\"] { assert_usage(flag); }\n",
+    )]);
+    assert_eq!(check_authentication_flags(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_find_no_authentication_disabling_flag_in_this_repository() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let problems = check_authentication_flags(root);
+    assert!(
+        problems.is_empty(),
+        "a flag would turn client authentication off:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
 // --- the release board (ADR-0402) ---------------------------------------------------------------
 
 #[test]
@@ -511,4 +645,69 @@ fn should_report_this_repository_as_announcing_every_skip_through_the_helper() {
             .expect("root"),
     );
     assert_eq!(problems, Vec::new(), "got {problems:?}");
+}
+
+// ----------------------------------------------------------------------------------------------
+// Confinement syscalls (issue #59, v0.4.1 §16.2, §65.4).
+// ----------------------------------------------------------------------------------------------
+
+#[test]
+fn should_report_an_unchecked_confinement_syscall_result() {
+    // v0.4.1 §65.4, verbatim: "Calling a confinement syscall, discarding its result and executing
+    // the plugin anyway is forbidden." §16.2 makes it a rule about *every* such syscall, and a
+    // rule about every one of something is a rule a review cannot hold: the next one is added by
+    // someone who never read §16.2. This is the check that does not depend on remembering.
+    let repo = fixture(&[(
+        "crates/ono-kuang-supervisor/src/platform.rs",
+        "fn install() {\n    unsafe {\n        libc::setsid();\n    }\n}\n",
+    )]);
+    let problems = xtask::scan::check_confinement_syscalls(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("setsid"),
+        "the problem names the call whose result was dropped, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_confinement_syscall_result_bound_to_a_discarded_name() {
+    // `let _ =` and `let _unused =` are the two spellings of "I read the value and threw it
+    // away", which is the same defect with a signature on it.
+    let repo = fixture(&[(
+        "crates/ono-kuang-supervisor/src/platform.rs",
+        "fn install() {\n    let _ = unsafe { libc::prctl(38, 1, 0, 0, 0) };\n}\n",
+    )]);
+    let problems = xtask::scan::check_confinement_syscalls(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("prctl"), "got {problems:?}");
+}
+
+#[test]
+fn should_accept_a_confinement_syscall_whose_result_becomes_a_value() {
+    let repo = fixture(&[(
+        "crates/ono-kuang-supervisor/src/platform.rs",
+        "fn install() -> std::io::Result<()> {\n    checked(unsafe { libc::setsid() })\n}\n",
+    )]);
+    assert_eq!(
+        xtask::scan::check_confinement_syscalls(repo.path()),
+        Vec::new()
+    );
+}
+
+#[test]
+fn should_find_no_unchecked_confinement_syscall_in_this_repository() {
+    // The rule, applied to the tree it exists for.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let problems = xtask::scan::check_confinement_syscalls(root);
+    assert!(
+        problems.is_empty(),
+        "a confinement syscall result is dropped (v0.4.1 §16.2, §65.4):\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }

@@ -36,6 +36,7 @@ fn main() {
         Some("--misbehave=garbage") => misbehave(Mode::Garbage),
         Some("--misbehave=huge-frame") => misbehave(Mode::HugeFrame),
         Some("--misbehave=bad-hello") => misbehave(Mode::BadHello),
+        Some("--misbehave=die") => misbehave(Mode::Die),
         _ => honest().run(),
     }
 }
@@ -394,6 +395,13 @@ enum Mode {
     Garbage,
     HugeFrame,
     BadHello,
+    /// Ends the process mid-invocation without breaking the protocol at all.
+    ///
+    /// v0.4.1 §18 asks for four distinguishable outcomes, and three of them already had a
+    /// fixture: a launch failure, a protocol violation, a resource-limit kill. The fourth — an
+    /// ordinary crash — is the one where the package does nothing *wrong* on the wire and simply
+    /// stops being there, which is exactly what §18.4 says must not corrupt the shell.
+    Die,
 }
 
 fn misbehave(mode: Mode) {
@@ -482,6 +490,12 @@ fn misbehave(mode: Mode) {
                             error: None,
                         };
                         let _ = ono_kuang_protocol::write_frame(&mut writer, &done, limits);
+                    }
+                    Mode::Die => {
+                        // No frame, no violation: the invocation is in flight and the process is
+                        // gone. Status 3 is arbitrary and non-zero, so the host sees an abnormal
+                        // exit rather than a completed one.
+                        std::process::exit(3);
                     }
                     Mode::Garbage => {
                         // A well-formed length declaring a payload that is not an envelope.

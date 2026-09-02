@@ -55,6 +55,10 @@ pub fn run_program(
     report: &mut dyn FnMut(&ErrorValue),
 ) -> ExitStatus {
     for statement in &program.statements {
+        // v0.4.1 §23.4: the capture ceiling is "an upper bound on the total bytes retained by
+        // simultaneous evaluator captures" of *one* shell command, so the accounting starts
+        // afresh here and nowhere inside (ADR-0457).
+        session.begin_command_captures();
         match run_statement(session, statement, source) {
             Ok(status) => session.set_status(status),
             Err(Flow::Failed(error)) => {
@@ -581,7 +585,7 @@ fn run_function_body(
     }
     if !values.is_empty() {
         if session.capturing() {
-            session.capture(&values);
+            session.capture(&values)?;
         } else {
             return crate::native::run_seeded(session, list, source, values);
         }
@@ -1247,7 +1251,7 @@ pub fn run_external_segment(
             .unwrap_or_default()
     });
     if captured {
-        session.capture(&[captured_text(bytes.as_deref().unwrap_or_default())]);
+        session.capture(&[captured_text(bytes.as_deref().unwrap_or_default())])?;
         return Ok((None, outcome.status()));
     }
     Ok((bytes, outcome.status()))

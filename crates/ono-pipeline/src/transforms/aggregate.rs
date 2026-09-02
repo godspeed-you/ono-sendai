@@ -138,9 +138,16 @@ impl Transform for Measure {
                 }
             };
 
+            // `measure` retains a sample per value only because the percentiles of §53 need the
+            // whole distribution; count, min, max and mean would be constant-state (Appendix E).
+            let mut budget = input.budget_for("measure");
             let mut samples: Vec<Value> = Vec::new();
             let mut skipped: i128 = 0;
             while let Some(value) = input.next_value(&sink).await {
+                if let Err(exceeded) = budget.charge(&value) {
+                    let _ = sink.fail(exceeded.into_error()).await;
+                    return;
+                }
                 match self.key.key(&value) {
                     Ok(Value::Null) => {
                         skipped += 1;

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use ono_core::ErrorCode;
 use ono_kuang_protocol::{
-    AuditEvent, Capability, CapabilityRequest, DeclarationClass, HOST_API, Manifest,
+    AuditEvent, Capability, CapabilityRequest, DeclarationClass, ExecutionTier, HOST_API, Manifest,
     PackageSignature, PluginState, Role, RuntimeKind, SIGNATURE_FILE, ShutdownReason, WireError,
     artifact_files,
 };
@@ -875,6 +875,25 @@ pub fn isolation(manifest: &Manifest) -> &'static str {
     }
 }
 
+/// The named execution tier a loaded instance of this package runs in (v0.4.1 §17.2).
+///
+/// A name rather than a boolean. `isolation` above answers "what kind of thing is the artifact",
+/// out of spec §31.10's manifest vocabulary; this answers "what is installed around it", which is
+/// the question §17.3 forbids anyone answering with the bare word "sandboxed". The two are
+/// deliberately separate fields, because a `wasm-component` package on a build with no component
+/// runtime declares one and runs in neither.
+#[must_use]
+pub fn execution_tier(manifest: &Manifest) -> &'static str {
+    match manifest.runtime.as_ref().map(|runtime| runtime.kind) {
+        Some(RuntimeKind::NativeProcess) => ExecutionTier::NativeConfined.id(),
+        Some(RuntimeKind::WasmComponent) => ExecutionTier::Wasm.id(),
+        Some(RuntimeKind::RemoteService) => "remote-service",
+        // A declarative package has no runtime of its own: what runs is the core's interpreter of
+        // its packs, in process (ADR-0107).
+        Some(RuntimeKind::Declarative) | None => "core-built-in",
+    }
+}
+
 /// The role as the manifest spells it (spec §31.4).
 #[must_use]
 pub fn role_name(role: Role) -> &'static str {
@@ -1042,6 +1061,9 @@ pub fn plugin_record(
         // artifact, and `local` is what an unsigned development package says.
         .set("trust", Value::string(package_trust))?
         .set("isolation", Value::string(isolation(manifest)))?
+        // v0.4.1 §17.2: the tier is a name, and it is the name that reaches audit, diagnostics
+        // and documentation. `inspect plugin` shows the controls it stands for (ADR-0448).
+        .set("execution_tier", Value::string(execution_tier(manifest)))?
         .set("roles", roles)?
         .set("enabled", Value::Bool(management.enabled))?
         // One directory per package id in the plugin home (ADR-0051): the installed version is
@@ -1711,6 +1733,28 @@ fn sandbox_of(instance: &Instance) -> Value {
     ])
 }
 
+/// The confinement report of v0.4.1 §16.5, one row per control the tier claimed.
+///
+/// Available here rather than only behind `RUST_LOG=debug`, because §54.2 says a refusal a user
+/// meets has to be explainable without turning debug logging on, and a control that is *not* in
+/// force is exactly that kind of fact. §16.5 also forbids the report exposing secrets:
+/// `platform_detail` is the operating system's own error text and nothing else.
+fn confinement_of(instance: &Instance) -> Value {
+    let report = instance.plugin.confinement();
+    Value::list(report.entries().iter().map(|entry| {
+        map([
+            ("control", Value::string(entry.control().id())),
+            ("required", Value::Bool(entry.required())),
+            ("attempted", Value::Bool(entry.attempted())),
+            ("result", Value::string(entry.result().as_str())),
+            (
+                "platform_detail",
+                entry.platform_detail().map_or(Value::Null, Value::string),
+            ),
+        ])
+    }))
+}
+
 /// The `ono.plugin-runtime/1` record of a loaded instance — the negotiated contract (spec §31.63).
 ///
 /// # Errors
@@ -1736,6 +1780,18 @@ pub fn runtime_record(package: &Installed, instance: &Instance) -> Result<Record
             .set("host_api", Value::string(&contract.host_api))?
             .set("value_protocol", Value::string(&contract.value_protocol))?
             .set("isolation", Value::string(isolation(manifest)))?
+            .set(
+                "execution_tier",
+                Value::string(instance.plugin.confinement().tier().id()),
+            )?
+            // v0.4.1 §15.2, §19.2: the sentence that says what the tier is and what it is not,
+            // taken from the tier rather than written beside it, so the record and the
+            // documentation cannot drift.
+            .set(
+                "execution_boundary",
+                Value::string(instance.plugin.confinement().tier().boundary()),
+            )?
+            .set("confinement", confinement_of(instance))?
             .set(
                 "granted",
                 Value::list(contract.granted.iter().map(|granted| {

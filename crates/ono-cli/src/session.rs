@@ -5,9 +5,10 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use ono_core::ExitStatus;
+use ono_pipeline::Budget;
 use ono_process::Executor;
 use ono_provider_api::ProviderRegistry;
-use ono_value::Value;
+use ono_value::{ErrorValue, Value};
 
 /// What the evaluator is allowed to do.
 ///
@@ -58,18 +59,13 @@ pub enum Definition {
 /// for it forever.
 pub(crate) const AGENT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// How many recent results `@-1` … `@-N` can reach (spec §20.2: retention is *bounded*).
+/// The deepest `@-N` the language admits, whatever the configured retention is.
 ///
-/// Sixteen is deep enough that a session's working set of answers survives a few detours, and
-/// shallow enough that nothing accumulates: the seventeenth result evicts the first.
-pub const RETAINED_RESULTS: usize = 16;
-
-/// How many values of one result are retained for reuse (spec §20.2).
-///
-/// Ten thousand is well past what any screen showed and well short of what a `get file /` can
-/// produce. A result larger than this is kept truncated, and the shell says so at the moment it
-/// happens rather than letting a later `@-1` come up short in silence (ADR-0249).
-pub const RETAINED_VALUES: usize = 10_000;
+/// v0.4.1 §55.1 makes the retained count configurable through `limits.history_results`, so the
+/// number of slots is no longer a constant. This one bounds how far a *reference* may reach when
+/// the scope is built, which has to be a compile-time figure and is the largest the setting's
+/// range permits nothing beyond: a `@-N` past what is retained answers nothing, as it always did.
+pub const DEEPEST_REFERENCE: u32 = 4096;
 
 /// Everything a running shell knows.
 pub struct Session {
@@ -98,10 +94,12 @@ pub struct Session {
     frames: Vec<ShellFrame>,
     /// Recent structured results, newest last (spec §20.2). Bounded, so a long session cannot
     /// hold every table it ever printed.
-    results: std::collections::VecDeque<Vec<Value>>,
+    results: ono_history::ResultHistory,
     /// Sub-pipelines being captured as values, innermost last: while one is open, a finished
     /// native pipeline hands its values here instead of to the terminal (ADR-0072 §4).
     captures: Vec<Vec<Value>>,
+    /// What every capture inside the current shell command may retain together (v0.4.1 §23.4).
+    capture_budget: Budget,
     /// Backgrounded native pipelines (spec §18.4, ADR-0024): jobs in the same table as external
     /// commands, numbered from the executor's own sequence.
     native_jobs: Vec<NativeJob>,
@@ -174,6 +172,11 @@ impl SessionLink {
             targets: connection.map_or_else(Vec::new, LinkConnection::targets),
             protocol: connection.and_then(LinkConnection::protocol_version),
             providers: connection.map(LinkConnection::provider_ids),
+            transport_fingerprint: connection.and_then(LinkConnection::transport_fingerprint),
+            transport_trust: connection.and_then(LinkConnection::transport_trust),
+            runtime_user: connection.and_then(LinkConnection::runtime_user),
+            runtime_uid: connection.and_then(LinkConnection::runtime_uid),
+            runtime_elevated: connection.and_then(LinkConnection::runtime_elevated),
         }
     }
 }
@@ -262,6 +265,58 @@ impl LinkConnection {
                 None => "agentless".to_owned(),
             },
         }
+    }
+
+    /// The fingerprint of the key the far side proved it holds during this link's handshake
+    /// (v0.4.1 §7.3).
+    ///
+    /// `None` where the transport authenticated nobody to this process. That is the honest answer
+    /// for `ssh`, where OpenSSH verified the host in its own `known_hosts` and will not say which
+    /// key it accepted (§4.3, ADR-0037 §4), and for `local`, where the far side is this shell's
+    /// own child — and it stays `None` rather than borrowing somebody else's verification.
+    #[must_use]
+    pub fn transport_fingerprint(&self) -> Option<String> {
+        self.agent_link().and_then(|link| {
+            link.negotiated()
+                .fingerprint()
+                .map(|fingerprint| fingerprint.to_string())
+        })
+    }
+
+    /// What the trust store concluded about that key, as `ono.link/1` spells it.
+    #[must_use]
+    pub fn transport_trust(&self) -> Option<&'static str> {
+        self.agent_link()
+            .map(|link| match link.negotiated().trust() {
+                ono_protocol::TrustDecision::Pinned => "pinned",
+                ono_protocol::TrustDecision::NewlyPinned => "newly_pinned",
+                ono_protocol::TrustDecision::Unauthenticated => "unauthenticated",
+            })
+    }
+
+    /// The user the far side reports it runs as (v0.4.1 §7.3).
+    ///
+    /// Kept apart from [`transport_fingerprint`](Self::transport_fingerprint) on purpose: this is
+    /// what the peer said about itself, and §2.1 forbids a self-reported field from satisfying
+    /// the word authenticated.
+    #[must_use]
+    pub fn runtime_user(&self) -> Option<String> {
+        self.agent_link()
+            .map(|link| link.negotiated().peer().identity().user().to_owned())
+    }
+
+    /// The numeric user id the far side reports, where it reports one.
+    #[must_use]
+    pub fn runtime_uid(&self) -> Option<u32> {
+        self.agent_link()
+            .and_then(|link| link.negotiated().peer().identity().uid())
+    }
+
+    /// Whether the far side reports it is elevated.
+    #[must_use]
+    pub fn runtime_elevated(&self) -> Option<bool> {
+        self.agent_link()
+            .map(|link| link.negotiated().peer().identity().is_elevated())
     }
 
     /// The ids of the providers the far side offers (spec §21.2).
@@ -393,8 +448,9 @@ impl Session {
             runtime: None,
             providers: None,
             frames: Vec::new(),
-            results: std::collections::VecDeque::new(),
+            results: ono_history::ResultHistory::new(ono_history::RetentionLimits::default()),
             captures: Vec::new(),
+            capture_budget: Budget::command_captures(),
             native_jobs: Vec::new(),
             tables: std::sync::Arc::default(),
             job_started: BTreeMap::new(),
@@ -806,42 +862,69 @@ impl Session {
     /// Retains a finished pipeline's values for `@-1` and `@N` (spec §6.4, §20.2), and answers
     /// how many values it could not keep.
     ///
-    /// Retention is bounded twice — by [`RETAINED_RESULTS`] and by [`RETAINED_VALUES`] — because
-    /// spec §20.2 asks for *bounded* recent results and a `get file /` that printed a million
-    /// rows must not pin a million values in memory for the rest of the session. The count of
-    /// what was dropped is returned rather than swallowed: a caller shows it, so a later `@-1`
-    /// that is short of what the screen held is never a surprise (ADR-0249).
-    pub fn retain_result(&mut self, mut values: Vec<Value>) -> usize {
-        if values.is_empty() {
-            return 0;
-        }
-        let dropped = values.len().saturating_sub(RETAINED_VALUES);
-        values.truncate(RETAINED_VALUES);
+    /// Retention is bounded in four dimensions by [`ono_history::RetentionLimits`], because spec
+    /// §20.2 asks for *bounded* recent results and v0.4.1 §2.4 will not accept a count as a
+    /// memory bound. The count of what was dropped is returned rather than swallowed: a caller
+    /// shows it, so a later `@-1` that is short of what the screen held is never a surprise
+    /// (ADR-0249, v0.4.1 §24.3).
+    pub fn retain_result(&mut self, values: Vec<Value>) -> usize {
+        self.retain(&values).dropped()
+    }
+
+    /// Retains a finished pipeline's values, answering what was kept and what was not.
+    ///
+    /// The values are borrowed and never edited: v0.4.1 §24.2 rule 1 is that *"the live pipeline
+    /// result is never truncated merely to fit history"*, and a borrow is how that becomes a
+    /// property of the type rather than a promise in a comment (§60.6).
+    pub fn retain(&mut self, values: &[Value]) -> ono_history::Retained {
+        // The configured ceilings are read here rather than only at startup, so a `set config
+        // limits.history_…` at the prompt takes effect on the next result — the same way the
+        // materialization limits are read per pipeline and the capture ceiling per command.
+        self.apply_retention_limits();
         // Spec §20.2: "Retention policy must protect secrets". The policy that keeps a secret
         // out of history is the one that keeps it out of what `@-1` replays, or the shell would
-        // redact the command that read a token and keep the token (spec §17.5, ADR-0262).
+        // redact the command that read a token and keep the token (spec §17.5, ADR-0262). It runs
+        // inside retention, so only what is kept pays for it.
         let policy = redaction_policy();
-        values = values
-            .into_iter()
-            .map(|value| {
-                value.map_text(&|text| {
-                    let redacted = policy.redact(text);
-                    (redacted != text).then(|| std::sync::Arc::from(redacted.as_str()))
-                })
+        self.results.retain_mapped(values, |value| {
+            value.map_text(&|text| {
+                let redacted = policy.redact(text);
+                (redacted != text).then(|| std::sync::Arc::from(redacted.as_str()))
             })
-            .collect();
-        if self.results.len() == RETAINED_RESULTS {
-            self.results.pop_front();
-        }
-        self.results.push_back(values);
-        dropped
+        })
     }
 
     /// The `n`th previous result, `1` for the most recent (spec §6.4 `@-1`).
     #[must_use]
     pub fn previous_result(&self, n: u32) -> Option<&[Value]> {
-        let index = self.results.len().checked_sub(n as usize)?;
-        self.results.get(index).map(Vec::as_slice)
+        self.results.previous(n)
+    }
+
+    /// What retaining the `n`th previous result did, so an inspection can say it is partial
+    /// (v0.4.1 §24.3).
+    #[must_use]
+    pub fn previous_result_retention(&self, n: u32) -> Option<ono_history::Retained> {
+        self.results.retention_of(n)
+    }
+
+    /// The retained result history, for a diagnostic that reports what it holds.
+    #[must_use]
+    pub const fn result_history(&self) -> &ono_history::ResultHistory {
+        &self.results
+    }
+
+    /// Applies the configured retention limits to the result history (v0.4.1 §24.1, §55.1).
+    ///
+    /// Called once configuration has been read: the session exists before the config layers do,
+    /// so it starts at Appendix A's defaults and narrows to the user's.
+    pub fn apply_retention_limits(&mut self) {
+        let limits = crate::limits::HistoryLimits::of(&self.settings);
+        self.results.set_limits(ono_history::RetentionLimits {
+            results: limits.results,
+            items_per_result: limits.items_per_result,
+            bytes_per_result: limits.bytes_per_result,
+            bytes_total: limits.bytes_total,
+        });
     }
 
     /// The context stack above the ground frame, outermost first (spec §14.1).
@@ -1122,6 +1205,12 @@ impl Session {
     }
 
     /// Ends the innermost capture and returns what it collected.
+    ///
+    /// The bytes it held stay charged to the command's budget until the command ends. v0.4.1
+    /// §23.4 bounds *"the total bytes retained by simultaneous evaluator captures"*, and a
+    /// capture whose values were just handed to an enclosing scope, a variable or an argument
+    /// list is still retained — a budget that refunded on `end_capture` would bound nothing that
+    /// nesting does (ADR-0457).
     pub fn end_capture(&mut self) -> Vec<Value> {
         self.captures.pop().unwrap_or_default()
     }
@@ -1132,17 +1221,51 @@ impl Session {
         !self.captures.is_empty()
     }
 
+    /// Starts one shell command's capture accounting afresh (v0.4.1 §23.4).
+    ///
+    /// The ceiling is per command, so the statement loop calls this once per top-level statement.
+    /// Nothing inside a command resets it: that is what makes nested captures share one allowance
+    /// rather than each starting again at the global default.
+    pub fn begin_command_captures(&mut self) {
+        self.capture_budget = Budget::of(
+            "this command's captures",
+            ono_pipeline::COMMAND_CAPTURE_MAX_ITEMS,
+            crate::limits::command_capture_bytes(&self.settings),
+        )
+        .for_settings("limits.materialize_items", "limits.command_capture_bytes");
+    }
+
+    /// What this command's captures have retained so far, and what they may still retain.
+    #[must_use]
+    pub const fn capture_budget(&self) -> &Budget {
+        &self.capture_budget
+    }
+
     /// Hands finished values to the innermost capture, if one is open.
     ///
     /// Returns whether they were taken; when they were not, they are the terminal's to show.
-    pub fn capture(&mut self, values: &[Value]) -> bool {
-        match self.captures.last_mut() {
-            Some(capture) => {
-                capture.extend(values.iter().cloned());
-                true
-            }
-            None => false,
+    ///
+    /// Every value is charged to the one budget this command's captures share (v0.4.1 §23.1,
+    /// §23.4), so a construction that nests captures cannot spend the ceiling once per level.
+    ///
+    /// # Errors
+    ///
+    /// The structured resource refusal of §21.4 when the command's capture ceiling is reached.
+    /// §21.3 forbids the alternative: nothing is kept from the values that would not fit, and the
+    /// capture is not silently truncated.
+    pub fn capture(&mut self, values: &[Value]) -> Result<bool, ErrorValue> {
+        if self.captures.is_empty() {
+            return Ok(false);
         }
+        for value in values {
+            self.capture_budget
+                .charge(value)
+                .map_err(ono_pipeline::Exceeded::into_error)?;
+            if let Some(capture) = self.captures.last_mut() {
+                capture.push(value.clone());
+            }
+        }
+        Ok(true)
     }
 
     /// Declares `name` in the innermost scope, shadowing any outer binding of the name: what a

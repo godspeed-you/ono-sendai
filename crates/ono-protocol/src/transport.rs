@@ -39,25 +39,34 @@ pub trait Transport: AsyncRead + AsyncWrite + Send + Unpin + 'static {
     fn peer_key(&self) -> Option<&HostKey>;
 }
 
-/// A transport over a byte stream that provides no security of its own.
+/// A transport over a byte stream that authenticates nobody, and says so in its name.
 ///
 /// It is the adapter for a stream whose protection comes from somewhere else — a channel inside
 /// an already-authenticated SSH connection, a unix socket in the shell's own runtime directory —
 /// and it is what the test suites run over. [`with_peer_key`](Self::with_peer_key) sets what such
-/// an outer layer authenticated, so the trust store sees exactly what it would see in production.
+/// an outer layer authenticated, so the trust store sees exactly what it would see in production;
+/// without it, [`peer_key`](Transport::peer_key) is `None` and only
+/// [`TrustPolicy::Unauthenticated`](crate::TrustPolicy::Unauthenticated) will carry a link over
+/// it.
+///
+/// The name is required rather than chosen. v0.4.1 §7.4: "if an unauthenticated transport remains
+/// necessary for tests or in-process duplexes, it MUST be inaccessible from ordinary network CLI
+/// configuration and clearly named `Unauthenticated` in internal APIs." §65.1 says why — calling a
+/// session authenticated because it is encrypted is the mistake, and a type called `Plain` is
+/// where somebody reaches for the wrong one (ADR-0440).
 ///
 /// ```
-/// use ono_protocol::{PlainTransport, Transport};
+/// use ono_protocol::{UnauthenticatedTransport, Transport};
 /// let (near, _far) = tokio::io::duplex(64);
-/// assert!(PlainTransport::new(near).peer_key().is_none());
+/// assert!(UnauthenticatedTransport::new(near).peer_key().is_none());
 /// ```
 #[derive(Debug)]
-pub struct PlainTransport<S> {
+pub struct UnauthenticatedTransport<S> {
     stream: S,
     peer_key: Option<HostKey>,
 }
 
-impl<S> PlainTransport<S> {
+impl<S> UnauthenticatedTransport<S> {
     /// A transport over `stream` that authenticates nobody.
     #[must_use]
     pub const fn new(stream: S) -> Self {
@@ -75,13 +84,13 @@ impl<S> PlainTransport<S> {
     }
 }
 
-impl<S: AsyncRead + AsyncWrite + Send + Unpin + 'static> Transport for PlainTransport<S> {
+impl<S: AsyncRead + AsyncWrite + Send + Unpin + 'static> Transport for UnauthenticatedTransport<S> {
     fn peer_key(&self) -> Option<&HostKey> {
         self.peer_key.as_ref()
     }
 }
 
-impl<S: AsyncRead + Unpin> AsyncRead for PlainTransport<S> {
+impl<S: AsyncRead + Unpin> AsyncRead for UnauthenticatedTransport<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -91,7 +100,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for PlainTransport<S> {
     }
 }
 
-impl<S: AsyncWrite + Unpin> AsyncWrite for PlainTransport<S> {
+impl<S: AsyncWrite + Unpin> AsyncWrite for UnauthenticatedTransport<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

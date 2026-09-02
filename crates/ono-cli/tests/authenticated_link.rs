@@ -291,3 +291,81 @@ fn should_keep_a_pin_in_a_file_a_person_can_read() {
         shown.stdout()
     );
 }
+
+/// v0.4.1 §7.3: "the authenticated transport identity and the runtime `Identity { user, uid,
+/// elevated }` MUST remain separate fields", and "the runtime identity is useful context but MUST
+/// NOT grant authority". A link is where a person sees both, and seeing them apart is what stops
+/// the second from being read as the first.
+#[test]
+fn should_show_the_proved_identity_and_the_reported_one_as_separate_fields() {
+    let home = scratch();
+    let agent = agent(&home, "first.pem");
+    ono(
+        &home,
+        &format!(
+            "add host-key 127.0.0.1 --fingerprint {} | select status",
+            agent.fingerprint
+        ),
+    )
+    .assert_success();
+
+    let run = ono(
+        &home,
+        &format!(
+            "link host {} --transport tcp; get link | select transport_fingerprint \
+             transport_trust runtime_user runtime_elevated | to json",
+            agent.address
+        ),
+    );
+    run.assert_success();
+
+    let answered = last_line(&run);
+    assert!(
+        answered.contains(&format!(
+            "\"transport_fingerprint\":\"{}\"",
+            agent.fingerprint
+        )),
+        "the proved identity is the key this handshake verified, got {answered:?}"
+    );
+    assert!(
+        answered.contains("\"transport_trust\":\"pinned\""),
+        "§7.3's `transport_trust` says how that key was decided about, got {answered:?}"
+    );
+    assert!(
+        answered.contains("\"runtime_user\":\"") && answered.contains("\"runtime_elevated\":"),
+        "the reported identity is beside it, in its own fields and under its own names, got \
+         {answered:?}"
+    );
+}
+
+/// The same rule from the other side: a transport that authenticated nobody says so.
+/// §4.3 spells out what an ssh-carried agent must report — "peer key visible to ono: no" — and
+/// `local` is the same shape, a child of this very process. The runtime identity is still there
+/// and still grants nothing, which is the whole distinction in one row.
+#[test]
+fn should_report_no_proved_key_over_a_transport_that_proves_nothing() {
+    let home = scratch();
+
+    let run = ono(
+        &home,
+        "link host here --transport local; get link | select transport_fingerprint \
+         transport_trust runtime_user | to json",
+    );
+    run.assert_success();
+
+    let answered = last_line(&run);
+    assert!(
+        answered.contains("\"transport_fingerprint\":null"),
+        "§2.6: unknown remains unknown — a transport that cannot report a peer key reports none, \
+         rather than borrowing OpenSSH's verification or the child's parentage, got {answered:?}"
+    );
+    assert!(
+        answered.contains("\"transport_trust\":\"unauthenticated\""),
+        "§7.4 asks that an unauthenticated transport be named `unauthenticated` where it is \
+         described, got {answered:?}"
+    );
+    assert!(
+        answered.contains("\"runtime_user\":\""),
+        "the far side still reports who it runs as; it just does not prove it, got {answered:?}"
+    );
+}

@@ -270,8 +270,10 @@ Read together, they produce a fairly small set of interface rules:
   machine is another place in the same world, not a second product mode with its own language.
 - **Extensions are guests, not co-authors.** KUANG/11 packages contribute real objects and real
   relationships to the same typed pipeline as native commands, under declared capabilities,
-  sandboxed execution and an audit trail — because an extension that can silently invent an edge
-  breaks the honesty guarantee everything else rests on.
+  brokered host calls, process confinement and an audit trail — because an extension that can
+  silently invent an edge breaks the honesty guarantee everything else rests on. And the guest
+  list is honest too: the native tier confines a plugin's process, it does not isolate it from the
+  filesystem or the network, and it says so rather than borrowing the word "sandbox".
 - **Configuration cannot execute.** `~/.config/ono/config.ono` sets values, functions and
   aliases; it cannot run commands at startup.
 

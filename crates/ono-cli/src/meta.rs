@@ -28,6 +28,8 @@ pub enum Request {
     GetConfig,
     /// `set config key = value` — one typed assignment (spec §30).
     SetConfig,
+    /// `inspect limits [key]` — the effective runtime limits (v0.4.1 §54.3).
+    InspectLimits,
 }
 
 /// Whether `stage` is one of the commands this module answers.
@@ -51,6 +53,7 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         ("resolve", Some("command")) => Some(Request::ResolveCommand),
         ("get", Some("config")) => Some(Request::GetConfig),
         ("set", Some("config")) => Some(Request::SetConfig),
+        ("inspect", Some("limits")) => Some(Request::InspectLimits),
         _ => None,
     }
 }
@@ -77,7 +80,65 @@ pub fn answer(
             get_config(session, &words).map_err(Flow::Failed)
         }
         Request::SetConfig => set_config(session, stage, source),
+        Request::InspectLimits => {
+            let words = crate::eval::stage_arguments(session, stage, source)?;
+            inspect_limits(session, &words).map_err(Flow::Failed)
+        }
     }
+}
+
+/// `inspect limits [key|prefix.]`: the effective runtime limits (v0.4.1 §54.3, §12.4).
+///
+/// The figures come from the settings catalogue, which is what the shell enforces, so this is a
+/// view of the limits in force rather than a second table of the same numbers (§52.2). Nothing
+/// here is secret: a limit is a ceiling, and §53.3's fingerprints and keys are not settings.
+fn inspect_limits(session: &Session, words: &[OsString]) -> Result<Vec<Value>, ErrorValue> {
+    // The first word is the target, `limits`.
+    let mut selector: Option<String> = None;
+    for word in words.iter().skip(1) {
+        let word = word.to_string_lossy();
+        if let Some(option) = word.strip_prefix("--") {
+            return Err(ErrorValue::new(
+                ErrorCode::TypeUnknownField,
+                format!("`inspect limits` has no option `--{option}`"),
+            )
+            .with_help("`inspect limits` takes one key or dotted prefix, and no options"));
+        }
+        if selector.replace(word.into_owned()).is_some() {
+            return Err(ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                "`inspect limits` takes one key or prefix",
+            ));
+        }
+    }
+    let rows = crate::limits::rows(session.settings());
+    let Some(selector) = selector else {
+        return Ok(rows);
+    };
+    let matched: Vec<Value> = rows
+        .into_iter()
+        .filter(|row| match row {
+            Value::Map(map) => match map.get("key") {
+                Some(Value::String(key)) => {
+                    if let Some(prefix) = selector.strip_suffix('.') {
+                        key.starts_with(prefix)
+                    } else {
+                        **key == *selector
+                    }
+                }
+                _ => false,
+            },
+            _ => false,
+        })
+        .collect();
+    if matched.is_empty() {
+        return Err(ErrorValue::new(
+            ErrorCode::TypeUnknownField,
+            format!("there is no limit `{selector}`"),
+        )
+        .with_help("`inspect limits` with no argument lists every limit in force"));
+    }
+    Ok(matched)
 }
 
 /// `resolve command <word>`: the one record for what the head word resolves to (ADR-0093).

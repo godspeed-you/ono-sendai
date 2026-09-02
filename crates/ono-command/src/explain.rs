@@ -11,10 +11,11 @@ use std::path::PathBuf;
 
 use ono_adapter::{Consumer, Negotiation, OutputDemand, Stdout};
 use ono_parser::{Argument, Expr, Pipeline, RedirectOp, RedirectTarget, Stage, StageList};
+use ono_pipeline::MaterializationLimits;
 use ono_provider_api::{ProviderRegistry, Risk};
 use ono_value::{MapValue, Value};
 
-use crate::contract::{IoType, Origin, Privilege};
+use crate::contract::{ExecutionClass, IoType, Origin, Privilege};
 use crate::invoke::ContextFrame;
 use crate::registry::CommandRegistry;
 
@@ -66,6 +67,10 @@ pub struct StagePlan {
     raw: bool,
     /// What the adapter registry answered for an external stage (spec v0.3 §1.6).
     adaptation: Option<Adaptation>,
+    /// Where the stage sits in the streaming classification matrix (v0.4.1 Appendix E).
+    execution: Option<ExecutionClass>,
+    /// What a materializing stage may collect, in values and bytes (v0.4.1 §22.2, §22.4).
+    budget: Option<(u64, u64)>,
 }
 
 /// The adapter registry's answer for one external stage, as the plan shows it.
@@ -94,6 +99,11 @@ pub struct PlanContext<'a> {
     /// The context frames in force, so the plan can print the explicit spelling a frame narrows
     /// the stage to (spec §14.5, ADR-0023, ADR-0225).
     pub context: &'a [ContextFrame],
+    /// What a materializing stage of this pipeline may collect (v0.4.1 §22.2, §22.4).
+    ///
+    /// The plan shows the budget the pipeline would really run under, so a user who has narrowed
+    /// `limits.materialize_bytes` sees their own figure rather than Appendix A's.
+    pub limits: MaterializationLimits,
 }
 
 impl std::fmt::Debug for PlanContext<'_> {
@@ -101,11 +111,51 @@ impl std::fmt::Debug for PlanContext<'_> {
         f.debug_struct("PlanContext")
             .field("stdout", &self.stdout)
             .field("adapters", &self.adapters.is_some())
+            .field("limits", &self.limits)
             .finish_non_exhaustive()
     }
 }
 
 impl StagePlan {
+    /// Where the stage sits in the streaming classification matrix of v0.4.1 Appendix E.
+    #[must_use]
+    pub const fn execution(&self) -> Option<ExecutionClass> {
+        self.execution
+    }
+
+    /// How v0.4.1 §22.4 names the stage's execution mode.
+    ///
+    /// `global materialization` for a stage that holds its input, `streaming` for one that does
+    /// not. §22.4 calls showing this *"a product feature of honesty, not merely debug output"*,
+    /// which is why it is a field of the plan and not a line only the renderer knows.
+    #[must_use]
+    pub fn execution_mode(&self) -> &'static str {
+        self.execution
+            .map_or("streaming", ExecutionClass::execution_mode)
+    }
+
+    /// Whether the stage holds its input rather than forwarding it (v0.4.1 §22.1).
+    #[must_use]
+    pub fn materializes(&self) -> bool {
+        self.execution.is_some_and(ExecutionClass::may_materialize)
+    }
+
+    /// Whether the stage refuses a declared-unbounded upstream immediately (v0.4.1 §22.3).
+    #[must_use]
+    pub fn requires_finite_input(&self) -> bool {
+        self.execution
+            .is_some_and(ExecutionClass::requires_finite_input)
+    }
+
+    /// What a materializing stage may collect: values and bytes (v0.4.1 §22.2).
+    ///
+    /// `None` for a stage that materializes nothing, because a budget shown beside a stage that
+    /// cannot spend it is the opposite of what §22.4 asks for.
+    #[must_use]
+    pub const fn budget(&self) -> Option<(u64, u64)> {
+        self.budget
+    }
+
     /// The stage's position in the pipeline, counting from one as spec §42.1 does.
     #[must_use]
     pub fn ordinal(&self) -> usize {
@@ -251,6 +301,27 @@ impl StagePlan {
         map.insert("input".into(), Value::string(&self.input));
         map.insert("output".into(), Value::string(&self.output));
         map.insert("streaming".into(), Value::Bool(self.streaming));
+        // v0.4.1 §22.4 is "a product feature of honesty, not merely debug output", so what the
+        // stage will hold is a field a script can read and not only a line a renderer prints.
+        map.insert("execution".into(), Value::string(self.execution_mode()));
+        map.insert(
+            "requires".into(),
+            if self.requires_finite_input() {
+                Value::string("finite input")
+            } else {
+                Value::Null
+            },
+        );
+        map.insert(
+            "budget_items".into(),
+            self.budget
+                .map_or(Value::Null, |(items, _)| Value::Int(i128::from(items))),
+        );
+        map.insert(
+            "budget_bytes".into(),
+            self.budget
+                .map_or(Value::Null, |(_, bytes)| Value::Int(i128::from(bytes))),
+        );
         map.insert(
             "privilege".into(),
             self.privilege
@@ -340,6 +411,21 @@ impl StagePlan {
             }
         }
         row(into, "streaming", if self.streaming { "yes" } else { "no" });
+        // v0.4.1 §22.4's three lines, and only where they say something. A budget printed beside a
+        // stage that materializes nothing would be noise pretending to be a guarantee.
+        if let Some(class) = self.execution {
+            row(into, "execution", class.execution_mode());
+            if class.requires_finite_input() {
+                row(into, "requires", "finite input");
+            }
+        }
+        if let Some((items, bytes)) = self.budget {
+            row(
+                into,
+                "budget",
+                &format!("{items} values / {}", human_bytes(bytes)),
+            );
+        }
         if let Some(privilege) = self.privilege {
             row(into, "privilege", privilege.as_str());
         }
@@ -470,6 +556,7 @@ pub fn plan_for(
             adapters: None,
             executables: None,
             context: &[],
+            limits: MaterializationLimits::default(),
         },
     )
 }
@@ -502,6 +589,7 @@ pub fn plan_with(
                 source,
                 ordinal,
                 upstream.as_ref(),
+                context.limits,
             );
             upstream = Some(IoType::from_text(&planned.output));
             stages.push(planned);
@@ -516,6 +604,7 @@ pub fn plan_with(
             providers,
             context.context,
             source,
+            context.limits,
         );
     }
 
@@ -610,6 +699,7 @@ fn rethread(
     providers: Option<&ProviderRegistry>,
     frames: &[ContextFrame],
     source: &str,
+    limits: MaterializationLimits,
 ) {
     let mut upstream: Option<IoType> = None;
     let mut changed = false;
@@ -633,6 +723,7 @@ fn rethread(
                 source,
                 ordinal,
                 upstream.as_ref(),
+                limits,
             );
             planned.demand = keep.0;
             planned.adaptation = keep.1;
@@ -755,6 +846,7 @@ fn plan_stage(
     source: &str,
     ordinal: usize,
     upstream: Option<&IoType>,
+    limits: MaterializationLimits,
 ) -> StagePlan {
     let text = stage.span.of(source).trim().to_owned();
     let carried = upstream.and_then(IoType::element_schema);
@@ -781,6 +873,8 @@ fn plan_stage(
             declared_input: None,
             raw: false,
             adaptation: None,
+            execution: None,
+            budget: None,
         };
     };
 
@@ -812,6 +906,8 @@ fn plan_stage(
             declared_input: None,
             raw: true,
             adaptation: None,
+            execution: None,
+            budget: None,
         };
     }
 
@@ -843,6 +939,8 @@ fn plan_stage(
             declared_input: None,
             raw: false,
             adaptation: None,
+            execution: None,
+            budget: None,
         };
     }
 
@@ -881,6 +979,8 @@ fn plan_stage(
             declared_input: None,
             raw: false,
             adaptation: None,
+            execution: None,
+            budget: None,
         };
     };
 
@@ -970,6 +1070,13 @@ fn plan_stage(
         declared_input: Some(contract.input().text().to_owned()),
         raw: false,
         adaptation: None,
+        // v0.4.1 §22.4: what the stage will hold, and what it is allowed to hold, derived from
+        // the classification the contract declares rather than restated here (ADR-0460).
+        execution: contract.execution(),
+        budget: contract
+            .execution()
+            .filter(|class| class.may_materialize())
+            .map(|_| (limits.max_items(), limits.max_bytes())),
     }
 }
 
@@ -1066,4 +1173,29 @@ fn collect_fields(expression: &Expr, into: &mut Vec<String>) {
         }
         _ => {}
     }
+}
+
+/// Renders a byte ceiling the way v0.4.1 §22.4's example plan writes it: `128 MiB`.
+///
+/// Appendix A: "Limits MUST be expressed internally in integer base units and rendered in
+/// human-readable units separately." This is the rendering half.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [(&str, u64); 4] = [
+        ("GiB", 1 << 30),
+        ("MiB", 1 << 20),
+        ("KiB", 1 << 10),
+        ("B", 1),
+    ];
+    for (name, scale) in UNITS {
+        if bytes >= scale {
+            let whole = bytes / scale;
+            let tenths = (bytes % scale) * 10 / scale;
+            return if tenths == 0 {
+                format!("{whole} {name}")
+            } else {
+                format!("{whole}.{tenths} {name}")
+            };
+        }
+    }
+    "0 B".to_owned()
 }

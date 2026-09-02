@@ -834,6 +834,11 @@ async fn should_shape_ono_link_1_the_way_ono_shell_declares_it() {
             harness::FieldContract { name: "targets", ty: "list<string>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "protocol", ty: "int", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "providers", ty: "list<string>", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "transport_fingerprint", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "transport_trust", ty: "enum<pinned|newly_pinned|unauthenticated>", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "runtime_user", ty: "string", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "runtime_uid", ty: "int", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "runtime_elevated", ty: "bool", required: false, nullable: true, unit: None },
         ],
     }).await;
 }
@@ -894,6 +899,7 @@ async fn should_shape_ono_plugin_1_the_way_ono_shell_declares_it() {
             harness::FieldContract { name: "state", ty: "enum<installed|enabled|loaded|active|degraded|quarantined>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "trust", ty: "enum<signed|verified|local|unknown|untrusted>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "isolation", ty: "enum<core-built-in|trusted-native|isolated-component|remote-service>", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "execution_tier", ty: "enum<native-confined|native-isolated|wasm|remote-service|declarative|core-built-in>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "roles", ty: "list<string>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "enabled", ty: "bool", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "active_version", ty: "bool", required: true, nullable: false, unit: None },

@@ -462,6 +462,7 @@ pub fn check(
     let adapted = if session.link_host().is_some() {
         Vec::new()
     } else {
+        let materialization = crate::limits::materialization(session.settings());
         let resolve = crate::resolve::resolver(session);
         let executables = |name: &str| resolve(name);
         let (providers, adapters) = session.registries();
@@ -475,6 +476,7 @@ pub fn check(
                 adapters: Some(adapters),
                 executables: Some(&executables),
                 context: &[],
+                limits: materialization,
             },
         )
         .adapted_schemas()
@@ -569,6 +571,7 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
     let context = session.context();
     let adapters = session.shared_adapters();
     let resolver = crate::resolve::resolver(session);
+    let materialization = crate::limits::materialization(session.settings());
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -596,9 +599,16 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
                 invocation = invocation.with_input(previous);
             }
             match table.run(contract.id(), &mut invocation).await {
-                Ok(Outcome::Values(produced)) => stream = Some(produced),
+                // v0.4.1 §22.2, as in the foreground loop: the configured limits are stated where
+                // the pipeline is assembled, and every stage below inherits them (ADR-0454).
+                Ok(Outcome::Values(produced)) => {
+                    stream = Some(produced.with_materialization_limits(materialization));
+                }
                 Ok(Outcome::Actions(outcomes)) => {
-                    stream = Some(action_records(contract, outcomes, started));
+                    stream = Some(
+                        action_records(contract, outcomes, started)
+                            .with_materialization_limits(materialization),
+                    );
                 }
                 Err(error) => {
                     task_failures
@@ -1549,6 +1559,7 @@ fn run_native_segment(
     // Whether the last stage's values reach a person rather than another stage, a file or a
     // capture — the one fact a full-screen view may not decide for itself (spec v0.4 §29.1).
     let displays = last && stage_has_no_redirection && !capturing;
+    let materialization = crate::limits::materialization(session.settings());
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
@@ -1610,7 +1621,12 @@ fn run_native_segment(
                 invocation = invocation.with_input(previous);
             }
             match table.run(contract.id(), &mut invocation).await {
-                Ok(Outcome::Values(values)) => stream = Some(values),
+                // v0.4.1 §22.2: the configured materialization limits are stated once, here,
+                // where the pipeline is assembled. Every stage built from this stream inherits
+                // them, so a producer does not have to know they exist (ADR-0454).
+                Ok(Outcome::Values(values)) => {
+                    stream = Some(values.with_materialization_limits(materialization));
+                }
                 Ok(Outcome::Actions(outcomes)) => {
                     // Spec §11.5: one record per target, so `97 succeeded, 3 failed` stays two
                     // readable numbers rather than one ambiguous status — and a failed row
@@ -1621,7 +1637,10 @@ fn run_native_segment(
                     {
                         failed_rows = true;
                     }
-                    stream = Some(action_records(contract, outcomes, started));
+                    stream = Some(
+                        action_records(contract, outcomes, started)
+                            .with_materialization_limits(materialization),
+                    );
                 }
                 Err(error) => return Err(error),
             }
@@ -1796,7 +1815,7 @@ fn stage_scope(
     // writes one — v0.4 §28.2's `enter @-1` — reads the same values the pipeline head does, or
     // the reference would mean two different things in two positions of one language.
     let mut previous: Vec<Value> = Vec::new();
-    for back in 1..=crate::session::RETAINED_RESULTS as u32 {
+    for back in 1..=crate::session::DEEPEST_REFERENCE {
         match session.previous_result(back) {
             Some(values) => previous.push(Value::list(values.to_vec())),
             None => break,
@@ -1899,9 +1918,9 @@ fn write_result(
     // nothing was shown. A redirection still means the file.
     if destination.is_none() && session.capturing() {
         if serialised {
-            session.capture(&[crate::eval::captured_text(&bytes_of(values))]);
+            session.capture(&[crate::eval::captured_text(&bytes_of(values))])?;
         } else {
-            session.capture(values);
+            session.capture(values)?;
         }
         return Ok(());
     }
@@ -1909,8 +1928,7 @@ fn write_result(
     // not retained: its values are one rendered document, and reusing the objects it was made
     // from is what the retention of the *previous* result is for.
     if !serialised {
-        let dropped = session.retain_result(values.to_vec());
-        crate::report::retention_notice(dropped, values.len());
+        crate::report::retention_notice(session.retain(values));
     }
     match destination {
         Some(mut file) => {

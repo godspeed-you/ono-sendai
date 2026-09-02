@@ -4,7 +4,9 @@ mod common;
 
 use common::{client_config, connect, server_config, try_connect, within};
 use ono_core::ErrorCode;
-use ono_protocol::{ClientConfig, Identity, PlainTransport, ProviderDescriptor, ServerConfig};
+use ono_protocol::{
+    ClientConfig, Identity, ProviderDescriptor, ServerConfig, UnauthenticatedTransport,
+};
 
 #[tokio::test]
 async fn should_report_what_was_negotiated_when_a_link_is_established() {
@@ -116,7 +118,7 @@ async fn should_report_an_unreachable_peer_when_the_transport_ends_before_the_ha
     drop(far);
 
     let error = within(ono_protocol::Link::connect(
-        PlainTransport::new(near),
+        UnauthenticatedTransport::new(near),
         client_config("testhost"),
     ))
     .await
@@ -140,7 +142,7 @@ async fn should_report_a_protocol_mismatch_when_the_transport_answers_with_rubbi
     });
 
     let error = within(ono_protocol::Link::connect(
-        PlainTransport::new(near),
+        UnauthenticatedTransport::new(near),
         client_config("testhost"),
     ))
     .await

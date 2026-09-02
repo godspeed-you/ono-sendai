@@ -166,6 +166,7 @@ commands:
       - {name: live, type: bool, doc: "Keep the map current. At an interactive terminal it is the full-screen view of §23.3, redrawn from a polling source and saying so in §25.3's vocabulary; where the values are consumed instead, it is a stream that subscribes to the change events of everything this place is drawn from — the first value is the current state, every value after it is something that moved (v0.4 §25.1, §25.2, §25.3, §29.1)."}
     privilege: conditional
     streaming: true
+    execution: live_view   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: S
     note: >-
       §22 fixes the answer of `map --json` field for field and forbids screen coordinates in it:

@@ -20,8 +20,8 @@ use std::time::Duration;
 
 use ono_core::ErrorCode;
 use ono_protocol::{
-    ActRequest, ClientConfig, HostKey, Identity, PlainTransport, ProviderDescriptor, RemoteQuery,
-    RemoteService, ServerConfig, StreamResponder, TrustPolicy, TrustStore, serve,
+    ActRequest, ClientConfig, HostKey, Identity, ProviderDescriptor, RemoteQuery, RemoteService,
+    ServerConfig, StreamResponder, TrustPolicy, TrustStore, UnauthenticatedTransport, serve,
 };
 use ono_provider_api::{ActionOutcome, Capability, ObjectEvent, Risk};
 use ono_value::{
@@ -321,8 +321,10 @@ pub async fn try_connect(
     let observed = Arc::new(Observed::default());
     let service = DemoService::new(Arc::clone(&observed));
     let handle =
-        tokio::spawn(async move { serve(PlainTransport::new(far), server, service).await });
-    let mut transport = PlainTransport::new(near);
+        tokio::spawn(
+            async move { serve(UnauthenticatedTransport::new(far), server, service).await },
+        );
+    let mut transport = UnauthenticatedTransport::new(near);
     if let Some(key) = presents {
         transport = transport.with_peer_key(key);
     }

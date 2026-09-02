@@ -105,6 +105,10 @@ const BOUND_ELSEWHERE: &[(&str, &str)] = &[
         "ono.config.set",
         "the evaluator's configuration layers (ADR-0010)",
     ),
+    (
+        "ono.limits.inspect",
+        "the evaluator's settings catalogue, which is what the shell enforces (ADR-0456)",
+    ),
     ("ono.env.set", "the evaluator's own scope (ADR-0020 §9)"),
     // --- `ono-cli` answers it as a shell builtin -----------------------------------------------
     // KUANG/11's lifecycle and the remote link table are the shell's: the supervisor and the

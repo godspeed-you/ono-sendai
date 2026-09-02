@@ -79,6 +79,69 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 toml = "1"
 unicode-width = "0.2"
 
+# --- release tool versions (spec §44.2, ADR-0450) -----------------------------------------------
+#
+# Every tool the release path installs, at the one version it installs. A packaging tool decides
+# what an artifact *is* — `cargo-deb` 3.5 and 3.7 lay out a `.deb` differently — so the version is
+# an input to the build and belongs beside the other inputs rather than in whatever
+# `install-action` considers newest today. `xtask spec-check` refuses a workflow or a script that
+# names a different one, and `xtask build-manifest` reads these into the release input manifest
+# of Appendix H.
+
+[workspace.metadata.release-tools]
+cargo-deb = "3.7.0"
+cargo-generate-rpm = "0.21.0"
+cross = "0.2.5"
+cargo-deny = "0.20.2"
+
+# --- recorded justifications (spec §45.3, §45.4, ADR-0449) --------------------------------------
+#
+# `cargo` ignores `workspace.metadata`; `xtask spec-check` does not. Two kinds of dependency are
+# not an ordinary library choice, and both are decisions somebody has to be able to find again:
+#
+#   * a dependency taken from git, which must name one immutable revision (spec §45.3) — there
+#     are none, and the gate refuses the first one that arrives without an entry here;
+#   * a dependency that TLS, signing, hashing or key handling passes through, which needs a
+#     recorded review before it is introduced (spec §45.4).
+#
+# `reviewed` is the date of the decision the ADR records, not the date the line was written.
+
+[[workspace.metadata.supply-chain.cryptographic]]
+crate = "ed25519-dalek"
+role = "the signature over a KUANG/11 package manifest, verified before a plugin is trusted (spec §31.36)"
+adr = "ADR-0311"
+reviewed = "2026-08-29"
+
+[[workspace.metadata.supply-chain.cryptographic]]
+crate = "sha2"
+role = "content digests: spatial identity and edge identity, KUANG/11 manifest digests, host-key fingerprints"
+adr = "ADR-0129"
+reviewed = "2026-08-28"
+
+[[workspace.metadata.supply-chain.cryptographic]]
+crate = "rustls"
+role = "the TLS transport that carries the direct remote protocol, with the ring provider (spec §21.5)"
+adr = "ADR-0353"
+reviewed = "2026-08-29"
+
+[[workspace.metadata.supply-chain.cryptographic]]
+crate = "tokio-rustls"
+role = "the async adapter over rustls used by the listening agent and the client"
+adr = "ADR-0353"
+reviewed = "2026-08-29"
+
+[[workspace.metadata.supply-chain.cryptographic]]
+crate = "rustls-pemfile"
+role = "reading the local certificate and key files that are a host's own pinned identity"
+adr = "ADR-0353"
+reviewed = "2026-08-29"
+
+[[workspace.metadata.supply-chain.cryptographic]]
+crate = "rcgen"
+role = "writing the self-signed certificate that is a host's identity when it is first generated"
+adr = "ADR-0353"
+reviewed = "2026-08-29"
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"

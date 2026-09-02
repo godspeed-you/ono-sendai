@@ -319,6 +319,12 @@ targets:
     summary: A resolved configuration setting with its provenance. # spec §30, ADR-0010
     schema: ono.config-setting/1
     phase: A
+  - id: ono.target.limits
+    name: limits
+    category: system
+    summary: An effective runtime resource limit. # v0.4.1 §54.3, §12.4, Appendix A
+    schema: ono.limit/1
+    phase: A
 
   # --- development, spec §8.2 --------------------------------------------------------------
   # "These SHOULD only be native when Ono-Sendai can expose meaningful structured semantics

@@ -111,6 +111,16 @@ impl Transform for Join {
             };
             let right_key = self.right_key.as_ref().unwrap_or(&self.left_key);
 
+            // The right side is what `join` retains; the left streams past it. §2.4's byte bound
+            // belongs on the collection that is held, so it is charged before a row is emitted.
+            let mut budget = input.budget_for("join");
+            for value in &self.right {
+                if let Err(exceeded) = budget.charge(value) {
+                    let _ = sink.fail(exceeded.into_error()).await;
+                    return;
+                }
+            }
+
             let mut buckets: HashMap<KeyRepr, Vec<usize>> = HashMap::new();
             let mut right_keys: Vec<Option<Value>> = Vec::with_capacity(self.right.len());
             for (index, value) in self.right.iter().enumerate() {
@@ -259,6 +269,15 @@ impl Transform for Diff {
                     return;
                 }
             };
+
+            // The earlier snapshot is what `diff` retains; the new state streams past it.
+            let mut budget = input.budget_for("diff");
+            for value in &self.previous {
+                if let Err(exceeded) = budget.charge(value) {
+                    let _ = sink.fail(exceeded.into_error()).await;
+                    return;
+                }
+            }
 
             let mut before: HashMap<KeyRepr, usize> = HashMap::new();
             for (index, value) in self.previous.iter().enumerate() {

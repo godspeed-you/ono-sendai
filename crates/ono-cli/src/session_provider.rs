@@ -97,6 +97,19 @@ pub struct LinkRow {
     pub protocol: Option<u16>,
     /// The ids of the providers the remote offers.
     pub providers: Option<Vec<String>>,
+    /// The fingerprint of the key the far side proved it holds (v0.4.1 §7.3).
+    ///
+    /// `None` where the transport authenticated nobody to this process, which is the truth for
+    /// `ssh` and `local` and stays the truth (§4.3, ADR-0037 §4, ADR-0274).
+    pub transport_fingerprint: Option<String>,
+    /// What the trust store concluded about that key: one of the `ono.link/1` trust words.
+    pub transport_trust: Option<&'static str>,
+    /// The user the far side *reports* it runs as. Context, never authority (§7.3).
+    pub runtime_user: Option<String>,
+    /// The numeric user id the far side reports, where it reports one.
+    pub runtime_uid: Option<u32>,
+    /// Whether the far side reports it is elevated.
+    pub runtime_elevated: Option<bool>,
 }
 
 /// What the session has published for the provider to answer from.
@@ -702,6 +715,34 @@ fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, Erro
     .set(
         "providers",
         link.providers.as_deref().map_or(Value::Null, strings),
+    )?
+    // The two identities of v0.4.1 §7.3, side by side and never merged: what the peer proved,
+    // and what the peer said. A reader who cannot tell them apart cannot tell a link that is
+    // authenticated from one that is merely talkative.
+    .set(
+        "transport_fingerprint",
+        link.transport_fingerprint
+            .as_deref()
+            .map_or(Value::Null, Value::string),
+    )?
+    .set(
+        "transport_trust",
+        link.transport_trust.map_or(Value::Null, Value::string),
+    )?
+    .set(
+        "runtime_user",
+        link.runtime_user
+            .as_deref()
+            .map_or(Value::Null, Value::string),
+    )?
+    .set(
+        "runtime_uid",
+        link.runtime_uid
+            .map_or(Value::Null, |uid| Value::Int(i128::from(uid))),
+    )?
+    .set(
+        "runtime_elevated",
+        link.runtime_elevated.map_or(Value::Null, Value::Bool),
     )?
     .build())
 }

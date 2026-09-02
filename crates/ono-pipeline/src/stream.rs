@@ -4,7 +4,7 @@ use std::fmt;
 use std::future::Future;
 
 use ono_core::ErrorCode;
-use ono_value::{ErrorValue, Value};
+use ono_value::{Budget, ErrorValue, MaterializationLimits, Value};
 use tokio::sync::mpsc;
 
 use crate::{CancelToken, Diagnostics, InputRequirement, Transform, Window};
@@ -29,6 +29,7 @@ pub struct PipelineConfig {
     capacity: usize,
     cancel: CancelToken,
     diagnostics: Diagnostics,
+    limits: MaterializationLimits,
 }
 
 impl Default for PipelineConfig {
@@ -37,6 +38,7 @@ impl Default for PipelineConfig {
             capacity: DEFAULT_CAPACITY,
             cancel: CancelToken::new(),
             diagnostics: Diagnostics::new(),
+            limits: MaterializationLimits::default(),
         }
     }
 }
@@ -70,6 +72,13 @@ impl PipelineConfig {
         self
     }
 
+    /// Sets what every materializing stage in this pipeline may collect (§22.2, §55.1).
+    #[must_use]
+    pub const fn with_materialization_limits(mut self, limits: MaterializationLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
     /// How many values a channel buffers.
     #[must_use]
     pub const fn capacity(&self) -> usize {
@@ -86,6 +95,12 @@ impl PipelineConfig {
     #[must_use]
     pub const fn diagnostics(&self) -> &Diagnostics {
         &self.diagnostics
+    }
+
+    /// What every materializing stage in this pipeline may collect (§22.2).
+    #[must_use]
+    pub const fn materialization_limits(&self) -> MaterializationLimits {
+        self.limits
     }
 }
 
@@ -219,6 +234,19 @@ pub struct Collected {
 }
 
 impl Collected {
+    /// What an operation collected, for a collector that is not [`ValueStream::collect`].
+    pub(crate) const fn new(
+        values: Vec<Value>,
+        errors: Vec<ErrorValue>,
+        diagnostics: Diagnostics,
+    ) -> Self {
+        Self {
+            values,
+            errors,
+            diagnostics,
+        }
+    }
+
     /// The values, in the order they arrived.
     #[must_use]
     pub fn values(&self) -> &[Value] {
@@ -282,6 +310,7 @@ pub struct ValueStream {
     boundedness: Boundedness,
     cancel: CancelToken,
     diagnostics: Diagnostics,
+    limits: MaterializationLimits,
 }
 
 impl ValueStream {
@@ -325,6 +354,31 @@ impl ValueStream {
     #[must_use]
     pub const fn boundedness(&self) -> Boundedness {
         self.boundedness
+    }
+
+    /// Sets what a materializing stage below this stream may collect (§22.2, §55.1).
+    ///
+    /// Every stage built from this one inherits the figures, so the evaluator states them once
+    /// where a pipeline is assembled rather than at each producer.
+    #[must_use]
+    pub const fn with_materialization_limits(mut self, limits: MaterializationLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// A fresh budget for a stage of this pipeline that must materialize (§22.1, §22.2).
+    ///
+    /// Every blocking transform takes one of these before it starts buffering, so the byte bound
+    /// of §2.4 sits in the primitive rather than in each caller (§6.2).
+    #[must_use]
+    pub fn budget_for(&self, stage: &str) -> Budget {
+        self.limits.budget_for(stage)
+    }
+
+    /// What a materializing stage of this pipeline may collect (§22.2).
+    #[must_use]
+    pub const fn materialization_limits(&self) -> MaterializationLimits {
+        self.limits
     }
 
     /// The pipeline's cancellation scope, which a consumer may trip itself.
@@ -437,7 +491,8 @@ impl ValueStream {
         let config = PipelineConfig::new()
             .with_capacity(self.capacity)
             .with_cancel_token(self.cancel.clone())
-            .with_diagnostics(self.diagnostics.clone());
+            .with_diagnostics(self.diagnostics.clone())
+            .with_materialization_limits(self.limits);
         let (stream, sink) = Self::channel(&config, boundedness);
         tokio::spawn(async move { body(self, sink).await });
         stream
@@ -500,6 +555,7 @@ impl ValueStream {
             boundedness,
             cancel: config.cancel_token().clone(),
             diagnostics: config.diagnostics().clone(),
+            limits: config.materialization_limits(),
         };
         (stream, sink)
     }
@@ -533,13 +589,19 @@ pub(crate) fn cancelled_error() -> ErrorValue {
 
 /// The error a blocking transform reports over a stream that never ends (spec §11.1, §43).
 pub(crate) fn unbounded_error(transform: &str) -> ErrorValue {
+    // v0.4.1 §54.1 fixes the shape a refusal is read in: name the operation, name the requirement
+    // it could not meet, and say what the upstream declared itself to be. §22.3 makes this answer
+    // arrive before a value is drawn, so the sentence is true of a stream nobody has touched.
     ErrorValue::new(
         ErrorCode::StreamUnboundedOperation,
-        format!("`{transform}` needs input that ends, and this stream may not end"),
+        format!("`{transform}` requires finite input; the upstream is declared unbounded"),
     )
     .with_retryable(false)
     .with_help(format!(
         "bound the stream first, for example `| take 100 | {transform} …`, or give `{transform}` \
          an explicit window"
     ))
+    .with_metadata("stage", Value::string(transform))
+    .with_metadata("requires", Value::string("finite input"))
+    .with_metadata("upstream", Value::string("unbounded"))
 }

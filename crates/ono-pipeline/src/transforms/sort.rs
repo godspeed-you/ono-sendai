@@ -58,8 +58,13 @@ impl Transform for Sort {
 
     fn apply(self: Box<Self>, input: ValueStream) -> ValueStream {
         input.stage(Boundedness::Bounded, move |mut input, sink| async move {
+            let mut budget = input.budget_for("sort");
             let mut keyed: Vec<(Value, Value)> = Vec::new();
             while let Some(value) = input.next_value(&sink).await {
+                if let Err(exceeded) = budget.charge(&value) {
+                    let _ = sink.fail(exceeded.into_error()).await;
+                    return;
+                }
                 match self.key.key(&value) {
                     Ok(key) => keyed.push((key, value)),
                     Err(error) => {

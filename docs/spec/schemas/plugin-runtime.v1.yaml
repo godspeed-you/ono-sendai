@@ -33,7 +33,39 @@ fields:
     type: enum
     required: true
     values: [core-built-in, trusted-native, isolated-component, remote-service]
-    doc: The tier this instance actually runs in (spec §31.10).
+    doc: >-
+      The tier the package's manifest declares, in spec §31.10's own vocabulary. It says what
+      kind of thing the artifact is; `execution_tier` says what was actually installed around it,
+      and the two are different questions (v0.4.1 §17.2).
+  execution_tier:
+    type: enum
+    required: true
+    values: [native-confined, native-isolated, wasm, remote-service, declarative, core-built-in]
+    doc: >-
+      The named execution tier this instance ran in (v0.4.1 §17.2). A name rather than a boolean,
+      because `sandboxed: true` cannot distinguish a process under resource ceilings and
+      no-new-privileges from one behind a kernel filesystem allowlist, and v0.4.1 §17.3 forbids
+      calling either "sandboxed" without saying which boundary is meant. `native-confined` is
+      what this build runs native packages in: capability mediation and process confinement, and
+      no kernel isolation of the filesystem or the network. `native-isolated` and `wasm` are
+      names the model can express and this build does not offer.
+  execution_boundary:
+    type: string
+    required: true
+    doc: >-
+      One sentence saying what the tier is and what it is not, from
+      `docs/spec/hardening/kuang_confinement_controls.yaml` (v0.4.1 §15.2, §19.2). Generated from
+      the tier rather than written beside it, so the record and the documentation cannot drift.
+  confinement:
+    type: list<record>
+    required: true
+    doc: >-
+      The confinement report of v0.4.1 §16.5, one row per control the tier claimed:
+      `{control, required, attempted, result, platform_detail}`. `result` is `applied`, `failed`,
+      `skipped` or `not_attempted`, and a successful spawn implies every `required` row reads
+      `applied` — a load for which that did not hold produced no instance at all (§2.3). The
+      control ids are the ones
+      `docs/spec/hardening/kuang_confinement_controls.yaml` declares.
   granted:
     type: list<record>
     required: true
@@ -101,4 +133,4 @@ fields:
       Whether the instance was loaded with `--dev` (spec §31.71). Development mode relaxes
       integrity, never authority, and it must remain visually marked for the whole session.
 default_view:
-  columns: [plugin, host_api, isolation, degraded, started_at]
+  columns: [plugin, host_api, execution_tier, degraded, started_at]

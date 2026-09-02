@@ -231,16 +231,15 @@ pub fn notice(text: &str) {
     reporter.notice(text);
 }
 
-/// Says that a result was retained truncated, and to what (spec §20.2, ADR-0249).
+/// Says that a result was retained truncated, and to what (spec §20.2, v0.4.1 §24.3, ADR-0249).
 ///
 /// Silence here is the failure mode: `@-1` would come up short of what the screen held, and
-/// nothing would connect the two.
-pub fn retention_notice(dropped: usize, total: usize) {
-    if dropped == 0 {
+/// nothing would connect the two. v0.4.1 §24.3 makes it a requirement rather than a courtesy —
+/// *"It MUST NOT present the retained subset as though it were the complete original output"* —
+/// and the sentence says which side was shortened, because the command's own output was not.
+pub fn retention_notice(retained: ono_history::Retained) {
+    let Some(text) = retained.notice() else {
         return;
-    }
-    let kept = total.saturating_sub(dropped);
-    notice(&format!(
-        "retained the first {kept} of {total} values for reuse; `@-1` sees {kept} (spec §20.2)"
-    ));
+    };
+    notice(&format!("{text}; `@-1` sees {}", retained.kept()));
 }

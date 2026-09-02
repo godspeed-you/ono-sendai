@@ -37,8 +37,10 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
-          # xtask/tests/packaging.rs drives both packagers in the gate (ADR-0121)
-          tool: cargo-deb,cargo-generate-rpm
+          # Exact versions, because each of these decides what an artifact or a verification
+          # means (spec §44.2, ADR-0450). xtask/tests/packaging.rs drives both packagers in the
+          # gate (ADR-0121) and scripts/gate.sh runs the dependency policy (ADR-0449).
+          tool: cargo-deb@3.7.0,cargo-generate-rpm@0.21.0,cargo-deny@0.20.2
       - name: run the gate
         run: scripts/gate.sh
 
@@ -62,7 +64,8 @@ jobs:
           toolchain: "1.94"
       - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
-          tool: cargo-deb,cargo-generate-rpm,cross
+          # The versions of Cargo.toml's [workspace.metadata.release-tools] (spec §44.2).
+          tool: cargo-deb@3.7.0,cargo-generate-rpm@0.21.0,cross@0.2.5
       - name: build the packages
         run: scripts/package.sh
       - name: install and run them in fresh containers

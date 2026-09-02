@@ -27,6 +27,7 @@ commands:
     options: []
     privilege: none
     streaming: true
+    execution: predicate   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     examples:
       - get process | where cpu > 20
@@ -47,6 +48,7 @@ commands:
     options: []
     privilege: none
     streaming: true
+    execution: item_transform   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     examples:
       - get process | select pid name memory
@@ -67,6 +69,7 @@ commands:
     options: []
     privilege: none
     streaming: false
+    execution: global_reorder   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     note: >-
       Finite input by default. A truly unbounded stream without a window is rejected with
@@ -89,6 +92,7 @@ commands:
     options: []
     privilege: none
     streaming: false
+    execution: global_grouping   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     note: Returns Group records rather than preformatted headings (spec §53).
     examples:
@@ -109,6 +113,7 @@ commands:
     options: []
     privilege: none
     streaming: true
+    execution: prefix   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     note: Streaming and lazy; also the way to bound an unbounded stream for `sort` or `count`.
     examples:
@@ -128,6 +133,7 @@ commands:
     options: []
     privilege: none
     streaming: true
+    execution: prefix   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     examples:
       - get process | sort cpu desc | skip 1 | take 5
@@ -146,6 +152,7 @@ commands:
     options: []
     privilege: none
     streaming: true
+    execution: item_transform   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     note: >-
       Maps one input value to zero, one or many outputs depending on the block. Spec §53 warns
@@ -168,6 +175,7 @@ commands:
       - {name: initial, type: value, doc: "The starting accumulator. Without it the first value seeds the fold and an empty stream is an error."}
     privilege: none
     streaming: false
+    execution: incremental_aggregate   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     examples:
       - get process | select memory | reduce $acc + @ --initial 0
@@ -185,6 +193,7 @@ commands:
     options: []
     privilege: none
     streaming: false
+    execution: incremental_aggregate   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     examples:
       - get process | count
@@ -204,6 +213,7 @@ commands:
     options: []
     privilege: none
     streaming: false
+    execution: explicit_collect   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     note: >-
       Yields count, sum, mean, min and max as typed values, not as formatted strings
@@ -326,6 +336,7 @@ commands:
       - {name: follow, type: bool, doc: "Keep the stream open and emit values as they arrive."}
     privilege: none
     streaming: true
+    execution: incremental_aggregate   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     note: >-
       Distinct from `tail file` and `tail journal`, which take a target word and follow a
@@ -350,6 +361,7 @@ commands:
       - {name: kind, type: string, default: inner, doc: "`inner`, `left`, `right` or `outer`."}
     privilege: none
     streaming: false
+    execution: explicit_collect   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     note: >-
       Spec §53: "Relational joins are powerful but complex. Syntax should not be frozen until
@@ -375,6 +387,7 @@ commands:
       - {name: identity, type: list<string>, doc: "Override the schema's identity fields for the comparison."}
     privilege: none
     streaming: false
+    execution: explicit_collect   # v0.4.1 Appendix E, docs/spec/hardening/streaming_classification.yaml
     phase: B
     note: >-
       Spec §53 gives the semantics but not a frozen syntax; see `ono.data.join`. Delivered

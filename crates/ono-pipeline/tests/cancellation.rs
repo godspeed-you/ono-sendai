@@ -167,3 +167,81 @@ async fn should_wake_a_waiting_producer_when_the_consumer_drops_the_stream() {
     })
     .await;
 }
+
+// --- v0.4.1 §23.3: cancellation stops a capture growing (issue #71) ---------------------------
+
+/// A source that counts what it has sent, so a test can watch retention stop rather than time it.
+fn counted(cancel: CancelToken, sent: std::sync::Arc<std::sync::atomic::AtomicU64>) -> ValueStream {
+    ValueStream::spawn(
+        PipelineConfig::new()
+            .with_capacity(4)
+            .with_cancel_token(cancel),
+        // Declared bounded, because a materializer refuses an unbounded upstream outright (§22.3)
+        // and the question here is what happens to one that is allowed to start.
+        Boundedness::Bounded,
+        move |sink| async move {
+            let payload = Value::string(&"x".repeat(1024));
+            while sink.send(payload.clone()).await.is_ok() {
+                sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        },
+    )
+}
+
+#[tokio::test]
+async fn should_stop_a_capture_growing_when_the_scope_is_cancelled() {
+    // §23.3: "Cancellation while capturing MUST stop upstream consumption promptly and release
+    // retained values as soon as the owning operation unwinds."
+    //
+    // Nothing here reads a clock. What is asserted is the outcome cancellation is *for*: the
+    // materializing operation unwinds instead of running to the end of its budget, and once it
+    // has unwound the source has stopped producing — read twice, and equal. A latency figure over
+    // the same event is issue #71's other half and is measured by the benchmark harness of phase
+    // H7 (#83, #84, ADR-0459), because a millisecond threshold on shared hardware is this
+    // repository's most reliable source of flakes (issue #21, ADR-0252).
+    within(async {
+        let cancel = CancelToken::new();
+        let sent = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let stream = counted(cancel.clone(), std::sync::Arc::clone(&sent));
+
+        // A budget large enough that reaching it, rather than the cancellation, would take a very
+        // long time: whatever ends this operation, it is not the ceiling.
+        let budget = ono_pipeline::Budget::of("capture", 10_000_000, 1 << 40);
+        let collecting = tokio::spawn(ono_pipeline::materialize(stream, budget));
+
+        while sent.load(std::sync::atomic::Ordering::SeqCst) < 32 {
+            tokio::task::yield_now().await;
+        }
+        cancel.cancel();
+
+        let collected = collecting
+            .await
+            .expect("the collecting task must not panic")
+            .expect("a cancelled materialization ends without a resource refusal");
+
+        let at_unwind = sent.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            at_unwind < 10_000_000,
+            "the operation ran to its ceiling rather than stopping at the signal: {at_unwind}"
+        );
+
+        // §23.3's "stop upstream consumption": once the owning operation has unwound, the source
+        // is not producing into anything and cannot be.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            sent.load(std::sync::atomic::Ordering::SeqCst),
+            at_unwind,
+            "the capture kept growing after the operation that owned it had unwound"
+        );
+
+        assert!(
+            collected
+                .errors()
+                .iter()
+                .any(|error| error.code() == ErrorCode::StreamCancelled),
+            "the consumer is told why it ended (spec §18.5): {:?}",
+            collected.errors()
+        );
+    })
+    .await;
+}

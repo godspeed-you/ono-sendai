@@ -28,6 +28,7 @@
 mod agent;
 mod agentless;
 mod client;
+mod identity;
 mod retag;
 mod tls;
 mod transport;
@@ -38,8 +39,7 @@ pub use agentless::{
     far_side_lacks_agent,
 };
 pub use client::{RemoteLink, RemoteProvider};
+pub use identity::PeerIdentity;
 pub use retag::retag_value;
-pub use tls::{
-    DEFAULT_PORT, HostIdentity, TlsListener, TlsTransport, connect as tls_connect, split_address,
-};
+pub use tls::{DEFAULT_PORT, TlsListener, TlsTransport, connect as tls_connect, split_address};
 pub use transport::{ChildProcess, SshTarget, StdioTransport, SubprocessTransport, ssh_command};

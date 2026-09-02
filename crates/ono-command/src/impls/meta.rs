@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use ono_core::ErrorCode;
+use ono_pipeline::MaterializationLimits;
 use ono_pipeline::{Boundedness, ValueStream};
 use ono_value::{
     ErrorValue, FieldAccess, MapValue, Provenance, RecordValue, Schema, SchemaId, Value,
@@ -87,6 +88,7 @@ impl CommandImpl for MetaCommand {
                         adapters: ctx.adapters(),
                         executables: Some(&executables),
                         context: ctx.context(),
+                        limits: MaterializationLimits::default(),
                     },
                 );
                 Ok(values([plan.to_value()]))
@@ -126,6 +128,7 @@ impl MetaCommand {
                     adapters: ctx.adapters(),
                     executables: Some(&executables),
                     context: ctx.context(),
+                    limits: MaterializationLimits::default(),
                 },
             );
             let last = plan

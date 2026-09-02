@@ -862,6 +862,7 @@ dependencies = [
  "jiff",
  "ono-core",
  "ono-testkit",
+ "ono-value",
  "regex",
  "serde",
  "serde_json",
@@ -886,6 +887,7 @@ dependencies = [
 name = "ono-kuang-sdk"
 version = "0.4.0"
 dependencies = [
+ "libc",
  "ono-kuang-protocol",
  "ono-kuang-supervisor",
  "ono-kuang-testhost",
@@ -909,6 +911,7 @@ dependencies = [
  "ono-value",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "thiserror",
  "tokio",
 ]
@@ -2044,7 +2047,9 @@ dependencies = [
  "ono-testkit",
  "ono-value",
  "serde",
+ "serde_json",
  "serde_yaml_ng",
+ "toml",
 ]
 
 [[package]]

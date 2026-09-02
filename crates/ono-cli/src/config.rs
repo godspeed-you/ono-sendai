@@ -150,7 +150,12 @@ pub fn load(session: &mut Session, options: &Options, reporter: &Reporter) {
             .apply_environment(&environment, &mut report);
     }
 
-    // Every layer is in; `theme.name` can now be resolved into the theme the renderers paint
-    // with (spec §44, ADR-0332). A theme that cannot be found never stops the shell.
+    // Every layer is in, so the figures the session enforces can be taken from them. The result
+    // history exists before the configuration does, so it starts at Appendix A's defaults and
+    // narrows here (v0.4.1 §24.1, §55.1).
+    session.apply_retention_limits();
+
+    // `theme.name` can now be resolved into the theme the renderers paint with (spec §44,
+    // ADR-0332). A theme that cannot be found never stops the shell.
     crate::theme::load(session, reporter);
 }

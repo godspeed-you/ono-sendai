@@ -2672,6 +2672,34 @@ set config history.result_cache = 64MiB
 set config safety.confirm.bulk_threshold = 100
 ```
 
+### `inspect limits`
+
+Show the effective non-secret runtime resource limits and the range each may take.
+
+| | |
+|---|---|
+| id | `ono.limits.inspect` |
+| stability | stable |
+| phase | A |
+| input | `null` |
+| output | `stream<ono.limit/1>` |
+| provider capability | `config.read` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `key` | `string` | Show one limit, or a dotted prefix such as `limits.history`. |
+
+**Examples**
+
+```text
+inspect limits
+inspect limits limits.materialize_bytes
+```
+
 ### `leave context`
 
 Pop the active context.

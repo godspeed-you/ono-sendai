@@ -1451,81 +1451,90 @@ sandbox when it provides no filesystem or network isolation.
 §66.2's four bullets. §65.6 names the shape of the defect: a limit counted in items while the
 bytes behind them are unbounded.
 
-- [ ] **P1 · A value's retained size is estimable, deterministically.** The estimator answers the
-      same figure for the same value on every run, is defined for every `Value` variant, and stays
-      within a documented tolerance of the real retained size —
+- [x] **P1 · A value's retained size is estimable, deterministically.** The estimator answers the
+      same figure for the same value on every run, is defined for every `Value` variant, stays
+      within a documented tolerance of the payload it can measure, and charges a shared `Arc`
+      once — which is what separates a memory estimate from a fan-out count —
       `crates/ono-value/tests/size_estimate.rs::should_answer_the_same_estimate_for_the_same_value_on_every_run`,
       `::should_define_an_estimate_for_every_value_variant`,
-      `::should_stay_within_the_documented_tolerance_of_the_measured_retained_size` (#65, §21.2,
-      §56.6).
-- [ ] **P1 · One `Budget` type, with no unlimited default.** Materialization, captures and history
+      `::should_stay_within_the_documented_tolerance_of_the_measured_retained_size`,
+      `::should_count_shared_payload_once_within_one_estimate` (#65, §21.2, §56.6, ADR-0452).
+- [x] **P1 · One `Budget` type, with no unlimited default.** Materialization, captures and history
       share one abstraction, constructing a budget requires stating both ceilings, and exceeding
       one is a refusal rather than a truncation —
       `crates/ono-pipeline/tests/budget.rs::should_require_both_an_item_and_a_byte_ceiling_when_a_budget_is_constructed`,
       `::should_offer_no_default_that_leaves_a_budget_unlimited`,
-      `::should_refuse_rather_than_truncate_when_a_budget_is_exceeded` (#66, §21.1, §21.3).
-- [ ] **P1 · Materialization is bounded in items and in bytes.** The default global materializer
+      `::should_refuse_rather_than_truncate_when_a_budget_is_exceeded` (#66, §21.1, §21.3,
+      ADR-0453).
+- [x] **P1 · Materialization is bounded in items and in bytes.** The default global materializer
       refuses past 100 000 values and past 128 MiB, the byte ceiling triggers on a few large values
       while the item count stays far below its own, and one helper owns the enforcement so no caller
       recreates it — `crates/ono-pipeline/tests/budget.rs::should_refuse_the_hundred_thousand_and_first_value_a_global_operation_collects`,
       `::should_refuse_on_the_byte_ceiling_when_a_few_large_values_exceed_it`,
+      `::should_bound_every_transform_that_buffers_its_whole_input`,
       `crates/ono-cli/tests/resource_limits.rs::should_route_every_global_collection_through_the_budget_aware_helper`,
-      case `190` (#67, §22.1, §22.2, §30.2, §60.4, §60.5, Appendix A).
-- [ ] **P1 · An operation that needs finite input refuses an unbounded one immediately.** `sort`
+      case `190` (#67, §22.1, §22.2, §30.2, §60.4, §60.5, Appendix A, ADR-0454).
+- [x] **P1 · An operation that needs finite input refuses an unbounded one immediately.** `sort`
       and its kind answer a stable refusal naming the requirement when the upstream is declared
       unbounded, before waiting —
       `crates/ono-pipeline/tests/boundedness.rs::should_refuse_an_unbounded_upstream_before_waiting_when_the_operation_requires_finite_input`,
       `crates/ono-cli/tests/resource_limits.rs::should_name_the_finiteness_requirement_and_the_declaring_stage_in_the_refusal`,
       and `xtask/tests/contracts.rs::should_place_every_pipeline_operation_in_the_streaming_classification_matrix`
-      for Appendix E, which §65.8 makes a release requirement (#68, §22.3).
-- [ ] **P1 · `explain` shows what will be materialized.** A plan says which stages materialize,
+      for Appendix E, which §65.8 makes a release requirement (#68, §22.3, ADR-0455).
+- [x] **P1 · `explain` shows what will be materialized.** A plan says which stages materialize,
       which require finite input and which budget applies, before the pipeline runs —
       `crates/ono-command/tests/explain.rs::should_mark_every_materializing_stage_in_the_plan`,
       `::should_name_the_finiteness_requirement_and_the_budget_of_each_materializing_stage`,
-      case `192` (#69, §22.4).
-- [ ] **P1 · Capture buffers go through the same budget.** A nested command capture is charged
+      case `192` (#69, §22.4, ADR-0460).
+- [x] **P1 · Capture buffers go through the same budget.** A nested command capture is charged
       against a budget with a 256 MiB aggregate ceiling per command, nesting accumulates against
       that ceiling rather than resetting it, and exceeding it refuses —
       `crates/ono-cli/tests/resource_limits.rs::should_charge_a_nested_command_capture_against_the_shared_budget`,
       `::should_accumulate_nested_captures_against_the_one_per_command_ceiling`,
       `::should_refuse_a_capture_that_would_exceed_the_command_ceiling` (#70, §23.1, §23.2, §23.4,
-      Appendix A).
+      Appendix A, ADR-0457).
 - [ ] **P1 · Cancellation stops a capture growing.** Cancelling a command whose capture is filling
-      releases it within p95 < 100 ms and p99 < 250 ms, measured as a distribution rather than a
-      single run — `crates/ono-cli/tests/resource_limits.rs::should_stop_capture_growth_within_the_cancellation_budget`,
-      `crates/ono-pipeline/tests/cancellation.rs::should_meet_the_p95_and_p99_cancellation_targets_over_repeated_runs`
-      (#71, §23.3, Appendix A).
-- [ ] **P1 · Retained history is bounded and says when it truncated.** Sixteen slots, 10 000 values
+      releases it, deterministically: the operation unwinds, the source stops producing, and the
+      next capture has its whole allowance —
+      `crates/ono-cli/tests/resource_limits.rs::should_stop_capture_growth_within_the_cancellation_budget`,
+      `crates/ono-pipeline/tests/cancellation.rs::should_stop_a_capture_growing_when_the_scope_is_cancelled`.
+      **The p95 < 100 ms / p99 < 250 ms half of §23.3 is not ticked here.** §37.2 measures a target
+      on a *named reference environment*, which #84 delivers, and a millisecond threshold asserted
+      on whatever ran `cargo test` is issue #21's defect rather than a proof; the measured
+      distribution is owed by the benchmark harness of §4.8.8 (#83, #84). ADR-0459 records what was
+      measured while writing this — 100 cancellations in 0.07 s, two orders of magnitude inside the
+      p95 target — and why it is not asserted. This box is ticked when that benchmark reports
+      (#71, §23.3, §61.5, Appendix A).
+- [x] **P1 · Retained history is bounded and says when it truncated.** Sixteen slots, 10 000 values
       and 16 MiB per result, 64 MiB in total with oldest-first eviction, a truthful marker on any
       truncated entry, and — the invariant that matters — the pipeline's own output is unaffected by
-      any of it — `crates/ono-history/tests/history.rs::should_evict_the_oldest_result_when_the_total_byte_ceiling_is_reached`,
+      any of it — `crates/ono-history/tests/result_history.rs::should_evict_the_oldest_result_when_the_total_byte_ceiling_is_reached`,
       `::should_mark_a_result_it_kept_only_in_part_and_say_how_much_it_kept`,
-      `::should_leave_the_emitted_output_complete_when_the_retained_copy_is_truncated`, case `191`
-      (#72, §24, §60.6, §67.6, Appendix A).
-- [ ] **P1 · The refusals are stable error codes.** `resource.item_limit`, `resource.byte_limit`
+      `::should_leave_the_emitted_output_complete_when_the_retained_copy_is_truncated`,
+      `::should_not_retain_a_single_value_larger_than_the_per_result_byte_limit`,
+      `crates/ono-cli/tests/resource_limits.rs::should_leave_the_pipeline_output_complete_when_history_could_not_keep_it_all`,
+      case `191` (#72, §24, §60.6, §67.6, Appendix A, ADR-0458).
+- [x] **P1 · The refusals are stable error codes.** `resource.item_limit`, `resource.byte_limit`
       and `resource.materialization_limit` are declared in `docs/spec/errors.yaml` with the details
       §53.3 requires — the limit, the observed figure and the stage that enforced it — so automation
       reads a code instead of a message (§53.2) —
       `crates/ono-value/tests/errors.rs::should_declare_the_three_resource_refusal_codes_with_their_details`,
       `crates/ono-cli/tests/resource_limits.rs::should_answer_the_same_resource_code_for_the_same_refusal_every_time`,
-      case `190` (#73, §21.4, §53.1).
-- [ ] **P2 · The limits are configurable within validated ranges.** `limits.*` keys exist for the
+      `::should_carry_the_limit_and_the_consumption_but_no_payload_in_a_resource_refusal`,
+      case `190` (#73, §21.4, §53.1, ADR-0453).
+- [x] **P2 · The limits are configurable within validated ranges.** `limits.*` keys exist for the
       Appendix A defaults, a value outside the permitted range is refused at load with the range in
       the message, and the environment overrides of §55.4 behave as documented —
       `crates/ono-cli/tests/meta_config.rs::should_accept_every_documented_limits_key_and_reject_an_unknown_one`,
       `::should_refuse_a_limits_value_outside_its_permitted_range_and_name_the_range`,
-      `::should_apply_the_documented_environment_override_for_a_limits_key` (#74, §55.1–§55.4).
-- [ ] **P3 · The effective limits are inspectable.** `inspect limits` answers the non-secret
+      `::should_apply_the_documented_environment_override_for_a_limits_key`,
+      `xtask/tests/contracts.rs::should_reject_a_limit_whose_default_lies_outside_its_own_range`
+      (#74, §55.1–§55.4, ADR-0456).
+- [x] **P3 · The effective limits are inspectable.** `inspect limits` answers the non-secret
       runtime limits in force as objects, so a test and a user read the same figures the shell uses
       — `crates/ono-cli/tests/resource_limits.rs::should_answer_the_effective_non_secret_limits_when_inspect_limits_runs`,
       `::should_answer_the_same_figures_inspect_limits_shows_from_the_contract_registry`, case
-      `192` (#120, §54.3).
-
-#### 4.8.7 Streaming (H6 — §66.3, §25–§28, Appendix E)
-
-§66.3's five bullets. §0.5.5 found `each` collecting its complete input before running its block,
-which §65.7 names as streaming implemented by background collection.
-
+      `192` (#120, §54.3, ADR-0461).
 - [ ] **P1 · `each` consumes and emits incrementally.** `source | each { $it } | take 1` completes
       while the source is still waiting, the block runs for the first value before the second is
       required, order and seriality are unchanged, and no complete-input `Vec<Value>` capture
@@ -1786,27 +1795,35 @@ mutable inputs.
       `::should_reject_a_publishing_workflow_without_a_concurrency_guard`,
       `::should_report_this_repository_as_granting_least_privilege_in_every_workflow` (#100,
       §43.3–§43.5, ADR-0433).
-- [ ] **P2 · The dependency policy is enforced and provably fails.** Advisory, license and source
+- [x] **P2 · The dependency policy is enforced and provably fails.** Advisory, license and source
       policy run in the gate, a git dependency and a new cryptographic dependency each need the
       recorded justification §45.3 and §45.4 require, and a controlled fixture proves the check
       fails on a denied condition rather than being assumed to —
-      `xtask/tests/contracts.rs::should_fail_the_dependency_policy_on_a_denied_advisory_fixture`,
+      `xtask/tests/supply_chain.rs::should_fail_the_dependency_policy_on_a_denied_advisory_fixture`,
       `::should_fail_the_dependency_policy_on_a_denied_license_fixture`,
-      `::should_fail_the_dependency_policy_on_an_unjustified_git_dependency` (#101, §45.1–§45.4,
-      §62.3).
-- [ ] **P2 · Tools and toolchain are exact, and the fetch is reproducible.** The Rust toolchain
+      `::should_fail_the_dependency_policy_on_an_unjustified_git_dependency`,
+      `::should_reject_an_ignored_advisory_whose_removal_deadline_has_passed`,
+      `::should_report_this_repository_as_running_its_dependency_policy_in_the_gate`,
+      `::should_report_this_repository_as_justifying_every_git_and_cryptographic_dependency`
+      (#101, §45.1–§45.4, §62.3, ADR-0449 — the three named tests live in `supply_chain.rs`
+      beside the other supply-chain rules, not in `contracts.rs`).
+- [x] **P2 · Tools and toolchain are exact, and the fetch is reproducible.** The Rust toolchain
       stays pinned, packaging tool versions are exact rather than floating, `Cargo.lock` is
       committed and release builds are `--locked`, and dependency fetching is deterministic —
       `xtask/tests/supply_chain.rs::should_find_an_exact_version_for_every_release_tool`,
       `::should_build_the_release_with_a_locked_dependency_graph`,
+      `::should_reject_a_fallback_that_builds_again_without_the_lock`,
+      `::should_reject_a_rust_toolchain_that_follows_a_channel_instead_of_a_version`,
       `xtask/tests/packaging.rs::should_refuse_a_release_build_whose_lockfile_would_change` (#102,
-      §44.2–§44.4).
-- [ ] **P2 · The build inputs are written down.** The release workflow emits the Appendix H
+      §44.2–§44.4, ADR-0450).
+- [x] **P2 · The build inputs are written down.** The release workflow emits the Appendix H
       manifest — source commit and tag, toolchain, `Cargo.lock` hash, build and package-test
       container digests, Action SHAs, packaging tool versions, `SOURCE_DATE_EPOCH`, workflow run
-      identity — and the manifest is an input to provenance rather than a summary written afterwards
+      identity — to `dist/build-inputs.json`, read from the same files the pin scanners read, and
+      the manifest is an input to provenance rather than a summary written afterwards
       — `xtask/tests/provenance.rs::should_emit_a_build_input_manifest_carrying_every_field_appendix_h_requires`,
-      `::should_bind_the_build_input_manifest_to_the_release_it_describes` (#103, §43.2, §57 H10).
+      `::should_bind_the_build_input_manifest_to_the_release_it_describes` (#103, §43.2, §57 H10,
+      Appendix H, ADR-0451).
 - [ ] **P2 · The determinism inputs are fixed.** `SOURCE_DATE_EPOCH`, locale, timezone, file
       ordering, ownership and mode are set by the workflow rather than inherited from the runner,
       and a build that omits one is refused —

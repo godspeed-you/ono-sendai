@@ -28,6 +28,7 @@
 mod artifact;
 mod audit;
 mod capability;
+mod confinement;
 mod contract;
 mod error;
 mod frame;
@@ -43,6 +44,7 @@ pub use capability::{
     Capability, Decision, DeclarationClass, Elevation, Enforcement, GrantDuration, Lease, Risk,
     ScopeKey, ScopeKind,
 };
+pub use confinement::{Control, ExecutionTier, FailureBehaviour, Requirement};
 pub use contract::{
     DeniedCapability, EffectiveLimits, GrantedCapability, OverflowPolicy, PluginContract,
 };

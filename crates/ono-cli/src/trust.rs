@@ -12,17 +12,131 @@
 //! really changed, and `remove host-key` forgets one. There is no "continue anyway" anywhere,
 //! because ADR-0015 standing rule 4 forbids one.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ono_core::ErrorCode;
 use ono_protocol::{Fingerprint, TrustEntry, TrustStore};
+use ono_remote::PeerIdentity;
 use ono_value::ErrorValue;
 
 /// The file the pins live in, under the configuration directory of ADR-0010.
 pub const STORE_FILE: &str = "trusted_hosts";
 
 /// The file a listening agent keeps its own identity in, under the same directory.
+///
+/// The name v0.4.0 gave it, when only a listening host had an identity. v0.4.1 §8.1 renames the
+/// canonical file to [`LINK_IDENTITY_FILE`]; this one is still read, still written by
+/// `--agent --host-key`, and never deleted (§8.2 rule 4).
 pub const HOST_KEY_FILE: &str = "host_key.pem";
+
+/// The file this shell keeps its own peer identity in (v0.4.1 §8.1).
+///
+/// `~/.config/ono/link_identity.pem`, under whatever configuration directory ADR-0010's
+/// resolution answers — `ONO_CONFIG_DIR`, then XDG, then `HOME`.
+pub const LINK_IDENTITY_FILE: &str = "link_identity.pem";
+
+/// The identity this shell proves it holds on a direct link, from `directory` (v0.4.1 §8.1, §8.2).
+///
+/// Both ends of a direct TCP link present a certificate now (§7.1), so the identity is no longer
+/// something only a listening agent has. §8.2 fixes what a machine that already ran one does with
+/// the file it already has, and the ladder is followed in the order the specification writes it:
+///
+/// 1. `link_identity.pem` exists — use it;
+/// 2. else `host_key.pem` exists *and parses* — copy it across, preserving mode `0600`;
+/// 3. else generate `link_identity.pem`;
+/// 4. the legacy file is never deleted.
+///
+/// The copy is one-time and by value rather than a symlink or a read fallback (ADR-0435): after
+/// it, one file is the identity and the other is a file the old flag still names.
+///
+/// # Errors
+///
+/// `parse.syntax` when the canonical file exists and is not an identity, `io.permission_denied`
+/// when it cannot be written, and the security refusal of §8.3 when its permissions expose the
+/// private key.
+pub fn link_identity(directory: &Path) -> Result<PeerIdentity, ErrorValue> {
+    let canonical = directory.join(LINK_IDENTITY_FILE);
+    if canonical.exists() {
+        return PeerIdentity::open_or_create(&canonical);
+    }
+    let legacy = directory.join(HOST_KEY_FILE);
+    if legacy.is_file() {
+        match PeerIdentity::open_or_create(&legacy) {
+            Ok(_) => migrate(&legacy, &canonical)?,
+            // §8.3's refusal travels: an exposed legacy key must not be quietly stepped over,
+            // because stepping over it is exactly the "second unrelated identity" §8.2 forbids,
+            // and it would generate one out of a security problem the operator never saw.
+            Err(error) if error.code() == ErrorCode::RemoteIdentityPermissions => {
+                return Err(error);
+            }
+            // Rule 2 is conditional on the legacy file *parsing*: a `host_key.pem` that is not
+            // an identity is not an identity to inherit, and refusing here would leave a shell
+            // unable to link because of a file no current path writes.
+            Err(_) => {}
+        }
+    }
+    PeerIdentity::open_or_create(&canonical)
+}
+
+/// The identity this session presents on a direct link, from its configuration directory.
+///
+/// A session with no configuration directory — no `HOME`, no `XDG_CONFIG_HOME`, no
+/// `ONO_CONFIG_DIR` — has nowhere to keep an identity, and v0.4.1 §8.1 wants a *persistent* one.
+/// Generating a fresh key per process instead would make every direct link a first contact and
+/// every authorization the operator granted worthless, so it refuses and says where to put one.
+///
+/// # Errors
+///
+/// `io.not_found` when there is no configuration directory, and as [`link_identity`] otherwise.
+pub fn identity(sources: &crate::hosts::HostSources) -> Result<PeerIdentity, ErrorValue> {
+    let Some(directory) = &sources.config_dir else {
+        return Err(ErrorValue::new(
+            ErrorCode::IoNotFound,
+            "this account has no configuration directory to keep a peer identity in",
+        )
+        .with_help(
+            "a direct link proves who this shell is with a persistent key (v0.4.1 §8.1). Set \
+             `HOME`, `XDG_CONFIG_HOME` or `ONO_CONFIG_DIR` so there is somewhere to keep one.",
+        ));
+    };
+    link_identity(directory)
+}
+
+/// Copies `legacy` to `canonical` with mode `0600`, without ever exposing a half-written key.
+///
+/// Written to a temporary file in the same directory and renamed, so the canonical path is either
+/// absent or a complete identity — a truncated private key would be an identity nobody can prove
+/// and every peer has pinned.
+fn migrate(legacy: &Path, canonical: &Path) -> Result<(), ErrorValue> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let contents = std::fs::read(legacy).map_err(|error| identity_io_error(legacy, &error))?;
+    let temporary = canonical.with_extension("pem.tmp");
+    let _ = std::fs::remove_file(&temporary);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)
+        .map_err(|error| identity_io_error(&temporary, &error))?;
+    file.write_all(&contents)
+        .map_err(|error| identity_io_error(&temporary, &error))?;
+    file.sync_all()
+        .map_err(|error| identity_io_error(&temporary, &error))?;
+    drop(file);
+    std::fs::rename(&temporary, canonical).map_err(|error| identity_io_error(canonical, &error))
+}
+
+fn identity_io_error(path: &Path, error: &std::io::Error) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::IoPermissionDenied,
+        format!(
+            "the peer identity at {} is not usable: {error}",
+            path.display()
+        ),
+    )
+}
 
 /// How a key was proved, when a command does not say.
 ///

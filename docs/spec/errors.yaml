@@ -43,6 +43,10 @@ kinds:
     doc: A safety policy or confirmation requirement stopped the operation (ADR-0006).
   - name: stream
     doc: The operation is not valid for a stream with these properties (ADR-0006).
+  - name: resource
+    doc: >-
+      A resource budget — items retained, bytes retained, values materialized — was reached
+      (v0.4.1 §21.4, ADR-0453).
 
 errors:
   # --- parse ------------------------------------------------------------------------------
@@ -191,6 +195,24 @@ errors:
     help: >-
       Do not override this because it is inconvenient. Verify the new key out of band, then
       record it deliberately. A changed key is indistinguishable from an interception.
+  - code: Ono-Sendai-E0604
+    name: remote.identity_permissions
+    kind: safety
+    summary: The peer identity file is readable or writable by someone other than its owner.
+    help: >-
+      The file holds the private key that is this machine's identity on a direct link (v0.4.1
+      section 8.3). `chmod 600` the path named in the diagnostic. A key another account could
+      read is a key another account can impersonate you with, so this is a refusal and not a
+      warning; nothing is printed from inside the file.
+  - code: Ono-Sendai-E0605
+    name: remote.peer_unauthenticated
+    kind: safety
+    summary: The remote peer did not prove possession of a peer key.
+    help: >-
+      A direct link is mutually authenticated in v0.4.1 (section 7.1, section 13.3) and never
+      retries without a certificate. A peer that speaks the older, one-sided direct protocol is
+      refused here; upgrade it, or reach it over `--transport ssh`, where OpenSSH authenticates
+      the host instead.
 
   # --- safety -----------------------------------------------------------------------------
   - code: Ono-Sendai-E0701
@@ -427,6 +449,33 @@ errors:
       §42.1). The metadata names both identities and the providers that asserted them; this is a
       provider defect worth reporting.
 
+  # --- resource budgets (v0.4.1 §21.4, §53.1, ADR-0453) ------------------------------------
+  - code: Ono-Sendai-E1101
+    name: resource.item_limit
+    kind: resource
+    summary: An operation reached the number of values it is allowed to retain.
+    help: >-
+      The metadata names the stage that enforced the ceiling, the configured limit and the
+      consumption that crossed it — never the retained values, because a resource error that
+      prints its payload is a second resource problem (v0.4.1 §21.4, §53.3). Narrow the input,
+      or raise `limits.materialize_items` deliberately.
+  - code: Ono-Sendai-E1102
+    name: resource.byte_limit
+    kind: resource
+    summary: An operation reached the number of bytes it is allowed to retain.
+    help: >-
+      Bytes are counted with the deterministic approximate estimator of §21.2, so the figure is
+      a logical payload size rather than resident memory. Narrow the input, or raise
+      `limits.materialize_bytes` deliberately.
+  - code: Ono-Sendai-E1103
+    name: resource.materialization_limit
+    kind: resource
+    summary: An operation that must see its whole input may not materialize this input.
+    help: >-
+      The refusal is about the input as a whole rather than about a count that was reached: the
+      stage requires finite input, or its budget admits nothing at all (v0.4.1 §22.2, §22.3).
+      Bound the upstream before the stage that needs it whole.
+
   # --- KUANG/11, spec §31.79 (folded into the global model by ADR-0108) ---------------------
   - code: Ono-Sendai-K11001
     name: package.invalid
@@ -590,3 +639,21 @@ errors:
     summary: The remote host's policy denies the capability, whatever the local grant says.
     help: >-
       Effective authority is the intersection of local and remote policy (spec §31.40). A local grant never becomes a remote grant on its own; change the policy on the host that owns the objects.
+  - code: Ono-Sendai-K11801
+    name: plugin.confinement_failed
+    kind: safety
+    summary: A mandatory confinement control could not be installed, so the plugin was not started.
+    help: >-
+      The metadata names the control and carries the operating system's own reason. v0.4.1 §2.3 is why nothing ran: a safety control Ono says it applies before an operation must prevent that operation when it cannot be applied. The package is not quarantined — it never started, so there is nothing to hold (v0.4.1 §18.1).
+  - code: Ono-Sendai-K11802
+    name: plugin.resource_limit_failed
+    kind: safety
+    summary: A mandatory resource limit could not be installed, so the plugin was not started.
+    help: >-
+      The metadata names which limit and the value that was refused. A `setrlimit` refusal is usually a hard ceiling below the requested soft one, which is a configuration question about the shell's own limits rather than about the package (v0.4.1 §59.8).
+  - code: Ono-Sendai-K11803
+    name: plugin.no_new_privs_failed
+    kind: safety
+    summary: "`PR_SET_NO_NEW_PRIVS` could not be installed, so the plugin was not started."
+    help: >-
+      Without it a setuid or file-capability binary the package execs could gain authority the package was never granted, which is the one thing process confinement is for. On a kernel that does not implement the option there is no confined way to run a native package (v0.4.1 §59.7).

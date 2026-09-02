@@ -38,12 +38,31 @@ case "$target" in
   *) echo "package: no package layout for target $target" >&2; exit 2 ;;
 esac
 
-for tool in cargo-deb cargo-generate-rpm; do
+# The exact versions of Cargo.toml's [workspace.metadata.release-tools] (spec §44.2, ADR-0450).
+# These two lay out the package, so a different version is a different artifact from the same
+# commit — the script refuses rather than producing something the release cannot reproduce.
+require_tool() {
+  local tool="${1%@*}" want="${1#*@}" have
   if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "package: $tool is not installed — cargo install --locked $tool" >&2
+    echo "package: $tool is not installed — cargo install --locked $tool@$want" >&2
     exit 127
   fi
-done
+  # Each of them prints `<its own name> <version>` first; `cross` prints rustup chatter around it.
+  if [[ "$tool" == cargo-* ]]; then
+    have="$(cargo "${tool#cargo-}" --version 2>/dev/null)"
+  else
+    have="$("$tool" --version 2>/dev/null)"
+  fi
+  have="$(printf '%s\n' "$have" | sed -n "s/^$tool \\([0-9][^ ]*\\).*/\\1/p" | head -1)"
+  if [[ "$have" != "$want" ]]; then
+    echo "package: $tool is $have and the release is built with $want — cargo install --locked $tool@$want" >&2
+    echo "package: the packaging tool decides what the artifact is; two versions are two packages (spec §44.2)" >&2
+    exit 127
+  fi
+}
+
+require_tool cargo-deb@3.7.0
+require_tool cargo-generate-rpm@0.21.0
 
 version="$(cargo pkgid --package ono-cli | sed 's/.*[#@]//')"
 # Both tools clamp file timestamps and the build time to this, so the same commit yields the
@@ -76,10 +95,7 @@ if [[ $no_build -eq 0 ]]; then
       "$BUILD_IMAGE" \
       cargo build --release --locked --target "$target" --package ono-cli
   else
-    if ! command -v cross >/dev/null 2>&1; then
-      echo "package: cross is not installed — cargo install --locked cross" >&2
-      exit 127
-    fi
+    require_tool cross@0.2.5
     step "building ono for $target in cross's toolchain image"
     cat <<NOTE
 package: $target is foreign to this $host_triple host. The packages will carry the right

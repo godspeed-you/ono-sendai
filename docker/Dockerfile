@@ -33,7 +33,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
     find crates xtask fuzz docs/spec Cargo.toml Cargo.lock -type f -exec touch {} + && \
     cargo build --release --package ono-cli --package ono-kuang-sdk --locked \
-      || cargo build --release --package ono-cli --package ono-kuang-sdk \
     && install -m 0755 target/release/ono /usr/local/bin/ono \
     && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin \
     && install -m 0755 target/release/kuang-sign /usr/local/bin/kuang-sign

@@ -261,8 +261,10 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-**The v0.4.1 tranche, phase H0 — claimed 2026-09-02.** The build order and the H0…H12 milestones
-are recorded above; H0 is being delivered now:
+**The v0.4.1 tranche — claimed 2026-09-02.** The build order and the H0…H12 milestones are
+recorded above. **H0, H1, H4, H5 and H10 are delivered** (29 issues; #71's measured half and H0's
+#30/#117/#118 are the exceptions, each recorded below). H2, H3, H6, H7, H8, H9, H11 and H12 are
+open. What H0 delivered:
 
 - **#29** — `docs/ACCEPTANCE.md` §4.8 written from v0.4.1 §66.1–§66.9 and §40.3, all boxes
   unticked. `scripts/release-check.sh` fails on its unticked-box grep from the moment §4.8
@@ -272,6 +274,22 @@ are recorded above; H0 is being delivered now:
   first-output pathology. They land `#[ignore]`d with a `// REASON:` and a *Deferred* entry, the
   way v0.4's RED suites did (ADR-0426).
 - **#30**, **#117**, **#118** — baseline snapshot and the contract registries, behind the two above.
+
+**One integration commit, and why it is not thirty (2026-09-02).** AGENTS.md §4 asks for one
+increment of one kind per commit, and this batch does not meet it. Five agents worked the tranche
+in parallel **in one worktree**, and the shared contract files no longer separate: `docs/spec/errors.yaml`
+carries `E0604`/`E0605` from H1, the `K118` plugin family from H4 and `E1101`–`E1103` from H5;
+`xtask/src/scan.rs` carries H4's syscall scan and two repairs of mine; `crates/ono-cli/src/session.rs`
+carries H1's link fields and H5's result history. A commit taking any one of those files whole
+holds contract without implementation, which is not a green commit — and splitting them by hunk
+would fabricate intermediate states that were never tested.
+
+The cause is an orchestration mistake, not a property of the work: **AGENTS.md §12.1 allows
+sub-branches `implementation/<crate>` for parallel agents**, and all five were pointed at the same
+tree instead. H2, H3, H6 and the phases after them use sub-branches, so their increments separate.
+
+What replaces the granularity here: the commit body enumerates every issue with its ADR and its
+proofs, and each issue is closed on GitHub with a comment naming this commit and the evidence.
 
 Delivered so far in the tranche:
 
@@ -1694,7 +1712,105 @@ gh issue view <NN>               # the evidence for one problem
 gh issue list --label class-c    # the large ones, a tranche each
 ```
 
-*Empty.* The twenty-seven entries that stood here on 2026-08-31 were filed as issues **#1–#27** —
+**`rustls-pemfile` is archived, and the dependency policy now says so out loud (2026-09-02).**
+RUSTSEC-2025-0134: the crate is unmaintained. It is waived in `deny.toml` with a reason and an
+`expires = "2027-03-01"`, and `xtask/src/supply_chain.rs` fails the gate once a waiver's deadline
+passes, so the waiver cannot quietly become permanent. The replacement is
+`rustls_pki_types::pem::PemObject`, and the migration belongs to whoever owns `crates/ono-remote`
+— the crate reads the local certificate and key files that are a host's own pinned identity
+(ADR-0353, ADR-0449). **Exit test:** the workspace no longer depends on `rustls-pemfile`, and the
+waiver is deleted rather than extended.
+
+**`explain … | to json` cannot yield the plan as data (2026-09-02).** The `explain` builtin
+consumes the whole line, so `explain get process | sort m | to json` explains the `to json` stage
+rather than serialising the plan. `ExecutionPlan::to_value` is correct and unreachable from the
+shell. Closes when the builtin stops swallowing the stages downstream of it. **Exit test:**
+`explain <pipeline> | to json` answers the plan.
+
+**`measure` materializes for statistics that do not need it (2026-09-02).** `count`, `sum`,
+`mean`, `min` and `max` are constant-state; only the percentiles need the distribution held.
+Splitting them moves half of `measure` onto the incremental path (ADR-0455). **Exit test:**
+`measure count` over an unbounded source answers without materializing.
+
+**`complete.rs::BUDGET` is 40 ms and Appendix A says 50 (2026-09-02).** `limits.completion_soft_ms`
+and `limits.completion_hard_ms` are declared, range-validated and read by nobody. Closes with #86.
+**Exit test:** the completion path reads its budget from the catalogue.
+
+**`history.result_cache` is a superseded duplicate of `limits.history_bytes_total`
+(2026-09-02).** It is kept declared only so existing configuration files still parse (§4.5).
+Retire it in a release that may break configuration. **Exit test:** one key names the ceiling.
+
+**`ono-remote` declares its four ceilings as constants instead of reading the shared catalogue
+(2026-09-02).** `limits.remote_*` exist with `enforced_by: pending`, and §52.2 wants one source.
+This is **work for phase H3** (#54, one central `Limits` contract): if
+`docs/spec/hardening/remote_limits.yaml` is still wanted, it should reference these keys rather
+than restate the numbers. **Exit test:** changing a remote ceiling in the catalogue changes what
+the listener enforces.
+
+**The systemd test fixture leaks a follower process per run, and they accumulate for days
+(2026-09-02).** 331 `/bin/sh /tmp/ono-test-<pid>-4/journalctl --output=json --no-pager --follow`
+processes were alive on the development machine, the oldest **five days and two hours** old. Every
+one of their `/tmp/ono-test-*` directories had already been removed, so each was a follower
+pointing at a script that no longer exists, parked in `do_wait` with no child. They were killed by
+hand on 2026-09-02; nothing in the repository would have done it.
+
+This is the same defect class the spatial proof found while writing issue #22's fixture — two
+`ono` shells holding a pipeline open for seven hours — and the answer there was
+`support::run_bounded`, which kills *and reaps* at the deadline. The systemd fixture needs the
+same: whatever spawns the `--follow` stub owns its lifetime. Look in `crates/ono-testkit` and
+`crates/ono-provider-systemd/tests/` for the spawn site.
+
+It belongs to **H8** (test truthfulness, #88–#94): a suite that leaves 331 processes behind over
+five days is not reporting its own execution truthfully, whatever its exit code says. **Exit
+test:** a full `cargo test --workspace` run leaves no `ono-test-*` process behind, asserted rather
+than observed by hand.
+
+**`docs/decisions/ADR-0422` says a plugin "runs sandboxed under the shell's uid" (2026-09-02).**
+That is factually the claim v0.4.1 §65.5 forbids, and `xtask::terminology` would report it — which
+is why the scan deliberately excludes `docs/decisions/`. AGENTS.md §8 forbids editing an accepted
+ADR, so this closes by deciding whether a superseding note is warranted or whether the sentence
+stands as a historical record of what was believed then. **Exit test:** a decision, recorded.
+
+**A killed pre-exec child reports the first mandatory control rather than the reason
+(2026-09-02).** If the child dies between `fork` and `install_controls`, every row of the
+confinement report reads `not_attempted` and the refusal says `an earlier mandatory control failed
+first`. Honest, and unhelpful. Closed by folding the `io::Error` from `Command::spawn` into
+`ConfinementReport::refusal` when no row reads `failed` (ADR-0445 *Consequences*). **Exit test:** a
+spawn that fails before the first control names the spawn failure.
+
+**`Sandbox` is now the least accurate identifier in `ono-kuang-supervisor` (2026-09-02).** It
+carries an `ExecutionTier` and has stopped being "the native process sandbox". A pure rename,
+deliberately left out of a `feat` increment (AGENTS.md §4, ADR-0448). **Exit test:** the type is
+named for what it is.
+
+**`ono.plugin/1` carries both `isolation` and `execution_tier` (2026-09-02).** Two adjacent fields
+answering related questions is a real cost; `isolation` holds spec §31.10's *manifest* vocabulary
+and `execution_tier` holds what the plugin actually runs inside. Removing `isolation` is a schema
+break and belongs to whichever increment bumps `ono.plugin/1` (ADR-0448). **Exit test:** one field
+answers one question.
+
+**`ono.link/1`'s `transport_trust` can spell `newly_pinned`, which no production path produces
+(2026-09-02).** The CLI's `tcp` link uses `TrustPolicy::Pinned`, so the value is reachable only
+through the library. Harmless today; it becomes either a real state or a value to delete once H2
+decides whether an operator-facing trust-on-first-use mode exists at all (ADR-0438). **Exit test:**
+either a production path produces `newly_pinned`, or the schema stops offering it.
+
+**`--agent --host-key <path>` bypasses the §8.2 identity ladder entirely (2026-09-02).** An
+operator can run a listening agent on an identity that diverges from `link_identity.pem`. §8.2
+rule 5 is satisfied per role and ADR-0435 records the divergence as deliberate, so this is a
+visibility gap rather than a defect: nothing shows an operator that the two files disagree. A
+`get identity`-shaped surface naming both would close it. **Exit test:** a diverging pair is
+visible without reading the filesystem by hand.
+
+**The gate now needs `cargo-deny@0.20.2` installed (2026-09-02).** `scripts/gate.sh` runs
+`cargo deny --locked --all-features check` and exits 127 with the install command when the tool is
+absent, the same shape `cargo-deb` already uses (ADR-0121). Any machine that runs the gate needs
+`cargo install --locked cargo-deny@0.20.2`. This is a note rather than a defect; it is here so the
+next person to meet exit code 127 finds the reason.
+
+---
+
+*Empty when the tranche started.* The twenty-seven entries that stood here on 2026-08-31 were filed as issues **#1–#27** —
 five class C, twenty-two class B — and what follows is the record of the triage that produced
 them.
 
@@ -3221,27 +3337,17 @@ opposite of a silenced requirement: they are the requirement, written down befor
   interface that supplies the link; until then the relation is declared and honestly empty rather
   than faked or removed. **Exit test:** none can be written today, which is the point.
 
+- **#71's measured cancellation distribution.** The p95 < 100 ms / p99 < 250 ms half of issue #71
+  needs §37.2's *named reference environment*, which issue #84 delivers; asserting a wall clock on
+  shared hardware is the trap ADR-0252 and issue #21 already recorded. The deterministic half is
+  green and un-ignored — `crates/ono-pipeline/tests/cancellation.rs::should_stop_a_capture_growing_when_the_scope_is_cancelled`
+  reads the source's counter after the operation unwinds, waits, and reads it again. The
+  100-sample latency run was written, executed (100 cancellations in 0.07 s total, two orders of
+  magnitude inside the target) and removed from the tree rather than left ignored — ADR-0459
+  carries the measurement. **No ignored test exists for this.** Owed by **#83** and **#84**;
+  §4.8.6's box stays unticked and says so.
+
 The H0 failure proofs, red by design (issue #31, ADR-0430):
-
-- **A listening agent authenticates nobody.** A TLS client built `with_no_client_auth()` completes
-  the handshake against `TlsListener`, speaks the Ono protocol and reads back the agent's whole
-  provider inventory; the protocol `Identity` it sends is a string it chose about itself (v0.4.1
-  §0.5.1, §2.1, §2.2, §13.1, §59.1). Ignored test:
-  `crates/ono-remote/tests/client_authentication.rs::should_refuse_a_tls_client_that_presents_no_certificate`
-  — ADR-0430. Un-ignored by issue #35, which makes the listener demand and verify a client
-  certificate; the assertion may not change in that increment.
-
-- **A mandatory confinement failure does not stop the plugin.** The `pre_exec` closure in
-  `crates/ono-kuang-supervisor/src/sandbox.rs` discards every `setrlimit`, `setpriority`, `setsid`
-  and `prctl` return value and ends in an unconditional `Ok(())`, so a native plugin execs after a
-  control Appendix D marks `required` / `spawn fails` was refused (v0.4.1 §0.5.3, §2.3, §16.2,
-  §16.3, §59.7). The proof fails `setsid` with `EPERM` by making the child a process-group leader,
-  so the failure is arranged from outside the process with no fault injection and no privileges.
-  Ignored test:
-  `crates/ono-kuang-supervisor/tests/confinement.rs::should_not_exec_the_plugin_when_a_mandatory_confinement_control_fails`
-  — ADR-0430. Un-ignored by issues #59 and #60. ADR-0430 also records that phase H4 still owes the
-  injectable platform layer §59.7 asks for, because `PR_SET_NO_NEW_PRIVS` cannot be failed from
-  outside the process.
 
 - **`each` captures its complete upstream before its block runs.**
   `crates/ono-cli/tests/each_streaming.rs` holds two `#[ignore]`d tests, both red at HEAD with

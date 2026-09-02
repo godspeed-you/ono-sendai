@@ -7,13 +7,17 @@
 
 #![allow(
     clippy::expect_used,
+    clippy::panic,
     reason = "AGENTS.md §16: a helper shared by tests states its preconditions the same way a test does"
 )]
 
 use std::path::Path;
 
 use ono_testkit::{Scratch, scratch};
-use xtask::supply_chain::{check_action_pins, check_image_digests, check_workflow_permissions};
+use xtask::supply_chain::{
+    check_action_pins, check_dependency_justifications, check_dependency_policy,
+    check_image_digests, check_locked_builds, check_tool_versions, check_workflow_permissions,
+};
 
 /// Builds a throwaway repository shaped like this one.
 fn fixture(files: &[(&str, &str)]) -> Scratch {
@@ -325,6 +329,595 @@ fn should_report_this_repository_as_granting_least_privilege_in_every_workflow()
     assert!(
         problems.is_empty(),
         "this repository hands its workflows more than they need:\n{}",
+        report(&problems)
+    );
+}
+
+// --- dependency policy (spec §45.1, §45.2, §62.3) -----------------------------------------------
+
+/// A policy file that satisfies every rule but the one under test.
+const SOUND_POLICY: &str = r#"
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = ["MIT"]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+"#;
+
+/// A gate that runs the policy, so a fixture only fails on what it is about.
+const SOUND_GATE: &str = "cargo deny --locked check\n";
+
+#[test]
+fn should_reject_a_repository_with_no_dependency_policy_at_all() {
+    let repo = fixture(&[("scripts/gate.sh", SOUND_GATE)]);
+    let problems = check_dependency_policy(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert_eq!(problems[0].location, "deny.toml");
+}
+
+#[test]
+fn should_reject_a_dependency_policy_that_leaves_one_of_the_four_checks_unconfigured() {
+    let repo = fixture(&[
+        ("scripts/gate.sh", SOUND_GATE),
+        (
+            "deny.toml",
+            "[advisories]\nyanked = \"deny\"\n\n[licenses]\nallow = [\"MIT\"]\n\n[bans]\nmultiple-versions = \"warn\"\n",
+        ),
+    ]);
+    let problems = check_dependency_policy(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("sources"), "got {problems:?}");
+}
+
+#[test]
+fn should_reject_a_dependency_policy_that_allows_no_licence_at_all() {
+    let repo = fixture(&[
+        ("scripts/gate.sh", SOUND_GATE),
+        (
+            "deny.toml",
+            &SOUND_POLICY.replace("allow = [\"MIT\"]", "allow = []"),
+        ),
+    ]);
+    let problems = check_dependency_policy(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("licence"), "got {problems:?}");
+}
+
+#[test]
+fn should_reject_an_ignored_advisory_that_names_no_removal_deadline() {
+    let repo = fixture(&[
+        ("scripts/gate.sh", SOUND_GATE),
+        (
+            "deny.toml",
+            &SOUND_POLICY.replace(
+                "[advisories]\n",
+                "[advisories]\nignore = [{ id = \"RUSTSEC-2026-0001\", reason = \"we will look \
+                 at it\" }]\n",
+            ),
+        ),
+    ]);
+    let problems = check_dependency_policy(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("RUSTSEC-2026-0001"),
+        "got {problems:?}"
+    );
+}
+
+#[test]
+fn should_accept_an_ignored_advisory_carrying_a_reason_and_a_removal_deadline() {
+    let repo = fixture(&[
+        ("scripts/gate.sh", SOUND_GATE),
+        (
+            "deny.toml",
+            &SOUND_POLICY.replace(
+                "[advisories]\n",
+                "[advisories]\nignore = [{ id = \"RUSTSEC-2026-0001\", reason = \"the vulnerable \
+                 path is unreachable, expires 2099-01-01\" }]\n",
+            ),
+        ),
+    ]);
+    assert_eq!(check_dependency_policy(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_reject_an_ignored_advisory_whose_removal_deadline_has_passed() {
+    let repo = fixture(&[
+        ("scripts/gate.sh", SOUND_GATE),
+        (
+            "deny.toml",
+            &SOUND_POLICY.replace(
+                "[advisories]\n",
+                "[advisories]\nignore = [{ id = \"RUSTSEC-2026-0001\", reason = \"the vulnerable \
+                 path is unreachable, expires 2000-01-01\" }]\n",
+            ),
+        ),
+    ]);
+    let problems = check_dependency_policy(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("2000-01-01"),
+        "got {problems:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_dependency_policy_that_nothing_in_the_gate_runs() {
+    let repo = fixture(&[
+        ("scripts/gate.sh", "cargo test --workspace\n"),
+        ("deny.toml", SOUND_POLICY),
+    ]);
+    let problems = check_dependency_policy(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert_eq!(problems[0].location, "scripts/gate.sh");
+}
+
+#[test]
+fn should_report_this_repository_as_running_its_dependency_policy_in_the_gate() {
+    let problems = check_dependency_policy(this_repository());
+    assert!(
+        problems.is_empty(),
+        "this repository's dependency policy does not hold:\n{}",
+        report(&problems)
+    );
+}
+
+// --- recorded justifications (spec §45.3, §45.4) ------------------------------------------------
+
+#[test]
+fn should_fail_the_dependency_policy_on_an_unjustified_git_dependency() {
+    let repo = fixture(&[(
+        "Cargo.toml",
+        "[workspace]\nmembers = []\n\n[workspace.dependencies]\nacme = { git = \"https://example.invalid/acme\", rev = \"1111111111111111111111111111111111111111\" }\n",
+    )]);
+    let problems = check_dependency_justifications(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("acme"), "got {problems:?}");
+}
+
+#[test]
+fn should_reject_a_git_dependency_that_follows_a_branch_instead_of_a_revision() {
+    let repo = fixture(&[(
+        "Cargo.toml",
+        "[workspace]\nmembers = []\n\n[workspace.dependencies]\nacme = { git = \"https://example.invalid/acme\", branch = \"main\" }\n\n[[workspace.metadata.supply-chain.git]]\ncrate = \"acme\"\nreason = \"nothing else reads the format\"\nadr = \"ADR-0449\"\n",
+    )]);
+    let problems = check_dependency_justifications(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("branch"), "got {problems:?}");
+}
+
+#[test]
+fn should_accept_a_git_dependency_pinned_to_a_revision_and_written_down() {
+    let repo = fixture(&[(
+        "Cargo.toml",
+        "[workspace]\nmembers = []\n\n[workspace.dependencies]\nacme = { git = \"https://example.invalid/acme\", rev = \"1111111111111111111111111111111111111111\" }\n\n[[workspace.metadata.supply-chain.git]]\ncrate = \"acme\"\nreason = \"nothing else reads the format\"\nadr = \"ADR-0449\"\n",
+    )]);
+    assert_eq!(check_dependency_justifications(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_reject_a_cryptographic_dependency_nobody_recorded_a_review_for() {
+    let repo = fixture(&[(
+        "Cargo.toml",
+        "[workspace]\nmembers = []\n\n[workspace.dependencies]\nacme-tls = \"1\"\n",
+    )]);
+    let problems = check_dependency_justifications(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("acme-tls"), "got {problems:?}");
+}
+
+#[test]
+fn should_reject_a_cryptographic_dependency_a_single_crate_pulls_in_on_its_own() {
+    let repo = fixture(&[
+        ("Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n"),
+        (
+            "crates/ono-thing/Cargo.toml",
+            "[package]\nname = \"ono-thing\"\n\n[dependencies]\ned25519-dalek = \"3\"\n",
+        ),
+    ]);
+    let problems = check_dependency_justifications(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("ed25519-dalek"),
+        "got {problems:?}"
+    );
+}
+
+#[test]
+fn should_accept_a_cryptographic_dependency_whose_review_is_recorded() {
+    let repo = fixture(&[(
+        "Cargo.toml",
+        "[workspace]\nmembers = []\n\n[workspace.dependencies]\nacme-tls = \"1\"\n\n[[workspace.metadata.supply-chain.cryptographic]]\ncrate = \"acme-tls\"\nrole = \"the transport of spec §21.5\"\nadr = \"ADR-0449\"\nreviewed = \"2026-09-02\"\n",
+    )]);
+    assert_eq!(check_dependency_justifications(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_ignore_a_crate_that_only_inherits_a_dependency_the_workspace_already_recorded() {
+    let repo = fixture(&[
+        (
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.dependencies]\nacme-tls = \"1\"\n\n[[workspace.metadata.supply-chain.cryptographic]]\ncrate = \"acme-tls\"\nrole = \"the transport of spec §21.5\"\nadr = \"ADR-0449\"\nreviewed = \"2026-09-02\"\n",
+        ),
+        (
+            "crates/ono-thing/Cargo.toml",
+            "[package]\nname = \"ono-thing\"\n\n[dependencies]\nacme-tls.workspace = true\n",
+        ),
+    ]);
+    assert_eq!(check_dependency_justifications(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_report_a_recorded_justification_for_a_dependency_the_workspace_no_longer_has() {
+    let repo = fixture(&[(
+        "Cargo.toml",
+        "[workspace]\nmembers = []\n\n[[workspace.metadata.supply-chain.cryptographic]]\ncrate = \"acme-tls\"\nrole = \"the transport of spec §21.5\"\nadr = \"ADR-0449\"\nreviewed = \"2026-09-02\"\n",
+    )]);
+    let problems = check_dependency_justifications(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("acme-tls"), "got {problems:?}");
+}
+
+#[test]
+fn should_report_this_repository_as_justifying_every_git_and_cryptographic_dependency() {
+    let problems = check_dependency_justifications(this_repository());
+    assert!(
+        problems.is_empty(),
+        "this repository trusts dependencies nobody wrote a reason for:\n{}",
+        report(&problems)
+    );
+}
+
+// --- the policy command actually fails (spec §62.3) ---------------------------------------------
+//
+// A policy nobody has seen fail is a policy nobody has tested. These two run the real
+// `cargo deny` against a condition arranged from outside it, so the gate's dependency step is
+// known to be load-bearing rather than assumed to be.
+
+/// Runs `cargo deny` and returns its exit status and combined output.
+fn cargo_deny(args: &[&str]) -> (bool, String) {
+    let output = std::process::Command::new("cargo")
+        .arg("deny")
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| {
+            panic!(
+                "`cargo deny` must be runnable in the gate — cargo install --locked \
+                 cargo-deny@0.20.2: {error}"
+            )
+        });
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    (output.status.success(), text)
+}
+
+/// Makes `dir` a git repository holding everything under it, which is the only shape
+/// `cargo deny` will read an advisory database in.
+fn commit_everything(dir: &Path) {
+    for args in [
+        vec!["-c", "init.defaultBranch=main", "init", "--quiet"],
+        vec!["add", "--all"],
+        vec![
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "user.name=fixture",
+            "commit",
+            "--quiet",
+            "--message",
+            "the seeded database",
+        ],
+    ] {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(&args)
+            .status()
+            .expect("git must be runnable in the gate");
+        assert!(status.success(), "git {args:?} failed in {}", dir.display());
+    }
+}
+
+#[test]
+fn should_fail_the_dependency_policy_on_a_denied_advisory_fixture() {
+    // The advisory arm can only fire on a crate that came from a registry, so the graph under
+    // test is this workspace and the database is the fixture: one advisory, invented here,
+    // against a crate this repository really depends on.
+    let lock = std::fs::read_to_string(this_repository().join("Cargo.lock")).expect("Cargo.lock");
+    let (name, version) = first_registry_crate(&lock);
+
+    let scratch = scratch();
+    let db_path = scratch.path().join("advisory-db");
+    let config = scratch.write(
+        "deny.toml",
+        format!(
+            "[advisories]\ndb-path = {:?}\ndb-urls = [\"https://example.invalid/ono-fixture-advisory-db\"]\n",
+            db_path.display().to_string()
+        ),
+    );
+    let manifest = this_repository().join("Cargo.toml");
+    let arguments = [
+        "--manifest-path",
+        manifest.to_str().expect("a utf-8 path"),
+        "--config",
+        config.to_str().expect("a utf-8 path"),
+        "--offline",
+        "check",
+        "advisories",
+    ];
+
+    // cargo-deny keeps each database in a directory it names after the URL. Rather than
+    // reproducing that naming, the fixture asks: the first run fails because the database is
+    // absent, and says where it looked.
+    let (passed, output) = cargo_deny(&arguments);
+    assert!(
+        !passed,
+        "an absent advisory database must not pass:\n{output}"
+    );
+    let seeded = output
+        .split(|c: char| c == '"' || c == '\'' || c.is_whitespace())
+        .find(|word| word.starts_with(&db_path.display().to_string()))
+        .unwrap_or_else(|| panic!("cargo-deny did not say where it keeps the database:\n{output}"))
+        .to_owned();
+
+    std::fs::create_dir_all(Path::new(&seeded).join("crates").join(&name))
+        .expect("the seeded database directory");
+    std::fs::write(
+        Path::new(&seeded)
+            .join("crates")
+            .join(&name)
+            .join("RUSTSEC-2026-0001.md"),
+        format!(
+            "```toml\n[advisory]\nid = \"RUSTSEC-2026-0001\"\npackage = \"{name}\"\n\
+             date = \"2026-01-01\"\nurl = \"https://example.invalid/seeded\"\n\
+             categories = [\"code-execution\"]\nkeywords = [\"fixture\"]\n\n\
+             [versions]\npatched = [\">= 99.0.0\"]\n```\n\n\
+             # A seeded advisory that exists only to prove the policy fails\n\n\
+             Nothing in it is real. It names {name} {version} because this workspace depends on \
+             it, so a policy that reports nothing here is a policy that reports nothing at all.\n"
+        ),
+    )
+    .expect("the seeded advisory");
+    commit_everything(Path::new(&seeded));
+
+    let (passed, output) = cargo_deny(&arguments);
+    assert!(
+        !passed,
+        "the dependency policy passed with an advisory against {name} {version}:\n{output}"
+    );
+    assert!(
+        output.contains("RUSTSEC-2026-0001"),
+        "the failure does not name the advisory:\n{output}"
+    );
+}
+
+#[test]
+fn should_fail_the_dependency_policy_on_a_denied_license_fixture() {
+    let workspace = fixture(&[
+        (
+            "Cargo.toml",
+            "[workspace]\n\n[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n\
+             edition = \"2021\"\nlicense = \"MIT\"\n\n[dependencies]\n\
+             denied = { path = \"denied\" }\n",
+        ),
+        ("src/lib.rs", ""),
+        (
+            "denied/Cargo.toml",
+            "[package]\nname = \"denied\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             license = \"GPL-3.0\"\n",
+        ),
+        ("denied/src/lib.rs", ""),
+        ("deny.toml", "[licenses]\nallow = [\"MIT\"]\n"),
+    ]);
+    let manifest = workspace.path().join("Cargo.toml");
+    let config = workspace.path().join("deny.toml");
+    let (passed, output) = cargo_deny(&[
+        "--manifest-path",
+        manifest.to_str().expect("a utf-8 path"),
+        "--config",
+        config.to_str().expect("a utf-8 path"),
+        "--offline",
+        "check",
+        "licenses",
+    ]);
+    assert!(
+        !passed,
+        "the dependency policy passed a GPL-3.0 crate under an MIT-only allow list:\n{output}"
+    );
+    assert!(
+        output.contains("GPL-3.0"),
+        "the failure does not name the licence:\n{output}"
+    );
+}
+
+/// The first crate in a lockfile that a registry supplied, with its version.
+fn first_registry_crate(lock: &str) -> (String, String) {
+    let mut name = None;
+    let mut version = None;
+    for line in lock.lines() {
+        if let Some(rest) = line.strip_prefix("name = \"") {
+            name = rest.strip_suffix('"').map(str::to_owned);
+        } else if let Some(rest) = line.strip_prefix("version = \"") {
+            version = rest.strip_suffix('"').map(str::to_owned);
+        } else if line.starts_with("source = \"registry+")
+            && let (Some(name), Some(version)) = (name.clone(), version.clone())
+        {
+            return (name, version);
+        }
+    }
+    panic!("Cargo.lock names no crate that came from a registry");
+}
+
+// --- exact tool versions and locked builds (spec §44.2, §44.3, §44.4) ---------------------------
+
+/// A workspace manifest whose register names the versions the fixtures install.
+const SOUND_REGISTER: &str = "[workspace]\nmembers = []\n\n\
+     [workspace.metadata.release-tools]\ncargo-deb = \"3.7.0\"\n";
+
+/// A workspace manifest that pins no tool, for the fixtures that are about the toolchain.
+const NO_TOOLS: &str = "[workspace]\nmembers = []\n";
+
+/// The pinned toolchain the fixtures agree with.
+const SOUND_TOOLCHAIN: &str = "[toolchain]\nchannel = \"1.94\"\n";
+
+#[test]
+fn should_reject_a_tool_installed_without_a_version() {
+    let repo = fixture(&[
+        ("Cargo.toml", SOUND_REGISTER),
+        ("rust-toolchain.toml", SOUND_TOOLCHAIN),
+        (
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    steps:\n      - uses: taiki-e/install-action@abc\n        with:\n          tool: cargo-deb\n",
+        ),
+    ]);
+    let problems = check_tool_versions(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("cargo-deb"), "got {problems:?}");
+}
+
+#[test]
+fn should_reject_a_tool_installed_at_a_version_the_register_does_not_name() {
+    let repo = fixture(&[
+        ("Cargo.toml", SOUND_REGISTER),
+        ("rust-toolchain.toml", SOUND_TOOLCHAIN),
+        (
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    steps:\n      - uses: taiki-e/install-action@abc\n        with:\n          tool: cargo-deb@1.0.0\n",
+        ),
+    ]);
+    let problems = check_tool_versions(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("3.7.0"), "got {problems:?}");
+}
+
+#[test]
+fn should_accept_a_tool_installed_at_the_registered_version() {
+    let repo = fixture(&[
+        ("Cargo.toml", SOUND_REGISTER),
+        ("rust-toolchain.toml", SOUND_TOOLCHAIN),
+        (
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    steps:\n      - uses: taiki-e/install-action@abc\n        with:\n          tool: cargo-deb@3.7.0\n",
+        ),
+    ]);
+    assert_eq!(check_tool_versions(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_reject_a_release_job_asking_for_a_toolchain_the_repository_does_not_pin() {
+    let repo = fixture(&[
+        ("Cargo.toml", NO_TOOLS),
+        ("rust-toolchain.toml", SOUND_TOOLCHAIN),
+        (
+            ".github/workflows/release.yml",
+            "jobs:\n  a:\n    steps:\n      - uses: dtolnay/rust-toolchain@abc\n        with:\n          toolchain: \"1.90\"\n",
+        ),
+    ]);
+    let problems = check_tool_versions(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("1.94"), "got {problems:?}");
+}
+
+#[test]
+fn should_reject_a_rust_toolchain_that_follows_a_channel_instead_of_a_version() {
+    let repo = fixture(&[
+        ("Cargo.toml", NO_TOOLS),
+        ("rust-toolchain.toml", "[toolchain]\nchannel = \"stable\"\n"),
+    ]);
+    let problems = check_tool_versions(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert_eq!(problems[0].location, "rust-toolchain.toml");
+}
+
+#[test]
+fn should_reject_a_registered_tool_version_that_disagrees_with_a_script() {
+    let repo = fixture(&[
+        ("Cargo.toml", SOUND_REGISTER),
+        ("rust-toolchain.toml", SOUND_TOOLCHAIN),
+        (
+            "scripts/package.sh",
+            "for spec in cargo-deb@3.5.0; do :; done\n",
+        ),
+    ]);
+    let problems = check_tool_versions(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("3.7.0"), "got {problems:?}");
+}
+
+#[test]
+fn should_report_a_registered_tool_version_nothing_installs() {
+    let repo = fixture(&[
+        (
+            "Cargo.toml",
+            "[workspace]\nmembers = []\n\n[workspace.metadata.release-tools]\nghost-tool = \"1.0.0\"\n",
+        ),
+        ("rust-toolchain.toml", SOUND_TOOLCHAIN),
+    ]);
+    let problems = check_tool_versions(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].detail.contains("ghost-tool"),
+        "got {problems:?}"
+    );
+}
+
+#[test]
+fn should_find_an_exact_version_for_every_release_tool() {
+    let problems = check_tool_versions(this_repository());
+    assert!(
+        problems.is_empty(),
+        "this repository builds a release with tools nothing pins:\n{}",
+        report(&problems)
+    );
+}
+
+#[test]
+fn should_reject_a_release_build_that_does_not_lock_the_dependency_graph() {
+    let repo = fixture(&[(
+        "scripts/package.sh",
+        "cargo build --release --target \"$target\" --package ono-cli\n",
+    )]);
+    let problems = check_locked_builds(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].detail.contains("--locked"), "got {problems:?}");
+}
+
+#[test]
+fn should_reject_a_fallback_that_builds_again_without_the_lock() {
+    let repo = fixture(&[(
+        "docker/Dockerfile",
+        "RUN cargo build --release --locked \\\n  || cargo build --release\n",
+    )]);
+    let problems = check_locked_builds(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0].location.ends_with(":2"),
+        "got {}",
+        problems[0].location
+    );
+}
+
+#[test]
+fn should_accept_a_developer_script_that_only_mentions_a_build_command() {
+    let repo = fixture(&[(
+        "scripts/demo/make.sh",
+        "echo \"demo: cargo build --release -p ono-cli first\"\n",
+    )]);
+    assert_eq!(check_locked_builds(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_build_the_release_with_a_locked_dependency_graph() {
+    let problems = check_locked_builds(this_repository());
+    assert!(
+        problems.is_empty(),
+        "this repository builds a release that may re-resolve its dependencies:\n{}",
         report(&problems)
     );
 }

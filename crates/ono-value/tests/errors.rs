@@ -139,3 +139,112 @@ fn should_reject_reading_an_error_as_another_type() {
 
     assert_eq!(error.code(), ErrorCode::TypeMismatch);
 }
+
+// --- v0.4.1 §21.4 and §53.1: the three resource refusals (issue #73) --------------------------
+
+#[test]
+fn should_declare_the_three_resource_refusal_codes_with_their_details() {
+    // §53.1 names the three families and §21.4 fixes what they carry: "the configured limit and
+    // observed/estimated consumption without dumping the retained values themselves". A resource
+    // error that printed what it was holding would be a second resource problem.
+    let registry = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/errors.yaml"),
+    )
+    .expect("docs/spec/errors.yaml is the single taxonomy (ADR-0125)");
+
+    for (code, name) in [
+        (ErrorCode::ResourceItemLimit, "resource.item_limit"),
+        (ErrorCode::ResourceByteLimit, "resource.byte_limit"),
+        (
+            ErrorCode::ResourceMaterializationLimit,
+            "resource.materialization_limit",
+        ),
+    ] {
+        assert_eq!(
+            code.name(),
+            name,
+            "§53.1 fixes the selector automation matches on"
+        );
+        assert_eq!(
+            code.kind(),
+            ErrorKind::Resource,
+            "a budget being reached is its own class, not a timeout and not a safety policy"
+        );
+        assert!(
+            registry.contains(&format!("name: {name}")),
+            "ADR-0125: `{name}` is implemented and `docs/spec/errors.yaml` does not declare it"
+        );
+        assert!(
+            registry.contains(code.code()),
+            "ADR-0125: `{}` is implemented and the registry does not declare it",
+            code.code()
+        );
+    }
+
+    // §21.4's detail fields, and the payload that must not be among them.
+    let mut budget = ono_value::Budget::of("sort", 2, 1 << 30);
+    let secret = Value::string("a-token-nobody-should-see-in-a-diagnostic");
+    budget.charge(&secret).expect("the first value fits");
+    budget.charge(&secret).expect("the second value fits");
+    let refusal = budget
+        .charge(&secret)
+        .expect_err("the third crosses the ceiling")
+        .into_error();
+
+    assert_eq!(refusal.code(), ErrorCode::ResourceItemLimit);
+    let detail = refusal.metadata();
+    assert_eq!(
+        detail.get("limit").and_then(|limit| limit.as_int().ok()),
+        Some(2),
+        "§21.4: the refusal carries the configured limit"
+    );
+    assert_eq!(
+        detail
+            .get("consumed")
+            .and_then(|consumed| consumed.as_int().ok()),
+        Some(3),
+        "§21.4: and the consumption that crossed it"
+    );
+    assert_eq!(
+        detail
+            .get("stage")
+            .and_then(|stage| stage.as_str().ok().map(str::to_owned)),
+        Some("sort".to_owned()),
+        "§54.1: a refusal names the boundary that made the decision"
+    );
+    assert_eq!(
+        detail
+            .get("setting")
+            .and_then(|key| key.as_str().ok().map(str::to_owned)),
+        Some("limits.materialize_items".to_owned()),
+        "§55.1: and the key a user would raise to permit more"
+    );
+    assert!(
+        refusal.help().is_some_and(|help| help.contains("limits.")),
+        "§54.1: and the configuration key that would permit more: {:?}",
+        refusal.help()
+    );
+
+    let rendered = refusal.render_full();
+    assert!(
+        !rendered.contains("a-token-nobody-should-see-in-a-diagnostic"),
+        "§21.4, §53.3: the refusal dumped the value it was holding: {rendered}"
+    );
+}
+
+#[test]
+fn should_answer_the_same_resource_refusal_for_the_same_ceiling_every_time() {
+    // §53.2: automation matches codes, so a code has to be a function of the condition alone.
+    let refuse = |max_items: u64, max_bytes: u64| {
+        let mut budget = ono_value::Budget::of("collect", max_items, max_bytes);
+        loop {
+            if let Err(exceeded) = budget.charge(&Value::string(&"x".repeat(4096))) {
+                return exceeded.into_error().code();
+            }
+        }
+    };
+    for _ in 0..8 {
+        assert_eq!(refuse(2, 1 << 30), ErrorCode::ResourceItemLimit);
+        assert_eq!(refuse(1_000_000, 4096), ErrorCode::ResourceByteLimit);
+    }
+}

@@ -18,7 +18,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ono_protocol::{ClientConfig, Identity, PlainTransport, TrustPolicy};
+use ono_protocol::{ClientConfig, Identity, TrustPolicy, UnauthenticatedTransport};
 use ono_remote::{AgentConfig, RemoteLink, serve_registry};
 use ono_value::ErrorValue;
 
@@ -69,9 +69,12 @@ pub async fn connect() -> Connected {
     let observed = Arc::new(FixtureObserved::default());
     let registry = fixture_registry(Arc::clone(&observed));
     let config = AgentConfig::new(registry).with_identity(Identity::new("remote-user"));
-    let agent = tokio::spawn(async move { serve_registry(PlainTransport::new(far), config).await });
+    let agent =
+        tokio::spawn(
+            async move { serve_registry(UnauthenticatedTransport::new(far), config).await },
+        );
     let link = within(RemoteLink::connect(
-        PlainTransport::new(near),
+        UnauthenticatedTransport::new(near),
         client_config(),
     ))
     .await

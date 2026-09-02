@@ -10,6 +10,8 @@ pub mod bindings;
 pub mod conformance;
 pub mod contracts;
 pub mod narrative;
+pub mod provenance;
 pub mod reference;
 pub mod scan;
 pub mod supply_chain;
+pub mod terminology;

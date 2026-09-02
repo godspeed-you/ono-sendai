@@ -96,6 +96,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     problems.extend(check_spatial_implementation(root));
     problems.extend(check_provider_claims(root));
     problems.extend(check_kuang_contracts(root));
+    problems.extend(check_hardening_contracts(root));
 
     problems.sort_by(|a, b| (&a.location, &a.detail).cmp(&(&b.location, &b.detail)));
     problems
@@ -2442,4 +2443,347 @@ fn manifest_section_fields(section: &str) -> Option<BTreeSet<String>> {
         .map(str::to_owned)
         .collect();
     (!fields.is_empty()).then_some(fields)
+}
+
+/// Holds `docs/spec/hardening/` against the runtime that serves it (v0.4.1 §52.2, §52.3).
+///
+/// §52.1 asks for the hardening policy data as machine-readable registries rather than prose-only
+/// constants, and §52.2 for one source of truth behind the runtime defaults, the generated
+/// documentation and the tests. A registry nothing is compared against is a second copy that
+/// agrees today; this is the comparison.
+///
+/// Today the directory holds one registry, `kuang_confinement_controls.yaml`. The other six of
+/// §52.1 arrive with the phases that need them, and a missing registry is not an error
+/// (AGENTS.md §14).
+#[must_use]
+pub fn check_hardening_contracts(root: &Path) -> Vec<Problem> {
+    let directory = root.join("docs").join("spec").join("hardening");
+    if !directory.is_dir() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    let read = |name: &str| -> Option<(String, Yaml)> {
+        let path = directory.join(name);
+        let text = std::fs::read_to_string(&path).ok()?;
+        // The generic sweep already reports a file that is not valid YAML, with the parse error.
+        let document = serde_yaml_ng::from_str::<Yaml>(&text).ok()?;
+        Some((relative(root, &path), document))
+    };
+
+    if let Some((location, document)) = read("kuang_confinement_controls.yaml") {
+        problems.extend(check_confinement_controls(&location, &document));
+    }
+    if let Some((location, document)) = read("streaming_classification.yaml") {
+        problems.extend(check_streaming_classification(root, &location, &document));
+    }
+    if let Some((location, document)) = read("limits.yaml") {
+        problems.extend(check_limits_registry(&location, &document));
+    }
+    problems
+}
+
+/// v0.4.1 Appendix E's matrix against the command registry and `ono_command::ExecutionClass`.
+///
+/// Appendix E closes with the sentence this check exists to enforce: *"If a command cannot be
+/// placed in this matrix, its execution semantics are underspecified and MUST be resolved before
+/// release."* So a stream-consuming command that names no class is a problem, a class the
+/// implementation does not know is a problem, and a class whose two properties disagree between
+/// the registry and the implementation is a problem.
+fn check_streaming_classification(root: &Path, location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_command::ExecutionClass;
+
+    let mut problems = Vec::new();
+    let problem = |detail: String| Problem {
+        location: location.to_owned(),
+        detail,
+    };
+
+    let mut declared = BTreeSet::new();
+    for entry in sequence(document, "classes") {
+        let Some(id) = string_at(entry, "id") else {
+            continue;
+        };
+        declared.insert(id.clone());
+        let Some(class) = ExecutionClass::from_id(&id) else {
+            problems.push(problem(format!(
+                "`{id}` is declared as an execution class and `ono_command::ExecutionClass` has \
+                 no such variant, so no command can be placed in it (v0.4.1 Appendix E, §52.3)"
+            )));
+            continue;
+        };
+        for (field, implemented) in [
+            ("requires_finite_input", class.requires_finite_input()),
+            ("may_materialize", class.may_materialize()),
+        ] {
+            let registered = entry.get(field).and_then(Yaml::as_bool);
+            if registered != Some(implemented) {
+                problems.push(problem(format!(
+                    "`{id}` has {field} {registered:?} in the registry and {implemented} in the \
+                     implementation; Appendix E fixes one answer per class"
+                )));
+            }
+        }
+    }
+    for class in ExecutionClass::ALL {
+        if !declared.contains(class.id()) {
+            problems.push(problem(format!(
+                "`{}` is an execution class the implementation knows and the registry does not \
+                 declare (v0.4.1 Appendix E)",
+                class.id()
+            )));
+        }
+    }
+
+    let mut placed: BTreeMap<String, String> = BTreeMap::new();
+    for entry in sequence(document, "operations") {
+        let (Some(command), Some(class)) = (string_at(entry, "command"), string_at(entry, "class"))
+        else {
+            problems.push(problem(
+                "an operation row names no command or no class".to_owned(),
+            ));
+            continue;
+        };
+        if !declared.contains(&class) {
+            problems.push(problem(format!(
+                "`{command}` is placed in `{class}`, which is not one of the eight classes of \
+                 v0.4.1 Appendix E"
+            )));
+        }
+        placed.insert(command, class);
+    }
+
+    // Every command that consumes a stream is a pipeline operation, and Appendix E requires every
+    // one of them to be placeable. The contracts are the list, so the list cannot go stale.
+    let commands = root.join("docs").join("spec").join("commands");
+    let Ok(entries) = std::fs::read_dir(&commands) else {
+        return problems;
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "yaml")
+        })
+        .collect();
+    paths.sort();
+    for path in paths {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        for command in sequence(&document, "commands") {
+            let Some(id) = string_at(command, "id") else {
+                continue;
+            };
+            let consumes_stream = string_at(command, "input")
+                .is_some_and(|input| input.starts_with("stream<") || input.starts_with("stream "));
+            let stated = string_at(command, "execution");
+            match (consumes_stream, placed.get(&id), stated.as_ref()) {
+                (true, None, _) => problems.push(problem(format!(
+                    "`{id}` consumes a stream and this matrix does not place it; v0.4.1 \
+                     Appendix E: \"If a command cannot be placed in this matrix, its execution \
+                     semantics are underspecified and MUST be resolved before release\""
+                ))),
+                (_, Some(class), Some(contract)) if class != contract => {
+                    problems.push(problem(format!(
+                        "`{id}` is `{class}` in this matrix and `{contract}` in its contract"
+                    )));
+                }
+                (_, Some(class), None) => problems.push(problem(format!(
+                    "`{id}` is placed in `{class}` here and its contract declares no \
+                     `execution:`, so nothing the shell runs reads the classification"
+                ))),
+                _ => {}
+            }
+        }
+    }
+    problems
+}
+
+/// v0.4.1 §55.1 and Appendix A's limits against the shell's own settings catalogue.
+///
+/// §52.2: *"A number such as `max_connections = 32` MUST not be independently typed into five
+/// files if one contract can generate the others."* The bidirectional comparison against
+/// `ono_cli::settings::CATALOGUE` is a test rather than a gate check, because `xtask` does not
+/// depend on `ono-cli`; what the gate checks here is that the registry is internally coherent, so
+/// the test has something well-formed to compare against.
+fn check_limits_registry(location: &str, document: &Yaml) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let problem = |detail: String| Problem {
+        location: location.to_owned(),
+        detail,
+    };
+    let mut seen = BTreeSet::new();
+    for entry in sequence(document, "limits") {
+        let Some(key) = string_at(entry, "key") else {
+            problems.push(problem("a limit row names no key".to_owned()));
+            continue;
+        };
+        if !key.starts_with("limits.") {
+            problems.push(problem(format!(
+                "`{key}` is declared as a runtime limit and v0.4.1 §55.1 spells every one of them \
+                 `limits.<name>`"
+            )));
+        }
+        if !seen.insert(key.clone()) {
+            problems.push(problem(format!("`{key}` is declared twice")));
+        }
+        let number = |field: &str| entry.get(field).and_then(Yaml::as_u64);
+        let (Some(default), Some(min), Some(max)) =
+            (number("default"), number("min"), number("max"))
+        else {
+            problems.push(problem(format!(
+                "`{key}` does not carry a default, a minimum and a maximum as whole numbers; \
+                 v0.4.1 §55.2 range-checks every limit and Appendix A expresses each in integer \
+                 base units"
+            )));
+            continue;
+        };
+        if min > max {
+            problems.push(problem(format!("`{key}` has a minimum above its maximum")));
+        }
+        if default < min || default > max {
+            problems.push(problem(format!(
+                "`{key}` defaults to {default}, outside its own permitted range {min}..={max}; a \
+                 default a user cannot restore is not a default"
+            )));
+        }
+        if string_at(entry, "enforced_by").is_none() {
+            problems.push(problem(format!(
+                "`{key}` does not say what enforces it. `pending` is an answer; silence lets a \
+                 reader infer an effect the key does not have (v0.4.1 §52.3)"
+            )));
+        }
+    }
+    problems
+}
+
+/// v0.4.1 §16.4's central table against `ono_kuang_protocol::confinement`.
+fn check_confinement_controls(location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_kuang_protocol::{Control, ExecutionTier, Requirement};
+
+    let mut problems = Vec::new();
+    let problem = |detail: String| Problem {
+        location: location.to_owned(),
+        detail,
+    };
+
+    let mut declared = BTreeSet::new();
+    for entry in sequence(document, "controls") {
+        let Some(id) = string_at(entry, "id") else {
+            continue;
+        };
+        declared.insert(id.clone());
+        if Control::from_id(&id).is_none() {
+            problems.push(problem(format!(
+                "`{id}` is declared as a confinement control and \
+                 `ono_kuang_protocol::Control` has no such variant, so nothing installs it and \
+                 nothing can report on it (v0.4.1 §16.4, §52.3)"
+            )));
+        }
+    }
+    for control in Control::ALL {
+        if !declared.contains(control.id()) {
+            problems.push(problem(format!(
+                "the supervisor knows the control `{}` and this table declares it nowhere, so its \
+                 requirement is a constant in the code rather than a row an operator can read \
+                 (v0.4.1 §16.4, §52.2)",
+                control.id()
+            )));
+        }
+    }
+
+    let mut tiers_declared = BTreeSet::new();
+    for tier_entry in sequence(document, "tiers") {
+        let Some(id) = string_at(tier_entry, "id") else {
+            continue;
+        };
+        tiers_declared.insert(id.clone());
+        let Some(tier) = ExecutionTier::from_id(&id) else {
+            problems.push(problem(format!(
+                "`{id}` is declared as an execution tier and `ono_kuang_protocol::ExecutionTier` \
+                 has no such variant (v0.4.1 §17.2)"
+            )));
+            continue;
+        };
+        if let Some(available) = tier_entry.get("available").and_then(Yaml::as_bool)
+            && available != tier.is_available()
+        {
+            problems.push(problem(format!(
+                "the tier `{id}` is declared `available: {available}` and the runtime reports \
+                 `{}`. §17.3 forbids offering a tier whose isolation the implementation does not \
+                 install",
+                tier.is_available()
+            )));
+        }
+        let mut rows = BTreeSet::new();
+        for row in sequence(tier_entry, "controls") {
+            let Some(control_id) = string_at(row, "control") else {
+                continue;
+            };
+            let Some(control) = Control::from_id(&control_id) else {
+                problems.push(problem(format!(
+                    "the tier `{id}` names the control `{control_id}`, which is not a control \
+                     this build can install. v0.4.1 §52.3: an unknown control id in a KUANG tier \
+                     definition fails the gate"
+                )));
+                continue;
+            };
+            rows.insert(control_id.clone());
+            if let Some(requirement) = string_at(row, "requirement") {
+                let served = tier.requirement(control);
+                if requirement != served.as_str() {
+                    problems.push(problem(format!(
+                        "the tier `{id}` declares `{control_id}` as `{requirement}` and the \
+                         supervisor treats it as `{served}`. A control the table calls mandatory \
+                         is one v0.4.1 §2.3 says the spawn must not survive"
+                    )));
+                }
+                if Requirement::Mandatory.as_str() != requirement
+                    && Requirement::BestEffort.as_str() != requirement
+                    && Requirement::NotProvided.as_str() != requirement
+                {
+                    problems.push(problem(format!(
+                        "the tier `{id}` declares `{control_id}` as `{requirement}`, which is not \
+                         one of v0.4.1 §16.4's words"
+                    )));
+                }
+            }
+            if let Some(failure) = string_at(row, "failure") {
+                let served = tier.failure(control);
+                if failure != served.as_str() {
+                    problems.push(problem(format!(
+                        "Appendix D's Failure column for `{control_id}` in `{id}` reads \
+                         `{failure}` and the supervisor would do `{served}` instead"
+                    )));
+                }
+            }
+        }
+        // A tier that declares any control declares all of them: a control omitted from a tier
+        // that has a table is a requirement nobody wrote down, which is what §16.4 forbids.
+        if !rows.is_empty() {
+            for control in Control::ALL {
+                if !rows.contains(control.id()) {
+                    problems.push(problem(format!(
+                        "the tier `{id}` says nothing about the control `{}`, so its requirement \
+                         in that tier is unwritten (v0.4.1 §16.4)",
+                        control.id()
+                    )));
+                }
+            }
+        }
+    }
+    for tier in ExecutionTier::ALL {
+        if !tiers_declared.contains(tier.id()) {
+            problems.push(problem(format!(
+                "the runtime names the execution tier `{}` and this table declares it nowhere \
+                 (v0.4.1 §17.2)",
+                tier.id()
+            )));
+        }
+    }
+    problems
 }

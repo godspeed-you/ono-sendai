@@ -145,6 +145,7 @@ impl ShellCompleter {
                 adapters: self.adapters.as_deref(),
                 executables: Some(&executables),
                 context: &[],
+                limits: ono_pipeline::MaterializationLimits::default(),
             },
         );
         let stages = plan.stages();
