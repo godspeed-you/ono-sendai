@@ -395,6 +395,7 @@ fn spec_check() -> ExitCode {
             .into_iter()
             .chain(scan::check_acceptance_case_references(&root))
             .chain(scan::check_silent_skips(&root))
+            .chain(scan::check_unannounced_skips(&root))
             .chain(scan::check_confinement_syscalls(&root))
             .chain(scan::check_evaluator_captures(&root))
             .chain(scan::check_bounded_channels(&root))

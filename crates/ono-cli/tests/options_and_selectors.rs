@@ -28,7 +28,7 @@
 use std::net::TcpListener;
 use std::time::Duration;
 
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::{Scratch, Shell, SkipReason, scratch};
 use serde_yaml_ng::Value;
 
 mod support;
@@ -529,6 +529,11 @@ fn should_leave_out_the_processes_the_named_user_does_not_own() {
     if me == "root" {
         // Running as root there may be no other user's process to leave out, and inventing one
         // would need privileges the suite must not assume.
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "running as root, where there may be no other user's process for the filter to leave \
+             out",
+        );
         return;
     }
     let strangers = count(r#"get process | where user.name != "root" | count | to json"#);

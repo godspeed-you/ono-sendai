@@ -18,6 +18,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use ono_testkit::SkipReason;
+
 use ono_testkit::scratch;
 
 fn repo() -> PathBuf {
@@ -356,6 +358,10 @@ fn should_stamp_the_workspace_before_building_when_the_image_caches_its_target_d
 
     if !build.contains("type=cache,target=/build/target") {
         // No cache mount, no staleness: a fresh target directory rebuilds everything anyway.
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            "the Dockerfile mounts no build cache, so there is no stale artifact to guard against",
+        );
         return;
     }
     assert!(

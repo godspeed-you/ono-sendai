@@ -265,8 +265,9 @@ pub fn check_silent_skips(root: &Path) -> Vec<Problem> {
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
         };
-        for (number, line) in text.lines().enumerate() {
-            if !announces_a_skip(line) {
+        let lines: Vec<&str> = text.lines().collect();
+        for (number, line) in lines.iter().enumerate() {
+            if !announces_a_skip(line, lines.get(number + 1).copied().unwrap_or("")) {
                 continue;
             }
             problems.push(Problem::new(
@@ -285,13 +286,21 @@ pub fn check_silent_skips(root: &Path) -> Vec<Problem> {
 /// Matched on the printed text rather than on the macro, because the defect is the announcement:
 /// `println!` reaches the same reader, and a test that writes "skipping" says the same thing as
 /// one that writes "skipped".
-fn announces_a_skip(line: &str) -> bool {
+fn announces_a_skip(line: &str, next: &str) -> bool {
     let trimmed = line.trim_start();
     if !(trimmed.starts_with("eprintln!(") || trimmed.starts_with("println!(")) {
         return false;
     }
-    let Some(quoted) = trimmed.split('"').nth(1) else {
-        return false;
+    // A macro whose first argument is long enough is written with the string on the next line,
+    // and the announcement is the same announcement. Reading only the opening line let one of
+    // them sit in `spatial_map.rs` for a release (v0.4.1 §65.10).
+    let quoted = match trimmed.split('"').nth(1) {
+        Some(quoted) => quoted,
+        None if trimmed.ends_with('(') => match next.trim_start().split('"').nth(1) {
+            Some(quoted) => quoted,
+            None => return false,
+        },
+        None => return false,
     };
     let lowered = quoted.trim_start().to_ascii_lowercase();
     lowered.starts_with("skip")
@@ -1166,4 +1175,260 @@ pub fn check_bounded_channels(root: &Path) -> Vec<Problem> {
         }
     }
     problems
+}
+
+/// Checks that a test never returns before its assertion path without saying it skipped.
+///
+/// v0.4.1 §65.10 names the defect: *"A test returning before its assertion path without an
+/// explicit skip outcome is forbidden."* Appendix G writes the same rule as a shape —
+///
+/// ```text
+/// if prerequisite_missing() {
+///     return;
+/// }
+/// ```
+///
+/// — *"is prohibited unless the return path has already emitted the canonical explicit skip
+/// signal that the gate recognizes."* ADR-0428 stopped short of this and said so: a precondition
+/// guard and an ordinary `return` are the same Rust, and a scanner that guessed would cry wolf.
+/// What makes the rule holdable is that the specification names two escapes, and both are
+/// readable from the source.
+///
+/// A bare `return;` inside a `#[test]` function is accepted when any of these holds:
+///
+/// * **it is not the test's return.** A `return` inside a closure or an `async` block leaves that
+///   block, not the test — `sink.send(..).await.is_err()` is flow control in a fixture;
+/// * **the block it sits in asserted something.** A branch that asserts and then returns has
+///   reached an assertion path, which is precisely what §65.10 requires it to reach;
+/// * **the skip has been announced on the path.** Either the block calls
+///   [`skipped`](ono_testkit::skipped) or [`require`](ono_testkit::require) itself, or the guard
+///   that opened the block calls a helper in the same file that does. `unprivileged()` announcing
+///   the skip and returning `false` is the canonical signal already emitted, and the caller's
+///   `if !unprivileged() { return; }` is the shape Appendix G permits.
+///
+/// Everything else is a test whose summary line says `ok` for a run in which it asserted nothing.
+#[must_use]
+pub fn check_unannounced_skips(root: &Path) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    for file in rust_sources(root) {
+        let relative = relative(root, &file);
+        if !relative.contains("/tests/") || is_scanner_source(&relative) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        problems.extend(unannounced_skips_in(&relative, &text));
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// One block of a test function, and what has happened inside it so far.
+#[derive(Clone, Copy)]
+struct Block {
+    /// Whether this block is a closure or an `async` block, so a `return` leaves it and not the
+    /// test.
+    detached: bool,
+    /// Whether the guard that opened it called a helper that announces a skip.
+    guarded_by_announcer: bool,
+    /// Whether something inside it has asserted, announced a skip, or required a prerequisite.
+    reached_its_path: bool,
+}
+
+/// The rule of [`check_unannounced_skips`], applied to one file's text.
+fn unannounced_skips_in(relative: &str, text: &str) -> Vec<Problem> {
+    let announcers = skip_announcing_helpers(text);
+    let mut problems = Vec::new();
+    let mut stack: Vec<Block> = Vec::new();
+    let mut in_test = false;
+    let mut pending_test = false;
+    let mut pending_announcer = false;
+
+    for (number, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if !in_test {
+            if is_test_attribute(trimmed) {
+                pending_test = true;
+            } else if pending_test && trimmed.contains("fn ") {
+                in_test = true;
+                pending_test = false;
+                stack.clear();
+                stack.push(Block {
+                    detached: false,
+                    guarded_by_announcer: false,
+                    reached_its_path: false,
+                });
+                continue;
+            }
+            continue;
+        }
+
+        if calls_an_announcer(line, &announcers) {
+            pending_announcer = true;
+        }
+        if reaches_an_assertion_path(line)
+            && let Some(block) = stack.last_mut()
+        {
+            block.reached_its_path = true;
+        }
+        if trimmed == "return;" {
+            let detached = stack.iter().any(|block| block.detached);
+            let excused = stack
+                .last()
+                .is_none_or(|block| block.reached_its_path || block.guarded_by_announcer);
+            if !detached && !excused {
+                problems.push(Problem::new(
+                    format!("{relative}:{}", number + 1),
+                    "returns from a test before its assertion path without announcing a skip. A                  test that gives up on a precondition calls                  `ono_testkit::require(condition, SkipReason::…, detail)` or                  `ono_testkit::skipped(SkipReason::…, detail)` first, so the run says                  SKIP(reason) instead of counting as a pass that asserted nothing (v0.4.1                  §38.1, §65.10, Appendix G)"
+                        .to_owned(),
+                ));
+            }
+        }
+
+        let opened = opens_a_detached_block(line);
+        let (opens, closes) = brace_delta(line);
+        for _ in 0..opens {
+            stack.push(Block {
+                detached: opened,
+                guarded_by_announcer: pending_announcer,
+                reached_its_path: false,
+            });
+        }
+        for _ in 0..closes {
+            stack.pop();
+        }
+        if opens > 0 || trimmed.ends_with(';') {
+            pending_announcer = false;
+        }
+        if stack.is_empty() {
+            in_test = false;
+        }
+    }
+    problems
+}
+
+/// Whether a line carries the attribute that makes the next function a test.
+fn is_test_attribute(trimmed: &str) -> bool {
+    trimmed == "#[test]" || (trimmed.starts_with("#[") && trimmed.contains("test]"))
+}
+
+/// Whether a line opens a closure or an `async` block, from which `return` leaves the block
+/// rather than the test.
+fn opens_a_detached_block(line: &str) -> bool {
+    if line.contains("async move {") || line.contains("async {") {
+        return true;
+    }
+    let bytes = line.as_bytes();
+    let mut bars = 0usize;
+    let mut in_string = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if in_string => index += 1,
+            b'"' => in_string = !in_string,
+            b'|' if !in_string => bars += 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    // `|a, b|` and `||` are two bars on one line; `a || b` is caught by the same count and is
+    // not worth separating, because a line holding a boolean `or` and opening a block that a
+    // test returns from is not a shape this repository writes.
+    bars >= 2
+}
+
+/// Whether a line reaches an assertion — the path §65.10 wants a test to reach before it leaves.
+fn reaches_an_assertion_path(line: &str) -> bool {
+    const REACHED: [&str; 8] = [
+        "assert!",
+        "assert_eq!",
+        "assert_ne!",
+        "debug_assert!",
+        "panic!",
+        "unreachable!",
+        "skipped(",
+        "require(",
+    ];
+    REACHED.iter().any(|marker| line.contains(marker))
+}
+
+/// Whether a line calls the canonical helper, or one of the file's own skip-announcing helpers.
+fn calls_an_announcer(line: &str, announcers: &[String]) -> bool {
+    if line.contains("require(") || line.contains("skipped(") {
+        return true;
+    }
+    announcers
+        .iter()
+        .any(|name| line.contains(&format!("{name}(")))
+}
+
+/// The names of the functions in `text` whose bodies announce a skip.
+///
+/// `unprivileged()` in `network.rs` prints the marker and returns `false`; its callers write
+/// `if !unprivileged() { return; }`. That return path *has* emitted the canonical signal, which
+/// is the escape Appendix G names, and the only way to see it is to read the helper.
+fn skip_announcing_helpers(text: &str) -> Vec<String> {
+    let mut announcers = Vec::new();
+    let mut current: Option<(String, bool)> = None;
+    let mut depth = 0usize;
+    for line in text.lines() {
+        if current.is_none()
+            && let Some(name) = function_name(line)
+        {
+            current = Some((name, false));
+            depth = 0;
+        }
+        if let Some((_, announces)) = current.as_mut()
+            && (line.contains("skipped(") || line.contains("require("))
+        {
+            *announces = true;
+        }
+        let (opens, closes) = brace_delta(line);
+        depth += opens;
+        depth = depth.saturating_sub(closes);
+        if current.is_some()
+            && depth == 0
+            && (opens > 0 || closes > 0)
+            && let Some((name, announces)) = current.take()
+            && announces
+        {
+            announcers.push(name);
+        }
+    }
+    announcers
+}
+
+/// The name a `fn` line declares, if it declares one.
+fn function_name(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let rest = trimmed.strip_prefix("pub ").unwrap_or(trimmed);
+    let rest = rest.strip_prefix("pub(crate) ").unwrap_or(rest);
+    let rest = rest.strip_prefix("async ").unwrap_or(rest);
+    let rest = rest.strip_prefix("fn ")?;
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty()).then_some(name)
+}
+
+/// How many braces a line opens and closes, ignoring those inside string literals.
+fn brace_delta(line: &str) -> (usize, usize) {
+    let mut opens = 0usize;
+    let mut closes = 0usize;
+    let mut in_string = false;
+    let bytes = line.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if in_string => index += 1,
+            b'"' => in_string = !in_string,
+            b'{' if !in_string => opens += 1,
+            b'}' if !in_string => closes += 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    (opens, closes)
 }

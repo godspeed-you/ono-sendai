@@ -2,7 +2,7 @@
 //! actually see, so a harness that quietly stopped capturing stderr would make the whole suite
 //! meaningless (AGENTS.md section 14).
 
-use ono_testkit::Shell;
+use ono_testkit::{Shell, SkipReason, require};
 
 #[test]
 fn should_report_the_version_on_standard_output_when_asked() {
@@ -123,14 +123,60 @@ fn should_take_a_wider_budget_than_the_default_when_a_script_is_given_one() {
 }
 
 #[test]
-fn should_name_the_test_and_the_reason_when_a_skip_is_announced() {
+fn should_name_the_test_the_reason_and_the_category_when_a_skip_is_announced() {
     // The marker is what makes a skipped test countable, so its shape is a contract: the word
-    // `SKIPPED`, the test that skipped, and why. Asserting it here means a later change to the
-    // format has to be deliberate.
-    ono_testkit::skipped("this host has no second mount to cross");
+    // `SKIPPED`, the test that skipped, the v0.4.1 §38.4 category and the detail. Asserting it
+    // here means a later change to the format has to be deliberate.
+    ono_testkit::skipped(
+        SkipReason::FixtureNotApplicable,
+        "this host has no second mount to cross",
+    );
     let name = std::thread::current().name().unwrap_or_default().to_owned();
     assert_eq!(
-        name, "should_name_the_test_and_the_reason_when_a_skip_is_announced",
+        name, "should_name_the_test_the_reason_and_the_category_when_a_skip_is_announced",
         "the marker takes the test's name from its thread, so cargo must still name it"
     );
+    assert_eq!(
+        SkipReason::FixtureNotApplicable.category(),
+        "fixture_not_applicable",
+        "the category token is what the expected-skip registry stores"
+    );
+    for reason in SkipReason::ALL {
+        assert_eq!(
+            SkipReason::from_category(reason.category()),
+            Some(reason),
+            "every §38.4 category round-trips through its token"
+        );
+    }
+    assert_eq!(
+        SkipReason::from_category("the machine was busy"),
+        None,
+        "the taxonomy is closed: free text is not a category"
+    );
+}
+
+#[test]
+fn should_offer_a_require_helper_that_records_an_unmet_prerequisite() {
+    // v0.4.1 Appendix G: `require(condition, reason_category, detail) -> TestPrerequisite`. A met
+    // prerequisite announces nothing and lets the test carry on; an unmet one has already emitted
+    // the canonical skip signal by the time the caller returns, which is what makes the early
+    // return legal under §65.10.
+    let met = require(
+        true,
+        SkipReason::ExternalToolUnavailable,
+        "this detail is never printed",
+    );
+    assert!(met.met(), "a satisfied prerequisite lets the test carry on");
+    assert!(!met.unmet());
+
+    let unmet = require(
+        false,
+        SkipReason::ExternalToolUnavailable,
+        "no journal on this host",
+    );
+    assert!(
+        unmet.unmet(),
+        "an unsatisfied prerequisite tells the caller to return"
+    );
+    assert!(!unmet.met());
 }

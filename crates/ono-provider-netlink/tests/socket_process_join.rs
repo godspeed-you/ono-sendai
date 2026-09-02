@@ -19,6 +19,8 @@ mod support;
 use std::net::TcpListener;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
+use ono_testkit::SkipReason;
+
 use ono_pipeline::StreamEvent;
 use ono_provider_api::{Provider, Query};
 use ono_provider_netlink::{SocketOwners, SocketProtocol, SocketProvider, decode_inet_sockets};
@@ -64,6 +66,10 @@ async fn should_name_the_process_that_holds_a_socket_this_test_created() {
     let records = sockets(&query).await;
     if records.is_empty() {
         // sock_diag is not readable here; `should_either_read_sockets_or_say_why_not` covers it.
+        ono_testkit::skipped(
+            SkipReason::MissingKernelFeature,
+            "sock_diag answers no socket here, so there is no row to join a process onto",
+        );
         return;
     }
 
@@ -99,6 +105,10 @@ async fn should_leave_the_owner_null_when_the_scan_was_not_asked_for() {
 
     let records = sockets(&Query::target("socket")).await;
     if records.is_empty() {
+        ono_testkit::skipped(
+            SkipReason::MissingKernelFeature,
+            "sock_diag answers no socket here, so there is no row to read",
+        );
         return;
     }
     let ours = records
@@ -127,6 +137,10 @@ async fn should_narrow_the_dump_to_one_port_when_the_query_names_it() {
         Query::target("socket").with(ono_provider_api::Selector::field("port", Value::Port(port)));
     let records = sockets(&query).await;
     if records.is_empty() {
+        ono_testkit::skipped(
+            SkipReason::MissingKernelFeature,
+            "sock_diag answers no socket here, so there is no row to read",
+        );
         return;
     }
     assert!(

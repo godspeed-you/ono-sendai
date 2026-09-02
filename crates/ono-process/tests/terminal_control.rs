@@ -17,6 +17,7 @@ use std::env;
 use std::time::{Duration, Instant};
 
 use ono_process::{Command, Executor, ForegroundOutcome, JobState, PtySession, Signal, WindowSize};
+use ono_testkit::SkipReason;
 use support::{DEADLINE, poll_until, within};
 
 /// Environment variable naming the role the re-run should play.
@@ -175,6 +176,11 @@ fn should_work_the_same_way_when_there_is_no_terminal_at_all() {
 #[test]
 fn acts_as_the_shell_when_a_role_is_requested() {
     let Ok(role) = env::var(ROLE) else {
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            "this is the re-exec entry point the tests above drive; without a role in the \
+             environment there is nothing for it to act as",
+        );
         return;
     };
     let code = match role.as_str() {

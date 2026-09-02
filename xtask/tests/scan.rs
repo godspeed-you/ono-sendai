@@ -6,7 +6,7 @@ use std::path::Path;
 use ono_testkit::{Scratch, scratch};
 use xtask::scan::{
     check_acceptance_case_references, check_authentication_flags, check_release_board,
-    check_silent_skips, check_unfinished_work,
+    check_silent_skips, check_unannounced_skips, check_unfinished_work,
 };
 
 /// Builds a throwaway repository shaped like this one.
@@ -920,5 +920,100 @@ fn should_find_no_unbounded_pipeline_channel_in_this_repository() {
             .map(|p| format!("  {} — {}", p.location, p.detail))
             .collect::<Vec<_>>()
             .join("\n")
+    );
+}
+
+// --- v0.4.1 §38.1, §65.10 and Appendix G: a skip is visible or it is not a skip ----------------
+
+#[test]
+fn should_reject_a_test_that_announces_a_skip_on_the_line_after_the_macro() {
+    // The announcement written across two lines is the same announcement, and reading only the
+    // opening line let one of them live in `spatial_map.rs` unnoticed.
+    let repo = fixture(&[(
+        "crates/a/tests/thing.rs",
+        "#[test]\nfn should_do_it() {\n    eprintln!(\n        \"skipped: nothing to cluster here\"\n    );\n}\n",
+    )]);
+    let problems = check_silent_skips(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0]
+            .location
+            .starts_with("crates/a/tests/thing.rs:3")
+    );
+}
+
+#[test]
+fn should_reject_a_test_that_returns_before_its_assertion_path_without_a_skip() {
+    let repo = fixture(&[(
+        "crates/a/tests/thing.rs",
+        "#[test]\nfn should_do_it() {\n    if no_mount() {\n        return;\n    }\n    assert!(true);\n}\n",
+    )]);
+    let problems = check_unannounced_skips(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(
+        problems[0]
+            .location
+            .starts_with("crates/a/tests/thing.rs:4"),
+        "got {:?}",
+        problems[0].location
+    );
+    assert!(
+        problems[0].detail.contains("ono_testkit::require"),
+        "the complaint names the helper of Appendix G, got {:?}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_accept_a_test_that_announces_its_skip_before_it_returns() {
+    let repo = fixture(&[(
+        "crates/a/tests/thing.rs",
+        "#[test]\nfn should_do_it() {\n    if no_mount() {\n        skipped(SkipReason::FixtureNotApplicable, \"no second mount\");\n        return;\n    }\n}\n",
+    )]);
+    assert_eq!(check_unannounced_skips(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_accept_a_guard_whose_own_helper_announced_the_skip() {
+    // `unprivileged()` prints the marker and returns false; `if !unprivileged() { return; }` is
+    // the return path Appendix G permits, because the canonical signal was already emitted.
+    let repo = fixture(&[(
+        "crates/a/tests/thing.rs",
+        "fn unprivileged() -> bool {\n    if is_root() {\n        ono_testkit::skipped(SkipReason::MissingPrivilege, \"running as root\");\n        return false;\n    }\n    true\n}\n\n#[test]\nfn should_do_it() {\n    if !unprivileged() {\n        return;\n    }\n    assert!(true);\n}\n",
+    )]);
+    assert_eq!(check_unannounced_skips(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_accept_a_branch_that_asserted_before_it_returned() {
+    // A branch that asserts has reached an assertion path, which is what §65.10 asks of it.
+    let repo = fixture(&[(
+        "crates/a/tests/thing.rs",
+        "#[test]\nfn should_do_it() {\n    if unavailable() {\n        assert!(reason().len() > 0);\n        return;\n    }\n}\n",
+    )]);
+    assert_eq!(check_unannounced_skips(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_leave_a_return_inside_a_closure_alone_when_scanning_for_unannounced_skips() {
+    // A `return` inside a closure leaves the closure, not the test: it is flow control in a
+    // fixture, and reporting it would teach people to write fixtures differently.
+    let repo = fixture(&[(
+        "crates/a/tests/thing.rs",
+        "#[test]\nfn should_do_it() {\n    spawn(move |sink| async move {\n        if sink.send(1).is_err() {\n            return;\n        }\n    });\n    assert!(true);\n}\n",
+    )]);
+    assert_eq!(check_unannounced_skips(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_report_this_repository_as_announcing_every_skip_it_takes() {
+    // The whole tree, so a regression is caught where it lands rather than in a fixture.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the workspace root is the parent of xtask/");
+    assert_eq!(
+        check_unannounced_skips(root),
+        Vec::new(),
+        "every test that gives up on a precondition says so (v0.4.1 §38.1, §65.10)"
     );
 }

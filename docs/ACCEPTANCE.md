@@ -1733,13 +1733,16 @@ mode this phase removes.
 §66.5's six bullets. §65.10 names the defect this phase removes: a skip that reaches the summary as
 a pass. ADR-0428 already made every skip announce itself; this phase makes an unexpected one fail.
 
-- [ ] **P2 · A test run has three visible outcomes.** PASS, FAIL and SKIP with a reason category
+- [x] **P2 · A test run has three visible outcomes.** PASS, FAIL and SKIP with a reason category
       from the §38.4 taxonomy, emitted through the canonical helper of Appendix G, with the raw
       early-return form rejected by the gate —
       `crates/ono-testkit/tests/harness.rs::should_name_the_test_the_reason_and_the_category_when_a_skip_is_announced`,
       `::should_offer_a_require_helper_that_records_an_unmet_prerequisite`,
       `xtask/tests/scan.rs::should_reject_a_test_that_announces_a_skip_with_its_own_print` (ADR-0428,
-      extended to carry the category) (#88, §38.1, §38.4).
+      extended to carry the category by ADR-0513),
+      `::should_reject_a_test_that_returns_before_its_assertion_path_without_a_skip` and
+      `::should_report_this_repository_as_announcing_every_skip_it_takes`, which held the
+      forty-one silent returns the rule found (#88, §38.1, §38.4).
 - [ ] **P2 · An unexpected skip fails the gate.** The expected skip set is checked in as
       `docs/spec/hardening/expected_test_skips.yaml`, the verifier compares observed skip IDs and
       categories against it, and a skip nobody declared turns the run red —

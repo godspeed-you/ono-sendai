@@ -45,7 +45,7 @@
 
 use std::process::{Child, Command, Stdio};
 
-use ono_testkit::scratch;
+use ono_testkit::{SkipReason, scratch};
 use serde_yaml_ng::Value;
 
 mod support;
@@ -257,9 +257,10 @@ fn on_path(name: &str) -> bool {
     };
     let found = std::env::split_paths(&path).any(|dir| dir.join(name).is_file());
     if !found {
-        ono_testkit::skipped(&format!(
-            "the external half needs `{name}`, which is not installed on this host"
-        ));
+        ono_testkit::skipped(
+            SkipReason::ExternalToolUnavailable,
+            &format!("the external half needs `{name}`, which is not installed on this host"),
+        );
     }
     found
 }

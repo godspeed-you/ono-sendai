@@ -17,6 +17,7 @@ use ono_graph::{
     ServiceDependencies, ServiceProcesses, SocketOwners, TraceOptions, UserGroups, UserProcesses,
 };
 use ono_provider_api::Provider;
+use ono_testkit::SkipReason;
 use ono_value::Value;
 
 /// One hop, so a test about one relationship sees only that relationship.
@@ -157,6 +158,10 @@ async fn should_report_an_error_when_a_process_hides_its_file_descriptors() {
     // root, so under root the scenario is unreachable and the general test above is what covers
     // the contract. `ono-provider-linux` skips its two permission tests the same way.
     if running_as_root() {
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "mode bits do not restrain root, so another user's descriptors are readable here",
+        );
         return;
     }
     let proc = ProcFixture::new();

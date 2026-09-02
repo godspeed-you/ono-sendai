@@ -66,7 +66,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use ono_testkit::ono_within;
-use ono_testkit::scratch;
+use ono_testkit::{SkipReason, scratch, skipped};
 use serde_yaml_ng::Value;
 
 /// The six neighborhood-group states of spec §35.2. They "MUST remain distinct".
@@ -94,6 +94,23 @@ fn uid() -> u32 {
     std::fs::metadata("/proc/self")
         .expect("/proc is mounted on every Linux test host")
         .uid()
+}
+
+/// Whether this run is the unprivileged one the refusal tests need, announcing the skip when it
+/// is not.
+///
+/// The acceptance container runs as an unprivileged user (docs/ACCEPTANCE.md §2); as root nothing
+/// is denied, so the boundary these tests observe cannot be provoked at all. That is a
+/// `SKIP(missing_privilege)` rather than a pass (v0.4.1 §38.1, §38.4).
+fn unprivileged() -> bool {
+    if uid() == 0 {
+        skipped(
+            SkipReason::MissingPrivilege,
+            "running as root, where nothing is denied and the refusal cannot be provoked",
+        );
+        return false;
+    }
+    true
 }
 
 /// Every JSON document a script printed, in order. JSON is YAML, so the workspace's YAML
@@ -681,9 +698,7 @@ fn should_report_permission_denied_rather_than_zero_files_for_another_users_proc
     // host and container, so `/proc/1/fd` is unreadable to this user — the v0.2 provider
     // already answers `io.permission_denied` there, and §35.1 forbids the spatial layer from
     // turning that into a count.
-    if uid() == 0 {
-        // The acceptance container runs as an unprivileged user (docs/ACCEPTANCE.md §2); as
-        // root there is nothing this user may not read, so the denial cannot be provoked.
+    if !unprivileged() {
         return;
     }
 
@@ -1048,9 +1063,7 @@ fn should_refuse_a_path_this_user_may_not_read_as_denied_rather_than_as_missing(
     // §35.2 and §53 keep denied and missing apart: "the path does not exist" and "you may not
     // look" are different answers, and a navigation that reports the first for the second tells
     // the user something untrue about the machine. §40 names the answer `spatial.permission_denied`.
-    if uid() == 0 {
-        // The acceptance container runs as an unprivileged user (docs/ACCEPTANCE.md §2); as
-        // root nothing is denied, so the boundary cannot be provoked.
+    if !unprivileged() {
         return;
     }
     let run = ono("enter /root/.bashrc");
@@ -1069,7 +1082,7 @@ fn should_refuse_to_stand_in_a_directory_this_user_may_not_read() {
     // may not read is not a place to stand in — §35.1 forbids revealing what the provider could
     // not answer, and a working directory the shell cannot run a program from is worse than a
     // refusal. §40 names the refusal.
-    if uid() == 0 {
+    if !unprivileged() {
         return;
     }
     let dir = scratch();
@@ -1103,7 +1116,7 @@ fn should_refuse_to_stand_in_a_directory_this_user_may_not_read() {
 fn should_keep_the_working_directory_usable_when_a_denied_directory_is_named() {
     // The consequence the refusal buys: a shell whose cwd is a directory it cannot execute from
     // cannot run anything at all. §49.8 keeps this a Unix shell after every spatial move.
-    if uid() == 0 {
+    if !unprivileged() {
         return;
     }
     let dir = scratch();
@@ -1135,7 +1148,7 @@ fn should_refuse_a_search_anchored_on_a_path_this_user_may_not_read() {
     // did not — the anchor was resolved against the index alone, so a denied scope answered
     // `spatial.not_found`, which says the place is not there rather than that it is not this
     // user's to see (§35.1, §35.2, §40).
-    if uid() == 0 {
+    if !unprivileged() {
         return;
     }
     let run = ono("find place --near /root secret");
@@ -1153,7 +1166,7 @@ fn should_not_call_a_map_complete_when_a_place_it_drew_could_not_be_read() {
     // could not be read" (§35.2). A map centred on a directory whose contents are denied drew the
     // place, drew none of its contents, and called itself `complete` — which under §2.17 is the
     // shell claiming there is nothing more to see.
-    if uid() == 0 {
+    if !unprivileged() {
         return;
     }
     let dir = scratch();

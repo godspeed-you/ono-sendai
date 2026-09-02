@@ -18,6 +18,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use ono_pipeline::StreamEvent;
 use ono_provider_api::{Availability, Provider, Query, Selector};
 use ono_provider_netlink::{InterfaceProvider, NeighborProvider, RouteProvider, SocketProvider};
+use ono_testkit::{SkipReason, require};
 use ono_value::{RecordValue, Value};
 
 /// Drains a provider's snapshot into the records and the errors it produced.
@@ -135,7 +136,13 @@ async fn should_either_read_the_route_table_or_say_why_not() {
 #[tokio::test]
 async fn should_read_the_neighbour_table_without_inventing_entries() {
     let provider = NeighborProvider::new();
-    if !provider.availability().is_available() {
+    if require(
+        provider.availability().is_available(),
+        SkipReason::MissingKernelFeature,
+        "this kernel does not answer the netlink family the provider reads",
+    )
+    .unmet()
+    {
         return;
     }
     let (records, errors) = snapshot(&provider, &Query::target("neighbor")).await;
@@ -176,7 +183,13 @@ async fn should_either_read_sockets_or_say_why_not() {
 #[tokio::test]
 async fn should_answer_the_connection_target_with_connected_sockets_only() {
     let provider = SocketProvider::new();
-    if !provider.availability().is_available() {
+    if require(
+        provider.availability().is_available(),
+        SkipReason::MissingKernelFeature,
+        "this kernel does not answer the netlink family the provider reads",
+    )
+    .unmet()
+    {
         return;
     }
     assert!(provider.targets().contains(&"connection"));
@@ -195,7 +208,13 @@ async fn should_answer_exactly_the_bound_when_a_socket_query_asks_for_one() {
     // The reader stops where the answer is full (ADR-0418). What a caller can observe of that is
     // the bound itself: a machine with a socket table answers one socket, not the table.
     let provider = SocketProvider::new();
-    if !provider.availability().is_available() {
+    if require(
+        provider.availability().is_available(),
+        SkipReason::MissingKernelFeature,
+        "this kernel does not answer the netlink family the provider reads",
+    )
+    .unmet()
+    {
         return;
     }
 
@@ -214,7 +233,13 @@ async fn should_answer_no_unix_socket_when_the_connection_target_is_asked() {
     // Unix table when the target is `connection` (ADR-0418), and the observable half of that is
     // this: no answer to `connection` is a Unix socket, on a host that has thousands of them.
     let provider = SocketProvider::new();
-    if !provider.availability().is_available() {
+    if require(
+        provider.availability().is_available(),
+        SkipReason::MissingKernelFeature,
+        "this kernel does not answer the netlink family the provider reads",
+    )
+    .unmet()
+    {
         return;
     }
 

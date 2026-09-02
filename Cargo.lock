@@ -950,6 +950,7 @@ version = "0.4.0"
 dependencies = [
  "nix",
  "ono-core",
+ "ono-testkit",
  "tempfile",
  "thiserror",
 ]
@@ -1062,6 +1063,7 @@ dependencies = [
  "ono-core",
  "ono-pipeline",
  "ono-provider-api",
+ "ono-testkit",
  "ono-value",
  "tokio",
  "zbus",
