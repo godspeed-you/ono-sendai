@@ -205,21 +205,20 @@ const REFERENCE_TARGETS: [(&str, &str, &str, &str, f64); 4] = [
     ),
 ];
 
-// Three of §33.2's four rows are outside their budget on the reference environment, measured with
-// `cargo xtask perf` at twenty iterations and recorded in the baseline (ADR-0491):
+// §33.2's four rows are measured with `cargo xtask perf` at twenty iterations and recorded in the
+// baseline. Three of them are outside their budget on the reference environment (ADR-0491), and
+// the remaining cause is one thing rather than two: an *acquisition* that costs more than the
+// budget allows, per object, from outside this shell.
 //
-//   spatial query Profile M first result           580 ms   against 150 ms
-//   map live Profile M initial visible frame       1 090 ms against 500 ms
-//   map live Profile L initial progress/summary    25.7 s   against 1.5 s
-//
-// Both causes are §34's, and neither is the cardinality the profile is named for. COMPUTE pays
-// 413 ms for an external service acquisition on every orientation (§34.2's `external` class), and
-// the Profile L map builds the whole graph to draw thirty nodes (§34.4). §33.2's own escape
-// clause is the shape of the fix — "they MUST at least emit progress metadata or a deterministic
-// cost/refusal message before 1.5 seconds on Profile L".
-// REASON: red at HEAD; un-ignored by the increments that deliver §34.2's cost classes and §34.4's
-// bounded neighbourhood, which are issues #86 and #87. Defended by ADR-0491.
-#[ignore = "red until §34.2's cost classes and §34.4's bounded neighbourhood land (#86, #87; ADR-0491)"]
+// COMPUTE pays about 400 ms on every orientation for the systemd service enumeration — 569 units
+// at three D-Bus round trips each, already made concurrent, and §34.2's `external` class by
+// construction. Profile L pays for absorbing a hundred thousand socket records before anything is
+// drawn. Neither is the cardinality the profile is named for, and neither is a planner defect:
+// both are the shell asking a provider for every object when it needs a bounded view of them,
+// which is §34.4's sentence and what its remaining half owes.
+// REASON: red at HEAD; un-ignored by the increment that lets an orientation query take a bounded
+// answer from a provider instead of the complete one (§34.4). Defended by ADR-0491 and ADR-0496.
+#[ignore = "red until an orientation query can take a bounded answer from a provider (§34.4; ADR-0496)"]
 #[test]
 fn should_hold_every_time_to_first_result_target_of_the_reference_targets_table() {
     let baseline = recorded_baseline();
@@ -254,13 +253,14 @@ fn should_hold_every_time_to_first_result_target_of_the_reference_targets_table(
     );
 }
 
-// §33.3 at the other reference profile. `enter network; map --live --json | take 1 | to json`
-// against a hundred thousand listening sockets produces nothing for 79 s in a debug build and
-// 23 s in a release one, so the shell spends §33.3's whole budget saying nothing — which is the
-// rule this file's Profile M watchdog states, met at the cardinality §32.2 names beside it.
-// REASON: red at HEAD; un-ignored by the increment that stops a local question building the whole
-// graph (§34.4, issue #87). Defended by ADR-0491.
-#[ignore = "red until a local question at Profile L stops building the whole graph (#87; ADR-0491)"]
+// §33.3 at the other reference profile, and the rule this file's Profile M watchdog states, met
+// at the cardinality §32.2 names beside it. Against a hundred thousand listening sockets the live
+// map produced nothing for 79 s in a debug build and 23 s in a release one; it now answers with
+// §34.1's cost refusal, naming the estimate (ADR-0494, ADR-0496).
+//
+// The margin is 1.5x rather than the twenty ADR-0431 had at Profile M: the refusal arrives after
+// the observation, and observing a hundred thousand sockets is 20 s in a debug build. What is
+// left is the observation itself, which §34.4 is about and which this branch reports as owed.
 #[test]
 fn should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture() {
     // Profile L's ten thousand processes belong to the container; its hundred thousand listening

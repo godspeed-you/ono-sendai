@@ -24,6 +24,12 @@
 use std::collections::BTreeSet;
 
 use ono_spatial_core::{AcquisitionCost, CostClass, spaces};
+use ono_spatial_index::PinRegistry;
+use ono_spatial_query::{NeighborhoodRequest, neighborhood_of};
+
+mod common;
+
+use common::NOW;
 use ono_spatial_query::cost::{CostEstimate, INTERACTIVE_BUDGET, refusal};
 
 /// §34.2's four class names, typed from the specification.
@@ -176,4 +182,151 @@ fn declared_classes() -> BTreeSet<String> {
         .iter()
         .filter_map(|row| row["id"].as_str().map(str::to_owned))
         .collect()
+}
+
+// --- v0.4.1 §34.4: a local question does not build the whole graph (issue #87) ------------------
+
+#[test]
+fn should_answer_a_local_neighborhood_question_without_projecting_every_domain() {
+    // §34.4: "A local neighborhood query SHOULD NOT require construction of the complete system
+    // graph when provider APIs can answer the neighborhood incrementally."
+    //
+    // The property is asserted as an outcome, not by watching a call path (AGENTS.md §11): the
+    // same question, asked of an index holding one unrelated object and of an index holding two
+    // thousand, has to give the same answer. A planner that consulted the whole index to answer
+    // about one place could not, because the second index holds a great deal more.
+    let (small, center) = host_with(2);
+    let (large, other) = host_with(2_000);
+    assert_eq!(center, other, "the centre is the same object in both");
+
+    let near_small = neighborhood_of(
+        &small,
+        &center,
+        &NeighborhoodRequest::new(),
+        &PinRegistry::new(),
+        NOW,
+    );
+    let near_large = neighborhood_of(
+        &large,
+        &center,
+        &NeighborhoodRequest::new(),
+        &PinRegistry::new(),
+        NOW,
+    );
+
+    assert_eq!(
+        labels(&near_small),
+        labels(&near_large),
+        "§34.4: the neighbourhood of one place is its own edges, so two thousand unrelated \
+         objects elsewhere on the host must not change it"
+    );
+    assert_eq!(
+        near_small.hidden_count(),
+        near_large.hidden_count(),
+        "and they must not change what it hid either"
+    );
+    for label in labels(&near_small) {
+        assert_eq!(
+            total(&near_small, &label),
+            total(&near_large, &label),
+            "the `{label}` exit counts the centre's own neighbours, not the host's objects"
+        );
+    }
+}
+
+#[test]
+fn should_keep_the_work_of_a_neighborhood_question_within_its_declared_cost_class() {
+    // §34.1's estimate is what §33.3 refuses on, so the estimate for a *local* question has to be
+    // about the neighbourhood rather than about the system it sits in. Two thousand objects on
+    // the host, three of them adjacent: the estimate is three, and the question is answered.
+    let (large, center) = host_with(2_000);
+    let neighbours: usize = labels(&large_neighbourhood(&large, &center))
+        .iter()
+        .filter_map(|label| total(&large_neighbourhood(&large, &center), label))
+        .sum();
+
+    let estimate = CostEstimate::new(
+        neighbours,
+        1,
+        ono_spatial_core::AcquisitionCost::Moderate,
+        1,
+    );
+    assert!(
+        !estimate.exceeds(INTERACTIVE_BUDGET),
+        "§34.4: a local neighbourhood question estimated {} units over {neighbours} neighbours, \
+         which is the cost of the host rather than of the question",
+        estimate.units()
+    );
+
+    // And the whole host, asked for as a whole, is what the budget is for.
+    let global = CostEstimate::new(
+        2_000 * 200,
+        4,
+        ono_spatial_core::AcquisitionCost::Moderate,
+        2,
+    );
+    assert!(
+        global.exceeds(INTERACTIVE_BUDGET),
+        "a complete graph of the system is what §34.1 calls obviously explosive work"
+    );
+}
+
+/// The neighbourhood of `center` in `index`, with the default request.
+fn large_neighbourhood(
+    index: &ono_spatial_index::SpatialIndex,
+    center: &ono_spatial_core::SpatialId,
+) -> ono_spatial_core::Neighborhood {
+    neighborhood_of(
+        index,
+        center,
+        &NeighborhoodRequest::new(),
+        &PinRegistry::new(),
+        NOW,
+    )
+}
+
+/// A host holding one `nginx` process with three sockets, plus `filler` unrelated processes.
+fn host_with(filler: usize) -> (ono_spatial_index::SpatialIndex, ono_spatial_core::SpatialId) {
+    let mut records = vec![common::process(1842, "nginx", "running")];
+    for step in 0..3 {
+        records.push(common::with(
+            common::socket_with(5_000 + step, Some("listen"), None),
+            "process",
+            ono_value::Value::Int(1842),
+        ));
+    }
+    for step in 0..filler {
+        let pid = 20_000 + i64::try_from(step).expect("a small fixture");
+        records.push(common::process(pid, &format!("filler-{step}"), "sleeping"));
+    }
+    let mut index = common::index();
+    let mut bridge = common::bridge();
+    let absorbed = bridge.absorb(&mut index, &records, NOW);
+    assert!(absorbed.refused().is_empty(), "{:?}", absorbed.refused());
+    let center = index
+        .by_alias("nginx")
+        .first()
+        .expect("the process is indexed")
+        .object()
+        .spatial_id()
+        .clone();
+    (index, center)
+}
+
+/// The exit labels of a neighbourhood, in order.
+fn labels(neighborhood: &ono_spatial_core::Neighborhood) -> Vec<String> {
+    neighborhood
+        .groups()
+        .iter()
+        .map(|group| group.label().to_owned())
+        .collect()
+}
+
+/// What one exit says it holds.
+fn total(neighborhood: &ono_spatial_core::Neighborhood, label: &str) -> Option<usize> {
+    neighborhood
+        .groups()
+        .iter()
+        .find(|group| group.label() == label)
+        .and_then(ono_spatial_core::NeighborhoodGroup::total)
 }
