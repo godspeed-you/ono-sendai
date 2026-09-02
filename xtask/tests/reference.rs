@@ -16,13 +16,8 @@ use std::path::Path;
 use ono_testkit::{Scratch, scratch};
 use xtask::reference::{check_committed, generate};
 
-/// The workspace root.
-fn repo() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask sits in the workspace")
-        .to_path_buf()
-}
+mod support;
+use support::repo;
 
 fn registries() -> Scratch {
     let repo = scratch();

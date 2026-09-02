@@ -12,9 +12,11 @@ use std::sync::Arc;
 use jiff::tz::TimeZone;
 use ono_render::{Cell, Layout, Presentation, Renderer, Theme, View};
 use ono_value::{
-    ByteSize, FieldDef, FieldType, MapValue, Percent, Provenance, RecordValue, Schema, SchemaId,
-    Value,
+    ByteSize, FieldDef, FieldType, Percent, Provenance, RecordValue, Schema, SchemaId, Value,
 };
+
+mod support;
+use support::{map, strip};
 
 fn schema(default_view: bool) -> Arc<Schema> {
     let mut builder = Schema::builder(SchemaId::new("ono.demo", 1), "Demo")
@@ -59,14 +61,6 @@ fn process(schema: &Arc<Schema>, pid: i128, name: &str, memory: Option<u128>) ->
 
 fn renderer() -> Renderer {
     Renderer::in_zone(TimeZone::UTC)
-}
-
-fn map(pairs: &[(&str, Value)]) -> Value {
-    let mut map = MapValue::new();
-    for (key, value) in pairs {
-        map.insert((*key).into(), value.clone());
-    }
-    Value::Map(Arc::new(map))
 }
 
 #[test]
@@ -277,22 +271,4 @@ fn should_render_the_list_view_as_one_labelled_block_per_record() {
         list.iter().any(|line| line.contains("null")),
         "got {list:#?}"
     );
-}
-
-/// Removes every ANSI escape sequence, so a painted line can be compared with a plain one.
-fn strip(line: &str) -> String {
-    let mut out = String::new();
-    let mut chars = line.chars();
-    while let Some(character) = chars.next() {
-        if character == '\u{1b}' {
-            for escaped in chars.by_ref() {
-                if escaped == 'm' {
-                    break;
-                }
-            }
-        } else {
-            out.push(character);
-        }
-    }
-    out
 }

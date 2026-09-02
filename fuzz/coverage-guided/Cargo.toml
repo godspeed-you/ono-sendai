@@ -1,0 +1,81 @@
+# The coverage-guided fuzzing tier of v0.4.1 §41.2.
+#
+# This is a workspace of its own — the empty `[workspace]` table below — and it is deliberately
+# not a member of the repository's. `cargo-fuzz` builds with libFuzzer and a sanitizer, which
+# needs a nightly toolchain, and the gate is pinned to 1.94 (spec §44.3). Keeping the two apart
+# means the scheduled tier can use the toolchain it needs without the gate, `cargo deny` or
+# `Cargo.lock` ever seeing it.
+#
+# The targets are one line each: every body lives in `ono-fuzz`, so the deterministic tier the
+# gate runs and the coverage-guided tier the schedule runs execute exactly the same code on the
+# same corpora. A finding in one reproduces in the other.
+#
+# Run one:  cargo +nightly fuzz run --fuzz-dir fuzz/coverage-guided parser
+# Decisions: ADR-0521.
+
+[package]
+name = "ono-fuzz-coverage-guided"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ono-fuzz = { path = ".." }
+
+[workspace]
+
+[profile.release]
+debug = true
+
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "serializers"
+path = "fuzz_targets/serializers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "remote-protocol"
+path = "fuzz_targets/remote-protocol.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "remote-handshake"
+path = "fuzz_targets/remote-handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plugin-protocol"
+path = "fuzz_targets/plugin-protocol.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "system-decoders"
+path = "fuzz_targets/system-decoders.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "adapter-decoders"
+path = "fuzz_targets/adapter-decoders.rs"
+test = false
+doc = false
+bench = false

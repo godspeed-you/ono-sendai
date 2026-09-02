@@ -216,6 +216,9 @@ pub struct ProfileDeclaration {
     pub edges: usize,
     /// Appendix F.2's socket count.
     pub sockets: usize,
+    /// Open file descriptors a host must allow one process before the socket axis can be built,
+    /// including the headroom the rest of the test process needs (ADR-0517).
+    pub descriptors: u64,
     /// Where a fixture of this size is built.
     pub built_by: BuiltBy,
     /// Where the socket axis alone is built, when that differs from `built_by`.
@@ -303,6 +306,26 @@ pub fn payload(bytes: usize) -> String {
         .collect()
 }
 
+/// The descriptor limit `profile`'s socket axis needs, as the registry declares it.
+///
+/// # Panics
+///
+/// Panics when the registry knows no such profile, which means the constants and the contract
+/// have drifted apart.
+#[must_use]
+pub fn descriptors_for(profile: Profile) -> u64 {
+    declared_profiles()
+        .into_iter()
+        .find(|declaration| declaration.id == profile.name)
+        .unwrap_or_else(|| {
+            panic!(
+                "performance_profiles.yaml declares no profile `{}`",
+                profile.name
+            )
+        })
+        .descriptors
+}
+
 /// The parsed registry.
 fn registry() -> serde_yaml_ng::Value {
     serde_yaml_ng::from_str(DECLARATIONS)
@@ -318,6 +341,7 @@ fn declaration(row: &serde_yaml_ng::Value) -> ProfileDeclaration {
         graph_nodes: count(row, "graph_nodes"),
         edges: count(row, "edges"),
         sockets: count(row, "sockets"),
+        descriptors: count(row, "descriptors") as u64,
         built_by: BuiltBy::from_name(&built)
             .unwrap_or_else(|| panic!("profile `{id}` declares an unknown `built_by`: {built}")),
         sockets_built_by: row
@@ -394,12 +418,45 @@ impl SocketPopulation {
     ///
     /// # Panics
     ///
-    /// Panics if the directory or a socket cannot be created, which means the host cannot host
-    /// the fixture — a descriptor limit below the profile's cardinality, most likely.
+    /// Panics if the host cannot supply the descriptors, which is a host capability rather than
+    /// a product defect: use [`SocketPopulation::try_of`] wherever the caller can report the
+    /// shortfall as a skip instead (v0.4.1 §38.1, §38.4).
     #[must_use]
     pub fn of(profile: Profile) -> Self {
+        Self::try_of(profile).unwrap_or_else(|shortfall| {
+            panic!(
+                "Profile {} needs {} listening sockets and {shortfall}",
+                profile.name, profile.sockets
+            )
+        })
+    }
+
+    /// Opens `profile.sockets` listening unix sockets, or reports the descriptor limit it could
+    /// not reach.
+    ///
+    /// The soft limit is raised toward the hard one first. That changes nothing about what the
+    /// fixture measures — the descriptors were always allowed and the process was simply not
+    /// asking for them — so it is tried before anything is reported. Only a *hard* limit below
+    /// the profile's cardinality is a host that has genuinely refused, and a host that refuses
+    /// has not found a defect in the product (v0.4.1 §38.1).
+    ///
+    /// # Errors
+    ///
+    /// Returns the shortfall when this host cannot hold the profile's sockets open at once.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the directory or a socket cannot be created for a reason other than the
+    /// descriptor limit, which is a broken host rather than a small one.
+    pub fn try_of(profile: Profile) -> Result<Self, crate::DescriptorShortfall> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        // The requirement comes from the registry beside the cardinality that fixes it, not from
+        // a constant here: the fixture is not the only thing holding descriptors, and how much
+        // headroom the rest of the test process needs is a statement about the profile
+        // (§52.2, ADR-0517).
+        crate::require_descriptors(descriptors_for(profile))?;
 
         let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
         let root = std::env::var_os("CARGO_TARGET_TMPDIR")
@@ -422,11 +479,11 @@ impl SocketPopulation {
                 })
             })
             .collect();
-        Self {
+        Ok(Self {
             profile,
             directory,
             listeners,
-        }
+        })
     }
 
     /// The profile this population realises.

@@ -20,6 +20,7 @@ fn main() -> ExitCode {
         Some("acceptance") => run_script("acceptance.sh", &rest),
         Some("spec-check") => spec_check(),
         Some("state-check") => state_check(),
+        Some("skip-check") => skip_check(&rest),
         Some("build-manifest") => build_manifest(&rest),
         Some("perf") => perf(&rest),
         Some("docs") => generate_docs(),
@@ -44,6 +45,10 @@ fn usage() {
     eprintln!("  gate           format, lint, test, contract check, docs (AGENTS.md section 10)");
     eprintln!("  spec-check     contract drift between docs/spec and the implementation");
     eprintln!("  state-check    the claims docs/ACCEPTANCE.md makes about docs/STATE.md");
+    eprintln!(
+        "  skip-check     a test log's SKIPPED markers against the declared expectation \
+(spec section 38.3) <log>"
+    );
     eprintln!("  build-manifest write the release input manifest of Appendix H [--output <path>]");
     eprintln!(
         "  perf           run the performance benchmarks of spec section 37.1 \
@@ -395,6 +400,10 @@ fn spec_check() -> ExitCode {
             .into_iter()
             .chain(scan::check_acceptance_case_references(&root))
             .chain(scan::check_silent_skips(&root))
+            .chain(scan::check_unannounced_skips(&root))
+            .chain(scan::check_expected_skips(&root))
+            .chain(scan::check_duplicate_helpers(&root))
+            .chain(scan::check_pty_resize_assertions(&root))
             .chain(scan::check_confinement_syscalls(&root))
             .chain(scan::check_evaluator_captures(&root))
             .chain(scan::check_bounded_channels(&root))
@@ -473,6 +482,53 @@ fn state_check() -> ExitCode {
     }
     for problem in &problems {
         eprintln!("state-check: {} — {}", problem.location, problem.detail);
+    }
+    ExitCode::FAILURE
+}
+
+/// The skip-verification step of v0.4.1 §38.3.
+///
+/// §38.3 makes the gate bidirectional: *"A test that becomes skipped when it was expected to run
+/// MUST fail the CI gate or an explicit skip-verification step."* This is that step. It reads a
+/// test run's output and compares the `SKIPPED` markers in it against
+/// `docs/spec/hardening/expected_test_skips.yaml`, in both directions — an undeclared skip fails,
+/// and a declared skip that did not happen fails too.
+///
+/// It is a separate task rather than part of `spec-check` because it needs an observation: the
+/// gate's static half already refuses a skip the registry does not declare, and only a run can
+/// say which of them actually happened.
+fn skip_check(arguments: &[String]) -> ExitCode {
+    let Some(log_path) = arguments.first() else {
+        return usage_error(
+            "skip-check: name the file holding a test run's output, as in \
+             `cargo test --workspace --all-features 2>&1 | tee test.log`",
+        );
+    };
+    let root = repo_root();
+    let expected = match scan::ExpectedSkips::read(&root) {
+        Ok(expected) => expected,
+        Err(message) => {
+            eprintln!("skip-check: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let log = match std::fs::read_to_string(log_path) {
+        Ok(log) => log,
+        Err(error) => {
+            eprintln!("skip-check: cannot read {log_path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let problems = scan::verify_observed_skips(&expected, &log);
+    if problems.is_empty() {
+        println!(
+            "skip-check: ok — {} declared skip(s) observed, none undeclared",
+            expected.canonical_ci.len()
+        );
+        return ExitCode::SUCCESS;
+    }
+    for problem in &problems {
+        eprintln!("skip-check: {} — {}", problem.location, problem.detail);
     }
     ExitCode::FAILURE
 }

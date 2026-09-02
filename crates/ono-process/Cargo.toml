@@ -14,6 +14,7 @@ nix = { workspace = true, features = ["fs", "ioctl", "poll", "process", "signal"
 thiserror.workspace = true
 
 [dev-dependencies]
+ono-testkit.workspace = true
 tempfile.workspace = true
 
 [lints]

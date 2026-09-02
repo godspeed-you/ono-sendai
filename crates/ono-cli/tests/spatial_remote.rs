@@ -32,6 +32,9 @@ use ono_testkit::Shell;
 use ono_testkit::ono;
 use serde_yaml_ng::Value;
 
+mod support;
+use support::{balanced_end, field, list_at, search};
+
 /// The link every test in this file navigates to. `local` spawns this binary as `ono --agent`.
 const LINK: &str = "link host testbox --transport local";
 
@@ -47,36 +50,6 @@ fn ono_colorless(script: &str) -> ono_testkit::Run {
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
         .run()
-}
-
-/// The end of the JSON document that starts at `chars[start]`, or `None` when it never closes.
-fn balanced_end(chars: &[char], start: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    for (offset, character) in chars.iter().enumerate().skip(start) {
-        if in_string {
-            match character {
-                _ if escaped => escaped = false,
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
-        match character {
-            '"' => in_string = true,
-            '{' | '[' => depth += 1,
-            '}' | ']' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(offset);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// Whether `text` opens like JSON rather than like a rendered table cell.
@@ -151,42 +124,6 @@ fn nth_document(run: &ono_testkit::Run, index: usize, what: &str) -> Value {
     })
 }
 
-/// The first value anywhere in `document` stored under `key`.
-fn search(document: &Value, key: &str) -> Option<Value> {
-    match document {
-        Value::Mapping(mapping) => {
-            for (name, value) in mapping {
-                if name.as_str() == Some(key) {
-                    return Some(value.clone());
-                }
-            }
-            mapping.values().find_map(|value| search(value, key))
-        }
-        Value::Sequence(items) => items.iter().find_map(|item| search(item, key)),
-        _ => None,
-    }
-}
-
-/// The value at a dotted path, falling back to the first field anywhere in the document whose
-/// key is the path's last segment.
-///
-/// v0.4 fixes the *facts* a `PlaceView` (§6.1) and a `SpatialMap` (§22) must carry, and fixes
-/// the field names of `NavigationStep` (§20.1) and `MapEdge` (§22), but it does not fix how a
-/// `PlaceView` nests them. These tests therefore pin the facts, not the nesting.
-fn field(document: &Value, path: &str) -> Value {
-    let mut cursor = document.clone();
-    for segment in path.split('.') {
-        match cursor.get(segment) {
-            Some(next) => cursor = next.clone(),
-            None => {
-                let last = path.rsplit('.').next().unwrap_or(path);
-                return search(document, last).unwrap_or(Value::Null);
-            }
-        }
-    }
-    cursor
-}
-
 fn text_at(document: &Value, path: &str, what: &str) -> String {
     field(document, path)
         .as_str()
@@ -214,14 +151,6 @@ fn wait_for(shell: &mut PtySession, seen: &mut String, needle: &str, budget: Dur
 
 fn rendered(value: &Value) -> String {
     serde_yaml_ng::to_string(value).expect("a value serialises")
-}
-
-/// The list at a dotted path.
-fn list_at(document: &Value, path: &str, what: &str) -> Vec<Value> {
-    field(document, path)
-        .as_sequence()
-        .unwrap_or_else(|| panic!("{what} — `{path}` must be a list, got {document:?}"))
-        .clone()
 }
 
 // --- §19.1 the link map -----------------------------------------------------------------------

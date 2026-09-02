@@ -6,6 +6,7 @@
 //! testable without a PTY.
 
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossterm::cursor;
 use crossterm::event::{Event, KeyEvent, KeyEventKind, KeyModifiers, read};
@@ -78,6 +79,10 @@ pub fn read_key() -> io::Result<KeyPress> {
 /// Fails when the size cannot be determined.
 pub fn terminal_size() -> io::Result<(usize, usize)> {
     let (columns, rows) = size()?;
+    // Asking the size is also how the answer is established: a view built at this size is a view
+    // that must be told when the terminal stops being it, and `read_event_timeout` compares
+    // against what was last asked for (issue #6).
+    remember_terminal_size(columns as usize, rows as usize);
     Ok((columns as usize, rows as usize))
 }
 
@@ -103,6 +108,9 @@ pub enum TerminalEvent {
 ///
 /// Fails when the terminal cannot be read.
 pub fn read_event_timeout(patience: std::time::Duration) -> io::Result<Option<TerminalEvent>> {
+    if let Some(resized) = resize_since_the_last_read() {
+        return Ok(Some(resized));
+    }
     let deadline = std::time::Instant::now() + patience;
     loop {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
@@ -124,6 +132,46 @@ pub fn read_event_timeout(patience: std::time::Duration) -> io::Result<Option<Te
             return Ok(None);
         }
     }
+}
+
+/// The size the terminal was last known to have, as `columns << 32 | rows`; zero until the first
+/// read establishes it.
+static LAST_SIZE: AtomicU64 = AtomicU64::new(0);
+
+/// Records that a view has drawn itself at this size, so a later change to it is a change.
+///
+/// A resize is reported for as long as it is unacknowledged, because a reader that discards one
+/// has not handled it. `ready_key` in the map loop asks for a *key* and a resize is not one; a
+/// resize it dropped used to be a resize the view never heard about, which is issue #6 — sessions
+/// whose whole key history was `Down`, `Esc` and whose map went on drawing at the size it opened
+/// with. Acknowledging is what ends the report, and only the code that acts on a resize can
+/// acknowledge it.
+pub fn remember_terminal_size(columns: usize, rows: usize) {
+    let packed = ((columns as u64) << 32) | (rows as u64 & 0xffff_ffff);
+    LAST_SIZE.store(packed, Ordering::Relaxed);
+}
+
+/// A resize the terminal has already had and no signal delivered.
+///
+/// `SIGWINCH` is the fast path and it is not a guarantee. The signal is delivered to whatever
+/// handler is installed *at the moment it arrives*, and a full-screen view installs one when it
+/// first polls — so a resize between opening the view and that first poll reaches the default
+/// handler and is gone. Issue #6 is that hole seen from the outside: a map opened at thirty rows,
+/// resized to twenty while it was still painting its first frame, went on drawing thirty-row
+/// frames for the rest of the session, and §43.4 was not held by anything.
+///
+/// So the size is compared as well as signalled. One `ioctl` per read is cheaper than a lost
+/// resize, and it makes the view's correctness a property of what the terminal *is* rather than
+/// of what it managed to say.
+fn resize_since_the_last_read() -> Option<TerminalEvent> {
+    let (columns, rows) = size().ok()?;
+    let (columns, rows) = (columns as usize, rows as usize);
+    let packed = ((columns as u64) << 32) | (rows as u64 & 0xffff_ffff);
+    let previous = LAST_SIZE.load(Ordering::Relaxed);
+    // Nothing is recorded here. The change stands until somebody acts on it and says so with
+    // `remember_terminal_size`, so a reader that only wanted a key cannot swallow it. A view that
+    // has never asked the size has nothing drawn to be the wrong size, so zero reports nothing.
+    (previous != 0 && previous != packed).then_some(TerminalEvent::Resize(columns, rows))
 }
 
 /// The alternate screen buffer, left when this value is dropped.

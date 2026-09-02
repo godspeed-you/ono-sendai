@@ -14,18 +14,13 @@
 )]
 
 use ono_spatial_render::{Charset, Key, Keymap, MapView};
-use ono_value::{FieldDef, FieldType, Provenance, RecordValue, Schema, SchemaId, Value};
+use ono_value::{FieldType, Provenance, RecordValue, SchemaId, Value};
+
+mod support;
+use support::schema;
 
 /// The four widths §43.5 names.
 const WIDTHS: [usize; 4] = [40, 80, 120, 200];
-
-fn schema(id: &str, fields: &[(&str, FieldType)]) -> std::sync::Arc<Schema> {
-    let mut builder = Schema::builder(SchemaId::new(id, 1), id);
-    for (name, kind) in fields {
-        builder = builder.field(FieldDef::new(name, kind.clone()));
-    }
-    std::sync::Arc::new(builder.build().expect("a well-formed schema"))
-}
 
 /// A map with labels long enough that 40 columns must do something about them and 200 need not.
 fn map_record() -> RecordValue {

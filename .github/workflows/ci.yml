@@ -23,6 +23,10 @@ env:
   # CI verifies whatever branch it is handed; the branch policy of AGENTS.md section 12.1 is
   # enforced where it matters, on the machine an agent commits from.
   ONO_ALLOW_MAIN: 1
+  # This is the canonical environment whose expected skip set `expected_test_skips.yaml`
+  # declares, so the gate runs the skip-verification step of spec §38.3 here: a skip nobody
+  # declared fails the run, and a declared skip that stopped happening fails it too.
+  ONO_CANONICAL_CI: 1
 
 jobs:
   gate:

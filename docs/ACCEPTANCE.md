@@ -1733,60 +1733,103 @@ mode this phase removes.
 §66.5's six bullets. §65.10 names the defect this phase removes: a skip that reaches the summary as
 a pass. ADR-0428 already made every skip announce itself; this phase makes an unexpected one fail.
 
-- [ ] **P2 · A test run has three visible outcomes.** PASS, FAIL and SKIP with a reason category
+- [x] **P2 · A test run has three visible outcomes.** PASS, FAIL and SKIP with a reason category
       from the §38.4 taxonomy, emitted through the canonical helper of Appendix G, with the raw
       early-return form rejected by the gate —
       `crates/ono-testkit/tests/harness.rs::should_name_the_test_the_reason_and_the_category_when_a_skip_is_announced`,
       `::should_offer_a_require_helper_that_records_an_unmet_prerequisite`,
       `xtask/tests/scan.rs::should_reject_a_test_that_announces_a_skip_with_its_own_print` (ADR-0428,
-      extended to carry the category) (#88, §38.1, §38.4).
-- [ ] **P2 · An unexpected skip fails the gate.** The expected skip set is checked in as
+      extended to carry the category by ADR-0513),
+      `::should_reject_a_test_that_returns_before_its_assertion_path_without_a_skip` and
+      `::should_report_this_repository_as_announcing_every_skip_it_takes`, which held the
+      forty-one silent returns the rule found (#88, §38.1, §38.4).
+- [x] **P2 · An unexpected skip fails the gate.** The expected skip set is checked in as
       `docs/spec/hardening/expected_test_skips.yaml`, the verifier compares observed skip IDs and
       categories against it, and a skip nobody declared turns the run red —
       `xtask/tests/scan.rs::should_fail_on_a_skip_the_expectation_does_not_declare`,
       `::should_fail_when_a_declared_skip_no_longer_happens`,
-      `::should_report_this_repositorys_observed_skips_as_exactly_the_declared_set` (#89, §38.2,
-      §38.3, §65.10).
-- [ ] **P2 · The shared test helpers are canonical.** One helper per job, used by every suite that
+      `::should_report_this_repositorys_observed_skips_as_exactly_the_declared_set` and
+      `::should_neither_require_nor_forbid_a_skip_the_host_capability_decides` (ADR-0514;
+      `cargo xtask skip-check` is the §38.3 verification step, run by `scripts/gate.sh` where
+      `ONO_CANONICAL_CI=1`). ADR-0517 settles the two cases that made a red run mean something
+      other than a defect — a host that cannot supply a capability skips rather than fails, and a
+      watchdog scales with the load the test does not control:
+      `crates/ono-testkit/tests/harness.rs::should_report_a_descriptor_limit_the_host_cannot_reach_rather_than_failing`,
+      `::should_raise_its_own_soft_descriptor_limit_before_reporting_a_shortfall`,
+      `::should_stretch_a_watchdog_for_the_load_the_test_does_not_control` (#89, §38.2, §38.3,
+      §65.10).
+- [x] **P2 · The shared test helpers are canonical.** One helper per job, used by every suite that
       needs it, with the divergence that ADR-0427 already forbids asserted over the whole tree —
       `xtask/tests/scan.rs::should_report_two_test_helpers_that_do_the_same_job_under_different_names`,
-      `::should_report_this_repository_as_using_the_canonical_helper_everywhere` (#90, §39.1–§39.4).
+      `::should_report_this_repository_as_using_the_canonical_helper_everywhere`, and the three
+      that hold the rule to ADR-0427's boundary,
+      `::should_leave_two_helpers_that_differ_alone_when_scanning_for_duplicates`,
+      `::should_leave_a_helper_alone_when_it_calls_its_own_files_helper` and
+      `::should_leave_two_crates_helpers_alone_when_they_share_no_home` (ADR-0515) (#90,
+      §39.1–§39.4).
 - [ ] **P1 · The fourteen acceptance families exist and run.** Every box of §4.8.13 is ticked, the
       cases execute the real `ono` binary (§40.1), remote cases use an isolated container network
       rather than the public internet (§40.2), and every case has a finite timeout that counts as a
       failure when it fires (§40.4) —
       `xtask/tests/hardening_evidence.rs::should_find_a_case_for_every_one_of_the_fourteen_acceptance_families`,
-      `::should_find_a_finite_timeout_on_every_v041_case` (#91, §40).
-- [ ] **P2 · Coverage-guided fuzzing is scheduled and the gate fuzzing stays fast.** The
-      deterministic gate tier keeps running in `scripts/gate.sh`, a scheduled workflow runs the
-      coverage-guided tier over the §35.6 targets, and the schedule is declared rather than assumed
+      `::should_find_a_finite_timeout_on_every_v041_case`. The two proofs exist and are green:
+      thirteen of the fourteen families name a case that exists, `180-remote-mutual-authentication`
+      is the one this increment wrote, and the fourteenth is the release-provenance family whose
+      case H11 owes with the checksums, signature and provenance it asserts. The box itself waits
+      on §4.8.13's last four boxes (#91, §40).
+- [x] **P2 · Coverage-guided fuzzing is scheduled and the gate fuzzing stays fast.** The
+      deterministic gate tier keeps running in `scripts/gate.sh`, `.github/workflows/fuzz.yml`
+      runs the coverage-guided tier daily over all seven entry points of §41.2 — the five of
+      §35.6 plus the remote handshake decoder and the adapter decoders this increment added —
+      and the schedule is declared rather than assumed
       — `xtask/tests/supply_chain.rs::should_declare_a_scheduled_coverage_guided_fuzzing_job_for_every_declared_target`,
-      `::should_keep_the_deterministic_fuzz_tier_inside_the_gate` (#92, §41.1–§41.3).
-- [ ] **P2 · Corpora persist and a hang is a failure.** Fuzz corpora are stored and reloaded
-      between runs, each input has a timeout, and an input that exceeds it is recorded as a hang
-      rather than silently dropped — `fuzz/tests/corpus.rs::should_reload_the_persisted_corpus_for_every_target`,
-      `::should_record_an_input_that_exceeds_its_timeout_as_a_hang` (#93, §41.4, §41.5).
+      `::should_keep_the_deterministic_fuzz_tier_inside_the_gate`, with the target list held
+      against the targets themselves by
+      `fuzz/tests/corpus.rs::should_have_a_target_for_every_entry_point_the_coverage_guided_tier_must_cover`
+      (ADR-0521) (#92, §41.1–§41.3).
+- [x] **P2 · Corpora persist and a hang is a failure.** Fuzz corpora are stored and reloaded
+      between runs — the seeds and the crash reproducers committed and replayed on every gate run,
+      the corpus libFuzzer grows cached per target between scheduled runs — each input has a
+      timeout, and an input that exceeds it is recorded as a hang with its bytes attached rather
+      than silently dropped — `fuzz/tests/corpus.rs::should_reload_the_persisted_corpus_for_every_target`,
+      `::should_record_an_input_that_exceeds_its_timeout_as_a_hang` (ADR-0521) (#93, §41.4,
+      §41.5).
 - [ ] **P2 · Miri and the sanitizers run on the unsafe boundary.** The targeted jobs exist, cover
       the `unsafe` code §42.1 names, and are green for the release commit —
       `xtask/tests/supply_chain.rs::should_declare_a_miri_job_covering_every_unsafe_boundary_module`,
       `::should_declare_an_address_and_undefined_behaviour_sanitizer_job_for_the_release_commit`,
-      with the result recorded in the release evidence of §4.8.11 (#94, §42.1–§42.4).
-- [ ] **P2 · The resize assertion needs a resize.** `should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
+      with the result recorded in the release evidence of §4.8.11. Both proofs are green:
+      `.github/workflows/verification.yml` runs Miri over §42.2's areas and both sanitizers over
+      every crate that holds an `unsafe` block, and the sanitizer job's crate list is read from
+      the tree rather than typed, so a crate that grows one and is not covered fails the gate
+      (ADR-0522). The box waits on the first scheduled run: §66.5 asks for green, and neither job
+      has been executed yet (#94, §42.1–§42.4).
+- [x] **P2 · The resize assertion needs a resize.** `should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
       is satisfied only by output that the resize itself produced, so an earlier repaint cannot
       close it — `crates/ono-cli/tests/spatial_interactive.rs::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
-      rewritten to wait on a resize-specific observation, and
+      waits for a frame that addresses the new row count and no row above it, and
+      `::should_paint_no_frame_at_a_new_row_count_when_the_terminal_is_not_resized` is the proof
+      that the assertion fails when the resize does not happen. Written that way it went red and
+      named the defect behind it: `ready_key` read the resize out of the terminal while a
+      projection was running and dropped it, so the map went on drawing at the size it opened
+      with. ADR-0519 makes a resize stand until the code that acts on one acknowledges it, and
       `xtask/tests/scan.rs::should_report_a_pty_assertion_that_an_earlier_repaint_can_satisfy`
-      (#6, §65.10 — a test that can pass without exercising its subject is the skip-as-pass defect
-      in a different costume).
-- [ ] **P2 · The two known flaky tests are deterministic.**
+      holds the shape (#6, §65.10 — a test that can pass without exercising its subject is the
+      skip-as-pass defect in a different costume).
+- [x] **P2 · The two known flaky tests are deterministic.**
       `should_report_a_failing_streamed_child_after_its_records` (#7) and
-      `ono-process::should_run_a_text_script_without_a_shebang_through_the_shell` (#27) are made
-      deterministic or their non-determinism is fixed at its source, and each is proven by the
-      test's own repeated execution —
+      `ono-process::should_run_a_text_script_without_a_shebang_through_the_shell` (#27) are one
+      defect, fixed at its source: both run a script the test has just written, and a thread that
+      forks between the write's `open` and `close` inherits the descriptor, so `execve` answers
+      `ETXTBSY` — reported as exit 126 about a file that is executable. ADR-0520 waits that out
+      and answers every other failure at once —
       `crates/ono-cli/tests/adapters.rs::should_report_a_failing_streamed_child_after_its_records`,
       `crates/ono-process/tests/external_command.rs::should_run_a_text_script_without_a_shebang_through_the_shell`,
-      both named in the expected-skip and flake declarations of #89 so a recurrence is visible
-      (#7, #27, §38.3).
+      with the condition forced and asserted in
+      `crates/ono-testkit/tests/harness.rs::should_run_a_script_again_while_another_thread_still_holds_it_open`
+      and `::should_answer_a_failure_that_is_not_a_busy_file_on_the_first_attempt`. Proven by
+      repetition: twelve runs of `external_command` and ten of `adapters` at load 6 (#7, #27,
+      §38.3).
 
 #### 4.8.10 Maintainability (H9 — §66.6, §29–§31, Appendix I)
 
@@ -2011,35 +2054,35 @@ and `200` (§54.1) — and the six scenarios of §62 are carried by the gate che
 check §4.8.11 names. §59.9 is asserted inside each of the security cases: every trust failure is
 non-interactive and deterministic with no terminal attached (#91).
 
-- [ ] **Direct mutual TLS authentication** — `180-remote-mutual-authentication`: both ends prove
+- [x] **Direct mutual TLS authentication** — `180-remote-mutual-authentication`: both ends prove
       possession of a persistent key, the accepted client's fingerprint is available at accept, a
       wrong ALPN and an absent client certificate are refused, and a changed host key is refused
       with E0603 (#35, #36, #38, #18).
-- [ ] **Unknown client refusal** — `182-remote-unknown-client-refused`: a client with a valid but
+- [x] **Unknown client refusal** — `182-unknown-client-is-refused`: a client with a valid but
       unauthorized certificate is refused before provider negotiation, and the session learns no
       process, schema or capability inventory beyond the rejection (§59.1, #43, #45).
-- [ ] **Authorization-constrained capability negotiation** —
-      `183-remote-policy-filtered-negotiation`: the offer an observe-only client receives holds the
+- [x] **Authorization-constrained capability negotiation** —
+      `183-offer-is-filtered-by-policy`: the offer an observe-only client receives holds the
       read and observe capabilities and none of the actions the provider advertises (§10.1, #45,
       #47).
-- [ ] **Unauthorized action refusal** — `184-remote-unauthorized-action-refused`: an observe-only
+- [x] **Unauthorized action refusal** — `184-dispatch-refuses-independently`: an observe-only
       client executes representative read and observe operations and is refused `service.restart`
       with `remote.capability_denied`, at dispatch as well as in the offer (§59.2, #46, #48).
-- [ ] **Authorized exact action success** — `185-remote-exact-action-grant`: after the operator
+- [x] **Authorized exact action success** — `185-exact-action-grants`: after the operator
       grants `service.restart`, that action succeeds under the provider's own rules and
       `process.signal` stays refused (§59.3, #44).
-- [ ] **Changed client key refusal** — `186-remote-changed-client-key`: a new key at the same host
+- [x] **Changed client key refusal** — `186-client-key-commands`: a new key at the same host
       is refused until its fingerprint is explicitly added, and `get link` shows it as
       authenticated and unauthorized (§59.4, #42, #50).
-- [ ] **Malformed authorization store fails closed at startup** —
-      `187-remote-corrupt-authorization-store`: one malformed line stops the agent
+- [x] **Malformed authorization store fails closed at startup** —
+      `187-corrupt-authorization-store`: one malformed line stops the agent
       deterministically, an empty store refuses to listen, and neither is treated as zero
       restrictions (§59.5, #40, #55).
 - [ ] **KUANG mandatory confinement setup failure** — `189-kuang-confinement-fail-closed`: with
       `PR_SET_NO_NEW_PRIVS` and a mandatory `setrlimit` made to fail through the injectable platform
       layer, the spawn fails, the plugin's startup marker stays absent, and the confinement report
       names the control (§59.7, §59.8, #60, #61, #62).
-- [ ] **`each` streams an unbounded source** — `193-each-streams-an-unbounded-source`: a source
+- [x] **`each` streams an unbounded source** — `193-each-streams-an-unbounded-source`: a source
       that emits `1`, waits and is marked unbounded lets `source | each { $it } | take 1` answer `1`
       and complete before the source closes (§60.1, #75, #76).
 - [ ] **Materialization item and byte limits refuse** — `190-materialization-limits`: 100 001 small
@@ -2049,14 +2092,17 @@ non-interactive and deterministic with no terminal attached (#91).
 - [ ] **Result-history truncation is visible** — `191-result-history-truncation`: a pipeline that
       exceeds the history limits emits its complete result to the user while the retained copy is
       truncated and says so (§60.6, §67.6, #72).
-- [ ] **Profile M spatial first result** — `195-spatial-first-result-profile-m`: canonical `look`,
+- [x] **Profile M spatial first result** — `195-profile-m-navigation`: canonical `look`,
       `near` and selector operations hold their Profile M p95 targets on the reference environment,
       including the selector miss (§61.1, #82, #83, #85, #8).
-- [ ] **Live map cancellation under load** — `196-live-map-cancellation`: Profile M `map --live`
+- [x] **Live map cancellation under load** — `196-live-map-stabilization`: Profile M `map --live`
       renders an initial frame within 500 ms p95, Profile L answers a frame or a truthful
       progress/cost response within 1.5 s, and cancelling the heaviest Profile L view releases the
       query task promptly and stops result growth (§61.2, §61.5, #22, #20).
-- [ ] **Package signature, checksum and provenance** — `199-release-provenance`: the release
+- [ ] **Package signature, checksum and provenance** — 199-release-provenance, written without
+      backticks because the case does not exist yet and §4.8's convention records an absent name
+      in prose: it belongs to H11, which delivers the checksums, the signature and the provenance
+      it asserts. The release
       fixture produces `SHA256SUMS`, a verifying signature and provenance binding the seven fields
       to each artifact digest; verification succeeds on the published bytes, fails on a tampered
       one, and the installed package hashes identically to the published asset (§62.5, §62.6,

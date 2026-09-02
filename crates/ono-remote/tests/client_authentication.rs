@@ -31,33 +31,11 @@ mod common;
 
 use std::sync::Arc;
 
-use common::fixture::{FixtureObserved, fixture_registry};
-use common::{client_config, within};
-use ono_protocol::{Identity, ProviderDescriptor, Transport, UnauthenticatedTransport};
-use ono_remote::{AgentConfig, PeerIdentity, RemoteLink, TlsListener, serve_registry, tls_connect};
+use common::{client_config, listening, within};
+use ono_protocol::{ProviderDescriptor, Transport, UnauthenticatedTransport};
+use ono_remote::{PeerIdentity, RemoteLink, TlsListener, tls_connect};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio::net::TcpStream;
-
-/// An agent listening on a loopback port the system chooses, serving the fixture registry.
-async fn listening(identity: PeerIdentity) -> String {
-    let listener = TlsListener::bind("127.0.0.1:0", &identity)
-        .await
-        .expect("a loopback listener binds");
-    let address = listener
-        .local_addr()
-        .expect("the system reports the port it chose")
-        .to_string();
-    tokio::spawn(async move {
-        while let Ok(transport) = listener.accept().await {
-            let registry = fixture_registry(Arc::new(FixtureObserved::default()));
-            let config = AgentConfig::new(registry).with_identity(Identity::new("remote-user"));
-            tokio::spawn(async move {
-                let _ = serve_registry(transport, config).await;
-            });
-        }
-    });
-    address
-}
 
 /// A client that checks nothing about the certificate the server sends.
 ///

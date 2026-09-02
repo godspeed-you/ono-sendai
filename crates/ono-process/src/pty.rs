@@ -434,6 +434,28 @@ impl<'fd> RawMode<'fd> {
     }
 }
 
+impl Drop for PtySession {
+    /// Kills and reaps the session when nobody waited for it.
+    ///
+    /// A `PtySession` owns a session leader on its own terminal, so a caller that drops one
+    /// without waiting orphans the leader *and* everything it started — the shell, its pipeline,
+    /// and whatever those spawned. A sweep on 2026-09-02 found 331 such strays on a development
+    /// machine, the oldest five days old, each one a grandchild of a session a test had dropped.
+    ///
+    /// The signal goes to the process group, because the leader is not the only thing running
+    /// under the terminal, and the reap is what keeps a killed child from becoming a zombie the
+    /// next `waitpid` in the process has to step over. A caller that already waited has
+    /// `status`, and this does nothing (v0.4.1 §2.4).
+    fn drop(&mut self) {
+        if self.status.is_some() {
+            return;
+        }
+        let group = Pid::from_raw(self.pid);
+        let _ = nix::sys::signal::killpg(group, nix::sys::signal::Signal::SIGKILL);
+        while let Err(Errno::EINTR) = waitpid(group, None) {}
+    }
+}
+
 impl Drop for RawMode<'_> {
     fn drop(&mut self) {
         if let Some(saved) = &self.saved {

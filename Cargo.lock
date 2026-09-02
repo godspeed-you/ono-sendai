@@ -830,6 +830,7 @@ name = "ono-fuzz"
 version = "0.4.0"
 dependencies = [
  "bytes",
+ "ono-adapter",
  "ono-kuang-protocol",
  "ono-parser",
  "ono-protocol",
@@ -950,6 +951,7 @@ version = "0.4.0"
 dependencies = [
  "nix",
  "ono-core",
+ "ono-testkit",
  "tempfile",
  "thiserror",
 ]
@@ -1062,6 +1064,7 @@ dependencies = [
  "ono-core",
  "ono-pipeline",
  "ono-provider-api",
+ "ono-testkit",
  "ono-value",
  "tokio",
  "zbus",
@@ -1166,6 +1169,7 @@ dependencies = [
 name = "ono-testkit"
 version = "0.4.0"
 dependencies = [
+ "nix",
  "ono-core",
  "serde_yaml_ng",
 ]
@@ -2046,6 +2050,7 @@ dependencies = [
  "ono-cli",
  "ono-command",
  "ono-core",
+ "ono-fuzz",
  "ono-kuang-protocol",
  "ono-parser",
  "ono-spatial-core",

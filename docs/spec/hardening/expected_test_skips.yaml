@@ -1,0 +1,293 @@
+# The expected test skip set of Ono-Sendai, as data.
+#
+# Source: v0.4.1 §38.2 ("For the repository's canonical CI environment, the expected skip set MUST
+# be declared … If non-zero skips are intentional, their IDs and reasons MUST be listed in a
+# machine-readable file"), §38.3 (an unexpected skip fails the gate, and so does a declared skip
+# that stops happening), §38.4 (the six stable categories), §52.1 (`expected_test_skips` is one of
+# the seven machine-readable hardening registries) and Appendix G (the test result contract).
+# Decisions: ADR-0428, ADR-0513, ADR-0514.
+#
+# Two lists, because §38.2 and §38.3 ask two different questions.
+#
+#   declared             every test in this repository that *can* announce a skip, with the §38.4
+#                        category it announces. `xtask spec-check` reads the tree and compares:
+#                        a skip nobody declared fails the gate, and a row whose test no longer
+#                        skips fails it too, so the registry cannot fall behind the suite.
+#
+#   canonical_ci         the skips a run in the canonical CI environment is *expected* to take.
+#     .expected_skips    §38.2 prefers this list empty. `cargo xtask skip-check <log>` compares a
+#                        run's `SKIPPED` markers against it in both directions (§38.3): a skip
+#                        outside the list fails the run, and a listed skip that did not happen
+#                        fails it as well.
+#
+# Fields of a `declared` row
+#
+#   id            `<path>::<test>` — the form `docs/ACCEPTANCE.md` names a proof by.
+#   category      one of the six of §38.4.
+#   prerequisite  what the host has to supply for the test to run. This is the sentence a
+#                 maintainer reads when deciding whether CI could supply it instead (§38.2).
+#
+# The marker a run emits is `SKIPPED <test>: <category>: <detail>` (ADR-0513), so the observation
+# and this file share a vocabulary and no second mechanism has to agree with them.
+
+version: 1
+
+declared:
+  - id: "crates/ono-cli/tests/network.rs::should_act_on_the_piped_interface_when_a_record_arrives_instead_of_a_selector"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/network.rs::should_act_on_the_piped_interface_when_a_record_arrives_instead_of_a_selector_for_start"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/network.rs::should_report_a_permission_failure_when_adding_a_route_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/network.rs::should_report_a_permission_failure_when_adding_an_interface_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/network.rs::should_report_a_permission_failure_when_removing_a_route_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/network.rs::should_report_a_permission_failure_when_removing_an_address_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/network.rs::should_report_a_permission_failure_when_setting_a_route_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/network.rs::should_report_a_permission_failure_when_setting_an_interface_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/network.rs::should_report_a_permission_failure_when_starting_an_interface_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/network.rs::should_report_a_permission_failure_when_stopping_a_socket_unprivileged_with_confirm"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/network.rs::should_report_a_permission_failure_when_stopping_an_interface_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/options_and_selectors.rs::should_leave_out_the_processes_the_named_user_does_not_own"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_accept_piped_service_records_when_set_service_has_no_selector"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_emit_existing_records_in_order_before_following_when_lines_is_given"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_emit_journal_events_with_the_schema_fields_when_the_journal_is_queried"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_emit_structured_log_records_when_the_log_is_queried"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_emit_the_most_recent_event_and_return_when_the_journal_is_tailed_through_take"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_filter_journal_events_by_priority_when_where_composes_over_the_typed_stream"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_list_the_dependencies_of_a_unit_as_a_field_of_its_record"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_only_emit_recent_events_when_since_is_a_relative_timestamp"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_order_the_level_by_severity_rather_than_by_spelling"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_relate_a_service_to_the_units_it_requires"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_report_one_failed_row_when_disabling_a_unit_is_refused_unprivileged"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_report_one_failed_row_when_the_unit_to_modify_does_not_exist"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_restrict_journal_events_to_the_current_boot_when_boot_is_zero"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_restrict_log_records_by_minimum_severity_when_level_is_given"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_restrict_log_records_to_one_unit_when_service_is_given"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_run_the_failed_service_example_when_a_level_threshold_composes"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/services_logs.rs::should_trace_a_service_to_the_processes_it_owns"
+    category: external_tool_unavailable
+    prerequisite: "the host runs systemd with a journal this user may read"
+  - id: "crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture"
+    category: missing_privilege
+    prerequisite: "the host allows the 101 024 open descriptors `performance_profiles.yaml` declares for Profile L's socket axis"
+  - id: "crates/ono-cli/tests/spatial_identity.rs::should_keep_the_working_directory_usable_when_a_denied_directory_is_named"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/spatial_identity.rs::should_not_call_a_map_complete_when_a_place_it_drew_could_not_be_read"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/spatial_identity.rs::should_refuse_a_path_this_user_may_not_read_as_denied_rather_than_as_missing"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/spatial_identity.rs::should_refuse_a_search_anchored_on_a_path_this_user_may_not_read"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/spatial_identity.rs::should_refuse_to_stand_in_a_directory_this_user_may_not_read"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/spatial_identity.rs::should_report_permission_denied_rather_than_zero_files_for_another_users_process"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/spatial_map.rs::should_not_invent_a_change_section_when_no_snapshot_or_event_source_exists"
+    category: fixture_not_applicable
+    prerequisite: "the run has an earlier snapshot or an event source to compare against"
+  - id: "crates/ono-cli/tests/spatial_map.rs::should_report_how_many_objects_a_cluster_stands_for_when_the_view_budget_is_exceeded"
+    category: fixture_not_applicable
+    prerequisite: "the host has more processes than the text map's view budget"
+  - id: "crates/ono-cli/tests/spatial_map.rs::should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded"
+    category: fixture_not_applicable
+    prerequisite: "the host has more processes than the text map's view budget"
+  - id: "crates/ono-cli/tests/spatial_navigation.rs::should_run_the_native_spatial_find_and_keep_the_external_find_reachable_when_both_exist"
+    category: external_tool_unavailable
+    prerequisite: "the external `find` and `look` programs are installed beside the shell's own"
+  - id: "crates/ono-cli/tests/spatial_navigation.rs::should_run_the_native_spatial_look_and_keep_the_external_look_reachable_when_both_exist"
+    category: external_tool_unavailable
+    prerequisite: "the external `find` and `look` programs are installed beside the shell's own"
+  - id: "crates/ono-cli/tests/spatial_storage.rs::should_list_the_mounts_the_providers_report_when_walking_into_the_storage_domain"
+    category: fixture_not_applicable
+    prerequisite: "the host has a mount below `/` to cross"
+  - id: "crates/ono-cli/tests/spatial_storage.rs::should_record_the_boundary_crossing_when_traversing_from_the_root_into_a_mounted_directory"
+    category: fixture_not_applicable
+    prerequisite: "the host has a mount below `/` to cross"
+  - id: "crates/ono-cli/tests/spatial_storage.rs::should_show_the_source_device_and_filesystem_when_the_place_is_a_mount_boundary"
+    category: fixture_not_applicable
+    prerequisite: "the host has a mount below `/` to cross"
+  - id: "crates/ono-cli/tests/storage.rs::should_accept_one_mount_option_per_occurrence_when_mounting"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/storage.rs::should_label_the_unmounted_mount_the_same_way_whichever_spelling_named_it"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/storage.rs::should_report_a_failed_row_and_leave_the_target_unmounted_when_mounting_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/storage.rs::should_report_a_failed_row_when_adding_a_persistent_mount_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/storage.rs::should_report_a_failed_row_when_remounting_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/storage.rs::should_report_a_failed_row_when_removing_a_persistent_mount_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/storage.rs::should_report_a_failed_row_when_starting_a_mount_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/storage.rs::should_report_a_failed_row_when_stopping_a_mount_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/storage.rs::should_report_a_failed_row_when_unmounting_the_root_filesystem_unprivileged"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-cli/tests/storage.rs::should_unmount_the_mounts_piped_in_from_get_mount"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-graph/tests/relationships.rs::should_report_an_error_when_a_process_hides_its_file_descriptors"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-process/tests/redirection.rs::should_report_permission_denied_when_the_target_cannot_be_opened"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-process/tests/terminal_control.rs::acts_as_the_shell_when_a_role_is_requested"
+    category: fixture_not_applicable
+    prerequisite: "the re-exec entry point is given its role in the environment by the test that drives it"
+  - id: "crates/ono-provider-linux/tests/process.rs::should_report_permission_denied_in_the_field_when_a_file_is_closed_to_this_user"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
+  - id: "crates/ono-provider-netlink/tests/kernel_providers.rs::should_answer_exactly_the_bound_when_a_socket_query_asks_for_one"
+    category: missing_kernel_feature
+    prerequisite: "the kernel answers the netlink family the provider reads"
+  - id: "crates/ono-provider-netlink/tests/kernel_providers.rs::should_answer_no_unix_socket_when_the_connection_target_is_asked"
+    category: missing_kernel_feature
+    prerequisite: "the kernel answers the netlink family the provider reads"
+  - id: "crates/ono-provider-netlink/tests/kernel_providers.rs::should_answer_the_connection_target_with_connected_sockets_only"
+    category: missing_kernel_feature
+    prerequisite: "the kernel answers the netlink family the provider reads"
+  - id: "crates/ono-provider-netlink/tests/kernel_providers.rs::should_read_the_neighbour_table_without_inventing_entries"
+    category: missing_kernel_feature
+    prerequisite: "the kernel answers the netlink family the provider reads"
+  - id: "crates/ono-provider-netlink/tests/socket_process_join.rs::should_leave_the_owner_null_when_the_scan_was_not_asked_for"
+    category: missing_kernel_feature
+    prerequisite: "the kernel answers the netlink family the provider reads"
+  - id: "crates/ono-provider-netlink/tests/socket_process_join.rs::should_name_the_process_that_holds_a_socket_this_test_created"
+    category: missing_kernel_feature
+    prerequisite: "the kernel answers the netlink family the provider reads"
+  - id: "crates/ono-provider-netlink/tests/socket_process_join.rs::should_narrow_the_dump_to_one_port_when_the_query_names_it"
+    category: missing_kernel_feature
+    prerequisite: "the kernel answers the netlink family the provider reads"
+  - id: "crates/ono-provider-systemd/tests/service.rs::should_agree_with_the_running_service_manager_when_one_is_present"
+    category: external_tool_unavailable
+    prerequisite: "a systemd service manager answers on the system bus"
+  - id: "crates/ono-provider-systemd/tests/service.rs::should_agree_with_the_running_service_manager_when_one_is_present"
+    category: fixture_not_applicable
+    prerequisite: "at least one active `.service` unit is loaded"
+  - id: "crates/ono-spatial-query/tests/profiles.rs::should_build_every_declared_profile_at_the_cardinality_the_registry_states"
+    category: missing_privilege
+    prerequisite: "the host allows the open descriptors `performance_profiles.yaml` declares for each profile's socket axis"
+  - id: "crates/ono-testkit/tests/harness.rs::should_name_the_test_the_reason_and_the_category_when_a_skip_is_announced"
+    category: fixture_not_applicable
+    prerequisite: "none: the helper's own suite emits the marker in order to prove its shape"
+  - id: "crates/ono-testkit/tests/harness.rs::should_offer_a_require_helper_that_records_an_unmet_prerequisite"
+    category: external_tool_unavailable
+    prerequisite: "none: the helper's own suite emits the marker in order to prove its shape"
+  - id: "xtask/tests/packaging.rs::should_stamp_the_workspace_before_building_when_the_image_caches_its_target_directory"
+    category: fixture_not_applicable
+    prerequisite: "the acceptance Dockerfile mounts a build cache there is staleness to guard against"
+
+canonical_ci:
+  # The `ubuntu-latest` GitHub runner that `.github/workflows/ci.yml` runs the gate on: an
+  # unprivileged user, a live systemd with a readable journal, and a kernel that answers
+  # rtnetlink and sock_diag. Every prerequisite above is one that image supplies, so §38.2's
+  # preferred count of zero is the honest expectation — with the two exceptions below, which are
+  # not lost coverage.
+  #
+  # Three entries, and none of them is coverage anybody lost. Each is a test that skips on every
+  # host by construction rather than because a prerequisite is missing, so listing them is what
+  # makes §38.3's reverse check a guard rather than a nuisance: if one stops emitting its marker,
+  # `skip-check` says so.
+  #
+  # Measured on 2026-09-02 by a full `cargo test --workspace --all-features` on the reference
+  # developer machine, which supplies every prerequisite the `declared:` rows above name — a
+  # live systemd with a readable journal, rtnetlink and sock_diag, an unprivileged user, a second
+  # mount, and the external `find` and `look`. The `ubuntu-latest` runner supplies the same set,
+  # so §38.2's preferred count of zero environmental skips is the expectation, and the first run
+  # that disagrees is exactly the signal §38.3 exists to raise.
+  expected_skips:
+    # The helper's own suite proves the marker's shape by emitting one.
+    - "crates/ono-testkit/tests/harness.rs::should_name_the_test_the_reason_and_the_category_when_a_skip_is_announced"
+    - "crates/ono-testkit/tests/harness.rs::should_offer_a_require_helper_that_records_an_unmet_prerequisite"
+    # The re-exec entry point the PTY tests drive. `cargo test` runs it once with no role in the
+    # environment, and that run has nothing to act as.
+    - "crates/ono-process/tests/terminal_control.rs::acts_as_the_shell_when_a_role_is_requested"
+
+  # Skips whose outcome is a property of the host rather than of this repository, each with the
+  # condition that decides it. `skip-check` neither requires nor forbids these — it would be a
+  # coin toss in both directions — but §38.2 asks that an intentional skip be listed with its
+  # reason, and that is what these rows are. Nothing goes here for being awkward: an entry names
+  # a capability the runner either has or has not, and a reader can check it in one command.
+  permitted_skips:
+    - id: "crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture"
+      condition: "`ulimit -Hn` is at least 101024"
+      doc: >-
+        Profile L's socket axis needs 101 024 open descriptors. `SocketPopulation::try_of` raises
+        the soft limit toward the hard one first, so this skips only where the *hard* limit is
+        short — which the development machine's 524 288 is not and the GitHub runner's may be.
+        Reported as `missing_privilege` because only a privileged process can raise a hard limit.
+    - id: "crates/ono-spatial-query/tests/profiles.rs::should_build_every_declared_profile_at_the_cardinality_the_registry_states"
+      condition: "`ulimit -Hn` is at least 101024"
+      doc: >-
+        The same limit, reached from the registry side: this test builds every profile whose
+        socket axis declares itself gate-buildable, and skips the ones the host cannot hold.

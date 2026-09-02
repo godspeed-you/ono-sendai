@@ -11,9 +11,15 @@
               test binary (AGENTS.md section 16)"
 )]
 
-use ono_command::CommandRegistry;
+use ono_command::{Candidate, CommandRegistry, StageContext};
 
 /// The command contracts compiled into the binary, which are the ones every command answers from.
 pub fn registry() -> &'static CommandRegistry {
     CommandRegistry::embedded().expect("the embedded command contracts must parse")
+}
+
+/// The candidates the completer offers for `line`, with the cursor at its end.
+pub fn complete(line: &str) -> Vec<Candidate> {
+    let cursor = line.len();
+    ono_command::complete(registry(), &StageContext::from_line(line, cursor), None)
 }

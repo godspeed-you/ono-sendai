@@ -20,6 +20,7 @@ use common::{
 use ono_core::ErrorCode;
 use ono_provider_api::{Action, ObjectId, Provider, Query, Selector};
 use ono_provider_linux::{ProcessProvider, schemas};
+use ono_testkit::SkipReason;
 use ono_value::{ByteSize, FieldAccess, Value};
 
 fn accounts() -> Arc<FakeAccounts> {
@@ -347,6 +348,10 @@ async fn should_report_permission_denied_in_the_field_when_a_file_is_closed_to_t
     // Running as root defeats the mode bits this fixture relies on, and a root CI run would
     // otherwise silently assert nothing.
     if is_root() {
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "running as root defeats the mode bits this fixture relies on",
+        );
         return;
     }
     let fixture = ProcFixture::new();

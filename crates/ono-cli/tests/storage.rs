@@ -25,7 +25,7 @@
 use std::time::Duration;
 
 use ono_testkit::ono_within;
-use ono_testkit::{Shell, scratch};
+use ono_testkit::{Shell, SkipReason, scratch};
 use serde_yaml_ng::Value;
 
 mod support;
@@ -44,7 +44,10 @@ fn ono(script: &str) -> ono_testkit::Run {
 /// really mounted or unmounted something on the developer's machine would be the defect.
 fn unprivileged() -> bool {
     if ono_process::effective_uid() == 0 {
-        ono_testkit::skipped("this test asserts the unprivileged refusal and would mutate as root");
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "this test asserts the unprivileged refusal and would mutate as root",
+        );
         return false;
     }
     true

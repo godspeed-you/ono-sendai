@@ -1193,13 +1193,17 @@ pub fn check_tool_versions(root: &Path) -> Vec<Problem> {
                 problems.extend(unversioned_tools(&at, line, &register, &mut installed));
                 if let (Some(asked), Some(pinned)) = (requested_toolchain(line), toolchain.as_ref())
                     && &asked != pinned
+                    && !excused_toolchain(&text, line)
                 {
                     problems.push(problem(
                         &at,
                         format!(
                             "asks for Rust `{asked}` while `rust-toolchain.toml` pins `{pinned}`. \
                              A release built by a toolchain the repository does not name is not \
-                             the release the repository describes (spec §44.3)"
+                             the release the repository describes (spec §44.3). A verification \
+                             job whose tool needs another toolchain — Miri, libFuzzer, the \
+                             sanitizers — says which section requires it in a comment on the \
+                             line, and its workflow builds no artifact"
                         ),
                     ));
                 }
@@ -1381,6 +1385,25 @@ pub fn check_locked_builds(root: &Path) -> Vec<Problem> {
     }
     problems.sort_by(|left, right| left.location.cmp(&right.location));
     problems
+}
+
+/// Whether a workflow may ask for a toolchain other than the pinned one on this line.
+///
+/// §44.3 is about the toolchain a *release* is built by, and v0.4.1 asks for three jobs that
+/// cannot run on it: §41.2's coverage-guided fuzzing needs libFuzzer's `-Z sanitizer`, and §42.2
+/// and §42.3 need Miri and the sanitizers, all of which are nightly-only. A rule that forbade
+/// them would forbid the specification.
+///
+/// The exception is narrow in both directions. The line must say which section requires the
+/// toolchain, so the reason is beside the request rather than in somebody's memory; and the
+/// workflow must build no artifact, so a job that could produce a release cannot excuse itself
+/// however well it explains. `ci.yml` runs `scripts/package.sh`, so nothing in it is excused.
+fn excused_toolchain(workflow: &str, line: &str) -> bool {
+    let names_a_section = line.contains("spec §") || line.contains("§4");
+    let builds_an_artifact = workflow.contains("scripts/package.sh")
+        || workflow.contains("scripts/release-check.sh")
+        || workflow.contains("softprops/action-gh-release");
+    names_a_section && !builds_an_artifact
 }
 
 /// The files a release is built by: the workflows, the Dockerfiles, the top-level scripts.

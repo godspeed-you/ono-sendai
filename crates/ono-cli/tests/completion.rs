@@ -13,24 +13,11 @@
 
 use std::time::{Duration, Instant};
 
-use ono_process::{Command, Executor, PtySession, WindowSize};
+use ono_process::{Command, Executor, WindowSize};
 use ono_testkit::{Scratch, scratch};
 
 mod support;
-use support::read_until;
-
-/// Starts `ono` interactively on a pseudo-terminal, in `directory`.
-fn interactive_shell_in(directory: &Scratch) -> PtySession {
-    let mut executor = Executor::detached();
-    let command = Command::new(ono_testkit::ono_binary())
-        .env("TERM", "xterm")
-        .env("NO_COLOR", "1")
-        .env("HOME", directory.path().display().to_string())
-        .current_dir(directory.path());
-    executor
-        .run_pty(&command, WindowSize::new(24, 100))
-        .expect("a pseudo-terminal must be available")
-}
+use support::{interactive_shell_in, read_until};
 
 /// Reads from the terminal until `needle` appears or `budget` runs out.
 #[test]
@@ -225,10 +212,12 @@ fn should_stop_discovery_at_the_hard_budget_and_answer_what_it_has() {
     // — so what the nanosecond budget stopped was real work rather than a missing provider.
     let patient = ono_cli::complete::ProviderValues::new(Vec::new());
     let mut offered = ono_command::ValueCompleter::complete(&patient, command, parameter, "");
-    for _ in 0..20 {
-        if !offered.is_empty() {
-            break;
-        }
+    // The window the cache is given to fill is a watchdog rather than the budget under test —
+    // the budget under test is the nanosecond one above — so it stretches for the load this run
+    // does not control. A fixed second is what made this test red under a parallel workspace run
+    // on 2026-09-02 while the same assertion passed in isolation (ADR-0517).
+    let deadline = Instant::now() + ono_testkit::under_load(Duration::from_secs(1));
+    while offered.is_empty() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
         offered = ono_command::ValueCompleter::complete(&patient, command, parameter, "");
     }

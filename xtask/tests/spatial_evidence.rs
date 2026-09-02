@@ -24,19 +24,10 @@
 )]
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask sits in the workspace")
-        .to_path_buf()
-}
-
-fn read(relative: &str) -> String {
-    let path = repo().join(relative);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{relative} is readable: {error}"))
-}
+mod support;
+use support::{read, repo};
 
 /// The text of `docs/ACCEPTANCE.md` §4.7, which is the v0.4 definition of done.
 ///

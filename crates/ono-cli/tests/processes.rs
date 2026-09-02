@@ -22,69 +22,13 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use std::os::unix::process::ExitStatusExt;
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ono_testkit::ono;
 use serde_yaml_ng::Value;
 
-/// A `sleep` child the test owns: its pid is a target nobody else will touch, and it is killed
-/// when the test ends whether or not the shell got to it first.
-struct SleepChild(Child);
-
-impl SleepChild {
-    fn spawn() -> Self {
-        let child = Command::new("sleep")
-            .arg("30")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("`sleep` is available on every test host");
-        Self(child)
-    }
-
-    fn pid(&self) -> u32 {
-        self.0.id()
-    }
-
-    /// The signal the child died from, waiting up to `budget` for it to die; `None` if it is
-    /// still alive when the budget runs out.
-    fn signal_within(&mut self, budget: Duration) -> Option<i32> {
-        let deadline = Instant::now() + budget;
-        while Instant::now() < deadline {
-            if let Some(status) = self.0.try_wait().expect("try_wait works on an owned child") {
-                return status.signal();
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        None
-    }
-
-    /// The niceness of the child as the kernel reports it in `/proc/<pid>/stat`, field 19 —
-    /// the system state a `set process --priority` must leave behind.
-    fn niceness(&self) -> i64 {
-        let stat = std::fs::read_to_string(format!("/proc/{}/stat", self.pid()))
-            .expect("the child's stat is readable while it lives");
-        let after_comm = stat
-            .rsplit_once(')')
-            .map(|(_, rest)| rest)
-            .expect("stat has a comm in parentheses");
-        after_comm
-            .split_whitespace()
-            .nth(16)
-            .and_then(|field| field.parse().ok())
-            .expect("stat carries the nice value as its 19th field")
-    }
-}
-
-impl Drop for SleepChild {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
+mod support;
+use support::SleepChild;
 
 /// Parses one line of `to json` output — a JSON array of the stream's values (spec §33.5).
 /// `context` is what the shell said on stderr, so a command that answered with a diagnostic

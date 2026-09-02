@@ -8,8 +8,9 @@
 )]
 
 use jiff::Timestamp;
-use ono_spatial_core::{BootIdentity, Projection, SpatialScope};
-use ono_spatial_index::{FreshnessPolicy, ProviderBridge, SpatialIndex};
+use ono_spatial_core::{BootIdentity, Projection, SpatialId, SpatialScope};
+use ono_spatial_index::{FreshnessPolicy, PinRegistry, ProviderBridge, SpatialIndex};
+use ono_spatial_query::{MAP_NODE_BUDGET, MapHorizon, MapRequest, SpatialMap, project_map};
 use ono_value::{Provenance, RecordValue, SchemaId, Value, builtin_schemas};
 
 /// The instant every fixture observation is made at.
@@ -124,5 +125,17 @@ pub fn service(name: &str, state: &str) -> RecordValue {
             ("state", Value::string(state)),
             ("provider", Value::string("systemd")),
         ],
+    )
+}
+
+pub fn draw(index: &SpatialIndex, horizon: &MapHorizon, request: &MapRequest) -> SpatialMap {
+    project_map(
+        index,
+        &SpatialId::of_space("system"),
+        horizon,
+        request,
+        &PinRegistry::new(),
+        MAP_NODE_BUDGET,
+        NOW,
     )
 }

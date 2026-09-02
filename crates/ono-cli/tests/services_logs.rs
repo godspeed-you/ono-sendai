@@ -25,7 +25,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ono_testkit::Shell;
+use ono_testkit::{Shell, SkipReason, skipped};
 
 /// A unit every systemd system has. It is `static`, so even a privileged `--enabled false` could
 /// not change anything on the machine running the tests.
@@ -91,6 +91,10 @@ fn provider_unavailable(run: &ono_testkit::Run) -> bool {
 
 /// The dual expectation of every query here: records, or `provider.unavailable` — and in no
 /// case the "declared but not implemented" answer. Returns the rows when there are any to check.
+///
+/// When the backing system is absent the caller has nothing to assert, so this announces the skip
+/// itself before answering `None`: the caller's `else { return; }` is then a return path that has
+/// already emitted the canonical signal (v0.4.1 Appendix G).
 fn records_or_unavailable(run: &ono_testkit::Run, what: &str) -> Option<Vec<serde_yaml_ng::Value>> {
     assert!(
         !run.stderr().contains("Ono-Sendai-E0101") && !run.stderr().contains("Ono-Sendai-E0102"),
@@ -100,6 +104,10 @@ fn records_or_unavailable(run: &ono_testkit::Run, what: &str) -> Option<Vec<serd
         run.output()
     );
     if provider_unavailable(run) {
+        skipped(
+            SkipReason::ExternalToolUnavailable,
+            &format!("{what}: this host has no journal or service manager to answer it"),
+        );
         return None;
     }
     assert!(
@@ -429,6 +437,10 @@ fn one_failed_row(run: &ono_testkit::Run, what: &str) -> Option<serde_yaml_ng::V
         run.output()
     );
     if provider_unavailable(run) {
+        skipped(
+            SkipReason::ExternalToolUnavailable,
+            &format!("{what}: this host runs no service manager to refuse it"),
+        );
         return None;
     }
     assert_eq!(

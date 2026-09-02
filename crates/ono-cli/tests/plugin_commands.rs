@@ -18,10 +18,11 @@
 )]
 
 use std::path::Path;
-use std::time::Duration;
 
-use ono_testkit::Shell;
 use serde_yaml_ng::Value;
+
+mod support;
+use support::{items, json, ono_with_plugins};
 
 const ECHO: &str = "dev.example.echo";
 
@@ -91,32 +92,6 @@ fn plugin_home() -> ono_testkit::Scratch {
     scratch
 }
 
-fn ono(home: &ono_testkit::Scratch, script: &str) -> ono_testkit::Run {
-    let root = home.path();
-    Shell::new()
-        .args(["-c", script])
-        .env(
-            "ONO_PLUGIN_PATH",
-            root.join("plugins").display().to_string(),
-        )
-        .env("HOME", root.join("home").display().to_string())
-        .env("XDG_STATE_HOME", root.join("state").display().to_string())
-        .env("XDG_CONFIG_HOME", root.join("config").display().to_string())
-        .env(
-            "ONO_CONFIG_DIR",
-            root.join("config/ono").display().to_string(),
-        )
-        .timeout(Duration::from_secs(30))
-        .run()
-}
-
-/// Parses one line of `to json` output. JSON is YAML, so the workspace's YAML parser reads it.
-fn json(text: &str) -> Value {
-    serde_yaml_ng::from_str(text).unwrap_or_else(|error| {
-        panic!("`to json` emits a JSON document (spec §33.5): {error}\n{text}")
-    })
-}
-
 /// The last `to json` line on stdout as a JSON document — a script's final `| to json`.
 fn last_json(run: &ono_testkit::Run) -> Value {
     let line = run
@@ -138,15 +113,6 @@ fn last_line(run: &ono_testkit::Run) -> &str {
 /// A value rendered as text, for substring checks on nested structure.
 fn text(value: &Value) -> String {
     serde_yaml_ng::to_string(value).expect("a value renders")
-}
-
-fn items(value: &Value) -> &[Value] {
-    value
-        .as_sequence()
-        .unwrap_or_else(|| {
-            panic!("`to json` emits an array of the stream's values (spec §33.5), got {value:?}")
-        })
-        .as_slice()
 }
 
 fn field<'a>(record: &'a Value, name: &str) -> &'a Value {
@@ -193,7 +159,7 @@ fn assert_refused_with(run: &ono_testkit::Run, code: &str, why: &str) {
 #[test]
 fn should_emit_plugin_records_when_get_plugin_is_piped() {
     let home = plugin_home();
-    let run = ono(&home, "get plugin | to json");
+    let run = ono_with_plugins(&home, "get plugin | to json");
     run.assert_success();
     let value = last_json(&run);
     let record = only(&run, &value);
@@ -255,7 +221,7 @@ fn should_emit_plugin_records_when_get_plugin_is_piped() {
 #[test]
 fn should_count_loaded_packages_before_and_after_load() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "get plugin | where state == \"loaded\" | count | to json; load plugin {ECHO} --grant clock.read; get plugin | where state == \"loaded\" | count | to json"
@@ -279,7 +245,7 @@ fn should_count_loaded_packages_before_and_after_load() {
 #[test]
 fn should_report_degraded_when_an_optional_capability_was_denied_at_load() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!("load plugin {ECHO}; get plugin {ECHO} | select state degraded_reason | to json"),
     );
@@ -301,13 +267,13 @@ fn should_report_degraded_when_an_optional_capability_was_denied_at_load() {
 #[test]
 fn should_resolve_one_package_by_its_id_selector() {
     let home = plugin_home();
-    let run = ono(&home, &format!("get plugin {ECHO} | to json"));
+    let run = ono_with_plugins(&home, &format!("get plugin {ECHO} | to json"));
     run.assert_success();
     let value = last_json(&run);
     let record = only(&run, &value);
     assert_eq!(str_field(record, "id"), ECHO, "kuang.yaml selector `id`");
 
-    let miss = ono(&home, "get plugin dev.example.nosuch | to json");
+    let miss = ono_with_plugins(&home, "get plugin dev.example.nosuch | to json");
     assert!(
         !miss.stdout().contains(ECHO),
         "kuang.yaml: the `id` selector resolves one package, not the whole set, got {:?}",
@@ -322,7 +288,7 @@ fn should_resolve_one_package_by_its_id_selector() {
 #[test]
 fn should_show_manifest_contributions_and_capability_requests_when_inspected() {
     let home = plugin_home();
-    let run = ono(&home, &format!("inspect plugin {ECHO} | to json"));
+    let run = ono_with_plugins(&home, &format!("inspect plugin {ECHO} | to json"));
     run.assert_success();
     let value = last_json(&run);
     let record = only(&run, &value);
@@ -385,7 +351,7 @@ fn should_show_manifest_contributions_and_capability_requests_when_inspected() {
 #[test]
 fn should_find_an_installed_package_without_loading_it() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         "find plugin echo | to json; get plugin | where state == \"loaded\" | count | to json",
     );
@@ -440,7 +406,7 @@ fn should_find_an_uninstalled_package_in_a_path_source() {
         "0.3.0",
         ">=11.1 <12",
     );
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "find plugin other --source path:{} | to json",
@@ -473,7 +439,7 @@ fn should_find_an_uninstalled_package_in_a_path_source() {
 #[test]
 fn should_report_an_unsigned_local_package_as_compatible_when_verified() {
     let home = plugin_home();
-    let run = ono(&home, &format!("verify plugin {ECHO} | to json"));
+    let run = ono_with_plugins(&home, &format!("verify plugin {ECHO} | to json"));
     run.assert_success();
     let value = last_json(&run);
     let result = only(&run, &value);
@@ -520,7 +486,7 @@ fn should_report_incompatibility_when_the_kuang_api_range_excludes_the_host() {
         format!("plugins/{ECHO}/manifest.yaml"),
         manifest(ECHO, "echo", "0.1.0", ">=99"),
     );
-    let run = ono(&home, &format!("verify plugin {ECHO} | to json"));
+    let run = ono_with_plugins(&home, &format!("verify plugin {ECHO} | to json"));
     assert!(
         !run.status().is_success(),
         "lifecycle.v1 verification: a blocking check that fails is a failed verification, got {:?}",
@@ -547,7 +513,7 @@ fn should_refuse_to_load_an_incompatible_package() {
         format!("plugins/{ECHO}/manifest.yaml"),
         manifest(ECHO, "echo", "0.1.0", ">=99"),
     );
-    let run = ono(&home, &format!("load plugin {ECHO}"));
+    let run = ono_with_plugins(&home, &format!("load plugin {ECHO}"));
     assert!(
         !run.status().is_success(),
         "lifecycle.v1: a blocking check prevents load, got {:?}",
@@ -569,7 +535,7 @@ fn should_verify_the_piped_packages_when_verify_plugin_follows_get_plugin() {
     // kuang.yaml `verify plugin`: input `null | stream<ono.plugin/1>` — each piped record is
     // verified as `verify plugin <id>` would.
     let home = plugin_home();
-    let run = ono(&home, "get plugin | verify plugin | to json");
+    let run = ono_with_plugins(&home, "get plugin | verify plugin | to json");
     run.assert_success();
     let value = last_json(&run);
     let result = only(&run, &value);
@@ -588,7 +554,7 @@ fn should_verify_the_piped_packages_when_verify_plugin_follows_get_plugin() {
 #[test]
 fn should_load_the_piped_packages_when_load_plugin_follows_get_plugin() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         "get plugin | load plugin --grant clock.read; get plugin | where state == \"loaded\" | count | to json",
     );
@@ -607,7 +573,7 @@ fn should_refuse_to_ask_when_no_assistant_is_named_after_get_assistant() {
     // still selected explicitly (spec §7.1). Nothing loaded answers, and that is E0102, not a
     // claim that the command is unimplemented.
     let home = plugin_home();
-    let run = ono(&home, "get assistant | ask assistant");
+    let run = ono_with_plugins(&home, "get assistant | ask assistant");
     assert_refused_with(
         &run,
         "Ono-Sendai-E0102",
@@ -639,7 +605,7 @@ fn should_install_a_package_from_a_path_reference_when_confirmed() {
         "path:{}",
         elsewhere.path().join("dev.example.other").display()
     );
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!("install plugin {reference} --confirm | to json"),
     );
@@ -659,7 +625,7 @@ fn should_install_a_package_from_a_path_reference_when_confirmed() {
 
     // A second session sees the package: installation placed it in the plugin home
     // (ADR-0051: installed is a directory layout), not in the first session's memory.
-    let listed = ono(
+    let listed = ono_with_plugins(
         &home,
         "get plugin | where id == \"dev.example.other\" | select id version state | to json",
     );
@@ -693,7 +659,7 @@ fn should_refuse_to_install_without_confirmation_in_a_script() {
         "path:{}",
         elsewhere.path().join("dev.example.other").display()
     );
-    let run = ono(&home, &format!("install plugin {reference}"));
+    let run = ono_with_plugins(&home, &format!("install plugin {reference}"));
     assert_refused_with(
         &run,
         "Ono-Sendai-E0701",
@@ -712,7 +678,7 @@ fn should_refuse_to_install_a_version_that_is_already_installed() {
     lay_out_package(elsewhere.path(), ECHO, "echo", "0.1.0", ">=11.1 <12");
     let reference = format!("path:{}", elsewhere.path().join(ECHO).display());
     let before = home.read(format!("plugins/{ECHO}/manifest.yaml"));
-    let run = ono(&home, &format!("install plugin {reference} --confirm"));
+    let run = ono_with_plugins(&home, &format!("install plugin {reference} --confirm"));
     assert_refused_with(
         &run,
         "Ono-Sendai-E0303",
@@ -732,7 +698,7 @@ fn should_refuse_to_install_a_version_that_is_already_installed() {
 #[test]
 fn should_withdraw_contributions_when_a_package_is_unloaded() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "load plugin {ECHO}; unload plugin {ECHO} | to json; get plugin | where state == \"loaded\" | count | to json; echo:emit --count 3 | to json"
@@ -778,7 +744,7 @@ fn should_withdraw_contributions_when_a_package_is_unloaded() {
 #[test]
 fn should_disable_a_package_and_refuse_to_load_it() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "set plugin {ECHO} --enabled false | to json; get plugin {ECHO} | select enabled | to json"
@@ -809,7 +775,7 @@ fn should_disable_a_package_and_refuse_to_load_it() {
         "plugin.v1: `enabled` reflects the setting (spec §31.3)"
     );
 
-    let load = ono(
+    let load = ono_with_plugins(
         &home,
         &format!(
             "set plugin {ECHO} --enabled false; load plugin {ECHO}; get plugin | where state == \"loaded\" | count | to json"
@@ -831,8 +797,8 @@ fn should_disable_a_package_and_refuse_to_load_it() {
 #[test]
 fn should_persist_enablement_across_sessions() {
     let home = plugin_home();
-    ono(&home, &format!("set plugin {ECHO} --enabled false")).assert_success();
-    let later = ono(
+    ono_with_plugins(&home, &format!("set plugin {ECHO} --enabled false")).assert_success();
+    let later = ono_with_plugins(
         &home,
         &format!("get plugin {ECHO} | select enabled | to json"),
     );
@@ -852,7 +818,7 @@ fn should_persist_enablement_across_sessions() {
 #[test]
 fn should_remove_the_package_directory_when_removed() {
     let home = plugin_home();
-    let run = ono(&home, &format!("remove plugin {ECHO} | to json"));
+    let run = ono_with_plugins(&home, &format!("remove plugin {ECHO} | to json"));
     run.assert_success();
     let value = last_json(&run);
     let result = only(&run, &value);
@@ -870,7 +836,7 @@ fn should_remove_the_package_directory_when_removed() {
         !home.exists(format!("plugins/{ECHO}/manifest.yaml")),
         "lifecycle.v1 remove: package versions are removed from the plugin home"
     );
-    let listed = ono(&home, "get plugin | count | to json");
+    let listed = ono_with_plugins(&home, "get plugin | count | to json");
     listed.assert_success();
     assert_eq!(
         last_line(&listed),
@@ -883,7 +849,7 @@ fn should_remove_the_package_directory_when_removed() {
 #[test]
 fn should_unload_a_loaded_package_before_removing_it() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "load plugin {ECHO}; remove plugin {ECHO} | to json; echo:emit --count 3 | to json"
@@ -924,7 +890,7 @@ fn should_revoke_the_grants_of_a_removed_package_unless_asked_to_keep_them() {
     let spare = ono_testkit::scratch();
     lay_out_package(spare.path(), ECHO, "echo", "0.1.0", ">=11.1 <12");
 
-    let removed = ono(&plugin_home(), &removal_keeping(spare.path(), ""));
+    let removed = ono_with_plugins(&plugin_home(), &removal_keeping(spare.path(), ""));
     assert!(
         !removed.status().is_success()
             && (removed.stderr().contains("capability.denied")
@@ -934,7 +900,7 @@ fn should_revoke_the_grants_of_a_removed_package_unless_asked_to_keep_them() {
         removed.output()
     );
 
-    let kept = ono(
+    let kept = ono_with_plugins(
         &plugin_home(),
         &removal_keeping(spare.path(), " --keep-grants"),
     );
@@ -953,7 +919,7 @@ fn should_revoke_the_grants_of_a_removed_package_unless_asked_to_keep_them() {
 #[test]
 fn should_list_capability_definitions() {
     let home = plugin_home();
-    let run = ono(&home, "get capability | to json");
+    let run = ono_with_plugins(&home, "get capability | to json");
     run.assert_success();
     let text = text(&last_json(&run));
     assert!(
@@ -965,7 +931,7 @@ fn should_list_capability_definitions() {
 #[test]
 fn should_show_a_grant_made_at_load_for_the_package() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "load plugin {ECHO} --grant clock.read; get capability --plugin {ECHO} | where capability == \"clock.read\" | to json"
@@ -1002,7 +968,7 @@ fn should_show_a_grant_made_at_load_for_the_package() {
 #[test]
 fn should_grant_and_revoke_a_capability_at_runtime() {
     let home = plugin_home();
-    let granted = ono(
+    let granted = ono_with_plugins(
         &home,
         &format!(
             "load plugin {ECHO}; grant capability clock.read --plugin {ECHO} | to json; echo:clock | to json"
@@ -1038,7 +1004,7 @@ fn should_grant_and_revoke_a_capability_at_runtime() {
         lines[1]
     );
 
-    let revoked = ono(
+    let revoked = ono_with_plugins(
         &home,
         &format!(
             "load plugin {ECHO}; grant capability clock.read --plugin {ECHO}; revoke capability clock.read --plugin {ECHO} | to json; echo:clock | to json"
@@ -1065,7 +1031,7 @@ fn should_record_the_scope_the_operator_named_on_the_grant() {
     // carries and the one the broker checks. `--scope` is declared in kuang.yaml, and a declared
     // safety control that is read by nothing is the F13 defect class.
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "grant capability filesystem.read --plugin {ECHO} --scope 'paths=/var/log/**' | to json"
@@ -1086,7 +1052,7 @@ fn should_refuse_a_scope_key_the_capability_does_not_declare() {
     // §31.16: "A key the capability does not declare is invalid, not ignored", and a scope that
     // cannot be enforced MUST NOT be offered as if it were a security boundary.
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!("grant capability filesystem.read --plugin {ECHO} --scope units=nginx.service"),
     );
@@ -1107,7 +1073,7 @@ fn should_make_a_lease_that_expires_when_a_grant_is_given_a_span() {
     // §31.18: a grant prompt must state its duration, and §31.49 makes a grant with an expiry a
     // lease. kuang.yaml's own example is `--duration 1h`.
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!("grant capability clock.read --plugin {ECHO} --duration 1h | to json"),
     );
@@ -1134,7 +1100,7 @@ fn should_refuse_a_duration_the_broker_cannot_enforce() {
     // to is refused by name rather than silently recorded as something else — a duration that
     // does nothing is the control this whole increment exists to remove.
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!("grant capability clock.read --plugin {ECHO} --duration fortnight"),
     );
@@ -1156,13 +1122,13 @@ fn should_read_back_an_always_grant_in_a_later_session() {
     // store kept apart from the packages so a package update cannot rewrite it. A grant the
     // shell forgets at exit is neither inspectable nor a policy.
     let home = plugin_home();
-    ono(
+    ono_with_plugins(
         &home,
         &format!("grant capability clock.read --plugin {ECHO} --duration always"),
     )
     .assert_success();
 
-    let later = ono(
+    let later = ono_with_plugins(
         &home,
         &format!("get capability --plugin {ECHO} | where capability == \"clock.read\" | to json"),
     );
@@ -1185,7 +1151,7 @@ fn should_read_back_an_always_grant_in_a_later_session() {
         "spec §31.19: a grant read out of the operator's policy came from that layer"
     );
 
-    let used = ono(&home, &format!("load plugin {ECHO}; echo:clock | to json"));
+    let used = ono_with_plugins(&home, &format!("load plugin {ECHO}; echo:clock | to json"));
     assert!(
         used.status().is_success(),
         "spec §31.19: the stored grant is what the broker enforces, got {:?}",
@@ -1198,18 +1164,18 @@ fn should_forget_a_stored_grant_when_it_is_revoked_in_a_later_session() {
     // §31.18: an "always" grant is revocable, and a revocation that only lasts until the shell
     // exits is not one.
     let home = plugin_home();
-    ono(
+    ono_with_plugins(
         &home,
         &format!("grant capability clock.read --plugin {ECHO} --duration always"),
     )
     .assert_success();
-    ono(
+    ono_with_plugins(
         &home,
         &format!("revoke capability clock.read --plugin {ECHO}"),
     )
     .assert_success();
 
-    let later = ono(&home, &format!("load plugin {ECHO}; echo:clock"));
+    let later = ono_with_plugins(&home, &format!("load plugin {ECHO}; echo:clock"));
     assert!(
         !later.status().is_success()
             && (later.stderr().contains("capability.denied") || later.stderr().contains("K11301")),
@@ -1225,13 +1191,13 @@ fn should_keep_the_audit_trail_across_sessions() {
     // auditable. A trail that dies with the process answers "what did that package do?" only
     // for as long as nobody has left the shell.
     let home = plugin_home();
-    ono(
+    ono_with_plugins(
         &home,
         &format!("load plugin {ECHO}; grant capability clock.read --plugin {ECHO}; echo:clock"),
     )
     .assert_success();
 
-    let later = ono(&home, "get audit | to json");
+    let later = ono_with_plugins(&home, "get audit | to json");
     later.assert_success();
     let document = last_json(&later);
     let events = items(&document);
@@ -1248,7 +1214,7 @@ fn should_keep_the_audit_trail_across_sessions() {
 #[test]
 fn should_refuse_to_grant_an_unknown_capability() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!("grant capability nosuch.thing --plugin {ECHO}"),
     );
@@ -1266,7 +1232,7 @@ fn should_refuse_to_grant_an_unknown_capability() {
 #[test]
 fn should_record_a_capability_use_in_the_audit_trail() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "load plugin {ECHO} --grant clock.read; echo:clock; get audit --plugin {ECHO} | where capability == \"clock.read\" | to json"
@@ -1303,7 +1269,7 @@ fn should_record_a_capability_use_in_the_audit_trail() {
 #[test]
 fn should_record_a_denied_capability_use_in_the_audit_trail() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "load plugin {ECHO}; echo:clock; get audit --plugin {ECHO} | where result == \"denied\" | to json"
@@ -1325,7 +1291,7 @@ fn should_give_every_audit_event_an_identity_of_its_own() {
     // event by it. The host's own events and each package's are minted by different counters,
     // so an id has to say which trail it came from or two events claim to be one.
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!("load plugin {ECHO}; echo:clock; get audit | select id | to json"),
     );
@@ -1351,7 +1317,7 @@ fn should_give_every_audit_event_an_identity_of_its_own() {
 #[test]
 fn should_filter_the_audit_trail_by_package() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "load plugin {ECHO} --grant clock.read; echo:clock; get audit --plugin dev.example.nosuch | to json"
@@ -1369,7 +1335,7 @@ fn should_filter_the_audit_trail_by_package() {
 #[test]
 fn should_reject_an_unknown_field_on_the_audit_stream() {
     let home = plugin_home();
-    let run = ono(&home, "get audit | where plugn == \"x\"");
+    let run = ono_with_plugins(&home, "get audit | where plugn == \"x\"");
     assert_refused_with(
         &run,
         "Ono-Sendai-E0202",
@@ -1390,7 +1356,7 @@ fn should_reject_an_unknown_field_on_the_audit_stream() {
 fn should_show_the_new_version_when_a_loaded_package_is_reloaded() {
     let home = plugin_home();
     let manifest_path = format!("plugins/{ECHO}/manifest.yaml");
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         &format!(
             "load plugin {ECHO}; get plugin {ECHO} | select version | to json; cp {stale} {live}; load plugin {ECHO}; get plugin {ECHO} | select version state | to json",
@@ -1440,7 +1406,7 @@ fn should_show_the_new_version_when_a_loaded_package_is_reloaded() {
 #[test]
 fn should_report_no_assistants_when_none_is_loaded() {
     let home = plugin_home();
-    let run = ono(&home, "get assistant | to json");
+    let run = ono_with_plugins(&home, "get assistant | to json");
     run.assert_success();
     assert_eq!(
         last_line(&run),
@@ -1453,7 +1419,7 @@ fn should_report_no_assistants_when_none_is_loaded() {
 #[test]
 fn should_report_no_model_providers_when_none_is_configured() {
     let home = plugin_home();
-    let run = ono(&home, "get model | to json");
+    let run = ono_with_plugins(&home, "get model | to json");
     run.assert_success();
     assert_eq!(
         last_line(&run),
@@ -1466,7 +1432,7 @@ fn should_report_no_model_providers_when_none_is_configured() {
 #[test]
 fn should_report_a_structured_not_found_when_asking_an_unknown_assistant() {
     let home = plugin_home();
-    let run = ono(&home, "ask assistant nobody \"hello\"");
+    let run = ono_with_plugins(&home, "ask assistant nobody \"hello\"");
     assert_refused_with(
         &run,
         "Ono-Sendai-E0102",
@@ -1486,7 +1452,7 @@ fn should_refuse_an_autonomy_level_the_shell_does_not_define() {
     // shell's, and a word outside it is refused rather than passed on: a turn must never run
     // under a policy nothing can enforce.
     let home = plugin_home();
-    let run = ono(&home, "ask assistant nobody \"hello\" --autonomy L9");
+    let run = ono_with_plugins(&home, "ask assistant nobody \"hello\" --autonomy L9");
     assert_refused_with(
         &run,
         "Ono-Sendai-E0201",
@@ -1498,7 +1464,7 @@ fn should_refuse_an_autonomy_level_the_shell_does_not_define() {
         run.stderr()
     );
 
-    let accepted = ono(&home, "ask assistant nobody \"hello\" --autonomy L2");
+    let accepted = ono_with_plugins(&home, "ask assistant nobody \"hello\" --autonomy L2");
     assert!(
         accepted.stderr().contains("Ono-Sendai-E0102"),
         "a level the shell defines is accepted, and what is missing is then the assistant, got \
@@ -1510,7 +1476,7 @@ fn should_refuse_an_autonomy_level_the_shell_does_not_define() {
 #[test]
 fn should_report_no_findings_when_nothing_was_analysed() {
     let home = plugin_home();
-    let run = ono(
+    let run = ono_with_plugins(
         &home,
         "get finding | to json; get finding | where severity == \"high\" | to json",
     );
@@ -1535,7 +1501,7 @@ fn should_refuse_a_severity_the_finding_schema_does_not_carry() {
     // other honestly; a sixth word is a filter nobody can apply, and a filter nobody applied
     // answers with everything (ADR-0233).
     let home = plugin_home();
-    let run = ono(&home, "get finding --severity urgent | count");
+    let run = ono_with_plugins(&home, "get finding --severity urgent | count");
     assert_refused_with(
         &run,
         "Ono-Sendai-E0201",
@@ -1547,7 +1513,7 @@ fn should_refuse_a_severity_the_finding_schema_does_not_carry() {
         run.stderr()
     );
 
-    let accepted = ono(&home, "get finding --severity high | count | to json");
+    let accepted = ono_with_plugins(&home, "get finding --severity high | count | to json");
     accepted.assert_success();
     assert_eq!(
         last_line(&accepted),
@@ -1561,7 +1527,7 @@ fn should_refuse_a_severity_the_finding_schema_does_not_carry() {
 #[test]
 fn should_reject_an_unknown_field_on_the_finding_stream() {
     let home = plugin_home();
-    let run = ono(&home, "get finding | where sevrity == \"x\"");
+    let run = ono_with_plugins(&home, "get finding | where sevrity == \"x\"");
     assert_refused_with(
         &run,
         "Ono-Sendai-E0202",

@@ -5,6 +5,7 @@
 //! easy to forget, and both are exactly how a project acquires unfinished work nobody is
 //! tracking. The gate checks them instead of trusting them.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// A rule violation, phrased so the reader knows what to do about it.
@@ -265,8 +266,9 @@ pub fn check_silent_skips(root: &Path) -> Vec<Problem> {
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
         };
-        for (number, line) in text.lines().enumerate() {
-            if !announces_a_skip(line) {
+        let lines: Vec<&str> = text.lines().collect();
+        for (number, line) in lines.iter().enumerate() {
+            if !announces_a_skip(line, lines.get(number + 1).copied().unwrap_or("")) {
                 continue;
             }
             problems.push(Problem::new(
@@ -285,13 +287,21 @@ pub fn check_silent_skips(root: &Path) -> Vec<Problem> {
 /// Matched on the printed text rather than on the macro, because the defect is the announcement:
 /// `println!` reaches the same reader, and a test that writes "skipping" says the same thing as
 /// one that writes "skipped".
-fn announces_a_skip(line: &str) -> bool {
+fn announces_a_skip(line: &str, next: &str) -> bool {
     let trimmed = line.trim_start();
     if !(trimmed.starts_with("eprintln!(") || trimmed.starts_with("println!(")) {
         return false;
     }
-    let Some(quoted) = trimmed.split('"').nth(1) else {
-        return false;
+    // A macro whose first argument is long enough is written with the string on the next line,
+    // and the announcement is the same announcement. Reading only the opening line let one of
+    // them sit in `spatial_map.rs` for a release (v0.4.1 §65.10).
+    let quoted = match trimmed.split('"').nth(1) {
+        Some(quoted) => quoted,
+        None if trimmed.ends_with('(') => match next.trim_start().split('"').nth(1) {
+            Some(quoted) => quoted,
+            None => return false,
+        },
+        None => return false,
     };
     let lowered = quoted.trim_start().to_ascii_lowercase();
     lowered.starts_with("skip")
@@ -1189,4 +1199,960 @@ pub fn check_bounded_channels(root: &Path) -> Vec<Problem> {
         }
     }
     problems
+}
+
+/// Checks that a test never returns before its assertion path without saying it skipped.
+///
+/// v0.4.1 §65.10 names the defect: *"A test returning before its assertion path without an
+/// explicit skip outcome is forbidden."* Appendix G writes the same rule as a shape —
+///
+/// ```text
+/// if prerequisite_missing() {
+///     return;
+/// }
+/// ```
+///
+/// — *"is prohibited unless the return path has already emitted the canonical explicit skip
+/// signal that the gate recognizes."* ADR-0428 stopped short of this and said so: a precondition
+/// guard and an ordinary `return` are the same Rust, and a scanner that guessed would cry wolf.
+/// What makes the rule holdable is that the specification names two escapes, and both are
+/// readable from the source.
+///
+/// A bare `return;` inside a `#[test]` function is accepted when any of these holds:
+///
+/// * **it is not the test's return.** A `return` inside a closure or an `async` block leaves that
+///   block, not the test — `sink.send(..).await.is_err()` is flow control in a fixture;
+/// * **the block it sits in asserted something.** A branch that asserts and then returns has
+///   reached an assertion path, which is precisely what §65.10 requires it to reach;
+/// * **the skip has been announced on the path.** Either the block calls
+///   [`skipped`](ono_testkit::skipped) or [`require`](ono_testkit::require) itself, or the guard
+///   that opened the block calls a helper in the same file that does. `unprivileged()` announcing
+///   the skip and returning `false` is the canonical signal already emitted, and the caller's
+///   `if !unprivileged() { return; }` is the shape Appendix G permits.
+///
+/// Everything else is a test whose summary line says `ok` for a run in which it asserted nothing.
+#[must_use]
+pub fn check_unannounced_skips(root: &Path) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    for file in rust_sources(root) {
+        let relative = relative(root, &file);
+        if !relative.contains("/tests/") || is_scanner_source(&relative) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        problems.extend(unannounced_skips_in(&relative, &text));
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// One block of a test function, and what has happened inside it so far.
+#[derive(Clone, Copy)]
+struct Block {
+    /// Whether this block is a closure or an `async` block, so a `return` leaves it and not the
+    /// test.
+    detached: bool,
+    /// Whether the guard that opened it called a helper that announces a skip.
+    guarded_by_announcer: bool,
+    /// Whether something inside it has asserted, announced a skip, or required a prerequisite.
+    reached_its_path: bool,
+}
+
+/// The rule of [`check_unannounced_skips`], applied to one file's text.
+fn unannounced_skips_in(relative: &str, text: &str) -> Vec<Problem> {
+    let announcers = skip_announcing_helpers(text);
+    let mut problems = Vec::new();
+    let mut stack: Vec<Block> = Vec::new();
+    let mut in_test = false;
+    let mut pending_test = false;
+    let mut pending_announcer = false;
+
+    for (number, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if !in_test {
+            if is_test_attribute(trimmed) {
+                pending_test = true;
+            } else if pending_test && trimmed.contains("fn ") {
+                in_test = true;
+                pending_test = false;
+                stack.clear();
+                stack.push(Block {
+                    detached: false,
+                    guarded_by_announcer: false,
+                    reached_its_path: false,
+                });
+                continue;
+            }
+            continue;
+        }
+
+        if calls_an_announcer(line, &announcers) {
+            pending_announcer = true;
+        }
+        if reaches_an_assertion_path(line)
+            && let Some(block) = stack.last_mut()
+        {
+            block.reached_its_path = true;
+        }
+        if trimmed == "return;" {
+            let detached = stack.iter().any(|block| block.detached);
+            let excused = stack
+                .last()
+                .is_none_or(|block| block.reached_its_path || block.guarded_by_announcer);
+            if !detached && !excused {
+                problems.push(Problem::new(
+                    format!("{relative}:{}", number + 1),
+                    "returns from a test before its assertion path without announcing a skip. A                  test that gives up on a precondition calls                  `ono_testkit::require(condition, SkipReason::…, detail)` or                  `ono_testkit::skipped(SkipReason::…, detail)` first, so the run says                  SKIP(reason) instead of counting as a pass that asserted nothing (v0.4.1                  §38.1, §65.10, Appendix G)"
+                        .to_owned(),
+                ));
+            }
+        }
+
+        let opened = opens_a_detached_block(line);
+        let (opens, closes) = brace_delta(line);
+        for _ in 0..opens {
+            stack.push(Block {
+                detached: opened,
+                guarded_by_announcer: pending_announcer,
+                reached_its_path: false,
+            });
+        }
+        for _ in 0..closes {
+            stack.pop();
+        }
+        if opens > 0 || trimmed.ends_with(';') {
+            pending_announcer = false;
+        }
+        if stack.is_empty() {
+            in_test = false;
+        }
+    }
+    problems
+}
+
+/// Whether a line carries the attribute that makes the next function a test.
+fn is_test_attribute(trimmed: &str) -> bool {
+    trimmed == "#[test]" || (trimmed.starts_with("#[") && trimmed.contains("test]"))
+}
+
+/// Whether a line opens a closure or an `async` block, from which `return` leaves the block
+/// rather than the test.
+fn opens_a_detached_block(line: &str) -> bool {
+    if line.contains("async move {") || line.contains("async {") {
+        return true;
+    }
+    let bytes = line.as_bytes();
+    let mut bars = 0usize;
+    let mut in_string = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if in_string => index += 1,
+            b'"' => in_string = !in_string,
+            b'|' if !in_string => bars += 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    // `|a, b|` and `||` are two bars on one line; `a || b` is caught by the same count and is
+    // not worth separating, because a line holding a boolean `or` and opening a block that a
+    // test returns from is not a shape this repository writes.
+    bars >= 2
+}
+
+/// Whether a line reaches an assertion — the path §65.10 wants a test to reach before it leaves.
+fn reaches_an_assertion_path(line: &str) -> bool {
+    const REACHED: [&str; 8] = [
+        "assert!",
+        "assert_eq!",
+        "assert_ne!",
+        "debug_assert!",
+        "panic!",
+        "unreachable!",
+        "skipped(",
+        "require(",
+    ];
+    REACHED.iter().any(|marker| line.contains(marker))
+}
+
+/// Whether a line calls the canonical helper, or one of the file's own skip-announcing helpers.
+fn calls_an_announcer(line: &str, announcers: &[String]) -> bool {
+    if line.contains("require(") || line.contains("skipped(") {
+        return true;
+    }
+    announcers
+        .iter()
+        .any(|name| line.contains(&format!("{name}(")))
+}
+
+/// The names of the functions in `text` whose bodies announce a skip.
+///
+/// `unprivileged()` in `network.rs` prints the marker and returns `false`; its callers write
+/// `if !unprivileged() { return; }`. That return path *has* emitted the canonical signal, which
+/// is the escape Appendix G names, and the only way to see it is to read the helper.
+fn skip_announcing_helpers(text: &str) -> Vec<String> {
+    let mut announcers = Vec::new();
+    let mut current: Option<(String, bool)> = None;
+    let mut depth = 0usize;
+    for line in text.lines() {
+        if current.is_none()
+            && let Some(name) = function_name(line)
+        {
+            current = Some((name, false));
+            depth = 0;
+        }
+        if let Some((_, announces)) = current.as_mut()
+            && (line.contains("skipped(") || line.contains("require("))
+        {
+            *announces = true;
+        }
+        let (opens, closes) = brace_delta(line);
+        depth += opens;
+        depth = depth.saturating_sub(closes);
+        if current.is_some()
+            && depth == 0
+            && (opens > 0 || closes > 0)
+            && let Some((name, announces)) = current.take()
+            && announces
+        {
+            announcers.push(name);
+        }
+    }
+    announcers
+}
+
+/// The name a `fn` line declares, if it declares one.
+fn function_name(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let rest = trimmed.strip_prefix("pub ").unwrap_or(trimmed);
+    let rest = rest.strip_prefix("pub(crate) ").unwrap_or(rest);
+    let rest = rest.strip_prefix("async ").unwrap_or(rest);
+    let rest = rest.strip_prefix("fn ")?;
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty()).then_some(name)
+}
+
+/// How many braces a line opens and closes, ignoring those inside string literals.
+fn brace_delta(line: &str) -> (usize, usize) {
+    let mut opens = 0usize;
+    let mut closes = 0usize;
+    let mut in_string = false;
+    let bytes = line.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if in_string => index += 1,
+            b'"' => in_string = !in_string,
+            b'{' if !in_string => opens += 1,
+            b'}' if !in_string => closes += 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    (opens, closes)
+}
+
+// --- v0.4.1 §38.2 and §38.3: the declared skip set, and the two ways a run may break it --------
+
+/// The path, below the repository root, of the `expected_test_skips` registry of §52.1.
+pub const EXPECTED_TEST_SKIPS: &str = "docs/spec/hardening/expected_test_skips.yaml";
+
+/// A test that can announce a skip, and the §38.4 category it announces.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SkipSite {
+    /// `crates/<crate>/tests/<file>.rs::<test>` — the form `docs/ACCEPTANCE.md` names a proof by.
+    pub id: String,
+    /// The §38.4 category, as `SkipReason::category` spells it.
+    pub category: String,
+}
+
+/// The `expected_test_skips` registry: every skip the tree can take, and the ones the canonical
+/// CI environment is expected to take.
+#[derive(Debug, Clone, Default)]
+pub struct ExpectedSkips {
+    /// Every test that can announce a skip, with its category.
+    pub declared: Vec<SkipSite>,
+    /// The test ids §38.2 expects the canonical CI environment to skip. §38.2 prefers this
+    /// empty; §38.3 makes anything outside it a failure in both directions.
+    pub canonical_ci: Vec<String>,
+    /// The test ids whose skip depends on a host capability the repository does not control, each
+    /// with the condition that decides it. Neither required nor forbidden — but listed with its
+    /// reason, which is what §38.2 asks of an intentional skip.
+    pub permitted: Vec<String>,
+}
+
+impl ExpectedSkips {
+    /// Reads the registry from `root`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the file when it is missing or does not hold the two lists.
+    pub fn read(root: &Path) -> Result<Self, String> {
+        let path = root.join(EXPECTED_TEST_SKIPS);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("{EXPECTED_TEST_SKIPS}: {error}"))?;
+        Self::parse(&text)
+    }
+
+    /// Reads the registry from its text.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the document does not hold the two lists in the declared shape.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(text)
+            .map_err(|error| format!("{EXPECTED_TEST_SKIPS} is not readable YAML: {error}"))?;
+        let mut declared = Vec::new();
+        let rows = document
+            .get("declared")
+            .and_then(serde_yaml_ng::Value::as_sequence)
+            .ok_or_else(|| format!("{EXPECTED_TEST_SKIPS} declares no `declared:` list"))?;
+        for row in rows {
+            let id = row
+                .get("id")
+                .and_then(serde_yaml_ng::Value::as_str)
+                .ok_or_else(|| format!("{EXPECTED_TEST_SKIPS}: a declared skip has no `id`"))?;
+            let category = row
+                .get("category")
+                .and_then(serde_yaml_ng::Value::as_str)
+                .ok_or_else(|| format!("{EXPECTED_TEST_SKIPS}: `{id}` declares no `category`"))?;
+            declared.push(SkipSite {
+                id: id.to_owned(),
+                category: category.to_owned(),
+            });
+        }
+        let canonical_ci = document
+            .get("canonical_ci")
+            .and_then(|section| section.get("expected_skips"))
+            .and_then(serde_yaml_ng::Value::as_sequence)
+            .ok_or_else(|| {
+                format!("{EXPECTED_TEST_SKIPS} declares no `canonical_ci.expected_skips:` list")
+            })?
+            .iter()
+            .filter_map(|entry| entry.as_str().map(ToOwned::to_owned))
+            .collect();
+        let permitted = document
+            .get("canonical_ci")
+            .and_then(|section| section.get("permitted_skips"))
+            .and_then(serde_yaml_ng::Value::as_sequence)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        row.get("id")
+                            .and_then(serde_yaml_ng::Value::as_str)
+                            .map(ToOwned::to_owned)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        declared.sort();
+        Ok(Self {
+            declared,
+            canonical_ci,
+            permitted,
+        })
+    }
+}
+
+/// Every test in the tree that can announce a skip, with the category it announces.
+///
+/// A test announces directly when its body names a [`SkipReason`](ono_testkit::SkipReason), and
+/// indirectly when a guard calls a helper in the same file that does — the shape `unprivileged()`
+/// gives twenty-one callers. Both are read here, because §38.2's registry has to hold what a run
+/// can actually produce rather than what is written at one of the two places.
+#[must_use]
+pub fn skip_sites(root: &Path) -> Vec<SkipSite> {
+    let mut sites = Vec::new();
+    for file in rust_sources(root) {
+        let relative = relative(root, &file);
+        if !relative.contains("/tests/") || is_scanner_source(&relative) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        sites.extend(skip_sites_in(&relative, &text));
+    }
+    sites.sort();
+    sites.dedup();
+    sites
+}
+
+/// The skip sites of one file's text.
+fn skip_sites_in(relative: &str, text: &str) -> Vec<SkipSite> {
+    let helpers = announcing_helper_categories(text);
+    let mut sites = Vec::new();
+    let mut current: Option<(String, Vec<String>)> = None;
+    let mut depth = 0usize;
+    let mut pending_test = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if current.is_none() {
+            if is_test_attribute(trimmed) {
+                pending_test = true;
+            } else if pending_test && let Some(name) = function_name(trimmed) {
+                current = Some((name, Vec::new()));
+                pending_test = false;
+                depth = 0;
+            }
+        }
+        if let Some((_, categories)) = current.as_mut() {
+            categories.extend(categories_named_on(line));
+            for (helper, category) in &helpers {
+                if line.contains(&format!("{helper}(")) {
+                    categories.push(category.clone());
+                }
+            }
+        }
+        let (opens, closes) = brace_delta(line);
+        depth += opens;
+        depth = depth.saturating_sub(closes);
+        if current.is_some()
+            && depth == 0
+            && (opens > 0 || closes > 0)
+            && let Some((name, mut categories)) = current.take()
+        {
+            categories.sort();
+            categories.dedup();
+            for category in categories {
+                sites.push(SkipSite {
+                    id: format!("{relative}::{name}"),
+                    category,
+                });
+            }
+        }
+    }
+    sites
+}
+
+/// The six categories of v0.4.1 §38.4, as `SkipReason::category` spells them.
+pub const SKIP_CATEGORIES: [&str; 6] = [
+    "missing_kernel_feature",
+    "missing_privilege",
+    "unsupported_arch",
+    "unsupported_distribution",
+    "external_tool_unavailable",
+    "fixture_not_applicable",
+];
+
+/// The §38.4 categories a line names, as `SkipReason::MissingPrivilege` names one.
+///
+/// Only the six count: `SkipReason::ALL` and `SkipReason::from_category` are the type's own
+/// surface rather than a category, and a taxonomy that grew whatever an identifier happened to
+/// spell would not be a taxonomy.
+fn categories_named_on(line: &str) -> Vec<String> {
+    let mut categories = Vec::new();
+    for (index, _) in line.match_indices("SkipReason::") {
+        let variant: String = line[index + "SkipReason::".len()..]
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .collect();
+        let category = snake_case(&variant);
+        if SKIP_CATEGORIES.contains(&category.as_str()) {
+            categories.push(category);
+        }
+    }
+    categories
+}
+
+/// `MissingKernelFeature` as `missing_kernel_feature`, the token §38.4 fixes.
+fn snake_case(variant: &str) -> String {
+    let mut out = String::new();
+    for (index, character) in variant.chars().enumerate() {
+        if character.is_uppercase() && index > 0 {
+            out.push('_');
+        }
+        out.extend(character.to_lowercase());
+    }
+    out
+}
+
+/// The functions in `text` that announce a skip, and the category each announces.
+///
+/// A helper announces when its body calls `skipped` or `require`; the category is the first
+/// `SkipReason::…` its body names, which is where rustfmt puts it whether the call fits on one
+/// line or not.
+fn announcing_helper_categories(text: &str) -> Vec<(String, String)> {
+    let mut helpers = Vec::new();
+    let mut current: Option<(String, bool, Option<String>)> = None;
+    let mut depth = 0usize;
+    for line in text.lines() {
+        if current.is_none()
+            && let Some(name) = function_name(line)
+        {
+            current = Some((name, false, None));
+            depth = 0;
+        }
+        if let Some((_, announces, category)) = current.as_mut() {
+            if line.contains("skipped(") || line.contains("require(") {
+                *announces = true;
+            }
+            if category.is_none() {
+                *category = categories_named_on(line).into_iter().next();
+            }
+        }
+        let (opens, closes) = brace_delta(line);
+        depth += opens;
+        depth = depth.saturating_sub(closes);
+        if current.is_some()
+            && depth == 0
+            && (opens > 0 || closes > 0)
+            && let Some((name, announces, Some(category))) = current.take()
+            && announces
+        {
+            helpers.push((name, category));
+        }
+    }
+    helpers
+}
+
+/// Checks that the `expected_test_skips` registry names exactly the skips the tree can take.
+///
+/// §38.2 requires the expected skip set to be declared and its reasons listed in a
+/// machine-readable file. A registry that has fallen behind the tree cannot do that: a skip
+/// nobody declared is one nobody decided to permit, and a declaration whose test no longer skips
+/// is a permission granted to nothing.
+#[must_use]
+pub fn check_expected_skips(root: &Path) -> Vec<Problem> {
+    let expected = match ExpectedSkips::read(root) {
+        Ok(expected) => expected,
+        Err(message) => {
+            return vec![Problem::new(EXPECTED_TEST_SKIPS, message)];
+        }
+    };
+    let observed = skip_sites(root);
+    let mut problems = Vec::new();
+    for site in &observed {
+        if !expected.declared.contains(site) {
+            problems.push(Problem::new(
+                site.id.clone(),
+                format!(
+                    "announces a `{}` skip that `{EXPECTED_TEST_SKIPS}` does not declare. A skip \
+                     nobody declared is a skip nobody decided to permit (v0.4.1 §38.2)",
+                    site.category
+                ),
+            ));
+        }
+    }
+    for site in &expected.declared {
+        if !observed.contains(site) {
+            problems.push(Problem::new(
+                site.id.clone(),
+                format!(
+                    "is declared in `{EXPECTED_TEST_SKIPS}` as a `{}` skip, and no test of that \
+                     name announces one. Delete the row, or restore the skip it permits (v0.4.1 \
+                     §38.2)",
+                    site.category
+                ),
+            ));
+        }
+    }
+    for id in expected
+        .canonical_ci
+        .iter()
+        .chain(expected.permitted.iter())
+    {
+        if !expected.declared.iter().any(|site| &site.id == id) {
+            problems.push(Problem::new(
+                id.clone(),
+                format!(
+                    "is named under `canonical_ci` and is not in `{EXPECTED_TEST_SKIPS}`'s \
+                     `declared:` list, so its reason is undeclared (v0.4.1 §38.2)"
+                ),
+            ));
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// Compares the skips a run actually took against the ones the canonical CI environment declares.
+///
+/// §38.3 is bidirectional and this is both halves of it: a skip outside the declared set fails,
+/// *and* a declared skip that did not happen fails. The second is the one #14 needed — five
+/// acceptance cases that had never run were green for as long as nobody counted them.
+///
+/// `log` is the output of a test run. The marker `ono_testkit::skipped` writes is
+/// `SKIPPED <test>: <category>: <detail>`, so the run's own output is the observation and no
+/// second mechanism has to agree with it.
+#[must_use]
+pub fn verify_observed_skips(expected: &ExpectedSkips, log: &str) -> Vec<Problem> {
+    let observed = observed_skips(log);
+    let mut problems = Vec::new();
+    for (test, category) in &observed {
+        let suffix = format!("::{test}");
+        let known = expected
+            .canonical_ci
+            .iter()
+            .chain(expected.permitted.iter())
+            .any(|id| id.ends_with(&suffix));
+        if !known {
+            problems.push(Problem::new(
+                test.clone(),
+                format!(
+                    "skipped with `{category}` and is not in `{EXPECTED_TEST_SKIPS}`'s \
+                     `canonical_ci.expected_skips:` list. Either the environment stopped \
+                     supplying a prerequisite, or the skip is intended and belongs in the list \
+                     with its reason (v0.4.1 §38.2, §38.3)"
+                ),
+            ));
+        }
+    }
+    for id in &expected.canonical_ci {
+        let test = id.rsplit("::").next().unwrap_or(id);
+        if !observed.iter().any(|(name, _)| name == test) {
+            problems.push(Problem::new(
+                id.clone(),
+                "is expected to skip in this environment and did not. A test that starts \
+                 running again is good news, and the expectation has to say so — remove the row \
+                 (v0.4.1 §38.3)",
+            ));
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// The `SKIPPED <test>: <category>: <detail>` markers a run left in `log`.
+fn observed_skips(log: &str) -> Vec<(String, String)> {
+    let mut observed = Vec::new();
+    for line in log.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("SKIPPED ") else {
+            continue;
+        };
+        let Some((test, rest)) = rest.split_once(": ") else {
+            continue;
+        };
+        let category = rest.split(':').next().unwrap_or_default().trim();
+        observed.push((test.trim().to_owned(), category.to_owned()));
+    }
+    observed.sort();
+    observed.dedup();
+    observed
+}
+
+// --- v0.4.1 §39.1 and §39.2: one helper per job ------------------------------------------------
+
+/// A helper function defined in test code, and what it does with its arguments.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Helper {
+    /// Where it is defined, as `path.rs::name`.
+    id: String,
+    /// The crate whose `tests/` tree it lives in — the home §39.1 would move it to.
+    home: String,
+    /// Its parameter and return types with the names stripped, and its body with comments,
+    /// whitespace and formatting removed: what §39.2 means by "semantics/signatures rather than
+    /// fragile exact source strings".
+    shape: String,
+}
+
+/// Checks that no two test helpers with the same home do the same job under two definitions.
+///
+/// §39.1 puts the common helpers — invoking `ono`, decoding rows, constructing fixtures — in
+/// shared modules *"rather than dozens of near-identical local variants"*, and §39.2 asks the
+/// gate for a structural check that stops the variants coming back.
+///
+/// ADR-0427 is the standing decision on when a helper may be shared, and this rule holds it
+/// rather than going past it. Three properties have to hold before a pair is reported, and each
+/// of them is one of ADR-0427's reasons written as code:
+///
+/// * **the signature and the body match** once comments, whitespace and formatting are removed.
+///   A variant is not a duplicate: two suites that need different budgets, different panic
+///   messages or a different tolerance for stderr keep two helpers, and unifying them would
+///   change what a test does — the one thing a refactor may not do (AGENTS.md §11);
+/// * **the body is self-contained**, calling no other function its own file defines. ADR-0427
+///   left `files.rs::single_result` where it was for exactly this: its body is identical to three
+///   others and it calls `files.rs::text`, which names an `ActionResult` field in its panic. Two
+///   identical bodies over two different callees are two behaviours, and moving one would change
+///   the diagnostic a reader depends on;
+/// * **the copies share a home.** §39.2 asks for the check *"where a canonical helper exists"*,
+///   and a home is `crates/<crate>/tests/support/mod.rs` for one crate's suites or
+///   `xtask/tests/support/mod.rs` for the automation's. A pair spanning two crates has no home
+///   that does not put a crate's own types into `ono-testkit`, which ADR-0427 rejected because
+///   the testkit is meant to be neutral about the crates it serves.
+///
+/// The name is not part of the comparison. ADR-0427 found one name over eleven behaviours; this
+/// is the same defect from the other end — one behaviour under two names is a helper somebody
+/// could not find, so they wrote it again.
+///
+/// A body under eighty normalised characters is left alone. A two-line accessor
+/// is not a helper anybody consolidates, and a rule that reported it would be a rule people turn
+/// off.
+#[must_use]
+pub fn check_duplicate_helpers(root: &Path) -> Vec<Problem> {
+    let mut helpers: Vec<Helper> = Vec::new();
+    let mut seen_paths: Vec<String> = Vec::new();
+    for file in rust_sources(root) {
+        let relative = relative(root, &file);
+        if !relative.contains("/tests/") || is_scanner_source(&relative) {
+            continue;
+        }
+        // A `support/mod.rs` is `#[path]`-included into several test binaries; it is one file and
+        // one definition, however many suites read it.
+        if seen_paths.contains(&relative) {
+            continue;
+        }
+        seen_paths.push(relative.clone());
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        helpers.extend(helpers_in(&relative, &text));
+    }
+
+    let mut groups: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    for helper in helpers {
+        groups
+            .entry((helper.home, helper.shape))
+            .or_default()
+            .push(helper.id);
+    }
+
+    let mut problems = Vec::new();
+    for ((home, _), mut members) in groups {
+        if members.len() < 2 {
+            continue;
+        }
+        members.sort();
+        members.dedup();
+        if members.len() < 2 {
+            continue;
+        }
+        let named = members.join(", ");
+        for member in &members {
+            problems.push(Problem::new(
+                member.clone(),
+                format!(
+                    "is one of {} definitions of the same helper: {named}. §39.1 wants one shared \
+                     definition per job; move it to `{home}/tests/support/mod.rs` and call it from \
+                     each suite. If the copies must differ, they are not copies — make the \
+                     difference visible in the body and record why (ADR-0427, §39.2, §39.4)",
+                    members.len()
+                ),
+            ));
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// The shortest normalised body worth comparing. Below it a match is a coincidence of shape
+/// rather than a helper somebody duplicated.
+const TRIVIAL_HELPER_BODY: usize = 80;
+
+/// The tree a helper's copies would share a canonical module in, or `None` when they would not.
+fn helper_home(relative: &str) -> Option<String> {
+    if let Some(rest) = relative.strip_prefix("crates/") {
+        let crate_name = rest.split('/').next()?;
+        return Some(format!("crates/{crate_name}"));
+    }
+    relative.starts_with("xtask/").then(|| "xtask".to_owned())
+}
+
+/// Every non-test, self-contained function defined in one file's text, with its shape.
+fn helpers_in(relative: &str, text: &str) -> Vec<Helper> {
+    let Some(home) = helper_home(relative) else {
+        return Vec::new();
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let declared: Vec<String> = lines
+        .iter()
+        .filter_map(|line| function_name(line))
+        .collect();
+
+    let mut helpers = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let Some(name) = function_name(lines[index]) else {
+            index += 1;
+            continue;
+        };
+        // A test is not a helper: two tests asserting the same thing are a duplicated *test*,
+        // which is a different finding and not this rule's.
+        if lines[index.saturating_sub(6)..index]
+            .iter()
+            .any(|above| is_test_attribute(above.trim()))
+        {
+            index += 1;
+            continue;
+        }
+        let (signature, body, end) = function_text(&lines, index);
+        index = end.max(index) + 1;
+        let Some(body) = body else { continue };
+        let normalised = normalise_source(&body);
+        if normalised.len() < TRIVIAL_HELPER_BODY {
+            continue;
+        }
+        // A body that calls one of its own file's helpers means whatever that helper means, so
+        // two identical bodies over two different callees are two behaviours (ADR-0427).
+        if declared
+            .iter()
+            .any(|other| *other != name && body.contains(&format!("{other}(")))
+        {
+            continue;
+        }
+        helpers.push(Helper {
+            id: format!("{relative}::{name}"),
+            home: home.clone(),
+            shape: format!(
+                "{}|{normalised}",
+                normalise_source(&signature_shape(&signature))
+            ),
+        });
+    }
+    helpers
+}
+
+/// The signature, the body and the last line of the function that starts at `start`.
+fn function_text(lines: &[&str], start: usize) -> (String, Option<String>, usize) {
+    let mut signature = String::new();
+    let mut body = String::new();
+    let mut depth = 0usize;
+    let mut started = false;
+    for (offset, current) in lines[start..].iter().enumerate() {
+        let (opens, closes) = brace_delta(current);
+        if started {
+            body.push_str(current);
+            body.push('\n');
+        } else {
+            signature.push_str(current);
+            if opens > 0 {
+                started = true;
+                if let Some((_, rest)) = current.split_once('{') {
+                    body.push_str(rest);
+                    body.push('\n');
+                }
+            }
+        }
+        depth += opens;
+        depth = depth.saturating_sub(closes);
+        if started && depth == 0 {
+            return (signature, Some(body), start + offset);
+        }
+    }
+    (signature, None, start)
+}
+
+/// A signature with its parameter *names* removed, leaving what the helper takes and answers.
+fn signature_shape(signature: &str) -> String {
+    let Some(open) = signature.find('(') else {
+        return signature.to_owned();
+    };
+    signature[open..]
+        .split(',')
+        .map(|parameter| parameter.rsplit(':').next().unwrap_or(parameter))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Source with its comments, its whitespace and its formatting removed.
+fn normalise_source(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines() {
+        let code = match line.find("//") {
+            Some(position) if !line[..position].contains('"') => &line[..position],
+            _ => line,
+        };
+        out.extend(code.split_whitespace());
+    }
+    out
+}
+
+// --- v0.4.1 §65.10 at a terminal: an assertion an earlier repaint can satisfy ------------------
+
+/// How far after a resize the assertion about it may be written.
+const RESIZE_ASSERTION_WINDOW: usize = 30;
+
+/// Checks that a test which resizes a terminal asserts on the size it resized to.
+///
+/// Issue #6 is the defect this rule is made of. `should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
+/// resized a pseudo-terminal and then waited for *new output naming the place* — which the
+/// repaint the earlier arrow key was still producing already satisfied. Tracing the map loop
+/// during a green run found sessions whose whole key history was `Down`, `Esc`, with no resize
+/// event in them at all. The test passed, §43.4 was held by nothing, and a test that can pass
+/// without exercising its subject is §65.10's skip-as-pass in a different costume: it is worse
+/// than one that flakes, because nobody looks at it.
+///
+/// The rule is narrow enough to be mechanical. A resize is written
+/// `resize(WindowSize::new(<rows>, <columns>))`, and the assertion that follows it must name the
+/// row count it resized to — or the resize itself, as the signal it delivers or the size the
+/// terminal now reports — within thirty lines. A frame at a stated row count
+/// is something only a resize produces; "new output" is not.
+///
+/// What it cannot check is whether the assertion is a *good* one — a scanner cannot tell a frame
+/// from a comment. What it can insist on is that the new size appears in the assertion at all,
+/// which is exactly what the old test did not do.
+#[must_use]
+pub fn check_pty_resize_assertions(root: &Path) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    for file in rust_sources(root) {
+        let relative = relative(root, &file);
+        if !relative.contains("/tests/") || is_scanner_source(&relative) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        for (number, line) in lines.iter().enumerate() {
+            let Some(rows) = resized_rows(line) else {
+                continue;
+            };
+            let window =
+                &lines[number + 1..(number + 1 + RESIZE_ASSERTION_WINDOW).min(lines.len())];
+            if window
+                .iter()
+                .any(|later| mentions_number(later, rows) || names_the_resize_itself(later))
+            {
+                continue;
+            }
+            problems.push(Problem::new(
+                format!("{relative}:{}", number + 1),
+                format!(
+                    "resizes the terminal to {rows} rows and asserts nothing about that number. \
+                     An assertion that only asks for new output is satisfied by the repaint an \
+                     earlier key was still producing, so it passes on a run where the resize \
+                     never arrived — which is what issue #6 found. Assert on the frame at the new \
+                     row count (v0.4.1 §43.4, §65.10, ADR-0519)"
+                ),
+            ));
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// Whether a line asserts on the resize rather than on the size: the signal the kernel sends, or
+/// the size the terminal now reports.
+///
+/// `should_deliver_sigwinch_to_the_child_when_the_window_changes` waits for a `SIGWINCH` trap to
+/// fire, which is something only a resize produces and which no row count appears in. The rule is
+/// that the assertion names the resize; the row count is the usual way and not the only one.
+fn names_the_resize_itself(line: &str) -> bool {
+    line.contains("WINCH") || line.contains("window_size(")
+}
+
+/// The row count a `resize(WindowSize::new(<rows>, <columns>))` call asks for.
+fn resized_rows(line: &str) -> Option<u32> {
+    let at = line.find("resize(WindowSize::new(")?;
+    let rest = &line[at + "resize(WindowSize::new(".len()..];
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// Whether a line names `number` as a number rather than as part of a longer one.
+fn mentions_number(line: &str, number: u32) -> bool {
+    let needle = number.to_string();
+    let bytes = line.as_bytes();
+    line.match_indices(&needle).any(|(at, _)| {
+        let before = at.checked_sub(1).map(|index| bytes[index]);
+        let after = bytes.get(at + needle.len()).copied();
+        !before.is_some_and(|byte| byte.is_ascii_digit() || byte == b'_')
+            && !after.is_some_and(|byte| byte.is_ascii_digit() || byte == b'_')
+    })
 }

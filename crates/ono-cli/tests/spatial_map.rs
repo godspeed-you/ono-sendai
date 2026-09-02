@@ -49,7 +49,7 @@ use std::net::TcpListener;
 use std::process::{Child, Stdio};
 use std::time::Duration;
 
-use ono_testkit::Shell;
+use ono_testkit::{Shell, SkipReason};
 use serde_yaml_ng::Value;
 
 /// The six canonical domains of §7 and §53, as they appear at zoom level L1 (§8.1).
@@ -768,10 +768,13 @@ fn should_report_how_many_objects_a_cluster_stands_for_when_the_view_budget_is_e
     if processes <= TEXT_MAP_NODE_BUDGET as u64 {
         // Clustering is only required once the visible count exceeds the budget; a host smaller
         // than that has nothing to cluster, and asserting anyway would test the host, not Ono.
-        eprintln!(
-            "skipped: {processes} processes ({} of them this test's own) stay inside the \
-             {TEXT_MAP_NODE_BUDGET}-node view budget, so §8.2 does not require clustering here",
-            children.0.len()
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            &format!(
+                "{processes} processes ({} of them this test's own) stay inside the \
+                 {TEXT_MAP_NODE_BUDGET}-node view budget, so §8.2 does not require clustering here",
+                children.0.len()
+            ),
         );
         return;
     }
@@ -827,7 +830,10 @@ fn should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expande
             "spec §8.2: a processes collection larger than the {TEXT_MAP_NODE_BUDGET}-node view \
              budget is clustered, got {collapsed:?}"
         );
-        ono_testkit::skipped("the host is smaller than the view budget, so nothing is clustered");
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            "the host is smaller than the view budget, so nothing is clustered",
+        );
         return;
     };
     let cluster_id = text(&cluster, "id", "§22");
@@ -1229,6 +1235,11 @@ fn should_not_invent_a_change_section_when_no_snapshot_or_event_source_exists() 
 
     let changed = &place["changed"];
     if changed.is_null() {
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            "a one-shot script has no earlier snapshot, so this run reports no change section \
+             at all and there is none to read",
+        );
         return;
     }
     let state = changed["state"].as_str().unwrap_or_default();

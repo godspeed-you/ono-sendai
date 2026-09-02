@@ -16,15 +16,14 @@ use std::sync::{Arc, Mutex};
 use ono_core::ErrorCode;
 use ono_protocol::{
     ActRequest, ActionGrant, AuditEvent, AuditKind, AuditSink, AuthorizedClient, AuthorizedClients,
-    ClientConfig, HostKey, Identity, RemoteMessage, RemoteQuery, ServerAuthorization, TrustPolicy,
-    UnauthenticatedTransport,
+    HostKey, Identity, RemoteMessage, RemoteQuery, ServerAuthorization, UnauthenticatedTransport,
 };
 use ono_remote::{AgentConfig, RemoteLink, serve_registry};
 use ono_value::SchemaId;
 
 mod common;
-use common::fixture::{FixtureObserved, fixture_registry, fixture_schemas};
-use common::within;
+use common::fixture::{FixtureObserved, fixture_registry};
+use common::{client_config, within};
 
 /// The audit stream, kept in memory so a test can read it back.
 #[derive(Debug, Default)]
@@ -85,13 +84,6 @@ fn client_key() -> HostKey {
 
 fn stranger_key() -> HostKey {
     HostKey::new("ed25519", *b"a-stranger-nobody-authorized----")
-}
-
-fn client_config() -> ClientConfig {
-    ClientConfig::new("remhost")
-        .with_schemas(fixture_schemas())
-        .with_trust_policy(TrustPolicy::Unauthenticated)
-        .with_identity(Identity::new("tester"))
 }
 
 /// A listening agent whose policy is `store`, serving one connection from a peer proving `proves`.

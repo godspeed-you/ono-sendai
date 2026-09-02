@@ -38,6 +38,13 @@
 #                   benchmark  — `cargo xtask perf` and `--ignored` proofs build it; too large
 #                                for every gate run, small enough for a developer machine.
 #                   container  — only the acceptance image builds it, through `fixture`.
+#   descriptors   how many file descriptors a host must let one process hold open at once before
+#                 the socket axis of this profile can be built at all, including the headroom the
+#                 rest of the test process needs. A host below it has not found a defect in the
+#                 product: `SocketPopulation::try_of` raises the soft `RLIMIT_NOFILE` toward the
+#                 hard one and, where the hard one is still short, reports a `missing_privilege`
+#                 skip naming both numbers (v0.4.1 §38.1, §38.4, ADR-0517). The number lives here
+#                 rather than in a panic message so it sits beside the cardinality that fixes it.
 #   sockets_built_by
 #                 the same question asked of the socket axis alone, where the answer differs.
 #                 Profile L's ten thousand processes cost about 13 GB and belong to the
@@ -63,6 +70,7 @@ profiles:
     graph_nodes: 500
     edges: 2000
     sockets: 1000
+    descriptors: 2024
     built_by: gate
     spec: "v0.4.1 §32.2, Appendix F.1, F.2"
     doc: >-
@@ -74,6 +82,7 @@ profiles:
     graph_nodes: 5000
     edges: 25000
     sockets: 10000
+    descriptors: 11024
     built_by: benchmark
     spec: "v0.4.1 §32.2, Appendix F.1, F.2"
     doc: >-
@@ -85,6 +94,7 @@ profiles:
     graph_nodes: 50000
     edges: 250000
     sockets: 100000
+    descriptors: 101024
     built_by: container
     sockets_built_by: gate
     fixture: docker/acceptance/fixtures/perf/many-processes.pl
@@ -94,6 +104,9 @@ profiles:
       The cardinality at which §0.5.7's failures were first seen. Ten thousand processes is more
       than a developer machine should be asked to fork from a test, so the acceptance image
       builds it: the two fixture scripts fork the population and report the count they reached.
+      Its socket axis needs a descriptor limit above 101 024, which the GitHub `ubuntu-latest`
+      runner does not supply: that run declares the skip in `expected_test_skips.yaml` rather
+      than reporting the runner's rlimit as a product failure.
 
 # ---------------------------------------------------------------------------------------------
 # Appendix F.3. Materialization benchmarks measure the byte budget, and a byte budget is only

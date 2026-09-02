@@ -10,8 +10,12 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+nix = { workspace = true, features = ["resource"] }
 ono-core.workspace = true
 serde_yaml_ng.workspace = true
+
+[dev-dependencies]
+nix = { workspace = true, features = ["resource"] }
 
 [lints]
 workspace = true

@@ -15,23 +15,7 @@ use std::path::Path;
 
 use ono_provider_netlink::{SocketProtocol, decode_inet_sockets, decode_unix_sockets};
 use ono_value::{RecordValue, Value};
-use support::{attr, concat, inet_diag_msg, message, sockid, unix_diag_msg};
-
-/// A listening TCP socket on `0.0.0.0:22`.
-fn listening_tcp() -> Vec<u8> {
-    message(
-        20,
-        &inet_diag_msg(
-            2,
-            10,
-            &sockid((&[0, 0, 0, 0], 22), (&[0, 0, 0, 0], 0), 0x1234_5678_9abc),
-            0,
-            0,
-            0,
-            4_242,
-        ),
-    )
-}
+use support::{attr, concat, inet_diag_msg, listening_tcp, message, sockid, unix_diag_msg};
 
 /// An established TCP connection from `10.0.0.2:51000` to `10.0.0.1:443`.
 fn established_tcp() -> Vec<u8> {

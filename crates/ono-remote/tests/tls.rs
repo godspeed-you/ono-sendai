@@ -17,35 +17,12 @@
 
 mod common;
 
-use std::sync::Arc;
-
-use common::fixture::{FixtureObserved, fixture_registry, fixture_schemas};
-use common::within;
+use common::fixture::fixture_schemas;
+use common::{listening, within};
 use ono_core::ErrorCode;
 use ono_protocol::{ClientConfig, Identity, Transport, TrustPolicy, TrustStore};
 use ono_provider_api::Query;
-use ono_remote::{AgentConfig, PeerIdentity, RemoteLink, TlsListener, serve_registry, tls_connect};
-
-/// An agent listening on a loopback port the system chooses, serving the fixture registry.
-async fn listening(identity: PeerIdentity) -> String {
-    let listener = TlsListener::bind("127.0.0.1:0", &identity)
-        .await
-        .expect("a loopback listener binds");
-    let address = listener
-        .local_addr()
-        .expect("the system reports the port it chose")
-        .to_string();
-    tokio::spawn(async move {
-        while let Ok(transport) = listener.accept().await {
-            let registry = fixture_registry(Arc::new(FixtureObserved::default()));
-            let config = AgentConfig::new(registry).with_identity(Identity::new("remote-user"));
-            tokio::spawn(async move {
-                let _ = serve_registry(transport, config).await;
-            });
-        }
-    });
-    address
-}
+use ono_remote::{PeerIdentity, RemoteLink, tls_connect};
 
 /// The identity a connecting client presents (v0.4.1 §7.1). Every suite here dials with one,
 /// because there is no way to dial without one.

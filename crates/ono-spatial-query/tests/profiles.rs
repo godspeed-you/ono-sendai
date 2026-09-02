@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 
 use ono_testkit::{
     BuiltBy, PROFILE_L, PROFILE_M, PROFILE_S, ProcessPopulation, Profile, ProfileDeclaration,
-    SocketPopulation, declared_payloads, declared_profiles, payload,
+    SkipReason, SocketPopulation, declared_payloads, declared_profiles, payload, skipped,
 };
 
 /// Appendix F.1 and F.2, typed out from the specification rather than read from the registry.
@@ -156,7 +156,21 @@ fn should_build_every_declared_profile_at_the_cardinality_the_registry_states() 
         if declaration.sockets_built_by != BuiltBy::Gate {
             continue;
         }
-        let sockets = SocketPopulation::of(declaration.profile());
+        let sockets = match SocketPopulation::try_of(declaration.profile()) {
+            Ok(sockets) => sockets,
+            Err(shortfall) => {
+                // The registry states the descriptor limit beside the cardinality that fixes it,
+                // and a host below it has not found a defect in the product (ADR-0517).
+                skipped(
+                    SkipReason::MissingPrivilege,
+                    &format!(
+                        "Profile {} places {} listening sockets and {shortfall}",
+                        declaration.id, declaration.sockets
+                    ),
+                );
+                continue;
+            }
+        };
         assert_eq!(
             sockets.len(),
             declaration.sockets,
