@@ -1798,7 +1798,12 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       the `unsafe` code §42.1 names, and are green for the release commit —
       `xtask/tests/supply_chain.rs::should_declare_a_miri_job_covering_every_unsafe_boundary_module`,
       `::should_declare_an_address_and_undefined_behaviour_sanitizer_job_for_the_release_commit`,
-      with the result recorded in the release evidence of §4.8.11 (#94, §42.1–§42.4).
+      with the result recorded in the release evidence of §4.8.11. Both proofs are green:
+      `.github/workflows/verification.yml` runs Miri over §42.2's areas and both sanitizers over
+      every crate that holds an `unsafe` block, and the sanitizer job's crate list is read from
+      the tree rather than typed, so a crate that grows one and is not covered fails the gate
+      (ADR-0522). The box waits on the first scheduled run: §66.5 asks for green, and neither job
+      has been executed yet (#94, §42.1–§42.4).
 - [x] **P2 · The resize assertion needs a resize.** `should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
       is satisfied only by output that the resize itself produced, so an earlier repaint cannot
       close it — `crates/ono-cli/tests/spatial_interactive.rs::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`

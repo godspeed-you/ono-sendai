@@ -982,3 +982,106 @@ fn should_keep_the_deterministic_fuzz_tier_inside_the_gate() {
          finding rather than a slow gate"
     );
 }
+
+#[test]
+fn should_declare_a_miri_job_covering_every_unsafe_boundary_module() {
+    // §42.1: unsafe code is concentrated, and v0.4.1 "MUST exploit that architecture with
+    // targeted verification". §42.2 names the areas Miri covers and excuses the process layer,
+    // which it cannot execute.
+    let verification = workflow("verification.yml");
+    assert!(
+        verification.contains("schedule:") && verification.contains("cargo miri test"),
+        "§42.2: a scheduled Miri job exists"
+    );
+    for area in [
+        "--package ono-value",
+        "--package ono-parser",
+        "--package ono-protocol",
+        "--package ono-kuang-protocol",
+    ] {
+        assert!(
+            verification.contains(area),
+            "§42.2 names value ownership, parser data structures and protocol serialization, and \
+             the Miri job does not run `{area}`"
+        );
+    }
+    assert!(
+        !verification.contains("continue-on-error"),
+        "§42.4: a reproducible Miri or sanitizer finding is a release blocker, not a warning"
+    );
+}
+
+#[test]
+fn should_declare_an_address_and_undefined_behaviour_sanitizer_job_for_the_release_commit() {
+    // §42.3: "Linux scheduled CI SHOULD run AddressSanitizer and UndefinedBehaviorSanitizer on
+    // selected integration tests... The unsafe process crate and FFI/syscall wrappers are
+    // priority targets." §66.5 requires the jobs to be green for the release commit, which is
+    // what a schedule on the default branch delivers.
+    let verification = workflow("verification.yml");
+    assert!(
+        verification.contains("sanitizer: [address, undefined]"),
+        "§42.3 names both sanitizers"
+    );
+    assert!(
+        verification.contains("-Zsanitizer=${{ matrix.sanitizer }}"),
+        "§42.3: the tests are built with the sanitizer rather than merely beside it"
+    );
+
+    // Every crate that holds an `unsafe` block is one the sanitizer job runs. The list is read
+    // from the tree, so a fifth crate that grows one fails here rather than going unverified.
+    let mut unsafe_crates: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for entry in walk(&this_repository().join("crates")) {
+        let Some(name) = entry.to_str() else { continue };
+        if !name.ends_with(".rs") || name.contains("/tests/") || name.contains("/target/") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&entry) else {
+            continue;
+        };
+        if !text.lines().any(|line| {
+            let trimmed = line.trim_start();
+            (trimmed.starts_with("unsafe ") || trimmed.contains("unsafe {"))
+                && !trimmed.starts_with("//")
+        }) {
+            continue;
+        }
+        let relative = name
+            .strip_prefix(this_repository().to_str().unwrap_or_default())
+            .unwrap_or(name);
+        if let Some(crate_name) = relative.trim_start_matches('/').split('/').nth(1) {
+            unsafe_crates.insert(crate_name.to_owned());
+        }
+    }
+    assert!(
+        !unsafe_crates.is_empty(),
+        "the tree holds unsafe code somewhere, or this test is reading nothing"
+    );
+    for crate_name in &unsafe_crates {
+        assert!(
+            verification.contains(&format!("--package {crate_name}")),
+            "§42.1, §42.3: `{crate_name}` holds an `unsafe` block and the sanitizer job does not \
+             run it. The whole argument of §42.1 is that the boundary is small enough to verify; \
+             a crate outside the job is a crate outside the argument. Found: {unsafe_crates:?}"
+        );
+    }
+}
+
+/// Every file under `directory`, recursively.
+fn walk(directory: &Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == "target") {
+                continue;
+            }
+            found.extend(walk(&path));
+        } else {
+            found.push(path);
+        }
+    }
+    found
+}
