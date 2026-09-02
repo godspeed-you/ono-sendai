@@ -294,3 +294,64 @@ fn should_stretch_a_watchdog_for_the_load_the_test_does_not_control() {
          can tell a busy machine from a hang, got {told:?}"
     );
 }
+
+#[test]
+fn should_run_a_script_again_while_another_thread_still_holds_it_open() {
+    // `cargo test` runs a crate's tests in threads of one process, and a thread that forks between
+    // another thread's `open` and `close` of a file inherits the write descriptor. Until that
+    // child execs, `execve` on the file answers ETXTBSY, which POSIX and this shell both report as
+    // exit 126 — "found and not executable" about a file that is executable. Issue #27 saw it
+    // once; issue #7 is the same race one crate over (ADR-0520).
+    let directory = ono_testkit::scratch();
+    let script = ono_testkit::executable_script(directory.path(), "greet", "#!/bin/sh\nexit 7\n");
+
+    let holder = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&script)
+        .expect("the script this test wrote is writable");
+    let refused = std::process::Command::new(&script).output();
+    assert_eq!(
+        refused
+            .as_ref()
+            .err()
+            .and_then(std::io::Error::raw_os_error),
+        Some(26),
+        "a writer holding the file makes `execve` answer ETXTBSY, got {refused:?}"
+    );
+
+    let released = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        drop(holder);
+    });
+    let outcome = ono_testkit::while_text_file_busy(
+        |answer: &std::io::Result<std::process::Output>| {
+            answer.as_ref().err().and_then(std::io::Error::raw_os_error) == Some(26)
+        },
+        || std::process::Command::new(&script).output(),
+    );
+    released.join().expect("the holder thread finishes");
+    assert_eq!(
+        outcome
+            .expect("the script runs once nobody is writing it")
+            .status
+            .code(),
+        Some(7),
+        "the retry waits out the writer instead of reporting the machine's state as the script's"
+    );
+}
+
+#[test]
+fn should_answer_a_failure_that_is_not_a_busy_file_on_the_first_attempt() {
+    // The retry is not a blanket one: every other failure is returned unretried, so a script that
+    // really cannot be run fails at once rather than a second later.
+    let attempts = std::cell::Cell::new(0u32);
+    let outcome = ono_testkit::while_text_file_busy(
+        |_: &u32| false,
+        || {
+            attempts.set(attempts.get() + 1);
+            attempts.get()
+        },
+    );
+    assert_eq!(outcome, 1, "an answer that is not `busy` is the answer");
+    assert_eq!(attempts.get(), 1, "and it was asked for exactly once");
+}

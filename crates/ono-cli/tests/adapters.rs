@@ -278,15 +278,42 @@ fn should_adapt_the_ip_family_into_canonical_network_records() {
 /// A fake `journalctl` that answers the version probe and then runs `body`.
 fn journal_shim(body: &str) -> Scratch {
     let dir = scratch();
-    dir.write(
+    ono_testkit::executable_script(
+        dir.path(),
         "journalctl",
-        format!(
+        &format!(
             "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'systemd 259 (259.5)'; exit 0; fi\n{body}\n"
         ),
     );
-    let mode = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-    std::fs::set_permissions(dir.path().join("journalctl"), mode).unwrap();
     dir
+}
+
+/// Runs `script` with the shim directory first on `PATH`, waiting out a thread that is still
+/// holding the shim open.
+///
+/// A thread that forks between this thread's `open` and `close` of the shim inherits the write
+/// descriptor, and until that child execs, the shell's `execve` on it answers ETXTBSY. The shell
+/// reports that as exit 126 with "Text file busy" in the diagnostic — about a file that is
+/// executable — and the assertion the test wanted to make never gets a chance. Issue #7 is one
+/// sighting of that; issue #27 is the same race one crate down (ADR-0520). Every other failure is
+/// answered on the first attempt.
+fn shimmed(dir: &Scratch, script: &str) -> ono_testkit::Run {
+    ono_testkit::while_text_file_busy(
+        |run: &ono_testkit::Run| run.stderr().contains("Text file busy"),
+        || {
+            Shell::new()
+                .args(["-c", script])
+                .env(
+                    "PATH",
+                    format!(
+                        "{}:{}",
+                        dir.path().display(),
+                        std::env::var("PATH").unwrap_or_default()
+                    ),
+                )
+                .run()
+        },
+    )
 }
 
 const ENTRY_ONE: &str = r#"{"MESSAGE":"first","PRIORITY":"6","__REALTIME_TIMESTAMP":"1787820400000000","_BOOT_ID":"b","_HOSTNAME":"h","__CURSOR":"c1"}"#;
@@ -330,17 +357,7 @@ fn should_stream_decoded_records_while_the_child_still_runs() {
 fn should_report_a_failing_streamed_child_after_its_records() {
     // Records that arrived are shown; the child's status still stands (spec v0.3 §1.20).
     let dir = journal_shim(&format!("echo '{ENTRY_ONE}'; exit 3"));
-    let run = Shell::new()
-        .args(["-c", "journalctl | select message | to json"])
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                dir.path().display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
-        )
-        .run();
+    let run = shimmed(&dir, "journalctl | select message | to json");
     assert_ne!(run.status().code(), 0);
     assert!(
         run.stderr().contains("Ono-Sendai-E0501"),

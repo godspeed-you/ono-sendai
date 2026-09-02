@@ -1803,15 +1803,20 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       `xtask/tests/scan.rs::should_report_a_pty_assertion_that_an_earlier_repaint_can_satisfy`
       holds the shape (#6, §65.10 — a test that can pass without exercising its subject is the
       skip-as-pass defect in a different costume).
-- [ ] **P2 · The two known flaky tests are deterministic.**
+- [x] **P2 · The two known flaky tests are deterministic.**
       `should_report_a_failing_streamed_child_after_its_records` (#7) and
-      `ono-process::should_run_a_text_script_without_a_shebang_through_the_shell` (#27) are made
-      deterministic or their non-determinism is fixed at its source, and each is proven by the
-      test's own repeated execution —
+      `ono-process::should_run_a_text_script_without_a_shebang_through_the_shell` (#27) are one
+      defect, fixed at its source: both run a script the test has just written, and a thread that
+      forks between the write's `open` and `close` inherits the descriptor, so `execve` answers
+      `ETXTBSY` — reported as exit 126 about a file that is executable. ADR-0520 waits that out
+      and answers every other failure at once —
       `crates/ono-cli/tests/adapters.rs::should_report_a_failing_streamed_child_after_its_records`,
       `crates/ono-process/tests/external_command.rs::should_run_a_text_script_without_a_shebang_through_the_shell`,
-      both named in the expected-skip and flake declarations of #89 so a recurrence is visible
-      (#7, #27, §38.3).
+      with the condition forced and asserted in
+      `crates/ono-testkit/tests/harness.rs::should_run_a_script_again_while_another_thread_still_holds_it_open`
+      and `::should_answer_a_failure_that_is_not_a_busy_file_on_the_first_attempt`. Proven by
+      repetition: twelve runs of `external_command` and ten of `adapters` at load 6 (#7, #27,
+      §38.3).
 
 #### 4.8.10 Maintainability (H9 — §66.6, §29–§31, Appendix I)
 
