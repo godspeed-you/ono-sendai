@@ -634,16 +634,28 @@ fn should_only_remove_edges_when_a_relation_filter_narrows_the_map() {
     let (complete, filtered) = (both[0].clone(), both[1].clone());
 
     let known = ids(edges(&complete));
+    // Every place the unfiltered map had seen, so an edge to something that did not exist yet can
+    // be told apart from an edge the filter invented. This test binary runs two dozen tests in
+    // parallel and each of them spawns a shell, so *its own children* churn between two
+    // observations — the same hazard the comment above records for the processes collection,
+    // arriving through the place the test chose to avoid it (§43.2, ADR-0183).
+    let existing = ids(nodes(&complete));
     for edge in edges(&filtered) {
         assert_eq!(
             text(edge, "relation", "§22"),
             relation,
             "spec §6.9: `--relations` keeps only the requested relations, got {edge:?}"
         );
+        let ends_existed = ["source", "target"]
+            .into_iter()
+            .all(|end| existing.contains(&text(edge, end, "§22")));
+        if !ends_existed {
+            continue;
+        }
         assert!(
             known.contains(&text(edge, "id", "§22")),
-            "spec §43.2: filtering cannot create unknown edges; {edge:?} is absent from the \
-             unfiltered map"
+            "spec §43.2: filtering cannot create unknown edges; {edge:?} joins two places the \
+             unfiltered map already drew and is absent from it"
         );
     }
     assert_edges_resolve(&filtered, "the relation-filtered map");

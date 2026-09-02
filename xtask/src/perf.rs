@@ -1160,11 +1160,30 @@ impl Runner {
         }
     }
 
-    /// Milliseconds from an interrupt to the process being gone (§32.3's cancellation latency).
+    /// The p95 of the milliseconds from an interrupt to the process being gone (§32.3's
+    /// cancellation latency), over as many samples as the benchmark's iterations.
+    ///
+    /// The p95 rather than the median, because §23.3 states its target as one:
+    ///
+    /// > p95 < 100 ms, p99 < 250 ms … measured from the cancellation signal to the cessation of
+    /// > additional captured-value growth.
+    ///
+    /// ADR-0459 measured that behaviour deterministically and deliberately asserted no figure,
+    /// naming issues #83 and #84 as what would make one meaningful. They exist, so the figure is
+    /// taken here, under §37.4's rule and on §37.2's named environment. A p99 would want about a
+    /// hundred samples rather than twenty; that is the sample count and nothing else.
     ///
     /// A benchmark that finishes before it can be interrupted has no cancellation latency to
     /// report, and `None` says so rather than reporting a zero nobody measured (§2.6).
     fn cancellation(&self, script: &str) -> Option<f64> {
+        let samples: Vec<f64> = (0..self.iterations)
+            .filter_map(|_| self.cancellation_sample(script))
+            .collect();
+        (!samples.is_empty()).then(|| percentile(&samples, 95.0))
+    }
+
+    /// One interrupt, and how long the process took to be gone.
+    fn cancellation_sample(&self, script: &str) -> Option<f64> {
         use std::time::Instant;
 
         let mut child = std::process::Command::new(&self.binary)
