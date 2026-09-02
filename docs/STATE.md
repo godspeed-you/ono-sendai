@@ -285,8 +285,15 @@ Delivered so far in the tranche:
   the v0.4.1 counterpart `xtask/tests/hardening_evidence.rs` is §4.8.1's first box and the last
   box of the tranche to close. From here `scripts/release-check.sh` fails on §4.8's first open
   box, and that is the correct state for a tranche that has just started.
-- **#31 half-delivered (2026-09-02).** Failure proofs 1 and 2 are in, red by design, tracked under
-  *Deferred* above; proofs 3 and 4 are in flight.
+- **#31 closed (2026-09-02).** All four failure proofs are in, red by design, tracked under
+  *Deferred* above (ADR-0430, ADR-0431). Two diagnoses came out of writing them and belong to the
+  phases that own the fix: the `map --live` pathology is **unconditional rather than
+  cardinality-driven** — `map --live --json | take 1` answers in 0.2 s, and the second value never
+  comes because the root projection is domains and collections while `MapSnapshot` compares node
+  and edge labels only, so a picture made of names that cannot change never reports a change
+  (#22); and issue **#20**'s instance measures 29.7 s at Profile M, inside §33.3's thirty-second
+  budget by 0.3 s and sixty times outside §33.2's target, so it needs a phase-H7 frame-budget
+  proof under a terminal rather than a watchdog that would be a coin toss (ADR-0252, #21).
 - **#98, #99, #100 closed (2026-09-02), out of phase order and deliberately so.** H10 touches
   `.github/`, `docker/`, `scripts/` and `xtask/` and no runtime code, so running it beside H1 and
   H4 delays no safety work; §57's staging rule is about refactoring landing before safety work,
@@ -3235,6 +3242,26 @@ The H0 failure proofs, red by design (issue #31, ADR-0430):
   — ADR-0430. Un-ignored by issues #59 and #60. ADR-0430 also records that phase H4 still owes the
   injectable platform layer §59.7 asks for, because `PR_SET_NO_NEW_PRIVS` cannot be failed from
   outside the process.
+
+- **`each` captures its complete upstream before its block runs.**
+  `crates/ono-cli/tests/each_streaming.rs` holds two `#[ignore]`d tests, both red at HEAD with
+  `Ono-Sendai-E0801 stream.unbounded_operation` (v0.4.1 §0.5.5, §25.2). The source is the
+  production file provider — `tail file … --lines 1 --follow`, which emits the one line the file
+  holds and then waits — so the barrier is the file not growing and no clock appears anywhere.
+  `should_answer_take_one_before_the_source_closes_when_each_transforms_a_waiting_stream` (§25.1,
+  §58.2, §60.1) is un-ignored by **#75**, and `should_accept_an_unbounded_source_when_each_transforms_it`
+  (§25.6) by **#76** — ADR-0431. The suite's third test is green and un-ignored: `where` over the
+  identical source and the identical `take 1` answers at once, which pins the defect on `each`
+  rather than on the source, `take` or the stream plumbing.
+
+- **`map --live` produces nothing for the whole of §33.3's budget.**
+  `crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_the_live_map_within_the_interactive_watchdog_on_profile_m`
+  is `#[ignore]`d and red at HEAD: on the `ono_testkit::PROFILE_M` population, issue #22's own
+  `map --live --json | take 3 | to json` writes zero bytes to either stream for thirty seconds and
+  is killed. The assertion is only `!silent()`, so output, progress metadata or a deterministic
+  refusal all satisfy it — the proof does not prescribe which §35.2 answer the fix picks.
+  Un-ignored by **#22** — ADR-0431, which also records why issue #20's neighbouring instance
+  (29.7 s at Profile M, inside §33.3's budget by 0.3 s) is deliberately not encoded as a watchdog.
 
 Two entries left this section on 2026-08-29:
 

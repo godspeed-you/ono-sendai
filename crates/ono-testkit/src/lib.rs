@@ -18,10 +18,12 @@
     reason = "this crate is only ever linked into tests, where a failed precondition should abort loudly"
 )]
 
+mod profile;
 mod rng;
 mod run;
 mod scratch;
 
+pub use profile::{PROFILE_L, PROFILE_M, PROFILE_S, ProcessPopulation, Profile};
 pub use rng::Rng;
 pub use run::{Run, RunError, Shell};
 pub use scratch::{Scratch, scratch};
