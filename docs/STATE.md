@@ -180,6 +180,76 @@ delivered until its live case runs there (`docs/ACCEPTANCE.md` §4.6.3).
 
 ---
 
+## The v0.4.1 build order (2026-09-02)
+
+The tranche's 101 issues carry GitHub milestones **H0 … H12**, one per phase of v0.4.1 spec §57,
+which is normative: *"The implementation MUST be staged so safety-critical work lands before
+broad refactoring … unless an ADR documents a dependency requiring a local swap."* The phase a
+work package belongs to is stated in its issue body (`**Phase H4 · P0 · spec §16.1**`); the
+milestone makes it queryable:
+
+```bash
+gh issue list --milestone "H1 — Direct remote mutual authentication"
+gh api repos/godspeed-you/ono-sendai/milestones --jq '.[] | "\(.title)\t\(.open_issues)"'
+```
+
+Within a phase the order below is the intended one — it is a reading of the dependencies, and an
+agent that finds a better one records why in the commit body.
+
+**H0 · Baseline and guardrails** — #29 (ACCEPTANCE §4.8) first, because it defines what finished
+means for the other hundred; then #31, the four failing proofs §57 requires before any fix lands;
+then #30 (frozen baseline) and the two registries #117/#118, which #117 itself asks to land early
+so later phases write policy data into them rather than into scattered constants.
+
+**H1 · Mutual authentication** — #32 → #33 → #34 → #35 → #36 → #38 → #39 → #37. #18 (host-key
+pinning is dead code on the only production transport) closes here: ADR-0274 records that its
+exit test needs exactly the authenticated TCP transport H1 builds.
+
+**H2 · Authorization** — #40 → #41 → #42 → #43 → #44 → #47 → #45 → #46 → #48 → #49 → #50. The
+store precedes the commands, and the immutable `AuthorizationContext` (#47) precedes the
+offer filter (#45) and dispatch defense in depth (#46), which both read it.
+
+**H3 · Remote limits** — #54 first (one central `Limits` contract), then #51 → #52 → #53 → #57 →
+#55 → #56. Starting with the semaphores would create three sources for the same numbers.
+
+**H4 · KUANG fail-closed** — #58 → #59 → #60 → #61 → #62 → #63 → #64. Crate-disjoint from
+H1–H3 (`ono-kuang` against `ono-remote`), so it can run beside them.
+
+H1–H4 hold every P0. When they are green, spec §3.2's mandatory scope is met and §66.9's
+"zero unresolved P0" is reachable.
+
+**H5 · Budgets** — #65 → #66 → #67 → #68 → #70 → #71 → #72 → #73 → #74 → #69, with #120 behind
+#73/#74. `explain` (#69) and `inspect limits` (#120) display finished values, so they come last.
+
+**H6 · Streaming** — #78 first: the capture inventory says what #75 and #79 have to touch. Then
+#75 → #76 → #77 → #79 → #81 → #80. H5 precedes H6 because a streamed `each` bounds itself
+against a budget that must already exist.
+
+**H7 · Spatial performance** — measurement before optimisation: #82 → #83 → #84 → #85, then the
+pathologies #22 and #20 (`map --live`), then #86 → #25 → #87 → #8 → #21. #8 is a design question
+(a persistent cross-process index against a bounded last step) and needs an ADR before code.
+#21 needs the container-invocable measurement #84 delivers.
+
+**H8 · Test truthfulness** — #88 → #89 → #90 → #91, then the three known flaky or self-satisfying
+tests #27, #7 and #6, which are the local instance of §65.10's skip-as-pass, then #92 → #93 → #94.
+
+**H9 · Structural refactor** — #95 → #96 → #97, strictly after H6: §65.12 forbids carrying a
+refactor and a semantic redesign in one step, and H6 is what changes evaluator semantics.
+
+**H10 → H11 → H12 · Supply chain, reproducibility, release proof** — #98 … #103, then #104 …
+#110, then #111 … #116 with #119 as their gate. #119's refusal texts are written as the
+boundaries appear in H2, H4 and H5; H12 proves they all name the deciding boundary.
+
+### What carries no milestone
+
+Twelve open issues sit outside the tranche. #10 and #11 (socket and filesystem identity) are worth
+taking before v0.5, whose evidence ledger correlates on stable object identity. #12 (theme
+markers) belongs to the v0.7 presentation tranche. #9, #15, #16, #17, #23, #24 and #26 are
+independent class-b defects, schedulable whenever a phase leaves room. #3 and #5 are class-c and
+are tranches of their own, competing with v0.5 rather than fitting inside v0.4.1.
+
+---
+
 ## Product direction from the user (2026-08-26)
 
 **"Es muss immer cool sein und Spaß machen, es zu benutzen. Es soll aufregend sein."** The shell
