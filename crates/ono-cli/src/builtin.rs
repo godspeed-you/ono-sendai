@@ -342,7 +342,7 @@ fn help(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         return Ok(ExitStatus::SUCCESS);
     }
 
-    let registry = match crate::native::registry() {
+    let registry = match crate::eval::native::registry() {
         Ok(registry) => registry,
         Err(error) => return Err(Flow::Failed(error)),
     };
@@ -428,7 +428,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         )));
     };
 
-    let registry = crate::native::registry().map_err(Flow::Failed)?;
+    let registry = crate::eval::native::registry().map_err(Flow::Failed)?;
     // The last stage's consumer is whatever the shell's stdout is, and a plan that assumed a
     // terminal would promise interactive rendering to a script (spec v0.3 §1.4).
     let stdout = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
@@ -565,11 +565,11 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             if ono_command::is_raw(stage) {
                 continue;
             }
-            let Some(argv) = crate::native::literal_argv(stage) else {
+            let Some(argv) = crate::eval::native::literal_argv(stage) else {
                 continue;
             };
             let agentless = session.link(&host).is_some_and(|link| link.agentless);
-            let state = crate::native::remote_decision(session, &argv, demand).map_or_else(
+            let state = crate::eval::native::remote_decision(session, &argv, demand).map_or_else(
                 || {
                     if agentless {
                         "raw (this link is agentless: there is no agent over there to negotiate \
@@ -606,8 +606,8 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             // v0.4.1 §26.2: where a call cannot be continued as a stage of the pipeline it stands
             // in, "that limitation MUST be explicit in `explain`" — so it is stated here rather
             // than left for a user to meet as a refusal over an unbounded source (ADR-0481).
-            let continues = crate::native::continuable_body(&function.declaration.body)
-                .is_some_and(|body| crate::native::continuable_list(session, body));
+            let continues = crate::eval::native::continuable_body(&function.declaration.body)
+                .is_some_and(|body| crate::eval::native::continuable_list(session, body));
             let continuation = if continues {
                 "its body streams into the stages after the call"
             } else {

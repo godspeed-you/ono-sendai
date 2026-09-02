@@ -292,7 +292,7 @@ fn failed_row(request: Request, name: &str, operation: &str, error: ErrorValue) 
 
 /// Binds the stage's arguments to the command's contract.
 fn bind(request: Request, stage: &Stage) -> Eval<ono_command::BoundArguments> {
-    let registry = crate::native::registry().map_err(Flow::Failed)?;
+    let registry = crate::eval::native::registry().map_err(Flow::Failed)?;
     let resolved = registry
         .resolve(request.verb(), &stage.arguments)
         .map_err(Flow::Failed)?;

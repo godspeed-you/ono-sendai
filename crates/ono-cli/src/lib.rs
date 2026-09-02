@@ -21,7 +21,6 @@ pub mod kuang_trust;
 pub mod limits;
 pub mod live;
 pub mod meta;
-pub mod native;
 pub mod piped;
 pub mod plugin_registry;
 pub mod plugins;

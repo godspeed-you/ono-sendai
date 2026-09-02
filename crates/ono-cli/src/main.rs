@@ -225,7 +225,7 @@ fn default_identity() -> Result<ono_remote::PeerIdentity, ono_value::ErrorValue>
 /// `process.signal`, `restart service` needs `service.manage`. An action the registry does not
 /// map is denied under a policy, because Appendix C denies an unknown capability id always.
 fn with_action_capabilities(config: ono_remote::AgentConfig) -> ono_remote::AgentConfig {
-    let Ok(registry) = ono_cli::native::registry() else {
+    let Ok(registry) = ono_cli::eval::native::registry() else {
         // Without the registry no action can be named, so every action is denied. That is the
         // fail-closed direction (v0.4.1 §2.3), and the agent still serves reads.
         return config;

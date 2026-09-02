@@ -1043,7 +1043,7 @@ pub fn contributed_command(stage: &ono_parser::Stage) -> Option<&'static Command
     if name.namespace.is_some() {
         return None;
     }
-    let registry = crate::native::registry().ok()?;
+    let registry = crate::eval::native::registry().ok()?;
     let target = stage
         .arguments
         .first()
@@ -1060,7 +1060,7 @@ pub fn contributed_by_namespace(
     namespace: &str,
     command: &str,
 ) -> Option<&'static CommandContract> {
-    let registry = crate::native::registry().ok()?;
+    let registry = crate::eval::native::registry().ok()?;
     registry.commands().iter().find(|contract| {
         let Some(package) = contract.origin().package() else {
             return false;

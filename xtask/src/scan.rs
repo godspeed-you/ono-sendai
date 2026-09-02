@@ -920,15 +920,38 @@ fn without_comments_and_strings(text: &str) -> String {
 
 /// The evaluator execution paths §26.1's inventory covers.
 ///
-/// These five files are where a pipeline is assembled, driven, drained and retained: `eval.rs`
-/// runs statements and blocks, `native.rs` builds and drains the value stream, `session.rs` owns
-/// the capture stack and the retained history, and `report.rs` and `view.rs` are what a drained
-/// result reaches. A command implementation that materializes is placed by Appendix E instead —
-/// `docs/spec/hardening/streaming_classification.yaml` — because there the class is a property of
-/// the operation's contract rather than of the evaluator's structure.
+/// Every file of `ono-cli`'s evaluator, plus the three it hands a drained result to: `eval/` runs
+/// statements, expressions, blocks and pipelines and `eval/native/` assembles, drives and drains
+/// the value stream; `session.rs` owns the capture stack and the retained history; `report.rs`
+/// and `view.rs` are what a drained result reaches. A command implementation that materializes is
+/// placed by Appendix E instead — `docs/spec/hardening/streaming_classification.yaml` — because
+/// there the class is a property of the operation's contract rather than of the evaluator's
+/// structure.
+///
+/// The list follows the code: v0.4.1 §30.2 split `eval.rs` and `native.rs` into the modules below
+/// (ADR-0507), and a scan that had kept pointing at the two old paths would have gone quiet
+/// rather than red. The two old paths are still listed because the fixtures of
+/// `xtask/tests/scan.rs` are written against them and a fixture test states the rule rather than
+/// the tree; a path this repository does not have costs one failed `read_to_string`.
 const EVALUATOR_SOURCES: &[&str] = &[
     "crates/ono-cli/src/eval.rs",
     "crates/ono-cli/src/native.rs",
+    "crates/ono-cli/src/eval/mod.rs",
+    "crates/ono-cli/src/eval/block.rs",
+    "crates/ono-cli/src/eval/control.rs",
+    "crates/ono-cli/src/eval/expression.rs",
+    "crates/ono-cli/src/eval/function.rs",
+    "crates/ono-cli/src/eval/materialize.rs",
+    "crates/ono-cli/src/eval/pipeline.rs",
+    "crates/ono-cli/src/eval/statement.rs",
+    "crates/ono-cli/src/eval/native/mod.rs",
+    "crates/ono-cli/src/eval/native/bind.rs",
+    "crates/ono-cli/src/eval/native/drive.rs",
+    "crates/ono-cli/src/eval/native/external.rs",
+    "crates/ono-cli/src/eval/native/foreground.rs",
+    "crates/ono-cli/src/eval/native/remote.rs",
+    "crates/ono-cli/src/eval/native/result.rs",
+    "crates/ono-cli/src/eval/native/segment.rs",
     "crates/ono-cli/src/session.rs",
     "crates/ono-cli/src/report.rs",
     "crates/ono-cli/src/view.rs",

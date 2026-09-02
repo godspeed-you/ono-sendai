@@ -83,7 +83,7 @@ pub fn run(session: &mut Session, name: &str, values: Vec<Value>) -> Eval<ExitSt
 fn browse(values: &[Value], tree: bool) -> std::io::Result<Option<Value>> {
     let theme = Theme::default();
     let renderer = Renderer::new();
-    let (width, height) = crate::native::live_geometry();
+    let (width, height) = crate::eval::native::live_geometry();
     let page = height.saturating_sub(6).max(4);
     let layout = Layout::new(width);
 

@@ -48,7 +48,7 @@ pub fn attach(session: &mut Session, number: u32) -> Eval<ExitStatus> {
         let _ = ono_process::take_interrupt();
         let renderer = Renderer::new();
         let theme = Theme::clone(session.theme());
-        let (width, height) = crate::native::live_geometry();
+        let (width, height) = crate::eval::native::live_geometry();
         let layout = Layout::new(width).max_rows(height.saturating_sub(3).max(4));
         let mut painted = 0usize;
         while !ono_process::take_interrupt() {
