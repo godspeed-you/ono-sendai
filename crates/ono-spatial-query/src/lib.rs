@@ -18,6 +18,7 @@
 //!
 //! [`NeighborhoodGroup`]: ono_spatial_core::NeighborhoodGroup
 
+pub mod cost;
 pub mod discovery;
 pub mod find;
 pub mod landmark;
@@ -26,6 +27,7 @@ pub mod neighborhood;
 pub mod place;
 pub mod resolve;
 
+pub use cost::{CostEstimate, INTERACTIVE_BUDGET};
 pub use discovery::{SpaceSource, TargetPlan, source_of_space, targets_for};
 pub use find::{FindRequest, FoundPlace, find_places};
 pub use landmark::{LandmarkThresholds, landmarks_of as landmarks_of_object};

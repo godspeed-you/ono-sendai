@@ -1150,6 +1150,7 @@ dependencies = [
  "ono-spatial-index",
  "ono-testkit",
  "ono-value",
+ "serde_yaml_ng",
  "sha2",
 ]
 
@@ -2046,6 +2047,7 @@ dependencies = [
  "ono-kuang-protocol",
  "ono-parser",
  "ono-spatial-core",
+ "ono-spatial-query",
  "ono-testkit",
  "ono-value",
  "serde",

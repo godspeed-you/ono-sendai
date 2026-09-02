@@ -1,0 +1,95 @@
+# The spatial acquisition cost classes of v0.4.1 §34.2, as data.
+#
+# §34.2 lists four names and then says the one thing that makes them useful:
+#
+#   "Relationship/provider acquisition SHOULD classify cost as cheap / moderate / expensive /
+#    external. The class MUST be machine-readable."
+#
+# Machine-readable is what this file is for. §34.3's request path keys off the class — a relation
+# described as "available on request" must have a way to make the request — and §33.3's refusal
+# names it: "If the planner predicts cost beyond the supported interactive budget, Ono MUST refuse
+# or switch to a bounded lower-detail strategy rather than silently appear hung."
+#
+# Two vocabularies, and the file declares both plus the map between them:
+#
+#   * §34.2's four, which a *caller* reads. `ono_spatial_core::AcquisitionCost`.
+#   * the planner's five, which it reasons in. `ono_spatial_core::CostClass` keeps `privileged`
+#     and `remote` apart from each other because it declines them differently — one needs an
+#     authority outside this shell, the other a host outside this one — and both are `external`
+#     to a caller deciding whether to ask.
+#
+# The `weight` is §34.1's "relationship acquisition cost class" as an input to the estimate rather
+# than a label beside it: one candidate of an external acquisition is estimated to cost what
+# sixty-four cheap ones do. §34.1 asks for no more precision than that — "It need not be
+# mathematically exact. It MUST be conservative enough to avoid obviously explosive work."
+#
+# Authority: `crates/ono-spatial-query/tests/cost.rs::should_assign_a_declared_cost_class_to_every_canonical_query`
+# compares this file against the implementation in both directions, and requires every declared
+# relation and every enumerable space to carry one. Decisions: ADR-0494.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# §34.2's four, in increasing cost order.
+# ---------------------------------------------------------------------------------------------
+classes:
+  - id: cheap
+    weight: 1
+    spec: "v0.4.1 §34.2"
+    doc: >-
+      Already available, or an O(1) local lookup. A default `look` follows these without asking.
+  - id: moderate
+    weight: 4
+    spec: "v0.4.1 §34.2"
+    doc: >-
+      A bounded local query — one `/proc` sweep, one netlink dump. Followed eagerly, and counted.
+  - id: expensive
+    weight: 16
+    spec: "v0.4.1 §34.2"
+    doc: >-
+      A broad scan or a correlation across several providers. Not followed by an orientation
+      query; §34.3 requires the request path that obtains it.
+  - id: external
+    weight: 64
+    spec: "v0.4.1 §34.2"
+    doc: >-
+      Work outside this shell: another daemon over an IPC bus, another host across a link, or a
+      privilege the shell must be granted. The cost is latency the shell does not control, which
+      is why it outweighs a broad local scan.
+
+# ---------------------------------------------------------------------------------------------
+# The planner's classes, and the §34.2 class each is reported as.
+# ---------------------------------------------------------------------------------------------
+planner_classes:
+  - id: cheap
+    reports: cheap
+    doc: "Already available, or an O(1)/small local lookup."
+  - id: normal
+    reports: moderate
+    doc: "A bounded system query."
+  - id: expensive
+    reports: expensive
+    doc: "A broad scan or a cross-provider correlation."
+  - id: privileged
+    reports: external
+    doc: >-
+      Requires elevated permission, which navigation itself never requests (v0.4 §35.3). External
+      because the authority is outside this shell.
+  - id: remote
+    reports: external
+    doc: >-
+      Requires an operation across a link (v0.4 §19, §35.4). External because the host is outside
+      this one.
+
+# ---------------------------------------------------------------------------------------------
+# The budget §33.3's refusal is measured against, in candidate acquisitions.
+# ---------------------------------------------------------------------------------------------
+interactive_budget:
+  units: 250000
+  error: Ono-Sendai-E1401
+  spec: "v0.4.1 §33.3, §34.1"
+  doc: >-
+    A ceiling on obviously explosive work rather than a latency target. A thousand candidates at
+    moderate cost with a fan-out of four is 20 000 units and is answered; two hundred thousand is
+    not. Deliberately not a wall clock: §32.4 puts absolute time on a named reference environment,
+    and a refusal that depended on the machine would refuse different queries on different hosts.

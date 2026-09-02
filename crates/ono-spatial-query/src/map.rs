@@ -205,6 +205,12 @@ impl MapRequest {
         !self.expand.is_empty()
     }
 
+    /// Whether the caller asked for everything (§6.9, and §34.3's request path).
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.all
+    }
+
     /// How many hierarchy hops to draw. Two by default: the current place, its canonical
     /// children and what lies behind them — §6.9's "canonical children and significant direct
     /// relationships within a bounded semantic horizon".

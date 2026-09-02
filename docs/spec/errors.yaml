@@ -449,6 +449,18 @@ errors:
       §42.1). The metadata names both identities and the providers that asserted them; this is a
       provider defect worth reporting.
 
+  # --- spatial cost model (v0.4.1 §33.3, §34.1, ADR-0494) -----------------------------------
+  - code: Ono-Sendai-E1401
+    name: spatial.cost_refused
+    kind: resource
+    summary: The planner estimated this query beyond the interactive budget and refused it.
+    help: >-
+      v0.4.1 §33.3: a query the planner predicts beyond the supported interactive budget is
+      refused or answered at a bounded lower detail, rather than left to look hung. The message
+      names the estimate and the number of candidates it was made over (§34.1), so the refusal
+      can be acted on. Narrow the place, lower the depth, or ask for the expensive relation
+      explicitly — §34.3 requires that path to exist.
+
   # --- resource budgets (v0.4.1 §21.4, §53.1, ADR-0453) ------------------------------------
   - code: Ono-Sendai-E1101
     name: resource.item_limit

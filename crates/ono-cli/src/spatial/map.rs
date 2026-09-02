@@ -264,6 +264,14 @@ pub async fn project_at(
             observed
         }
     };
+    // v0.4.1 §34.1: a coarse estimate before the expansion, conservative enough to catch work
+    // nobody meant. §33.3 says what to do about it — refuse rather than appear hung — and §34.3
+    // makes `--all` the request path that says the cost is acceptable.
+    let estimate = estimate_of(&horizon, request);
+    if estimate.exceeds(ono_spatial_query::INTERACTIVE_BUDGET) {
+        return Err(ono_spatial_query::cost::refusal(&estimate, "map"));
+    }
+
     let pins = session.pins().clone();
     Ok(ono_spatial_query::project_map(
         session.index(),
@@ -274,6 +282,46 @@ pub async fn project_at(
         session.preferences().map_node_budget,
         now,
     ))
+}
+
+/// v0.4.1 §34.1's coarse estimate for the projection about to be made.
+///
+/// The horizon is what was observed, so the candidate count is known exactly and the estimate is
+/// about what *expanding* it costs. The dominating class is the most expensive acquisition the
+/// horizon holds, because §34.1 asks for an estimate conservative enough to avoid obviously
+/// explosive work rather than an average.
+fn estimate_of(
+    horizon: &ono_spatial_query::MapHorizon,
+    request: &MapRequest,
+) -> ono_spatial_query::CostEstimate {
+    let candidates = horizon.places().len();
+    let fan_out = if candidates == 0 {
+        0
+    } else {
+        horizon.edges().len().div_ceil(candidates)
+    };
+    let class = horizon
+        .places()
+        .iter()
+        .filter_map(|place| {
+            ono_spatial_query::resolve::space_of(&place.id)
+                .and_then(|space| ono_spatial_query::source_of_space(space.id))
+                .map(|source| source.cost.acquisition())
+        })
+        .max()
+        .unwrap_or(ono_spatial_core::AcquisitionCost::Moderate);
+    let estimate = ono_spatial_query::CostEstimate::new(
+        candidates,
+        fan_out,
+        class,
+        u32::try_from(request.horizon_depth()).unwrap_or(u32::MAX),
+    );
+    // §34.3: a caller who asked for everything has accepted the cost of everything.
+    if request.is_complete() {
+        estimate.requested()
+    } else {
+        estimate
+    }
 }
 
 /// The `ono.spatial-map/1` record of a projection, with the changes that produced it (§22, §25).
