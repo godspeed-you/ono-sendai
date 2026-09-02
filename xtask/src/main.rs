@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use xtask::{bindings, conformance, contracts, narrative, reference, scan};
+use xtask::{bindings, conformance, contracts, narrative, reference, scan, supply_chain};
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -129,6 +129,14 @@ fn spec_check() -> ExitCode {
             .into_iter()
             .chain(scan::check_acceptance_case_references(&root))
             .chain(scan::check_silent_skips(&root))
+            .map(|problem| format!("{} — {}", problem.location, problem.detail)),
+    );
+
+    problems.extend(
+        supply_chain::check_action_pins(&root)
+            .into_iter()
+            .chain(supply_chain::check_image_digests(&root))
+            .chain(supply_chain::check_workflow_permissions(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 

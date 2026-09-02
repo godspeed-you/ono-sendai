@@ -287,6 +287,14 @@ Delivered so far in the tranche:
   box, and that is the correct state for a tranche that has just started.
 - **#31 half-delivered (2026-09-02).** Failure proofs 1 and 2 are in, red by design, tracked under
   *Deferred* above; proofs 3 and 4 are in flight.
+- **#98, #99, #100 closed (2026-09-02), out of phase order and deliberately so.** H10 touches
+  `.github/`, `docker/`, `scripts/` and `xtask/` and no runtime code, so running it beside H1 and
+  H4 delays no safety work; §57's staging rule is about refactoring landing before safety work,
+  and nothing here refactors anything. Seven third-party Actions are pinned by commit SHA and four
+  release-critical images by digest, `release.yml` drops from workflow-wide `contents: write` to
+  the publishing job alone, and `pull_request_target` is banned outright. The gate scan
+  `xtask/src/supply_chain.rs` keeps all three true — 28 tests in `xtask/tests/supply_chain.rs`,
+  ADR-0433. Three boxes of §4.8.11 are ticked.
 
 ## Session records (2026-08-27 … 2026-08-29)
 

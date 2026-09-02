@@ -1756,7 +1756,7 @@ never travel together, so every box here is closed with the test suite unchanged
 these bytes (Appendix H). §65.11 names the failure this phase removes — a release built from
 mutable inputs.
 
-- [ ] **P2 · Every required Action is pinned by commit SHA.** No third-party `uses:` reference in a
+- [x] **P2 · Every required Action is pinned by commit SHA.** No third-party `uses:` reference in a
       required workflow carries a tag or a branch, repository-local actions are the stated
       exception, and the scanner runs in the gate rather than in a review —
       `xtask/tests/supply_chain.rs::should_reject_an_action_referenced_by_a_floating_tag`,
@@ -1766,7 +1766,7 @@ mutable inputs.
       `::should_accept_an_action_that_lives_in_this_repository`,
       `::should_report_this_repository_as_pinning_every_action_it_uses` (#98, §43.1, §62.1,
       ADR-0433).
-- [ ] **P2 · Every release-critical image is pinned by digest.** A container reference without a
+- [x] **P2 · Every release-critical image is pinned by digest.** A container reference without a
       digest in a release-critical script or workflow fails policy, an image this repository builds
       itself is the stated exception, and a digest hidden behind a shell variable is found —
       `xtask/tests/supply_chain.rs::should_reject_a_build_image_pulled_by_tag_alone`,
@@ -1775,7 +1775,7 @@ mutable inputs.
       `::should_accept_an_image_this_repository_builds_itself`,
       `::should_report_this_repository_as_pinning_every_release_critical_image` (#99, §44.1,
       §62.2, ADR-0433).
-- [ ] **P2 · Workflows hold least privilege, and an untrusted pull request is isolated.** Each
+- [x] **P2 · Workflows hold least privilege, and an untrusted pull request is isolated.** Each
       workflow declares the narrowest `permissions` it needs, a pull request from a fork reaches no
       secret and no write token, and a publishing workflow carries a concurrency guard —
       `xtask/tests/supply_chain.rs::should_reject_a_workflow_that_declares_no_permissions_at_all`,

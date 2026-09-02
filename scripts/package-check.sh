@@ -13,8 +13,8 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-DEBIAN_IMAGE="${ONO_PACKAGE_CHECK_DEBIAN:-debian:bookworm}"
-FEDORA_IMAGE="${ONO_PACKAGE_CHECK_FEDORA:-fedora:latest}"
+DEBIAN_IMAGE="${ONO_PACKAGE_CHECK_DEBIAN:-debian:bookworm@sha256:6ebd97fa83deb272194a2cf015b3d26a4d538e9ad3a7a79d544c8af5b0a01443}"
+FEDORA_IMAGE="${ONO_PACKAGE_CHECK_FEDORA:-fedora:latest@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80}"
 
 host_triple="$(rustc -vV | sed -n 's/^host: //p')"
 target="$host_triple"

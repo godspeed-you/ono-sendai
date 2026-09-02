@@ -4,7 +4,7 @@
 # The acceptance suite runs against the binary produced here, not against a developer machine:
 # a shell that only works where it was written is not a shell (docs/ACCEPTANCE.md).
 
-FROM rust:1.94-slim-bookworm AS builder
+FROM rust:1.94-slim-bookworm@sha256:cf9dd0ec73e75f827fe59123fff9dc65af1a1c8363c3c31ee8d7f8ad0b6a5fb2 AS builder
 WORKDIR /build
 
 # Registry and target caches survive between builds, so the acceptance suite stays cheap enough
@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin \
     && install -m 0755 target/release/kuang-sign /usr/local/bin/kuang-sign
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS runtime
 
 # Fixtures the provider phases need: real processes, real services, real sockets, real users,
 # and the ordinary programs a shell must be able to run.

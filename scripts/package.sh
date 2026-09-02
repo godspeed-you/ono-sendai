@@ -18,7 +18,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-BUILD_IMAGE="rust:1.94-slim-bookworm"
+BUILD_IMAGE="rust:1.94-slim-bookworm@sha256:cf9dd0ec73e75f827fe59123fff9dc65af1a1c8363c3c31ee8d7f8ad0b6a5fb2"
 
 host_triple="$(rustc -vV | sed -n 's/^host: //p')"
 target="$host_triple"
