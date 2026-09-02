@@ -14,8 +14,9 @@ family, written before the work as §4.8 requires. Read against the tree, the ch
 of it in two different ways.
 
 **Eight boxes named a case that does not exist under the name they used.** `182` is
-`182-unknown-client-is-refused` and the box said `182-remote-unknown-client-refused`; the same for
-`183`, `184`, `185`, `186`, `187`, `195` and `196`. Every one of those cases exists and passes.
+`182-unknown-client-is-refused` and the box said 182-remote-unknown-client-refused — written here
+without backticks, because it is a name recorded absent rather than a case anybody can run
+(ADR-0401). The same held for `183`, `184`, `185`, `186`, `187`, `195` and `196`. Every one of those cases exists and passes.
 The names were written from the specification's own vocabulary before the delivering increments
 chose theirs, and nothing resolved them, because ADR-0401 deliberately leaves an unticked box's
 references unresolved — a checklist written ahead of the work names cases that are by definition

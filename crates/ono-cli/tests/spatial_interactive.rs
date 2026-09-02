@@ -30,6 +30,7 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
@@ -878,12 +879,42 @@ fn should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_o
         plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
     );
 
+    // The frame before the resize is a frame at thirty rows, which is what makes the assertion
+    // after it mean something.
+    let painted = after(session.seen(), ALTERNATE_SCREEN_ON);
+    let before = rows_addressed(&painted);
+    assert!(
+        before.contains(&30),
+        "the map fills the terminal it was given, so the frame before the resize reaches row 30; \
+         it addressed {before:?}"
+    );
+
     let mark = session.seen().len();
     session.resize(WindowSize::new(20, 60));
+    // §43.4 asks that a resize preserve the place, and the only way to see that a resize happened
+    // at all is the geometry of the frame it caused. Waiting for "new output naming the place"
+    // was satisfied by the repaint the earlier `Down` was still producing at thirty rows, so this
+    // test passed on runs whose whole key history was `Down`, `Esc`, with no resize in it (#6).
+    // A frame that addresses row 20 and no row above it is a frame at the new row count, and
+    // nothing an earlier repaint produced can be one.
     assert!(
-        session.wait_until(BUDGET, |seen| seen.len() > mark
-            && plain(&seen[mark..]).to_lowercase().contains("compute")),
-        "§43.4/§39.3: the map redraws at the new size and still shows the open place; saw:\n{}",
+        session.wait_until(BUDGET, |seen| {
+            if seen.len() <= mark {
+                return false;
+            }
+            frames(&seen[mark..]).into_iter().any(|frame| {
+                let rows = rows_addressed(frame);
+                rows.contains(&20)
+                    && rows.iter().all(|row| *row <= 20)
+                    && plain(frame).to_lowercase().contains("compute")
+            })
+        }),
+        "§43.4/§39.3: the map redraws at the new twenty-row size and still shows the open place. \
+         The frames it painted addressed rows {:?}; saw:\n{}",
+        frames(&session.seen()[mark.min(session.seen().len())..])
+            .into_iter()
+            .map(rows_addressed)
+            .collect::<Vec<_>>(),
         plain(&session.seen()[mark.min(session.seen().len())..])
     );
 
@@ -1169,4 +1200,97 @@ fn should_close_the_full_screen_map_promptly_while_a_projection_is_in_flight() {
         plain(session.seen())
     );
     session.line("exit");
+}
+
+#[test]
+fn should_paint_no_frame_at_a_new_row_count_when_the_terminal_is_not_resized() {
+    // The other half of #6, and the reason the test above is worth its complication: without the
+    // resize, the same key sequence paints frames at the size the terminal has had all along.
+    // This is the run whose whole key history is `Down`, `Esc` — the one that satisfied the old
+    // assertion — and here it is red by construction, so a resize that stops arriving turns the
+    // test above red instead of leaving it silently green (§65.10).
+    let (home, work) = workspace();
+    let mut session = Session::start(WindowSize::new(30, 100), home.path(), &work);
+    assert!(session.wait_for("> ", STARTUP));
+
+    session.line("enter compute");
+    let _ = session.prompt("NR0");
+    session.line("map");
+    assert!(
+        session.wait_for_after("\r\nNR0\r\n", ALTERNATE_SCREEN_ON, BUDGET),
+        "§52.1: `map` opens a full-screen view; saw:\n{}",
+        plain(&after(session.seen(), "\r\nNR0\r\n"))
+    );
+
+    let mark = session.seen().len();
+    session.keys(DOWN);
+    assert!(
+        session.wait_until(BUDGET, |seen| seen.len() > mark
+            && plain(&seen[mark..]).to_lowercase().contains("compute")),
+        "the repaint the arrow key causes arrives; saw:\n{}",
+        plain(&session.seen()[mark.min(session.seen().len())..])
+    );
+
+    let rows: BTreeSet<usize> = frames(&session.seen()[mark..])
+        .into_iter()
+        .flat_map(rows_addressed)
+        .collect();
+    assert!(
+        rows.iter().any(|row| *row > 20),
+        "§43.4: a repaint with no resize behind it is a frame at the terminal's own thirty rows, \
+         and would be indistinguishable from a resized one if the assertion only asked for new \
+         output naming the place. It addressed {rows:?}"
+    );
+
+    session.keys(ESCAPE);
+    assert!(
+        session.wait_for_after(ALTERNATE_SCREEN_ON, ALTERNATE_SCREEN_OFF, BUDGET),
+        "the view closes; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+    session.line("exit");
+}
+
+/// The frames a passage of output holds, split where each one starts.
+///
+/// The map repaints by homing the cursor and addressing every row in turn, so `ESC [ 1 ; 1 H`
+/// is where one frame ends and the next begins. Reading a window of output as one frame would
+/// merge the repaint that was still in flight with the one the resize caused, which is exactly
+/// the confusion #6 is about.
+fn frames(text: &str) -> Vec<&str> {
+    const HOME: &str = "\u{1b}[1;1H";
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(HOME) {
+        let body = &rest[at + HOME.len()..];
+        let end = body.find(HOME).unwrap_or(body.len());
+        found.push(&body[..end]);
+        rest = &body[end..];
+    }
+    found
+}
+
+/// The terminal rows a passage of output positioned the cursor to.
+///
+/// The map paints a frame by addressing each row in turn — `ESC [ <row> ; 1 H` — so the set of
+/// rows a frame touched is its height, read off the wire. That is the one observation a resize
+/// produces and nothing else can: a repaint at the old size addresses the old rows.
+fn rows_addressed(text: &str) -> BTreeSet<usize> {
+    let mut found = BTreeSet::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('\u{1b}') {
+        rest = &rest[at + 1..];
+        let Some(body) = rest.strip_prefix('[') else {
+            continue;
+        };
+        let Some(end) = body.find('H') else {
+            continue;
+        };
+        if let Some((row, _)) = body[..end].split_once(';')
+            && let Ok(row) = row.parse::<usize>()
+        {
+            found.insert(row);
+        }
+    }
+    found
 }

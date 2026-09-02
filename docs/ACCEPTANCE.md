@@ -1791,13 +1791,18 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       `xtask/tests/supply_chain.rs::should_declare_a_miri_job_covering_every_unsafe_boundary_module`,
       `::should_declare_an_address_and_undefined_behaviour_sanitizer_job_for_the_release_commit`,
       with the result recorded in the release evidence of §4.8.11 (#94, §42.1–§42.4).
-- [ ] **P2 · The resize assertion needs a resize.** `should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
+- [x] **P2 · The resize assertion needs a resize.** `should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
       is satisfied only by output that the resize itself produced, so an earlier repaint cannot
       close it — `crates/ono-cli/tests/spatial_interactive.rs::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
-      rewritten to wait on a resize-specific observation, and
+      waits for a frame that addresses the new row count and no row above it, and
+      `::should_paint_no_frame_at_a_new_row_count_when_the_terminal_is_not_resized` is the proof
+      that the assertion fails when the resize does not happen. Written that way it went red and
+      named the defect behind it: `ready_key` read the resize out of the terminal while a
+      projection was running and dropped it, so the map went on drawing at the size it opened
+      with. ADR-0519 makes a resize stand until the code that acts on one acknowledges it, and
       `xtask/tests/scan.rs::should_report_a_pty_assertion_that_an_earlier_repaint_can_satisfy`
-      (#6, §65.10 — a test that can pass without exercising its subject is the skip-as-pass defect
-      in a different costume).
+      holds the shape (#6, §65.10 — a test that can pass without exercising its subject is the
+      skip-as-pass defect in a different costume).
 - [ ] **P2 · The two known flaky tests are deterministic.**
       `should_report_a_failing_streamed_child_after_its_records` (#7) and
       `ono-process::should_run_a_text_script_without_a_shebang_through_the_shell` (#27) are made

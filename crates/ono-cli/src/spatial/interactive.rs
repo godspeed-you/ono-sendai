@@ -316,6 +316,11 @@ pub async fn run_map_view(
                         }
                         view.set_place(place_path(session, &center));
                         view.resize(&record, columns, rows, charset);
+                        // The view has drawn itself at the new size, so the change is answered.
+                        // Until this is said, the terminal keeps reporting it — which is what
+                        // stops `ready_key` from swallowing a resize that arrives while a
+                        // projection is running (issue #6).
+                        ono_editor::remember_terminal_size(columns, rows);
                         continue;
                     }
                     TerminalEvent::Key(press) => press,

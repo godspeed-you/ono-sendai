@@ -11,8 +11,9 @@ use std::path::Path;
 use ono_testkit::{Scratch, scratch};
 use xtask::scan::{
     ExpectedSkips, check_acceptance_case_references, check_authentication_flags,
-    check_duplicate_helpers, check_expected_skips, check_release_board, check_silent_skips,
-    check_unannounced_skips, check_unfinished_work, verify_observed_skips,
+    check_duplicate_helpers, check_expected_skips, check_pty_resize_assertions,
+    check_release_board, check_silent_skips, check_unannounced_skips, check_unfinished_work,
+    verify_observed_skips,
 };
 
 /// Builds a throwaway repository shaped like this one.
@@ -1227,5 +1228,58 @@ fn should_neither_require_nor_forbid_a_skip_the_host_capability_decides() {
         ),
         Vec::new(),
         "and a host that can must not be told it should have skipped"
+    );
+}
+
+// --- v0.4.1 §65.10 at a terminal ---------------------------------------------------------------
+
+#[test]
+fn should_report_a_pty_assertion_that_an_earlier_repaint_can_satisfy() {
+    // The shape issue #6 found: resize, then wait for "new output naming the place". The repaint
+    // the earlier arrow key was still producing satisfies it, so the test passed on runs whose
+    // whole key history was `Down`, `Esc` — with no resize in them at all.
+    let repo = fixture(&[(
+        "crates/a/tests/tui.rs",
+        "#[test]\nfn should_keep_the_place() {\n    session.keys(DOWN);\n    let mark = session.seen().len();\n    session.resize(WindowSize::new(20, 60));\n    assert!(session.wait_until(BUDGET, |seen| seen.len() > mark\n        && plain(&seen[mark..]).contains(\"compute\")));\n}\n",
+    )]);
+    let problems = check_pty_resize_assertions(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].location.starts_with("crates/a/tests/tui.rs:5"));
+    assert!(
+        problems[0].detail.contains("20 rows"),
+        "the complaint names the size nothing asserted on, got {:?}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_accept_a_pty_assertion_that_names_the_frame_at_the_new_row_count() {
+    let repo = fixture(&[(
+        "crates/a/tests/tui.rs",
+        "#[test]\nfn should_keep_the_place() {\n    session.resize(WindowSize::new(20, 60));\n    assert!(session.wait_until(BUDGET, |seen| {\n        let rows = rows_addressed(seen);\n        rows.contains(&20) && rows.iter().all(|row| *row <= 20)\n    }));\n}\n",
+    )]);
+    assert_eq!(check_pty_resize_assertions(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_accept_a_resize_asserted_by_the_signal_it_delivers() {
+    // A row count is the usual way to name a resize and not the only one: a test that waits for
+    // the child's `SIGWINCH` trap to fire has named something only a resize produces.
+    let repo = fixture(&[(
+        "crates/a/tests/pty.rs",
+        "#[test]\nfn should_deliver_the_signal() {\n    session.resize(WindowSize::new(30, 90)).expect(\"resizing succeeds\");\n    let seen = drain(&mut session, DEADLINE);\n    assert!(seen.contains(\"WINCHED\"));\n}\n",
+    )]);
+    assert_eq!(check_pty_resize_assertions(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_report_this_repository_as_asserting_on_every_resize_it_makes() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the workspace root is the parent of xtask/");
+    assert_eq!(
+        check_pty_resize_assertions(root),
+        Vec::new(),
+        "a test that resizes a terminal says what the new size produced (v0.4.1 §43.4, §65.10)"
     );
 }

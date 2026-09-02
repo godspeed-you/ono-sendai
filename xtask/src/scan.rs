@@ -2039,3 +2039,97 @@ fn normalise_source(text: &str) -> String {
     }
     out
 }
+
+// --- v0.4.1 §65.10 at a terminal: an assertion an earlier repaint can satisfy ------------------
+
+/// How far after a resize the assertion about it may be written.
+const RESIZE_ASSERTION_WINDOW: usize = 30;
+
+/// Checks that a test which resizes a terminal asserts on the size it resized to.
+///
+/// Issue #6 is the defect this rule is made of. `should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`
+/// resized a pseudo-terminal and then waited for *new output naming the place* — which the
+/// repaint the earlier arrow key was still producing already satisfied. Tracing the map loop
+/// during a green run found sessions whose whole key history was `Down`, `Esc`, with no resize
+/// event in them at all. The test passed, §43.4 was held by nothing, and a test that can pass
+/// without exercising its subject is §65.10's skip-as-pass in a different costume: it is worse
+/// than one that flakes, because nobody looks at it.
+///
+/// The rule is narrow enough to be mechanical. A resize is written
+/// `resize(WindowSize::new(<rows>, <columns>))`, and the assertion that follows it must name the
+/// row count it resized to — or the resize itself, as the signal it delivers or the size the
+/// terminal now reports — within [`RESIZE_ASSERTION_WINDOW`] lines. A frame at a stated row count
+/// is something only a resize produces; "new output" is not.
+///
+/// What it cannot check is whether the assertion is a *good* one — a scanner cannot tell a frame
+/// from a comment. What it can insist on is that the new size appears in the assertion at all,
+/// which is exactly what the old test did not do.
+#[must_use]
+pub fn check_pty_resize_assertions(root: &Path) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    for file in rust_sources(root) {
+        let relative = relative(root, &file);
+        if !relative.contains("/tests/") || is_scanner_source(&relative) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        for (number, line) in lines.iter().enumerate() {
+            let Some(rows) = resized_rows(line) else {
+                continue;
+            };
+            let window =
+                &lines[number + 1..(number + 1 + RESIZE_ASSERTION_WINDOW).min(lines.len())];
+            if window
+                .iter()
+                .any(|later| mentions_number(later, rows) || names_the_resize_itself(later))
+            {
+                continue;
+            }
+            problems.push(Problem::new(
+                format!("{relative}:{}", number + 1),
+                format!(
+                    "resizes the terminal to {rows} rows and asserts nothing about that number. \
+                     An assertion that only asks for new output is satisfied by the repaint an \
+                     earlier key was still producing, so it passes on a run where the resize \
+                     never arrived — which is what issue #6 found. Assert on the frame at the new \
+                     row count (v0.4.1 §43.4, §65.10, ADR-0519)"
+                ),
+            ));
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// Whether a line asserts on the resize rather than on the size: the signal the kernel sends, or
+/// the size the terminal now reports.
+///
+/// `should_deliver_sigwinch_to_the_child_when_the_window_changes` waits for a `SIGWINCH` trap to
+/// fire, which is something only a resize produces and which no row count appears in. The rule is
+/// that the assertion names the resize; the row count is the usual way and not the only one.
+fn names_the_resize_itself(line: &str) -> bool {
+    line.contains("WINCH") || line.contains("window_size(")
+}
+
+/// The row count a `resize(WindowSize::new(<rows>, <columns>))` call asks for.
+fn resized_rows(line: &str) -> Option<u32> {
+    let at = line.find("resize(WindowSize::new(")?;
+    let rest = &line[at + "resize(WindowSize::new(".len()..];
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// Whether a line names `number` as a number rather than as part of a longer one.
+fn mentions_number(line: &str, number: u32) -> bool {
+    let needle = number.to_string();
+    let bytes = line.as_bytes();
+    line.match_indices(&needle).any(|(at, _)| {
+        let before = at.checked_sub(1).map(|index| bytes[index]);
+        let after = bytes.get(at + needle.len()).copied();
+        !before.is_some_and(|byte| byte.is_ascii_digit() || byte == b'_')
+            && !after.is_some_and(|byte| byte.is_ascii_digit() || byte == b'_')
+    })
+}
