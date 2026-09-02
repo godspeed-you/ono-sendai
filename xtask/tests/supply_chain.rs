@@ -921,3 +921,64 @@ fn should_build_the_release_with_a_locked_dependency_graph() {
         report(&problems)
     );
 }
+
+// --- v0.4.1 §41 and §42: the scheduled tiers -----------------------------------------------------
+
+/// The text of a workflow, or a panic naming the one that is missing.
+fn workflow(name: &str) -> String {
+    let path = this_repository().join(".github/workflows").join(name);
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!(".github/workflows/{name} is readable: {error}"))
+}
+
+#[test]
+fn should_declare_a_scheduled_coverage_guided_fuzzing_job_for_every_declared_target() {
+    // v0.4.1 §41.2 requires a coverage-guided tier over seven named entry points, and §41.3 puts
+    // it on a schedule: "at least daily on the default branch or a minimum aggregate time of 30
+    // minutes per day across the critical targets". A list of targets in a workflow can drift
+    // from the targets themselves, so it is read against them.
+    let fuzz = workflow("fuzz.yml");
+    assert!(
+        fuzz.contains("schedule:") && fuzz.contains("cron:"),
+        "§41.3: the coverage-guided tier runs on a schedule rather than when somebody remembers"
+    );
+    assert!(
+        fuzz.contains("cargo fuzz run"),
+        "§41.2: the tier is coverage-guided — `cargo-fuzz`/libFuzzer, or an equivalent engine"
+    );
+    for target in ono_fuzz::TARGETS {
+        assert!(
+            fuzz.contains(&format!("- {}\n", target.name)),
+            "the `{}` target is declared and the scheduled tier does not run it: a target that \
+             only ever runs for four hundred bounded iterations a gate run is not fuzzed (§41.2)",
+            target.name
+        );
+    }
+    // Seven targets at five minutes each is thirty-five, which clears §41.3's daily aggregate.
+    assert!(
+        fuzz.contains("default: \"5\"") && fuzz.contains("MINUTES * 60"),
+        "§41.3's aggregate is a number the workflow states, not one a reader adds up"
+    );
+    assert!(
+        ono_fuzz::TARGETS.len() * 5 >= 30,
+        "§41.3: at least thirty minutes a day across the critical targets"
+    );
+}
+
+#[test]
+fn should_keep_the_deterministic_fuzz_tier_inside_the_gate() {
+    // §41.1: "The existing lightweight/deterministic fuzz targets remain valuable and MUST stay
+    // in the normal gate where they are fast enough." Adding the scheduled tier is not permission
+    // to take the fast one out — it is the regression suite that replays every past finding.
+    let gate = std::fs::read_to_string(this_repository().join("scripts/gate.sh"))
+        .expect("scripts/gate.sh is readable");
+    assert!(
+        gate.contains("--package ono-fuzz") && gate.contains("--iterations"),
+        "§41.1: the gate runs the deterministic tier over a bounded iteration count"
+    );
+    assert!(
+        gate.contains("--per-input-ms"),
+        "§41.5: the gate's tier enforces a per-input ceiling too, so a pathological input is a \
+         finding rather than a slow gate"
+    );
+}

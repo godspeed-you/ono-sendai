@@ -30,3 +30,13 @@ target
 
 # Packages written by scripts/package.sh (ADR-0121)
 /dist/
+
+# The coverage-guided fuzzing tier writes its own corpus, its crash artifacts and its build
+# output under `fuzz/coverage-guided/`. v0.4.1 §41.4 asks for the corpus to be committed *or*
+# stored as a durable CI artifact, and the scheduled workflow caches it between runs; a corpus
+# libFuzzer grew to nine hundred files in twenty seconds is not a thing to keep in git. A crash
+# *reproducer* is different: it is minimized by hand and committed under `fuzz/artifacts/`,
+# where the gate replays it on every run (ADR-0521).
+fuzz/coverage-guided/corpus/
+fuzz/coverage-guided/artifacts/
+fuzz/coverage-guided/target/

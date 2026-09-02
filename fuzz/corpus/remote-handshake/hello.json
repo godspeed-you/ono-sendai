@@ -1,0 +1,1 @@
+{"versions": [2], "agent": "ono 0.4.0", "os": "linux", "arch": "x86_64", "providers": ["linux.procfs"], "schemas": ["ono.process/1"]}

@@ -1777,15 +1777,23 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       is the one this increment wrote, and the fourteenth is the release-provenance family whose
       case H11 owes with the checksums, signature and provenance it asserts. The box itself waits
       on §4.8.13's last four boxes (#91, §40).
-- [ ] **P2 · Coverage-guided fuzzing is scheduled and the gate fuzzing stays fast.** The
-      deterministic gate tier keeps running in `scripts/gate.sh`, a scheduled workflow runs the
-      coverage-guided tier over the §35.6 targets, and the schedule is declared rather than assumed
+- [x] **P2 · Coverage-guided fuzzing is scheduled and the gate fuzzing stays fast.** The
+      deterministic gate tier keeps running in `scripts/gate.sh`, `.github/workflows/fuzz.yml`
+      runs the coverage-guided tier daily over all seven entry points of §41.2 — the five of
+      §35.6 plus the remote handshake decoder and the adapter decoders this increment added —
+      and the schedule is declared rather than assumed
       — `xtask/tests/supply_chain.rs::should_declare_a_scheduled_coverage_guided_fuzzing_job_for_every_declared_target`,
-      `::should_keep_the_deterministic_fuzz_tier_inside_the_gate` (#92, §41.1–§41.3).
-- [ ] **P2 · Corpora persist and a hang is a failure.** Fuzz corpora are stored and reloaded
-      between runs, each input has a timeout, and an input that exceeds it is recorded as a hang
-      rather than silently dropped — `fuzz/tests/corpus.rs::should_reload_the_persisted_corpus_for_every_target`,
-      `::should_record_an_input_that_exceeds_its_timeout_as_a_hang` (#93, §41.4, §41.5).
+      `::should_keep_the_deterministic_fuzz_tier_inside_the_gate`, with the target list held
+      against the targets themselves by
+      `fuzz/tests/corpus.rs::should_have_a_target_for_every_entry_point_the_coverage_guided_tier_must_cover`
+      (ADR-0521) (#92, §41.1–§41.3).
+- [x] **P2 · Corpora persist and a hang is a failure.** Fuzz corpora are stored and reloaded
+      between runs — the seeds and the crash reproducers committed and replayed on every gate run,
+      the corpus libFuzzer grows cached per target between scheduled runs — each input has a
+      timeout, and an input that exceeds it is recorded as a hang with its bytes attached rather
+      than silently dropped — `fuzz/tests/corpus.rs::should_reload_the_persisted_corpus_for_every_target`,
+      `::should_record_an_input_that_exceeds_its_timeout_as_a_hang` (ADR-0521) (#93, §41.4,
+      §41.5).
 - [ ] **P2 · Miri and the sanitizers run on the unsafe boundary.** The targeted jobs exist, cover
       the `unsafe` code §42.1 names, and are green for the release commit —
       `xtask/tests/supply_chain.rs::should_declare_a_miri_job_covering_every_unsafe_boundary_module`,

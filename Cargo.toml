@@ -15,6 +15,7 @@ authors = ["The Ono-Sendai project"]
 [workspace.dependencies]
 # Internal crates. Created as a phase needs them (ADR-0001, ADR-0005).
 ono-core = { path = "crates/ono-core", version = "0.4.0" }
+ono-fuzz = { path = "fuzz", version = "0.4.0" }
 ono-value = { path = "crates/ono-value", version = "0.4.0" }
 ono-parser = { path = "crates/ono-parser", version = "0.4.0" }
 ono-process = { path = "crates/ono-process", version = "0.4.0" }
