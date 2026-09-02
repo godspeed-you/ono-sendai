@@ -87,27 +87,29 @@ fn should_show_a_placed_population_to_the_process_provider_when_a_profile_fixtur
     // measurement: "provider/planner code exercised by the benchmark MUST match production
     // logic". The population is therefore real processes, and the way to prove it is production
     // logic is to ask the shell's own provider to count them.
-    let population = ProcessPopulation::of(PROFILE_S);
     let home = scratch();
     let mine = std::process::id();
+    // Counted as a difference rather than as a total, for the reason the socket fixture is: the
+    // watchdog beside this test places a Profile M population from the same parent process, and
+    // `cargo test` runs the two on their own threads. A count that assumed it was the only
+    // fixture on the machine would be a test that fails when a neighbour is doing its job.
+    let counting =
+        format!("get process | where ppid == {mine} | where name == \"sleep\" | count | to json");
 
-    let run = run_bounded(
-        &home,
-        &format!("get process | where ppid == {mine} | where name == \"sleep\" | count | to json"),
-        WATCHDOG,
-    );
+    let before = rows_count(&run_bounded(&home, &counting, WATCHDOG));
+    let population = ProcessPopulation::of(PROFILE_S);
+    let run = run_bounded(&home, &counting, WATCHDOG);
 
     assert!(
         run.finished,
         "counting a small population answers. {}",
         run.report()
     );
-    let counted = rows_count(&run);
-    assert_eq!(
-        counted,
-        population.len() as u64,
-        "the process provider must see every process the Profile {} fixture placed, got {counted} \
-         of {}. {}",
+    let after = rows_count(&run);
+    assert!(
+        after >= before + population.len() as u64,
+        "the process provider must see every process the Profile {} fixture placed: {before} \
+         before, {} placed, {after} after. {}",
         population.profile().name,
         population.len(),
         run.report()
@@ -147,11 +149,11 @@ fn should_show_a_placed_socket_population_to_the_socket_provider_when_a_profile_
 
 // --- the watchdog of v0.4.1 §61.3 ---------------------------------------------------------------
 
-// Issue #22's own command, and the §57 phase H0 failure proof that has to exist before phase H7
-// touches it. It produces zero bytes on either stream for the whole of §33.3's budget.
-// REASON: red at HEAD; un-ignored by the increment that delivers §35.1/§35.2's bounded initial
-// projection and closes #22. Defended by ADR-0431.
-#[ignore = "red until issue #22 stops `map --live` producing nothing on a Profile M host (ADR-0431)"]
+// Issue #22's own command, and the §57 phase H0 failure proof that had to exist before phase H7
+// touched it. It produced zero bytes on either stream for the whole of §33.3's budget; it now
+// answers, because a live map that has watched a still system for ten seconds says so instead of
+// looking hung (ADR-0492). What satisfies this is deliberately wide, because §33.3 is: output,
+// progress metadata or a deterministic refusal.
 #[test]
 fn should_answer_or_refuse_the_live_map_within_the_interactive_watchdog_on_profile_m() {
     let (population, run) = under_load(PROFILE_M, "map --live --json | take 3 | to json");

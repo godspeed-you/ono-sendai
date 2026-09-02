@@ -1,0 +1,94 @@
+# v0.4.1 §35.1 is a release blocker in as many words:
+#
+#   "The known class of behavior where `map --live` produces no bytes for tens of seconds on a
+#    realistic host MUST be eliminated for v0.4.1."
+#
+# Issue #22 is that class, and its shape is not what the report assumed. `map --live --json |
+# take 1 | to json` answers at once; the *second* value never arrives, because the root
+# projection is domains and collections and a picture made of names that cannot change never
+# reports a change. `to json` writes one document when the stream ends (v0.2 §12.2), so a
+# pipeline waiting for a third frame writes nothing at all — thirty seconds of blank terminal.
+#
+# The fix is not a frame on a timer: v0.4 §25.2 forbids that and case `098` asserts it. It is
+# progress, which §33.3 and §65.9 name as the third acceptable answer beside a result and a
+# refusal. So this case proves three things at a stated cardinality: the first frame arrives,
+# a pipeline that waits is told it is waiting, and Ctrl-C ends the live map promptly (§35.5).
+case: a live map answers at once, says when it is waiting, and ends on Ctrl-C
+timeout: 600
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  echo "== the host at Profile M (v0.4.1 §32.2) =="
+  perl /opt/ono-fixtures/perf/many-processes.pl 1000 /tmp/profile-m.state &
+  for _ in $(seq 600); do [ -s /tmp/profile-m.state ] && break; sleep 0.5; done
+  . /tmp/profile-m.state
+  visible=$(ls /proc | grep -c '^[0-9]')
+  echo "fixture: asked for 1000, forked $FIXTURE_PROCESSES, /proc shows $visible processes"
+  if [ "$visible" -lt 500 ]; then echo "TOO-FEW-PROCESSES"; else echo "the host is at Profile M"; fi
+
+  echo "== the first frame arrives, and is truthful about what it left out (§35.2) =="
+  start=$(date +%s%N)
+  timeout 30 ono --no-config -c 'map --live --json | take 1 | to json' > /tmp/first.json 2>&1
+  first_status=$?
+  end=$(date +%s%N)
+  echo "first frame: $(( (end - start) / 1000000 ))ms, $(wc -c < /tmp/first.json) bytes"
+  prove 35.2a "the initial projection lands rather than waiting for the whole system" \
+    'test "$first_status" -eq 0 && test -s /tmp/first.json'
+  prove 35.2b "and it says how complete it is (§2.17, §3.6)" \
+    'grep -q "completeness" /tmp/first.json'
+
+  echo "== a pipeline waiting for a frame the system will not produce is told so (§33.3, §65.9) =="
+  # `take 3` on a still system can never finish, and v0.4 §25.2 forbids inventing frames to make
+  # it. What v0.4.1 §33.3 forbids is doing that silently, so the run must say something well
+  # inside thirty seconds without producing a value.
+  timeout 25 ono --no-config -c 'map --live --json | take 3 | to json' > /tmp/waiting.out 2>&1
+  echo "waiting run: $(wc -c < /tmp/waiting.out) bytes"
+  prove 33.3a "thirty seconds of neither output nor progress does not happen" \
+    'test -s /tmp/waiting.out'
+  # §33.3 accepts either answer, so the case does too: a host whose topology really moves
+  # collects its three frames, and one that is still says it is still. What neither may be is an
+  # error, and what neither may be is silence — 33.3a above.
+  prove 33.3b "and what it produced is a frame or a note, never a refusal" \
+    '( grep -qi "note:" /tmp/waiting.out || grep -q "map_id" /tmp/waiting.out ) &&
+     ! grep -q "Ono-Sendai-E" /tmp/waiting.out'
+
+  echo "== Ctrl-C ends the live map promptly (§35.5, §61.5) =="
+  ono --no-config -c 'map --live --json | take 3 | to json' > /tmp/cancelled.out 2>&1 &
+  LIVE=$!
+  sleep 3
+  kill -INT "$LIVE" 2>/dev/null
+  gone=0
+  for _ in $(seq 100); do
+    if ! kill -0 "$LIVE" 2>/dev/null; then gone=1; break; fi
+    sleep 0.1
+  done
+  wait "$LIVE" 2>/dev/null
+  prove 35.5a "the query task is released rather than waiting for a recomputation" \
+    'test "$gone" -eq 1'
+  prove 35.5b "and no ono process is left holding the pipeline open" \
+    '! pgrep -x ono > /dev/null'
+
+  kill %1 2>/dev/null || true
+  wait 2>/dev/null || true
+  echo "fixture: stopped"
+exit: 0
+stdout-contains: the host is at Profile M
+stdout-contains: PROVED 35.2a
+stdout-contains: PROVED 35.2b
+stdout-contains: PROVED 33.3a
+stdout-contains: PROVED 33.3b
+stdout-contains: PROVED 35.5a
+stdout-contains: PROVED 35.5b
+stdout-contains: fixture: stopped
+stdout-not-contains: FAILED
+stdout-not-contains: TOO-FEW-PROCESSES
+stdout-not-contains: panicked

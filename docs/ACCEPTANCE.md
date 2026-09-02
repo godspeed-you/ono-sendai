@@ -1629,8 +1629,10 @@ mode this phase removes.
       initial projection is bounded, updates are incremental, backpressure holds and Ctrl-C releases
       the query task promptly —
       `crates/ono-cli/tests/watch_live.rs::should_answer_a_bounded_first_projection_before_any_update_arrives`,
-      `::should_complete_a_live_map_pipeline_that_takes_the_first_three_frames`,
-      `::should_release_the_query_task_promptly_when_a_live_map_is_cancelled`, case `196` (#22,
+      `::should_release_the_query_task_promptly_when_a_live_map_is_cancelled`,
+      `crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_the_live_map_within_the_interactive_watchdog_on_profile_m`,
+      `crates/ono-cli/tests/spatial_relationships.rs::should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes`,
+      case `196` (#22,
       §35.1–§35.5, §61.2, §61.5).
 - [ ] **P1 · A full-screen map stays responsive while a projection is in flight.** Focus movement
       and Ctrl-C are answered at a real PTY while COMPUTE is being projected, inside the 16 ms frame
