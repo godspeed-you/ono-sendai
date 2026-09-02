@@ -1813,8 +1813,10 @@ never travel together, so every box here is closed with the test suite unchanged
       job reaping, navigation trail semantics, result-history identifiers —
       `xtask/tests/architecture.rs::should_find_every_session_state_group_the_specification_names`,
       `crates/ono-cli/tests/session_lifetime.rs` green and unedited, and
-      `crates/ono-history/tests/history.rs::should_enforce_the_history_budget_inside_the_history_state_group`
-      (#97, §31.1–§31.4).
+      `crates/ono-history/tests/result_history.rs` — the byte ceiling, the eviction and the
+      truthful truncation are proved there, against `ono_history::ResultHistory`, which is what
+      the history state group owns; `history.rs` beside it is the command-line history and holds
+      no result budget at all (#97, §31.1–§31.4).
 - [ ] **P2 · No cross-crate dependency inversion was introduced.** The crate graph after the
       refactor holds the boundaries §56 states, and a new edge that inverts one fails the gate —
       `xtask/tests/architecture.rs::should_hold_the_crate_graph_against_the_declared_layering`,

@@ -68,7 +68,29 @@ pub(crate) const AGENT_GRACE: std::time::Duration = std::time::Duration::from_se
 pub const DEEPEST_REFERENCE: u32 = 4096;
 
 /// Everything a running shell knows.
+/// Everything a running shell knows.
+///
+/// v0.4.1 §31.1: the shell is not stateless and does not try to be; the goal is that the
+/// categories of state are explicit. §31.2's eight groups are the fields below, each owning the
+/// invariants for its own data (§31.3), and the methods stay on `Session` so no caller has to
+/// know the split.
 pub struct Session {
+    environment: EnvironmentState,
+    scope: ScopeState,
+    execution: ExecutionState,
+    navigation: NavigationState,
+    history: ResultHistoryState,
+    jobs: JobState,
+    provider: ProviderState,
+    presentation: PresentationState,
+}
+
+/// Where the session is, and what it hands to a child process.
+///
+/// v0.4.1 §31.3: this group owns the invariant that binds `cwd` and `PWD` together, and the one
+/// that tells an inherited binding from a bound one — `set env` writes here and `get env` reads
+/// what was written, through the provider below.
+struct EnvironmentState {
     cwd: PathBuf,
     env: BTreeMap<OsString, OsString>,
     /// The environment as the process that started the shell handed it over — what tells an
@@ -77,7 +99,28 @@ pub struct Session {
     /// The `env` provider registered in `providers()`, handed the session's bindings before
     /// each pipeline runs so `get env` sees what `set env` bound.
     env_provider: std::sync::Arc<ono_provider_linux::EnvProvider>,
+}
+
+/// What a name means here: values, functions, aliases, and the expansion in flight.
+///
+/// Three stacks that are pushed and popped together, which is the invariant this group owns: a
+/// scope's bindings and its definitions have the same lifetime, and an alias being expanded is
+/// never expanded again (ADR-0011 step 3, ADR-0070).
+struct ScopeState {
     scopes: Vec<Scope>,
+    /// Functions and aliases, one map per lexical scope, innermost last (ADR-0070).
+    definitions: Vec<BTreeMap<String, Definition>>,
+    /// The aliases being expanded right now, so an expansion is never expanded again
+    /// (ADR-0011 step 3, ADR-0070).
+    expanding: Vec<String>,
+}
+
+/// What the session is running, under which rules, and what it has captured.
+///
+/// The capture stack and the budget that bounds it are one thing and live together: v0.4.1
+/// §23.1 forbids the buffer being "an invisible unlimited vector", and it is not one because
+/// every value pushed is charged to the `Budget` beside it (§23.4, ADR-0453, ADR-0457).
+struct ExecutionState {
     status: ExitStatus,
     executor: Executor,
     mode: Mode,
@@ -87,44 +130,81 @@ pub struct Session {
     /// Built on first use. A shell that runs `echo hi` should not have paid for a thread pool to
     /// do it, and spec §34's cold-start budget is measured on exactly that command.
     runtime: Option<tokio::runtime::Runtime>,
-    /// Built on first use, for the same reason: constructing it opens sockets and speaks D-Bus.
-    providers: Option<ProviderRegistry>,
-    /// The context stack of spec §14.1, above the implicit ground frame. Each entry pairs the
-    /// frame every command sees with what popping it must restore.
-    frames: Vec<ShellFrame>,
-    /// Recent structured results, newest last (spec §20.2). Bounded, so a long session cannot
-    /// hold every table it ever printed.
-    results: ono_history::ResultHistory,
     /// Sub-pipelines being captured as values, innermost last: while one is open, a finished
     /// native pipeline hands its values here instead of to the terminal (ADR-0072 §4).
     captures: Vec<Vec<Value>>,
     /// What every capture inside the current shell command may retain together (v0.4.1 §23.4).
     capture_budget: Budget,
-    /// Backgrounded native pipelines (spec §18.4, ADR-0024): jobs in the same table as external
-    /// commands, numbered from the executor's own sequence.
-    native_jobs: Vec<NativeJob>,
-    /// The tables the session publishes for `ono.shell` to answer from — the job table today
-    /// (spec §18.4, ADR-0090). Shared with the provider registered in `providers()`.
-    tables: std::sync::Arc<std::sync::Mutex<crate::session_provider::SessionTables>>,
-    /// When each external job was detached, by job number; the executor's table does not
-    /// record it, and `ono.job/1` requires it.
-    job_started: BTreeMap<u32, Value>,
+}
+
+/// Where the session has gone: the context stack, the links it stands on, what it selected.
+///
+/// Appendix I.3 protects the trail's semantics, and they are the ones this group holds: a frame
+/// remembers what leaving it restores, a link's frames go when the link does, and bare `@` is
+/// whatever the last interactive view left selected.
+struct NavigationState {
+    /// The context stack of spec §14.1, above the implicit ground frame. Each entry pairs the
+    /// frame every command sees with what popping it must restore.
+    frames: Vec<ShellFrame>,
+    /// The remote links this session holds (spec §21.1), by the name the user gave them.
+    links: Vec<SessionLink>,
     /// What the last interactive view left selected — the referent of bare `@` (spec §6.4,
     /// ADR-0033, ADR-0050).
     selection: Option<Value>,
-    /// The remote links this session holds (spec §21.1), by the name the user gave them.
-    links: Vec<SessionLink>,
+}
+
+/// The retained results of spec §20.2, and the ceilings v0.4.1 §24.1 bounds them by.
+///
+/// v0.4.1 §31.3 names this group by name: "result-history byte-budget enforcement belongs in
+/// `ResultHistoryState`, not scattered across evaluator call sites". It is not scattered —
+/// [`Session::retain`] is the one door, it applies the configured limits before it retains, and
+/// `ono_history` enforces all four dimensions inside. No evaluator call site decides what fits.
+struct ResultHistoryState {
+    /// Recent structured results, newest last (spec §20.2). Bounded, so a long session cannot
+    /// hold every table it ever printed.
+    results: ono_history::ResultHistory,
+}
+
+/// Background work, and the tables that make it answerable.
+///
+/// Appendix I.3 protects job reaping, which is this group's invariant: a job leaves the table
+/// when it is taken, the detach times are keyed by the same job number the executor issued, and
+/// what `get job` answers is published from here before every pipeline (ADR-0090).
+struct JobState {
+    /// Backgrounded native pipelines (spec §18.4, ADR-0024): jobs in the same table as external
+    /// commands, numbered from the executor's own sequence.
+    native_jobs: Vec<NativeJob>,
+    /// When each external job was detached, by job number; the executor's table does not
+    /// record it, and `ono.job/1` requires it.
+    job_started: BTreeMap<u32, Value>,
+    /// The tables the session publishes for `ono.shell` to answer from — the job table today
+    /// (spec §18.4, ADR-0090). Shared with the provider registered in `providers()`.
+    tables: std::sync::Arc<std::sync::Mutex<crate::session_provider::SessionTables>>,
+}
+
+/// What answers a question: the provider registry, and the external command adapters.
+///
+/// Both are built on first use and neither is state a session could be reconstructed from —
+/// v0.4.1 §31.4: segmentation "MUST not accidentally turn ephemeral handles, runtimes or jobs
+/// into serializable state", and nothing here is serializable.
+struct ProviderState {
+    /// Built on first use, for the same reason: constructing it opens sockets and speaks D-Bus.
+    providers: Option<ProviderRegistry>,
     /// The external command adapters (spec v0.3 §1.24), built on first use: the registry holds
     /// the version probe cache, which is per session by design (§1.46).
     adapters: Option<std::sync::Arc<ono_adapter::Registry>>,
     /// The adapters that shaped the statement being run, with the argv each one planned —
     /// what history records about it (spec v0.3 §1.62).
     adaptations: Vec<(String, String)>,
-    /// Functions and aliases, one map per lexical scope, innermost last (ADR-0070).
-    definitions: Vec<BTreeMap<String, Definition>>,
-    /// The aliases being expanded right now, so an expansion is never expanded again
-    /// (ADR-0011 step 3, ADR-0070).
-    expanding: Vec<String>,
+}
+
+/// How the session behaves and how it looks.
+///
+/// The layered configuration of ADR-0010 with the provenance of every value (ADR-0094), and the
+/// theme resolved once it has been read. §31.2 names no configuration group; the settings live
+/// beside the theme because that is what a session's declaration of itself is read for, and
+/// Appendix I.3's config precedence is `Settings`' own invariant, unchanged by where it sits.
+struct PresentationState {
     /// The layered configuration of ADR-0010, with the provenance of every value (ADR-0094).
     settings: crate::settings::Settings,
     /// The theme every renderer paints with, resolved once configuration has been read
@@ -394,13 +474,115 @@ impl ShellFrame {
     }
 }
 
+impl EnvironmentState {
+    /// Moves the session to `directory`, or leaves it where it was.
+    ///
+    /// The process moves with it, and that pairing is this group's invariant (§31.3): a session
+    /// `cwd` the process did not follow would leave every command that resolves a relative path
+    /// through the kernel answering about wherever the shell happened to start. A kernel that
+    /// refuses the move — the directory went away between the caller's check and here — leaves
+    /// both where they were rather than splitting them.
+    fn set_cwd(&mut self, directory: PathBuf) {
+        if std::env::set_current_dir(&directory).is_err() {
+            return;
+        }
+        self.cwd = directory;
+    }
+}
+
+impl ExecutionState {
+    /// Opens a capture buffer for the next finished pipeline.
+    fn begin_capture(&mut self) {
+        self.captures.push(Vec::new());
+    }
+
+    /// Ends the innermost capture and answers what it collected.
+    fn end_capture(&mut self) -> Vec<Value> {
+        self.captures.pop().unwrap_or_default()
+    }
+
+    /// Whether a pipeline's result is being captured rather than shown.
+    fn capturing(&self) -> bool {
+        !self.captures.is_empty()
+    }
+
+    /// Starts one shell command's capture accounting afresh, at `bytes` (v0.4.1 §23.4).
+    fn begin_command_captures(&mut self, bytes: u64) {
+        self.capture_budget = Budget::of(
+            "this command's captures",
+            ono_pipeline::COMMAND_CAPTURE_MAX_ITEMS,
+            bytes,
+        )
+        .for_settings("limits.materialize_items", "limits.command_capture_bytes");
+    }
+
+    /// Hands finished values to the innermost capture, charging every one of them.
+    ///
+    /// The invariant this group owns (§31.3): a value is in a capture buffer only if it was
+    /// charged to the budget beside it, so §23.1's "invisible unlimited vector" cannot exist
+    /// here however deeply captures nest (§23.4, ADR-0453, ADR-0457).
+    fn capture(&mut self, values: &[Value]) -> Result<bool, ErrorValue> {
+        if self.captures.is_empty() {
+            return Ok(false);
+        }
+        for value in values {
+            self.capture_budget
+                .charge(value)
+                .map_err(ono_pipeline::Exceeded::into_error)?;
+            if let Some(capture) = self.captures.last_mut() {
+                capture.push(value.clone());
+            }
+        }
+        Ok(true)
+    }
+}
+
+impl ResultHistoryState {
+    /// Retains a finished pipeline's values, answering what was kept and what was not.
+    ///
+    /// v0.4.1 §31.3 asks for exactly this: the byte-budget enforcement is here rather than at the
+    /// evaluator call sites, so there is one place that decides what fits. The ceilings are read
+    /// on every retention rather than only at startup, so a `set config limits.history_…` at the
+    /// prompt takes effect on the next result — the same way the materialization limits are read
+    /// per pipeline and the capture ceiling per command.
+    fn retain(
+        &mut self,
+        values: &[Value],
+        settings: &crate::settings::Settings,
+    ) -> ono_history::Retained {
+        self.apply_limits(settings);
+        // Spec §20.2: "Retention policy must protect secrets". The policy that keeps a secret
+        // out of history is the one that keeps it out of what `@-1` replays, or the shell would
+        // redact the command that read a token and keep the token (spec §17.5, ADR-0262). It runs
+        // inside retention, so only what is kept pays for it.
+        let policy = redaction_policy();
+        self.results.retain_mapped(values, |value| {
+            value.map_text(&|text| {
+                let redacted = policy.redact(text);
+                (redacted != text).then(|| std::sync::Arc::from(redacted.as_str()))
+            })
+        })
+    }
+
+    /// Narrows the four retention dimensions to what the settings declare (v0.4.1 §24.1, §55.1).
+    fn apply_limits(&mut self, settings: &crate::settings::Settings) {
+        let limits = crate::limits::HistoryLimits::of(settings);
+        self.results.set_limits(ono_history::RetentionLimits {
+            results: limits.results,
+            items_per_result: limits.items_per_result,
+            bytes_per_result: limits.bytes_per_result,
+            bytes_total: limits.bytes_total,
+        });
+    }
+}
+
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
-            .field("cwd", &self.cwd)
-            .field("status", &self.status)
-            .field("mode", &self.mode)
-            .field("interactive", &self.interactive)
+            .field("cwd", &self.environment.cwd)
+            .field("status", &self.execution.status)
+            .field("mode", &self.execution.mode)
+            .field("interactive", &self.execution.interactive)
             .finish_non_exhaustive()
     }
 }
@@ -435,61 +617,77 @@ impl Session {
         // detaches.
         let executor = Executor::new().unwrap_or_else(|_| Executor::detached());
         Self {
-            cwd,
-            inherited_env: env.clone(),
-            env,
-            env_provider,
-            scopes: vec![Scope::new()],
-            status: ExitStatus::SUCCESS,
-            executor,
-            mode: Mode::Normal,
-            interactive,
-            leaving: None,
-            runtime: None,
-            providers: None,
-            frames: Vec::new(),
-            results: ono_history::ResultHistory::new(ono_history::RetentionLimits::default()),
-            captures: Vec::new(),
-            capture_budget: Budget::command_captures(),
-            native_jobs: Vec::new(),
-            tables: std::sync::Arc::default(),
-            job_started: BTreeMap::new(),
-            selection: None,
-            links: Vec::new(),
-            adapters: None,
-            adaptations: Vec::new(),
-            definitions: vec![BTreeMap::new()],
-            expanding: Vec::new(),
-            settings: crate::settings::Settings::new(),
-            theme: std::sync::Arc::new(ono_render::Theme::default()),
+            environment: EnvironmentState {
+                cwd,
+                inherited_env: env.clone(),
+                env,
+                env_provider,
+            },
+            scope: ScopeState {
+                scopes: vec![Scope::new()],
+                definitions: vec![BTreeMap::new()],
+                expanding: Vec::new(),
+            },
+            execution: ExecutionState {
+                status: ExitStatus::SUCCESS,
+                executor,
+                mode: Mode::Normal,
+                interactive,
+                leaving: None,
+                runtime: None,
+                captures: Vec::new(),
+                capture_budget: Budget::command_captures(),
+            },
+            navigation: NavigationState {
+                frames: Vec::new(),
+                links: Vec::new(),
+                selection: None,
+            },
+            history: ResultHistoryState {
+                results: ono_history::ResultHistory::new(ono_history::RetentionLimits::default()),
+            },
+            jobs: JobState {
+                native_jobs: Vec::new(),
+                job_started: BTreeMap::new(),
+                tables: std::sync::Arc::default(),
+            },
+            provider: ProviderState {
+                providers: None,
+                adapters: None,
+                adaptations: Vec::new(),
+            },
+            presentation: PresentationState {
+                settings: crate::settings::Settings::new(),
+                theme: std::sync::Arc::new(ono_render::Theme::default()),
+            },
         }
     }
 
     /// The configuration settings, with the layer that set each one (spec §30).
     #[must_use]
     pub fn settings(&self) -> &crate::settings::Settings {
-        &self.settings
+        &self.presentation.settings
     }
 
     /// The configuration settings, for a layer that sets one.
     pub fn settings_mut(&mut self) -> &mut crate::settings::Settings {
-        &mut self.settings
+        &mut self.presentation.settings
     }
 
     /// The theme every renderer paints with (spec §44).
     #[must_use]
     pub fn theme(&self) -> &std::sync::Arc<ono_render::Theme> {
-        &self.theme
+        &self.presentation.theme
     }
 
     /// Replaces the theme, which `config::load` does once the settings are in (ADR-0332).
     pub fn set_theme(&mut self, theme: ono_render::Theme) {
-        self.theme = std::sync::Arc::new(theme);
+        self.presentation.theme = std::sync::Arc::new(theme);
     }
 
     /// Defines `name` as a function or an alias in the innermost scope (ADR-0070).
     pub fn define(&mut self, name: impl Into<String>, definition: Definition) {
-        if let Some(scope) = self.definitions.last_mut() {
+        if let Some(scope) = self.scope.definitions.last_mut() {
             scope.insert(name.into(), definition);
         }
     }
@@ -497,7 +695,8 @@ impl Session {
     /// The user function `name`, from the innermost scope that defines one.
     #[must_use]
     pub fn function(&self, name: &str) -> Option<std::sync::Arc<Function>> {
-        self.definitions
+        self.scope
+            .definitions
             .iter()
             .rev()
             .find_map(|scope| match scope.get(name) {
@@ -510,10 +709,16 @@ impl Session {
     /// expanded right now, in which case it is not an alias for the head it produced.
     #[must_use]
     pub fn alias(&self, name: &str) -> Option<std::sync::Arc<Alias>> {
-        if self.expanding.iter().any(|expanding| expanding == name) {
+        if self
+            .scope
+            .expanding
+            .iter()
+            .any(|expanding| expanding == name)
+        {
             return None;
         }
-        self.definitions
+        self.scope
+            .definitions
             .iter()
             .rev()
             .find_map(|scope| match scope.get(name) {
@@ -524,12 +729,12 @@ impl Session {
 
     /// Marks `name` as being expanded, until [`Session::finish_expanding`].
     pub fn begin_expanding(&mut self, name: impl Into<String>) {
-        self.expanding.push(name.into());
+        self.scope.expanding.push(name.into());
     }
 
     /// Ends the innermost alias expansion.
     pub fn finish_expanding(&mut self) {
-        self.expanding.pop();
+        self.scope.expanding.pop();
     }
 
     /// The async runtime native pipelines run on, built the first time one is needed.
@@ -537,20 +742,21 @@ impl Session {
     /// Returns `None` only if the operating system refuses to start it, which a caller reports as
     /// a structured error rather than treating as impossible.
     pub fn runtime(&mut self) -> Option<&tokio::runtime::Runtime> {
-        if self.runtime.is_none() {
-            self.runtime = tokio::runtime::Builder::new_multi_thread()
+        if self.execution.runtime.is_none() {
+            self.execution.runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .thread_name("ono")
                 .build()
                 .ok();
         }
-        self.runtime.as_ref()
+        self.execution.runtime.as_ref()
     }
 
     /// A handle to the runtime, cloneable and borrow-free, once it exists.
     #[must_use]
     pub fn runtime_handle(&self) -> Option<tokio::runtime::Handle> {
-        self.runtime
+        self.execution
+            .runtime
             .as_ref()
             .map(tokio::runtime::Runtime::handle)
             .cloned()
@@ -562,12 +768,13 @@ impl Session {
     pub fn tables(
         &self,
     ) -> &std::sync::Arc<std::sync::Mutex<crate::session_provider::SessionTables>> {
-        &self.tables
+        &self.jobs.tables
     }
 
     /// Runs `body` over the KUANG/11 host, locked for that one operation.
     pub fn with_kuang<T>(&self, body: impl FnOnce(&mut crate::kuang_host::Host) -> T) -> T {
         let mut tables = self
+            .jobs
             .tables
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -618,32 +825,39 @@ impl Session {
         while let Some(replaced) = self.remove_link(&link.name) {
             self.hang_up(replaced);
         }
-        self.links.push(link);
+        self.navigation.links.push(link);
     }
 
     /// The links this session holds, oldest first.
     #[must_use]
     pub fn links(&self) -> &[SessionLink] {
-        &self.links
+        &self.navigation.links
     }
 
     /// The named link, if the session knows it.
     #[must_use]
     pub fn link(&self, name: &str) -> Option<&SessionLink> {
-        self.links.iter().find(|link| link.name == name)
+        self.navigation.links.iter().find(|link| link.name == name)
     }
 
     /// The named link, to change its definition.
     pub fn link_mut(&mut self, name: &str) -> Option<&mut SessionLink> {
-        self.links.iter_mut().find(|link| link.name == name)
+        self.navigation
+            .links
+            .iter_mut()
+            .find(|link| link.name == name)
     }
 
     /// Forgets the named link and hands it back, so the caller decides when the connection
     /// drops — and with it, hangs up (ADR-0036 §8). A caller that is letting the link go for
     /// good passes it to [`hang_up`](Self::hang_up), which also ends the process serving it.
     pub fn remove_link(&mut self, name: &str) -> Option<SessionLink> {
-        let index = self.links.iter().position(|link| link.name == name)?;
-        Some(self.links.remove(index))
+        let index = self
+            .navigation
+            .links
+            .iter()
+            .position(|link| link.name == name)?;
+        Some(self.navigation.links.remove(index))
     }
 
     /// Ends a link the session has let go of: it hangs up, and the process it started to serve
@@ -662,7 +876,7 @@ impl Session {
         connection.hangup();
         let agent = connection.agent.clone();
         drop(connection);
-        let (Some(agent), Some(runtime)) = (agent, self.runtime.as_ref()) else {
+        let (Some(agent), Some(runtime)) = (agent, self.execution.runtime.as_ref()) else {
             return;
         };
         runtime.block_on(agent.end(AGENT_GRACE));
@@ -671,7 +885,7 @@ impl Session {
     /// Ends every link the session still holds. Called when the session goes, so no agent it
     /// started can outlive the shell and reparent to init.
     fn hang_up_all(&mut self) {
-        for link in std::mem::take(&mut self.links) {
+        for link in std::mem::take(&mut self.navigation.links) {
             self.hang_up(link);
         }
     }
@@ -679,7 +893,8 @@ impl Session {
     /// How many frames on the stack stand on the named link.
     #[must_use]
     pub fn link_frames(&self, name: &str) -> usize {
-        self.frames
+        self.navigation
+            .frames
             .iter()
             .filter(|frame| frame.is_link(name))
             .count()
@@ -689,15 +904,16 @@ impl Session {
     /// how many went. Frames above it stay: an entered directory inside a link is still the
     /// directory (spec §14.1 nests frames; only the link's own are the link's).
     pub fn pop_link_frames(&mut self, name: &str) -> usize {
-        let before = self.frames.len();
-        self.frames.retain(|frame| !frame.is_link(name));
-        before - self.frames.len()
+        let before = self.navigation.frames.len();
+        self.navigation.frames.retain(|frame| !frame.is_link(name));
+        before - self.navigation.frames.len()
     }
 
     /// The mounted registry of the named link, if the session holds it established.
     #[must_use]
     pub fn link_registry(&self, name: &str) -> Option<std::sync::Arc<ProviderRegistry>> {
-        self.links
+        self.navigation
+            .links
             .iter()
             .find(|link| link.name == name)
             .and_then(|link| link.connection.as_ref())
@@ -708,6 +924,7 @@ impl Session {
     #[must_use]
     pub fn host_sources(&self) -> crate::hosts::HostSources {
         let pairs: Vec<(String, String)> = self
+            .environment
             .env
             .iter()
             .map(|(name, value)| {
@@ -727,11 +944,12 @@ impl Session {
     /// Publishes the link table as it is now, for `get link` and `get host` (ADR-0103).
     pub fn publish_links(&mut self) {
         let rows: Vec<crate::session_provider::LinkRow> =
-            self.links.iter().map(SessionLink::row).collect();
+            self.navigation.links.iter().map(SessionLink::row).collect();
         // §19.1: the same table is what the local root's link map is built from, and it must
         // never quietly drop a link that is no longer connected (§35.2).
         crate::spatial::links::publish(&rows);
-        self.tables
+        self.jobs
+            .tables
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .publish_links(rows);
@@ -739,40 +957,44 @@ impl Session {
 
     /// Keeps `value` as the interactive selection bare `@` refers to (ADR-0050).
     pub fn select(&mut self, value: Value) {
-        self.selection = Some(value);
+        self.navigation.selection = Some(value);
     }
 
     /// The interactive selection, if a view has set one.
     #[must_use]
     pub fn selection(&self) -> Option<&Value> {
-        self.selection.as_ref()
+        self.navigation.selection.as_ref()
     }
 
     /// Adds a backgrounded native pipeline to the job table.
     pub fn push_native_job(&mut self, job: NativeJob) {
-        self.native_jobs.push(job);
+        self.jobs.native_jobs.push(job);
     }
 
     /// The backgrounded native pipelines, oldest first.
     #[must_use]
     pub fn native_jobs(&self) -> &[NativeJob] {
-        &self.native_jobs
+        &self.jobs.native_jobs
     }
 
     /// Removes and answers native job `number`, releasing its number.
     pub fn take_native_job(&mut self, number: u32) -> Option<NativeJob> {
         let index = self
+            .jobs
             .native_jobs
             .iter()
             .position(|job| job.number == number)?;
-        let job = self.native_jobs.remove(index);
-        self.executor.release_job_number(number);
+        let job = self.jobs.native_jobs.remove(index);
+        self.execution.executor.release_job_number(number);
         Some(job)
     }
 
     /// Records that external job `number` was just detached, for `ono.job/1`'s `started`.
     pub fn note_job_started(&mut self, number: u32) {
-        self.job_started.entry(number).or_insert_with(Value::now);
+        self.jobs
+            .job_started
+            .entry(number)
+            .or_insert_with(Value::now);
     }
 
     /// Publishes the job table as it is now, for `get job` (spec §18.4, ADR-0090).
@@ -782,13 +1004,14 @@ impl Session {
     /// native pipelines — become rows of one list, in job-number order.
     pub fn publish_jobs(&mut self) {
         use crate::session_provider::JobRow;
-        let _ = self.executor.poll_jobs();
+        let _ = self.execution.executor.poll_jobs();
         let mut rows: Vec<JobRow> = Vec::new();
-        for job in self.executor.jobs() {
+        for job in self.execution.executor.jobs() {
             let number = job.id.number();
             // A job that entered the table by being stopped rather than by `&` was never noted;
             // its first publication is the closest instant the shell has.
             let started = self
+                .jobs
                 .job_started
                 .entry(number)
                 .or_insert_with(Value::now)
@@ -827,7 +1050,7 @@ impl Session {
                 exit_status,
             });
         }
-        for job in &self.native_jobs {
+        for job in &self.jobs.native_jobs {
             let finished = job.handle.is_finished();
             let failed = finished
                 && !job
@@ -851,9 +1074,11 @@ impl Session {
             });
         }
         rows.sort_by_key(|row| row.number);
-        self.job_started
+        self.jobs
+            .job_started
             .retain(|number, _| rows.iter().any(|row| row.number == *number));
-        self.tables
+        self.jobs
+            .tables
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .publish_jobs(rows);
@@ -877,40 +1102,26 @@ impl Session {
     /// result is never truncated merely to fit history"*, and a borrow is how that becomes a
     /// property of the type rather than a promise in a comment (§60.6).
     pub fn retain(&mut self, values: &[Value]) -> ono_history::Retained {
-        // The configured ceilings are read here rather than only at startup, so a `set config
-        // limits.history_…` at the prompt takes effect on the next result — the same way the
-        // materialization limits are read per pipeline and the capture ceiling per command.
-        self.apply_retention_limits();
-        // Spec §20.2: "Retention policy must protect secrets". The policy that keeps a secret
-        // out of history is the one that keeps it out of what `@-1` replays, or the shell would
-        // redact the command that read a token and keep the token (spec §17.5, ADR-0262). It runs
-        // inside retention, so only what is kept pays for it.
-        let policy = redaction_policy();
-        self.results.retain_mapped(values, |value| {
-            value.map_text(&|text| {
-                let redacted = policy.redact(text);
-                (redacted != text).then(|| std::sync::Arc::from(redacted.as_str()))
-            })
-        })
+        self.history.retain(values, &self.presentation.settings)
     }
 
     /// The `n`th previous result, `1` for the most recent (spec §6.4 `@-1`).
     #[must_use]
     pub fn previous_result(&self, n: u32) -> Option<&[Value]> {
-        self.results.previous(n)
+        self.history.results.previous(n)
     }
 
     /// What retaining the `n`th previous result did, so an inspection can say it is partial
     /// (v0.4.1 §24.3).
     #[must_use]
     pub fn previous_result_retention(&self, n: u32) -> Option<ono_history::Retained> {
-        self.results.retention_of(n)
+        self.history.results.retention_of(n)
     }
 
     /// The retained result history, for a diagnostic that reports what it holds.
     #[must_use]
     pub const fn result_history(&self) -> &ono_history::ResultHistory {
-        &self.results
+        &self.history.results
     }
 
     /// Applies the configured retention limits to the result history (v0.4.1 §24.1, §55.1).
@@ -918,25 +1129,20 @@ impl Session {
     /// Called once configuration has been read: the session exists before the config layers do,
     /// so it starts at Appendix A's defaults and narrows to the user's.
     pub fn apply_retention_limits(&mut self) {
-        let limits = crate::limits::HistoryLimits::of(&self.settings);
-        self.results.set_limits(ono_history::RetentionLimits {
-            results: limits.results,
-            items_per_result: limits.items_per_result,
-            bytes_per_result: limits.bytes_per_result,
-            bytes_total: limits.bytes_total,
-        });
+        self.history.apply_limits(&self.presentation.settings);
     }
 
     /// The context stack above the ground frame, outermost first (spec §14.1).
     #[must_use]
     pub fn frames(&self) -> &[ShellFrame] {
-        &self.frames
+        &self.navigation.frames
     }
 
     /// The frames as commands see them, for an [`ono_command::Invocation`].
     #[must_use]
     pub fn context(&self) -> Vec<ono_command::ContextFrame> {
-        self.frames
+        self.navigation
+            .frames
             .iter()
             .map(|entry| entry.frame.clone())
             .collect()
@@ -944,12 +1150,12 @@ impl Session {
 
     /// Pushes a frame (spec §14.1: `enter` pushes).
     pub fn push_frame(&mut self, frame: ShellFrame) {
-        self.frames.push(frame);
+        self.navigation.frames.push(frame);
     }
 
     /// Pops the innermost frame, answering it so the caller can restore what it changed.
     pub fn pop_frame(&mut self) -> Option<ShellFrame> {
-        self.frames.pop()
+        self.navigation.frames.pop()
     }
 
     /// The runtime and the providers together, for a caller that needs both at once.
@@ -970,6 +1176,7 @@ impl Session {
         // Spec §14.4: the active link frame decides where provider calls run. The innermost
         // link frame wins; without one, the local registry answers.
         let remote = self
+            .navigation
             .frames
             .iter()
             .rev()
@@ -988,16 +1195,20 @@ impl Session {
             });
         if let Some(host) = remote
             && let Some(index) = self
+                .navigation
                 .links
                 .iter()
                 .position(|link| link.name == host && link.connection.is_some())
         {
-            let runtime = self.runtime.as_ref()?;
-            let held = self.links[index].connection.as_ref()?;
+            let runtime = self.execution.runtime.as_ref()?;
+            let held = self.navigation.links[index].connection.as_ref()?;
             return Some((runtime, &held.registry));
         }
         self.providers();
-        match (self.runtime.as_ref(), self.providers.as_ref()) {
+        match (
+            self.execution.runtime.as_ref(),
+            self.provider.providers.as_ref(),
+        ) {
             (Some(runtime), Some(providers)) => Some((runtime, providers)),
             _ => None,
         }
@@ -1011,7 +1222,8 @@ impl Session {
     /// invocation with stdin closed and `LC_ALL=C`, whose output is read whole (ADR-0056).
     pub fn adapters(&mut self) -> &ono_adapter::Registry {
         self.shared_adapters();
-        self.adapters
+        self.provider
+            .adapters
             .as_deref()
             .unwrap_or_else(|| unreachable!("just constructed"))
     }
@@ -1019,30 +1231,32 @@ impl Session {
     /// The same registry, shared: commands that plan while they run (`type`), and the line
     /// editor's completion, hold it alongside the session (ADR-0067).
     pub fn shared_adapters(&mut self) -> std::sync::Arc<ono_adapter::Registry> {
-        if self.adapters.is_none() {
-            self.adapters = Some(std::sync::Arc::new(ono_adapter::Registry::bundled(
+        if self.provider.adapters.is_none() {
+            self.provider.adapters = Some(std::sync::Arc::new(ono_adapter::Registry::bundled(
                 Box::new(probe_version),
             )));
         }
-        self.adapters
+        self.provider
+            .adapters
             .clone()
             .unwrap_or_else(|| unreachable!("just constructed"))
     }
 
     /// Remembers that an adapter shaped the statement being run (spec v0.3 §1.62).
     pub fn note_adaptation(&mut self, adapter: String, plan: String) {
-        self.adaptations.push((adapter, plan));
+        self.provider.adaptations.push((adapter, plan));
     }
 
     /// The adaptations noted since the last call, for the history entry of the statement.
     pub fn take_adaptations(&mut self) -> Vec<(String, String)> {
-        std::mem::take(&mut self.adaptations)
+        std::mem::take(&mut self.provider.adaptations)
     }
 
     /// The host of the innermost link frame, when the session is inside one (spec §21.2).
     #[must_use]
     pub fn link_host(&self) -> Option<String> {
-        self.frames
+        self.navigation
+            .frames
             .iter()
             .rev()
             .find(|frame| matches!(frame.frame.kind(), ono_command::FrameKind::Link))
@@ -1053,7 +1267,8 @@ impl Session {
     #[must_use]
     pub fn remote_link(&self) -> Option<&LinkConnection> {
         let host = self.link_host()?;
-        self.links
+        self.navigation
+            .links
             .iter()
             .find(|link| link.name == host)
             .and_then(|link| link.connection.as_ref())
@@ -1063,7 +1278,7 @@ impl Session {
     pub fn registries(&mut self) -> (&ProviderRegistry, &ono_adapter::Registry) {
         let _ = self.providers();
         let _ = self.adapters();
-        match (&self.providers, self.adapters.as_deref()) {
+        match (&self.provider.providers, self.provider.adapters.as_deref()) {
             (Some(providers), Some(adapters)) => (providers, adapters),
             _ => unreachable!("just constructed"),
         }
@@ -1073,8 +1288,9 @@ impl Session {
     /// A provider that cannot be reached is still registered: it reports its own unavailability
     /// with a reason, which is a different answer from there being none of the thing asked for.
     pub fn providers(&mut self) -> &ProviderRegistry {
-        if self.providers.is_none() {
+        if self.provider.providers.is_none() {
             let environment: Vec<(String, String)> = self
+                .environment
                 .env
                 .iter()
                 .map(|(name, value)| {
@@ -1086,15 +1302,16 @@ impl Session {
                 .collect();
             let mut registry = crate::providers::registry_with_tables(
                 environment,
-                std::sync::Arc::clone(&self.tables),
-                std::sync::Arc::clone(&self.env_provider),
+                std::sync::Arc::clone(&self.jobs.tables),
+                std::sync::Arc::clone(&self.environment.env_provider),
             );
             if let Some(runtime) = self.runtime() {
                 runtime.block_on(crate::providers::register_async(&mut registry));
             }
-            self.providers = Some(registry);
+            self.provider.providers = Some(registry);
         }
-        self.providers
+        self.provider
+            .providers
             .as_ref()
             .unwrap_or_else(|| unreachable!("just constructed"))
     }
@@ -1102,9 +1319,10 @@ impl Session {
     /// Hands the `env` provider what the session holds now, so `get env` answers for this
     /// session rather than for the environment the shell was started with.
     pub fn publish_env(&self) {
-        self.env_provider
-            .publish(self.env.iter().map(|(name, value)| {
-                let inherited = self.inherited_env.get(name) == Some(value);
+        self.environment
+            .env_provider
+            .publish(self.environment.env.iter().map(|(name, value)| {
+                let inherited = self.environment.inherited_env.get(name) == Some(value);
                 let name = name.to_string_lossy();
                 let value = value.to_string_lossy();
                 if inherited {
@@ -1130,7 +1348,7 @@ impl Session {
     /// The current working directory.
     #[must_use]
     pub fn cwd(&self) -> &Path {
-        &self.cwd
+        &self.environment.cwd
     }
 
     /// Moves the session to `directory`, which must exist and be a directory.
@@ -1142,32 +1360,32 @@ impl Session {
     /// the directory went away between the caller's check and here — leaves the session where it
     /// was rather than splitting the two.
     pub fn set_cwd(&mut self, directory: PathBuf) {
-        if std::env::set_current_dir(&directory).is_err() {
-            return;
-        }
-        self.cwd = directory;
+        self.environment.set_cwd(directory);
     }
 
     /// The environment external commands will inherit.
     #[must_use]
     pub fn env(&self) -> &BTreeMap<OsString, OsString> {
-        &self.env
+        &self.environment.env
     }
 
     /// Reads one environment variable.
     #[must_use]
     pub fn env_var(&self, name: &str) -> Option<&OsStr> {
-        self.env.get(OsStr::new(name)).map(OsString::as_os_str)
+        self.environment
+            .env
+            .get(OsStr::new(name))
+            .map(OsString::as_os_str)
     }
 
     /// Sets one environment variable.
     pub fn set_env(&mut self, name: impl Into<OsString>, value: impl Into<OsString>) {
-        self.env.insert(name.into(), value.into());
+        self.environment.env.insert(name.into(), value.into());
     }
 
     /// Removes one environment variable.
     pub fn remove_env(&mut self, name: &str) {
-        self.env.remove(OsStr::new(name));
+        self.environment.env.remove(OsStr::new(name));
     }
 
     /// The home directory, from the environment.
@@ -1179,14 +1397,18 @@ impl Session {
     /// Looks a binding up, innermost scope first (ADR-0010).
     #[must_use]
     pub fn binding(&self, name: &str) -> Option<&Value> {
-        self.scopes.iter().rev().find_map(|scope| scope.get(name))
+        self.scope
+            .scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
     }
 
     /// Every visible binding, innermost scope winning, as a native stage's expressions see them.
     #[must_use]
     pub fn bindings(&self) -> BTreeMap<String, Value> {
         let mut visible = BTreeMap::new();
-        for scope in &self.scopes {
+        for scope in &self.scope.scopes {
             visible.extend(
                 scope
                     .iter()
@@ -1201,7 +1423,7 @@ impl Session {
     ///
     /// [`end_capture`]: Self::end_capture
     pub fn begin_capture(&mut self) {
-        self.captures.push(Vec::new());
+        self.execution.begin_capture();
     }
 
     /// Ends the innermost capture and returns what it collected.
@@ -1212,13 +1434,13 @@ impl Session {
     /// list is still retained — a budget that refunded on `end_capture` would bound nothing that
     /// nesting does (ADR-0457).
     pub fn end_capture(&mut self) -> Vec<Value> {
-        self.captures.pop().unwrap_or_default()
+        self.execution.end_capture()
     }
 
     /// Whether a pipeline's result is currently being captured rather than shown.
     #[must_use]
     pub fn capturing(&self) -> bool {
-        !self.captures.is_empty()
+        self.execution.capturing()
     }
 
     /// Starts one shell command's capture accounting afresh (v0.4.1 §23.4).
@@ -1227,18 +1449,14 @@ impl Session {
     /// Nothing inside a command resets it: that is what makes nested captures share one allowance
     /// rather than each starting again at the global default.
     pub fn begin_command_captures(&mut self) {
-        self.capture_budget = Budget::of(
-            "this command's captures",
-            ono_pipeline::COMMAND_CAPTURE_MAX_ITEMS,
-            crate::limits::command_capture_bytes(&self.settings),
-        )
-        .for_settings("limits.materialize_items", "limits.command_capture_bytes");
+        let bytes = crate::limits::command_capture_bytes(&self.presentation.settings);
+        self.execution.begin_command_captures(bytes);
     }
 
     /// What this command's captures have retained so far, and what they may still retain.
     #[must_use]
     pub const fn capture_budget(&self) -> &Budget {
-        &self.capture_budget
+        &self.execution.capture_budget
     }
 
     /// Hands finished values to the innermost capture, if one is open.
@@ -1254,24 +1472,13 @@ impl Session {
     /// §21.3 forbids the alternative: nothing is kept from the values that would not fit, and the
     /// capture is not silently truncated.
     pub fn capture(&mut self, values: &[Value]) -> Result<bool, ErrorValue> {
-        if self.captures.is_empty() {
-            return Ok(false);
-        }
-        for value in values {
-            self.capture_budget
-                .charge(value)
-                .map_err(ono_pipeline::Exceeded::into_error)?;
-            if let Some(capture) = self.captures.last_mut() {
-                capture.push(value.clone());
-            }
-        }
-        Ok(true)
+        self.execution.capture(values)
     }
 
     /// Declares `name` in the innermost scope, shadowing any outer binding of the name: what a
     /// loop variable, a parameter, a `catch` name and a block's `@` do.
     pub fn bind(&mut self, name: impl Into<String>, value: Value) {
-        if let Some(scope) = self.scopes.last_mut() {
+        if let Some(scope) = self.scope.scopes.last_mut() {
             scope.insert(name.into(), value);
         }
     }
@@ -1282,6 +1489,7 @@ impl Session {
     pub fn assign(&mut self, name: impl Into<String>, value: Value) {
         let name = name.into();
         match self
+            .scope
             .scopes
             .iter_mut()
             .rev()
@@ -1296,63 +1504,63 @@ impl Session {
 
     /// Enters a nested scope, for a block or a function body.
     pub fn push_scope(&mut self) {
-        self.scopes.push(Scope::new());
-        self.definitions.push(BTreeMap::new());
+        self.scope.scopes.push(Scope::new());
+        self.scope.definitions.push(BTreeMap::new());
     }
 
     /// Leaves the innermost scope. The outermost scope is never popped.
     pub fn pop_scope(&mut self) {
-        if self.scopes.len() > 1 {
-            self.scopes.pop();
-            self.definitions.pop();
+        if self.scope.scopes.len() > 1 {
+            self.scope.scopes.pop();
+            self.scope.definitions.pop();
         }
     }
 
     /// The status of the last statement.
     #[must_use]
     pub fn status(&self) -> ExitStatus {
-        self.status
+        self.execution.status
     }
 
     /// Records the status of a statement.
     pub fn set_status(&mut self, status: ExitStatus) {
-        self.status = status;
+        self.execution.status = status;
     }
 
     /// The process executor.
     pub fn executor(&mut self) -> &mut Executor {
-        &mut self.executor
+        &mut self.execution.executor
     }
 
     /// What the evaluator is currently allowed to do.
     #[must_use]
     pub fn mode(&self) -> Mode {
-        self.mode
+        self.execution.mode
     }
 
     /// Runs `body` under `mode`, restoring the previous mode afterwards.
     pub fn in_mode<T>(&mut self, mode: Mode, body: impl FnOnce(&mut Self) -> T) -> T {
-        let previous = std::mem::replace(&mut self.mode, mode);
+        let previous = std::mem::replace(&mut self.execution.mode, mode);
         let outcome = body(self);
-        self.mode = previous;
+        self.execution.mode = previous;
         outcome
     }
 
     /// Whether the session is attached to a person rather than to a script.
     #[must_use]
     pub fn is_interactive(&self) -> bool {
-        self.interactive
+        self.execution.interactive
     }
 
     /// Asks the session to leave with `status` once the current statement finishes.
     pub fn leave(&mut self, status: ExitStatus) {
-        self.leaving = Some(status);
+        self.execution.leaving = Some(status);
     }
 
     /// The status the session was asked to leave with, if it was.
     #[must_use]
     pub fn leaving(&self) -> Option<ExitStatus> {
-        self.leaving
+        self.execution.leaving
     }
 
     /// Withdraws a request to leave.
@@ -1362,7 +1570,7 @@ impl Session {
     /// every command the shell ever ran and short-circuit every statement after the first
     /// (ADR-0010).
     pub fn stay(&mut self) {
-        self.leaving = None;
+        self.execution.leaving = None;
     }
 }
 

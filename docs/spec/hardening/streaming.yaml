@@ -212,13 +212,15 @@ captures:
 
   # --- crates/ono-cli/src/session.rs ---------------------------------------------------------
   - file: crates/ono-cli/src/session.rs
-    site: Session
+    site: ExecutionState
     class: semantic_materialization
     holds: The stack of capture buffers a nested evaluation writes into.
     why: >-
       §23 defines the capture buffer and §23.1 forbids it being "an invisible unlimited vector".
       It is not one: every value pushed is measured and charged to the shared `Budget` of §21.1,
-      with one allowance per shell command (§23.4, ADR-0453, ADR-0457).
+      with one allowance per shell command (§23.4, ADR-0453, ADR-0457). §31.2 put the stack and
+      the budget that bounds it in one state group, which is the same collection under the name
+      of the group that owns it (ADR-0508).
 
   - file: crates/ono-cli/src/session.rs
     site: begin_capture
