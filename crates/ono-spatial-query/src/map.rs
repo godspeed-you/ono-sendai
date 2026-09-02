@@ -84,6 +84,14 @@ impl HorizonPlace {
 #[derive(Debug, Clone, Default)]
 pub struct MapHorizon {
     places: Vec<HorizonPlace>,
+    /// Where each place sits in `places`, so adding one is a lookup rather than a scan.
+    ///
+    /// The vector is kept because the order places were added in is the order the projection
+    /// ranks from, and a map is deterministic (§29.3). The index beside it is what stops the
+    /// insert from being linear: a horizon of a hundred thousand listeners cost a hundred
+    /// thousand scans of a growing vector, which is quadratic and was measured at twenty seconds
+    /// on the reference environment (issue #87, ADR-0496).
+    at: BTreeMap<SpatialId, usize>,
     edges: Vec<RelationshipEdge>,
 }
 
@@ -96,7 +104,12 @@ impl MapHorizon {
 
     /// Adds a place, keeping the shallowest depth when it was already reached another way.
     pub fn place(&mut self, place: HorizonPlace) {
-        if let Some(existing) = self.places.iter_mut().find(|known| known.id == place.id) {
+        if let Some(existing) = self
+            .at
+            .get(&place.id)
+            .copied()
+            .and_then(|at| self.places.get_mut(at))
+        {
             if place.depth < existing.depth {
                 existing.depth = place.depth;
                 existing.parent = place.parent;
@@ -106,6 +119,7 @@ impl MapHorizon {
             }
             return;
         }
+        self.at.insert(place.id.clone(), self.places.len());
         self.places.push(place);
     }
 
