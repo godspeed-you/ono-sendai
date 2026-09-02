@@ -96,6 +96,116 @@ pub fn check_documents(root: &Path) -> Vec<Problem> {
     problems
 }
 
+/// Reports an accepted decision record that asserts isolation the native tier does not have.
+///
+/// AGENTS.md §8 makes an accepted ADR immutable, which is why `USER_FACING` leaves the decision
+/// records out: a rule that reported one would demand a correction the rules forbid making.
+/// ADR-0422 showed the cost of stopping there — it says a plugin "runs sandboxed under the
+/// shell's uid", which is the claim §65.5 forbids, and nothing in the gate would ever have said
+/// so.
+///
+/// The way out is that superseding is the one correction AGENTS.md §8 *does* allow. So an
+/// accepted record is held to the terminology, and a record whose `Status` names a superseding
+/// ADR is not: the correction has been written, and it lives in the newer record.
+///
+/// Only the [`ASSERTIONS`] rule applies here. A decision record is not a description of the
+/// runtime, so requiring §15.2's statement in every ADR that mentions the native tier would be
+/// asking a decision to carry documentation prose. Asserting an isolation that does not exist is
+/// false wherever it is written; omitting a disclaimer is only a gap in a document a user reads.
+#[must_use]
+pub fn check_decisions(root: &Path) -> Vec<Problem> {
+    let directory = root.join("docs").join("decisions");
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        return Vec::new();
+    };
+    let mut records: Vec<_> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    records.sort();
+
+    let mut problems = Vec::new();
+    for path in records {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let name = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        problems.extend(check_decision(&name, &text));
+    }
+    problems
+}
+
+/// The [`ASSERTIONS`] rule, applied to one decision record.
+///
+/// A record that has been superseded, in whole or in part, is out of scope — see
+/// [`check_decisions`].
+#[must_use]
+pub fn check_decision(name: &str, text: &str) -> Vec<Problem> {
+    if !is_accepted(text) {
+        return Vec::new();
+    }
+    let claimed = without_mentions(text);
+    let mut problems = Vec::new();
+    for phrase in ASSERTIONS {
+        if !claimed.contains(phrase) {
+            continue;
+        }
+        problems.push(Problem::new(
+            format!("docs/decisions/{name}.md"),
+            format!(
+                "asserts `{phrase}`. v0.4.1 §15.2 and §65.5: the native tier applies process \
+                 confinement and is not a filesystem or network sandbox, so this states an \
+                 isolation the implementation does not have. An accepted decision record cannot \
+                 be edited (AGENTS.md §8), so the correction is a new ADR and a `Status: \
+                 superseded by ADR-XXXX` line here — which is also what takes this record out of \
+                 the rule's scope."
+            ),
+        ));
+    }
+    problems
+}
+
+/// Whether a record's `Status` is plain `accepted` rather than superseded by a later one.
+fn is_accepted(text: &str) -> bool {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("- Status:"))
+        .is_some_and(|status| status.trim() == "accepted")
+}
+
+/// The text with every backticked and quoted span blanked out.
+///
+/// A phrase inside backticks or quotation marks is a *mention* — the record is deciding about the
+/// phrase rather than claiming it. ADR-0447 defines this vocabulary and has to name every term in
+/// it, and a rule that caught the naming would delete the record carrying the rule.
+fn without_mentions(text: &str) -> String {
+    let normalised = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    let mut kept = String::with_capacity(normalised.len());
+    let mut inside: Option<char> = None;
+    for character in normalised.chars() {
+        match inside {
+            Some(opener) if character == opener => {
+                inside = None;
+                kept.push(' ');
+            }
+            Some(_) => kept.push(' '),
+            None if character == '`' || character == '"' => {
+                inside = Some(character);
+                kept.push(' ');
+            }
+            None => kept.push(character),
+        }
+    }
+    kept
+}
+
 /// The two rules, applied to one document's text.
 #[must_use]
 pub fn check_text(location: &str, text: &str) -> Vec<Problem> {

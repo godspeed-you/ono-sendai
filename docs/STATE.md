@@ -1765,12 +1765,6 @@ five days is not reporting its own execution truthfully, whatever its exit code 
 test:** a full `cargo test --workspace` run leaves no `ono-test-*` process behind, asserted rather
 than observed by hand.
 
-**`docs/decisions/ADR-0422` says a plugin "runs sandboxed under the shell's uid" (2026-09-02).**
-That is factually the claim v0.4.1 §65.5 forbids, and `xtask::terminology` would report it — which
-is why the scan deliberately excludes `docs/decisions/`. AGENTS.md §8 forbids editing an accepted
-ADR, so this closes by deciding whether a superseding note is warranted or whether the sentence
-stands as a historical record of what was believed then. **Exit test:** a decision, recorded.
-
 **A killed pre-exec child reports the first mandatory control rather than the reason
 (2026-09-02).** If the child dies between `fork` and `install_controls`, every row of the
 confinement report reads `not_attempted` and the refusal says `an earlier mandatory control failed

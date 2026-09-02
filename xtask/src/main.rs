@@ -174,6 +174,7 @@ fn spec_check() -> ExitCode {
             .chain(scan::check_confinement_syscalls(&root))
             .chain(scan::check_authentication_flags(&root))
             .chain(terminology::check_documents(&root))
+            .chain(terminology::check_decisions(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 

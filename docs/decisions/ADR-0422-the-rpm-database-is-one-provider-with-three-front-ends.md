@@ -1,6 +1,6 @@
 # ADR-0422: The rpm database is one provider with three front ends
 
-- Status: accepted
+- Status: superseded by ADR-0465 (in part: the sentence about a plugin running sandboxed)
 - Date: 2026-08-31
 - Spec refs: §9.1 (Package), §16.5, §17.2, §27, §31.58, §35.3, §43, §50; AGENTS.md §4, §6;
   ADR-0006, ADR-0068, ADR-0112, ADR-0115
