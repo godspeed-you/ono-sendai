@@ -81,6 +81,49 @@ fn should_fail_the_test_rather_than_hang_when_a_run_exceeds_its_budget() {
 }
 
 #[test]
+fn should_kill_and_reap_the_program_when_a_run_exceeds_its_budget() {
+    // Reporting the overrun is half of it. A sweep on 2026-09-02 killed 331 leaked test
+    // followers on the development machine, the oldest five days old, and a helper that walks
+    // away from a child it started is how they got there — a suite that leaves processes behind
+    // is not reporting its own execution truthfully, whatever its exit code says (v0.4.1 §2.4,
+    // §39.3).
+    let scratch = ono_testkit::scratch();
+    let marker = scratch.path().join("pid");
+    let outcome = Shell::program("/bin/sh")
+        .args([
+            "-c",
+            &format!("echo $$ > {}; exec sleep 300", marker.display()),
+        ])
+        .timeout(std::time::Duration::from_millis(500))
+        .try_run();
+    assert!(outcome.is_err(), "the run overran and must say so");
+
+    let pid: u32 = std::fs::read_to_string(&marker)
+        .expect("the child recorded its pid before it slept")
+        .trim()
+        .parse()
+        .expect("a pid is a number");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline && alive(pid) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        !alive(pid),
+        "an overrunning run must leave nothing behind, and pid {pid} is still there"
+    );
+}
+
+/// Whether a pid names a process that is neither gone nor a zombie nobody waited for.
+fn alive(pid: u32) -> bool {
+    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return false;
+    };
+    stat.rsplit_once(')')
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .is_some_and(|state| state != "Z")
+}
+
+#[test]
 fn should_report_the_signal_that_killed_the_program_as_128_plus_it_when_it_is_signalled() {
     let run = Shell::program("/bin/sh")
         .args(["-c", "kill -TERM $$"])

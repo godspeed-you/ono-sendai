@@ -4,14 +4,16 @@ use std::fmt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ono_core::ExitStatus;
 
 /// The default budget for a single run. A shell test that hangs stops the whole suite, so every
 /// run has a deadline even when the test does not ask for one.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// How often the deadline is checked while a run is in flight.
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// A shell invocation under construction.
 #[derive(Debug, Clone)]
@@ -154,28 +156,50 @@ impl Shell {
             });
         }
 
-        // `wait_with_output` has no deadline of its own, so the wait happens on a worker and the
-        // test thread enforces the budget.
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = sender.send(child.wait_with_output());
-        });
+        // Both pipes are drained on their own workers, so neither can deadlock the other while
+        // the test thread enforces the budget.
+        let out = drain(child.stdout.take().ok_or_else(|| RunError::Spawn {
+            program: self.program.clone(),
+            message: "standard output was piped and is missing".to_owned(),
+        })?);
+        let err = drain(child.stderr.take().ok_or_else(|| RunError::Spawn {
+            program: self.program.clone(),
+            message: "standard error was piped and is missing".to_owned(),
+        })?);
 
-        let output = match receiver.recv_timeout(self.timeout) {
-            Ok(Ok(output)) => output,
-            Ok(Err(error)) => {
-                return Err(RunError::Spawn {
-                    program: self.program.clone(),
-                    message: error.to_string(),
-                });
+        // A run that overruns is killed and reaped here rather than left to finish on its own.
+        // Reporting the overrun is only half of it: a sweep on 2026-09-02 found 331 leaked test
+        // followers on the development machine, the oldest five days old, and a helper that walks
+        // away from a child it started is how they got there (v0.4.1 §2.4).
+        let deadline = Instant::now() + self.timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                Ok(None) => break None,
+                Err(error) => {
+                    return Err(RunError::Spawn {
+                        program: self.program.clone(),
+                        message: error.to_string(),
+                    });
+                }
             }
-            Err(_) => {
-                return Err(RunError::Timeout {
-                    program: self.program.clone(),
-                    args: self.args.clone(),
-                    timeout: self.timeout,
-                });
-            }
+        };
+        let Some(status) = status else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(RunError::Timeout {
+                program: self.program.clone(),
+                args: self.args.clone(),
+                timeout: self.timeout,
+            });
+        };
+        let output = std::process::Output {
+            status,
+            stdout: out.join().unwrap_or_default(),
+            stderr: err.join().unwrap_or_default(),
         };
 
         let status = match output.status.code() {
@@ -366,4 +390,14 @@ impl AsRef<Path> for crate::Scratch {
     fn as_ref(&self) -> &Path {
         self.path()
     }
+}
+
+/// Reads a pipe to its end on a worker, so neither stream can deadlock the other and what the run
+/// managed to say is available even when it is killed at its deadline.
+fn drain(mut pipe: impl std::io::Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = pipe.read_to_end(&mut buffer);
+        buffer
+    })
 }
