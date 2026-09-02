@@ -62,6 +62,11 @@ pub struct HostSources {
     pub own: Option<PathBuf>,
     /// The pinned host keys of spec §21.5, read and written (ADR-0355).
     pub trust_store: Option<PathBuf>,
+    /// The client keys this machine authorizes, read and written (v0.4.1 §9.2, ADR-0468).
+    ///
+    /// The mirror of `trust_store`: that file says which machines this shell will link *to*,
+    /// this one says which clients its listening agent will serve.
+    pub authorized_clients: Option<PathBuf>,
     /// The configuration directory this shell's own peer identity lives in (v0.4.1 §8.1).
     ///
     /// The directory rather than the file, because §8.2's migration ladder reads two names in it.
@@ -88,6 +93,9 @@ impl HostSources {
             trust_store: config_dir
                 .as_ref()
                 .map(|directory| directory.join(crate::trust::STORE_FILE)),
+            authorized_clients: config_dir
+                .as_ref()
+                .map(|directory| directory.join(crate::trust::AUTHORIZED_CLIENTS_FILE)),
             config_dir,
         }
     }

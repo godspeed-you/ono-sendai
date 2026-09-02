@@ -93,6 +93,11 @@ fn main() -> ExitCode {
                 return ExitCode::from(ExitStatus::SUCCESS);
             }
             if let Some(address) = &agent_options.listen {
+                // v0.4.1 §9.5, §56.4: provider capabilities stay the canonical authorization
+                // unit, so the agent learns which capability an action needs from the same
+                // `provider_capability` field `docs/spec/commands/` already declares. A peer
+                // never says which capability it needs; this side resolves it (§65.2).
+                let config = with_action_capabilities(config);
                 return runtime.block_on(serve_authenticated(address, &identity, config));
             }
             return runtime.block_on(ono_remote::agent_main(
@@ -214,6 +219,45 @@ fn default_identity() -> Result<ono_remote::PeerIdentity, ono_value::ErrorValue>
     ono_cli::trust::identity(&sources)
 }
 
+/// The capability every action a command contract declares needs, as the agent resolves it.
+///
+/// `(target, verb) -> provider_capability`, read from the command registry: `stop process` needs
+/// `process.signal`, `restart service` needs `service.manage`. An action the registry does not
+/// map is denied under a policy, because Appendix C denies an unknown capability id always.
+fn with_action_capabilities(config: ono_remote::AgentConfig) -> ono_remote::AgentConfig {
+    let Ok(registry) = ono_cli::native::registry() else {
+        // Without the registry no action can be named, so every action is denied. That is the
+        // fail-closed direction (v0.4.1 §2.3), and the agent still serves reads.
+        return config;
+    };
+    let mut config = config;
+    for command in registry.commands() {
+        if let (Some(target), Some(capability)) = (command.target(), command.provider_capability())
+        {
+            config = config.with_action_capability(target, command.verb(), capability);
+        }
+    }
+    config
+}
+
+/// The authorization store a listening agent decides by (v0.4.1 §9.2).
+///
+/// §2.3 and §59.5 between them settle what happens when it cannot be read: "if Ono claims that a
+/// safety control is applied before an operation, failure to apply that control MUST prevent the
+/// operation from starting", and "a malformed line in `authorized_clients` MUST cause
+/// deterministic startup/configuration failure". So a corrupt store stops the agent before it
+/// binds, rather than being read as an empty one — which would authorize nobody today and be one
+/// edit away from authorizing everybody.
+fn authorization_store() -> Result<ono_protocol::AuthorizedClients, ono_value::ErrorValue> {
+    let environment: Vec<(String, String)> = std::env::vars().collect();
+    let sources = ono_cli::hosts::HostSources::from_environment(
+        environment
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+    );
+    ono_cli::trust::open_authorized_clients(&sources)
+}
+
 /// Serves links over Ono's own authenticated transport (spec §21.5): one TLS 1.3 endpoint,
 /// one agent per peer.
 ///
@@ -226,6 +270,27 @@ async fn serve_authenticated(
     identity: &ono_remote::PeerIdentity,
     config: ono_remote::AgentConfig,
 ) -> ExitCode {
+    // Before the socket, not after: an agent that bound first and then discovered it had no
+    // usable policy would have been reachable while it decided (§2.3, §59.5).
+    match authorization_store() {
+        Ok(store) => {
+            if !store.is_present() {
+                eprintln!(
+                    "{}: no client is authorized yet; `add client-key <fingerprint>` authorizes \
+                     one to observe (v0.4.1 section 9.4)",
+                    ono_core::SHORT_NAME
+                );
+            }
+        }
+        Err(error) => {
+            eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+            if let Some(help) = error.help() {
+                eprintln!("{}: {help}", ono_core::SHORT_NAME);
+            }
+            return ExitCode::from(ExitStatus::FAILURE);
+        }
+    }
+
     let listener = match ono_remote::TlsListener::bind(address, identity).await {
         Ok(listener) => listener,
         Err(error) => {
@@ -245,17 +310,46 @@ async fn serve_authenticated(
         ono_core::SHORT_NAME,
         identity.fingerprint()
     );
+    let audit: ono_protocol::Audit = std::sync::Arc::new(ono_remote::StderrAudit);
     loop {
         match listener.accept().await {
             Ok(transport) => {
-                let config = config.clone();
+                // The store is read once per accepted connection, and the policy it yields is
+                // then fixed for that connection's life (§10.3). Re-reading it per *request*
+                // would be the TOCTOU §10.3 rules out; never re-reading it would mean an
+                // operator's revocation reached nobody until the agent restarted (§12.5).
+                let store = match authorization_store() {
+                    Ok(store) => std::sync::Arc::new(store),
+                    // §2.3: the control could not be applied, so the connection does not start.
+                    // The listener stays up, because the next connection may find a repaired
+                    // file, and every connection meanwhile is refused rather than admitted.
+                    Err(error) => {
+                        eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+                        continue;
+                    }
+                };
+                let peer = transport
+                    .peer_address()
+                    .map_or_else(|| "unknown".to_owned(), |address| address.to_string());
+                let config = config
+                    .clone()
+                    .with_authorization(ono_protocol::ServerAuthorization::Store(store))
+                    .with_audit(std::sync::Arc::clone(&audit))
+                    .with_source_address(peer);
                 tokio::spawn(async move {
                     let _ = ono_remote::serve_registry(transport, config).await;
                 });
             }
             // One peer that could not complete a handshake is not a reason to stop serving the
             // rest: it is reported and the listener stays up (spec §16.5).
-            Err(error) => eprintln!("{}: {}", ono_core::SHORT_NAME, error.message()),
+            Err(error) => {
+                audit.record(&ono_protocol::AuditEvent::new(
+                    ono_protocol::AuditKind::ClientVerificationFailed,
+                    "unaccepted",
+                    "denied",
+                ));
+                eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+            }
         }
     }
 }

@@ -389,11 +389,16 @@ impl Link {
         let accept = match message {
             Message::Accept(accept) => accept,
             Message::Reject(reject) => {
-                return Err(ErrorValue::new(
-                    reject.code().unwrap_or(ErrorCode::RemoteProtocolMismatch),
-                    reject.message().to_owned(),
-                )
-                .with_retryable(false));
+                let code = reject.code().unwrap_or(ErrorCode::RemoteProtocolMismatch);
+                let refused =
+                    ErrorValue::new(code, reject.message().to_owned()).with_retryable(false);
+                return Err(match crate::authorization::refusal_guidance(code) {
+                    // The wire carries a code and a sentence; the remediation is the same for
+                    // everyone who meets the code, so this side supplies it rather than the far
+                    // side describing its own configuration to a peer it just refused (§59.1).
+                    Some(help) => refused.with_help(help),
+                    None => refused,
+                });
             }
             other => {
                 return Err(ErrorValue::from(ProtocolError::MalformedPayload {

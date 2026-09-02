@@ -312,6 +312,18 @@ Delivered so far in the tranche:
   (#22); and issue **#20**'s instance measures 29.7 s at Profile M, inside §33.3's thirty-second
   budget by 0.3 s and sixty times outside §33.2's target, so it needs a phase-H7 frame-budget
   proof under a terminal rather than a watchdog that would be a coin toss (ADR-0252, #21).
+- **H2 complete (2026-09-02), #40–#50.** A v0.4.1 listening agent now authenticates every client
+  **and authorizes only the ones an operator listed**: §59.1 moved from "the unknown client reads
+  the provider inventory" to "the unknown client is refused with `Ono-Sendai-E1202` before provider
+  negotiation". `authorized_clients` with a fail-closed parser that distinguishes *missing* from
+  *corrupt* and exits before `bind` on the latter; atomic updates; four `client-key` commands;
+  observe-only by default, with no option on `add` that could grant an action; `ActionGrant` as a
+  newtype whose only constructor refuses to represent a wildcard; an immutable per-connection
+  `AuthorizationContext` built from the fingerprint alone; `ServerConfig::offer()` replaced by
+  `offer_for(&PeerAuthorization)`; dispatch checked again independently on all four paths;
+  `E1201`–`E1204`; audit events whose record has no field a payload could occupy; and the four
+  trust words as four fields on `ono.link/1`. ADR-0466 … ADR-0475, cases 182–187, §4.8.3 ticked.
+
 - **#98, #99, #100 closed (2026-09-02), out of phase order and deliberately so.** H10 touches
   `.github/`, `docker/`, `scripts/` and `xtask/` and no runtime code, so running it beside H1 and
   H4 delays no safety work; §57's staging rule is about refactoring landing before safety work,
@@ -1746,6 +1758,31 @@ This is **work for phase H3** (#54, one central `Limits` contract): if
 `docs/spec/hardening/remote_limits.yaml` is still wanted, it should reference these keys rather
 than restate the numbers. **Exit test:** changing a remote ceiling in the catalogue changes what
 the listener enforces.
+
+**`set client-key --allow` takes a comma-separated word rather than a repeated option
+(2026-09-02).** §9.7 writes `--allow <capability>...`, and `ono_command`'s binder keeps one value
+per option while a bare comma ends a word, so the spelling that works is
+`--allow "process.signal,service.manage"`. Closing it means a repeated-option form in
+`crates/ono-command/src/contract.rs` (ADR-0468 §Alternatives). **Exit test:** `--allow a --allow b`
+grants both.
+
+**The trust store's writer is weaker than the authorization store's (2026-09-02).**
+`TrustStore::persist` in `crates/ono-protocol/src/trust.rs` writes a temporary, fsyncs and renames
+— with no explicit mode, no directory sync, and it *truncates* a leftover temporary rather than
+refusing it. `ono_protocol::write_store`, written for #41, is §9.8's full sequence sitting right
+beside it: `create_new` + `0600` + fsync + rename + directory sync. Two files holding key material,
+two different levels of care. ADR-0467 §Consequences. **Exit test:** both writers survive the same
+interrupted-write proof.
+
+**AGENTS.md §12.1's sub-branch convention cannot be used as written (2026-09-02).** It says
+*"Sub-branches are allowed for parallel agents (`implementation/<crate>`)"*, and git refuses to
+create one: a ref named `implementation` and a directory `refs/heads/implementation/` cannot both
+exist, so `git worktree add -b implementation/h7-spatial-performance` fails with *cannot lock ref
+… 'refs/heads/implementation' exists*. The convention is only usable if the trunk branch is
+renamed, which is the user's call and would touch §12.1, the gate's `main` guard and every ADR
+naming the branch. The parallel worktrees of 2026-09-02 use `implementation-<phase>` instead.
+**Exit test:** the convention as documented can be executed, or the document names the form that
+can.
 
 **The systemd test fixture leaks a follower process per run, and they accumulate for days
 (2026-09-02).** 331 `/bin/sh /tmp/ono-test-<pid>-4/journalctl --output=json --no-pager --follow`
@@ -3340,6 +3377,26 @@ opposite of a silenced requirement: they are the requirement, written down befor
   magnitude inside the target) and removed from the tree rather than left ignored — ADR-0459
   carries the measurement. **No ignored test exists for this.** Owed by **#83** and **#84**;
   §4.8.6's box stays unticked and says so.
+
+- **Live revocation of an established connection.** `remove client-key` refuses the *next*
+  connection and says so in its message; an already-open connection keeps the authorization it was
+  admitted with, because §12.5's registry of live connections is what H3 builds. ADR-0470 records
+  the deferral, as §12.5 asks. Owed by **H3**.
+
+- **The §6.1 boundary-inventory gate check has nothing to check against.**
+  `docs/spec/hardening/security_boundaries.yaml` does not exist — no phase has written it — so
+  `xtask` cannot cross-check that every declared dispatch path carries an authorization check.
+  §10.2 is proven instead by
+  `crates/ono-protocol/tests/authorization.rs::should_refuse_it_on_every_dispatch_path_the_server_exposes`,
+  which exercises query, subscribe, adapt and act. Owed by **#118**, which writes the inventory.
+
+- **§52.3 asks the gate to reject an unknown capability id in an authorization fixture.**
+  `ActionGrant` refuses a malformed id at construction, so `*` and `process.` cannot be stored at
+  all; a *well-formed* id naming nothing (`process.invented`) is denied at dispatch but does not
+  fail the gate. Needs a validator in `xtask/`, which H2 did not own. Owed by **#117**.
+
+- **`AuditKind::ConnectionLimitDenied` is declared and raised by nobody** until H3's connection
+  semaphore exists (#51, #52, #53). Seven of §14.1's eight classes are emitted today. ADR-0474.
 
 The H0 failure proofs, red by design (issue #31, ADR-0430):
 

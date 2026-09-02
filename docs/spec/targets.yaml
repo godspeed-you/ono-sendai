@@ -134,6 +134,12 @@ targets:
     summary: A host key this shell has pinned, and the fingerprint it was pinned by.
     schema: ono.host-key/1
     phase: H
+  - id: ono.target.client-key
+    name: client-key
+    category: system
+    summary: A client key this machine authorizes to reach its listening agent, and what it may do.
+    schema: ono.client-key/1
+    phase: H
   - id: ono.target.user
     name: user
     category: system

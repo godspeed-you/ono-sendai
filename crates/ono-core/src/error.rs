@@ -259,6 +259,18 @@ error_codes! {
     ResourceMaterializationLimit => "Ono-Sendai-E1103", "resource.materialization_limit", Resource,
         "An operation that must see its whole input may not materialize this input.";
 
+    // --- server-side client authorization, v0.4.1 §9 and §10.4: the three refusals §53.1 names
+    // as one family, plus the store that would not load (ADR-0466). E12xx, after the resource
+    // block ADR-0453 opened.
+    RemoteUnauthenticated => "Ono-Sendai-E1201", "remote.unauthenticated", Safety,
+        "The connecting client proved possession of no key, so there is no identity to authorize.";
+    RemoteUnauthorized => "Ono-Sendai-E1202", "remote.unauthorized", Safety,
+        "The client is authenticated but is not listed in the agent's authorization store.";
+    RemoteCapabilityDenied => "Ono-Sendai-E1203", "remote.capability_denied", Safety,
+        "The client is authorized, but not for the capability this request needs.";
+    RemoteAuthorizationStoreInvalid => "Ono-Sendai-E1204", "remote.authorization_store_invalid", Safety,
+        "The authorization store could not be loaded, so nothing is authorized.";
+
     // --- KUANG/11, spec §31.79: the K11 family of docs/spec/kuang/errors.v1.yaml, folded into
     // the global model (ADR-0108). Numbering follows §31.79's families.
     KuangPackageInvalid => "Ono-Sendai-K11001", "package.invalid", Parse,

@@ -1274,79 +1274,99 @@ authentication without performing it is exactly §3.1's release blocker.
 prove the operator wants that key to see the system (§9.1). §65.2 and §65.3 name the two ways this
 is got wrong — self-reported authorization, and authorization that exists only in the negotiation.
 
-- [ ] **P0 · The authorization store is explicit and strictly parsed.**
+- [x] **P0 · The authorization store is explicit and strictly parsed.**
       `~/.config/ono/authorized_clients` is line-oriented and human-readable, its entry model is
       the §9.3 record (fingerprint, optional label, `observe`, exact `actions`), an unknown field is
       rejected, and a malformed non-comment line fails the load —
       `crates/ono-cli/tests/authorized_clients.rs::should_parse_the_documented_entry_model_including_an_empty_action_set`,
       `::should_reject_an_unknown_field_in_an_authorization_entry`,
       `::should_fail_to_load_the_store_when_one_non_comment_line_is_malformed`,
-      `::should_never_treat_a_malformed_store_as_an_empty_one`, case `187` (#40, §9.2, §9.3,
-      §59.5, §65.2, §65.4).
-- [ ] **P1 · Store updates are atomic.** A concurrent reader sees the old file or the new one, an
+      `::should_never_treat_a_malformed_store_as_an_empty_one`,
+      `::should_distinguish_a_missing_store_from_a_corrupt_one`, case `187` (#40, §9.2, §9.3,
+      §59.5, §65.2, §65.4; ADR-0466).
+- [x] **P1 · Store updates are atomic.** A concurrent reader sees the old file or the new one, an
       interrupted write leaves the previous store intact, and the file's permissions survive the
       update — `crates/ono-cli/tests/authorized_clients.rs::should_replace_the_store_atomically_so_a_reader_never_sees_a_partial_file`,
       `::should_leave_the_previous_store_intact_when_a_write_is_interrupted`,
-      `::should_keep_the_owner_only_permissions_of_the_store_across_an_update` (#41, §9.8).
-- [ ] **P0 · The operator manages client keys through the command registry.**
+      `::should_keep_the_owner_only_permissions_of_the_store_across_an_update` (#41, §9.8;
+      ADR-0467).
+- [x] **P0 · The operator manages client keys through the command registry.**
       `get client-key`, `add client-key`, `set client-key` and `remove client-key` answer as
       objects, are declared in `docs/spec/commands/`, and carry help and completion —
       `crates/ono-cli/tests/client_keys.rs::should_list_every_authorized_client_as_an_object_when_get_client_key_runs`,
       `::should_add_a_client_key_and_show_it_in_the_next_listing`,
       `::should_change_exactly_the_grants_named_when_set_client_key_runs`,
-      `::should_remove_a_client_key_and_refuse_the_next_connection_from_it`, case `186`, and
-      `cargo run -p xtask -- spec-check` for the registry half (#42, §9.7).
-- [ ] **P0 · A newly added client observes and nothing more.** The default grant is
+      `::should_remove_a_client_key_so_the_store_no_longer_lists_it`,
+      `::should_carry_help_and_completion_for_every_client_key_command`,
+      `crates/ono-cli/tests/authenticated_link.rs::should_refuse_the_next_connection_from_a_revoked_client_key`,
+      case `186`, and `cargo run -p xtask -- spec-check` for the registry half (#42, §9.7;
+      ADR-0468).
+- [x] **P0 · A newly added client observes and nothing more.** The default grant is
       `observe=true` with an empty action set, an unlisted client is refused before negotiation, and
       neither state is reachable by an accident of parsing —
       `crates/ono-cli/tests/client_keys.rs::should_grant_observe_only_when_a_client_key_is_added_without_grants`,
       `crates/ono-protocol/tests/authorization.rs::should_refuse_an_unlisted_client_before_provider_negotiation`,
-      `::should_disclose_no_process_schema_or_capability_inventory_to_an_unlisted_client`, cases
-      `182` and `184` (#43, §9.4, §59.1, §59.2).
-- [ ] **P0 · An action grant is an exact capability ID.** A grant names one capability, no wildcard
+      `::should_disclose_no_process_schema_or_capability_inventory_to_an_unlisted_client`,
+      `::should_let_an_authorized_observer_read_and_refuse_it_an_action`,
+      `crates/ono-cli/tests/authenticated_link.rs::should_refuse_an_authenticated_client_the_agent_never_authorized`,
+      cases `182` and `184` (#43, §9.4, §59.1, §59.2; ADR-0468).
+- [x] **P0 · An action grant is an exact capability ID.** A grant names one capability, no wildcard
       or risk-class pattern is accepted by the parser, an unknown capability ID is denied, and
-      `service.restart` being granted leaves `process.signal` refused —
-      `crates/ono-cli/tests/authorized_clients.rs::should_refuse_a_wildcard_or_risk_class_pattern_in_an_action_grant`,
+      `service.manage` being granted leaves `process.signal` refused —
+      `crates/ono-cli/tests/authorized_clients.rs::should_refuse_a_wildcard_or_risk_class_in_an_action_grant`,
+      `::should_refuse_a_wildcard_from_the_command_that_writes_the_store`,
       `crates/ono-protocol/tests/authorization.rs::should_deny_an_action_whose_capability_id_is_unknown`,
+      `::should_deny_a_capability_introduced_after_the_grant_was_written`,
       `::should_leave_every_ungranted_action_refused_when_one_action_is_granted`, case `185`
-      (#44, §9.5, §9.6, §59.3, Appendix C).
-- [ ] **P1 · The policy for a connection is decided once and cannot change under it.** The
+      (#44, §9.5, §9.6, §59.3, Appendix C; ADR-0469).
+- [x] **P1 · The policy for a connection is decided once and cannot change under it.** The
       `AuthorizationContext` is built from the authenticated fingerprint at accept, is immutable
       for the life of the connection, and carries no self-reported field from the peer —
       `crates/ono-protocol/tests/authorization.rs::should_build_the_authorization_context_from_the_authenticated_fingerprint_alone`,
       `::should_keep_the_authorization_context_immutable_for_the_life_of_the_connection` (#47,
-      §10.3).
-- [ ] **P0 · The offer a client receives is filtered by its policy.** A capability the client may
+      §10.3; ADR-0470, which also records why live revocation is deferred to H3).
+- [x] **P0 · The offer a client receives is filtered by its policy.** A capability the client may
       not use is absent from the negotiated offer, so the inventory itself carries no information
       the policy withholds — `crates/ono-protocol/tests/authorization.rs::should_offer_only_the_capabilities_the_clients_policy_allows`,
       `::should_leave_an_ungranted_action_capability_out_of_the_offer_the_provider_advertises`,
-      case `183` (#45, §10.1).
-- [ ] **P0 · Dispatch refuses independently of the offer.** A request for a capability the offer
+      case `183` (#45, §10.1; ADR-0471).
+- [x] **P0 · Dispatch refuses independently of the offer.** A request for a capability the offer
       omitted is refused at dispatch as well, on every dispatch path, so a client that constructs
       the request by hand gains nothing (§65.3) —
       `crates/ono-protocol/tests/authorization.rs::should_refuse_a_request_for_a_capability_the_offer_omitted`,
-      `::should_refuse_it_on_every_dispatch_path_the_server_exposes`, and
-      `xtask/tests/contracts.rs::should_find_the_authorization_check_on_every_declared_dispatch_path`
-      against the §6.1 boundary inventory, case `184` (#46, §10.2, §20).
-- [ ] **P0 · Refusals are stable, structured and non-interactive.**
+      `::should_refuse_it_on_every_dispatch_path_the_server_exposes` — which drives query,
+      subscribe, adapt and act and asserts that no provider code ran — and case `184` (#46, §10.2,
+      §20; ADR-0472). The cross-check of the §6.1 boundary inventory needs
+      `docs/spec/hardening/security_boundaries.yaml`, which no phase has written yet; it is
+      recorded under *Deferred* in `docs/STATE.md` and belongs to the phase that creates the
+      inventory.
+- [x] **P0 · Refusals are stable, structured and non-interactive.**
       `remote.unauthenticated`, `remote.unauthorized` and `remote.capability_denied` are declared
       in `docs/spec/errors.yaml`, carry the deciding boundary in structured details, and never
-      prompt — `crates/ono-value/tests/errors.rs::should_declare_the_three_remote_refusal_codes_with_their_details`,
-      `crates/ono-protocol/tests/authorization.rs::should_answer_the_same_stable_code_for_the_same_refusal_every_time`,
-      `::should_refuse_without_prompting_when_no_terminal_is_attached` (§59.9), cases `182`, `184`
-      and `186` (#48, §10.4, §53.1, §53.2, §53.3).
-- [ ] **P1 · The agent records who connected and what was decided.** Accept, authentication
+      prompt — `crates/ono-protocol/tests/authorization.rs::should_declare_the_three_remote_refusal_codes_with_their_details`,
+      `::should_answer_the_same_stable_code_for_the_same_refusal_every_time`,
+      `::should_refuse_without_prompting_when_no_terminal_is_attached` (§59.9),
+      `crates/ono-cli/tests/authenticated_link.rs::should_report_an_authenticated_but_unauthorized_link_as_exactly_that`,
+      cases `182`, `184`, `186` and `187` (#48, §10.4, §53.1, §53.2, §53.3; ADR-0473).
+- [x] **P1 · The agent records who connected and what was decided.** Accept, authentication
       outcome, authorization outcome, capability decisions and disconnect are structured audit
       events carrying the §14.2 fields, and no key material or payload appears in one —
       `crates/ono-remote/tests/audit.rs::should_emit_a_structured_event_for_every_connection_lifecycle_step`,
+      `::should_record_the_refusal_of_a_client_nobody_authorized`,
+      `::should_record_a_client_that_proved_no_key_as_a_verification_failure`,
       `::should_carry_the_fingerprint_and_the_decision_on_every_authorization_event`,
-      `::should_never_write_key_material_or_payload_bytes_into_an_audit_event` (#49, §14.1, §14.2).
-- [ ] **P1 · `get link` distinguishes the six trust concepts.** Authenticated, authorized, pinned
+      `::should_never_write_key_material_or_payload_bytes_into_an_audit_event`,
+      `::should_name_every_event_class_the_specification_lists`,
+      `crates/ono-cli/tests/authenticated_link.rs::should_write_a_structured_audit_line_for_every_decision_the_agent_makes`,
+      case `184` (#49, §14.1, §14.2; ADR-0474). `connection.limit_denied` is declared in the
+      closed set and raised by nobody until H3 builds the connection semaphore of §12.1.
+- [x] **P1 · `get link` distinguishes the trust concepts.** Authenticated, authorized, pinned
       and self-reported are separate fields with separate values, so a reader can tell a proved
       identity from a claimed one —
-      `crates/ono-cli/tests/remote_commands.rs::should_distinguish_authenticated_authorized_pinned_and_self_reported_on_a_link`,
-      `::should_report_an_authenticated_but_unauthorized_link_as_exactly_that`, case `186`
-      (#50, §14.3, §19.1).
+      `crates/ono-cli/tests/authenticated_link.rs::should_distinguish_authenticated_authorized_pinned_and_self_reported_on_a_link`,
+      `::should_report_an_authenticated_but_unauthorized_link_as_exactly_that`,
+      `::should_report_no_proved_key_over_a_transport_that_proves_nothing`, case `186`
+      (#50, §14.3, §19.1; ADR-0475).
 
 #### 4.8.4 The listening agent stays bounded (H3 — §3.3, §11, §12)
 
@@ -1535,48 +1555,67 @@ bytes behind them are unbounded.
       — `crates/ono-cli/tests/resource_limits.rs::should_answer_the_effective_non_secret_limits_when_inspect_limits_runs`,
       `::should_answer_the_same_figures_inspect_limits_shows_from_the_contract_registry`, case
       `192` (#120, §54.3, ADR-0461).
-- [ ] **P1 · `each` consumes and emits incrementally.** `source | each { $it } | take 1` completes
+- [x] **P1 · `each` consumes and emits incrementally.** `source | each { $it } | take 1` completes
       while the source is still waiting, the block runs for the first value before the second is
       required, order and seriality are unchanged, and no complete-input `Vec<Value>` capture
       remains in the path — `crates/ono-cli/tests/streaming.rs::should_emit_the_first_value_before_the_source_closes`,
       `::should_run_the_block_for_one_item_before_the_next_item_is_required`,
       `::should_keep_the_input_order_and_the_serial_execution_of_the_block`,
+      `crates/ono-cli/tests/each_streaming.rs::should_answer_take_one_before_the_source_closes_when_each_transforms_a_waiting_stream`
+      (the §57 phase H0 failure proof, un-ignored by this increment with its assertion unchanged),
       `crates/ono-pipeline/tests/streaming_transforms.rs::should_hold_no_more_than_the_bounded_channel_and_one_in_flight_frame`
-      (#75, the work package written out in §58.2; §25.1–§25.4, §60.1).
-- [ ] **P1 · `each` accepts an unbounded source.** A source declared unbounded is a legal input,
+      (#75, the work package written out in §58.2; §25.1–§25.4, §60.1, ADR-0480).
+- [x] **P1 · `each` accepts an unbounded source.** A source declared unbounded is a legal input,
       the time to first output does not depend on how much the source will eventually produce, and
       memory stays flat while it runs —
       `crates/ono-cli/tests/streaming.rs::should_accept_a_source_declared_unbounded_without_refusing_it`,
-      `::should_keep_memory_flat_while_an_unbounded_source_is_consumed`, case `193` (#76, §25.6,
-      §25.7, §60.1).
-- [ ] **P1 · Control flow survives the streamed `each`.** `break`, `continue`, `return`, an error
+      `::should_keep_memory_flat_while_an_unbounded_source_is_consumed`,
+      `crates/ono-cli/tests/each_streaming.rs::should_accept_an_unbounded_source_when_each_transforms_it`
+      (the second phase H0 failure proof, likewise un-ignored unchanged), case `193` (#76, §25.6,
+      §25.7, §60.1, ADR-0480).
+- [x] **P1 · Control flow survives the streamed `each`.** `break`, `continue`, `return`, an error
       and `exit` behave as they did, `break` stops upstream consumption promptly, and the `Flow`
       representation stays explicit —
       `crates/ono-cli/tests/streaming.rs::should_stop_upstream_consumption_promptly_when_the_block_breaks`,
       `::should_skip_exactly_one_item_when_the_block_continues`,
       `::should_return_from_the_enclosing_function_when_the_block_returns`,
       `::should_propagate_a_block_error_with_the_status_it_had_before_the_rewrite`,
-      case `194` (#77, §25.5, §30.3, §60.3).
-- [ ] **P1 · Every remaining capture is classified and justified.** An inventory names every
-      `Vec<Value>` collection in the evaluator with the class of Appendix E it belongs to, each one
-      is either removed or bounded by a budget, and a new unclassified capture fails the gate —
+      `::should_leave_the_shell_with_the_status_the_block_exited_with`,
+      case `194` (#77, §25.5, §30.3, §60.3, ADR-0480).
+- [x] **P1 · Every remaining capture is classified and justified.** An inventory names every
+      `Vec<Value>` collection in the evaluator with the class of §26.1 it belongs to, each one is
+      either removed or bounded by a budget, and a new unclassified capture fails the gate — as
+      does an entry whose capture is gone, an invented class, and an `implementation_convenience`
+      capture no ADR justifies —
       `xtask/tests/scan.rs::should_report_an_evaluator_capture_the_streaming_inventory_does_not_classify`,
+      `::should_report_an_inventory_entry_whose_capture_is_no_longer_in_the_evaluator`,
+      `::should_report_an_implementation_convenience_capture_that_no_decision_record_justifies`,
+      `::should_report_a_capture_whose_class_is_not_one_the_specification_defines`,
+      `::should_accept_an_evaluator_capture_the_inventory_classifies`,
       `::should_report_this_repository_as_classifying_every_evaluator_capture`, with the inventory
-      in `docs/spec/hardening/streaming.yaml` (#78, §26.1, §65.7).
-- [ ] **P1 · A function is a pipeline stage.** A function invoked in a pipeline forwards values as
-      it produces them, its scope lives exactly as long as its invocation, and a function in the
-      middle of a pipeline does not turn the pipeline into a two-phase collection —
+      in `docs/spec/hardening/streaming.yaml` (#78, §26.1, §65.7, ADR-0479).
+- [x] **P1 · A function is a pipeline stage.** A function whose body is one native pipeline
+      forwards values as it produces them, its scope lives exactly as long as its invocation, and
+      the call does not turn the pipeline into a two-phase collection. A body that cannot be
+      continued says so in `explain` and refuses an unbounded input, which is what §26.2 requires
+      of the case that still collects —
       `crates/ono-cli/tests/streaming.rs::should_forward_values_from_a_function_as_it_produces_them`,
       `::should_drop_the_invocation_scope_when_the_function_call_ends`,
-      `::should_keep_a_pipeline_streaming_when_a_function_sits_in_the_middle_of_it` (#79, §26.2,
-      §26.3).
-- [ ] **P1 · Backpressure and cancellation survived the rewrite.** A fast source feeding a slow
+      `::should_keep_a_pipeline_streaming_when_a_function_sits_in_the_middle_of_it`,
+      `::should_say_in_explain_which_calls_stream_and_which_collect`,
+      `::should_refuse_an_unbounded_body_the_call_would_have_to_collect` (#79, §26.2, §26.3,
+      §65.8, ADR-0481).
+- [x] **P1 · Backpressure and cancellation survived the rewrite.** A fast source feeding a slow
       block grows no queue beyond the bounded channel plus the documented in-flight values,
-      cancellation wins over an in-flight block, and a cancelled child process is reaped —
+      cancellation wins over an in-flight block, a cancelled child process is reaped, the
+      reference capacity is still 64, and an unbounded channel on the data path fails the gate —
       `crates/ono-pipeline/tests/backpressure.rs::should_keep_the_retained_queue_within_the_bounded_channel_when_the_consumer_is_slow`,
+      `::should_keep_the_reference_channel_capacity_the_specification_names`,
       `crates/ono-pipeline/tests/cancellation.rs::should_stop_an_in_flight_block_when_the_pipeline_is_cancelled`,
       `crates/ono-cli/tests/streaming.rs::should_reap_the_child_process_of_a_cancelled_stage`,
-      case `194` (#81, §28.1–§28.4, §60.2).
+      `xtask/tests/scan.rs::should_report_an_unbounded_channel_on_the_pipeline_data_path`,
+      `::should_find_no_unbounded_pipeline_channel_in_this_repository`,
+      case `194` (#81, §28.1–§28.4, §60.2, §65.7, ADR-0482).
 - [ ] **P2 · Cross-kind stream ordering is documented and tested.** Per-channel order is total,
       the ordering guarantee between values, diagnostics and status is stated in one place, and the
       way to obtain a total order where a caller needs one is exercised —

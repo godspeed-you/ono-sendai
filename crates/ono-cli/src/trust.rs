@@ -15,7 +15,9 @@
 use std::path::{Path, PathBuf};
 
 use ono_core::ErrorCode;
-use ono_protocol::{Fingerprint, TrustEntry, TrustStore};
+use ono_protocol::{
+    ActionGrant, AuthorizedClient, AuthorizedClients, Fingerprint, TrustEntry, TrustStore,
+};
 use ono_remote::PeerIdentity;
 use ono_value::ErrorValue;
 
@@ -280,4 +282,235 @@ pub fn forget(sources: &crate::hosts::HostSources, host: &str) -> Result<(), Err
         .with_help("`get host-key` lists what this shell has pinned"));
     }
     store.forget(host)
+}
+
+// --- the clients this machine authorizes (v0.4.1 §9, ADR-0468) --------------------------------
+//
+// The other half of remote trust, and the half v0.4.0 did not have. `trusted_hosts` above is
+// which machines this shell will *link to*; `authorized_clients` is which clients its listening
+// agent will *serve*. §9.1 is why the second is not implied by the first: a certificate proves
+// which key connected, never that the operator wants that key here.
+//
+// `ono-protocol` owns the file format, the strict parser and the atomic writer, exactly as it
+// owns the trust store's. This module owns where the file lives for a session and how a person
+// sees and changes it.
+
+/// The file the authorized client keys live in, under the configuration directory of ADR-0010.
+///
+/// `~/.config/ono/authorized_clients`, the reference path of v0.4.1 §9.2.
+pub const AUTHORIZED_CLIENTS_FILE: &str = "authorized_clients";
+
+/// The authorization store this session's configuration directory points at.
+///
+/// A session with no configuration directory has no store, and a store nobody wrote authorizes
+/// nobody — which is the fail-closed answer §9.2 requires, not an inconvenience to work around.
+///
+/// # Errors
+///
+/// `remote.authorization_store_invalid` (E1204) naming the line when the file is not the format
+/// §9.2 defines. Never an empty store: §9.2 forbids reading a malformed one as one.
+pub fn open_authorized_clients(
+    sources: &crate::hosts::HostSources,
+) -> Result<AuthorizedClients, ErrorValue> {
+    match authorized_clients_path(sources) {
+        Some(path) => AuthorizedClients::open(path),
+        None => Ok(AuthorizedClients::empty()),
+    }
+}
+
+/// Where the authorized client keys are kept, when this session keeps them anywhere.
+#[must_use]
+pub fn authorized_clients_path(sources: &crate::hosts::HostSources) -> Option<PathBuf> {
+    sources.authorized_clients.clone()
+}
+
+/// One authorized client, as `get client-key` shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientKeyRow {
+    /// The full `sha256:` fingerprint of the client's key.
+    pub fingerprint: String,
+    /// What the operator called the client, where they called it anything.
+    pub label: Option<String>,
+    /// Whether the client may query and subscribe (§9.4).
+    pub observe: bool,
+    /// The exact capability ids the client may act with; empty for an observer.
+    pub actions: Vec<String>,
+    /// The file the grant is recorded in; `None` when this session keeps no store.
+    pub path: Option<PathBuf>,
+}
+
+impl ClientKeyRow {
+    /// The row for one store entry.
+    #[must_use]
+    pub fn of(entry: &AuthorizedClient, path: Option<&PathBuf>) -> Self {
+        Self {
+            fingerprint: entry.fingerprint().to_string(),
+            label: entry.label().map(ToOwned::to_owned),
+            observe: entry.observes(),
+            actions: entry
+                .actions()
+                .iter()
+                .map(|grant| grant.id().to_owned())
+                .collect(),
+            path: path.cloned(),
+        }
+    }
+}
+
+/// The rows `get client-key` answers with, in the order the file records them.
+///
+/// # Errors
+///
+/// As [`open_authorized_clients`].
+pub fn client_key_rows(
+    sources: &crate::hosts::HostSources,
+) -> Result<Vec<ClientKeyRow>, ErrorValue> {
+    let store = open_authorized_clients(sources)?;
+    let path = authorized_clients_path(sources);
+    Ok(store
+        .entries()
+        .iter()
+        .map(|entry| ClientKeyRow::of(entry, path.as_ref()))
+        .collect())
+}
+
+/// Authorizes `fingerprint` to observe this machine, and nothing else (§9.4).
+///
+/// The default grant is the whole of what adding a client does. An operator who wants an action
+/// says so afterwards, with [`set_client_key`], naming the capability.
+///
+/// # Errors
+///
+/// `parse.syntax` for a fingerprint that is not one, `conflict.*` when the client is already
+/// authorized — widening a grant is `set`, a separate act, exactly as re-trusting a host is —
+/// and an I/O error when the store cannot be written.
+pub fn authorize_client(
+    sources: &crate::hosts::HostSources,
+    fingerprint: &str,
+    label: Option<&str>,
+) -> Result<(), ErrorValue> {
+    let fingerprint: Fingerprint = fingerprint.parse()?;
+    let store = open_authorized_clients(sources)?;
+    if store.client(fingerprint).is_some() {
+        return Err(ErrorValue::new(
+            ErrorCode::IoAlreadyExists,
+            format!("{fingerprint} is already an authorized client"),
+        )
+        .with_help(
+            "`set client-key <fingerprint> --allow …` changes what it may do; adding it again \
+             would silently reset a grant somebody made deliberately",
+        ));
+    }
+    let mut entry = AuthorizedClient::observing(fingerprint);
+    if let Some(label) = label {
+        entry = entry.with_label(label);
+    }
+    let mut entries = store.entries().to_vec();
+    entries.push(entry);
+    persist_authorized(sources, &entries)
+}
+
+/// Replaces what an authorized client may do (§9.5, §9.7).
+///
+/// `allow` is a comma-separated list of **exact** capability ids and never a pattern; each is
+/// parsed as an [`ActionGrant`], so `*`, `process.*` and a risk class are refused rather than
+/// stored. `observe` and `label` change only what they name; a field left `None` is left alone,
+/// so `--allow` preserves observe state as §9.7 requires.
+///
+/// # Errors
+///
+/// `resolve.target_not_found` when the client is not authorized, the grant refusal when an
+/// allowlist entry is not a capability id, and an I/O error when the store cannot be written.
+pub fn set_client_key(
+    sources: &crate::hosts::HostSources,
+    fingerprint: &str,
+    allow: Option<&str>,
+    observe: Option<bool>,
+    label: Option<&str>,
+) -> Result<bool, ErrorValue> {
+    let fingerprint: Fingerprint = fingerprint.parse()?;
+    let store = open_authorized_clients(sources)?;
+    let Some(existing) = store.client(fingerprint) else {
+        return Err(unauthorized_client(fingerprint));
+    };
+    let mut entry = existing.clone();
+    if let Some(allow) = allow {
+        let mut granted = Vec::new();
+        for id in allow.split(',').map(str::trim).filter(|id| !id.is_empty()) {
+            granted.push(id.parse::<ActionGrant>()?);
+        }
+        entry = entry.with_actions(granted);
+    }
+    if let Some(observe) = observe {
+        entry = entry.with_observe(observe);
+    }
+    if let Some(label) = label {
+        entry = entry.with_label(label);
+    }
+    if &entry == existing {
+        return Ok(false);
+    }
+    let entries: Vec<AuthorizedClient> = store
+        .entries()
+        .iter()
+        .map(|candidate| {
+            if candidate.fingerprint() == fingerprint {
+                entry.clone()
+            } else {
+                candidate.clone()
+            }
+        })
+        .collect();
+    persist_authorized(sources, &entries)?;
+    Ok(true)
+}
+
+/// Revokes a client, so its next connection is refused (§9.7, §12.5).
+///
+/// # Errors
+///
+/// `resolve.target_not_found` when the client is not authorized, and an I/O error when the store
+/// cannot be written.
+pub fn revoke_client(
+    sources: &crate::hosts::HostSources,
+    fingerprint: &str,
+) -> Result<(), ErrorValue> {
+    let fingerprint: Fingerprint = fingerprint.parse()?;
+    let store = open_authorized_clients(sources)?;
+    if store.client(fingerprint).is_none() {
+        return Err(unauthorized_client(fingerprint));
+    }
+    let entries: Vec<AuthorizedClient> = store
+        .entries()
+        .iter()
+        .filter(|entry| entry.fingerprint() != fingerprint)
+        .cloned()
+        .collect();
+    persist_authorized(sources, &entries)
+}
+
+fn unauthorized_client(fingerprint: Fingerprint) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::ResolveTargetNotFound,
+        format!("{fingerprint} is not an authorized client of this machine"),
+    )
+    .with_help("`get client-key` lists the clients this machine authorizes")
+}
+
+fn persist_authorized(
+    sources: &crate::hosts::HostSources,
+    entries: &[AuthorizedClient],
+) -> Result<(), ErrorValue> {
+    let Some(path) = authorized_clients_path(sources) else {
+        return Err(ErrorValue::new(
+            ErrorCode::IoNotFound,
+            "this account has no configuration directory to keep an authorization store in",
+        )
+        .with_help(
+            "a listening agent decides who it serves from `~/.config/ono/authorized_clients` \
+             (v0.4.1 section 9.2). Set `HOME`, `XDG_CONFIG_HOME` or `ONO_CONFIG_DIR` so there is \
+             somewhere to keep one.",
+        ));
+    };
+    ono_protocol::write_store(&path, entries)
 }

@@ -27,6 +27,7 @@
 
 mod agent;
 mod agentless;
+mod audit;
 mod client;
 mod identity;
 mod retag;
@@ -38,6 +39,7 @@ pub use agentless::{
     AGENTLESS_PROVIDER, AgentlessLink, AgentlessProvider, FarSide, LocalFarSide, SshFarSide,
     far_side_lacks_agent,
 };
+pub use audit::StderrAudit;
 pub use client::{RemoteLink, RemoteProvider};
 pub use identity::PeerIdentity;
 pub use retag::retag_value;

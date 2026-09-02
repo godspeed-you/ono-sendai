@@ -1,0 +1,62 @@
+# v0.4.1 §9.7, §14.3 and §19.1. The four verbs an operator manages authorization with, and the
+# words a link is described in. §9.7 requires the user-facing concept to stay "authorized client
+# key" rather than a vague ACL blob, so every answer here is an object with named fields; §14.3
+# requires that `authenticated`, `authorized`, `pinned` and self-reported identity not be
+# conflated, so the link row shows four of them separately (ADR-0468, ADR-0475).
+case: client keys are managed with the ordinary verbs, and a link says which trust word it means
+timeout: 180
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+  CLIENT=$(ono --print-peer-key)
+
+  echo "== nothing is authorized to begin with =="
+  ono -c 'get client-key | to json'
+
+  echo "== add grants observation, and says where it wrote it =="
+  ono -c "add client-key $CLIENT --label deploy | select status changed | to json"
+  ono -c 'get client-key | select label observe actions | to json'
+  ono -c 'get client-key | select path | to json' | grep -o 'authorized_clients'
+
+  echo "== set changes exactly what it names =="
+  ono -c "set client-key $CLIENT --allow service.manage | select changed | to json"
+  ono -c 'get client-key | select observe actions | to json'
+  ono -c "set client-key $CLIENT --observe false | select changed | to json"
+  ono -c 'get client-key | select observe actions | to json'
+  ono -c "set client-key $CLIENT --observe true | select changed" > /dev/null
+
+  echo "== the four commands are in the registry, so help and completion find them =="
+  ono -c 'get command | where target == "client-key" | select id | to json'
+
+  echo "== a link says what it proved, what policy allowed, what was pinned and what was claimed =="
+  ono --agent --listen 127.0.0.1:7738 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/agent.log" && break; sleep 0.2; done
+  HOSTKEY=$(sed -n 's/.*host key //p' "$HOME/agent.log" | head -1)
+  ono -c "add host-key 127.0.0.1 --fingerprint $HOSTKEY | select status" > /dev/null
+  ono -c 'link host 127.0.0.1:7738 --transport tcp; get link | select authenticated authorized transport_trust runtime_user | to json' | tail -1
+
+  echo "== a link over a transport that proves nothing says so, and claims nothing =="
+  ono -c 'link host here --transport local; get link | select authenticated authorized transport_trust | to json' | tail -1
+
+  echo "== remove revokes, and the next connection is refused =="
+  ono -c "remove client-key $CLIENT | select status | to json"
+  ono -c 'try { link host 127.0.0.1:7738 --transport tcp } catch e { $e | select code name | to json }'
+  ono -c 'get client-key | to json'
+  kill "$AGENT" 2>/dev/null || true
+exit: 0
+stdout-contains: [{"status":"success","changed":true}]
+stdout-contains: [{"label":"deploy","observe":true,"actions":[]}]
+stdout-contains: authorized_clients
+stdout-contains: [{"observe":true,"actions":["service.manage"]}]
+stdout-contains: [{"observe":false,"actions":["service.manage"]}]
+stdout-contains: "ono.client-key.get"
+stdout-contains: "ono.client-key.add"
+stdout-contains: "ono.client-key.set"
+stdout-contains: "ono.client-key.remove"
+stdout-contains: "authenticated":true,"authorized":true,"transport_trust":"pinned"
+stdout-contains: "authenticated":false,"authorized":null,"transport_trust":"unauthenticated"
+stdout-contains: "code":"Ono-Sendai-E1202"
+stdout-not-contains: panicked

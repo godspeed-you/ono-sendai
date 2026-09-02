@@ -1,0 +1,64 @@
+# v0.4.1 §10.2 and §65.3. "Negotiation filtering is not sufficient by itself. Every
+# provider/adapter/action dispatch path MUST also validate that the operation is permitted by the
+# established peer authorization context." §65.3 names the failure mode: "hiding a capability in
+# `Accept` but still executing a forged request for it is forbidden."
+#
+# The offer an observer negotiates carries no action capability at all (case 183), so every
+# mutation here is a request for something the contract never mentioned. §20 sets the bar: a
+# security control is accepted only when an automated *negative* test proves the refusal.
+#
+# The same case drives §14.1's audit events, because a refusal an operator cannot see is a
+# refusal nobody can act on (ADR-0474).
+case: a request for a capability the offer omitted is refused at dispatch, and recorded
+timeout: 180
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+  STRANGER=$(mktemp -d)
+  export STRANGER
+
+  CLIENT=$(ono --print-peer-key)
+  UNKNOWN=$(ONO_CONFIG_DIR=$STRANGER ono --print-peer-key)
+
+  ono --agent --listen 127.0.0.1:7737 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/agent.log" && break; sleep 0.2; done
+  HOSTKEY=$(sed -n 's/.*host key //p' "$HOME/agent.log" | head -1)
+  ono -c "add host-key 127.0.0.1 --fingerprint $HOSTKEY | select status" > /dev/null
+  ONO_CONFIG_DIR=$STRANGER ono -c "add host-key 127.0.0.1 --fingerprint $HOSTKEY | select status" > /dev/null
+  ono -c "add client-key $CLIENT --label observer | select status" > /dev/null
+
+  echo "== an unlisted client is recorded and refused =="
+  ONO_CONFIG_DIR=$STRANGER ono -c 'try { link host 127.0.0.1:7737 --transport tcp } catch e { $e | select code | to json }'
+
+  echo "== the observer reads =="
+  ono -c 'link host 127.0.0.1:7737 --transport tcp; enter link 127.0.0.1:7737; get process | count | to json' | tail -1
+
+  echo "== and a mutation over the link is refused, on both halves of the check =="
+  # §10.1 first: the capability is absent from the contract this client negotiated, so the
+  # command is not even bound over the link. §10.2 second: the dispatch path refuses a request
+  # for it in any case, which `crates/ono-protocol/tests/authorization.rs` proves against a
+  # forged request no shell will send (§20's negative test).
+  ono -c 'link host 127.0.0.1:7737 --transport tcp; enter link 127.0.0.1:7737; try { signal process 1 --signal TERM } catch e { $e | select kind | to json }' | tail -1
+
+  echo "== process 1 is still there, so nothing ran =="
+  ono -c 'get process 1 | select pid | to json'
+
+  sleep 1
+  echo "== the agent wrote down what it decided =="
+  grep -c 'ono-audit ' "$HOME/agent.log"
+  grep 'event=connection.unknown_client_refused' "$HOME/agent.log" | head -1
+  grep 'event=connection.accepted' "$HOME/agent.log" | head -1
+  kill "$AGENT" 2>/dev/null || true
+exit: 0
+stdout-contains: "code":"Ono-Sendai-E1202"
+stdout-contains: [{"pid":1}]
+stdout-contains: error_code=remote.unauthorized
+stdout-contains: event=connection.accepted
+stdout-contains: source_address=127.0.0.1:
+stdout-contains: result=allowed
+stdout-not-contains: PRIVATE KEY
+stdout-not-contains: "status":"success","changed":true,"message":"signalled
+stdout-not-contains: panicked

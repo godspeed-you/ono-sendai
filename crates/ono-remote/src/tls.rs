@@ -280,6 +280,20 @@ fn proved_key(certificates: Option<&[CertificateDer<'static>]>) -> Option<HostKe
 pub struct TlsTransport<S> {
     stream: S,
     peer_key: Option<HostKey>,
+    peer_address: Option<SocketAddr>,
+}
+
+impl<S> TlsTransport<S> {
+    /// Where the peer connected from, for the `source_address` an audit event carries
+    /// (v0.4.1 §14.2).
+    ///
+    /// Reported by the socket, not claimed by the peer — and still not an identity: §65.2
+    /// forbids granting anything on the strength of a source address. It is there so an
+    /// operator reading an audit trail can correlate, and for nothing else.
+    #[must_use]
+    pub const fn peer_address(&self) -> Option<SocketAddr> {
+        self.peer_address
+    }
 }
 
 impl<S: AsyncRead + AsyncWrite + Send + Unpin + 'static + std::fmt::Debug> Transport
@@ -381,7 +395,12 @@ pub async fn connect(
         ));
     }
     let peer_key = proved_key(stream.get_ref().1.peer_certificates());
-    Ok(TlsTransport { stream, peer_key })
+    let peer_address = stream.get_ref().0.peer_addr().ok();
+    Ok(TlsTransport {
+        stream,
+        peer_key,
+        peer_address,
+    })
 }
 
 /// An agent's listening socket: one TLS 1.3 endpoint presenting this host's identity.
@@ -471,7 +490,11 @@ impl TlsListener {
         // handshake's transcript with the key inside it (v0.4.1 §7.1). That is what the peer key
         // is: something this process verified, not something the peer said about itself.
         let peer_key = proved_key(stream.get_ref().1.peer_certificates());
-        Ok(TlsTransport { stream, peer_key })
+        Ok(TlsTransport {
+            stream,
+            peer_key,
+            peer_address: Some(from),
+        })
     }
 }
 

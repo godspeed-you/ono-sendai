@@ -4692,6 +4692,129 @@ Forget a pinned host key, so the host must be trusted again deliberately.
 remove host-key prod-db
 ```
 
+### `get client-key`
+
+List the client keys this machine authorizes, and what each may do.
+
+| | |
+|---|---|
+| id | `ono.client-key.get` |
+| stability | experimental |
+| phase | H |
+| input | `null` |
+| output | `stream<ono.client-key/1>` |
+| provider capability | `host.list` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `fingerprint` | `string` | Show the grant for one client key. |
+
+**Examples**
+
+```text
+get client-key
+```
+
+### `add client-key`
+
+Authorize a client key to observe this machine, and nothing else.
+
+| | |
+|---|---|
+| id | `ono.client-key.add` |
+| stability | experimental |
+| phase | H |
+| input | `null` |
+| output | `ono.action-result/1` |
+| provider capability | `host.trust` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `fingerprint` | `string` | The full `sha256:` fingerprint of the client's key. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--label` | `string` | A name for the client, for your own reading and the audit trail. |
+
+**Examples**
+
+```text
+add client-key sha256:1f0c --label deploy
+```
+
+### `set client-key`
+
+Change what an authorized client key may do, by exact capability id.
+
+| | |
+|---|---|
+| id | `ono.client-key.set` |
+| stability | experimental |
+| phase | H |
+| input | `null | stream<ono.client-key/1>` |
+| output | `stream<ono.action-result/1>` |
+| provider capability | `host.trust` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `fingerprint` | `string` | The client key to change. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--allow` | `string` | Replace the action allowlist with these exact capability ids, comma-separated and quoted where there is more than one. Not a pattern and never `*`. |
+| `--observe` | `bool` | Whether the client may run queries and subscriptions. |
+| `--label` | `string` | Rename the client. |
+
+**Examples**
+
+```text
+set client-key sha256:1f0c --allow service.manage
+set client-key sha256:1f0c --observe false
+```
+
+### `remove client-key`
+
+Revoke a client key, so its next connection is refused.
+
+| | |
+|---|---|
+| id | `ono.client-key.remove` |
+| stability | experimental |
+| phase | H |
+| input | `null | stream<ono.client-key/1>` |
+| output | `stream<ono.action-result/1>` |
+| provider capability | `host.trust` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `fingerprint` | `string` | The client key to revoke. |
+
+**Examples**
+
+```text
+remove client-key sha256:1f0c
+```
+
 ## service
 
 ### `get service`

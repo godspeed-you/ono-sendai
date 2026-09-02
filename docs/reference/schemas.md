@@ -181,6 +181,22 @@ Default view: `window`, `state`, `source`
 | `source` | `string` | — | nullable | What the changes were observed through — an event stream or a snapshot comparison (§25.4). |
 | `entries` | `list<record>` | — | required | The changes themselves, each carrying the object it happened to and when it was observed. |
 
+## ClientKey — `ono.client-key/1`
+
+One client key this machine authorizes, and what it is authorized to do.
+
+Identity: `fingerprint`
+
+Default view: `fingerprint`, `label`, `observe`, `actions`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `fingerprint` | `string` | — | required | The full SHA-256 fingerprint of the client's key, `sha256:` and 64 hex digits. Never truncated: a shortened fingerprint is one an impersonator can search for a collision against. §53.3 makes a fingerprint public identity material that MAY be shown in full. |
+| `label` | `string` | — | nullable | What the operator called this client, for their own reading and for the audit trail. Null when they named it nothing; a label is a convenience and never part of the decision. |
+| `observe` | `bool` | — | required | Whether the client may run queries and subscriptions — the default grant of §9.4, which `add client-key` gives and nothing else. False means listed and permitted nothing. |
+| `actions` | `list<string>` | — | required | The exact provider capability ids the client may act with (§9.5). Empty for an observe-only client, which is what adding one produces. Every entry is one capability from docs/spec/capabilities.yaml; there is no wildcard, no prefix and no risk class, so a capability introduced in a later version stays denied until someone grants it by name. |
+| `path` | `path` | — | nullable | The `authorized_clients` file the grant is recorded in (§9.2); null when the session has no configuration directory and therefore keeps no store. |
+
 ## Command — `ono.command/1`
 
 One command of the registry, or what a head word resolves to.
@@ -865,6 +881,8 @@ Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 | `providers` | `list<string>` | — | nullable | The ids of the providers the remote offers (spec §21.2), which keep their ids across the link (ADR-0036); null until the handshake settled them. |
 | `transport_fingerprint` | `string` | — | nullable | The `sha256:` fingerprint of the key the far side proved it holds, during this link's own handshake (v0.4.1 §7.3). Null where the transport authenticated nobody to this process — `ssh`, where OpenSSH did the authenticating in its own `known_hosts` and will not say which key it accepted (§4.3), and `local`, where the far side is this shell's own child. Null is the honest answer there and not a missing value. |
 | `transport_trust` | `enum` | — | nullable | What the trust store concluded about that key (v0.4.1 §7.3): `pinned` for a key already recorded for this host, `newly_pinned` for one recorded on first contact, and `unauthenticated` for a transport that proved nothing and a policy that said so by name. Null until a handshake settled it. |
+| `authenticated` | `bool` | — | nullable | Whether *this process* verified the far side's key during this link's own handshake (v0.4.1 §19.1: "authenticated — cryptographic peer proof was verified"). True exactly where `transport_fingerprint` names a key. False over `ssh` and `local`, where something else did the authenticating and §4.3 requires the link to say so rather than borrow it. Not the same question as `transport_trust`, which says what was *decided* about that key. |
+| `authorized` | `bool` | — | nullable | Whether the far side's own policy admitted this connection (v0.4.1 §19.1: "authorized — authenticated principal is permitted by policy"). True for an established direct link, where the agent resolved its `authorized_clients` store for this client before it negotiated anything (§9.4, §10.1). Null where no policy this process can see decided — `ssh` and `local`, where the carrier decided — and null for a link that was never established. A client the agent refuses never becomes a row: the refusal is `remote.unauthorized` (E1202), which is where an unauthorized authenticated peer is seen. |
 | `runtime_user` | `string` | — | nullable | The user the far side reports it is running as. v0.4.1 §7.3: "the runtime identity is useful context but MUST NOT grant authority" — it is what the peer said about itself, and `transport_fingerprint` is what it proved. |
 | `runtime_uid` | `int` | — | nullable | The numeric user id the far side reports, where it reports one. Context, not authority. |
 | `runtime_elevated` | `bool` | — | nullable | Whether the far side reports it is running with elevated privilege (spec §17.2). Self- reported, and §2.1 forbids it from satisfying the word authenticated. |

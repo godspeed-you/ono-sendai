@@ -42,6 +42,7 @@ const ALL_TARGETS: &[&str] = &[
     "link",
     "host",
     "host-key",
+    "client-key",
     "plugin",
     "capability",
     "audit",
@@ -55,7 +56,7 @@ const ALL_TARGETS: &[&str] = &[
 /// A package loaded on the far side is a fact about the far side and stays remote; the links
 /// this session holds, the jobs it started and the hosts it knows are not.
 /// The targets the shell answers about itself: session facts, not observations of a machine.
-pub const SESSION_TARGETS: &[&str] = &["job", "link", "host", "host-key"];
+pub const SESSION_TARGETS: &[&str] = &["job", "link", "host", "host-key", "client-key"];
 
 /// One job as the session publishes it — the fields of `ono.job/1`, before they are a record.
 #[derive(Debug, Clone, PartialEq)]
@@ -186,6 +187,7 @@ impl SessionProvider {
             "link" => Ok((self.links()?, Vec::new())),
             "host" => self.hosts(None),
             "host-key" => Ok((self.host_keys()?, Vec::new())),
+            "client-key" => Ok((self.client_keys()?, Vec::new())),
             "plugin" => {
                 let (records, mut failures) = self.lock().kuang.plugin_records()?;
                 // A declaration the shell refused to register must not be a command that is
@@ -473,6 +475,16 @@ impl SessionProvider {
             .collect()
     }
 
+    /// The clients this machine authorizes, in the order the store's file records them
+    /// (v0.4.1 §9.2, §9.7).
+    fn client_keys(&self) -> Result<Vec<RecordValue>, ErrorValue> {
+        let schema = Self::schema("ono.client-key")?;
+        crate::trust::client_key_rows(&self.sources)?
+            .iter()
+            .map(|row| client_key_record(row, &schema))
+            .collect()
+    }
+
     /// The host records: every source's entries, one record per name, in the order the
     /// sources are consulted — the shell's own file, the OpenSSH configuration, the links held.
     /// A source that cannot be read is reported on the stream's failure channel and the other
@@ -692,6 +704,43 @@ fn host_key_record(
     .build())
 }
 
+/// One authorized client key as an `ono.client-key/1` record (ADR-0468).
+///
+/// # Errors
+///
+/// `provider.schema_violation` when the contract that defines the schema is missing.
+pub fn client_key_value(row: &crate::trust::ClientKeyRow) -> Result<Value, ErrorValue> {
+    let schema = SessionProvider::schema("ono.client-key")?;
+    client_key_record(row, &schema).map(RecordValue::into_value)
+}
+
+fn client_key_record(
+    row: &crate::trust::ClientKeyRow,
+    schema: &Arc<Schema>,
+) -> Result<RecordValue, ErrorValue> {
+    Ok(RecordValue::builder(
+        Arc::clone(schema),
+        Provenance::local(PROVIDER_ID, schema.id().clone()),
+    )
+    .set("fingerprint", Value::string(&row.fingerprint))?
+    .set(
+        "label",
+        row.label.as_deref().map_or(Value::Null, Value::string),
+    )?
+    .set("observe", Value::Bool(row.observe))?
+    .set(
+        "actions",
+        Value::list(row.actions.iter().map(|id| Value::string(id))),
+    )?
+    .set(
+        "path",
+        row.path
+            .as_ref()
+            .map_or(Value::Null, |path| Value::Path(path.as_path().into())),
+    )?
+    .build())
+}
+
 fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, ErrorValue> {
     let strings = |items: &[String]| Value::list(items.iter().map(|item| Value::string(item)));
     Ok(RecordValue::builder(
@@ -728,6 +777,27 @@ fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, Erro
     .set(
         "transport_trust",
         link.transport_trust.map_or(Value::Null, Value::string),
+    )?
+    // v0.4.1 §19.1's four words, kept four fields apart (§14.3). `authenticated` is whether
+    // *this* process verified a key; `authorized` is whether the far side's policy admitted the
+    // connection; `transport_trust` is what was decided about the key; `runtime_*` is what the
+    // peer said about itself. Conflating any two of them is what §65.1 and §65.2 forbid.
+    .set(
+        "authenticated",
+        Value::Bool(link.transport_fingerprint.is_some()),
+    )?
+    .set(
+        "authorized",
+        if link.state == "connected" && link.transport == "tcp" {
+            // The agent resolved its `authorized_clients` store for this client before it
+            // negotiated anything (§9.4, §10.1), so an established direct link is one the far
+            // side's policy admitted. A client it refuses never becomes a row.
+            Value::Bool(true)
+        } else {
+            // No policy this process can see decided: `ssh` and `local` are carried, and a
+            // definition was never established. §2.6 keeps unknown unknown.
+            Value::Null
+        },
     )?
     .set(
         "runtime_user",
@@ -818,24 +888,30 @@ impl Provider for SessionProvider {
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
-        ["ono.job", "ono.link", "ono.host", "ono.host-key"]
+        [
+            "ono.job",
+            "ono.link",
+            "ono.host",
+            "ono.host-key",
+            "ono.client-key",
+        ]
+        .into_iter()
+        .filter_map(|name| Self::schema(name).ok())
+        .chain(
+            [
+                "ono.plugin",
+                "ono.plugin-package",
+                "ono.plugin-inspection",
+                "ono.capability-grant",
+                "ono.plugin-audit-event",
+                "ono.assistant",
+                "ono.model-provider",
+                "ono.finding",
+            ]
             .into_iter()
-            .filter_map(|name| Self::schema(name).ok())
-            .chain(
-                [
-                    "ono.plugin",
-                    "ono.plugin-package",
-                    "ono.plugin-inspection",
-                    "ono.capability-grant",
-                    "ono.plugin-audit-event",
-                    "ono.assistant",
-                    "ono.model-provider",
-                    "ono.finding",
-                ]
-                .into_iter()
-                .filter_map(|name| crate::kuang_host::schema(name).ok()),
-            )
-            .collect()
+            .filter_map(|name| crate::kuang_host::schema(name).ok()),
+        )
+        .collect()
     }
 
     fn capabilities(&self) -> Vec<Capability> {

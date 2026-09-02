@@ -20,8 +20,9 @@ use std::time::Duration;
 
 use ono_core::ErrorCode;
 use ono_protocol::{
-    ActRequest, ClientConfig, HostKey, Identity, ProviderDescriptor, RemoteQuery, RemoteService,
-    ServerConfig, StreamResponder, TrustPolicy, TrustStore, UnauthenticatedTransport, serve,
+    ActRequest, ClientConfig, HostKey, Identity, PeerAuthorization, ProviderDescriptor,
+    RemoteQuery, RemoteService, ServerConfig, StreamResponder, TrustPolicy, TrustStore,
+    UnauthenticatedTransport, serve,
 };
 use ono_provider_api::{ActionOutcome, Capability, ObjectEvent, Risk};
 use ono_value::{
@@ -131,6 +132,16 @@ pub fn server_key() -> HostKey {
     HostKey::new("ed25519", *b"the-fixture-server-public-key---")
 }
 
+/// The key the fixture client proves it holds when the listening side demands one (§7.1).
+pub fn client_key() -> HostKey {
+    HostKey::new("ed25519", *b"the-fixture-client-public-key---")
+}
+
+/// A second client, authenticated exactly as well and authorized not at all (§59.1).
+pub fn other_client_key() -> HostKey {
+    HostKey::new("ed25519", *b"a-second-fixture-client-pub-key-")
+}
+
 /// A different key, standing in for the impersonator of ADR-0015 T5/T6.
 pub fn impostor_key() -> HostKey {
     HostKey::new("ed25519", *b"a-completely-different-public-ky")
@@ -201,12 +212,29 @@ impl Observed {
 #[derive(Debug, Default)]
 pub struct DemoService {
     observed: Arc<Observed>,
+    /// What an action on `(target, operation)` needs to be allowed to do, as the serving side
+    /// declares it — the fixture's stand-in for the CLI's command registry.
+    capabilities: Vec<(String, String, String)>,
 }
 
 impl DemoService {
     /// A service reporting what it did into `observed`.
     pub fn new(observed: Arc<Observed>) -> Self {
-        Self { observed }
+        Self {
+            observed,
+            capabilities: vec![
+                (
+                    "process".to_owned(),
+                    "stop".to_owned(),
+                    "process.signal".to_owned(),
+                ),
+                (
+                    "service".to_owned(),
+                    "restart".to_owned(),
+                    "service.manage".to_owned(),
+                ),
+            ],
+        }
     }
 }
 
@@ -214,9 +242,11 @@ impl DemoService {
 impl RemoteService for DemoService {
     async fn query(
         &self,
+        peer: &PeerAuthorization,
         query: RemoteQuery,
         responder: &StreamResponder,
     ) -> Result<(), ErrorValue> {
+        peer.require_observe(query.target_name())?;
         let base = match query.option_value("base") {
             Some(Value::Int(base)) => *base,
             _ => 0,
@@ -273,9 +303,11 @@ impl RemoteService for DemoService {
 
     async fn subscribe(
         &self,
+        peer: &PeerAuthorization,
         _query: RemoteQuery,
         responder: &StreamResponder,
     ) -> Result<(), ErrorValue> {
+        peer.require_observe("subscription")?;
         let _ = responder
             .send_event(ObjectEvent::snapshot(&remote_record(4419, "nginx")).with_sequence(1))
             .await;
@@ -285,7 +317,22 @@ impl RemoteService for DemoService {
         Ok(())
     }
 
-    async fn act(&self, action: ActRequest) -> Result<ActionOutcome, ErrorValue> {
+    async fn act(
+        &self,
+        peer: &PeerAuthorization,
+        action: ActRequest,
+    ) -> Result<ActionOutcome, ErrorValue> {
+        if matches!(peer, PeerAuthorization::Policy(_)) {
+            peer.require_action(
+                self.capabilities
+                    .iter()
+                    .find(|(target, operation, _)| {
+                        target == action.target_name() && operation == action.operation()
+                    })
+                    .map(|(_, _, capability)| capability.as_str()),
+                action.operation(),
+            )?;
+        }
         let request = action.to_action();
         Ok(ActionOutcome::succeeded(&request, true))
     }
@@ -299,6 +346,36 @@ pub struct Fixture {
     pub observed: Arc<Observed>,
     /// The task running the remote end.
     pub server: tokio::task::JoinHandle<Result<(), ErrorValue>>,
+}
+
+/// Connects a client whose transport proves `proves` to the *server*, which is what a listening
+/// agent's TLS layer reports and what an authorization policy is resolved from.
+///
+/// The mirror of `presents` in [`try_connect`]: one says what the client verified about the
+/// server, the other what the server verified about the client. §7.1's symmetry, as a fixture.
+pub async fn try_connect_proving(
+    client: ClientConfig,
+    server: ServerConfig,
+    proves: Option<HostKey>,
+) -> Result<Fixture, ErrorValue> {
+    let (near, far) = tokio::io::duplex(16 * 1024);
+    let observed = Arc::new(Observed::default());
+    let service = DemoService::new(Arc::clone(&observed));
+    let mut listening = UnauthenticatedTransport::new(far);
+    if let Some(key) = proves {
+        listening = listening.with_peer_key(key);
+    }
+    let handle = tokio::spawn(async move { serve(listening, server, service).await });
+    let link = within(ono_protocol::Link::connect(
+        UnauthenticatedTransport::new(near),
+        client,
+    ))
+    .await?;
+    Ok(Fixture {
+        link,
+        observed,
+        server: handle,
+    })
 }
 
 /// Connects a client to the fixture service over an in-memory duplex.

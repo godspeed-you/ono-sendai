@@ -476,6 +476,40 @@ errors:
       stage requires finite input, or its budget admits nothing at all (v0.4.1 §22.2, §22.3).
       Bound the upstream before the stage that needs it whole.
 
+  # --- server-side client authorization (v0.4.1 §9, §10.4, §53.1, ADR-0466) ----------------
+  - code: Ono-Sendai-E1201
+    name: remote.unauthenticated
+    kind: safety
+    summary: The connecting client proved possession of no key, so there is no identity to authorize.
+    help: >-
+      A direct link is mutually authenticated (v0.4.1 section 7.1). The listening agent has no
+      mode that accepts a client without a certificate, and authorization cannot begin without an
+      authenticated identity (section 2.2). Connect with an `ono` that presents a peer identity.
+  - code: Ono-Sendai-E1202
+    name: remote.unauthorized
+    kind: safety
+    summary: The client is authenticated but is not listed in the agent's authorization store.
+    help: >-
+      Holding a private key proves who you are, never that the operator wants you here (v0.4.1
+      section 9.1). On the agent's host, `add client-key <fingerprint>` authorizes the client to
+      observe; the diagnostic carries the fingerprint to add and whether a store exists at all.
+  - code: Ono-Sendai-E1203
+    name: remote.capability_denied
+    kind: safety
+    summary: The client is authorized, but not for the capability this request needs.
+    help: >-
+      Grants name exact capability ids and never patterns (v0.4.1 section 9.5). The metadata says
+      whether observe access is off or the action capability is absent; `set client-key
+      <fingerprint> --allow <capability>` on the agent's host grants exactly the one named.
+  - code: Ono-Sendai-E1204
+    name: remote.authorization_store_invalid
+    kind: safety
+    summary: The authorization store could not be loaded, so nothing is authorized.
+    help: >-
+      A malformed store is never read as an empty one and never falls back to permissive access
+      (v0.4.1 section 9.2, section 59.5). The diagnostic names the file and the line; repair that
+      line, or remove the file to authorize nobody deliberately.
+
   # --- KUANG/11, spec §31.79 (folded into the global model by ADR-0108) ---------------------
   - code: Ono-Sendai-K11001
     name: package.invalid

@@ -40,6 +40,12 @@ pub enum Request {
     SetHostKey,
     /// `remove host-key <host>` — forget a pin.
     RemoveHostKey,
+    /// `add client-key <fingerprint> [--label n]` — authorize a client to observe (§9.4).
+    AddClientKey,
+    /// `set client-key <fingerprint> --allow/--observe/--label` — change what it may do (§9.5).
+    SetClientKey,
+    /// `remove client-key <fingerprint>` — revoke a client.
+    RemoveClientKey,
 }
 
 impl Request {
@@ -55,6 +61,9 @@ impl Request {
             Self::AddHostKey => "add",
             Self::SetHostKey => "set",
             Self::RemoveHostKey => "remove",
+            Self::AddClientKey => "add",
+            Self::SetClientKey => "set",
+            Self::RemoveClientKey => "remove",
         }
     }
 
@@ -62,6 +71,7 @@ impl Request {
         match self {
             Self::ConnectHost | Self::TestHost => "host",
             Self::AddHostKey | Self::SetHostKey | Self::RemoveHostKey => "host-key",
+            Self::AddClientKey | Self::SetClientKey | Self::RemoveClientKey => "client-key",
             _ => "link",
         }
     }
@@ -70,6 +80,7 @@ impl Request {
     fn subject(self) -> &'static str {
         match self {
             Self::AddHostKey | Self::SetHostKey | Self::RemoveHostKey => "ono.host-key",
+            Self::AddClientKey | Self::SetClientKey | Self::RemoveClientKey => "ono.client-key",
             _ => "ono.link",
         }
     }
@@ -78,6 +89,7 @@ impl Request {
     fn identity_field(self) -> &'static str {
         match self {
             Self::AddHostKey | Self::SetHostKey | Self::RemoveHostKey => "host",
+            Self::AddClientKey | Self::SetClientKey | Self::RemoveClientKey => "fingerprint",
             _ => "name",
         }
     }
@@ -94,6 +106,9 @@ impl Request {
             Self::AddHostKey => "ono.host-key.add",
             Self::SetHostKey => "ono.host-key.set",
             Self::RemoveHostKey => "ono.host-key.remove",
+            Self::AddClientKey => "ono.client-key.add",
+            Self::SetClientKey => "ono.client-key.set",
+            Self::RemoveClientKey => "ono.client-key.remove",
         }
     }
 }
@@ -124,6 +139,9 @@ pub fn claims(stage: &Stage) -> Option<Request> {
         ("add", Some("host-key")) => Some(Request::AddHostKey),
         ("set", Some("host-key")) => Some(Request::SetHostKey),
         ("remove", Some("host-key")) => Some(Request::RemoveHostKey),
+        ("add", Some("client-key")) => Some(Request::AddClientKey),
+        ("set", Some("client-key")) => Some(Request::SetClientKey),
+        ("remove", Some("client-key")) => Some(Request::RemoveClientKey),
         _ => None,
     }
 }
@@ -170,7 +188,11 @@ pub fn answer_piped(
     let spelling = format!("{} {}", request.verb(), request.target());
     if matches!(
         request,
-        Request::AddLink | Request::ConnectHost | Request::TestHost | Request::AddHostKey
+        Request::AddLink
+            | Request::ConnectHost
+            | Request::TestHost
+            | Request::AddHostKey
+            | Request::AddClientKey
     ) {
         return Err(Flow::Failed(no_stream_input(&spelling, request.target())));
     }
@@ -349,6 +371,46 @@ fn act(
             (
                 true,
                 format!("{name} is no longer trusted; it must be pinned again deliberately"),
+            )
+        }
+        // v0.4.1 §9.4: adding a client grants observation and nothing else. There is no option
+        // here that grants an action, because an action is granted by naming it (§9.5).
+        Request::AddClientKey => {
+            crate::trust::authorize_client(
+                &session.host_sources(),
+                name,
+                option("label").as_deref(),
+            )
+            .map_err(Flow::Failed)?;
+            (
+                true,
+                format!("{name} may observe this machine, and nothing else"),
+            )
+        }
+        Request::SetClientKey => {
+            let observe = bound
+                .option("observe")
+                .and_then(|value| value.as_bool().ok());
+            let changed = crate::trust::set_client_key(
+                &session.host_sources(),
+                name,
+                option("allow").as_deref(),
+                observe,
+                option("label").as_deref(),
+            )
+            .map_err(Flow::Failed)?;
+            let message = if changed {
+                format!("{name} now has exactly the grants named")
+            } else {
+                format!("{name} already had these grants")
+            };
+            (changed, message)
+        }
+        Request::RemoveClientKey => {
+            crate::trust::revoke_client(&session.host_sources(), name).map_err(Flow::Failed)?;
+            (
+                true,
+                format!("{name} is revoked; its next connection is refused"),
             )
         }
     };

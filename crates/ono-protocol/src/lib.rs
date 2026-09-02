@@ -54,6 +54,8 @@
 
 #![forbid(unsafe_code)]
 
+mod audit;
+mod authorization;
 mod connection;
 mod error;
 mod frame;
@@ -66,6 +68,11 @@ mod trust;
 
 pub mod transport;
 
+pub use audit::{Audit, AuditEvent, AuditKind, AuditSink, NoAudit};
+pub use authorization::{
+    ActionGrant, AuthorizationContext, AuthorizedClient, AuthorizedClients, PeerAuthorization,
+    refusal_guidance, unauthenticated_refusal, write_store,
+};
 pub use error::ProtocolError;
 pub use frame::{FRAME_HEADER_LEN, FRAME_VERSION, Frame, FrameKind, decode, encode};
 pub use handshake::{
@@ -77,6 +84,6 @@ pub use limits::{
 };
 pub use link::{ClientConfig, Link, RemoteMessage, RemoteStream};
 pub use message::{ActRequest, AdaptRequest, Message, RemoteQuery, decode_message, encode_message};
-pub use service::{RemoteService, ServerConfig, StreamResponder, serve};
+pub use service::{RemoteService, ServerAuthorization, ServerConfig, StreamResponder, serve};
 pub use transport::{Transport, UnauthenticatedTransport};
 pub use trust::{Fingerprint, HostKey, TrustDecision, TrustEntry, TrustPolicy, TrustStore};
