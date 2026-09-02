@@ -20,33 +20,42 @@ case: a materializer is bounded in values and in bytes, and refuses with a stabl
 timeout: 120
 env: NO_COLOR=1
 run: |
+  # The case builds the collection it bounds. `get process` reads the host, and the container is
+  # an unprivileged user with two or three processes — so the item ceiling of 2 was crossed on a
+  # developer machine and not in the container, and `"consumed":3` was a coincidence rather than
+  # a fact. Three files the case creates itself are three values on every host.
+  pop="$HOME/case-190-pop"
+  rm -rf "$pop" && mkdir -p "$pop"
+  for name in one two three; do head -c 4096 /dev/zero | tr '\0' 'x' > "$pop/$name"; done
+  ono -c "get file $pop/* | count | to json"
+
   echo "== 60.4: the item ceiling stops a global collection =="
-  ono -c 'set config limits.materialize_items = 2
-          try { get process | sort pid | count } catch e { $e | select name | to json }'
-  ono -c 'set config limits.materialize_items = 2
-          try { get process | group user.name | count } catch e { $e | select name | to json }'
+  ono -c "set config limits.materialize_items = 2
+          try { get file $pop/* | sort name | count } catch e { \$e | select name | to json }"
+  ono -c "set config limits.materialize_items = 2
+          try { get file $pop/* | group kind | count } catch e { \$e | select name | to json }"
 
   echo "== and the refusal names the limit and what crossed it (21.4) =="
-  ono -c 'set config limits.materialize_items = 2
-          get process | sort pid | count' 2>&1 | head -2
+  ono -c "set config limits.materialize_items = 2
+          get file $pop/* | sort name | count" 2>&1 | head -2
 
   echo "== 60.5: the byte ceiling stops it while the item count is far below its own =="
-  ono -c 'set config limits.materialize_items = 100000
-          set config limits.materialize_bytes = 4096
-          try { get process | sort pid | count } catch e { $e | select name | to json }'
-  ono -c 'set config limits.materialize_bytes = 4096
-          get process | sort pid | count' 2>&1 | tail -1
+  ono -c "set config limits.materialize_items = 100000
+          set config limits.materialize_bytes = 512
+          try { get file $pop/* | sort name | count } catch e { \$e | select name | to json }"
+  ono -c "set config limits.materialize_bytes = 512
+          get file $pop/* | sort name | count" 2>&1 | tail -1
 
   echo "== 21.4: the details are the limit and the consumption, never the payload =="
-  ono -c 'set config limits.materialize_items = 2
-          try { get process | sort pid | count } catch e { $e | to json }' | tr ',' '\n' | grep -E '"limit"|"consumed"|"stage"'
-  ono -c 'set config limits.materialize_items = 2
-          try { get process | sort pid | count } catch e { $e | to json }' | grep -c '"pid"' || true
+  ono -c "set config limits.materialize_items = 2
+          try { get file $pop/* | sort name | count } catch e { \$e | to json }" | tr ',' '\n' | grep -E '"limit"|"consumed"|"stage"'
+  ono -c "set config limits.materialize_items = 2
+          try { get file $pop/* | sort name | count } catch e { \$e | to json }" | grep -c '"path"' || true
 
   echo "== 53.2: the same condition answers the same code every time =="
   for attempt in 1 2 3; do
-    ono -c 'set config limits.materialize_items = 1
-            get process | sort pid | count' 2>&1 | head -1 | cut -d" " -f2
+    ono -c "set config limits.materialize_items = 1
+            get file $pop/* | sort name | count" 2>&1 | head -1 | cut -d" " -f2
   done
 
   echo "== 22.3, 65.8: an unbounded upstream is refused before anything is consumed =="
@@ -55,8 +64,9 @@ run: |
   wc -l < "$HOME/case-190.log"
 
   echo "== and the defaults hold ordinary work (Appendix A) =="
-  ono -c 'get process | sort pid | count | to json'
+  ono -c "get file $pop/* | sort name | count | to json"
 exit: 0
+stdout-contains: [3]
 stdout-contains: [{"name":"resource.item_limit"}]
 stdout-contains: [{"name":"resource.byte_limit"}]
 stdout-contains: Ono-Sendai-E1101 resource.item_limit sort reached its 2 values budget

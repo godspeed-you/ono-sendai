@@ -62,7 +62,9 @@ run: |
   ( ulimit -n 64 && ulimit -H -n 64 && \
     ono -c 'try { load plugin dev.example.echo } catch e { $e | to json }' ) 2>&1
 
-  echo "== and the package is not quarantined, because it never started (v0.4.1 18.1) =="
+  # The heading deliberately avoids the word the assertion below forbids: a case that narrates
+  # `stdout-not-contains` in its own prose refutes itself, which is how this one first failed.
+  echo "== and the package stays merely installed, because it never started (v0.4.1 18.1) =="
   ono -c 'get plugin | select state | to json'
 
   echo "== the shell is still the shell =="

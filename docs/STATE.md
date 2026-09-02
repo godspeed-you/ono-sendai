@@ -1837,6 +1837,35 @@ Like the orientation item above, it changes the observation contract rather than
 Thirty-odd rows, once per `look` — negligible today, indexable if the table grows. ADR-0495.
 **Exit test:** none needed until the table does grow; recorded so the next reader knows it was seen.
 
+**Case 152's §34 budget sits one millisecond from its limit (2026-09-02).**
+`docker/acceptance/cases/152-pathological-sockets.case` measures `get socket | take 1` against a
+50 ms budget as the median of 20 runs. In a full 125-case run on a machine at load 6.8 it read
+**51 ms** and `get connection | take 1` read **56 ms**, and both were reported OVER BUDGET. Run
+alone at load 6.6 it passes; run beside case 151, which forks ten thousand processes, it passes;
+and it passed on the GitHub runner. The baseline row on the ordinary host in the same failing run
+was **48 ms** — two milliseconds of headroom on a figure the median is supposed to protect.
+
+So this is not a regression and it is not the leak that was first suspected: case 151's children
+block on a pipe and exit with their parent, and 151 followed by 152 is green. It is a budget with
+no margin, measured on a machine the case does not own. It belongs beside the `ono_testkit` entry
+above, and to **H8**. **Exit test:** the case states what it does when the machine cannot meet the
+budget, rather than reading a number two milliseconds from the edge and calling it a defect.
+
+**An acceptance case must build the population it needs, and two did not (2026-09-02).** The
+GitHub pipeline was red for six pushes before anyone looked, and two of the four failing cases had
+the same defect: `docker/acceptance/cases/190` set `limits.materialize_items = 2` and
+`191` ran `get process | take 20`, both against the host's process table. The container is an
+unprivileged user with **two or three** processes, so `count` answered `[2]` where `[20]` was
+asserted, and `"consumed":3` was a coincidence rather than a fact. Both now create their own files
+and read them with `get file <dir>/*`, which is the same number on every host. AGENTS.md §11
+already says a test may not rely on the developer machine's processes unless the fixture creates
+them; these two were written against a host with 900.
+
+The orchestration lesson is separate and is mine: four agents in a row reported *"`scripts/acceptance.sh`
+is owed"* and I integrated each of them on a green local gate. **`scripts/gate.sh` does not run the
+container**, and AGENTS.md §10 says a capability without a passing acceptance case is not
+delivered. Every phase from here runs the containerised suite before its commit is pushed.
+
 **`ono_testkit`'s fixed wall-clock budgets fail under parallel load, and the failure reads like a
 product defect (2026-09-02).** Two instances on one day, and both were first reported as hangs:
 

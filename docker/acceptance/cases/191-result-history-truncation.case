@@ -16,45 +16,52 @@ case: history truncates itself, says so, and leaves the command's own output who
 timeout: 120
 env: NO_COLOR=1
 run: |
+  # The case builds the collection it retains. `get process | take 20` assumed twenty processes,
+  # and the container is an unprivileged user with two or three — so `[20]` was a fact about the
+  # developer's machine. Twenty files the case creates itself are twenty values everywhere.
+  pop="$HOME/case-191-pop"
+  rm -rf "$pop" && mkdir -p "$pop"
+  i=1; while [ "$i" -le 20 ]; do printf 'x%.0s' $(seq 1 200) > "$pop/f$i"; i=$((i + 1)); done
+
   echo "== 60.6: the pipeline emits everything; only the retained copy is short =="
-  ono -c 'set config limits.history_items_per_result = 3
-          get process | take 20 | select pid | count | to json'
-  ono -c 'set config limits.history_items_per_result = 3
-          get process | take 20 | select pid
-          @-1 | count | to json' 2>/dev/null | tail -1
+  ono -c "set config limits.history_items_per_result = 3
+          get file $pop/* | select name | count | to json"
+  ono -c "set config limits.history_items_per_result = 3
+          get file $pop/* | select name
+          @-1 | count | to json" 2>/dev/null | tail -1
 
   echo "== 24.3, 54.1: and the shell says which side it shortened =="
-  ono -c 'set config limits.history_items_per_result = 3
-          get process | take 20 | select pid' 2>&1 >/dev/null | head -1
+  ono -c "set config limits.history_items_per_result = 3
+          get file $pop/* | select name" 2>&1 >/dev/null | head -1
 
   echo "== 24.1: the byte ceiling truncates retention too, and never the output =="
-  ono -c 'set config limits.history_bytes_per_result = 512
-          get process | take 20 | select pid | count | to json'
-  ono -c 'set config limits.history_bytes_per_result = 512
-          get process | take 20 | select pid' 2>&1 >/dev/null | head -1
+  ono -c "set config limits.history_bytes_per_result = 512
+          get file $pop/* | select name | count | to json"
+  ono -c "set config limits.history_bytes_per_result = 512
+          get file $pop/* | select name" 2>&1 >/dev/null | head -1
 
   echo "== 24.2: oldest-first eviction, and a command that still succeeds =="
-  ono -c 'set config limits.history_results = 2
-          get process | take 1 | select pid
-          get process | take 2 | select pid
-          get process | take 3 | select pid
-          @-1 | count | to json' 2>/dev/null | tail -1
-  ono -c 'set config limits.history_results = 2
-          get process | take 1 | select pid
-          get process | take 2 | select pid
-          get process | take 3 | select pid
-          try { @-3 | count } catch e { $e | select name | to json }' 2>/dev/null | tail -1
+  ono -c "set config limits.history_results = 2
+          get file $pop/* | take 1 | select name
+          get file $pop/* | take 2 | select name
+          get file $pop/* | take 3 | select name
+          @-1 | count | to json" 2>/dev/null | tail -1
+  ono -c "set config limits.history_results = 2
+          get file $pop/* | take 1 | select name
+          get file $pop/* | take 2 | select name
+          get file $pop/* | take 3 | select name
+          try { @-3 | count } catch e { \$e | select name | to json }" 2>/dev/null | tail -1
 
   echo "== 21.3, 24.2: history evicting is never a resource error at the user =="
-  ono -c 'set config limits.history_bytes_total = 1
+  ono -c "set config limits.history_bytes_total = 1
           set config limits.history_bytes_per_result = 1
-          get process | take 5 | select pid | count | to json'
+          get file $pop/* | take 5 | select name | count | to json"
   echo "exit-$?"
 
   echo "== and at the Appendix A defaults nothing is truncated at all =="
-  ono -c 'get process | take 5 | select pid
-          @-1 | count | to json' 2>/dev/null | tail -1
-  ono -c 'get process | take 5 | select pid' 2>&1 >/dev/null | grep -c 'result history kept' || true
+  ono -c "get file $pop/* | take 5 | select name
+          @-1 | count | to json" 2>/dev/null | tail -1
+  ono -c "get file $pop/* | take 5 | select name" 2>&1 >/dev/null | grep -c 'result history kept' || true
 exit: 0
 stdout-contains: [20]
 stdout-contains: [3]

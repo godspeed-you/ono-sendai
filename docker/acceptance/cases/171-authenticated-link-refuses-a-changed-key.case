@@ -27,6 +27,14 @@ run: |
   ono -c 'try { link host 127.0.0.1:7734 --transport tcp } catch e { $e | select code name | to json }'
   ono -c 'get host-key | to json'
 
+  # Since v0.4.1 phase H2 the agent authenticates every client and authorizes only the ones an
+  # operator listed, so a link that was merely pinned now ends in `remote.unauthorized` (§9.1).
+  # Pinning and authorizing are the two halves this case keeps apart: the client decides which
+  # host it will speak to, and the host decides which client it will answer. Case 182 proves the
+  # refusal; this one needs the grant so the pinning half stays observable.
+  CLIENT=$(ono --print-peer-key)
+  ono -c "add client-key $CLIENT --label case-171 | select status | to json"
+
   echo "== pinned deliberately, the link is made over the authenticated transport =="
   ono -c "add host-key 127.0.0.1 --fingerprint $FIRST | select status changed | to json"
   ono -c 'link host 127.0.0.1:7734 --transport tcp; get link | select transport mode state | to json' | tail -1
