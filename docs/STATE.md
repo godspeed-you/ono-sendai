@@ -261,6 +261,18 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+**The v0.4.1 tranche, phase H0 — claimed 2026-09-02.** The build order and the H0…H12 milestones
+are recorded above; H0 is being delivered now:
+
+- **#29** — `docs/ACCEPTANCE.md` §4.8 written from v0.4.1 §66.1–§66.9 and §40.3, all boxes
+  unticked. `scripts/release-check.sh` fails on its unticked-box grep from the moment §4.8
+  exists, and that is the correct state for a tranche that has just started.
+- **#31** — the four failing proofs §57 requires before any production fix: the unauthenticated
+  client, the ignored KUANG control failure, the non-streaming `each`, and the spatial
+  first-output pathology. They land `#[ignore]`d with a `// REASON:` and a *Deferred* entry, the
+  way v0.4's RED suites did (ADR-0426).
+- **#30**, **#117**, **#118** — baseline snapshot and the contract registries, behind the two above.
+
 ## Session records (2026-08-27 … 2026-08-29)
 
 Every session below is complete. They are kept because each carries the reasoning behind a
@@ -3156,11 +3168,21 @@ security review — and because re-testing these later costs nothing if they are
 
 ## Deferred / blocked
 
-*Deferred* means blocked on something outside this repository. Work that is merely unfinished is
-an issue, and the 2026-08-29 triage moved everything that was really work out of here. The workspace holds **no `#[ignore]`d test at all** (`cargo xtask spec-check`'s
-unfinished-work scan keeps that true), so nothing below is a silenced requirement.
+This section holds two kinds of entry, and both are tracked rather than silenced — `cargo xtask
+spec-check`'s unfinished-work scan refuses an `#[ignore]`d test that no entry here names, and
+refuses an entry that names no ADR.
 
-**One entry, and it is blocked on the kernel.**
+**Blocked on something outside this repository.** Work that is merely unfinished is an issue, and
+the 2026-08-29 triage moved everything that was really work out of here. One entry, and it is
+blocked on the kernel.
+
+**Red by design: the v0.4.1 phase H0 failure proofs (issue #31).** v0.4.1 §57 is explicit that no
+production fix lands before the corresponding failure proof, so from 2026-09-02 the workspace
+carries proofs that fail at HEAD *because the defect is real*. AGENTS.md §7 forbids committing a
+failing test, so each one lands `#[ignore]`d with a `// REASON:` and an entry below naming the
+issue that un-ignores it. Each entry states the assertion that may not be weakened when that
+happens — a proof that is edited to fit the fix has stopped proving anything. These are the
+opposite of a silenced requirement: they are the requirement, written down before the fix.
 
 - **`socket.accepts_connection` cannot be observed.** It is declared in
   `docs/spec/spatial/relations.yaml`, claimed by no provider, and produces no edges (ADR-0135).
@@ -3168,6 +3190,28 @@ unfinished-work scan keeps that true), so nothing below is a silenced requiremen
   matching by local port would be a guess v0.4 §11.5 has no value for. Unblocked only by a kernel
   interface that supplies the link; until then the relation is declared and honestly empty rather
   than faked or removed. **Exit test:** none can be written today, which is the point.
+
+The H0 failure proofs, red by design (issue #31, ADR-0430):
+
+- **A listening agent authenticates nobody.** A TLS client built `with_no_client_auth()` completes
+  the handshake against `TlsListener`, speaks the Ono protocol and reads back the agent's whole
+  provider inventory; the protocol `Identity` it sends is a string it chose about itself (v0.4.1
+  §0.5.1, §2.1, §2.2, §13.1, §59.1). Ignored test:
+  `crates/ono-remote/tests/client_authentication.rs::should_refuse_a_tls_client_that_presents_no_certificate`
+  — ADR-0430. Un-ignored by issue #35, which makes the listener demand and verify a client
+  certificate; the assertion may not change in that increment.
+
+- **A mandatory confinement failure does not stop the plugin.** The `pre_exec` closure in
+  `crates/ono-kuang-supervisor/src/sandbox.rs` discards every `setrlimit`, `setpriority`, `setsid`
+  and `prctl` return value and ends in an unconditional `Ok(())`, so a native plugin execs after a
+  control Appendix D marks `required` / `spawn fails` was refused (v0.4.1 §0.5.3, §2.3, §16.2,
+  §16.3, §59.7). The proof fails `setsid` with `EPERM` by making the child a process-group leader,
+  so the failure is arranged from outside the process with no fault injection and no privileges.
+  Ignored test:
+  `crates/ono-kuang-supervisor/tests/confinement.rs::should_not_exec_the_plugin_when_a_mandatory_confinement_control_fails`
+  — ADR-0430. Un-ignored by issues #59 and #60. ADR-0430 also records that phase H4 still owes the
+  injectable platform layer §59.7 asks for, because `PR_SET_NO_NEW_PRIVS` cannot be failed from
+  outside the process.
 
 Two entries left this section on 2026-08-29:
 
