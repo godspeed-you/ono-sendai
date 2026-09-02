@@ -43,7 +43,7 @@ mod support;
 
 use std::time::Duration;
 
-use ono_testkit::{PROFILE_M, PROFILE_S, ProcessPopulation, Profile, scratch};
+use ono_testkit::{PROFILE_M, PROFILE_S, ProcessPopulation, Profile, SocketPopulation, scratch};
 
 use support::{Bounded, run_bounded};
 
@@ -106,6 +106,37 @@ fn should_show_a_placed_population_to_the_process_provider_when_a_profile_fixtur
         population.len() as u64,
         "the process provider must see every process the Profile {} fixture placed, got {counted} \
          of {}. {}",
+        population.profile().name,
+        population.len(),
+        run.report()
+    );
+}
+
+#[test]
+fn should_show_a_placed_socket_population_to_the_socket_provider_when_a_profile_fixture_is_built() {
+    // §32.2's socket-specific profiles (Appendix F.2) get the same treatment as its process
+    // ones: the fixture opens real listening sockets and the shell's own provider counts them.
+    // A unix socket carries no path in `ono.socket/1`, so the fixture is proven by the
+    // difference it makes rather than by naming its members — which is the honest measurement
+    // anyway, because the host is running its own listeners throughout.
+    let home = scratch();
+    let listening = "get socket | where family == \"unix\" | where state == \"listen\" \
+                     | count | to json";
+
+    let before = rows_count(&run_bounded(&home, listening, WATCHDOG));
+    let population = SocketPopulation::of(PROFILE_S);
+    let run = run_bounded(&home, listening, WATCHDOG);
+
+    assert!(
+        run.finished,
+        "counting the listening sockets of a small population answers. {}",
+        run.report()
+    );
+    let after = rows_count(&run);
+    assert!(
+        after >= before + population.len() as u64,
+        "the socket provider must see every socket the Profile {} fixture opened: {before} \
+         listening unix sockets before, {} placed, {after} after. {}",
         population.profile().name,
         population.len(),
         run.report()

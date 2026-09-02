@@ -1599,7 +1599,7 @@ mode this phase removes.
       `crates/ono-spatial-query/tests/profiles.rs::should_build_every_declared_profile_at_the_cardinality_the_registry_states`,
       `::should_rebuild_the_same_profile_from_the_same_declaration`, with the declarations in
       `docs/spec/hardening/performance_profiles.yaml` and the fixture under
-      `docker/acceptance/fixtures/performance/` (#82, §32.1, §32.2).
+      `docker/acceptance/fixtures/perf/` (#82, §32.1, §32.2).
 - [ ] **P1 · Six metrics per benchmark, against a machine-readable baseline.** Time to first value,
       time to completion, sampled RSS, values per second, estimated bytes and cancellation latency
       are recorded for every benchmark, and a result is compared against the baseline for its named

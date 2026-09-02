@@ -1,0 +1,110 @@
+# The performance fixture matrix of v0.4.1 Appendix F, as data.
+#
+# §32.1 is why this file exists:
+#
+#   "v0.4.1 MUST stop treating one small fixture passing a latency budget as sufficient proof
+#    that a spatial operation is performant."
+#
+# A curve needs more than one point, and the points have to be the same points every time or two
+# runs are not comparable. §32.2 and Appendix F.1–F.3 fix them; this file is where they are
+# written down once, so a benchmark, a watchdog and an acceptance case quote one declaration
+# instead of three copies of four numbers (§52.2).
+#
+# §32.2 also fixes the one rule that makes a fixture worth anything:
+#
+#   "Fixtures MAY synthesize entities where real host creation is impractical, but
+#    provider/planner code exercised by the benchmark MUST match production logic."
+#
+# So every fixture here creates **objects** — real processes the kernel lists in `/proc`, real
+# listening sockets the kernel lists in `/proc/net/unix` — never data handed to a provider. The
+# production providers read them exactly as they read anything else, and nothing is replaced.
+# Decisions: ADR-0431 (the population), ADR-0488 (this registry and the socket/payload profiles).
+#
+# Authority: `ono_testkit::profile` declares the same ids with the same numbers, and
+# `crates/ono-spatial-query/tests/profiles.rs` compares the two in both directions — a profile
+# this file declares and the testkit cannot build is a failure, and so is a profile the testkit
+# knows and this file omits.
+#
+# Fields of a topology profile
+#
+#   id            `S`, `M`, `L` — how a measurement record names the profile (Appendix F.4).
+#   processes     Appendix F.1's process count. The fixture creates this many *additional*
+#                 processes, so the host holds at least this many.
+#   graph_nodes   Appendix F.1's node count for a system of that size.
+#   edges         Appendix F.1's edge count for a system of that size.
+#   sockets       §32.2's socket-specific profile that belongs beside it (Appendix F.2).
+#   built_by      where a fixture of this size can honestly be created:
+#                   gate       — `cargo test` builds it on every gate run.
+#                   benchmark  — `cargo xtask perf` and `--ignored` proofs build it; too large
+#                                for every gate run, small enough for a developer machine.
+#                   container  — only the acceptance image builds it, through `fixture`.
+#   fixture       the script that creates it, for a `container` profile.
+#   spec          the section that fixes the numbers.
+#
+# `built_by` is a statement about this repository's machines, not about the product. A profile is
+# no less required for being expensive; it is measured somewhere that can afford it. Nothing here
+# may be lowered to make a suite faster — the number is Appendix F's.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# Appendix F.1 and F.2, one row per profile.
+# ---------------------------------------------------------------------------------------------
+profiles:
+  - id: S
+    processes: 100
+    graph_nodes: 500
+    edges: 2000
+    sockets: 1000
+    built_by: gate
+    spec: "v0.4.1 §32.2, Appendix F.1, F.2"
+    doc: >-
+      A quiet machine. Small enough that an ordinary `cargo test` can put the host at this
+      cardinality and take it down again, which makes it the profile the fixture itself is
+      proven against.
+  - id: M
+    processes: 1000
+    graph_nodes: 5000
+    edges: 25000
+    sockets: 10000
+    built_by: benchmark
+    spec: "v0.4.1 §32.2, Appendix F.1, F.2"
+    doc: >-
+      An ordinary busy desktop or server, and the profile §33.2 states the interactive targets
+      against. A thousand idle children cost about 1.35 GB of kernel memory, so this is built by
+      the benchmark command and by the `--ignored` watchdog rather than on every gate run.
+  - id: L
+    processes: 10000
+    graph_nodes: 50000
+    edges: 250000
+    sockets: 100000
+    built_by: container
+    fixture: docker/acceptance/fixtures/perf/many-processes.pl
+    socket_fixture: docker/acceptance/fixtures/perf/many-sockets.pl
+    spec: "v0.4.1 §32.2, Appendix F.1, F.2"
+    doc: >-
+      The cardinality at which §0.5.7's failures were first seen. Ten thousand processes is more
+      than a developer machine should be asked to fork from a test, so the acceptance image
+      builds it: the two fixture scripts fork the population and report the count they reached.
+
+# ---------------------------------------------------------------------------------------------
+# Appendix F.3. Materialization benchmarks measure the byte budget, and a byte budget is only
+# meaningful against values whose size is stated.
+# ---------------------------------------------------------------------------------------------
+payloads:
+  - id: small
+    bytes: 100
+    spec: "v0.4.1 Appendix F.3"
+    doc: >-
+      About the size of one process record. The item budget is what stops a stream of these.
+  - id: medium
+    bytes: 10240
+    spec: "v0.4.1 Appendix F.3"
+    doc: >-
+      Ten kibibytes — a log line with structure, or a small file's contents.
+  - id: large
+    bytes: 1048576
+    spec: "v0.4.1 Appendix F.3"
+    doc: >-
+      One mebibyte. Appendix F.3: "The 1 MiB case may use fewer elements to stay within practical
+      test-run memory while still proving the byte budget triggers before the item budget."

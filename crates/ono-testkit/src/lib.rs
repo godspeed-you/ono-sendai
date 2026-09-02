@@ -23,7 +23,10 @@ mod rng;
 mod run;
 mod scratch;
 
-pub use profile::{PROFILE_L, PROFILE_M, PROFILE_S, ProcessPopulation, Profile};
+pub use profile::{
+    BuiltBy, PROFILE_L, PROFILE_M, PROFILE_S, PayloadDeclaration, ProcessPopulation, Profile,
+    ProfileDeclaration, SocketPopulation, declared_payloads, declared_profiles, payload,
+};
 pub use rng::Rng;
 pub use run::{Run, RunError, Shell};
 pub use scratch::{Scratch, scratch};
