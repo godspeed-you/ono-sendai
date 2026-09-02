@@ -1136,3 +1136,94 @@ fn should_offer_the_listeners_of_a_service_as_an_exit_even_where_no_provider_joi
         "§13: a service place offers its listeners as an exit; got {shown}"
     );
 }
+
+// --- v0.4.1 §34.3: a relation described as requestable has a request path (issue #25) ----------
+
+#[test]
+fn should_follow_the_owner_relation_when_it_is_requested_explicitly() {
+    // Issue #25: `enter 127.0.0.1:<port>; follow owner` answered
+    //
+    //   Ono-Sendai-E1009 spatial.unsupported the `owner` of this place is not answered here:
+    //   available on request
+    //
+    // with and without a preceding `look`, while `near --type process` at the same place named
+    // the owner outright. v0.4.1 §34.3: "If a relationship is described as 'available on request',
+    // there MUST actually be a request path", and naming the relation is that path.
+    //
+    // The two words are one edge — `owner` is the inverse label of `process.owns_socket` and
+    // `process` is its inverse group — so the two spellings must reach the same place. The
+    // listener belongs to this test process, so the shell can attribute it without privilege.
+    let (_listener, port) = listener();
+    let mine = std::process::id().to_string();
+
+    let by_label = ono(&format!(
+        "enter 127.0.0.1:{port}; follow owner; look --json"
+    ));
+    let view = place_view(&by_label);
+    assert_place_is(&view, "process", &mine, "v0.4.1 §34.3");
+
+    let by_group = ono(&format!(
+        "enter 127.0.0.1:{port}; follow process; look --json"
+    ));
+    assert_eq!(
+        identity_of(&place_view(&by_group)),
+        identity_of(&view),
+        "§6.4 lets `follow` take either word for a relation, and both name the same edge, so \
+         they must arrive at the same place"
+    );
+}
+
+/// The spatial identity of the place a view describes, which is what "the same place" means.
+fn identity_of(view: &Value) -> String {
+    let place = place(view);
+    place["spatial_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("§42: a place carries its spatial identity, got {place:?}"))
+        .to_owned()
+}
+
+#[test]
+fn should_follow_the_owner_relation_whether_or_not_a_look_came_first() {
+    // Issue #25 is explicit that the refusal happened "with and without a preceding `look`", so
+    // this is not the ADR-0421 defect seen from another side. Both orders are asserted.
+    let (_listener, port) = listener();
+    let mine = std::process::id().to_string();
+
+    let after_look = ono(&format!("enter 127.0.0.1:{port}; look; follow owner"));
+    let seen = format!("{}{}", after_look.stdout(), after_look.stderr());
+    assert!(
+        after_look.status().is_success(),
+        "v0.4.1 §34.3: `follow owner` after a `look` traverses the relation rather than refusing; \
+         got exit {:?} and {seen:?}",
+        after_look.status()
+    );
+    // `look` itself is allowed to print "available on request" — §32.2 makes an exit nobody has
+    // asked about a discoverable, unloaded one, and §34.3 requires only that something can make
+    // the request. What §34.3 forbids is the *refusal*, and that is what must be gone.
+    assert!(
+        !seen.contains("Ono-Sendai-E1009"),
+        "§34.3: `follow owner` must traverse the relation or refuse for a reason that is not \
+         \"ask again\". Got {seen:?}"
+    );
+    let _ = &mine;
+}
+
+#[test]
+fn should_pay_for_an_expensive_relation_when_follow_is_asked_to_resolve_it() {
+    // §34.3's canonical shape: "follow owner --resolve". A relation classified `expensive` or
+    // `external` (§34.2) is left discoverable and unloaded by an orientation query, and the flag
+    // is what says the cost is acceptable. `openers` on a file is such a relation — finding every
+    // process that holds one file is every process on the host (ADR-0149).
+    let home = scratch();
+    let held = home.path().join("held.txt");
+    std::fs::write(&held, b"fixture").expect("the fixture file is writable");
+    let file = std::fs::File::open(&held).expect("the fixture file opens");
+    let mine = std::process::id().to_string();
+
+    let run = ono(&format!(
+        "enter {}; follow openers --resolve; look --json",
+        held.display()
+    ));
+    assert_place_is(&place_view(&run), "process", &mine, "v0.4.1 §34.3");
+    drop(file);
+}

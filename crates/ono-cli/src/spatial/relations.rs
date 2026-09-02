@@ -70,14 +70,35 @@ impl Interest {
     /// already available." The cost is not the relation's alone but the *end* it is answered
     /// from: reading one process's descriptors is one directory, and finding every process that
     /// holds one file is every process on the host (ADR-0149).
-    fn wants(&self, labels: &[&'static str], reaches: SpatialType) -> bool {
+    fn wants(&self, labels: &[&'static str], reaches: SpatialType, subject: SpatialType) -> bool {
         if self.complete {
             return true;
         }
-        if let Some(label) = &self.label
-            && labels.contains(&label.as_str())
-        {
-            return true;
+        if let Some(label) = &self.label {
+            if labels.contains(&label.as_str()) {
+                return true;
+            }
+            // The words here are the *group* words a place prints — `process` at a socket — and
+            // the word a caller typed is whatever §6.4 lets `follow` take, which is the label as
+            // well: `owner` and `process` are the same edge seen from the same end
+            // (`process.owns_socket`). Comparing the strings made `follow process` ask and
+            // `follow owner` refuse with "available on request" — a relation described as
+            // requestable that nothing could request, which is exactly the state v0.4.1 §34.3
+            // forbids (issue #25, ADR-0495). So both are resolved to relations and the relations
+            // are compared.
+            let asked: Vec<&str> = relation::resolve_label(subject, label)
+                .into_iter()
+                .map(|spec| spec.id)
+                .collect();
+            if !asked.is_empty()
+                && labels.iter().any(|group| {
+                    relation::resolve_label(subject, group)
+                        .into_iter()
+                        .any(|spec| asked.contains(&spec.id))
+                })
+            {
+                return true;
+            }
         }
         self.object_type.is_some_and(|wanted| reaches.is_a(wanted))
     }
@@ -415,7 +436,7 @@ pub async fn observe(
         // declined, so only a broad provider can be asked for (§32.1, §32.2).
         let asked_for = match broad(provider.id()) {
             Some(reaches) => {
-                if !interest.wants(labels_of(provider.id()), reaches) {
+                if !interest.wants(labels_of(provider.id()), reaches, object_type) {
                     declined.extend(labels_of(provider.id()).iter().copied());
                     continue;
                 }
