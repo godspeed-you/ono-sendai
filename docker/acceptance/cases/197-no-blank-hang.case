@@ -1,0 +1,85 @@
+# v0.4.1 §61.3, the watchdog: "A watchdog acceptance test MUST fail any interactive spatial
+# command that produces neither first result nor progress/refusal within the declared hard
+# interactive budget." The budget is §33.3's own number:
+#
+#   "A supported interactive operation MUST NOT spend 30 seconds producing neither output nor
+#    progress on the reference Profile M/L fixtures."
+#
+# §65.9 names the failure mode this case exists to catch: "An interactive command performing long
+# expensive work must produce results, progress or a bounded refusal; a silent blank terminal is
+# not acceptable behavior."
+#
+# What counts as an answer is deliberately wide, because §33.3 is wide: bytes on stdout, bytes on
+# stderr, a structured refusal, a progress line. Only silence fails. The case therefore says
+# nothing about *how fast* a command is — case `195` and the reference-environment baseline of
+# §32.4 do that — and everything about whether it is answering at all.
+#
+# The host is put at Profile M (§32.2: 1 000 processes) by the same fixture case `151` uses, so
+# the watchdog runs against a stated cardinality rather than against whatever the image happens
+# to be running (§32.1).
+case: no interactive spatial command spends the hard interactive budget saying nothing
+timeout: 900
+env: NO_COLOR=1
+run: |
+  # §33.3's budget, in seconds.
+  BUDGET=30
+
+  watchdog() {
+    local id="$1" statement="$2" out status
+    out=$(timeout "$BUDGET" ono --no-config -c "$statement" 2>&1)
+    status=$?
+    if [ -n "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
+      printf 'PROVED %s: answered within %ss (%d bytes) — %s\n' \
+        "$id" "$BUDGET" "${#out}" "$statement"
+    else
+      printf 'FAILED %s: %ss of neither output nor progress (exit %s) — %s\n' \
+        "$id" "$BUDGET" "$status" "$statement"
+    fi
+  }
+
+  echo "== the host at Profile M (v0.4.1 §32.2) =="
+  perl /opt/ono-fixtures/perf/many-processes.pl 1000 /tmp/profile-m.state &
+  for _ in $(seq 600); do [ -s /tmp/profile-m.state ] && break; sleep 0.5; done
+  . /tmp/profile-m.state
+  visible=$(ls /proc | grep -c '^[0-9]')
+  echo "fixture: asked for 1000, forked $FIXTURE_PROCESSES, /proc shows $visible processes"
+  if [ "$visible" -lt 500 ]; then echo "TOO-FEW-PROCESSES"; else echo "the host is at Profile M"; fi
+
+  echo "== every canonical interactive spatial operation answers or refuses (§33.3, §61.3) =="
+  # Orientation: where am I, and what is next to me.
+  watchdog 33.3a 'look --json'
+  watchdog 33.3b 'enter compute; look --json'
+  watchdog 33.3c 'enter compute; near --json'
+  watchdog 33.3d 'enter compute; look --all --json'
+  # The map, still and live. `take 1` is the initial projection of §35.2; the frames after it are
+  # issue #22's subject and join this list with the increment that closes it.
+  watchdog 33.3e 'enter compute; map --json'
+  watchdog 33.3f 'map --live --json | take 1 | to json'
+  # A selector that resolves and one that does not. §36.1 budgets the difference; §33.3 only
+  # requires that the miss answer at all, and a refusal is an answer. The hit is followed by a
+  # `look`, because `enter` answering silently is success rather than silence — this watchdog
+  # asks whether a command *can* say something, so it must be given one that has something to
+  # say.
+  watchdog 33.3g 'enter compute; enter processes; look --json'
+  watchdog 33.3h 'enter no-such-place-1a2b3c'
+  # Explaining a spatial query is itself an interactive operation (§22.4).
+  watchdog 33.3i 'explain look'
+
+  kill %1 2>/dev/null || true
+  wait 2>/dev/null || true
+  echo "fixture: stopped"
+exit: 0
+stdout-contains: the host is at Profile M
+stdout-contains: PROVED 33.3a
+stdout-contains: PROVED 33.3b
+stdout-contains: PROVED 33.3c
+stdout-contains: PROVED 33.3d
+stdout-contains: PROVED 33.3e
+stdout-contains: PROVED 33.3f
+stdout-contains: PROVED 33.3g
+stdout-contains: PROVED 33.3h
+stdout-contains: PROVED 33.3i
+stdout-contains: fixture: stopped
+stdout-not-contains: FAILED
+stdout-not-contains: TOO-FEW-PROCESSES
+stdout-not-contains: panicked

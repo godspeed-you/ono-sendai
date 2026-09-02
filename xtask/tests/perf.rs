@@ -343,3 +343,53 @@ fn repository_root() -> std::path::PathBuf {
     path.pop();
     path
 }
+
+#[test]
+fn should_measure_every_time_to_first_result_target_of_the_reference_targets_table() {
+    // §33.2 states four targets "on the release reference environment". A target nobody measured
+    // there is not a target that holds, and the failure this test exists to prevent is the one
+    // §65.10 names: an unmeasured row reaching the summary as a pass.
+    let baseline =
+        Baseline::parse(&std::fs::read_to_string(baseline_path()).expect("the baseline exists"))
+            .expect("the baseline parses");
+
+    let verdicts = xtask::perf::verdicts(&baseline);
+    assert_eq!(
+        verdicts.len(),
+        4,
+        "v0.4.1 §33.2 states four reference targets"
+    );
+    for (target, verdict) in &verdicts {
+        assert_ne!(
+            *verdict,
+            xtask::perf::TargetVerdict::Unmeasured,
+            "v0.4.1 §33.2's \"{}\" has no measurement on `{}`; the row is answered by `{}` at \
+             Profile {} ({}), and `cargo xtask perf` is what measures it",
+            target.spec,
+            baseline.environment,
+            target.benchmark,
+            target.profile,
+            target.temperature.as_str()
+        );
+    }
+
+    // §33.3 is the floor underneath all four, and §61.3 makes it a watchdog. It is asserted here
+    // against the recorded figures rather than by running anything, so the check is a comparison
+    // of two numbers in a file: deterministic, and never a verdict about the machine that
+    // happens to be running `cargo test` (ADR-0252, ADR-0431).
+    for record in &baseline.measurements {
+        let first = record
+            .metric("time_to_first_ms")
+            .expect("every record carries a time to first value");
+        assert!(
+            first < xtask::perf::HARD_INTERACTIVE_BUDGET_MS,
+            "v0.4.1 §33.3: `{}` at Profile {} ({}) recorded a first result after {first:.0} ms, \
+             and a supported interactive operation must not spend {} ms producing neither output \
+             nor progress",
+            record.benchmark,
+            record.profile,
+            record.temperature.as_str(),
+            xtask::perf::HARD_INTERACTIVE_BUDGET_MS
+        );
+    }
+}

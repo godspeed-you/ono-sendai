@@ -1619,8 +1619,9 @@ mode this phase removes.
       spatial query under 150 ms p95, Profile M `map --live` first frame under 500 ms p95, Profile L
       initial progress or a deterministic cost refusal under 1.5 s — and a supported interactive
       command that produces neither result nor progress inside the hard budget fails the suite —
-      `crates/ono-spatial-query/tests/profiles.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture`,
-      `xtask/tests/perf.rs::should_hold_every_time_to_first_result_target_of_the_reference_targets_table`,
+      `crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture`,
+      `::should_hold_every_time_to_first_result_target_of_the_reference_targets_table`,
+      `xtask/tests/perf.rs::should_measure_every_time_to_first_result_target_of_the_reference_targets_table`,
       cases `195` and `197`, the watchdog case being the one that fails on silence (#85, §33.1–§33.3,
       §61.1, §61.3).
 - [ ] **P1 · `map --live` produces a first frame and can be cancelled.** The reproduced hang —

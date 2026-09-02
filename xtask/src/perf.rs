@@ -648,9 +648,10 @@ pub fn reference_environment(root: &std::path::Path) -> Result<ReferenceEnvironm
 pub enum Temperature {
     /// A fresh process answering a query nothing has answered before.
     Cold,
-    /// A process whose providers are already initialised, answering again.
+    /// A process that is already running and whose providers are initialised, answering a query
+    /// nothing has answered before.
     Warm,
-    /// A query answered from a cache that is part of the product's semantics.
+    /// The same query answered again, from a cache that is part of the product's semantics.
     CacheHit,
 }
 
@@ -722,7 +723,7 @@ pub const BENCHMARKS: &[Benchmark] = &[
     Benchmark {
         id: "spatial.look",
         profile: "S",
-        temperature: Temperature::Warm,
+        temperature: Temperature::CacheHit,
         warmup: Some("look --json | count"),
         script: "look --json",
     },
@@ -767,9 +768,16 @@ pub const BENCHMARKS: &[Benchmark] = &[
     Benchmark {
         id: "spatial.query",
         profile: "M",
-        temperature: Temperature::Warm,
+        temperature: Temperature::CacheHit,
         warmup: Some("enter compute; look --json"),
         script: "look --json",
+    },
+    Benchmark {
+        id: "spatial.query",
+        profile: "M",
+        temperature: Temperature::Warm,
+        warmup: Some("get host"),
+        script: "enter compute; look --json",
     },
     Benchmark {
         id: "spatial.map_first_frame",
@@ -817,7 +825,7 @@ pub const TARGETS: &[Target] = &[
         spec: "basic cached look/near first result",
         benchmark: "spatial.look",
         profile: "S",
-        temperature: Temperature::Warm,
+        temperature: Temperature::CacheHit,
         budget_ms: 50.0,
     },
     Target {
@@ -842,6 +850,63 @@ pub const TARGETS: &[Target] = &[
         budget_ms: 1_500.0,
     },
 ];
+
+/// v0.4.1 §33.3's hard interactive budget.
+///
+/// > A supported interactive operation MUST NOT spend 30 seconds producing neither output nor
+/// > progress on the reference Profile M/L fixtures.
+///
+/// It is the floor underneath §33.2's four targets rather than one of them, and §61.3 makes it a
+/// watchdog: *"A watchdog acceptance test MUST fail any interactive spatial command that produces
+/// neither first result nor progress/refusal within the declared hard interactive budget."*
+pub const HARD_INTERACTIVE_BUDGET_MS: f64 = 30_000.0;
+
+/// A §33.2 target and what the baseline records against it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TargetVerdict {
+    /// The recorded p95 is inside the budget.
+    Held {
+        /// What was measured.
+        p95_ms: f64,
+    },
+    /// The recorded p95 is outside the budget.
+    Missed {
+        /// What was measured.
+        p95_ms: f64,
+        /// By what factor it exceeds the budget.
+        factor: f64,
+    },
+    /// The baseline holds no record for the row, so nothing is known about it.
+    Unmeasured,
+}
+
+/// What each §33.2 row says on the evidence of `baseline`.
+///
+/// Answering `Unmeasured` rather than passing is the same rule `Baseline::compare` follows: a
+/// target nobody measured is not a target that holds (§65.10).
+#[must_use]
+pub fn verdicts(baseline: &Baseline) -> Vec<(&'static Target, TargetVerdict)> {
+    TARGETS
+        .iter()
+        .map(|target| {
+            let verdict = baseline
+                .record_at(target.benchmark, target.profile, target.temperature)
+                .map_or(TargetVerdict::Unmeasured, |record| {
+                    if record.p95_ms <= target.budget_ms {
+                        TargetVerdict::Held {
+                            p95_ms: record.p95_ms,
+                        }
+                    } else {
+                        TargetVerdict::Missed {
+                            p95_ms: record.p95_ms,
+                            factor: record.p95_ms / target.budget_ms,
+                        }
+                    }
+                });
+            (target, verdict)
+        })
+        .collect()
+}
 
 /// One row of §33.2's reference targets table.
 #[derive(Debug, Clone, Copy, PartialEq)]

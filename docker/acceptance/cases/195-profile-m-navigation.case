@@ -1,0 +1,81 @@
+# v0.4.1 §61.1: "Canonical `look`, `near` and selector operations MUST satisfy the Profile M p95
+# targets on the reference environment." The container is not the reference environment — §32.4
+# is explicit that "release qualification MUST run on a named reference environment with stable
+# absolute targets", and `docs/spec/hardening/performance_environment.yaml` names it — so what
+# this case can prove is the part that does not depend on the machine:
+#
+#   * every canonical navigation operation answers at Profile M, and
+#   * the figure it took is printed, so two runs of the image are comparable, and
+#   * nothing is anywhere near §33.3's thirty-second floor.
+#
+# The absolute p95 targets of §33.2 are measured by `cargo xtask perf` and recorded in
+# `docs/spec/hardening/performance_baseline.json`, which is where a release reads them from
+# (ADR-0490, ADR-0491).
+#
+# §36.1's rule — "A selector miss MUST not be substantially more expensive than a hit solely
+# because the system scans an unnecessarily complete global candidate set" — is measured here and
+# printed. The ceiling it is asserted against is the container's, not §36.1's 250 ms, and the
+# increment that closes the miss/hit gap tightens it.
+case: canonical spatial navigation answers at Profile M
+timeout: 900
+env: NO_COLOR=1
+run: |
+  median() { sort -n | awk '{ v[NR] = $1 } END { if (NR == 0) { print -1 } else { print v[int((NR + 1) / 2)] } }'; }
+
+  measure() {
+    local label="$1" ceiling_ms="$2" runs="$3" statement="$4" figure
+    ono --no-config -c "$statement" >/dev/null 2>&1
+    figure=$(
+      for _ in $(seq "$runs"); do
+        local start end
+        start=$(date +%s%N)
+        ono --no-config -c "$statement" >/dev/null 2>&1
+        end=$(date +%s%N)
+        echo $(( (end - start) / 1000000 ))
+      done | median
+    )
+    echo "$label: ${figure}ms (ceiling ${ceiling_ms}ms, median of $runs runs, $statement)"
+    if [ "$figure" -le "$ceiling_ms" ]; then
+      echo "$label: within ceiling"
+    else
+      echo "$label: OVER CEILING"
+    fi
+    printf '%s' "$figure" > "/tmp/figure-$label"
+  }
+
+  echo "== the host at Profile M (v0.4.1 §32.2) =="
+  perl /opt/ono-fixtures/perf/many-processes.pl 1000 /tmp/profile-m.state &
+  for _ in $(seq 600); do [ -s /tmp/profile-m.state ] && break; sleep 0.5; done
+  . /tmp/profile-m.state
+  visible=$(ls /proc | grep -c '^[0-9]')
+  echo "fixture: asked for 1000, forked $FIXTURE_PROCESSES, /proc shows $visible processes"
+  if [ "$visible" -lt 500 ]; then echo "TOO-FEW-PROCESSES"; else echo "the host is at Profile M"; fi
+
+  echo "== canonical navigation (§61.1) =="
+  measure look 5000 10 'look --json'
+  measure look-in-compute 5000 10 'enter compute; look --json'
+  measure near-in-compute 5000 10 'enter compute; near --json'
+  measure map-in-compute 5000 10 'enter compute; map --json'
+
+  echo "== a selector that resolves, and one that does not (§36.1) =="
+  measure selector-hit 5000 10 'enter compute; enter processes'
+  measure selector-miss 10000 10 'enter no-such-place-1a2b3c'
+  hit=$(cat /tmp/figure-selector-hit)
+  miss=$(cat /tmp/figure-selector-miss)
+  echo "selector: hit ${hit}ms, miss ${miss}ms — §36.1 asks that a miss not be substantially more expensive than a hit"
+
+  kill %1 2>/dev/null || true
+  wait 2>/dev/null || true
+  echo "fixture: stopped"
+exit: 0
+stdout-contains: the host is at Profile M
+stdout-contains: look: within ceiling
+stdout-contains: look-in-compute: within ceiling
+stdout-contains: near-in-compute: within ceiling
+stdout-contains: map-in-compute: within ceiling
+stdout-contains: selector-hit: within ceiling
+stdout-contains: selector-miss: within ceiling
+stdout-contains: fixture: stopped
+stdout-not-contains: OVER CEILING
+stdout-not-contains: TOO-FEW-PROCESSES
+stdout-not-contains: panicked

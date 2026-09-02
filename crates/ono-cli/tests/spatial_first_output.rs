@@ -43,7 +43,9 @@ mod support;
 
 use std::time::Duration;
 
-use ono_testkit::{PROFILE_M, PROFILE_S, ProcessPopulation, Profile, SocketPopulation, scratch};
+use ono_testkit::{
+    PROFILE_L, PROFILE_M, PROFILE_S, ProcessPopulation, Profile, SocketPopulation, scratch,
+};
 
 use support::{Bounded, run_bounded};
 
@@ -155,6 +157,163 @@ fn should_answer_or_refuse_the_live_map_within_the_interactive_watchdog_on_profi
     let (population, run) = under_load(PROFILE_M, "map --live --json | take 3 | to json");
 
     assert!(!run.silent(), "{}", blank(population.profile(), &run));
+}
+
+// --- the reference targets of v0.4.1 §33.2 ------------------------------------------------------
+
+/// §33.2's table, typed from the specification.
+///
+/// The same four rows are declared as data in `xtask::perf::TARGETS`, which is what
+/// `cargo xtask perf` measures them by. They are written out again here for the reason
+/// `crates/ono-spatial-query/tests/profiles.rs` writes out Appendix F: a check that read the
+/// declaration to check the declaration would agree with itself.
+///
+/// Each row names the benchmark that answers it, at which profile and at which of §37.3's three
+/// temperatures. "Basic **cached**" is §37.3's cache hit — the same query answered again — and
+/// the rest are cold: an interactive operation is budgeted from where the user pressed return.
+const REFERENCE_TARGETS: [(&str, &str, &str, &str, f64); 4] = [
+    // §33.2 wording, benchmark, profile, temperature, p95 budget in milliseconds
+    (
+        "basic cached look/near first result",
+        "spatial.look",
+        "S",
+        "cache_hit",
+        50.0,
+    ),
+    (
+        "spatial query Profile M first result",
+        "spatial.query",
+        "M",
+        "cold",
+        150.0,
+    ),
+    (
+        "map live Profile M initial visible frame",
+        "spatial.map_first_frame",
+        "M",
+        "cold",
+        500.0,
+    ),
+    (
+        "map live Profile L initial progress/summary",
+        "spatial.map_first_frame",
+        "L",
+        "cold",
+        1_500.0,
+    ),
+];
+
+// Three of §33.2's four rows are outside their budget on the reference environment, measured with
+// `cargo xtask perf` at twenty iterations and recorded in the baseline (ADR-0491):
+//
+//   spatial query Profile M first result           580 ms   against 150 ms
+//   map live Profile M initial visible frame       1 090 ms against 500 ms
+//   map live Profile L initial progress/summary    25.7 s   against 1.5 s
+//
+// Both causes are §34's, and neither is the cardinality the profile is named for. COMPUTE pays
+// 413 ms for an external service acquisition on every orientation (§34.2's `external` class), and
+// the Profile L map builds the whole graph to draw thirty nodes (§34.4). §33.2's own escape
+// clause is the shape of the fix — "they MUST at least emit progress metadata or a deterministic
+// cost/refusal message before 1.5 seconds on Profile L".
+// REASON: red at HEAD; un-ignored by the increments that deliver §34.2's cost classes and §34.4's
+// bounded neighbourhood, which are issues #86 and #87. Defended by ADR-0491.
+#[ignore = "red until §34.2's cost classes and §34.4's bounded neighbourhood land (#86, #87; ADR-0491)"]
+#[test]
+fn should_hold_every_time_to_first_result_target_of_the_reference_targets_table() {
+    let baseline = recorded_baseline();
+    let mut missed = Vec::new();
+    for (spec, benchmark, profile, temperature, budget_ms) in REFERENCE_TARGETS {
+        let record = baseline
+            .iter()
+            .find(|record| {
+                text_of(record, "benchmark") == benchmark
+                    && text_of(record, "profile") == profile
+                    && text_of(record, "temperature") == temperature
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "v0.4.1 §33.2's \"{spec}\" is answered by `{benchmark}` at Profile {profile} \
+                     ({temperature}), and the baseline holds no such record. `cargo xtask perf` \
+                     is what measures it"
+                )
+            });
+        let p95 = number_of(record, "p95_ms");
+        if p95 > budget_ms {
+            missed.push(format!(
+                "  {spec}: {p95:.0} ms against {budget_ms:.0} ms ({:.1}x)",
+                p95 / budget_ms
+            ));
+        }
+    }
+    assert!(
+        missed.is_empty(),
+        "v0.4.1 §33.2's reference targets are not met on the reference environment:\n{}",
+        missed.join("\n")
+    );
+}
+
+// §33.3 at the other reference profile. `enter network; map --live --json | take 1 | to json`
+// against a hundred thousand listening sockets produces nothing for 79 s in a debug build and
+// 23 s in a release one, so the shell spends §33.3's whole budget saying nothing — which is the
+// rule this file's Profile M watchdog states, met at the cardinality §32.2 names beside it.
+// REASON: red at HEAD; un-ignored by the increment that stops a local question building the whole
+// graph (§34.4, issue #87). Defended by ADR-0491.
+#[ignore = "red until a local question at Profile L stops building the whole graph (#87; ADR-0491)"]
+#[test]
+fn should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture() {
+    // Profile L's ten thousand processes belong to the container; its hundred thousand listening
+    // sockets bind in two seconds and are built here (ADR-0488).
+    let sockets = SocketPopulation::of(PROFILE_L);
+    let home = scratch();
+
+    let run = run_bounded(
+        &home,
+        "enter network; map --live --json | take 1 | to json",
+        WATCHDOG,
+    );
+
+    assert!(
+        !run.silent(),
+        "{}",
+        format!(
+            "v0.4.1 §33.3 at Profile L: {} listening sockets placed, and the live map produced \
+             neither output nor progress inside {:?}. §33.2 allows the answer to be progress \
+             metadata or a deterministic cost message rather than the picture itself. {}",
+            sockets.len(),
+            WATCHDOG,
+            run.report()
+        )
+    );
+}
+
+/// The measurements `cargo xtask perf` recorded on the reference environment (§32.4, §37.2).
+fn recorded_baseline() -> Vec<serde_yaml_ng::Value> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/spec/hardening/performance_baseline.json");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "the regression baseline of v0.4.1 §32.4 is at {}: {error}",
+            path.display()
+        )
+    });
+    let document: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&text).expect("the baseline is a JSON document");
+    document["measurements"]
+        .as_sequence()
+        .expect("the baseline holds a sequence of measurements")
+        .clone()
+}
+
+/// A string field of a measurement record.
+fn text_of(record: &serde_yaml_ng::Value, field: &str) -> String {
+    record[field].as_str().unwrap_or_default().to_owned()
+}
+
+/// A numeric field of a measurement record.
+fn number_of(record: &serde_yaml_ng::Value, field: &str) -> f64 {
+    record[field]
+        .as_f64()
+        .unwrap_or_else(|| panic!("a measurement record carries a numeric `{field}`"))
 }
 
 /// The one number a `count | to json` run printed.
