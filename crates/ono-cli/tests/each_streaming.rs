@@ -19,12 +19,13 @@
 //! what "before the barrier releases" means when it is written as something a test can observe
 //! rather than as a duration.
 //!
-//! **What is red.** `should_answer_take_one_before_the_source_closes_when_each_transforms_a_waiting_stream`
+//! **What these were.** `should_answer_take_one_before_the_source_closes_when_each_transforms_a_waiting_stream`
 //! and `should_accept_an_unbounded_source_when_each_transforms_it` are the §57 phase H0 failure
-//! proofs required before the streaming repair of phase H6 lands (issue #31). They are
-//! `#[ignore]`d until issues #75 and #76 turn them green; ADR-0431 records why they land ignored
-//! and what un-ignores them. The third test is green today and is the differential that names the
-//! defect: the same source and the same `take 1`, with `where` in place of `each`, answer at once.
+//! proofs required before the streaming repair of phase H6 landed (issue #31). They were
+//! `#[ignore]`d and red until issues #75 and #76 turned them green; ADR-0431 records why they
+//! landed ignored, and ADR-0480 is the repair. Neither assertion changed. The third test was
+//! green throughout and is the differential that named the defect: the same source and the same
+//! `take 1`, with `where` in place of `each`, answered at once while `each` did not.
 
 #![allow(
     clippy::expect_used,
@@ -91,11 +92,6 @@ impl WaitingSource {
 
 // --- the failure proofs of v0.4.1 §57 phase H0 ------------------------------------------------
 
-// REASON: the §57 phase H0 failure proof for issue #75. `each` runs the stages in front of it as
-// a separate pipeline and captures everything they produce before its block runs (§0.5.5, §25.2),
-// so a source that has produced a value but has not ended produces nothing downstream. Un-ignored
-// by the increment that closes #75; defended by ADR-0431.
-#[ignore = "red until issue #75 makes `each` forward its input incrementally (ADR-0431)"]
 #[test]
 fn should_answer_take_one_before_the_source_closes_when_each_transforms_a_waiting_stream() {
     let source = WaitingSource::open();
@@ -128,10 +124,6 @@ fn should_answer_take_one_before_the_source_closes_when_each_transforms_a_waitin
     );
 }
 
-// REASON: the §57 phase H0 failure proof for issue #76. §25.6 makes accepting an unbounded source
-// the acceptance criterion that a capture-based `each` cannot meet; this build refuses one with
-// E0801 instead. Un-ignored by the increment that closes #76; defended by ADR-0431.
-#[ignore = "red until issue #76 makes `each` accept an unbounded source (ADR-0431)"]
 #[test]
 fn should_accept_an_unbounded_source_when_each_transforms_it() {
     let source = WaitingSource::open();

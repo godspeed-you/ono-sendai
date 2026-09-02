@@ -312,6 +312,19 @@ Delivered so far in the tranche:
   (#22); and issue **#20**'s instance measures 29.7 s at Profile M, inside §33.3's thirty-second
   budget by 0.3 s and sixty times outside §33.2's target, so it needs a phase-H7 frame-budget
   proof under a terminal rather than a watchdog that would be a coin toss (ADR-0252, #21).
+- **H6 complete (2026-09-02), #75–#81.** `each` streams. `eval.rs::run_each_block` and its second
+  `StageList` are gone: `each { … }` is bound and assembled as a stage of its own pipeline, and the
+  stage asks the evaluator over a bounded channel of one while a driver loop answers and drains at
+  the same time. Both H0 failure proofs are un-ignored with **no assertion touched** — the diff of
+  `each_streaming.rs` is the two `#[ignore]`/`// REASON:` blocks and one paragraph of module doc —
+  and the `where` differential stayed green throughout. `each {…} | each {…}` works at all now; it
+  answered `provider.unsupported` before. Memory is measured rather than asserted: two block
+  invocations for a 200-value source and two for a 2000-value one. #78's capture inventory is 21
+  classified sites in `docs/spec/hardening/streaming.yaml` with a gate that fails in four
+  directions, and it caught two real removals as the code changed under it. ADR-0479 … ADR-0483,
+  cases 193 and 194, §4.8.7 written and ticked. No code in the reserved `E1301`–`E1319` range was
+  needed: every refusal this tranche makes already had one.
+
 - **H2 complete (2026-09-02), #40–#50.** A v0.4.1 listening agent now authenticates every client
   **and authorizes only the ones an operator listed**: §59.1 moved from "the unknown client reads
   the provider inventory" to "the unknown client is refused with `Ono-Sendai-E1202` before provider
@@ -1758,6 +1771,26 @@ This is **work for phase H3** (#54, one central `Limits` contract): if
 `docs/spec/hardening/remote_limits.yaml` is still wanted, it should reference these keys rather
 than restate the numbers. **Exit test:** changing a remote ceiling in the catalogue changes what
 the listener enforces.
+
+**A function cannot be invoked between two pipeline stages (2026-09-02).** `get process | mine |
+take 1` resolves `mine` as an external program; `call_function` is reached only for
+`list.stages[0]`. Giving a function an input stream is a language feature rather than a streaming
+repair, so §65.12 kept it out of H6 (ADR-0481). **Exit test:** a call in a non-head position binds
+its input stream, and `explain` names it.
+
+**A function body containing `each { … }` still collects (2026-09-02).** `native::stream_segment`
+refuses a block stage, because the block bridge identifies a block by its *position* in the stage
+list the driver holds and a body's stages are in a different list. The fix is to make
+`BlockRequest` carry a block **site** rather than an index. ADR-0481. **Exit test:** a function
+whose body is `each { … }` streams like one whose body is `where`.
+
+**A backgrounded `each { … }` is still unsupported (2026-09-02).** `run_background` has no session
+to ask, so it fails as it did before the rewrite. ADR-0480. **Exit test:** `each { … } &` runs.
+
+**`run_native_segment` now assembles, drives and drains, and duplicates its binding and assembly
+with `stream_segment` (2026-09-02).** The seam is obvious — bind / assemble / drive / write-result
+— and §65.12 forbids cutting it in the same work package as the semantic change that created it.
+**This is work for H9 (#96)**, not a loose end. ADR-0480, ADR-0481.
 
 **`set client-key --allow` takes a comma-separated word rather than a repeated option
 (2026-09-02).** §9.7 writes `--allow <capability>...`, and `ono_command`'s binder keeps one value
@@ -3399,17 +3432,6 @@ opposite of a silenced requirement: they are the requirement, written down befor
   semaphore exists (#51, #52, #53). Seven of §14.1's eight classes are emitted today. ADR-0474.
 
 The H0 failure proofs, red by design (issue #31, ADR-0430):
-
-- **`each` captures its complete upstream before its block runs.**
-  `crates/ono-cli/tests/each_streaming.rs` holds two `#[ignore]`d tests, both red at HEAD with
-  `Ono-Sendai-E0801 stream.unbounded_operation` (v0.4.1 §0.5.5, §25.2). The source is the
-  production file provider — `tail file … --lines 1 --follow`, which emits the one line the file
-  holds and then waits — so the barrier is the file not growing and no clock appears anywhere.
-  `should_answer_take_one_before_the_source_closes_when_each_transforms_a_waiting_stream` (§25.1,
-  §58.2, §60.1) is un-ignored by **#75**, and `should_accept_an_unbounded_source_when_each_transforms_it`
-  (§25.6) by **#76** — ADR-0431. The suite's third test is green and un-ignored: `where` over the
-  identical source and the identical `take 1` answers at once, which pins the defect on `each`
-  rather than on the source, `take` or the stream plumbing.
 
 - **`map --live` produces nothing for the whole of §33.3's budget.**
   `crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_the_live_map_within_the_interactive_watchdog_on_profile_m`

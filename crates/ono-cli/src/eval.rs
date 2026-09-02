@@ -189,62 +189,48 @@ fn each_block_stage(list: &StageList) -> Option<usize> {
     })
 }
 
-/// Runs the stages before `index` for their values, the block once per value with `@` bound to
-/// it, and the stages after it over what the blocks produced.
-fn run_each_block(
+/// Runs one `each { … }` block over one item, as a stage of the pipeline it stands in.
+///
+/// v0.4.1 §25.1 requires the block to run for a value the source has already produced, before the
+/// source has completed. The streaming stage in [`crate::native`] calls this once per item while
+/// the rest of the pipeline is still running, and it is the only place a block is ever run
+/// (ADR-0480). What comes back is what the stage forwards, and whether the stage should keep
+/// reading its input.
+///
+/// `capture` is ADR-0070 point 3: with stages after it the block's values stream into them, and
+/// with nothing after it its statements show their results where they stand. The capture is one
+/// item's result — §25.4's per-invocation scope — never a collection over all of them.
+///
+/// # Errors
+///
+/// The block's own `Flow` when it failed, returned or exited: those unwind the pipeline rather
+/// than being answered.
+pub(crate) fn run_each_item(
     session: &mut Session,
-    list: &StageList,
+    block: &Block,
     source: &str,
-    index: usize,
-) -> Eval<ExitStatus> {
-    let stage = &list.stages[index];
-    let Some(Argument::Value(Expr::Block(block))) = stage.arguments.first() else {
-        return Ok(ExitStatus::SUCCESS);
+    item: Value,
+    capture: bool,
+) -> Eval<(Vec<Value>, bool)> {
+    session.push_scope();
+    session.bind("@", item);
+    if capture {
+        session.begin_capture();
+    }
+    let outcome = run_block(session, block, source);
+    let produced = if capture {
+        session.end_capture()
+    } else {
+        Vec::new()
     };
-    if index == 0 {
-        return Err(Flow::Failed(
-            ErrorValue::new(
-                ErrorCode::TypeMismatch,
-                "`each` needs a stream of values to run its block over, and none reaches it",
-            )
-            .with_help("put a producer in front of it: `get service | where … | each { … }`"),
-        ));
+    session.pop_scope();
+    match outcome {
+        // §25.5: `continue` skips the remainder of the current item and the next one is read;
+        // `break` stops consuming upstream, which the stage does by dropping its input.
+        Ok(_) | Err(Flow::Continue) => Ok((produced, true)),
+        Err(Flow::Break) => Ok((produced, false)),
+        Err(other) => Err(other),
     }
-
-    let upstream = StageList {
-        stages: list.stages[..index].to_vec(),
-        span: list.stages[0].span.join(list.stages[index - 1].span),
-    };
-    session.begin_capture();
-    let outcome = run_stage_list(session, &upstream, source, false);
-    let items = session.end_capture();
-    outcome?;
-
-    // The block runs in the caller's output context (ADR-0070 point 3): captured when stages
-    // follow, shown as it goes when nothing does.
-    let consumed = index + 1 < list.stages.len();
-    let mut produced = Vec::new();
-    for item in items {
-        session.push_scope();
-        session.bind("@", item);
-        if consumed {
-            session.begin_capture();
-        }
-        let outcome = run_block(session, block, source);
-        if consumed {
-            produced.extend(session.end_capture());
-        }
-        session.pop_scope();
-        match outcome {
-            Ok(_) | Err(Flow::Continue) => {}
-            Err(Flow::Break) => break,
-            Err(other) => return Err(other),
-        }
-    }
-    if consumed {
-        return crate::native::run_seeded_from(session, list, source, index + 1, produced);
-    }
-    Ok(ExitStatus::SUCCESS)
 }
 
 // --- prefix assignment (spec §54, ADR-0071 §2) ------------------------------------------------
@@ -561,6 +547,20 @@ fn run_function_body(
     body_source: &str,
 ) -> Eval<ExitStatus> {
     let consumed = list.stages.len() > 1;
+    // v0.4.1 §26.2's streaming continuation. A body that is one pipeline is one pipeline: its
+    // stages are assembled while the invocation's scope is on the session (§26.3), and the stream
+    // they produce is what the stages after the call read — so `watched | take 1` is answered from
+    // the first value the body produced rather than from a collection of all of them (ADR-0481).
+    //
+    // Every other body still collects, which is what it always did: §26.2 permits that where the
+    // shape cannot be continued, and `explain` says so of the call (§22.4).
+    if consumed
+        && let Some(body) = crate::native::continuable_body(&declaration.body)
+        && let Some((stream, failed_rows)) =
+            crate::native::stream_segment(session, body, body_source)?
+    {
+        return crate::native::run_piped(session, list, source, stream, failed_rows);
+    }
     if consumed {
         session.begin_capture();
     }
@@ -1023,9 +1023,18 @@ fn run_stage_list(
     }
 
     // `each { … }` with a block runs in the shell: a block holds statements, and a statement may
-    // run a command, which the transform engine cannot (spec §19.4, ADR-0071 §1).
-    if !background && let Some(index) = each_block_stage(list) {
-        return run_each_block(session, list, source, index);
+    // run a command, which the transform engine cannot (spec §19.4, ADR-0071 §1). Since v0.4.1 it
+    // runs *as a stage of its own pipeline* rather than in front of one — the native path below
+    // assembles it and drives it item by item (§25.1, ADR-0480) — so all that is left here is the
+    // one shape that has no pipeline to be a stage of.
+    if !background && each_block_stage(list) == Some(0) {
+        return Err(Flow::Failed(
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                "`each` needs a stream of values to run its block over, and none reaches it",
+            )
+            .with_help("put a producer in front of it: `get service | where … | each { … }`"),
+        ));
     }
 
     // A KUANG/11 management command that must both show its record and decide the run's status

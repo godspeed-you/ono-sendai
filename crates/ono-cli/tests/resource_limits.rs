@@ -309,7 +309,14 @@ const ONE_CAPTURE: &str = "let x = (get process | take 4 | where pid > 0)";
 
 /// The same four records held by two captures at once: a function body consumed by a later
 /// stage, inside the substitution that binds what the stage produced.
-const NESTED_CAPTURES: &str = "fn four() { get process | take 4 }\nlet x = (four | where pid > 0)";
+///
+/// The body has a statement in front of its pipeline on purpose. Since v0.4.1 §26.2 a function
+/// body that is *one* pipeline is a stage of the caller's pipeline and captures nothing at all
+/// (ADR-0481), which is the outcome that specification prefers — so the shape that still nests
+/// two captures is a body the continuation cannot apply to. What is being measured is unchanged:
+/// the same four records, held twice, against a ceiling calibrated to hold them once.
+const NESTED_CAPTURES: &str =
+    "fn four() {\n  let wanted = 4\n  get process | take 4\n}\nlet x = (four | where pid > 0)";
 
 #[test]
 fn should_refuse_a_capture_that_would_exceed_the_command_ceiling() {

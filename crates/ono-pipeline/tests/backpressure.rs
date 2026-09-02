@@ -118,3 +118,63 @@ async fn should_stop_the_producer_when_the_consumer_goes_away() {
     })
     .await;
 }
+
+// --- v0.4.1 §28.1, §28.2 and §60.2: the streaming rewrite bought nothing with unboundedness ----
+
+#[test]
+fn should_keep_the_reference_channel_capacity_the_specification_names() {
+    // v0.4.1 §28.1: "the default pipeline data path MUST continue to use bounded channels. The
+    // reference capacity remains `pipeline.channel_capacity = 64`." Changing the number is
+    // permitted "through an ADR and benchmark evidence"; changing it in passing is not, and this
+    // is what makes the difference visible.
+    assert_eq!(
+        ono_pipeline::DEFAULT_CAPACITY,
+        64,
+        "v0.4.1 §28.1 names 64 as the reference channel capacity"
+    );
+}
+
+#[tokio::test]
+async fn should_keep_the_retained_queue_within_the_bounded_channel_when_the_consumer_is_slow() {
+    // v0.4.1 §60.2: "a fast synthetic source feeding a slow `each`/downstream MUST not cause
+    // retained queue length to grow beyond configured bounded channels plus documented in-flight
+    // values." The shape is the one the streaming rewrite introduced — an item transform between
+    // a source that never stops and a consumer that reads one value at a time — and §28.2 is the
+    // rule it must not break: the change "MUST NOT solve materialization by inserting an
+    // unbounded task queue".
+    //
+    // The bound is arithmetic, not a guess. Two channels of `capacity` stand around the transform
+    // and it holds one value while it maps it, so after `reads` values have been read the source
+    // can have produced at most `reads + 2 * capacity + 1`.
+    within(async {
+        let produced = Arc::new(AtomicUsize::new(0));
+        let capacity = 4;
+        let config = PipelineConfig::new().with_capacity(capacity);
+        let mut stream = endless(config, Arc::clone(&produced))
+            .transform(ono_pipeline::Each::new(|value: &Value| {
+                Ok(vec![value.clone()])
+            }))
+            .expect("`each` never requires finite input (Appendix E)");
+
+        let reads = 10;
+        for expected in 0..reads {
+            // Every chance to run ahead before each read: a queue that grew would grow here.
+            for _ in 0..64 {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(
+                stream.recv().await,
+                Some(StreamEvent::Value(Value::Int(expected as i128))),
+                "values arrive in order however far the source was allowed to run"
+            );
+            let held = produced.load(Ordering::SeqCst);
+            assert!(
+                held <= expected + 1 + 2 * capacity + 1,
+                "after {} reads the source had produced {held}, which is more than the two \
+                 bounded channels and the value in flight allow with a capacity of {capacity}",
+                expected + 1
+            );
+        }
+    })
+    .await;
+}

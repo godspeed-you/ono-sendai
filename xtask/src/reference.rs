@@ -62,6 +62,7 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
     let schemas = load_directory(&spec.join("schemas"))?;
     let commands = load_directory(&spec.join("commands"))?;
     let packs = load_packs(&spec.join("adapters").join("first-party"))?;
+    let streaming = load(&spec.join("hardening").join("streaming_classification.yaml"))?;
 
     let mut pages = vec![
         Page {
@@ -91,6 +92,10 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
         Page {
             path: "docs/reference/capabilities.md".to_owned(),
             contents: capabilities_page(capabilities.as_ref()),
+        },
+        Page {
+            path: "docs/reference/streaming.md".to_owned(),
+            contents: streaming_page(streaming.as_ref()),
         },
     ];
     if !packs.is_empty() {
@@ -182,6 +187,9 @@ fn index_page() -> String {
          | [Schemas](schemas.md) | `docs/spec/schemas/*.v1.yaml` — the object contracts of spec §28 |\n\
          | [Adapters](adapters/README.md) | `docs/spec/adapters/first-party/*.yaml` — what each \
          external tool adapts, at which versions, through which invocations (spec v0.3 §1.66) |\n\
+         | [Streaming](streaming.md) | `docs/spec/hardening/streaming_classification.yaml` — what \
+         each pipeline operation may do to a stream, and what the order of events means (v0.4.1 \
+         Appendix E, §27) |\n\
          | [Errors](errors.md) | `docs/spec/errors.yaml` — the stable taxonomy of spec §43 |\n\
          | [Capabilities](capabilities.md) | `docs/spec/capabilities.yaml` — provider and KUANG/11 \
          capabilities |\n\
@@ -412,6 +420,101 @@ fn schemas_page(files: &BTreeMap<String, Yaml>) -> String {
                 string_at(definition, "unit").unwrap_or_else(|| "—".to_owned()),
                 string_at(definition, "doc").unwrap_or_default()
             );
+        }
+    }
+    page
+}
+
+fn streaming_page(document: Option<&Yaml>) -> String {
+    let mut page = header(
+        "Streaming and event ordering",
+        "What each pipeline operation may do to a stream, and what a consumer may conclude from \
+         the order it observed events in. The classes are v0.4.1 Appendix E; the ordering \
+         contract is v0.4.1 §27. Both are rendered from \
+         `docs/spec/hardening/streaming_classification.yaml`, which is also what `explain` reads \
+         and what the gate compares the command contracts against.",
+    );
+    let Some(document) = document else {
+        page.push_str("\nNo streaming classification is declared.\n");
+        return page;
+    };
+
+    page.push_str("\n## Classes\n\n| Class | Appendix E | Requires finite input | May materialize |\n|---|---|---|---|\n");
+    for class in sequence(document, "classes") {
+        let flag = |key: &str| {
+            if class.get(key).and_then(Yaml::as_bool).unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            }
+        };
+        page.push_str(&format!(
+            "| `{}` | {} | {} | {} |\n",
+            string_at(class, "id").unwrap_or_default(),
+            cell(&string_at(class, "appendix_e").unwrap_or_default()),
+            flag("requires_finite_input"),
+            flag("may_materialize"),
+        ));
+    }
+    for class in sequence(document, "classes") {
+        if let Some(doc) = string_at(class, "doc") {
+            page.push_str(&format!(
+                "\n**`{}`** — {}\n",
+                string_at(class, "id").unwrap_or_default(),
+                doc.trim()
+            ));
+        }
+    }
+
+    page.push_str("\n## Where each operation sits\n\n| Command | Class |\n|---|---|\n");
+    for operation in sequence(document, "operations") {
+        page.push_str(&format!(
+            "| `{}` | `{}` |\n",
+            string_at(operation, "command").unwrap_or_default(),
+            string_at(operation, "class").unwrap_or_default(),
+        ));
+    }
+
+    let Some(ordering) = document.get("ordering") else {
+        return page;
+    };
+    page.push_str("\n## Event ordering\n");
+    for (heading, key) in [
+        ("Within one channel", "per_channel"),
+        ("Between the two kinds", "cross_kind"),
+        ("Causality", "causality"),
+        ("When a total order is part of the answer", "total_order"),
+    ] {
+        if let Some(text) = string_at(ordering, key) {
+            page.push_str(&format!("\n**{heading}.** {}\n", text.trim()));
+        }
+    }
+    if !sequence(ordering, "channels").is_empty() {
+        page.push_str("\n| Channel | Carries | Ordered within itself |\n|---|---|---|\n");
+        for channel in sequence(ordering, "channels") {
+            page.push_str(&format!(
+                "| `{}` | {} | {} |\n",
+                string_at(channel, "id").unwrap_or_default(),
+                cell(&string_at(channel, "carries").unwrap_or_default()),
+                if channel
+                    .get("ordered_within_itself")
+                    .and_then(Yaml::as_bool)
+                    .unwrap_or(false)
+                {
+                    "yes"
+                } else {
+                    "no"
+                },
+            ));
+        }
+        for channel in sequence(ordering, "channels") {
+            if let Some(doc) = string_at(channel, "doc") {
+                page.push_str(&format!(
+                    "\n**`{}`** — {}\n",
+                    string_at(channel, "id").unwrap_or_default(),
+                    doc.trim()
+                ));
+            }
         }
     }
     page

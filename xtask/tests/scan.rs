@@ -711,3 +711,214 @@ fn should_find_no_unchecked_confinement_syscall_in_this_repository() {
             .join("\n")
     );
 }
+
+// --- the evaluator capture inventory (v0.4.1 §26.1, §65.7) -------------------------------------
+
+/// A fixture whose inventory covers exactly the sites named, with the class each carries.
+fn inventory(entries: &[(&str, &str, &str, Option<&str>)]) -> String {
+    let mut text = String::from("version: 1\ncaptures:\n");
+    for (file, site, class, adr) in entries {
+        text.push_str(&format!(
+            "  - file: {file}\n    site: {site}\n    class: {class}\n    holds: something\n"
+        ));
+        if let Some(adr) = adr {
+            text.push_str(&format!("    adr: {adr}\n"));
+        }
+    }
+    text
+}
+
+#[test]
+fn should_report_an_evaluator_capture_the_streaming_inventory_does_not_classify() {
+    // v0.4.1 §26.1: "The implementation MUST inventory every `Vec<Value>` or equivalent capture
+    // in evaluator execution paths and classify it". §65.7 is why it has to be a rule with teeth
+    // — a capture removed from `each` and grown one stage later is the same defect wearing a
+    // different function's name.
+    let repo = fixture(&[
+        (
+            "crates/ono-cli/src/eval.rs",
+            "fn run_each_block() {\n    let items: Vec<Value> = upstream();\n}\n",
+        ),
+        (
+            "docs/spec/hardening/streaming.yaml",
+            &inventory(&[(
+                "crates/ono-cli/src/eval.rs",
+                "run_for",
+                "semantic_materialization",
+                None,
+            )]),
+        ),
+    ]);
+    let problems = xtask::scan::check_evaluator_captures(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.location.contains("run_each_block")),
+        "an unclassified capture is reported against the site that holds it, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_an_inventory_entry_whose_capture_is_no_longer_in_the_evaluator() {
+    // The reverse direction, and the one that keeps the artifact honest as captures are removed:
+    // an entry nothing answers to is a classification of code that is not there.
+    let repo = fixture(&[
+        ("crates/ono-cli/src/eval.rs", "fn run_for() {}\n"),
+        (
+            "docs/spec/hardening/streaming.yaml",
+            &inventory(&[(
+                "crates/ono-cli/src/eval.rs",
+                "run_for",
+                "semantic_materialization",
+                None,
+            )]),
+        ),
+    ]);
+    let problems = xtask::scan::check_evaluator_captures(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("no capture")),
+        "a stale entry is reported, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_an_implementation_convenience_capture_that_no_decision_record_justifies() {
+    // v0.4.1 §26.1: "All `implementation convenience` captures on pipeline data MUST be removed
+    // or bounded and justified by ADR." An entry of that class without an ADR has done neither.
+    let repo = fixture(&[
+        (
+            "crates/ono-cli/src/eval.rs",
+            "fn run_for() {\n    let items: Vec<Value> = subject();\n}\n",
+        ),
+        (
+            "docs/spec/hardening/streaming.yaml",
+            &inventory(&[(
+                "crates/ono-cli/src/eval.rs",
+                "run_for",
+                "implementation_convenience",
+                None,
+            )]),
+        ),
+    ]);
+    let problems = xtask::scan::check_evaluator_captures(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("ADR")),
+        "an unjustified convenience capture is reported, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_accept_an_evaluator_capture_the_inventory_classifies() {
+    let repo = fixture(&[
+        (
+            "crates/ono-cli/src/eval.rs",
+            "fn run_for() {\n    let items: Vec<Value> = subject();\n}\n",
+        ),
+        (
+            "docs/spec/hardening/streaming.yaml",
+            &inventory(&[(
+                "crates/ono-cli/src/eval.rs",
+                "run_for",
+                "semantic_materialization",
+                None,
+            )]),
+        ),
+    ]);
+    assert_eq!(
+        xtask::scan::check_evaluator_captures(repo.path()),
+        Vec::new()
+    );
+}
+
+#[test]
+fn should_report_a_capture_whose_class_is_not_one_the_specification_defines() {
+    // §26.1 names three classes and no more. A fourth invented in passing is how an inventory
+    // stops being a classification.
+    let repo = fixture(&[
+        (
+            "crates/ono-cli/src/eval.rs",
+            "fn run_for() {\n    let items: Vec<Value> = subject();\n}\n",
+        ),
+        (
+            "docs/spec/hardening/streaming.yaml",
+            &inventory(&[("crates/ono-cli/src/eval.rs", "run_for", "it_is_fine", None)]),
+        ),
+    ]);
+    let problems = xtask::scan::check_evaluator_captures(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("it_is_fine")),
+        "an invented class is reported, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_this_repository_as_classifying_every_evaluator_capture() {
+    // The rule, applied to the tree it exists for.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let problems = xtask::scan::check_evaluator_captures(root);
+    assert!(
+        problems.is_empty(),
+        "an evaluator capture is unclassified (v0.4.1 §26.1, §65.7):\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+// --- bounded channels stay mandatory (v0.4.1 §28.1) -------------------------------------------
+
+#[test]
+fn should_report_an_unbounded_channel_on_the_pipeline_data_path() {
+    let repo = fixture(&[(
+        "crates/ono-pipeline/src/stream.rs",
+        "fn build() {\n    let (tx, rx) = mpsc::unbounded_channel();\n}\n",
+    )]);
+    let problems = xtask::scan::check_bounded_channels(repo.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+    assert!(problems[0].location.ends_with(":2"), "got {problems:?}");
+}
+
+#[test]
+fn should_leave_a_bounded_channel_alone_when_scanning_for_unbounded_ones() {
+    let repo = fixture(&[(
+        "crates/ono-pipeline/src/stream.rs",
+        "fn build() {\n    let (tx, rx) = mpsc::channel(64);\n}\n",
+    )]);
+    assert_eq!(xtask::scan::check_bounded_channels(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_ignore_prose_about_an_unbounded_channel_when_scanning() {
+    let repo = fixture(&[(
+        "crates/ono-pipeline/src/stream.rs",
+        "// An unbounded_channel( here would be forbidden by v0.4.1 §28.1.\nfn build() {}\n",
+    )]);
+    assert_eq!(xtask::scan::check_bounded_channels(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_find_no_unbounded_pipeline_channel_in_this_repository() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let problems = xtask::scan::check_bounded_channels(root);
+    assert!(
+        problems.is_empty(),
+        "an unbounded channel carries pipeline data (v0.4.1 §28.1, §28.2, §65.7):\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}

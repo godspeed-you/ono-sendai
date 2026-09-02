@@ -1,0 +1,245 @@
+# Every capture in the evaluator, and what class it belongs to (v0.4.1 §26.1).
+#
+# §26.1 asks for one thing and gives it teeth:
+#
+#   "The implementation MUST inventory every `Vec<Value>` or equivalent capture in evaluator
+#    execution paths and classify it as: semantic materialization / implementation convenience /
+#    history/cache. All `implementation convenience` captures on pipeline data MUST be removed or
+#    bounded and justified by ADR."
+#
+# §65.7 is why the inventory is a committed artifact rather than a paragraph in a pull request:
+# "replacing a foreground `Vec` with an unbounded background queue is not a streaming fix and is
+# forbidden". A capture removed from `each` and regrown one stage later is the same defect under
+# another function's name, and only an enumeration a gate reads can notice that.
+#
+# `cargo run -p xtask -- spec-check` reads this file and the five evaluator sources below, and
+# fails in both directions:
+#
+#   * a capture site no entry names            — the classification is missing;
+#   * an entry no capture site answers to      — the classification outlived its code;
+#   * a class §26.1 does not define            — a fourth class invented in passing;
+#   * `implementation_convenience` with no ADR — §26.1 permits it only bounded and justified.
+#
+# A site is an *item* — a function, a struct, an enum — not a line, so moving code does not
+# invalidate an entry and renaming it does. The markers that make a line a capture are
+# `Vec<Value>`, `begin_capture(` and `end_capture(`.
+#
+# Scope. These five files are the evaluator execution paths: `eval.rs` runs statements and
+# blocks, `native.rs` assembles, drives and drains the value stream, `session.rs` owns the
+# capture stack and the retained history, and `report.rs` and `view.rs` are where a drained
+# result arrives. A *command* that materializes is classified by Appendix E instead — see
+# `streaming_classification.yaml` — because there the class is a property of the operation's
+# published contract, not of the evaluator's structure. The two files answer different questions
+# and are deliberately not merged (ADR-0455, ADR-0479).
+#
+# Decisions: ADR-0479 (this inventory), ADR-0453 and ADR-0457 (what a retained collection is
+# charged to), ADR-0454 (the stage that holds the collection is the stage that pays).
+
+version: 1
+
+captures:
+  # --- crates/ono-cli/src/eval.rs ------------------------------------------------------------
+  - file: crates/ono-cli/src/eval.rs
+    site: run_each_item
+    class: semantic_materialization
+    holds: >-
+      What one `each { … }` block emitted for one input item, before the stage forwards it
+      downstream.
+    why: >-
+      §25.4 permits exactly this and no more: "the implementation SHOULD model each block
+      invocation as a small streaming/capture scope only where the block semantics require knowing
+      the block's complete result for that individual item". A block is a sequence of statements
+      whose control flow — `continue`, `break`, a failure — is only known when the last one has
+      run, so the stage cannot decide what to forward until the item is finished. It is one item's
+      result; the collection over all items that used to stand here is gone (ADR-0480), and the
+      bytes are charged to §23.2's capture ceiling like every other capture (ADR-0457).
+
+  - file: crates/ono-cli/src/eval.rs
+    site: run_function_body
+    class: semantic_materialization
+    holds: >-
+      Everything a function body produced, for a call the pipeline cannot be continued through.
+    why: >-
+      §26.2 permits this where the shape leaves no alternative — a body of several statements, a
+      chained pipeline, a serializer, an external program — and requires two things of it, both of
+      which hold: the limitation is stated by `explain` before the call is run, and the collection
+      has a finite-input guard, so an unbounded body is refused rather than waited for (§65.8). A
+      body that *is* one native pipeline is not collected at all any more: it becomes a stage of
+      the caller's pipeline (ADR-0481).
+
+  - file: crates/ono-cli/src/eval.rs
+    site: run_for
+    class: semantic_materialization
+    holds: The values a `for` loop iterates.
+    why: >-
+      The subject of `for name in <expression>` is a value the evaluator already has in hand — a
+      list, a range, a record's fields — not a stream drawn from a pipeline. Nothing is captured
+      that was not already one value.
+
+  - file: crates/ono-cli/src/eval.rs
+    site: captured_value
+    class: semantic_materialization
+    holds: The complete result of a pipeline whose value is being bound.
+    why: >-
+      `let hot = (get process | where cpu > 20)` is defined over the whole result: the binding is
+      one value, so the pipeline has to end before the name means anything. §22.1 permits a global
+      operation to materialize, and §23.2's capture ceiling bounds this one (ADR-0457).
+
+  # --- crates/ono-cli/src/native.rs ----------------------------------------------------------
+  - file: crates/ono-cli/src/native.rs
+    site: run_collecting
+    class: semantic_materialization
+    holds: The values a pipeline produced, answered instead of shown.
+    why: >-
+      `… | enter socket` needs the object the stages before it produced (spec §14.3, ADR-0075).
+      Entering is defined over one finished result; there is no incremental meaning to give it.
+
+  - file: crates/ono-cli/src/native.rs
+    site: run_seeded
+    class: semantic_materialization
+    holds: Values a pipeline head already is, rather than produces.
+    why: >-
+      `$hot | where …` and `@-1 | count` start from a value the session already holds (ADR-0019).
+      The collection is the head itself, not something drawn out of a stream.
+
+  - file: crates/ono-cli/src/native.rs
+    site: run_seeded_from
+    class: semantic_materialization
+    holds: >-
+      Values a shell-answered command produced, handed to the stages after it — `get link |
+      remove link`, `verify plugin` (ADR-0118).
+    why: >-
+      Those commands answer once, completely: there is no incremental form of "the plugin was
+      verified". `each { … }` no longer arrives here at all — it is a stage of its own pipeline
+      now (ADR-0480).
+
+  - file: crates/ono-cli/src/native.rs
+    site: BlockReply
+    class: semantic_materialization
+    holds: One item's block result, in flight between the evaluator and the stage that asked.
+    why: >-
+      The other end of `run_each_item` above, carried over a `oneshot` channel. Nothing
+      accumulates: the stage forwards the values and asks for the next item (§25.4).
+
+  - file: crates/ono-cli/src/native.rs
+    site: Start
+    class: semantic_materialization
+    holds: >-
+      What a run of a stage list starts from when it does not start from its own head: values the
+      evaluator already has, or a stream another pipeline is producing.
+    why: >-
+      The `Values` variant is the collection above, one call deeper. The `Pipe` variant beside it
+      is §26.2's streaming continuation and holds nothing at all — it is the reason a function
+      body no longer arrives here as a `Vec` (ADR-0481).
+
+  - file: crates/ono-cli/src/native.rs
+    site: Seed
+    class: semantic_materialization
+    holds: >-
+      The `Values` variant of what starts a native segment — a retained result, a plugin's answer,
+      a decoded document.
+    why: >-
+      Each of those arrives complete: a plugin answers once, a non-streaming decoder produces its
+      document once. The `Stream` variant beside it is the incremental case and holds nothing.
+
+  - file: crates/ono-cli/src/native.rs
+    site: run_native_segment
+    class: semantic_materialization
+    holds: >-
+      The values and the per-item failures a pipeline produced, drained before they are written,
+      rendered or retained.
+    why: >-
+      This is the shell's answer to one command. Rendering a table needs its widths, `write_result`
+      needs the whole of what it writes, and §60.6 requires the emitted result to be complete
+      whatever history keeps of it. An unbounded stream never reaches here: §18.3 sends it to the
+      live view at a terminal and refuses it anywhere else, before a value is drawn.
+
+  - file: crates/ono-cli/src/native.rs
+    site: run_background
+    class: history_cache
+    holds: What a background job produced, until `fg` shows it.
+    why: >-
+      A job nobody is watching has nowhere to write, so its result waits for the foreground. It is
+      retained state rather than pipeline data in flight, bounded the way §24 bounds retention.
+
+  - file: crates/ono-cli/src/native.rs
+    site: decode_adapted
+    class: semantic_materialization
+    holds: The records a non-streaming adapter decoded from a program's complete output.
+    why: >-
+      The decoder's own contract requires the whole document — a JSON array is not a value until
+      its closing bracket. An adapter whose decoder streams takes the other path entirely
+      (`run_streamed_segment`, ADR-0059) and holds nothing.
+
+  - file: crates/ono-cli/src/native.rs
+    site: seed_bytes
+    class: semantic_materialization
+    holds: The values being serialised into the bytes a child process will read.
+    why: >-
+      Spec §12.3: objects reach a child process only through an explicit representation, and a
+      representation is a document. The collection is the document, and it is consumed at once.
+
+  - file: crates/ono-cli/src/native.rs
+    site: stage_scope
+    class: history_cache
+    holds: The retained results `@-1` and `@N` name, made visible to a stage's expressions.
+    why: >-
+      These are the session's history, not this pipeline's data. §24.1's byte ceiling bounds what
+      may be retained at all, so what is copied here is already bounded (ADR-0458).
+
+  - file: crates/ono-cli/src/native.rs
+    site: capture_pipeline
+    class: semantic_materialization
+    holds: The complete result of a parenthesised sub-pipeline used as an argument.
+    why: >-
+      `join (get socket) --on pid` is defined over the whole right-hand side: §22.1 places the
+      held side of a relational operation in `explicit_collect`, and ADR-0454 charges it to the
+      stage that holds it.
+
+  # --- crates/ono-cli/src/session.rs ---------------------------------------------------------
+  - file: crates/ono-cli/src/session.rs
+    site: Session
+    class: semantic_materialization
+    holds: The stack of capture buffers a nested evaluation writes into.
+    why: >-
+      §23 defines the capture buffer and §23.1 forbids it being "an invisible unlimited vector".
+      It is not one: every value pushed is measured and charged to the shared `Budget` of §21.1,
+      with one allowance per shell command (§23.4, ADR-0453, ADR-0457).
+
+  - file: crates/ono-cli/src/session.rs
+    site: begin_capture
+    class: semantic_materialization
+    holds: The buffer opened for the next finished pipeline's values.
+    why: The other half of the capture stack above.
+
+  - file: crates/ono-cli/src/session.rs
+    site: end_capture
+    class: semantic_materialization
+    holds: The buffer handed back to whoever opened it.
+    why: >-
+      The budget is deliberately not refunded here: a caller that keeps the list still holds the
+      bytes, and a ceiling that forgot them would bound nothing (ADR-0457).
+
+  - file: crates/ono-cli/src/session.rs
+    site: NativeJob
+    class: history_cache
+    holds: A background job's values, shared with the task producing them.
+    why: The retained side of `run_background` above.
+
+  - file: crates/ono-cli/src/session.rs
+    site: retain_result
+    class: history_cache
+    holds: The last sixteen results, for `@-1` and `@N`.
+    why: >-
+      §24 is written for exactly this collection: sixteen slots, a per-result and a total byte
+      ceiling, oldest-first eviction and a truthful marker on anything shortened (ADR-0458).
+      §60.6 keeps it from touching the output — only the retained copy is truncated.
+
+  # --- crates/ono-cli/src/view.rs ------------------------------------------------------------
+  - file: crates/ono-cli/src/view.rs
+    site: run
+    class: semantic_materialization
+    holds: The rows the interactive browser moves a cursor over.
+    why: >-
+      A cursor is defined over a set that has an end: `view` is declared `streaming: false` in its
+      own contract, and a browser that could not scroll back would not be one.

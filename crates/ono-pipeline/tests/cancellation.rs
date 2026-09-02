@@ -245,3 +245,76 @@ async fn should_stop_a_capture_growing_when_the_scope_is_cancelled() {
     })
     .await;
 }
+
+// --- v0.4.1 §28.3: cancellation wins the race with capacity (issue #81) ------------------------
+
+#[tokio::test]
+async fn should_stop_an_in_flight_block_when_the_pipeline_is_cancelled() {
+    // v0.4.1 §28.3: "when cancellation and capacity availability race, cancellation SHOULD win
+    // such that a cancelled producer does not continue to enqueue a large tail of values."
+    //
+    // The race is arranged rather than waited for. Capacity is one and nothing reads, so by the
+    // time the counts stop moving every part of the pipeline is parked on a `send` that only
+    // needs one reader to complete — which is exactly the moment §28.3 is about. Cancelling then
+    // must stop them where they stand, and the proof is a pair of readings that are equal: what
+    // the stage had mapped before the cancellation is what it had mapped after it (ADR-0459 —
+    // a stop is proven by what stops, never by a stopwatch).
+    within(async {
+        let cancel = CancelToken::new();
+        let mapped = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = std::sync::Arc::clone(&mapped);
+
+        let mut stream = ValueStream::spawn(
+            PipelineConfig::new()
+                .with_capacity(1)
+                .with_cancel_token(cancel.clone()),
+            Boundedness::Unbounded,
+            |sink| async move {
+                let mut next: i128 = 0;
+                while sink.send(Value::Int(next)).await.is_ok() {
+                    next += 1;
+                }
+            },
+        )
+        .transform(ono_pipeline::Each::new(move |value: &Value| {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![value.clone()])
+        }))
+        .expect("`each` never requires finite input");
+
+        // Run everything to a standstill: every channel full, every task parked on a send.
+        let parked = loop {
+            let before = mapped.load(std::sync::atomic::Ordering::SeqCst);
+            for _ in 0..64 {
+                tokio::task::yield_now().await;
+            }
+            if mapped.load(std::sync::atomic::Ordering::SeqCst) == before && before > 0 {
+                break before;
+            }
+        };
+
+        cancel.cancel();
+        for _ in 0..256 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            mapped.load(std::sync::atomic::Ordering::SeqCst),
+            parked,
+            "a cancelled stage enqueued a tail after it was cancelled"
+        );
+
+        // And the consumer is told, once, why the values stopped.
+        let mut cancelled = false;
+        while let Some(event) = stream.recv().await {
+            if let StreamEvent::Failure(error) = event {
+                assert_eq!(error.code(), ErrorCode::StreamCancelled);
+                cancelled = true;
+            }
+        }
+        assert!(
+            cancelled,
+            "a cancelled pipeline tells its consumer why it ended (spec §18.5)"
+        );
+    })
+    .await;
+}

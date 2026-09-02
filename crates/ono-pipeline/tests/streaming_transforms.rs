@@ -478,3 +478,54 @@ async fn should_report_a_failing_each_body_per_value_and_keep_going() {
     assert_eq!(collected.errors().len(), 1);
     assert_eq!(collected.errors()[0].code(), ErrorCode::ProviderUnavailable);
 }
+
+#[tokio::test]
+async fn should_hold_no_more_than_the_bounded_channel_and_one_in_flight_frame() {
+    // The `Done` line of v0.4.1 §58.2: "memory stays within bounded channel plus per-item frame
+    // overhead". An item transform over an endless producer is the case where that either holds
+    // or does not: nothing about the stage's own state may grow with how much the source is
+    // willing to produce.
+    //
+    // The bound is arithmetic rather than a guess. Two channels of `capacity` stand around the
+    // stage — the one it reads and the one it writes — and the stage itself holds one value while
+    // it maps it. So by the time the consumer has read one value, the body can have run at most
+    // `1 + 2 * capacity + 1` times, however long the producer was left alone to run.
+    let capacity = 4;
+    let mapped = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = std::sync::Arc::clone(&mapped);
+
+    let mut stream = ValueStream::spawn(
+        ono_pipeline::PipelineConfig::new().with_capacity(capacity),
+        ono_pipeline::Boundedness::Unbounded,
+        move |sink| async move {
+            let mut next: i128 = 0;
+            while sink.send(Value::Int(next)).await.is_ok() {
+                next += 1;
+            }
+        },
+    )
+    .transform(Each::new(move |value: &Value| {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(vec![value.clone()])
+    }))
+    .expect("`each` never requires finite input (Appendix E)");
+
+    // Every chance to run ahead before the single read, so a stage that did accumulate would have
+    // shown it here rather than in a later run on a busier machine.
+    for _ in 0..256 {
+        tokio::task::yield_now().await;
+    }
+    let first = within(stream.recv()).await;
+
+    assert_eq!(
+        first,
+        Some(ono_pipeline::StreamEvent::Value(Value::Int(0))),
+        "the first value the source produced is the first one out"
+    );
+    let held = mapped.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        (1..=1 + 2 * capacity + 1).contains(&held),
+        "one read costs the two bounded channels and the value in flight, and no more: the body \
+         ran {held} times with a capacity of {capacity}"
+    );
+}

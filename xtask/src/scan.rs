@@ -915,3 +915,255 @@ fn without_comments_and_strings(text: &str) -> String {
     }
     out
 }
+
+// --- the evaluator capture inventory (v0.4.1 §26.1, §65.7) -------------------------------------
+
+/// The evaluator execution paths §26.1's inventory covers.
+///
+/// These five files are where a pipeline is assembled, driven, drained and retained: `eval.rs`
+/// runs statements and blocks, `native.rs` builds and drains the value stream, `session.rs` owns
+/// the capture stack and the retained history, and `report.rs` and `view.rs` are what a drained
+/// result reaches. A command implementation that materializes is placed by Appendix E instead —
+/// `docs/spec/hardening/streaming_classification.yaml` — because there the class is a property of
+/// the operation's contract rather than of the evaluator's structure.
+const EVALUATOR_SOURCES: &[&str] = &[
+    "crates/ono-cli/src/eval.rs",
+    "crates/ono-cli/src/native.rs",
+    "crates/ono-cli/src/session.rs",
+    "crates/ono-cli/src/report.rs",
+    "crates/ono-cli/src/view.rs",
+];
+
+/// Where the inventory lives.
+const CAPTURE_INVENTORY: &str = "docs/spec/hardening/streaming.yaml";
+
+/// What a capture looks like in source: a collection of pipeline values, or the capture stack
+/// that holds one for the evaluator.
+const CAPTURE_MARKERS: &[&str] = &["Vec<Value>", "begin_capture(", "end_capture("];
+
+/// The three classes v0.4.1 §26.1 defines, and no fourth.
+const CAPTURE_CLASSES: &[&str] = &[
+    "semantic_materialization",
+    "implementation_convenience",
+    "history_cache",
+];
+
+/// Checks that every capture in the evaluator is classified, and that the inventory names no
+/// capture that is not there (v0.4.1 §26.1).
+///
+/// §65.7 names "streaming via background collection" a forbidden failure mode, and an inventory
+/// is what stops a removed capture from reappearing one stage later under another name. The
+/// check runs in both directions on purpose: an unclassified capture fails the gate, and so does
+/// an entry whose site no longer holds one, so removing a capture removes its entry rather than
+/// leaving a classification of code nobody can find.
+#[must_use]
+pub fn check_evaluator_captures(root: &Path) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let mut found: Vec<(String, String)> = Vec::new();
+
+    for source in EVALUATOR_SOURCES {
+        let path = root.join(source);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for site in capture_sites(&text) {
+            let key = ((*source).to_owned(), site);
+            if !found.contains(&key) {
+                found.push(key);
+            }
+        }
+    }
+
+    let inventory_path = root.join(CAPTURE_INVENTORY);
+    let Ok(text) = std::fs::read_to_string(&inventory_path) else {
+        problems.push(Problem::new(
+            CAPTURE_INVENTORY,
+            "v0.4.1 §26.1 requires an inventory of every capture in the evaluator, and this file \
+             is where the gate reads it. Write it, with one entry per capture site.",
+        ));
+        return problems;
+    };
+    let entries = match inventory_entries(&text) {
+        Ok(entries) => entries,
+        Err(detail) => {
+            problems.push(Problem::new(CAPTURE_INVENTORY, detail));
+            return problems;
+        }
+    };
+
+    for (file, site, class, adr) in &entries {
+        if !CAPTURE_CLASSES.contains(&class.as_str()) {
+            problems.push(Problem::new(
+                format!("{CAPTURE_INVENTORY} ({file} :: {site})"),
+                format!(
+                    "`{class}` is not a class v0.4.1 §26.1 defines. It names three — {} — and a \
+                     capture that fits none of them is a capture whose semantics are not settled.",
+                    CAPTURE_CLASSES.join(", ")
+                ),
+            ));
+        }
+        if class == "implementation_convenience" && adr.is_none() {
+            problems.push(Problem::new(
+                format!("{CAPTURE_INVENTORY} ({file} :: {site})"),
+                "v0.4.1 §26.1: an `implementation_convenience` capture on pipeline data MUST be \
+                 removed, or bounded and justified by ADR. Name the ADR that bounds it, or remove \
+                 the capture."
+                    .to_owned(),
+            ));
+        }
+        if !found
+            .iter()
+            .any(|(held_file, held_site)| held_file == file && held_site == site)
+        {
+            problems.push(Problem::new(
+                format!("{CAPTURE_INVENTORY} ({file} :: {site})"),
+                format!(
+                    "the inventory classifies `{site}` in {file}, and no capture stands there \
+                     any more. Remove the entry: a classification of code that is not present \
+                     tells a later reader nothing about the code that is."
+                ),
+            ));
+        }
+    }
+
+    for (file, site) in &found {
+        if !entries
+            .iter()
+            .any(|(held_file, held_site, _, _)| held_file == file && held_site == site)
+        {
+            problems.push(Problem::new(
+                format!("{file} ({site})"),
+                format!(
+                    "`{site}` holds a collection of pipeline values that {CAPTURE_INVENTORY} does \
+                     not classify. v0.4.1 §26.1 requires every capture in an evaluator execution \
+                     path to be named there as `semantic_materialization`, \
+                     `implementation_convenience` or `history_cache`."
+                ),
+            ));
+        }
+    }
+
+    problems.sort_by(|left, right| {
+        (&left.location, &left.detail).cmp(&(&right.location, &right.detail))
+    });
+    problems
+}
+
+/// The items of `text` that hold a capture, in the order they are declared.
+///
+/// A site is an item name rather than a line number, so moving a function does not invalidate
+/// its entry and renaming one does. Comments and string literals are blanked first, so prose
+/// about a capture is not one.
+fn capture_sites(text: &str) -> Vec<String> {
+    let code = without_comments_and_strings(text);
+    let mut item = String::from("<file scope>");
+    let mut sites = Vec::new();
+    for line in code.lines() {
+        if let Some(name) = item_name(line) {
+            item = name;
+        }
+        if CAPTURE_MARKERS.iter().any(|marker| line.contains(marker)) && !sites.contains(&item) {
+            sites.push(item.clone());
+        }
+    }
+    sites
+}
+
+/// The name this line declares, when it opens a function, a struct or an enum.
+fn item_name(line: &str) -> Option<String> {
+    let mut tokens = line
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .peekable();
+    while let Some(token) = tokens.next() {
+        if matches!(token, "fn" | "struct" | "enum") {
+            let name = tokens.find(|candidate| !candidate.is_empty())?;
+            return name
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_alphabetic() || first == '_')
+                .then(|| name.to_owned());
+        }
+    }
+    None
+}
+
+/// The inventory as `(file, site, class, adr)` rows.
+fn inventory_entries(text: &str) -> Result<Vec<(String, String, String, Option<String>)>, String> {
+    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(text)
+        .map_err(|error| format!("the capture inventory is not readable YAML: {error}"))?;
+    let Some(captures) = document
+        .get("captures")
+        .and_then(|value| value.as_sequence())
+    else {
+        return Err("the capture inventory has no `captures:` sequence".to_owned());
+    };
+    let mut entries = Vec::new();
+    for capture in captures {
+        let field = |name: &str| {
+            capture
+                .get(name)
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+        };
+        let (Some(file), Some(site), Some(class)) = (field("file"), field("site"), field("class"))
+        else {
+            return Err(format!(
+                "a capture entry is missing `file`, `site` or `class`: {capture:?}"
+            ));
+        };
+        entries.push((file, site, class, field("adr")));
+    }
+    Ok(entries)
+}
+
+// --- bounded channels stay mandatory (v0.4.1 §28.1, §28.2, §65.7) ------------------------------
+
+/// Where the pipeline's data path is written, and where an unbounded channel would undo it.
+const PIPELINE_SOURCES: &[&str] = &["crates/ono-pipeline/src", "crates/ono-cli/src"];
+
+/// The spellings of an unbounded Tokio channel.
+const UNBOUNDED_CHANNELS: &[&str] = &["unbounded_channel(", "UnboundedSender", "UnboundedReceiver"];
+
+/// Checks that no unbounded channel carries pipeline data (v0.4.1 §28.1).
+///
+/// §28.1 permits the reference capacity to be tuned "through an ADR and benchmark evidence", and
+/// forbids the other change outright: "replacing bounded flow with unbounded channels is
+/// forbidden". §28.2 says the same thing about the streaming paths this tranche added — they
+/// "MUST NOT solve materialization by inserting an unbounded task queue" — and §65.7 names the
+/// result a forbidden failure mode. All three are one rule a scan can hold.
+#[must_use]
+pub fn check_bounded_channels(root: &Path) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let mut files = Vec::new();
+    for source in PIPELINE_SOURCES {
+        collect_rust(&root.join(source), &mut files);
+    }
+    files.sort();
+
+    for file in files {
+        let relative = relative(root, &file);
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let code = without_comments_and_strings(&text);
+        for (number, line) in code.lines().enumerate() {
+            let Some(spelling) = UNBOUNDED_CHANNELS
+                .iter()
+                .find(|spelling| line.contains(**spelling))
+            else {
+                continue;
+            };
+            problems.push(Problem::new(
+                format!("{relative}:{}", number + 1),
+                format!(
+                    "`{spelling}` carries pipeline data on an unbounded channel. v0.4.1 §28.1: \
+                     \"replacing bounded flow with unbounded channels is forbidden\", §28.2 \
+                     forbids solving materialization with an unbounded task queue, and §65.7 \
+                     names background collection a failure mode. Size the channel, and change \
+                     the reference capacity only through an ADR with benchmark evidence."
+                ),
+            ));
+        }
+    }
+    problems
+}

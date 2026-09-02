@@ -1,4 +1,30 @@
 //! The stream a native pipeline moves values along (spec §11.1, §11.2, §16.5, ADR-0013).
+//!
+//! # What the order of events means (v0.4.1 §27)
+//!
+//! **Within one channel the order is total.** Values arrive in the order they were produced and
+//! partial failures arrive in the order they were reported, however many stages they pass through
+//! (§27.1). A stage reorders its own channel only where its contract says so — `sort` does.
+//!
+//! **Between the two channels nothing is promised.** [`StreamEvent`] does not promise a total
+//! temporal ordering between independently produced value and partial-error channels unless a
+//! producer explicitly serializes them through one event source (§27.2). The two are separate
+//! `mpsc` channels, merged at the consumer by whichever has something ready, so a failure
+//! observed after a value did not necessarily happen after it.
+//!
+//! **Causality cannot be read off that order.** Consumers MUST NOT infer causality from the
+//! relative observation order of a value and an asynchronously reported partial error: "the error
+//! concerns the value I just read" is not something this stream says, and a consumer that acts on
+//! it is reading the scheduler (§27.2).
+//!
+//! **A producer that needs a total order takes one path.** Where the sequence is part of the
+//! answer — "the error occurred between A and B" — the producer sends every event through
+//! [`StreamSink::send_in_sequence`], which places all of them on the value channel in the order
+//! it chose (§27.3).
+//!
+//! The same rule is data in `docs/spec/hardening/streaming_classification.yaml`, and
+//! `docs/reference/streaming.md` is rendered from it, so the page a user reads and the paragraph
+//! above do not drift apart (ADR-0483).
 
 use std::fmt;
 use std::future::Future;
@@ -190,6 +216,30 @@ impl StreamSink {
             biased;
             () = self.cancel.cancelled() => Err(SinkClosed),
             result = self.errors.send(error) => result.map_err(|_| SinkClosed),
+        }
+    }
+
+    /// Sends one event on the value channel, so a producer that must place a failure *between*
+    /// two values has a sequence-bearing path to do it on.
+    ///
+    /// v0.4.1 §27.3: a provider or operation whose semantic contract has to express "the error
+    /// occurred between value A and value B" emits an ordered event stream through one path
+    /// rather than relying on the scheduler between two channels. This is that path: every event
+    /// goes to the value channel, one send at a time, and a failure travels as the error value it
+    /// is — so the order the producer chose is the order the consumer observes, every run.
+    ///
+    /// The cost is deliberate and is the reason this is not the default. A consumer of such a
+    /// stream reads its failures out of the values, so [`Collected::errors`] is empty and
+    /// [`ValueStream::saw_failure`] stays false; a producer takes this path only when its own
+    /// contract says the order is part of the answer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SinkClosed`] when the consumer has gone away or the pipeline was cancelled.
+    pub async fn send_in_sequence(&self, event: StreamEvent) -> Result<(), SinkClosed> {
+        match event {
+            StreamEvent::Value(value) => self.send(value).await,
+            StreamEvent::Failure(error) => self.send(error.into_value()).await,
         }
     }
 

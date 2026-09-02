@@ -1,0 +1,47 @@
+# v0.4.1 §25.1–§25.7 and §60.1, through the real binary as an unprivileged user.
+#
+# §60.1 is the scenario: "a test source emits value 1, waits indefinitely and is marked unbounded;
+# `source | each { $it } | take 1` MUST return 1 and complete without waiting for source closure."
+# §25.6 is the property that makes it more than one example — "`each` MUST accept an unbounded
+# stream because its semantics are incremental" — and §25.7 requires the acceptance test to
+# **fail** if output appears only after upstream completion, which is why the source here has no
+# completion to wait for: a followed file never closes, and nothing in this case ever writes to
+# it except the block itself.
+#
+# The case is written without a clock. Every command has the harness timeout above it and nothing
+# below asserts a duration: a streaming `each` answers these in milliseconds, and the
+# capture-based implementation this replaced answered none of them at all — it refused the source
+# with `stream.unbounded_operation` before reading a value (ADR-0431, ADR-0480).
+#
+# Decisions: ADR-0431 (the failure proofs), ADR-0480 (the repair).
+case: each accepts an unbounded source and answers before it closes
+timeout: 120
+env: NO_COLOR=1
+run: |
+  printf 'first\n' > "$HOME/case-193.log"
+
+  echo "== 25.6: an unbounded source is a legal input to each =="
+  ono -c "tail file $HOME/case-193.log --lines 1 --follow | each { @ } | take 1 | to json"
+
+  echo "== 25.7, 60.1: and the source has not closed, nor grown =="
+  echo "lines=$(wc -l < "$HOME/case-193.log")"
+
+  echo "== 25.4: the block's values for one item are forwarded before the next is required =="
+  printf 'first\n' > "$HOME/case-193-grow.log"
+  ono -c "tail file $HOME/case-193-grow.log --lines 1 --follow |
+          each { if @ == \"first\" { let next = \"second\"; \$next | to text >> $HOME/case-193-grow.log }; @ } |
+          take 2 | to json"
+  cat "$HOME/case-193-grow.log"
+
+  echo "== 25.3: order and seriality are unchanged =="
+  ono -c 'echo "[1,2,3,4,5]" | from json | each { @ } | to json'
+
+  echo "== 26.1, 25.2: and no stage of it needed the whole input first =="
+  ono -c "tail file $HOME/case-193.log --lines 1 --follow | each { @ } | each { @ } | take 1 | to json"
+exit: 0
+stdout-contains: ["first"]
+stdout-contains: lines=1
+stdout-contains: ["first","second"]
+stdout-contains: [1,2,3,4,5]
+stdout-not-contains: unbounded_operation
+stdout-not-contains: panicked

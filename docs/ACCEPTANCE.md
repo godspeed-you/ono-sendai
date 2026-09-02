@@ -1555,6 +1555,14 @@ bytes behind them are unbounded.
       — `crates/ono-cli/tests/resource_limits.rs::should_answer_the_effective_non_secret_limits_when_inspect_limits_runs`,
       `::should_answer_the_same_figures_inspect_limits_shows_from_the_contract_registry`, case
       `192` (#120, §54.3, ADR-0461).
+
+#### 4.8.7 Streaming correctness (H6 — §66.3, §2.5, §25–§28, Appendix E)
+
+§66.3's five bullets. §2.5 is the definition they are measured against — a command is streaming
+only if it "can consume and produce incrementally without first waiting for the complete upstream
+stream" — and §65.7 names the way a fix can look like one without being one: "replacing a
+foreground `Vec` with an unbounded background queue is not a streaming fix and is forbidden".
+
 - [x] **P1 · `each` consumes and emits incrementally.** `source | each { $it } | take 1` completes
       while the source is still waiting, the block runs for the first value before the second is
       required, order and seriality are unchanged, and no complete-input `Vec<Value>` capture
@@ -1616,14 +1624,17 @@ bytes behind them are unbounded.
       `xtask/tests/scan.rs::should_report_an_unbounded_channel_on_the_pipeline_data_path`,
       `::should_find_no_unbounded_pipeline_channel_in_this_repository`,
       case `194` (#81, §28.1–§28.4, §60.2, §65.7, ADR-0482).
-- [ ] **P2 · Cross-kind stream ordering is documented and tested.** Per-channel order is total,
-      the ordering guarantee between values, diagnostics and status is stated in one place, and the
-      way to obtain a total order where a caller needs one is exercised —
+- [x] **P2 · Cross-kind stream ordering is documented and tested.** Per-channel order is total,
+      the ordering guarantee between values and asynchronously reported partial failures is stated
+      in one place, and the way to obtain a total order where a caller needs one is exercised —
       `crates/ono-pipeline/tests/ordering.rs::should_deliver_every_event_of_one_channel_in_the_order_it_was_produced`,
       `::should_hold_the_documented_guarantee_between_values_diagnostics_and_status`,
       `::should_produce_a_total_order_when_the_caller_asks_for_one`, with the contract in
-      `docs/reference/` and held by `xtask/tests/reference.rs::should_render_the_stream_ordering_contract_from_the_registry`
-      (#80, §27.1–§27.4).
+      `docs/spec/hardening/streaming_classification.yaml`, rendered to
+      `docs/reference/streaming.md` and held by
+      `xtask/tests/reference.rs::should_render_the_stream_ordering_contract_from_the_registry`
+      and `::should_render_this_repositorys_ordering_contract_as_the_stream_module_states_it`
+      (#80, §27.1–§27.4, ADR-0483).
 
 #### 4.8.8 Performance (H7 — §66.4, §32–§37, Appendix F)
 

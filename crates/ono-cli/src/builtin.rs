@@ -603,9 +603,19 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         // A user function is step 2 of the order (ADR-0011, ADR-0070): it wins over the
         // registry and over PATH, and the report says so instead of describing what it shadows.
         if let Some(function) = session.function(name) {
+            // v0.4.1 §26.2: where a call cannot be continued as a stage of the pipeline it stands
+            // in, "that limitation MUST be explicit in `explain`" — so it is stated here rather
+            // than left for a user to meet as a refusal over an unbounded source (ADR-0481).
+            let continues = crate::native::continuable_body(&function.declaration.body)
+                .is_some_and(|body| crate::native::continuable_list(session, body));
+            let continuation = if continues {
+                "its body streams into the stages after the call"
+            } else {
+                "its result is collected before the stages after the call run, so its input must be finite"
+            };
+            let declared = function.declaration.span;
             print_safely(&format!(
-                "  `{name}` is a user function declared at {} — step 2 of the resolution order",
-                function.declaration.span
+                "  `{name}` is a user function declared at {declared} — step 2 of the resolution order; {continuation} (v0.4.1 §26.2)"
             ));
             continue;
         }

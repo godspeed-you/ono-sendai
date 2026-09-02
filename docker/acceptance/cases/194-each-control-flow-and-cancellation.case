@@ -1,0 +1,89 @@
+# v0.4.1 §25.5, §60.3 and §28.3–§28.4, through the real binary as an unprivileged user.
+#
+# §25.5 is the list this case walks: "`continue` skips the remainder of the current item; `break`
+# stops consuming upstream and cancels the remaining source where possible; `return` exits the
+# containing function according to existing language semantics; an unhandled error follows
+# existing error propagation and MUST stop or continue exactly as the language contract defines."
+# It closes with a requirement about this file: "the streaming rewrite MUST have dedicated
+# regression tests for every control-flow path."
+#
+# §65.12 is why the case is written as outcomes a reader can check by eye rather than as a
+# description of the new machinery: "combining parser/evaluator file decomposition with broad
+# language redesign in the same work package is forbidden. It destroys the ability of tests to
+# prove behavior preservation." Every status below is ADR-0008's, not `each`'s, and every one of
+# them held before the rewrite as well.
+#
+# §60.3's own scenario needs an unbounded source, which is what `--follow` gives: a `break` that
+# did not stop the source would leave a run that never ends, so termination is the assertion and
+# no clock appears anywhere.
+#
+# Decisions: ADR-0008 (statuses), ADR-0070 (the caller's output context), ADR-0459 (a stop is
+# proven by what stops), ADR-0480 (the streaming rewrite).
+case: control flow through a streamed each behaves exactly as the language says
+timeout: 120
+env: NO_COLOR=1
+run: |
+  echo "== 25.5: continue skips the remainder of the current item =="
+  ono -c 'echo "[1,2,3]" | from json | each { if @ == 2 { continue }; @ } | to json'
+
+  echo "== 25.5, 60.3: break stops consuming an upstream that would never have ended =="
+  printf 'one\ntwo\nthree\n' > "$HOME/case-194.log"
+  rm -f "$HOME/case-194-trace.log"
+  ono -c "tail file $HOME/case-194.log --lines 3 --follow |
+          each { @ | to text >> $HOME/case-194-trace.log; break } | to json"
+  echo "ran=$(wc -l < "$HOME/case-194-trace.log")"
+  echo "source=$(wc -l < "$HOME/case-194.log")"
+
+  echo "== 25.5: return exits the containing function =="
+  ono -c 'fn pick() {
+            echo "[1,2,3]" | from json | each { if @ == 2 { return @ } }
+            echo "the statement after the pipeline"
+          }
+          pick | to json'
+
+  echo "== 25.5, ADR-0008: an unresolvable command in a block is 127, as it is anywhere else =="
+  ono -c 'echo "[1,2,3]" | from json | each { a-command-no-host-has } | to json' 2>&1 | head -1
+  ono -c 'echo "[1,2,3]" | from json | each { a-command-no-host-has } | to json' >/dev/null 2>&1
+  echo "status=$?"
+
+  echo "== 25.5, ADR-0008: a command that ran and failed is 1 =="
+  ono -c 'echo "[1,2,3]" | from json | each { get file /no/such/path/at/all } | to json' >/dev/null 2>&1
+  echo "status=$?"
+
+  echo "== ADR-0008: exit unwinds to the top with the status it was given =="
+  ono -c 'echo "[1,2,3]" | from json | each { if @ == 2 { exit 3 } } | to json' >/dev/null 2>&1
+  echo "status=$?"
+
+  echo "== 28.4: a streaming stage that owns a child leaves no orphan when downstream stops reading =="
+  # The directory name is assembled at run time rather than written out, because the shell running
+  # this case carries the case text as its own command line: a marker spelled here in full would
+  # match that shell and count it as the orphan it is looking for.
+  tree="$HOME/case-194"; tree="${tree}-tree"
+  mkdir -p "$tree" && : > "$tree/found.txt"
+  # `adapt find` decodes line by line, so a record reaches the pipeline while the child is still
+  # walking: the scratch directory comes first so it answers at once, and the whole filesystem
+  # comes after it so there is work left when `take 1` stops reading.
+  ono -c "adapt find $tree / -type f | take 1 | to json" 2>/dev/null | grep -o 'found.txt' | head -1
+  left=0
+  for entry in /proc/[0-9]*; do
+    cmd=$(tr '\0' ' ' 2>/dev/null < "$entry/cmdline") || continue
+    case "$cmd" in *"$tree"*) left=$(( left + 1 )) ;; esac
+  done
+  echo "orphans=$left"
+
+  echo "== and an ordinary each is unchanged =="
+  ono -c 'echo "[1,2,3]" | from json | each { @ } | to json'
+exit: 0
+stdout-contains: [1,3]
+stdout-contains: ran=1
+stdout-contains: source=3
+stdout-contains: [2]
+stdout-contains: resolve.command_not_found
+stdout-contains: status=127
+stdout-contains: status=1
+stdout-contains: status=3
+stdout-contains: found.txt
+stdout-contains: orphans=0
+stdout-contains: [1,2,3]
+stdout-not-contains: the statement after the pipeline
+stdout-not-contains: panicked

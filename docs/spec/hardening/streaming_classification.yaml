@@ -135,3 +135,49 @@ operations:
     note: >-
       Appendix E's own example of the class. `--live` repaints a bounded projection of the
       current graph and keeps no history of it (§35.2, §35.3).
+
+# ---------------------------------------------------------------------------------------------
+# What a consumer may conclude from the order it observed things in (v0.4.1 §27).
+#
+# §27.2 requires this to be explicit rather than implied by whatever Tokio happened to schedule,
+# and §27.4 requires the stream module documentation to state it and the concurrency tests to
+# prove only what is promised here. `docs/reference/streaming.md` is rendered from this block, so
+# the page a user reads and the rule the tests hold are one text (ADR-0483).
+# ---------------------------------------------------------------------------------------------
+ordering:
+  per_channel: >-
+    Total. Every event of one channel is delivered in the order it was produced, and no stage
+    reorders its own channel: values keep value-channel order and partial failures keep
+    error-channel order, however many stages they pass through (§27.1).
+  cross_kind: >-
+    None. `StreamEvent` does not promise a total temporal ordering between independently produced
+    value and partial-error channels unless a producer explicitly serializes them through one
+    event source (§27.2).
+  causality: >-
+    Consumers MUST NOT infer causality from the relative observation order of a value and an
+    asynchronously reported partial error. That a failure was observed after a value does not mean
+    it happened after it, and a consumer that acts on the difference is reading the scheduler
+    rather than the pipeline (§27.2).
+  total_order: >-
+    A provider or operation whose semantic contract must express "the error occurred between value
+    A and value B" emits an ordered event stream through one sequence-bearing path — one sink,
+    one send at a time, on one channel — rather than relying on scheduling between two channels
+    (§27.3). `StreamSink::send_in_sequence` is that path: it places every event on the value
+    channel, carrying a failure as the error value it is, so the order the producer chose is the
+    order the consumer observes.
+  channels:
+    - id: value
+      carries: The values a stage produced.
+      ordered_within_itself: true
+      doc: >-
+        The stream's answer. A stage forwards these in the order it received them unless its own
+        contract reorders — `sort` does, and says so in its classification above.
+    - id: partial_failure
+      carries: >-
+        Failures that concern one item rather than the pipeline, which spec §16.5 forbids
+        collapsing into the result.
+      ordered_within_itself: true
+      doc: >-
+        Reported beside the values rather than instead of them, and asynchronously: the stage that
+        raised one keeps running, so the failure reaches the consumer when the error channel has
+        room rather than at the position in the value sequence where it arose.

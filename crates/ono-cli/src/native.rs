@@ -17,7 +17,7 @@ use ono_command::{
     BoundArguments, CommandContract, CommandRegistry, CommandTable, Invocation, Outcome, Scope,
 };
 use ono_core::{ErrorCode, ExitStatus};
-use ono_parser::{Stage, StageHead, StageList};
+use ono_parser::{Argument, Block, Expr, Stage, StageHead, StageList};
 use ono_pipeline::{StreamEvent, ValueStream};
 use ono_value::{ActionStatus, ErrorValue, Value};
 
@@ -435,6 +435,167 @@ fn produces_bytes(contract: &CommandContract) -> bool {
     })
 }
 
+/// The one pipeline a function body is, when it is one pipeline and nothing else.
+///
+/// v0.4.1 §26.2's continuation applies to a body of this shape and no other: several statements,
+/// a chained `&&`, or a backgrounded pipeline each mean the call has a result of its own that the
+/// stages after it read, rather than a stream they can be attached to.
+pub(crate) fn continuable_body(body: &Block) -> Option<&StageList> {
+    let [ono_parser::Statement::Pipeline(pipeline)] = body.statements.as_slice() else {
+        return None;
+    };
+    (pipeline.tail.is_empty() && !pipeline.background).then_some(&pipeline.head)
+}
+
+/// Whether every stage of `list` hands objects to the next one, so the whole of it can become a
+/// stage of the caller's pipeline (v0.4.1 §26.2).
+///
+/// Decided from the contracts alone, so `explain` can answer the same question without running
+/// anything (§22.4). A serializer ends the object stream, an external program is not this
+/// module's to continue, a redirection sends the values somewhere else, and a `each { … }` block
+/// belongs to the driver of the pipeline it was written in.
+pub(crate) fn continuable_list(session: &Session, list: &StageList) -> bool {
+    let Ok(registry) = registry() else {
+        return false;
+    };
+    !list.stages.is_empty()
+        && list.stages.iter().all(|stage| {
+            stage.redirections.is_empty()
+                && block_of(stage).is_none()
+                && native_contract(session, registry, stage, true)
+                    .is_some_and(|contract| !produces_bytes(contract) && !admits_bytes(contract))
+        })
+}
+
+/// A wholly-native pipeline, assembled into the stream it produces but not drained.
+///
+/// v0.4.1 §26.2: *"a function used as a pipeline stage SHOULD be able to stream values to
+/// downstream stages when the function body itself streams"*, and *"the preferred v0.4.1 outcome
+/// is streaming continuation rather than preservation of an accidental capture architecture"*.
+/// This is that continuation: the body's stages are bound and assembled here, and the stream they
+/// produce is what the caller's next stage reads, so nothing is collected in between and the
+/// caller's `take 1` can answer before the body's source has ended.
+///
+/// §26.3 is satisfied by construction rather than by care: every expression a stage carries is
+/// bound, and the `Scope` it will read is snapshotted, **while the invocation's scope is still on
+/// the session**. What travels into the asynchronous producer is the snapshot, so no lexical
+/// reference outlives the scope that owns it (ADR-0481).
+///
+/// `None` when the pipeline is not of a shape that can be continued — an external program, a
+/// redirection, a serializer that ends the object stream, a `each { … }` block whose evaluator
+/// belongs to another driver, or a stage the registry does not place. The caller then collects,
+/// which is what it always did.
+///
+/// # Errors
+///
+/// The structured error of whichever stage could not be bound or started.
+pub(crate) fn stream_segment(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+) -> Eval<Option<(ValueStream, bool)>> {
+    if !continuable_list(session, list) {
+        return Ok(None);
+    }
+    let registry = registry().map_err(Flow::Failed)?;
+    let table = implementations(session).map_err(Flow::Failed)?;
+
+    let mut bound: Vec<(&'static CommandContract, BoundArguments)> = Vec::new();
+    for stage in &list.stages {
+        // `structured` is true throughout: a pipeline that can be continued is one where every
+        // stage hands objects on, which `continuable_list` has already established.
+        let Some(contract) = native_contract(session, registry, stage, true) else {
+            return Ok(None);
+        };
+        refuse_switched_off_spatial(session, contract, stage)?;
+        let arguments =
+            crate::expand::expand_globs(session, &stage.arguments).map_err(Flow::Failed)?;
+        let resolved = registry
+            .resolve(head_name(stage), &arguments)
+            .map_err(Flow::Failed)?;
+        let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
+        bound.push((contract, arguments));
+    }
+    if bound.is_empty() {
+        return Ok(None);
+    }
+
+    let scope = std::sync::Arc::new(stage_scope(session, &bound, source)?);
+    let adapters = session.shared_adapters();
+    let resolver = crate::resolve::resolver(session);
+    let context = session.context();
+    let materialization = crate::limits::materialization(session.settings());
+    let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
+        Flow::Failed(ErrorValue::new(
+            ErrorCode::IoPermissionDenied,
+            "the operating system refused to start the pipeline runtime",
+        ))
+    })?;
+    let handle = runtime.handle().clone();
+
+    let assembled = handle.block_on(async {
+        let mut stream: Option<ValueStream> = None;
+        let mut failed_rows = false;
+        for (contract, arguments) in &bound {
+            let started = std::time::Instant::now();
+            let mut invocation = Invocation::new(contract, arguments, providers)
+                .with_scope(std::sync::Arc::clone(&scope))
+                .with_context(context.clone())
+                .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone());
+            if let Some(previous) = stream.take() {
+                invocation = invocation.with_input(previous);
+            }
+            match table.run(contract.id(), &mut invocation).await {
+                Ok(Outcome::Values(values)) => {
+                    stream = Some(values.with_materialization_limits(materialization));
+                }
+                Ok(Outcome::Actions(outcomes)) => {
+                    if outcomes
+                        .iter()
+                        .any(|outcome| outcome.status() == ActionStatus::Failed)
+                    {
+                        failed_rows = true;
+                    }
+                    stream = Some(
+                        action_records(contract, outcomes, started)
+                            .with_materialization_limits(materialization),
+                    );
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok((stream, failed_rows))
+    });
+    match assembled.map_err(Flow::Failed)? {
+        (Some(stream), failed_rows) => Ok(Some((stream, failed_rows))),
+        (None, _) => Ok(None),
+    }
+}
+
+/// Runs the stages of `list` after the first over a stream a function body is already producing.
+///
+/// # Errors
+///
+/// The structured error of whichever stage could not be resolved, bound, or run.
+pub(crate) fn run_piped(
+    session: &mut Session,
+    list: &StageList,
+    source: &str,
+    stream: ValueStream,
+    failed_rows: bool,
+) -> Eval<ExitStatus> {
+    run_from(
+        session,
+        list,
+        source,
+        1,
+        Start::Pipe {
+            stream,
+            failed_rows,
+        },
+    )
+}
+
 /// Checks every expression in `pipeline` against the schema that would reach it.
 ///
 /// Spec §11.3: a typo in a field name is caught before process enumeration begins, because the
@@ -490,7 +651,7 @@ pub fn check(
 ///
 /// The structured error of whichever stage could not be resolved, bound, or run.
 pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitStatus> {
-    run_from(session, list, source, 0, None)
+    run_from(session, list, source, 0, Start::Nothing)
 }
 
 /// Runs a native pipeline and answers its values instead of showing them.
@@ -504,7 +665,7 @@ pub fn run(session: &mut Session, list: &StageList, source: &str) -> Eval<ExitSt
 /// Exactly what [`run`] reports.
 pub fn run_collecting(session: &mut Session, list: &StageList, source: &str) -> Eval<Vec<Value>> {
     session.begin_capture();
-    let outcome = run_from(session, list, source, 0, None);
+    let outcome = run_from(session, list, source, 0, Start::Nothing);
     let captured = session.end_capture();
     outcome?;
     Ok(captured)
@@ -581,7 +742,8 @@ pub fn run_background(session: &mut Session, list: &StageList, source: &str) -> 
     let providers = providers.clone();
 
     let model = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
-    let values = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let values: std::sync::Arc<std::sync::Mutex<Vec<Value>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
     let task_model = std::sync::Arc::clone(&model);
@@ -677,7 +839,7 @@ pub fn run_seeded(
     source: &str,
     seed: Vec<Value>,
 ) -> Eval<ExitStatus> {
-    run_from(session, list, source, 1, Some(seed))
+    run_from(session, list, source, 1, Start::Values(seed))
 }
 
 /// Runs the stages of `list` from `start` on, seeded with values the evaluator already has —
@@ -693,7 +855,36 @@ pub fn run_seeded_from(
     start: usize,
     seed: Vec<Value>,
 ) -> Eval<ExitStatus> {
-    run_from(session, list, source, start, Some(seed))
+    run_from(session, list, source, start, Start::Values(seed))
+}
+
+/// What a run of `list` starts from, when it does not start from its own head.
+pub(crate) enum Start {
+    /// Nothing: the head stage is a producer.
+    Nothing,
+    /// Values the evaluator already has — a retained result, a plugin's answer.
+    Values(Vec<Value>),
+    /// A stream another pipeline is already producing into: v0.4.1 §26.2's streaming
+    /// continuation, where a function body is a stage of the caller's pipeline rather than a
+    /// collection in front of it (ADR-0481).
+    Pipe {
+        /// The assembled but undrained stream of the pipeline this run continues.
+        stream: ValueStream,
+        /// Whether a mutation in that pipeline reported a failed row (spec §16.5, ADR-0006).
+        failed_rows: bool,
+    },
+}
+
+impl Start {
+    /// Whether structure — rather than the head stage's own output — reaches the first stage.
+    fn is_some(&self) -> bool {
+        !matches!(self, Self::Nothing)
+    }
+
+    /// Takes the start, leaving nothing behind.
+    fn take(&mut self) -> Self {
+        std::mem::replace(self, Self::Nothing)
+    }
 }
 
 fn run_from(
@@ -701,7 +892,7 @@ fn run_from(
     list: &StageList,
     source: &str,
     start: usize,
-    seed: Option<Vec<Value>>,
+    seed: Start,
 ) -> Eval<ExitStatus> {
     let registry = registry().map_err(Flow::Failed)?;
     let segments = segments(session, list, start, seed.is_some()).ok_or_else(|| {
@@ -718,7 +909,7 @@ fn run_from(
     // A seeded list with nothing after the seed shows the seed itself: `@-1` alone re-renders
     // the retained result.
     if segments.is_empty() {
-        if let Some(values) = seed.take()
+        if let Start::Values(values) = seed.take()
             && let Some(stage) = list.stages.first()
         {
             write_result(session, stage, &values, false, source)?;
@@ -732,10 +923,21 @@ fn run_from(
         let last = position + 1 == segments.len();
         match segment {
             Segment::External(indices) => {
-                if let Some(values) = seed.take() {
+                match seed.take() {
                     // Spec §12.3: objects reach a child process only through an explicit
                     // representation. Text and bytes already are one.
-                    carried = Some(seed_bytes(values)?);
+                    Start::Values(values) => carried = Some(seed_bytes(values)?),
+                    Start::Pipe { .. } => {
+                        return Err(Flow::Failed(
+                            ErrorValue::new(
+                                ErrorCode::TypeMismatch,
+                                "this stage produces objects, and the next one is a program that \
+                                 reads bytes",
+                            )
+                            .with_help("choose the representation: `… | to json | …` (spec §12.3)"),
+                        ));
+                    }
+                    Start::Nothing => {}
                 }
                 let demand = external_demand(
                     session,
@@ -866,7 +1068,7 @@ fn run_from(
                             if last {
                                 write_result(session, stage, &values, false, source)?;
                             } else {
-                                seed = Some(values);
+                                seed = Start::Values(values);
                             }
                         }
                         Err(error) => {
@@ -913,7 +1115,17 @@ fn run_from(
                     indices,
                     source,
                     carried,
-                    seed.take().map_or(Seed::None, Seed::Values),
+                    match seed.take() {
+                        Start::Nothing => Seed::None,
+                        Start::Values(values) => Seed::Values(values),
+                        Start::Pipe {
+                            stream,
+                            failed_rows,
+                        } => Seed::Pipe {
+                            stream,
+                            failed_rows,
+                        },
+                    },
                     position == 0,
                     last,
                 )?;
@@ -932,6 +1144,11 @@ enum Seed {
     None,
     /// Values already in hand — a retained result, a plugin's answer, a decoded document.
     Values(Vec<Value>),
+    /// A stream another pipeline assembled: v0.4.1 §26.2's streaming continuation (ADR-0481).
+    Pipe {
+        stream: ValueStream,
+        failed_rows: bool,
+    },
     /// Values arriving from a reader thread while the child that produces them still runs.
     Stream {
         receiver: tokio::sync::mpsc::Receiver<StreamEvent>,
@@ -1431,6 +1648,130 @@ fn seed_bytes(values: Vec<Value>) -> Result<Vec<u8>, Flow> {
     Ok(bytes_of(&values))
 }
 
+// --- a block-based `each` as a stage of the pipeline it stands in (v0.4.1 §25, ADR-0480) ------
+
+/// The block a stage runs, when the stage is `each { … }`.
+///
+/// A block is not an expression the transform engine can evaluate: it holds statements, and a
+/// statement may run a command, bind a name or jump. Only the evaluator can run one, and only the
+/// thread that owns the session may call the evaluator — which is why the stage below asks rather
+/// than computes.
+pub(crate) fn block_of(stage: &Stage) -> Option<&Block> {
+    let StageHead::Command(name) = &stage.head else {
+        return None;
+    };
+    if !matches!(name.namespace.as_deref(), None | Some("ono")) || name.name != "each" {
+        return None;
+    }
+    match stage.arguments.as_slice() {
+        [Argument::Value(Expr::Block(block))] => Some(block),
+        _ => None,
+    }
+}
+
+/// One input value, and where the answer goes.
+#[derive(Debug)]
+struct BlockRequest {
+    /// Which stage of the list asked, so the driver knows which block to run.
+    stage: usize,
+    /// The value to bind as `@`.
+    value: Value,
+    /// Where the block's result goes.
+    reply: tokio::sync::oneshot::Sender<BlockReply>,
+}
+
+/// What the evaluator answers a [`BlockRequest`] with.
+#[derive(Debug)]
+enum BlockReply {
+    /// The values the block produced for this item, and whether upstream is still wanted.
+    Produced {
+        /// What the block emitted for this one item — §25.4's per-invocation scope.
+        values: Vec<Value>,
+        /// `false` after `break`: stop reading upstream (§25.5).
+        keep_going: bool,
+    },
+    /// The block jumped or failed: the pipeline stops, and the driver carries the reason out.
+    Stop,
+}
+
+/// What the driver loop does next.
+enum Driven {
+    /// A block stage is waiting for one item to be run.
+    Ask(BlockRequest),
+    /// No block stage will ask again.
+    Asked,
+    /// The pipeline produced something.
+    Event(StreamEvent),
+    /// The pipeline ended, or the live view was left.
+    Drained,
+    /// Ctrl-C reached the shell (spec §18.5).
+    Interrupted,
+}
+
+/// The stage a block-based `each` becomes: one that asks the evaluator, item by item.
+///
+/// v0.4.1 §25.4: the values a block emits for one input item are forwarded before the next input
+/// item is required, subject to downstream backpressure — which is what this loop does, because
+/// the next `next_value` only happens after the previous item's values have been sent. Returning
+/// drops the input, which closes the upstream channel and stops the source: §25.5's "`break`
+/// stops consuming upstream and cancels the remaining source where possible".
+fn asking_stage(
+    input: ValueStream,
+    stage: usize,
+    asked: tokio::sync::mpsc::Sender<BlockRequest>,
+) -> ValueStream {
+    // One value in, zero or more out: a stream that ends still ends, and one that does not still
+    // does not (§25.6, Appendix E's `item_transform`).
+    let boundedness = input.boundedness();
+    input.stage(boundedness, move |mut input, sink| async move {
+        while let Some(value) = input.next_value(&sink).await {
+            let (reply, answer) = tokio::sync::oneshot::channel();
+            if asked
+                .send(BlockRequest {
+                    stage,
+                    value,
+                    reply,
+                })
+                .await
+                .is_err()
+            {
+                return;
+            }
+            let Ok(BlockReply::Produced { values, keep_going }) = answer.await else {
+                return;
+            };
+            for value in values {
+                if sink.send(value).await.is_err() {
+                    return;
+                }
+            }
+            if !keep_going {
+                return;
+            }
+        }
+    })
+}
+
+/// The refusal for `each { … }` with no stream in front of it (spec §19.4).
+fn each_needs_a_stream() -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::TypeMismatch,
+        "`each` needs a stream of values to run its block over, and none reaches it",
+    )
+    .with_help("put a producer in front of it: `get service | where … | each { … }`")
+}
+
+/// The flow a pipeline error becomes, with an interrupted run reported as every shell reports one.
+fn interrupted_flow(error: ErrorValue) -> Flow {
+    if error.code() == ErrorCode::StreamCancelled {
+        // 128 + SIGINT, the status every shell reports for an interrupted foreground job
+        // (ADR-0008); the message would only repeat what the ^C on the terminal already says.
+        Flow::FailedWith(error, ExitStatus::from_signal(2))
+    } else {
+        Flow::Failed(error)
+    }
+}
+
 /// Refuses a spatial verb while `spatial.enabled` is false (spec v0.4 §47, §40).
 ///
 /// §47: "Disabling `spatial.enabled` MUST leave the typed shell and ordinary commands
@@ -1560,19 +1901,42 @@ fn run_native_segment(
     // capture — the one fact a full-screen view may not decide for itself (spec v0.4 §29.1).
     let displays = last && stage_has_no_redirection && !capturing;
     let materialization = crate::limits::materialization(session.settings());
+    // Which stages of this segment run a block, and where each one stands in `bound`.
+    //
+    // A block stage is bound like any other — same contract, same arguments, same scope — and
+    // only its *execution* differs: the transform engine cannot run statements, so the evaluator
+    // runs them, on this thread, one item at a time. v0.4.1 §25.1 requires that to happen while
+    // the source is still open, and §25.2 forbids the alternative that used to stand here
+    // (ADR-0480).
+    let blocks: Vec<(usize, usize)> = indices
+        .iter()
+        .enumerate()
+        .filter(|(_, index)| block_of(&list.stages[**index]).is_some())
+        .map(|(position, index)| (position, *index))
+        .collect();
+    // ADR-0070 point 3: with stages after it a block's values stream into them; with nothing
+    // after it the block's own statements show their results where they stand, and the stage has
+    // no result of its own.
+    let block_shows_itself = blocks.last().is_some_and(|(position, index)| {
+        *position + 1 == bound.len() && *index + 1 == list.stages.len()
+    });
+
     let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
             "the operating system refused to start the pipeline runtime",
         ))
     })?;
+    // Owned, so the borrow of the session ends with the assembly below and the evaluator can be
+    // called again while this pipeline is still running — which is the whole point (ADR-0480).
+    let handle = runtime.handle().clone();
 
     // Ctrl-C is delivered to the shell itself while a native pipeline runs — there is no child
-    // for the kernel to interrupt — so the pipeline future races the interrupt note and loses
-    // to it (spec §18.5). Dropping the futures drops every stream receiver, which closes the
-    // bounded channels and stops every producer at its next send.
+    // for the kernel to interrupt — so whatever this thread waits on races the interrupt note and
+    // loses to it (spec §18.5). Dropping the futures drops every stream receiver, which closes
+    // the bounded channels and stops every producer at its next send.
     let _ = ono_process::take_interrupt();
-    let interrupted = async {
+    let interrupted = || async {
         let mut tick = tokio::time::interval(std::time::Duration::from_millis(40));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -1583,9 +1947,22 @@ fn run_native_segment(
         }
     };
 
-    let pipeline = async {
+    // One request in flight. §25.3 keeps `each` serial, so a queue of items waiting to be run
+    // would buy nothing, and §65.7 forbids the shape it would take: "replacing a foreground
+    // `Vec` with an unbounded background queue is not a streaming fix".
+    let (asked, mut requests) = tokio::sync::mpsc::channel::<BlockRequest>(1);
+
+    let assemble = async {
+        let mut carried_failure = false;
         let mut stream: Option<ValueStream> = match seed {
             Seed::Values(values) => Some(ValueStream::from_values(values)),
+            Seed::Pipe {
+                stream,
+                failed_rows,
+            } => {
+                carried_failure = failed_rows;
+                Some(stream)
+            }
             Seed::Stream {
                 receiver,
                 boundedness,
@@ -1608,9 +1985,16 @@ fn run_native_segment(
             Seed::None => input.map(|bytes| ValueStream::from_values([Value::Bytes(bytes.into())])),
         };
 
-        let mut failed_rows = false;
+        let mut failed_rows = carried_failure;
         let final_stage = bound.len().saturating_sub(1);
         for (position, (contract, arguments)) in bound.iter().enumerate() {
+            if let Some((_, at)) = blocks.iter().find(|(held, _)| *held == position) {
+                let Some(previous) = stream.take() else {
+                    return Err(each_needs_a_stream());
+                };
+                stream = Some(asking_stage(previous, *at, asked.clone()));
+                continue;
+            }
             let started = std::time::Instant::now();
             let mut invocation = Invocation::new(contract, arguments, providers)
                 .with_scope(std::sync::Arc::clone(&scope))
@@ -1645,64 +2029,147 @@ fn run_native_segment(
                 Err(error) => return Err(error),
             }
         }
-
-        let mut values = Vec::new();
-        let mut failures = Vec::new();
-        // The counters are shared by every stage of the pipeline (ADR-0014); the handle is taken
-        // before the stream is drained, because the stream is consumed to do it.
-        let counted = stream
-            .as_ref()
-            .map(|stream| stream.diagnostics().clone())
-            .unwrap_or_default();
-        if let Some(mut stream) = stream {
-            if last && !stream.boundedness().is_bounded() && stage_has_no_redirection {
-                // A live stream at a terminal renders in place (spec §18.3); anywhere else the
-                // representation must be chosen, because an endless unserialised stream into a
-                // pipe or file is a table that never learns its widths.
-                if !capturing && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-                    let (width, height) = live_geometry();
-                    failures.extend(crate::live::show(stream, width, height, &theme).await);
-                    return Ok((Vec::new(), failures, failed_rows, counted));
-                }
-                return Err(ErrorValue::new(
-                    ErrorCode::StreamUnboundedOperation,
-                    "a live stream needs a representation when nobody is watching it",
-                )
-                .with_help(
-                    "pipe it through a serializer — `watch process | to json` — or bound it \
-                     with `take` (spec §18.3)",
-                ));
-            }
-            while let Some(event) = stream.recv().await {
-                match event {
-                    StreamEvent::Value(value) => values.push(value),
-                    StreamEvent::Failure(error) => failures.push(error),
-                }
-            }
-        }
-        Ok((values, failures, failed_rows, counted))
+        Ok((stream, failed_rows))
     };
 
-    let collected = runtime.block_on(async {
+    let assembled = handle.block_on(async {
         tokio::select! {
-            outcome = pipeline => outcome,
-            () = interrupted => Err(ErrorValue::new(
-                ErrorCode::StreamCancelled,
-                "interrupted",
-            )),
+            outcome = assemble => outcome,
+            () = interrupted() => Err(ErrorValue::new(ErrorCode::StreamCancelled, "interrupted")),
         }
     });
+    // Every sender that remains belongs to a block stage, so the driver below learns from the
+    // channel closing that no block will ask again.
+    drop(asked);
+    let (stream, failed_rows) = assembled.map_err(interrupted_flow)?;
 
-    let (values, failures, failed_rows, counted) = collected.map_err(|error| {
-        if error.code() == ErrorCode::StreamCancelled {
-            // 128 + SIGINT, the status every shell reports for an interrupted foreground job
-            // (ADR-0008); the message would only repeat what the ^C on the terminal already
-            // says.
-            Flow::FailedWith(error, ExitStatus::from_signal(2))
+    // Named for the inventory of §26.1: this is the result of one command, drained before it is
+    // written, rendered or retained (`docs/spec/hardening/streaming.yaml`).
+    let mut values: Vec<Value> = Vec::new();
+    let mut failures: Vec<ErrorValue> = Vec::new();
+    // The counters are shared by every stage of the pipeline (ADR-0014); the handle is taken
+    // before the stream is drained, because the stream is consumed to do it.
+    let counted = stream
+        .as_ref()
+        .map(|stream| stream.diagnostics().clone())
+        .unwrap_or_default();
+
+    // Taken before the stream is moved: what stops every producer of this pipeline at once. A
+    // stage that runs a block may still be waiting on a source that never ends after downstream
+    // has had its answer — `each { … } | take 1` over a followed file — and a shell that walked
+    // away from it would leave the source running (§28.3, §28.4).
+    let cancel = stream.as_ref().map(|stream| stream.cancel_token().clone());
+    let mut showing = None;
+    let mut draining = None;
+    if let Some(stream) = stream {
+        if last
+            && !stream.boundedness().is_bounded()
+            && stage_has_no_redirection
+            && !block_shows_itself
+        {
+            // A live stream at a terminal renders in place (spec §18.3); anywhere else the
+            // representation must be chosen, because an endless unserialised stream into a pipe
+            // or file is a table that never learns its widths.
+            if capturing || !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                return Err(Flow::Failed(
+                    ErrorValue::new(
+                        ErrorCode::StreamUnboundedOperation,
+                        "a live stream needs a representation when nobody is watching it",
+                    )
+                    .with_help(
+                        "pipe it through a serializer — `watch process | to json` — or bound it \
+                         with `take` (spec §18.3)",
+                    ),
+                ));
+            }
+            let (width, height) = live_geometry();
+            showing = Some(Box::pin(crate::live::show(stream, width, height, &theme)));
         } else {
-            Flow::Failed(error)
+            draining = Some(stream);
         }
-    })?;
+    }
+
+    // The driver. It is the only thing holding the session, so it is the only thing that can run
+    // a block — and it is also what drains the pipeline, so the two interleave rather than take
+    // turns. Between two answers it is inside `block_on`; while it answers one it is not, which
+    // is what lets a block run a pipeline of its own (ADR-0480).
+    let mut asking = true;
+    let mut stopped: Option<Flow> = None;
+    while draining.is_some() || showing.is_some() {
+        let driven = handle.block_on(async {
+            tokio::select! {
+                biased;
+                request = requests.recv(), if asking => match request {
+                    Some(request) => Driven::Ask(request),
+                    None => Driven::Asked,
+                },
+                event = async {
+                    match draining.as_mut() {
+                        Some(stream) => stream.recv().await,
+                        None => std::future::pending().await,
+                    }
+                }, if draining.is_some() => match event {
+                    Some(event) => Driven::Event(event),
+                    None => Driven::Drained,
+                },
+                reported = async {
+                    match showing.as_mut() {
+                        Some(shown) => shown.await,
+                        None => std::future::pending().await,
+                    }
+                }, if showing.is_some() => {
+                    failures.extend(reported);
+                    Driven::Drained
+                }
+                () = interrupted() => Driven::Interrupted,
+            }
+        });
+        match driven {
+            Driven::Ask(request) => {
+                let Some(block) = block_of(&list.stages[request.stage]) else {
+                    continue;
+                };
+                // ADR-0070 point 3 again, per item: the block's values are captured only where
+                // a later stage consumes them. §25.4 permits this scope because it is one item's
+                // result, and forbids the collection over all items that used to stand here.
+                let consumed = request.stage + 1 < list.stages.len();
+                match crate::eval::run_each_item(session, block, source, request.value, consumed) {
+                    Ok((produced, keep_going)) => {
+                        let _ = request.reply.send(BlockReply::Produced {
+                            values: produced,
+                            keep_going,
+                        });
+                    }
+                    Err(flow) => {
+                        let _ = request.reply.send(BlockReply::Stop);
+                        stopped = Some(flow);
+                        break;
+                    }
+                }
+            }
+            Driven::Asked => asking = false,
+            Driven::Event(StreamEvent::Value(value)) => values.push(value),
+            Driven::Event(StreamEvent::Failure(error)) => failures.push(error),
+            Driven::Drained => {
+                draining = None;
+                showing = None;
+            }
+            Driven::Interrupted => {
+                return Err(interrupted_flow(ErrorValue::new(
+                    ErrorCode::StreamCancelled,
+                    "interrupted",
+                )));
+            }
+        }
+    }
+    // Whatever is left is left because nobody is reading it any more: cancellation wins over
+    // capacity, so a producer behind a stage that stopped does not keep enqueueing (§28.3).
+    if let Some(cancel) = cancel {
+        cancel.cancel();
+    }
+    if let Some(flow) = stopped {
+        return Err(flow);
+    }
 
     // Spec §16.5: what succeeded and what failed are both reported, and neither is collapsed into
     // the other. A process that exits between being listed and being read costs one object, not
@@ -1770,6 +2237,13 @@ fn run_native_segment(
             Ok(_) => Ok((None, status)),
             Err(flow) => Err(flow),
         };
+    }
+
+    // A trailing `each { … }` with nothing after it has already shown whatever its statements
+    // produced, in the caller's output context (ADR-0070 point 3). It has no result of its own,
+    // and writing an empty one would retain a result the user never saw.
+    if block_shows_itself {
+        return Ok((None, status));
     }
 
     let stage = &list.stages[*indices.last().unwrap_or(&0)];

@@ -331,3 +331,96 @@ fn should_find_every_generation_claim_of_this_repositorys_checklist_true() {
             .join("\n")
     );
 }
+
+// --- the streaming and event-ordering contract (v0.4.1 §27.4, Appendix E) ----------------------
+
+#[test]
+fn should_render_the_stream_ordering_contract_from_the_registry() {
+    // v0.4.1 §27.4: "the stream module documentation MUST state this rule". It is stated in one
+    // place — `docs/spec/hardening/streaming_classification.yaml` — and the page a user reads is
+    // rendered from it, so the two cannot drift into two different contracts (ADR-0483).
+    let repo = registries();
+    repo.write(
+        "docs/spec/hardening/streaming_classification.yaml",
+        "version: 1\n\
+         classes:\n  \
+           - id: item_transform\n    \
+             appendix_e: Item transform\n    \
+             requires_finite_input: false\n    \
+             may_materialize: false\n    \
+             doc: One value in, zero or more out.\n\
+         operations:\n  \
+           - command: ono.data.each\n    \
+             class: item_transform\n\
+         ordering:\n  \
+           per_channel: Total within one channel.\n  \
+           cross_kind: No total temporal ordering between the two channels.\n  \
+           causality: Consumers must not infer causality from observation order.\n  \
+           total_order: One sequence-bearing path when the order is part of the answer.\n  \
+           channels:\n    \
+             - id: value\n      \
+               carries: The values a stage produced.\n      \
+               ordered_within_itself: true\n",
+    );
+
+    let pages = generate(repo.path()).expect("generation");
+    let page = pages
+        .iter()
+        .find(|page| page.path.ends_with("streaming.md"))
+        .expect("a streaming reference page");
+
+    for expected in [
+        "item_transform",
+        "ono.data.each",
+        "Total within one channel.",
+        "No total temporal ordering between the two channels.",
+        "Consumers must not infer causality from observation order.",
+        "One sequence-bearing path when the order is part of the answer.",
+    ] {
+        assert!(
+            page.contents.contains(expected),
+            "the rendered contract does not carry {expected:?}:\n{}",
+            page.contents
+        );
+    }
+}
+
+#[test]
+fn should_render_this_repositorys_ordering_contract_as_the_stream_module_states_it() {
+    // The two texts §27.4 requires to agree, compared: the sentence in the registry and the
+    // sentence in `stream.rs`. A change to either that the other does not follow fails here.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    // Both texts are wrapped for their own medium, so they are compared with their line breaks
+    // and comment markers flattened: what has to agree is the sentence, not the column it broke at.
+    let flatten = |text: &str| {
+        text.replace("//!", " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let registry = flatten(
+        &std::fs::read_to_string(root.join("docs/spec/hardening/streaming_classification.yaml"))
+            .expect("the streaming classification is committed"),
+    );
+    let module = flatten(
+        &std::fs::read_to_string(root.join("crates/ono-pipeline/src/stream.rs"))
+            .expect("the stream module is committed"),
+    );
+
+    for claim in [
+        "does not promise a total temporal ordering between",
+        "MUST NOT infer causality from the relative observation order",
+    ] {
+        assert!(
+            registry.contains(claim),
+            "the registry no longer states {claim:?}"
+        );
+        assert!(
+            module.contains(claim),
+            "v0.4.1 §27.4: the stream module documentation must state the rule, and it does not \
+             carry {claim:?}"
+        );
+    }
+}
