@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "note": "The regression baseline of v0.4.1 §32.4. Every record carries the six metrics of §32.3 in the shape of Appendix F.4, and names the reference environment of §37.2 it was measured on. Written by `cargo xtask perf --write-baseline`; a figure edited by hand is a figure nobody measured. `cargo xtask spec-check` refuses a record that is not a complete §32.3 result.",
+  "environment": "ryzen-3900x-ubuntu-2604",
+  "measurements": []
+}
