@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ono_protocol::{ClientConfig, Identity, TrustPolicy, UnauthenticatedTransport};
-use ono_remote::{AgentConfig, RemoteLink, serve_registry};
+use ono_remote::{AgentConfig, PeerIdentity, RemoteLink, TlsListener, serve_registry};
 use ono_value::ErrorValue;
 
 use fixture::{FixtureObserved, fixture_registry, fixture_schemas};
@@ -84,4 +84,25 @@ pub async fn connect() -> Connected {
         observed,
         agent,
     }
+}
+
+/// An agent listening on a loopback port the system chooses, serving the fixture registry.
+pub async fn listening(identity: PeerIdentity) -> String {
+    let listener = TlsListener::bind("127.0.0.1:0", &identity)
+        .await
+        .expect("a loopback listener binds");
+    let address = listener
+        .local_addr()
+        .expect("the system reports the port it chose")
+        .to_string();
+    tokio::spawn(async move {
+        while let Ok(transport) = listener.accept().await {
+            let registry = fixture_registry(Arc::new(FixtureObserved::default()));
+            let config = AgentConfig::new(registry).with_identity(Identity::new("remote-user"));
+            tokio::spawn(async move {
+                let _ = serve_registry(transport, config).await;
+            });
+        }
+    });
+    address
 }

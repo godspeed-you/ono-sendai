@@ -24,14 +24,10 @@
 )]
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask sits in the workspace")
-        .to_path_buf()
-}
+mod support;
+use support::repo;
 
 fn read(relative: &str) -> String {
     let path = repo().join(relative);

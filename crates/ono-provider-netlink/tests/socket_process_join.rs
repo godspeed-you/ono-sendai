@@ -25,7 +25,7 @@ use ono_pipeline::StreamEvent;
 use ono_provider_api::{Provider, Query};
 use ono_provider_netlink::{SocketOwners, SocketProtocol, SocketProvider, decode_inet_sockets};
 use ono_value::{RecordValue, Value};
-use support::{inet_diag_msg, message, sockid};
+use support::listening_tcp;
 
 async fn sockets(query: &Query) -> Vec<RecordValue> {
     let provider = SocketProvider::new();
@@ -188,23 +188,6 @@ fn should_map_an_inode_to_its_owner_from_a_proc_tree() {
     );
 }
 
-/// A listening TCP socket whose inode is `4242`, so a scan that attributes nothing leaves it
-/// without an owner.
-fn unowned_listener() -> Vec<u8> {
-    message(
-        20,
-        &inet_diag_msg(
-            2,
-            10,
-            &sockid((&[0, 0, 0, 0], 22), (&[0, 0, 0, 0], 0), 0x1234_5678_9abc),
-            0,
-            0,
-            0,
-            4_242,
-        ),
-    )
-}
-
 #[test]
 fn should_say_the_owner_is_denied_when_the_scan_was_refused_a_process() {
     // v0.4 §35.2 and AGENTS.md section 6. The kernel gave this socket an inode, so a process
@@ -223,7 +206,7 @@ fn should_say_the_owner_is_denied_when_the_scan_was_refused_a_process() {
         .expect("a directory this test owns can be closed to itself");
 
     let owners = SocketOwners::from_proc_root(root.path()).expect("the scan reads what it can");
-    let decoded = decode_inet_sockets(&unowned_listener(), SocketProtocol::Tcp, Some(&owners));
+    let decoded = decode_inet_sockets(&listening_tcp(), SocketProtocol::Tcp, Some(&owners));
     let socket = &decoded.records()[0];
 
     let error = match socket.get("process") {
@@ -254,7 +237,7 @@ fn should_leave_the_owner_null_when_a_complete_scan_found_nobody_holding_it() {
     symlink("socket:[99001]", fd.join("3")).expect("a symlink is creatable");
 
     let owners = SocketOwners::from_proc_root(root.path()).expect("the scan reads what it can");
-    let decoded = decode_inet_sockets(&unowned_listener(), SocketProtocol::Tcp, Some(&owners));
+    let decoded = decode_inet_sockets(&listening_tcp(), SocketProtocol::Tcp, Some(&owners));
     assert_eq!(
         decoded.records()[0].get("process"),
         Some(&Value::Null),

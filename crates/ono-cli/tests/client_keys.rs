@@ -15,10 +15,10 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::{Scratch, scratch};
 
 mod support;
-use support::last_line;
+use support::{binary, last_line, ono_at_home};
 
 fn fingerprint(marker: char) -> String {
     format!(
@@ -27,31 +27,20 @@ fn fingerprint(marker: char) -> String {
     )
 }
 
-fn ono(home: &Scratch, script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .env("HOME", home.path().to_string_lossy().into_owned())
-        .env(
-            "XDG_CONFIG_HOME",
-            home.path().to_string_lossy().into_owned(),
-        )
-        .args(["-c", script])
-        .run()
-}
-
 #[test]
 fn should_list_every_authorized_client_as_an_object_when_get_client_key_runs() {
     let home = scratch();
     let first = fingerprint('1');
     let second = fingerprint('2');
-    ono(&home, &format!("add client-key {first} --label watcher")).assert_success();
-    ono(&home, &format!("add client-key {second}")).assert_success();
-    ono(
+    ono_at_home(&home, &format!("add client-key {first} --label watcher")).assert_success();
+    ono_at_home(&home, &format!("add client-key {second}")).assert_success();
+    ono_at_home(
         &home,
         &format!("set client-key {second} --allow service.manage"),
     )
     .assert_success();
 
-    let listed = ono(
+    let listed = ono_at_home(
         &home,
         "get client-key | select fingerprint label observe actions | to json",
     );
@@ -69,7 +58,7 @@ fn should_list_every_authorized_client_as_an_object_when_get_client_key_runs() {
     );
 
     // §9.7's fifth column: where the store lives, so an operator can find the file.
-    let path = ono(&home, "get client-key | select path | to json");
+    let path = ono_at_home(&home, "get client-key | select path | to json");
     assert!(
         last_line(&path).contains("authorized_clients"),
         "the listing says which file the grants are kept in, got {:?}",
@@ -82,7 +71,7 @@ fn should_add_a_client_key_and_show_it_in_the_next_listing() {
     let home = scratch();
     let client = fingerprint('3');
 
-    let added = ono(
+    let added = ono_at_home(
         &home,
         &format!("add client-key {client} --label deploy | select status changed | to json"),
     );
@@ -94,14 +83,14 @@ fn should_add_a_client_key_and_show_it_in_the_next_listing() {
         added.stdout()
     );
 
-    let listed = ono(&home, "get client-key | select fingerprint label | to json");
+    let listed = ono_at_home(&home, "get client-key | select fingerprint label | to json");
     assert_eq!(
         last_line(&listed),
         format!("[{{\"fingerprint\":\"{client}\",\"label\":\"deploy\"}}]")
     );
 
     // Adding twice is not a silent reset of a grant somebody made deliberately.
-    let again = ono(
+    let again = ono_at_home(
         &home,
         &format!("try {{ add client-key {client} }} catch e {{ $e | select code | to json }}"),
     );
@@ -118,9 +107,9 @@ fn should_add_a_client_key_and_show_it_in_the_next_listing() {
 fn should_grant_observe_only_when_a_client_key_is_added_without_grants() {
     let home = scratch();
     let client = fingerprint('4');
-    ono(&home, &format!("add client-key {client}")).assert_success();
+    ono_at_home(&home, &format!("add client-key {client}")).assert_success();
 
-    let listed = ono(&home, "get client-key | select observe actions | to json");
+    let listed = ono_at_home(&home, "get client-key | select observe actions | to json");
     listed.assert_success();
     assert_eq!(
         last_line(&listed),
@@ -152,10 +141,10 @@ fn should_grant_observe_only_when_a_client_key_is_added_without_grants() {
 fn should_change_exactly_the_grants_named_when_set_client_key_runs() {
     let home = scratch();
     let client = fingerprint('5');
-    ono(&home, &format!("add client-key {client} --label bot")).assert_success();
+    ono_at_home(&home, &format!("add client-key {client} --label bot")).assert_success();
 
     // §9.7: `--allow` "replaces/sets the exact action allowlist while preserving observe state".
-    let allowed = ono(
+    let allowed = ono_at_home(
         &home,
         &format!(
             "set client-key {client} --allow \"process.signal,service.manage\" | select changed | to json"
@@ -163,7 +152,7 @@ fn should_change_exactly_the_grants_named_when_set_client_key_runs() {
     );
     allowed.assert_success();
     assert_eq!(last_line(&allowed), "[{\"changed\":true}]");
-    let after = ono(
+    let after = ono_at_home(
         &home,
         "get client-key | select observe actions label | to json",
     );
@@ -175,12 +164,12 @@ fn should_change_exactly_the_grants_named_when_set_client_key_runs() {
     );
 
     // §9.7: `--observe true|false` "changes query/subscription permission", and nothing else.
-    let closed = ono(
+    let closed = ono_at_home(
         &home,
         &format!("set client-key {client} --observe false | select changed | to json"),
     );
     closed.assert_success();
-    let narrowed = ono(&home, "get client-key | select observe actions | to json");
+    let narrowed = ono_at_home(&home, "get client-key | select observe actions | to json");
     assert_eq!(
         last_line(&narrowed),
         "[{\"observe\":false,\"actions\":[\"process.signal\",\"service.manage\"]}]",
@@ -189,12 +178,12 @@ fn should_change_exactly_the_grants_named_when_set_client_key_runs() {
     );
 
     // Replacing the allowlist with one id removes the other: it is a set, not an addition.
-    ono(
+    ono_at_home(
         &home,
         &format!("set client-key {client} --allow service.manage"),
     )
     .assert_success();
-    let replaced = ono(&home, "get client-key | select actions | to json");
+    let replaced = ono_at_home(&home, "get client-key | select actions | to json");
     assert_eq!(
         last_line(&replaced),
         "[{\"actions\":[\"service.manage\"]}]",
@@ -208,23 +197,23 @@ fn should_change_exactly_the_grants_named_when_set_client_key_runs() {
 fn should_remove_a_client_key_so_the_store_no_longer_lists_it() {
     let home = scratch();
     let client = fingerprint('6');
-    ono(&home, &format!("add client-key {client}")).assert_success();
+    ono_at_home(&home, &format!("add client-key {client}")).assert_success();
 
-    let removed = ono(
+    let removed = ono_at_home(
         &home,
         &format!("remove client-key {client} | select status | to json"),
     );
     removed.assert_success();
     assert_eq!(last_line(&removed), "[{\"status\":\"success\"}]");
 
-    let listed = ono(&home, "get client-key | to json");
+    let listed = ono_at_home(&home, "get client-key | to json");
     assert_eq!(
         last_line(&listed),
         "[]",
         "a revoked client is gone from the store, and its next connection has nothing to match"
     );
 
-    let missing = ono(
+    let missing = ono_at_home(
         &home,
         &format!("try {{ remove client-key {client} }} catch e {{ $e | select kind | to json }}"),
     );
@@ -242,10 +231,10 @@ fn should_act_on_the_client_keys_that_arrive_through_the_pipe() {
     // each record, so revoking everything is one line rather than a loop an operator writes.
     let home = scratch();
     for marker in ['7', '8'] {
-        ono(&home, &format!("add client-key {}", fingerprint(marker))).assert_success();
+        ono_at_home(&home, &format!("add client-key {}", fingerprint(marker))).assert_success();
     }
 
-    let removed = ono(
+    let removed = ono_at_home(
         &home,
         "get client-key | remove client-key | select status | to json",
     );
@@ -254,7 +243,10 @@ fn should_act_on_the_client_keys_that_arrive_through_the_pipe() {
         last_line(&removed),
         "[{\"status\":\"success\"},{\"status\":\"success\"}]"
     );
-    assert_eq!(last_line(&ono(&home, "get client-key | to json")), "[]");
+    assert_eq!(
+        last_line(&ono_at_home(&home, "get client-key | to json")),
+        "[]"
+    );
 }
 
 #[test]
@@ -269,7 +261,7 @@ fn should_carry_help_and_completion_for_every_client_key_command() {
         "set client-key",
         "remove client-key",
     ] {
-        let helped = ono(&home, &format!("help {spelling}"));
+        let helped = ono_at_home(&home, &format!("help {spelling}"));
         helped.assert_success();
         assert!(
             helped.stdout().contains("client"),
@@ -278,7 +270,7 @@ fn should_carry_help_and_completion_for_every_client_key_command() {
         );
     }
 
-    let options = ono(&home, "help set client-key");
+    let options = ono_at_home(&home, "help set client-key");
     for option in ["--allow", "--observe", "--label"] {
         assert!(
             options.stdout().contains(option),
@@ -287,7 +279,7 @@ fn should_carry_help_and_completion_for_every_client_key_command() {
         );
     }
 
-    let listed = ono(
+    let listed = ono_at_home(
         &home,
         "get command | where target == \"client-key\" | count | to json",
     );
@@ -316,15 +308,6 @@ impl Drop for Agent {
         let _ = self.process.kill();
         let _ = self.process.wait();
     }
-}
-
-fn binary() -> std::path::PathBuf {
-    let mut path = std::env::current_exe().expect("the test binary knows where it is");
-    path.pop();
-    if path.ends_with("deps") {
-        path.pop();
-    }
-    path.join("ono")
 }
 
 /// Starts `ono --agent --listen 127.0.0.1:0` and reads back the port and the fingerprint to pin.
@@ -381,7 +364,7 @@ fn should_refuse_the_next_connection_after_a_client_key_is_removed() {
     // where an operator forms the expectation.
     let home = scratch();
     let agent = agent(&home);
-    ono(
+    ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {} | select status",
@@ -400,9 +383,9 @@ fn should_refuse_the_next_connection_after_a_client_key_is_removed() {
     )
     .trim()
     .to_owned();
-    ono(&home, &format!("add client-key {client} --label suite")).assert_success();
+    ono_at_home(&home, &format!("add client-key {client} --label suite")).assert_success();
 
-    let linked = ono(
+    let linked = ono_at_home(
         &home,
         &format!(
             "link host {} --transport tcp; get link | select state | to json",
@@ -417,7 +400,7 @@ fn should_refuse_the_next_connection_after_a_client_key_is_removed() {
         linked.stderr()
     );
 
-    let removed = ono(
+    let removed = ono_at_home(
         &home,
         &format!("remove client-key {client} | select message | to json"),
     );
@@ -435,7 +418,7 @@ fn should_refuse_the_next_connection_after_a_client_key_is_removed() {
         removed.stdout()
     );
 
-    let refused = ono(
+    let refused = ono_at_home(
         &home,
         &format!(
             "try {{ link host {} --transport tcp }} catch e {{ $e | select code name | to json }}",

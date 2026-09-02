@@ -5,6 +5,7 @@
 //! easy to forget, and both are exactly how a project acquires unfinished work nobody is
 //! tracking. The gate checks them instead of trusting them.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// A rule violation, phrased so the reader knows what to do about it.
@@ -1786,4 +1787,230 @@ fn observed_skips(log: &str) -> Vec<(String, String)> {
     observed.sort();
     observed.dedup();
     observed
+}
+
+// --- v0.4.1 §39.1 and §39.2: one helper per job ------------------------------------------------
+
+/// A helper function defined in test code, and what it does with its arguments.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Helper {
+    /// Where it is defined, as `path.rs::name`.
+    id: String,
+    /// The crate whose `tests/` tree it lives in — the home §39.1 would move it to.
+    home: String,
+    /// Its parameter and return types with the names stripped, and its body with comments,
+    /// whitespace and formatting removed: what §39.2 means by "semantics/signatures rather than
+    /// fragile exact source strings".
+    shape: String,
+}
+
+/// Checks that no two test helpers with the same home do the same job under two definitions.
+///
+/// §39.1 puts the common helpers — invoking `ono`, decoding rows, constructing fixtures — in
+/// shared modules *"rather than dozens of near-identical local variants"*, and §39.2 asks the
+/// gate for a structural check that stops the variants coming back.
+///
+/// ADR-0427 is the standing decision on when a helper may be shared, and this rule holds it
+/// rather than going past it. Three properties have to hold before a pair is reported, and each
+/// of them is one of ADR-0427's reasons written as code:
+///
+/// * **the signature and the body match** once comments, whitespace and formatting are removed.
+///   A variant is not a duplicate: two suites that need different budgets, different panic
+///   messages or a different tolerance for stderr keep two helpers, and unifying them would
+///   change what a test does — the one thing a refactor may not do (AGENTS.md §11);
+/// * **the body is self-contained**, calling no other function its own file defines. ADR-0427
+///   left `files.rs::single_result` where it was for exactly this: its body is identical to three
+///   others and it calls `files.rs::text`, which names an `ActionResult` field in its panic. Two
+///   identical bodies over two different callees are two behaviours, and moving one would change
+///   the diagnostic a reader depends on;
+/// * **the copies share a home.** §39.2 asks for the check *"where a canonical helper exists"*,
+///   and a home is `crates/<crate>/tests/support/mod.rs` for one crate's suites or
+///   `xtask/tests/support/mod.rs` for the automation's. A pair spanning two crates has no home
+///   that does not put a crate's own types into `ono-testkit`, which ADR-0427 rejected because
+///   the testkit is meant to be neutral about the crates it serves.
+///
+/// The name is not part of the comparison. ADR-0427 found one name over eleven behaviours; this
+/// is the same defect from the other end — one behaviour under two names is a helper somebody
+/// could not find, so they wrote it again.
+///
+/// A body under [`TRIVIAL_HELPER_BODY`] normalised characters is left alone. A two-line accessor
+/// is not a helper anybody consolidates, and a rule that reported it would be a rule people turn
+/// off.
+#[must_use]
+pub fn check_duplicate_helpers(root: &Path) -> Vec<Problem> {
+    let mut helpers: Vec<Helper> = Vec::new();
+    let mut seen_paths: Vec<String> = Vec::new();
+    for file in rust_sources(root) {
+        let relative = relative(root, &file);
+        if !relative.contains("/tests/") || is_scanner_source(&relative) {
+            continue;
+        }
+        // A `support/mod.rs` is `#[path]`-included into several test binaries; it is one file and
+        // one definition, however many suites read it.
+        if seen_paths.contains(&relative) {
+            continue;
+        }
+        seen_paths.push(relative.clone());
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        helpers.extend(helpers_in(&relative, &text));
+    }
+
+    let mut groups: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    for helper in helpers {
+        groups
+            .entry((helper.home, helper.shape))
+            .or_default()
+            .push(helper.id);
+    }
+
+    let mut problems = Vec::new();
+    for ((home, _), mut members) in groups {
+        if members.len() < 2 {
+            continue;
+        }
+        members.sort();
+        members.dedup();
+        if members.len() < 2 {
+            continue;
+        }
+        let named = members.join(", ");
+        for member in &members {
+            problems.push(Problem::new(
+                member.clone(),
+                format!(
+                    "is one of {} definitions of the same helper: {named}. §39.1 wants one shared \
+                     definition per job; move it to `{home}/tests/support/mod.rs` and call it from \
+                     each suite. If the copies must differ, they are not copies — make the \
+                     difference visible in the body and record why (ADR-0427, §39.2, §39.4)",
+                    members.len()
+                ),
+            ));
+        }
+    }
+    problems.sort_by(|left, right| left.location.cmp(&right.location));
+    problems
+}
+
+/// The shortest normalised body worth comparing. Below it a match is a coincidence of shape
+/// rather than a helper somebody duplicated.
+const TRIVIAL_HELPER_BODY: usize = 80;
+
+/// The tree a helper's copies would share a canonical module in, or `None` when they would not.
+fn helper_home(relative: &str) -> Option<String> {
+    if let Some(rest) = relative.strip_prefix("crates/") {
+        let crate_name = rest.split('/').next()?;
+        return Some(format!("crates/{crate_name}"));
+    }
+    relative.starts_with("xtask/").then(|| "xtask".to_owned())
+}
+
+/// Every non-test, self-contained function defined in one file's text, with its shape.
+fn helpers_in(relative: &str, text: &str) -> Vec<Helper> {
+    let Some(home) = helper_home(relative) else {
+        return Vec::new();
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let declared: Vec<String> = lines
+        .iter()
+        .filter_map(|line| function_name(line))
+        .collect();
+
+    let mut helpers = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let Some(name) = function_name(lines[index]) else {
+            index += 1;
+            continue;
+        };
+        // A test is not a helper: two tests asserting the same thing are a duplicated *test*,
+        // which is a different finding and not this rule's.
+        if lines[index.saturating_sub(6)..index]
+            .iter()
+            .any(|above| is_test_attribute(above.trim()))
+        {
+            index += 1;
+            continue;
+        }
+        let (signature, body, end) = function_text(&lines, index);
+        index = end.max(index) + 1;
+        let Some(body) = body else { continue };
+        let normalised = normalise_source(&body);
+        if normalised.len() < TRIVIAL_HELPER_BODY {
+            continue;
+        }
+        // A body that calls one of its own file's helpers means whatever that helper means, so
+        // two identical bodies over two different callees are two behaviours (ADR-0427).
+        if declared
+            .iter()
+            .any(|other| *other != name && body.contains(&format!("{other}(")))
+        {
+            continue;
+        }
+        helpers.push(Helper {
+            id: format!("{relative}::{name}"),
+            home: home.clone(),
+            shape: format!(
+                "{}|{normalised}",
+                normalise_source(&signature_shape(&signature))
+            ),
+        });
+    }
+    helpers
+}
+
+/// The signature, the body and the last line of the function that starts at `start`.
+fn function_text(lines: &[&str], start: usize) -> (String, Option<String>, usize) {
+    let mut signature = String::new();
+    let mut body = String::new();
+    let mut depth = 0usize;
+    let mut started = false;
+    for (offset, current) in lines[start..].iter().enumerate() {
+        let (opens, closes) = brace_delta(current);
+        if started {
+            body.push_str(current);
+            body.push('\n');
+        } else {
+            signature.push_str(current);
+            if opens > 0 {
+                started = true;
+                if let Some((_, rest)) = current.split_once('{') {
+                    body.push_str(rest);
+                    body.push('\n');
+                }
+            }
+        }
+        depth += opens;
+        depth = depth.saturating_sub(closes);
+        if started && depth == 0 {
+            return (signature, Some(body), start + offset);
+        }
+    }
+    (signature, None, start)
+}
+
+/// A signature with its parameter *names* removed, leaving what the helper takes and answers.
+fn signature_shape(signature: &str) -> String {
+    let Some(open) = signature.find('(') else {
+        return signature.to_owned();
+    };
+    signature[open..]
+        .split(',')
+        .map(|parameter| parameter.rsplit(':').next().unwrap_or(parameter))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Source with its comments, its whitespace and its formatting removed.
+fn normalise_source(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines() {
+        let code = match line.find("//") {
+            Some(position) if !line[..position].contains('"') => &line[..position],
+            _ => line,
+        };
+        out.extend(code.split_whitespace());
+    }
+    out
 }

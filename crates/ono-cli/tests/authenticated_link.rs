@@ -19,10 +19,10 @@
 use std::io::{BufRead as _, BufReader};
 use std::process::{Child, Command, Stdio};
 
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::{Scratch, scratch};
 
 mod support;
-use support::last_line;
+use support::{binary, client_fingerprint, last_line, ono_at_home};
 
 /// A listening agent, and how to reach and pin it.
 struct Agent {
@@ -57,15 +57,6 @@ impl Drop for Agent {
         let _ = self.process.kill();
         let _ = self.process.wait();
     }
-}
-
-fn binary() -> std::path::PathBuf {
-    let mut path = std::env::current_exe().expect("the test binary knows where it is");
-    path.pop();
-    if path.ends_with("deps") {
-        path.pop();
-    }
-    path.join("ono")
 }
 
 /// Starts `ono --agent --listen 127.0.0.1:0` with `key` as its identity, and reads back the port
@@ -131,38 +122,14 @@ fn agent(home: &Scratch, key: &str) -> Agent {
     }
 }
 
-/// The fingerprint of the key *this* shell proves it holds — what the far side authorizes it by
-/// (v0.4.1 §8.5, §9.7). Client and agent share a configuration directory in these tests, so the
-/// client's own identity is the one the agent's store names.
-fn client_fingerprint(home: &Scratch) -> String {
-    let printed = Command::new(binary())
-        .arg("--print-peer-key")
-        .env("HOME", home.path())
-        .env("XDG_CONFIG_HOME", home.path())
-        .output()
-        .expect("the peer key is printable");
-    String::from_utf8_lossy(&printed.stdout).trim().to_owned()
-}
-
 /// Authorizes this shell's own key to observe the agent it is about to link to (§9.4).
 ///
 /// Every direct link in this suite needs one, because a v0.4.1 listening agent authorizes nobody
 /// it was not told about — which is §59.1, and is the whole of phase H2.
 fn authorize_self(home: &Scratch) -> String {
     let fingerprint = client_fingerprint(home);
-    ono(home, &format!("add client-key {fingerprint} --label suite")).assert_success();
+    ono_at_home(home, &format!("add client-key {fingerprint} --label suite")).assert_success();
     fingerprint
-}
-
-fn ono(home: &Scratch, script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .env("HOME", home.path().to_string_lossy().into_owned())
-        .env(
-            "XDG_CONFIG_HOME",
-            home.path().to_string_lossy().into_owned(),
-        )
-        .args(["-c", script])
-        .run()
 }
 
 #[test]
@@ -170,7 +137,7 @@ fn should_refuse_a_host_whose_key_was_never_pinned() {
     let home = scratch();
     let agent = agent(&home, "first.pem");
 
-    let run = ono(
+    let run = ono_at_home(
         &home,
         &format!(
             "try {{ link host {} --transport tcp }} catch e {{ $e | select name | to json }}",
@@ -184,7 +151,7 @@ fn should_refuse_a_host_whose_key_was_never_pinned() {
         "ADR-0015 T5: an unknown key is refused, not recorded and not prompted past, got {:?}",
         run.stdout()
     );
-    let pins = ono(&home, "get host-key | to json");
+    let pins = ono_at_home(&home, "get host-key | to json");
     assert_eq!(
         last_line(&pins),
         "[]",
@@ -198,7 +165,7 @@ fn should_link_to_a_host_whose_key_is_pinned() {
     let agent = agent(&home, "first.pem");
     authorize_self(&home);
 
-    let pinned = ono(
+    let pinned = ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {} | select status changed | to json",
@@ -212,7 +179,7 @@ fn should_link_to_a_host_whose_key_is_pinned() {
         pinned.stdout()
     );
 
-    let run = ono(
+    let run = ono_at_home(
         &home,
         &format!(
             "link host {} --transport tcp; get link | select transport mode state | to json",
@@ -233,7 +200,7 @@ fn should_refuse_a_changed_host_key_with_the_stable_safety_code() {
     let home = scratch();
     let first = agent(&home, "first.pem");
 
-    let pinned = ono(
+    let pinned = ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {} | select status | to json",
@@ -248,7 +215,7 @@ fn should_refuse_a_changed_host_key_with_the_stable_safety_code() {
     // where a host answers, not who it is — so a second identity on a second port is the same
     // contradiction as a rebuilt server on the same one, and needs no port to be re-bound.
     let impostor = agent(&home, "second.pem");
-    let run = ono(
+    let run = ono_at_home(
         &home,
         &format!(
             "try {{ link host {} --transport tcp }} catch e {{ $e | select code name retryable | to json }}",
@@ -278,13 +245,13 @@ fn should_show_replace_and_forget_a_pinned_key() {
     let a = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
     let b = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 
-    let added = ono(
+    let added = ono_at_home(
         &home,
         &format!("add host-key prod-db --fingerprint {a} | select status | to json"),
     );
     added.assert_success();
 
-    let listed = ono(
+    let listed = ono_at_home(
         &home,
         "get host-key | select host algorithm fingerprint | to json",
     );
@@ -296,7 +263,7 @@ fn should_show_replace_and_forget_a_pinned_key() {
     );
 
     // `add` will not quietly replace a different key; re-trusting is `set`, a separate act.
-    let refused = ono(
+    let refused = ono_at_home(
         &home,
         &format!(
             "try {{ add host-key prod-db --fingerprint {b} }} catch e {{ $e | select code | to json }}"
@@ -309,17 +276,17 @@ fn should_show_replace_and_forget_a_pinned_key() {
         refused.stdout()
     );
 
-    let replaced = ono(
+    let replaced = ono_at_home(
         &home,
         &format!("set host-key prod-db --fingerprint {b} | select changed | to json"),
     );
     replaced.assert_success();
     assert_eq!(last_line(&replaced), "[{\"changed\":true}]");
 
-    let after = ono(&home, "get host-key | select fingerprint | to json");
+    let after = ono_at_home(&home, "get host-key | select fingerprint | to json");
     assert_eq!(last_line(&after), format!("[{{\"fingerprint\":\"{b}\"}}]"));
 
-    let forgotten = ono(
+    let forgotten = ono_at_home(
         &home,
         "remove host-key prod-db | select status | to json; get host-key | to json",
     );
@@ -336,7 +303,7 @@ fn should_show_replace_and_forget_a_pinned_key() {
 fn should_keep_a_pin_in_a_file_a_person_can_read() {
     let home = scratch();
     let fingerprint = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
-    ono(
+    ono_at_home(
         &home,
         &format!("add host-key prod-db --fingerprint {fingerprint}"),
     )
@@ -349,7 +316,7 @@ fn should_keep_a_pin_in_a_file_a_person_can_read() {
         text.contains(&format!("prod-db tls-x509 {fingerprint}")),
         "one line per peer, `<host> <algorithm> <fingerprint>`, got {text:?}"
     );
-    let shown = ono(&home, "get host-key | select path | to json");
+    let shown = ono_at_home(&home, "get host-key | select path | to json");
     assert!(
         last_line(&shown).contains("trusted_hosts"),
         "the table says which file the pins are kept in, got {:?}",
@@ -366,7 +333,7 @@ fn should_show_the_proved_identity_and_the_reported_one_as_separate_fields() {
     let home = scratch();
     let agent = agent(&home, "first.pem");
     authorize_self(&home);
-    ono(
+    ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {} | select status",
@@ -375,7 +342,7 @@ fn should_show_the_proved_identity_and_the_reported_one_as_separate_fields() {
     )
     .assert_success();
 
-    let run = ono(
+    let run = ono_at_home(
         &home,
         &format!(
             "link host {} --transport tcp; get link | select transport_fingerprint \
@@ -412,7 +379,7 @@ fn should_show_the_proved_identity_and_the_reported_one_as_separate_fields() {
 fn should_report_no_proved_key_over_a_transport_that_proves_nothing() {
     let home = scratch();
 
-    let run = ono(
+    let run = ono_at_home(
         &home,
         "link host here --transport local; get link | select transport_fingerprint \
          transport_trust runtime_user | to json",
@@ -449,7 +416,7 @@ fn should_report_no_proved_key_over_a_transport_that_proves_nothing() {
 fn should_refuse_an_authenticated_client_the_agent_never_authorized() {
     let home = scratch();
     let agent = agent(&home, "first.pem");
-    ono(
+    ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {} | select status",
@@ -459,7 +426,7 @@ fn should_refuse_an_authenticated_client_the_agent_never_authorized() {
     .assert_success();
     // The client's key is real and the handshake completes. Nobody authorized it.
 
-    let run = ono(
+    let run = ono_at_home(
         &home,
         &format!(
             "try {{ link host {} --transport tcp }} catch e {{ $e | select code name retryable | to json }}",
@@ -481,7 +448,7 @@ fn should_refuse_an_authenticated_client_the_agent_never_authorized() {
 
     // §59.1: "no process list, schema list or capability inventory beyond minimal rejection
     // protocol data may be disclosed."
-    let whole = ono(
+    let whole = ono_at_home(
         &home,
         &format!(
             "try {{ link host {} --transport tcp }} catch e {{ $e | to json }}",
@@ -496,7 +463,7 @@ fn should_refuse_an_authenticated_client_the_agent_never_authorized() {
         );
     }
     assert_eq!(
-        last_line(&ono(&home, "get link | to json")),
+        last_line(&ono_at_home(&home, "get link | to json")),
         "[]",
         "a refused client holds no link"
     );
@@ -508,7 +475,7 @@ fn should_refuse_an_authenticated_client_the_agent_never_authorized() {
 fn should_let_an_authorized_observer_read_and_refuse_it_every_action() {
     let home = scratch();
     let agent = agent(&home, "first.pem");
-    ono(
+    ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {} | select status",
@@ -518,7 +485,7 @@ fn should_let_an_authorized_observer_read_and_refuse_it_every_action() {
     .assert_success();
     authorize_self(&home);
 
-    let read = ono(
+    let read = ono_at_home(
         &home,
         &format!(
             "link host {} --transport tcp; enter link {}; get process | count | to json",
@@ -536,7 +503,7 @@ fn should_let_an_authorized_observer_read_and_refuse_it_every_action() {
     // §9.4: "no `Act` request, no elevated action, no destructive action." The offer the client
     // negotiated carries no action capability at all, so the mutation has nothing to bind to and
     // the dispatch path refuses it in any case (§10.1, §10.2).
-    let refused = ono(
+    let refused = ono_at_home(
         &home,
         &format!(
             "link host {} --transport tcp; enter link {}; \
@@ -557,7 +524,7 @@ fn should_let_an_authorized_observer_read_and_refuse_it_every_action() {
 fn should_refuse_the_next_connection_from_a_revoked_client_key() {
     let home = scratch();
     let agent = agent(&home, "first.pem");
-    ono(
+    ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {} | select status",
@@ -567,7 +534,7 @@ fn should_refuse_the_next_connection_from_a_revoked_client_key() {
     .assert_success();
     let client = authorize_self(&home);
 
-    let linked = ono(
+    let linked = ono_at_home(
         &home,
         &format!(
             "link host {} --transport tcp; get link | select state | to json",
@@ -576,13 +543,13 @@ fn should_refuse_the_next_connection_from_a_revoked_client_key() {
     );
     assert_eq!(last_line(&linked), "[{\"state\":\"connected\"}]");
 
-    ono(
+    ono_at_home(
         &home,
         &format!("remove client-key {client} | select changed | to json"),
     )
     .assert_success();
 
-    let refused = ono(
+    let refused = ono_at_home(
         &home,
         &format!(
             "try {{ link host {} --transport tcp }} catch e {{ $e | select code | to json }}",
@@ -603,7 +570,7 @@ fn should_refuse_the_next_connection_from_a_revoked_client_key() {
 fn should_distinguish_authenticated_authorized_pinned_and_self_reported_on_a_link() {
     let home = scratch();
     let agent = agent(&home, "first.pem");
-    ono(
+    ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {} | select status",
@@ -613,7 +580,7 @@ fn should_distinguish_authenticated_authorized_pinned_and_self_reported_on_a_lin
     .assert_success();
     authorize_self(&home);
 
-    let run = ono(
+    let run = ono_at_home(
         &home,
         &format!(
             "link host {} --transport tcp; get link | select authenticated authorized \
@@ -657,7 +624,7 @@ fn should_distinguish_authenticated_authorized_pinned_and_self_reported_on_a_lin
 fn should_report_an_authenticated_but_unauthorized_link_as_exactly_that() {
     let home = scratch();
     let agent = agent(&home, "first.pem");
-    ono(
+    ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {} | select status",
@@ -666,7 +633,7 @@ fn should_report_an_authenticated_but_unauthorized_link_as_exactly_that() {
     )
     .assert_success();
 
-    let refused = ono(
+    let refused = ono_at_home(
         &home,
         &format!(
             "try {{ link host {} --transport tcp }} catch e {{ $e | select code name kind | to json }}",
@@ -696,7 +663,10 @@ fn should_report_an_authenticated_but_unauthorized_link_as_exactly_that() {
     // The host key really was pinned and the handshake really did complete: this is a client the
     // agent authenticated and then declined to authorize, which is the state §14.3 is about.
     assert_eq!(
-        last_line(&ono(&home, "get host-key | select fingerprint | to json")),
+        last_line(&ono_at_home(
+            &home,
+            "get host-key | select fingerprint | to json"
+        )),
         format!("[{{\"fingerprint\":\"{}\"}}]", agent.fingerprint)
     );
 }
@@ -707,7 +677,7 @@ fn should_report_an_authenticated_but_unauthorized_link_as_exactly_that() {
 fn should_write_a_structured_audit_line_for_every_decision_the_agent_makes() {
     let home = scratch();
     let mut agent = agent(&home, "first.pem");
-    ono(
+    ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {} | select status",
@@ -717,7 +687,7 @@ fn should_write_a_structured_audit_line_for_every_decision_the_agent_makes() {
     .assert_success();
 
     // One refused client, then one authorized client.
-    ono(
+    ono_at_home(
         &home,
         &format!(
             "try {{ link host {} --transport tcp }} catch e {{ }}",
@@ -725,7 +695,7 @@ fn should_write_a_structured_audit_line_for_every_decision_the_agent_makes() {
         ),
     );
     let client = authorize_self(&home);
-    let linked = ono(
+    let linked = ono_at_home(
         &home,
         &format!(
             "link host {} --transport tcp; get process | count",

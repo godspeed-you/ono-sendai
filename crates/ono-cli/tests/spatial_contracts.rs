@@ -31,6 +31,9 @@ use ono_testkit::ono;
 use ono_testkit::{Scratch, Shell, scratch};
 use serde_yaml_ng::Value;
 
+mod support;
+use support::{balanced_end, field, list_at, ono_at_home, search};
+
 /// The §11.5 confidence vocabulary.
 const CONFIDENCE: [&str; 5] = ["exact", "strong", "inferred", "user_declared", "unknown"];
 
@@ -84,50 +87,7 @@ const SPATIAL_SETTINGS: [(&str, &str); 11] = [
     ("spatial.trail.persist", "false"),
 ];
 
-/// Runs with the scratch directory as home and config home, so nothing this machine's real
-/// configuration says can reach the test.
-fn ono_at_home(home: &Scratch, script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .env("HOME", home.path().to_string_lossy().into_owned())
-        .env(
-            "XDG_CONFIG_HOME",
-            home.path().to_string_lossy().into_owned(),
-        )
-        .args(["-c", script])
-        .run()
-}
-
 // --- reading what the shell wrote -------------------------------------------------------------
-
-/// The end of the JSON document that starts at `chars[start]`, or `None` when it never closes.
-fn balanced_end(chars: &[char], start: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    for (offset, character) in chars.iter().enumerate().skip(start) {
-        if in_string {
-            match character {
-                _ if escaped => escaped = false,
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
-        match character {
-            '"' => in_string = true,
-            '{' | '[' => depth += 1,
-            '}' | ']' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(offset);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
 
 /// Whether `text` opens like JSON rather than like a rendered table cell. `serde_yaml_ng` parses
 /// JSON *and* YAML flow mappings such as the `{name: testbox}` an `ActionResult` table prints,
@@ -205,51 +165,11 @@ fn caught(run: &ono_testkit::Run, what: &str) -> Value {
     })
 }
 
-/// The first value anywhere in `document` stored under `key`.
-fn search(document: &Value, key: &str) -> Option<Value> {
-    match document {
-        Value::Mapping(mapping) => {
-            for (name, value) in mapping {
-                if name.as_str() == Some(key) {
-                    return Some(value.clone());
-                }
-            }
-            mapping.values().find_map(|value| search(value, key))
-        }
-        Value::Sequence(items) => items.iter().find_map(|item| search(item, key)),
-        _ => None,
-    }
-}
-
-/// The value at a dotted path, falling back to the first field anywhere in the document whose key
-/// is the path's last segment. v0.4 fixes the facts a `PlaceView` (§6.1) and a `SpatialMap` (§22)
-/// carry, not how a `PlaceView` nests them.
-fn field(document: &Value, path: &str) -> Value {
-    let mut cursor = document.clone();
-    for segment in path.split('.') {
-        match cursor.get(segment) {
-            Some(next) => cursor = next.clone(),
-            None => {
-                let last = path.rsplit('.').next().unwrap_or(path);
-                return search(document, last).unwrap_or(Value::Null);
-            }
-        }
-    }
-    cursor
-}
-
 fn text_at(document: &Value, path: &str, what: &str) -> String {
     field(document, path)
         .as_str()
         .unwrap_or_else(|| panic!("{what} — `{path}` must be a string, got {document:?}"))
         .to_owned()
-}
-
-fn list_at(document: &Value, path: &str, what: &str) -> Vec<Value> {
-    field(document, path)
-        .as_sequence()
-        .unwrap_or_else(|| panic!("{what} — `{path}` must be a list, got {document:?}"))
-        .clone()
 }
 
 fn rendered(value: &Value) -> String {

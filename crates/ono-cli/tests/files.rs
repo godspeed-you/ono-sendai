@@ -25,7 +25,7 @@ use ono_testkit::{Scratch, Shell, scratch};
 use serde_yaml_ng::Value;
 
 mod support;
-use support::rows;
+use support::{rows, single_result};
 
 /// Runs a one-liner with the scratch directory as the working directory.
 fn ono_in(directory: &Scratch, script: &str) -> ono_testkit::Run {
@@ -34,19 +34,6 @@ fn ono_in(directory: &Scratch, script: &str) -> ono_testkit::Run {
         .args(["-c", script])
         .timeout(Duration::from_secs(30))
         .run()
-}
-
-/// Parses the JSON document `to json` wrote as the stream's values.
-/// The one `ono.action-result/1` row a single-target mutation emits.
-fn single_result(run: &ono_testkit::Run) -> Value {
-    let mut rows = rows(run);
-    assert_eq!(
-        rows.len(),
-        1,
-        "spec §11.5: one ActionResult per target, got {:?}",
-        run.stdout()
-    );
-    rows.remove(0)
 }
 
 fn text(row: &Value, field: &str) -> String {

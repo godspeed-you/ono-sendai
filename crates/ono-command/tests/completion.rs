@@ -11,12 +11,7 @@
 use ono_command::{Candidate, CandidateKind, StageContext};
 
 mod support;
-use support::registry;
-
-fn complete(line: &str) -> Vec<Candidate> {
-    let cursor = line.len();
-    ono_command::complete(registry(), &StageContext::from_line(line, cursor), None)
-}
+use support::{complete, registry};
 
 fn texts(candidates: &[Candidate]) -> Vec<&str> {
     candidates

@@ -43,7 +43,7 @@ use ono_testkit::{Scratch, Shell, SkipReason, scratch};
 use serde_yaml_ng::Value;
 
 mod support;
-use support::listener;
+use support::{SleepChild, listener};
 
 /// Runs a one-liner with a generous budget: nothing here may hang, and a run that does is a
 /// failure of the shell, not of the test.
@@ -330,33 +330,6 @@ fn should_break_a_listing_refusal_into_lines_while_still_escaping_what_the_names
         stderr.contains("\\u{1b}"),
         "ADR-0015 T1: the escape byte is shown as data rather than dropped, got {stderr:?}"
     );
-}
-
-/// A `sleep` child: a process with a parent, a cgroup and no socket of its own.
-struct SleepChild(Child);
-
-impl SleepChild {
-    fn spawn() -> Self {
-        let child = Command::new("sleep")
-            .arg("30")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("`sleep` is available on every test host");
-        Self(child)
-    }
-
-    fn pid(&self) -> u32 {
-        self.0.id()
-    }
-}
-
-impl Drop for SleepChild {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 /// A listening TCP socket the test process owns, so the shell can attribute it to a pid the test

@@ -402,6 +402,7 @@ fn spec_check() -> ExitCode {
             .chain(scan::check_silent_skips(&root))
             .chain(scan::check_unannounced_skips(&root))
             .chain(scan::check_expected_skips(&root))
+            .chain(scan::check_duplicate_helpers(&root))
             .chain(scan::check_confinement_syscalls(&root))
             .chain(scan::check_evaluator_captures(&root))
             .chain(scan::check_bounded_channels(&root))

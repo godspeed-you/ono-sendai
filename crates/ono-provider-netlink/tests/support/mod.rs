@@ -222,3 +222,19 @@ pub fn link_stats64(counters: [u64; 8]) -> Vec<u8> {
     out.resize(8 * 24, 0);
     out
 }
+
+/// A listening TCP socket on `0.0.0.0:22`.
+pub fn listening_tcp() -> Vec<u8> {
+    message(
+        20,
+        &inet_diag_msg(
+            2,
+            10,
+            &sockid((&[0, 0, 0, 0], 22), (&[0, 0, 0, 0], 0), 0x1234_5678_9abc),
+            0,
+            0,
+            0,
+            4_242,
+        ),
+    )
+}

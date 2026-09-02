@@ -7,14 +7,8 @@
     reason = "AGENTS.md §16: a helper shared by tests states its preconditions the same way a test does"
 )]
 
-use std::path::{Path, PathBuf};
-
-fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask sits in the workspace")
-        .to_path_buf()
-}
+mod support;
+use support::repo;
 
 #[test]
 fn should_have_a_live_acceptance_case_for_every_first_party_adapter() {

@@ -35,7 +35,10 @@ use std::io::{BufRead as _, BufReader};
 use std::process::{Child, Command, Stdio};
 
 use ono_cli::invocation::Invocation;
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::{Scratch, scratch};
+
+mod support;
+use support::{binary, client_fingerprint, ono_at_home};
 
 /// A listening agent and everything it said on the way up.
 struct Agent {
@@ -60,15 +63,6 @@ impl Agent {
             .find_map(|line| line.strip_prefix(&format!("ono: {field} ")))
             .map(str::trim)
     }
-}
-
-fn binary() -> std::path::PathBuf {
-    let mut path = std::env::current_exe().expect("the test binary knows where it is");
-    path.pop();
-    if path.ends_with("deps") {
-        path.pop();
-    }
-    path.join("ono")
 }
 
 /// Starts `ono --agent --listen 127.0.0.1:0` and collects everything it says before it waits.
@@ -123,34 +117,12 @@ fn agent(home: &Scratch) -> Agent {
     }
 }
 
-fn ono(home: &Scratch, script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .env("HOME", home.path().to_string_lossy().into_owned())
-        .env(
-            "XDG_CONFIG_HOME",
-            home.path().to_string_lossy().into_owned(),
-        )
-        .args(["-c", script])
-        .run()
-}
-
-/// This shell's own fingerprint — what the agent's store would have to name.
-fn client_fingerprint(home: &Scratch) -> String {
-    let printed = Command::new(binary())
-        .arg("--print-peer-key")
-        .env("HOME", home.path())
-        .env("XDG_CONFIG_HOME", home.path())
-        .output()
-        .expect("the peer key is printable");
-    String::from_utf8_lossy(&printed.stdout).trim().to_owned()
-}
-
 #[test]
 fn should_print_the_bind_address_the_limits_and_the_authorized_client_count_when_listening_starts()
 {
     let home = scratch();
     let fingerprint = client_fingerprint(&home);
-    ono(&home, &format!("add client-key {fingerprint} --label one")).assert_success();
+    ono_at_home(&home, &format!("add client-key {fingerprint} --label one")).assert_success();
     let agent = agent(&home);
 
     // §11.2, field by field.
@@ -235,7 +207,7 @@ fn should_refuse_every_connection_when_the_authorization_store_is_empty_or_absen
 
     // The host is pinned deliberately, so the only thing left for the agent to refuse is who the
     // client is (§21.5, §9.1).
-    let refused = ono(
+    let refused = ono_at_home(
         &home,
         &format!(
             "add host-key 127.0.0.1 --fingerprint {key}; try {{ link host {address} --transport \

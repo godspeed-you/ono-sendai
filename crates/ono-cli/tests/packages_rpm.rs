@@ -30,15 +30,13 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::PathBuf;
 
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::{Scratch, scratch};
 use serde_yaml_ng::Value;
 
 mod support;
-use support::text;
+use support::{assert_failed_row, executable, ono_with_path, text};
 
 // --- helpers ------------------------------------------------------------------------------------
 
@@ -72,29 +70,6 @@ fn single_result(run: &ono_testkit::Run) -> Value {
         run.stdout()
     );
     rows.remove(0)
-}
-
-fn assert_failed_row(row: &Value, operation: &str, code: &str) {
-    assert_eq!(
-        text(row, "operation"),
-        operation,
-        "spec §11.5: `operation` is the command id, got {row:?}"
-    );
-    assert_eq!(
-        text(row, "status"),
-        "failed",
-        "the mutation reports a failure as a `failed` row, not as text, got {row:?}"
-    );
-    assert_eq!(
-        row["changed"].as_bool(),
-        Some(false),
-        "a failed mutation changed nothing, got {row:?}"
-    );
-    assert_eq!(
-        row["error"]["code"].as_str(),
-        Some(code),
-        "spec §43: the failed row carries the structured error {code}, got {row:?}"
-    );
 }
 
 /// The stderr of a run that must have been refused at the provider boundary.
@@ -227,21 +202,6 @@ fn fake_managers(directory: &Scratch, listing: Listing, frontend: Frontend) -> P
         Frontend::None => {}
     }
     bin
-}
-
-fn executable(path: &Path, contents: &str) {
-    std::fs::write(path, contents).expect("write the fake manager");
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-        .expect("mark the fake manager executable");
-}
-
-/// Runs a one-liner with exactly `bin` as the `PATH`.
-fn ono_with_path(bin: &Path, script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .env("PATH", bin.display().to_string())
-        .args(["-c", script])
-        .timeout(Duration::from_secs(30))
-        .run()
 }
 
 // --- enumeration --------------------------------------------------------------------------------

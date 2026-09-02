@@ -1751,10 +1751,15 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
       `::should_report_this_repositorys_observed_skips_as_exactly_the_declared_set` (ADR-0514;
       `cargo xtask skip-check` is the §38.3 verification step, run by `scripts/gate.sh` where
       `ONO_CANONICAL_CI=1`) (#89, §38.2, §38.3, §65.10).
-- [ ] **P2 · The shared test helpers are canonical.** One helper per job, used by every suite that
+- [x] **P2 · The shared test helpers are canonical.** One helper per job, used by every suite that
       needs it, with the divergence that ADR-0427 already forbids asserted over the whole tree —
       `xtask/tests/scan.rs::should_report_two_test_helpers_that_do_the_same_job_under_different_names`,
-      `::should_report_this_repository_as_using_the_canonical_helper_everywhere` (#90, §39.1–§39.4).
+      `::should_report_this_repository_as_using_the_canonical_helper_everywhere`, and the three
+      that hold the rule to ADR-0427's boundary,
+      `::should_leave_two_helpers_that_differ_alone_when_scanning_for_duplicates`,
+      `::should_leave_a_helper_alone_when_it_calls_its_own_files_helper` and
+      `::should_leave_two_crates_helpers_alone_when_they_share_no_home` (ADR-0515) (#90,
+      §39.1–§39.4).
 - [ ] **P1 · The fourteen acceptance families exist and run.** Every box of §4.8.13 is ticked, the
       cases execute the real `ono` binary (§40.1), remote cases use an isolated container network
       rather than the public internet (§40.2), and every case has a finite timeout that counts as a

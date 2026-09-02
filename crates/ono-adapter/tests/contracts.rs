@@ -7,16 +7,10 @@
     reason = "a test states its preconditions the way a #[test] body does (AGENTS.md section 16)"
 )]
 
-use std::path::PathBuf;
-
 use ono_adapter::{AdapterPack, validate};
 
-fn fixtures_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/spec/adapters/fixtures")
-        .canonicalize()
-        .expect("the fixtures directory exists")
-}
+mod support;
+use support::fixtures_root;
 
 const UTIL_LINUX: &str = include_str!("../../../docs/spec/adapters/first-party/util-linux.yaml");
 

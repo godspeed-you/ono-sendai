@@ -11,8 +11,8 @@ use std::path::Path;
 use ono_testkit::{Scratch, scratch};
 use xtask::scan::{
     ExpectedSkips, check_acceptance_case_references, check_authentication_flags,
-    check_expected_skips, check_release_board, check_silent_skips, check_unannounced_skips,
-    check_unfinished_work, verify_observed_skips,
+    check_duplicate_helpers, check_expected_skips, check_release_board, check_silent_skips,
+    check_unannounced_skips, check_unfinished_work, verify_observed_skips,
 };
 
 /// Builds a throwaway repository shaped like this one.
@@ -1105,5 +1105,98 @@ fn should_report_this_repositorys_observed_skips_as_exactly_the_declared_set() {
         check_expected_skips(root),
         Vec::new(),
         "docs/spec/hardening/expected_test_skips.yaml declares exactly the skips this tree takes"
+    );
+}
+
+// --- v0.4.1 §39.1 and §39.2: one helper per job ------------------------------------------------
+
+#[test]
+fn should_report_two_test_helpers_that_do_the_same_job_under_different_names() {
+    // ADR-0427 found one name over eleven behaviours. This is the same defect from the other end:
+    // one behaviour under two names is a helper somebody could not find, so they wrote it again.
+    let repo = fixture(&[
+        (
+            "crates/a/tests/one.rs",
+            "fn listening_tcp() -> Vec<u8> {\n    message(20, &socket(2, 10, 0, 0, 0, 4_242, 0x1234_5678))\n        .into_iter()\n        .chain(trailer(\"listening\"))\n        .collect()\n}\n",
+        ),
+        (
+            "crates/a/tests/two.rs",
+            "fn unowned_listener() -> Vec<u8> {\n    message(20, &socket(2, 10, 0, 0, 0, 4_242, 0x1234_5678))\n        .into_iter()\n        .chain(trailer(\"listening\"))\n        .collect()\n}\n",
+        ),
+    ]);
+    let problems = check_duplicate_helpers(repo.path());
+    assert_eq!(problems.len(), 2, "got {problems:?}");
+    assert_eq!(problems[0].location, "crates/a/tests/one.rs::listening_tcp");
+    assert_eq!(
+        problems[1].location,
+        "crates/a/tests/two.rs::unowned_listener"
+    );
+    assert!(
+        problems[0].detail.contains("crates/a/tests/support/mod.rs"),
+        "the complaint names the home the copies share, got {:?}",
+        problems[0].detail
+    );
+}
+
+#[test]
+fn should_leave_two_helpers_that_differ_alone_when_scanning_for_duplicates() {
+    // ADR-0427's rule, and the reason the check is written this way: unifying two helpers that
+    // differ picks one of them for callers that were using the other, which changes what a test
+    // does. A variant is not a duplicate.
+    let repo = fixture(&[
+        (
+            "crates/a/tests/one.rs",
+            "fn ono(script: &str) -> Run {\n    Shell::new()\n        .args([\"-c\", script])\n        .timeout(Duration::from_secs(20))\n        .run()\n}\n",
+        ),
+        (
+            "crates/a/tests/two.rs",
+            "fn ono(script: &str) -> Run {\n    Shell::new()\n        .args([\"-c\", script])\n        .timeout(Duration::from_secs(30))\n        .run()\n}\n",
+        ),
+    ]);
+    assert_eq!(check_duplicate_helpers(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_leave_a_helper_alone_when_it_calls_its_own_files_helper() {
+    // `files.rs::single_result` was identical to three others and called `files.rs::text`, which
+    // names an ActionResult field in its panic. Two identical bodies over two different callees
+    // are two behaviours, and moving one would change the diagnostic a reader depends on
+    // (ADR-0427).
+    let body = "fn single_result(run: &Run) -> Value {\n    let mut rows = rows(run);\n    assert_eq!(rows.len(), 1, \"one result per target, got {:?}\", run.stdout());\n    rows.remove(0)\n}\n";
+    let local = "fn rows(run: &Run) -> Vec<Value> {\n    serde_yaml_ng::from_str(run.stdout()).expect(\"json\")\n}\n";
+    let repo = fixture(&[
+        ("crates/a/tests/one.rs", &format!("{local}{body}")),
+        ("crates/a/tests/two.rs", &format!("{local}{body}")),
+    ]);
+    let problems = check_duplicate_helpers(repo.path());
+    assert!(
+        problems
+            .iter()
+            .all(|problem| !problem.location.ends_with("::single_result")),
+        "a helper whose meaning comes from its own file's callee stays put, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_leave_two_crates_helpers_alone_when_they_share_no_home() {
+    // §39.2 asks for the check "where a canonical helper exists". A pair spanning two crates has
+    // no home that does not put a crate's own types into `ono-testkit`, which ADR-0427 rejected.
+    let helper = "fn record(name: &str) -> RecordValue {\n    RecordValue::builder(schema())\n        .set(\"name\", Value::string(name))\n        .build()\n        .expect(\"a well-formed record\")\n}\n";
+    let repo = fixture(&[
+        ("crates/a/tests/one.rs", helper),
+        ("crates/b/tests/two.rs", helper),
+    ]);
+    assert_eq!(check_duplicate_helpers(repo.path()), Vec::new());
+}
+
+#[test]
+fn should_report_this_repository_as_using_the_canonical_helper_everywhere() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the workspace root is the parent of xtask/");
+    assert_eq!(
+        check_duplicate_helpers(root),
+        Vec::new(),
+        "every job a test helper does has one definition (v0.4.1 §39.1, §39.2)"
     );
 }

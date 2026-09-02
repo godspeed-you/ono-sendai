@@ -18,10 +18,10 @@
 
 use std::os::unix::fs::PermissionsExt as _;
 
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::{Scratch, scratch};
 
 mod support;
-use support::last_line;
+use support::{last_line, ono_at_home};
 
 /// A fingerprint of the shape the store records, distinguishable by its first digits.
 fn fingerprint(marker: char) -> String {
@@ -29,17 +29,6 @@ fn fingerprint(marker: char) -> String {
         "sha256:{}",
         std::iter::repeat_n(marker, 64).collect::<String>()
     )
-}
-
-fn ono(home: &Scratch, script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .env("HOME", home.path().to_string_lossy().into_owned())
-        .env(
-            "XDG_CONFIG_HOME",
-            home.path().to_string_lossy().into_owned(),
-        )
-        .args(["-c", script])
-        .run()
 }
 
 /// Writes `contents` as this account's authorization store and returns its path.
@@ -67,7 +56,7 @@ fn should_parse_the_documented_entry_model_including_an_empty_action_set() {
         ),
     );
 
-    let run = ono(
+    let run = ono_at_home(
         &home,
         "get client-key | select fingerprint label observe actions | to json",
     );
@@ -94,7 +83,7 @@ fn should_reject_an_unknown_field_in_an_authorization_entry() {
         &format!("{} observe=true elevated=true\n", fingerprint('3')),
     );
 
-    let run = ono(
+    let run = ono_at_home(
         &home,
         "try { get client-key } catch e { $e | select code name | to json }",
     );
@@ -118,7 +107,7 @@ fn should_fail_to_load_the_store_when_one_non_comment_line_is_malformed() {
         &format!("{good} observe=true\nthis line is not an entry\n"),
     );
 
-    let run = ono(
+    let run = ono_at_home(
         &home,
         "try { get client-key } catch e { $e | select code | to json }",
     );
@@ -129,7 +118,7 @@ fn should_fail_to_load_the_store_when_one_non_comment_line_is_malformed() {
         run.stdout()
     );
 
-    let message = ono(
+    let message = ono_at_home(
         &home,
         "try { get client-key } catch e { $e | select message }",
     );
@@ -149,7 +138,7 @@ fn should_never_treat_a_malformed_store_as_an_empty_one() {
     // Read as empty, this would answer `[]` and every later command would behave as though the
     // operator had authorized nobody — which reads as safe and is the doorway to §65.4's
     // fail-open: the *next* thing a fail-open reader does is fall back to a default.
-    let listing = ono(
+    let listing = ono_at_home(
         &home,
         "try { get client-key } catch e { $e | select code | to json }",
     );
@@ -164,7 +153,7 @@ fn should_never_treat_a_malformed_store_as_an_empty_one() {
 
     // And a mutation does not quietly rewrite the file it could not read, which would destroy
     // the grants an operator wrote and replace them with whatever this command happened to say.
-    let added = ono(
+    let added = ono_at_home(
         &home,
         &format!(
             "try {{ add client-key {} }} catch e {{ $e | select code | to json }}",
@@ -191,7 +180,7 @@ fn should_distinguish_a_missing_store_from_a_corrupt_one() {
     // Both authorize nobody. They are different conditions and send an operator to different
     // places, so the refusal must not read the same for both (§9.2).
     let absent = scratch();
-    let listed = ono(&absent, "get client-key | to json");
+    let listed = ono_at_home(&absent, "get client-key | to json");
     listed.assert_success();
     assert_eq!(
         last_line(&listed),
@@ -201,7 +190,7 @@ fn should_distinguish_a_missing_store_from_a_corrupt_one() {
 
     let corrupt = scratch();
     store(&corrupt, "not a fingerprint at all\n");
-    let refused = ono(
+    let refused = ono_at_home(
         &corrupt,
         "try { get client-key } catch e { $e | select code | to json }",
     );
@@ -233,7 +222,7 @@ fn should_refuse_a_wildcard_or_risk_class_in_an_action_grant() {
         let client = fingerprint('7');
         store(&home, &format!("{client} observe=true actions={pattern}\n"));
 
-        let run = ono(
+        let run = ono_at_home(
             &home,
             "try { get client-key } catch e { $e | select code | to json }",
         );
@@ -262,9 +251,9 @@ fn should_refuse_a_wildcard_or_risk_class_in_an_action_grant() {
 fn should_refuse_a_wildcard_from_the_command_that_writes_the_store() {
     let home = scratch();
     let client = fingerprint('8');
-    ono(&home, &format!("add client-key {client}")).assert_success();
+    ono_at_home(&home, &format!("add client-key {client}")).assert_success();
 
-    let refused = ono(
+    let refused = ono_at_home(
         &home,
         &format!(
             "try {{ set client-key {client} --allow process.* }} catch e {{ $e | select code | to json }}"
@@ -278,7 +267,7 @@ fn should_refuse_a_wildcard_from_the_command_that_writes_the_store() {
         refused.stdout()
     );
 
-    let after = ono(&home, "get client-key | select actions | to json");
+    let after = ono_at_home(&home, "get client-key | select actions | to json");
     assert_eq!(
         last_line(&after),
         "[{\"actions\":[]}]",
@@ -292,12 +281,12 @@ fn should_refuse_a_wildcard_from_the_command_that_writes_the_store() {
 fn should_replace_the_store_atomically_so_a_reader_never_sees_a_partial_file() {
     let home = scratch();
     let first = fingerprint('9');
-    ono(&home, &format!("add client-key {first} --label one")).assert_success();
+    ono_at_home(&home, &format!("add client-key {first} --label one")).assert_success();
 
     let directory = home.path().join("ono");
     for index in 0..8 {
         let client = format!("sha256:{:0>64}", format!("{index:x}"));
-        ono(&home, &format!("add client-key {client}")).assert_success();
+        ono_at_home(&home, &format!("add client-key {client}")).assert_success();
 
         // The write goes to a temporary and is renamed over the store, so the store path is
         // never open for writing and no temporary survives the update (§9.8). A reader that
@@ -313,7 +302,7 @@ fn should_replace_the_store_atomically_so_a_reader_never_sees_a_partial_file() {
             "an update left {leftovers:?} beside the store; the next one would refuse it"
         );
 
-        let listed = ono(&home, "get client-key | count | to json");
+        let listed = ono_at_home(&home, "get client-key | count | to json");
         listed.assert_success();
         assert_eq!(
             last_line(&listed),
@@ -327,7 +316,7 @@ fn should_replace_the_store_atomically_so_a_reader_never_sees_a_partial_file() {
 fn should_leave_the_previous_store_intact_when_a_write_is_interrupted() {
     let home = scratch();
     let kept = fingerprint('a');
-    ono(&home, &format!("add client-key {kept} --label keeper")).assert_success();
+    ono_at_home(&home, &format!("add client-key {kept} --label keeper")).assert_success();
 
     let directory = home.path().join("ono");
     let before = std::fs::read_to_string(directory.join("authorized_clients"))
@@ -342,7 +331,7 @@ fn should_leave_the_previous_store_intact_when_a_write_is_interrupted() {
     permissions.set_mode(0o500);
     std::fs::set_permissions(&directory, permissions).expect("the directory mode is settable");
 
-    let refused = ono(
+    let refused = ono_at_home(
         &home,
         &format!(
             "try {{ add client-key {} }} catch e {{ $e | select kind | to json }}",
@@ -368,7 +357,7 @@ fn should_leave_the_previous_store_intact_when_a_write_is_interrupted() {
         before,
         "§9.8: a failed update leaves the previous valid store intact, byte for byte"
     );
-    let listed = ono(&home, "get client-key | select label | to json");
+    let listed = ono_at_home(&home, "get client-key | select label | to json");
     assert_eq!(
         last_line(&listed),
         "[{\"label\":\"keeper\"}]",
@@ -379,7 +368,7 @@ fn should_leave_the_previous_store_intact_when_a_write_is_interrupted() {
 #[test]
 fn should_keep_the_owner_only_permissions_of_the_store_across_an_update() {
     let home = scratch();
-    ono(&home, &format!("add client-key {}", fingerprint('c'))).assert_success();
+    ono_at_home(&home, &format!("add client-key {}", fingerprint('c'))).assert_success();
     let path = home.path().join("ono").join("authorized_clients");
 
     let mode = |path: &std::path::Path| {
@@ -396,7 +385,7 @@ fn should_keep_the_owner_only_permissions_of_the_store_across_an_update() {
          itself"
     );
 
-    ono(&home, &format!("add client-key {}", fingerprint('d'))).assert_success();
+    ono_at_home(&home, &format!("add client-key {}", fingerprint('d'))).assert_success();
     assert_eq!(
         mode(&path),
         0o600,
@@ -408,12 +397,12 @@ fn should_keep_the_owner_only_permissions_of_the_store_across_an_update() {
 fn should_keep_the_store_in_a_file_a_person_can_read_and_edit() {
     let home = scratch();
     let client = fingerprint('e');
-    ono(
+    ono_at_home(
         &home,
         &format!("add client-key {client} --label deploy-bot"),
     )
     .assert_success();
-    ono(
+    ono_at_home(
         &home,
         &format!("set client-key {client} --allow service.manage"),
     )
@@ -428,7 +417,7 @@ fn should_keep_the_store_in_a_file_a_person_can_read_and_edit() {
         )),
         "§9.2: line-oriented and human-readable, one line per client, got {text:?}"
     );
-    let shown = ono(&home, "get client-key | select path | to json");
+    let shown = ono_at_home(&home, "get client-key | select path | to json");
     assert!(
         last_line(&shown).contains("authorized_clients"),
         "the table says which file the grants are kept in, got {:?}",

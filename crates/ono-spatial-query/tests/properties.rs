@@ -17,12 +17,10 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{NOW, bridge, index, process, service, socket_with};
+use common::{NOW, bridge, draw, index, process, service, socket_with};
 use ono_spatial_core::{HierarchyKind, SpatialId, SpatialType};
-use ono_spatial_index::{PinRegistry, SpatialIndex};
-use ono_spatial_query::{
-    HorizonPlace, MAP_NODE_BUDGET, MapHorizon, MapRequest, SpatialMap, project_map,
-};
+use ono_spatial_index::SpatialIndex;
+use ono_spatial_query::{HorizonPlace, MAP_NODE_BUDGET, MapHorizon, MapRequest, SpatialMap};
 use ono_testkit::Rng;
 
 const RUNS: u64 = 96;
@@ -83,18 +81,6 @@ fn host(count: usize) -> (SpatialIndex, MapHorizon) {
         }
     }
     (index, horizon)
-}
-
-fn draw(index: &SpatialIndex, horizon: &MapHorizon, request: &MapRequest) -> SpatialMap {
-    project_map(
-        index,
-        &SpatialId::of_space("system"),
-        horizon,
-        request,
-        &PinRegistry::new(),
-        MAP_NODE_BUDGET,
-        NOW,
-    )
 }
 
 fn node_ids(map: &SpatialMap) -> BTreeSet<String> {

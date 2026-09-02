@@ -12,15 +12,10 @@
               body does (AGENTS.md section 16)"
 )]
 
-use ono_command::{Candidate, StageContext};
+use ono_command::Candidate;
 
 mod support;
-use support::registry;
-
-fn complete(line: &str) -> Vec<Candidate> {
-    let cursor = line.len();
-    ono_command::complete(registry(), &StageContext::from_line(line, cursor), None)
-}
+use support::complete;
 
 fn texts(candidates: &[Candidate]) -> Vec<String> {
     candidates

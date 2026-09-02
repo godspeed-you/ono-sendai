@@ -22,12 +22,8 @@ use ono_testkit::SkipReason;
 
 use ono_testkit::scratch;
 
-fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask sits in the workspace")
-        .to_path_buf()
-}
+mod support;
+use support::repo;
 
 /// A private target directory holding a stand-in `release/ono` — this test executable, which
 /// is a genuine ELF binary so dependency scanners see what they see on the real thing.

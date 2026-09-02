@@ -27,12 +27,14 @@
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use ono_testkit::ono_within;
 use ono_testkit::{Shell, SkipReason, scratch};
 use serde_yaml_ng::Value;
+
+mod support;
+use support::SleepChild;
 
 /// Runs a one-liner in `directory`, so `pwd` has a value the test chose.
 fn ono_in(directory: &Path, script: &str) -> ono_testkit::Run {
@@ -224,33 +226,6 @@ fn boundary_mount() -> Option<Mount> {
             && path.is_dir()
             && std::fs::read_dir(path).is_ok()
     })
-}
-
-/// A `sleep` child: a process place that is emphatically not a directory.
-struct SleepChild(Child);
-
-impl SleepChild {
-    fn spawn() -> Self {
-        let child = Command::new("sleep")
-            .arg("30")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("`sleep` is available on every test host");
-        Self(child)
-    }
-
-    fn pid(&self) -> u32 {
-        self.0.id()
-    }
-}
-
-impl Drop for SleepChild {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 /// The canonical form of a scratch path, so a comparison against `pwd` cannot fail over a
