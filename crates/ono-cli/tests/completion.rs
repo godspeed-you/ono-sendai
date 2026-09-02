@@ -164,3 +164,87 @@ fn should_complete_a_contributed_target_before_its_package_is_loaded() {
     shell.write_all(b"exit\n").expect("input");
     let _ = shell.wait();
 }
+
+// --- v0.4.1 §36.2: the completion budgets are the shell's, and they are enforced ---------------
+
+#[test]
+fn should_read_its_budgets_from_the_limits_catalogue() {
+    // ADR-0456 recorded the gap this closes: `limits.completion_soft_ms` and
+    // `limits.completion_hard_ms` were declared, range-checked and read by nobody, while the
+    // completion path carried a 40 ms constant of its own. §52.2 allows one home for a number.
+    let completer = ono_cli::complete::ProviderValues::new(Vec::new());
+    let (soft, hard) = completer.budgets();
+
+    assert_eq!(
+        soft,
+        std::time::Duration::from_millis(declared("limits.completion_soft_ms")),
+        "v0.4.1 §36.2 and Appendix A fix the soft budget, and the catalogue is where it is written"
+    );
+    assert_eq!(
+        hard,
+        std::time::Duration::from_millis(declared("limits.completion_hard_ms")),
+        "and the hard one"
+    );
+    assert!(
+        soft < hard,
+        "§36.2 states the soft budget as the point at which completion *may* answer and the hard \
+         one as the point at which it must stop, so the second cannot come first"
+    );
+}
+
+#[test]
+fn should_stop_discovery_at_the_hard_budget_and_answer_what_it_has() {
+    // §36.2: "At the hard budget it MUST stop additional discovery work and return what it has."
+    //
+    // Asserted as an outcome rather than with a stopwatch: given a budget no provider read can
+    // fit inside, the answer is what the completer already had — which, on a cold cache, is
+    // nothing at all. A completer that ignored the budget would answer with this machine's
+    // accounts, because they are there to be read.
+    let registry = ono_command::CommandRegistry::embedded().expect("the embedded contracts parse");
+    let command = registry
+        .commands()
+        .iter()
+        .find(|command| command.id() == "ono.user.get")
+        .expect("`get user` is a stable command");
+    let parameter = command
+        .selectors()
+        .first()
+        .expect("`get user` takes a selector");
+
+    let impatient = ono_cli::complete::ProviderValues::new(Vec::new())
+        .budgeted(Duration::from_nanos(1), Duration::from_nanos(1));
+    let within_a_nanosecond =
+        ono_command::ValueCompleter::complete(&impatient, command, parameter, "");
+    assert!(
+        within_a_nanosecond.is_empty(),
+        "a budget of one nanosecond admits no discovery, so completion answers with what it had — \
+         nothing — rather than waiting for the provider. Got {within_a_nanosecond:?}"
+    );
+
+    // And with the budgets the catalogue declares, the same question is answered from the machine
+    // — so what the nanosecond budget stopped was real work rather than a missing provider.
+    let patient = ono_cli::complete::ProviderValues::new(Vec::new());
+    let mut offered = ono_command::ValueCompleter::complete(&patient, command, parameter, "");
+    for _ in 0..20 {
+        if !offered.is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        offered = ono_command::ValueCompleter::complete(&patient, command, parameter, "");
+    }
+    assert!(
+        !offered.is_empty(),
+        "within its own budget, and with the cache the first read filled, completion offers this \
+         machine's accounts (§15.1, ADR-0252)"
+    );
+}
+
+/// The default the settings catalogue declares for a `limits.*` key, in its base unit.
+fn declared(key: &str) -> u64 {
+    let spec = ono_cli::settings::spec(key)
+        .unwrap_or_else(|| panic!("v0.4.1 §55.1 declares `{key}` in the settings catalogue"));
+    match spec.default_value() {
+        ono_value::Value::Int(number) => u64::try_from(number).expect("a budget is not negative"),
+        other => panic!("`{key}` is a duration in milliseconds, got {other:?}"),
+    }
+}

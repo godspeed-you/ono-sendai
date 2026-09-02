@@ -47,6 +47,19 @@ const SPATIAL_TARGETS: &[(&str, CostClass)] = &[
     ("file", CostClass::Expensive),
 ];
 
+/// What enumerating one provider target costs, in v0.4.1 §34.2's vocabulary.
+///
+/// The class is the *search* cost — what it takes to enumerate the target — which is what a
+/// selector sweep pays. §36.1 asks for "a bounded candidate strategy for canonical selectors",
+/// and a strategy needs to know what each candidate costs before it can bound anything.
+#[must_use]
+pub fn acquisition_of_target(target: &str) -> Option<ono_spatial_core::AcquisitionCost> {
+    SPATIAL_TARGETS
+        .iter()
+        .find(|(known, _)| *known == target)
+        .map(|(_, cost)| cost.acquisition())
+}
+
 /// Why a target was left out of a search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Skipped {

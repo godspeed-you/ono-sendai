@@ -1,0 +1,40 @@
+# v0.4.1 §36.2 and §61.4, and the half of issue #21 the container can hold.
+#
+# §36.2 gives interactive completion a hard wall-clock work budget — `completion.soft_budget =
+# 50 ms`, `completion.hard_budget = 150 ms` — and §61.4 asks that "a completion request that
+# triggers expensive discovery MUST return partial results or stop by the 150 ms hard budget".
+#
+# ADR-0252 accepted a proxy for that budget: a thousand iterations of `ono_command::complete` with
+# no value completer at all, which touches no provider. Issue #21 has been open on it since. The
+# measurement that replaces it is `cargo xtask perf`'s `completion.first_candidate`, which calls
+# the completer the line editor installs, one cold sample per process, on §37.2's named reference
+# environment — and 11.5 ms is what it says.
+#
+# What the container proves is the other half: that the budget is the shell's own, readable where
+# a user reads limits, and that a completion at a real terminal answers rather than blocking.
+# Timing it here would measure the image, and §32.4 puts absolute figures on the named
+# environment rather than on a shared runner.
+case: completion answers inside its declared budget at a real terminal
+pty: true
+columns: 100
+lines: 30
+timeout: 120
+env: NO_COLOR=1
+stdin: |
+  inspect limits | where key == "limits.completion_soft_ms" | select key value | to json
+  inspect limits | where key == "limits.completion_hard_ms" | select key value | to json
+  get user ro	 | count
+  exit
+run: |
+  ono
+exit: 0
+# §55.1: the two budgets are declared keys with Appendix A's values, and `inspect limits` reports
+# what the shell enforces rather than a second copy of them (§54.3).
+stdout-contains: limits.completion_soft_ms
+stdout-contains: limits.completion_hard_ms
+stdout-contains: {"key":"limits.completion_soft_ms","value":50}
+stdout-contains: {"key":"limits.completion_hard_ms","value":150}
+# §15.1: and the completion itself still answers from the providers, inside the budget it declares.
+stdout-contains: get user root
+stdout-contains: VALUE
+stdout-not-contains: panicked

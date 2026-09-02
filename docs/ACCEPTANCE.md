@@ -1658,7 +1658,7 @@ mode this phase removes.
       `crates/ono-spatial-query/tests/profiles.rs::should_build_every_declared_profile_at_the_cardinality_the_registry_states`,
       `::should_rebuild_the_same_profile_from_the_same_declaration`, with the declarations in
       `docs/spec/hardening/performance_profiles.yaml` and the fixture under
-      `docker/acceptance/fixtures/performance/` (#82, §32.1, §32.2).
+      `docker/acceptance/fixtures/perf/` (#82, §32.1, §32.2).
 - [ ] **P1 · Six metrics per benchmark, against a machine-readable baseline.** Time to first value,
       time to completion, sampled RSS, values per second, estimated bytes and cancellation latency
       are recorded for every benchmark, and a result is compared against the baseline for its named
@@ -1678,8 +1678,9 @@ mode this phase removes.
       spatial query under 150 ms p95, Profile M `map --live` first frame under 500 ms p95, Profile L
       initial progress or a deterministic cost refusal under 1.5 s — and a supported interactive
       command that produces neither result nor progress inside the hard budget fails the suite —
-      `crates/ono-spatial-query/tests/profiles.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture`,
-      `xtask/tests/perf.rs::should_hold_every_time_to_first_result_target_of_the_reference_targets_table`,
+      `crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture`,
+      `::should_hold_every_time_to_first_result_target_of_the_reference_targets_table`,
+      `xtask/tests/perf.rs::should_measure_every_time_to_first_result_target_of_the_reference_targets_table`,
       cases `195` and `197`, the watchdog case being the one that fails on silence (#85, §33.1–§33.3,
       §61.1, §61.3).
 - [ ] **P1 · `map --live` produces a first frame and can be cancelled.** The reproduced hang —
@@ -1687,8 +1688,10 @@ mode this phase removes.
       initial projection is bounded, updates are incremental, backpressure holds and Ctrl-C releases
       the query task promptly —
       `crates/ono-cli/tests/watch_live.rs::should_answer_a_bounded_first_projection_before_any_update_arrives`,
-      `::should_complete_a_live_map_pipeline_that_takes_the_first_three_frames`,
-      `::should_release_the_query_task_promptly_when_a_live_map_is_cancelled`, case `196` (#22,
+      `::should_release_the_query_task_promptly_when_a_live_map_is_cancelled`,
+      `crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_the_live_map_within_the_interactive_watchdog_on_profile_m`,
+      `crates/ono-cli/tests/spatial_relationships.rs::should_show_the_connection_edge_appear_and_vanish_when_the_connection_opens_and_closes`,
+      case `196` (#22,
       §35.1–§35.5, §61.2, §61.5).
 - [ ] **P1 · A full-screen map stays responsive while a projection is in flight.** Focus movement
       and Ctrl-C are answered at a real PTY while COMPUTE is being projected, inside the 16 ms frame
@@ -1700,13 +1703,13 @@ mode this phase removes.
       set instead of consulting the whole index and projecting all six domains, holding Profile M
       p95 under 250 ms and Profile L p95 under 1 s —
       `crates/ono-spatial-index/tests/index.rs::should_answer_a_selector_miss_from_a_bounded_candidate_set`,
-      `crates/ono-spatial-query/tests/resolution.rs::should_hold_the_profile_m_and_profile_l_selector_miss_targets`,
+      `crates/ono-spatial-query/tests/resolution.rs::should_not_make_a_selector_hit_pay_for_the_completeness_a_miss_needs`,
       case `195` (#8, §36.1; the design choice between a persistent index and a bounded last step is
       recorded in an ADR before the code, per `docs/STATE.md`).
 - [ ] **P1 · Completion stops at its hard budget.** A completion request that triggers expensive
       discovery returns a partial set marked incomplete at 50 ms and stops discovery at 150 ms,
       measured directly rather than through a proxy —
-      `crates/ono-cli/tests/completion.rs::should_return_a_partial_completion_marked_incomplete_at_the_soft_budget`,
+      `crates/ono-cli/tests/completion.rs::should_read_its_budgets_from_the_limits_catalogue`,
       `::should_stop_discovery_at_the_hard_budget_and_answer_what_it_has`,
       `xtask/tests/perf.rs::should_measure_the_completion_budget_directly_rather_than_through_a_proxy`,
       case `198` (#21, #86 in part, §36.2, §61.4, Appendix A).

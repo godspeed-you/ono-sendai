@@ -247,6 +247,8 @@ error_codes! {
         "The movement would cross a scope boundary this session may not cross.";
     SpatialMapTooLarge => "Ono-Sendai-E1013", "spatial.map_too_large", Stream,
         "The requested map exceeds its node budget and cannot be drawn honestly.";
+    SpatialCostRefused => "Ono-Sendai-E1401", "spatial.cost_refused", Resource,
+        "The planner estimated this query beyond the interactive budget and refused it.";
     SpatialIdentityConflict => "Ono-Sendai-E1014", "spatial.identity_conflict", Conflict,
         "Two observations claim to be the same object and their identities disagree.";
 

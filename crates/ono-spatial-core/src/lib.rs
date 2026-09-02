@@ -49,6 +49,7 @@ pub use object::{
     LifetimeDescriptor, Projection, SpatialCapability, SpatialObject, aliases_of, spatial_types_of,
 };
 pub use place::Place;
+pub use relation::AcquisitionCost;
 pub use relation::{
     Confidence, ConfidenceClaim, CostClass, Direction, RelationSpec, RelationType, relations,
 };

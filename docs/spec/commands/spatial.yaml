@@ -128,7 +128,8 @@ commands:
     selectors:
       - {name: relation, type: string, doc: "The relation to traverse: the word `look` prints for the exit, or the relation label the registry declares — `parent`, `socket`, `children` (v0.4 §6.4, §24.2)."}
       - {name: selector, type: string, doc: "Which neighbour, where the relation reaches more than one: `follow socket :443`, `follow file /etc/nginx/nginx.conf` (v0.4 §6.4)."}
-    options: []
+    options:
+      - {name: resolve, type: bool, doc: "Pay for the relation even when it is classified `expensive` or `external`. v0.4.1 §34.3: a relation described as \"available on request\" must have a request path, and this is it (§34.2)."}
     privilege: conditional
     streaming: false
     phase: S

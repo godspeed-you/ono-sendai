@@ -54,6 +54,26 @@ pub fn materialization(settings: &Settings) -> MaterializationLimits {
     )
 }
 
+/// The two completion budgets of v0.4.1 §36.2, in the order the specification states them.
+///
+/// > Interactive completion MUST have a hard wall-clock work budget. … At the soft budget,
+/// > completion MAY return a partial set marked incomplete. At the hard budget it MUST stop
+/// > additional discovery work and return what it has.
+///
+/// Read from the catalogue rather than declared beside it: ADR-0456 recorded that
+/// `limits.completion_soft_ms` and `limits.completion_hard_ms` were declared, range-checked and
+/// read by nobody while `complete.rs` carried a 40 ms constant of its own, and that `enforced_by:
+/// ono-cli` overstated the truth by one increment. This is that increment (ADR-0498).
+#[must_use]
+pub fn completion(settings: &Settings) -> (std::time::Duration, std::time::Duration) {
+    let soft = magnitude(settings, "limits.completion_soft_ms");
+    let hard = magnitude(settings, "limits.completion_hard_ms").max(soft);
+    (
+        std::time::Duration::from_millis(soft),
+        std::time::Duration::from_millis(hard),
+    )
+}
+
 /// What every capture inside one shell command may retain together (§23.4).
 #[must_use]
 pub fn command_capture_bytes(settings: &Settings) -> u64 {

@@ -873,10 +873,27 @@ pub async fn resolved_place(
             &|target| !providers.for_target(target).is_empty(),
             &|_, _| true,
         );
-        let targets: std::collections::BTreeSet<&'static str> =
-            plan.asked().iter().copied().collect();
-        view::observe_targets(providers, session, &targets, now).await;
-        resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
+        // v0.4.1 §36.1: "A selector miss MUST not be substantially more expensive than a hit
+        // solely because the system scans an unnecessarily complete global candidate set." The
+        // set is asked cheapest first and the sweep stops as soon as the selector resolves, so it
+        // is complete only where completeness is what the answer needed. §34.2's classes are the
+        // order (ADR-0494, ADR-0497).
+        for class in ono_spatial_core::AcquisitionCost::ALL {
+            let targets: std::collections::BTreeSet<&'static str> = plan
+                .asked()
+                .iter()
+                .copied()
+                .filter(|target| ono_spatial_query::acquisition_of_target(target) == Some(*class))
+                .collect();
+            if targets.is_empty() {
+                continue;
+            }
+            view::observe_targets(providers, session, &targets, now).await;
+            resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
+            if !matches!(resolution, ono_spatial_query::Resolution::NotFound) {
+                break;
+            }
+        }
     }
     // §27.2: "Interactive ambiguity opens a picker." §29.3: a script never sees one, so the same
     // resolution turns into `spatial.ambiguous_selector` wherever there is nobody to ask.
@@ -1129,8 +1146,15 @@ impl CommandImpl for Follow {
 
             // Reading the edges is reading the providers (§2.16): a relation nobody asked about
             // yet is not a relation that is not there.
-            let interest =
-                crate::spatial::relations::Interest::here().along(Some(relation.clone()));
+            //
+            // v0.4.1 §34.3: "If a relationship is described as 'available on request', there MUST
+            // actually be a request path." Naming the relation *is* the request for anything an
+            // orientation query merely declined to spend the budget on; `--resolve` is the
+            // request for the rest — a relation whose class is `expensive` or `external`, which a
+            // named `follow` still will not pay for by itself (§34.2, ADR-0495).
+            let interest = crate::spatial::relations::Interest::here()
+                .along(Some(relation.clone()))
+                .complete(arguments.flag("resolve"));
             crate::spatial::relations::observe(
                 ctx.providers(),
                 &mut session,
@@ -1171,7 +1195,22 @@ impl CommandImpl for Follow {
                         ),
                     ));
                 }
-                PermissionState::Unsupported | PermissionState::Unknown => {
+                // §35.2 keeps these apart and §34.3 makes the difference actionable: `unknown`
+                // is "nobody has paid for it yet", and a refusal that says so without saying how
+                // to pay is the state §34.3 forbids.
+                PermissionState::Unknown => {
+                    return Err(ErrorValue::new(
+                        ErrorCode::SpatialUnsupported,
+                        format!(
+                            "the `{relation}` of this place has not been read: {}",
+                            group.detail().unwrap_or("nothing has asked for it")
+                        ),
+                    )
+                    .with_help(
+                        "`follow <relation> --resolve` pays for it (v0.4.1 §34.3). It is                          classified expensive or external, so an orientation `look` leaves it                          discoverable and unloaded (§34.2).",
+                    ));
+                }
+                PermissionState::Unsupported => {
                     return Err(ErrorValue::new(
                         ErrorCode::SpatialUnsupported,
                         format!(

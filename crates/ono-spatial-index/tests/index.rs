@@ -648,3 +648,52 @@ fn should_stay_bounded_when_a_churning_population_is_observed_over_and_over() {
         index.len()
     );
 }
+
+#[test]
+fn should_answer_a_selector_miss_from_a_bounded_candidate_set() {
+    // v0.4.1 §36.1: "A selector miss MUST not be substantially more expensive than a hit solely
+    // because the system scans an unnecessarily complete global candidate set." The index is
+    // where the candidate set is built, and it offers two of them: an exact lookup through the
+    // alias map, and a substring scan over every entry. §27.1's steps use the first; only §27.3's
+    // approximate pass — which "never acts alone" — uses the second.
+    //
+    // So the property is that the exact path stays exact however large the index gets: five
+    // thousand objects whose names all contain the needle, and the alias lookup still answers
+    // about the one that *is* the needle.
+    let mut index = index();
+    for step in 0..5_000 {
+        let pid = 20_000 + i64::from(step);
+        index
+            .register(process(pid, &format!("worker-{step}")), at(0))
+            .expect("a fixture object registers");
+    }
+    index
+        .register(process(1842, "worker"), at(0))
+        .expect("a fixture object registers");
+
+    // A miss: nothing is named this, and five thousand entries contain it as a substring.
+    assert!(
+        index.by_alias("work").is_empty(),
+        "§27.1's index step is an exact lookup, so a name nobody carries answers nothing however \
+         many entries contain it"
+    );
+    // A hit: exactly the object that carries the name, not the five thousand that contain it.
+    let hit = index.by_alias("worker");
+    assert_eq!(
+        hit.len(),
+        1,
+        "the candidate set for an exact selector is the objects that carry the name, and this one \
+         offered {}",
+        hit.len()
+    );
+    assert_eq!(
+        hit[0].object().spatial_id(),
+        process(1842, "worker").spatial_id()
+    );
+
+    // And the unbounded set is the approximate one, which is why §27.3 keeps it from acting alone.
+    assert!(
+        index.search("worker").len() > 5_000,
+        "the substring pass is the complete scan, and the two must not be the same set"
+    );
+}

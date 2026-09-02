@@ -2479,6 +2479,106 @@ pub fn check_hardening_contracts(root: &Path) -> Vec<Problem> {
     if let Some((location, document)) = read("limits.yaml") {
         problems.extend(check_limits_registry(&location, &document));
     }
+    if let Some((location, document)) = read("cost_classes.yaml") {
+        problems.extend(check_cost_classes(&location, &document));
+    }
+    problems
+}
+
+/// v0.4.1 §34.2's four acquisition classes against the implementation that reports them.
+///
+/// §34.2: *"The class MUST be machine-readable."* A registry that drifted from the enum would be
+/// machine-readable and wrong, which is worse than a comment — §34.3's request path and §33.3's
+/// refusal both key off the class, so a caller acting on the registry would be acting on a name
+/// the shell does not use.
+fn check_cost_classes(location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_spatial_core::{AcquisitionCost, CostClass};
+
+    let mut problems = Vec::new();
+    let problem = |detail: String| Problem {
+        location: location.to_owned(),
+        detail,
+    };
+
+    let mut declared = BTreeSet::new();
+    for entry in sequence(document, "classes") {
+        let Some(id) = string_at(entry, "id") else {
+            problems.push(problem("a cost class row names no `id`".to_owned()));
+            continue;
+        };
+        declared.insert(id.clone());
+        let Some(class) = AcquisitionCost::from_name(&id) else {
+            problems.push(problem(format!(
+                "`{id}` is declared as an acquisition cost class and \
+                 `ono_spatial_core::AcquisitionCost` has no such variant (v0.4.1 §34.2)"
+            )));
+            continue;
+        };
+        let weight = entry.get("weight").and_then(Yaml::as_u64);
+        if weight != Some(class.weight()) {
+            problems.push(problem(format!(
+                "`{id}` has weight {weight:?} in the registry and {} in the implementation; \
+                 v0.4.1 §34.1 makes the class an input to the estimate, so one number decides it",
+                class.weight()
+            )));
+        }
+    }
+    for class in AcquisitionCost::ALL {
+        if !declared.contains(class.as_str()) {
+            problems.push(problem(format!(
+                "`{}` is an acquisition cost class the implementation reports and the registry \
+                 does not declare (v0.4.1 §34.2)",
+                class.as_str()
+            )));
+        }
+    }
+
+    let mut mapped = BTreeSet::new();
+    for entry in sequence(document, "planner_classes") {
+        let (Some(id), Some(reports)) = (string_at(entry, "id"), string_at(entry, "reports"))
+        else {
+            problems.push(problem(
+                "a planner class row names no `id` or no `reports`".to_owned(),
+            ));
+            continue;
+        };
+        mapped.insert(id.clone());
+        let Some(planner) = CostClass::from_name(&id) else {
+            problems.push(problem(format!(
+                "`{id}` is declared as a planner cost class and `ono_spatial_core::CostClass` has \
+                 no such variant"
+            )));
+            continue;
+        };
+        if planner.acquisition().as_str() != reports {
+            problems.push(problem(format!(
+                "`{id}` is declared as reporting `{reports}` and the implementation reports \
+                 `{}` (v0.4.1 §34.2)",
+                planner.acquisition().as_str()
+            )));
+        }
+    }
+    for planner in CostClass::ALL {
+        if !mapped.contains(planner.as_str()) {
+            problems.push(problem(format!(
+                "`{}` is a planner cost class the registry does not map onto one of v0.4.1 \
+                 §34.2's four",
+                planner.as_str()
+            )));
+        }
+    }
+
+    let budget = document
+        .get("interactive_budget")
+        .and_then(|row| row.get("units"))
+        .and_then(Yaml::as_u64);
+    if budget != Some(ono_spatial_query::INTERACTIVE_BUDGET) {
+        problems.push(problem(format!(
+            "the interactive budget is {budget:?} in the registry and {} in the implementation; \
+             v0.4.1 §33.3's refusal is measured against one number",
+            ono_spatial_query::INTERACTIVE_BUDGET
+        )));
+    }
     problems
 }
 

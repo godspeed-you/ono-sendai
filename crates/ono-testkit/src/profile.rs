@@ -66,6 +66,19 @@ pub const PROFILE_L: Profile = Profile {
     sockets: 100_000,
 };
 
+impl Profile {
+    /// The profile constant carrying `id`, when there is one.
+    ///
+    /// The registry declares the numbers and these constants carry them; this is how a row of
+    /// `docs/spec/hardening/performance_profiles.yaml` reaches the fixture that realises it.
+    #[must_use]
+    pub fn named(id: &str) -> Option<Self> {
+        [PROFILE_S, PROFILE_M, PROFILE_L]
+            .into_iter()
+            .find(|profile| profile.name == id)
+    }
+}
+
 /// A population of real, idle child processes that puts the host at a profile's cardinality.
 ///
 /// The children are added to whatever the host is already running, so the machine the shell
@@ -153,5 +166,299 @@ impl Drop for ProcessPopulation {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+// ------------------------------------------------------------------------------------------
+// The declaration the fixtures are built from (v0.4.1 §32.2, §52.2, Appendix F).
+// ------------------------------------------------------------------------------------------
+
+/// The registry of v0.4.1 Appendix F, embedded so a fixture cannot drift from its declaration.
+const DECLARATIONS: &str = include_str!("../../../docs/spec/hardening/performance_profiles.yaml");
+
+/// Where a fixture of a given size can honestly be created.
+///
+/// A profile is no less required for being expensive; it is measured somewhere that can afford
+/// it. This says where, so nobody has to guess why one profile is built by `cargo test` and the
+/// next one is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltBy {
+    /// `cargo test` builds it on every gate run.
+    Gate,
+    /// `cargo xtask perf` and `--ignored` proofs build it: too large for every gate run.
+    Benchmark,
+    /// Only the acceptance image builds it, through the fixture the declaration names.
+    Container,
+}
+
+impl BuiltBy {
+    /// The word the registry uses.
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "gate" => Some(Self::Gate),
+            "benchmark" => Some(Self::Benchmark),
+            "container" => Some(Self::Container),
+            _ => None,
+        }
+    }
+}
+
+/// One row of `docs/spec/hardening/performance_profiles.yaml`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileDeclaration {
+    /// `S`, `M` or `L`.
+    pub id: String,
+    /// Appendix F.1's process count.
+    pub processes: usize,
+    /// Appendix F.1's node count.
+    pub graph_nodes: usize,
+    /// Appendix F.1's edge count.
+    pub edges: usize,
+    /// Appendix F.2's socket count.
+    pub sockets: usize,
+    /// Where a fixture of this size is built.
+    pub built_by: BuiltBy,
+    /// Where the socket axis alone is built, when that differs from `built_by`.
+    pub sockets_built_by: BuiltBy,
+    /// The scripts that build it, for a `container` profile.
+    fixtures: Vec<String>,
+}
+
+impl ProfileDeclaration {
+    /// The repository-relative fixture scripts that build this profile, if any.
+    #[must_use]
+    pub fn fixtures(&self) -> &[String] {
+        &self.fixtures
+    }
+
+    /// The constant a test builds this profile from.
+    ///
+    /// # Panics
+    ///
+    /// Panics when no constant carries the declared id, which means the registry declares a
+    /// profile nothing can build.
+    #[must_use]
+    pub fn profile(&self) -> Profile {
+        Profile::named(&self.id)
+            .unwrap_or_else(|| panic!("no profile constant is named `{}`", self.id))
+    }
+}
+
+/// One row of Appendix F.3.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PayloadDeclaration {
+    /// `small`, `medium` or `large`.
+    pub id: String,
+    /// How many bytes one value of this profile holds.
+    pub bytes: usize,
+}
+
+/// Appendix F.1 and F.2 as the registry declares them, in registry order.
+///
+/// # Panics
+///
+/// Panics if the registry cannot be parsed, which means no benchmark can state its cardinality.
+#[must_use]
+pub fn declared_profiles() -> Vec<ProfileDeclaration> {
+    let document = registry();
+    document
+        .get("profiles")
+        .and_then(serde_yaml_ng::Value::as_sequence)
+        .map(|rows| rows.iter().map(declaration).collect())
+        .expect("performance_profiles.yaml declares `profiles`")
+}
+
+/// Appendix F.3 as the registry declares it, in registry order.
+///
+/// # Panics
+///
+/// Panics if the registry cannot be parsed.
+#[must_use]
+pub fn declared_payloads() -> Vec<PayloadDeclaration> {
+    let document = registry();
+    document
+        .get("payloads")
+        .and_then(serde_yaml_ng::Value::as_sequence)
+        .map(|rows| {
+            rows.iter()
+                .map(|row| PayloadDeclaration {
+                    id: string(row, "id"),
+                    bytes: count(row, "bytes"),
+                })
+                .collect()
+        })
+        .expect("performance_profiles.yaml declares `payloads`")
+}
+
+/// A value of exactly `bytes` bytes, the same bytes every time.
+///
+/// Appendix F.3's payload profiles exist so a materialization benchmark measures the byte budget
+/// rather than the generator. Random content would make two runs incomparable and would make a
+/// serialized size depend on the seed, so the fill is a fixed cycle.
+#[must_use]
+pub fn payload(bytes: usize) -> String {
+    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz012345";
+    (0..bytes)
+        .map(|index| char::from(ALPHABET[index % ALPHABET.len()]))
+        .collect()
+}
+
+/// The parsed registry.
+fn registry() -> serde_yaml_ng::Value {
+    serde_yaml_ng::from_str(DECLARATIONS)
+        .expect("docs/spec/hardening/performance_profiles.yaml must be valid YAML")
+}
+
+/// One profile row.
+fn declaration(row: &serde_yaml_ng::Value) -> ProfileDeclaration {
+    let id = string(row, "id");
+    let built = string(row, "built_by");
+    ProfileDeclaration {
+        processes: count(row, "processes"),
+        graph_nodes: count(row, "graph_nodes"),
+        edges: count(row, "edges"),
+        sockets: count(row, "sockets"),
+        built_by: BuiltBy::from_name(&built)
+            .unwrap_or_else(|| panic!("profile `{id}` declares an unknown `built_by`: {built}")),
+        sockets_built_by: row
+            .get("sockets_built_by")
+            .and_then(serde_yaml_ng::Value::as_str)
+            .map_or_else(
+                || {
+                    BuiltBy::from_name(&built).unwrap_or_else(|| {
+                        panic!("profile `{id}` declares an unknown `built_by`: {built}")
+                    })
+                },
+                |name| {
+                    BuiltBy::from_name(name).unwrap_or_else(|| {
+                        panic!("profile `{id}` declares an unknown `sockets_built_by`: {name}")
+                    })
+                },
+            ),
+        fixtures: ["fixture", "socket_fixture"]
+            .iter()
+            .filter_map(|field| row.get(field).and_then(serde_yaml_ng::Value::as_str))
+            .map(str::to_owned)
+            .collect(),
+        id,
+    }
+}
+
+/// A required string field.
+fn string(row: &serde_yaml_ng::Value, field: &str) -> String {
+    row.get(field)
+        .and_then(serde_yaml_ng::Value::as_str)
+        .unwrap_or_else(|| panic!("a performance profile row must declare `{field}`"))
+        .to_owned()
+}
+
+/// A required count field.
+fn count(row: &serde_yaml_ng::Value, field: &str) -> usize {
+    usize::try_from(
+        row.get(field)
+            .and_then(serde_yaml_ng::Value::as_u64)
+            .unwrap_or_else(|| panic!("a performance profile row must declare `{field}`")),
+    )
+    .expect("a cardinality fits a usize")
+}
+
+// ------------------------------------------------------------------------------------------
+// The socket half of §32.2 (Appendix F.2).
+// ------------------------------------------------------------------------------------------
+
+/// A population of real listening sockets that puts the host at a profile's socket cardinality.
+///
+/// Unix domain sockets, for the reason `docker/acceptance/fixtures/perf/many-sockets.pl` gives:
+/// the acceptance container runs with networking disabled, and a unix listener is the one kind
+/// that always exists. They are listening sockets with a queue, so `sock_diag` reports them
+/// exactly as it reports any other listener and the production socket provider reads them
+/// unchanged — §32.2's rule that the code under measurement must be production logic.
+///
+/// Every socket is closed and its path removed when the population is dropped, including when
+/// the test panics.
+///
+/// ```no_run
+/// use ono_testkit::{PROFILE_S, SocketPopulation};
+/// let population = SocketPopulation::of(PROFILE_S);
+/// assert_eq!(population.len(), PROFILE_S.sockets);
+/// ```
+#[derive(Debug)]
+pub struct SocketPopulation {
+    profile: Profile,
+    directory: std::path::PathBuf,
+    listeners: Vec<std::os::unix::net::UnixListener>,
+}
+
+impl SocketPopulation {
+    /// Opens `profile.sockets` listening unix sockets in a directory of its own.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the directory or a socket cannot be created, which means the host cannot host
+    /// the fixture — a descriptor limit below the profile's cardinality, most likely.
+    #[must_use]
+    pub fn of(profile: Profile) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::var_os("CARGO_TARGET_TMPDIR")
+            .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+        let directory = root.join(format!("ono-sockets-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&directory)
+            .unwrap_or_else(|error| panic!("cannot create {}: {error}", directory.display()));
+
+        let listeners = (0..profile.sockets)
+            .map(|index| {
+                let path = directory.join(format!("s{index}"));
+                std::os::unix::net::UnixListener::bind(&path).unwrap_or_else(|error| {
+                    panic!(
+                        "cannot open socket {index} of {} at {}: {error}. Profile {} needs a \
+                         descriptor limit above its socket cardinality",
+                        profile.sockets,
+                        path.display(),
+                        profile.name
+                    )
+                })
+            })
+            .collect();
+        Self {
+            profile,
+            directory,
+            listeners,
+        }
+    }
+
+    /// The profile this population realises.
+    #[must_use]
+    pub fn profile(&self) -> Profile {
+        self.profile
+    }
+
+    /// How many sockets the fixture itself opened.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.listeners.len()
+    }
+
+    /// Whether the fixture opened nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.listeners.is_empty()
+    }
+
+    /// The directory the sockets live in, for a test that needs to name one of them.
+    #[must_use]
+    pub fn directory(&self) -> &std::path::Path {
+        &self.directory
+    }
+}
+
+impl Drop for SocketPopulation {
+    fn drop(&mut self) {
+        // Closing the listeners releases the descriptors; the paths outlive them, so the
+        // directory goes too. A failure here must not mask the test's own outcome.
+        self.listeners.clear();
+        let _ = std::fs::remove_dir_all(&self.directory);
     }
 }

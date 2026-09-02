@@ -192,6 +192,76 @@ impl fmt::Display for Direction {
     }
 }
 
+/// The four acquisition cost classes of v0.4.1 §34.2.
+///
+/// > Relationship/provider acquisition SHOULD classify cost as `cheap`, `moderate`, `expensive`,
+/// > `external`. **The class MUST be machine-readable.**
+///
+/// This is the vocabulary a *caller* reads, and it is deliberately smaller than [`CostClass`],
+/// which is the vocabulary the planner reasons in. The planner has to tell a broad scan from a
+/// permission the shell will not ask for from a hop across a link, because it treats the three
+/// differently; a caller reading a refusal or a cost estimate needs to know how expensive the
+/// acquisition is and whether it leaves this shell. Every internal class maps onto exactly one of
+/// these, and `docs/spec/hardening/cost_classes.yaml` declares both the four names and the
+/// mapping. Decisions: ADR-0494.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AcquisitionCost {
+    /// Already available, or an O(1) local lookup.
+    Cheap,
+    /// A bounded local query.
+    Moderate,
+    /// A broad scan, or a correlation across several providers.
+    Expensive,
+    /// Work outside this shell: another daemon, another host, or a privilege it must be granted.
+    External,
+}
+
+impl AcquisitionCost {
+    /// Every class, in increasing cost order.
+    pub const ALL: &'static [AcquisitionCost] = &[
+        AcquisitionCost::Cheap,
+        AcquisitionCost::Moderate,
+        AcquisitionCost::Expensive,
+        AcquisitionCost::External,
+    ];
+
+    /// The word the machine-readable contract uses (v0.4.1 §34.2).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AcquisitionCost::Cheap => "cheap",
+            AcquisitionCost::Moderate => "moderate",
+            AcquisitionCost::Expensive => "expensive",
+            AcquisitionCost::External => "external",
+        }
+    }
+
+    /// The class that word names.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|class| class.as_str() == name)
+    }
+
+    /// How much one candidate of this class is estimated to cost, relative to a cheap one.
+    ///
+    /// v0.4.1 §34.1 lists "relationship acquisition cost class" among the estimate's inputs, so
+    /// the class is a *weight* rather than a label beside the figure. The numbers are orders of
+    /// magnitude rather than measurements — §34.1: *"It need not be mathematically exact. It MUST
+    /// be conservative enough to avoid obviously explosive work."*
+    #[must_use]
+    pub fn weight(self) -> u64 {
+        match self {
+            AcquisitionCost::Cheap => 1,
+            AcquisitionCost::Moderate => 4,
+            AcquisitionCost::Expensive => 16,
+            AcquisitionCost::External => 64,
+        }
+    }
+}
+
 /// What a relation costs to answer (§32.1).
 ///
 /// Default `look` and `map` avoid [`CostClass::Expensive`] relations unless they are already
@@ -239,6 +309,22 @@ impl CostClass {
             .iter()
             .copied()
             .find(|value| value.as_str() == name)
+    }
+
+    /// The v0.4.1 §34.2 class this one is reported as.
+    ///
+    /// `Privileged` and `Remote` are both `external`: one needs an authority outside this shell
+    /// and the other a host outside this one, and to a caller deciding whether to ask for it that
+    /// is the same answer. The distinction the planner keeps between them is about *how* it
+    /// declines, which is §35.3's business rather than §34.2's.
+    #[must_use]
+    pub fn acquisition(self) -> AcquisitionCost {
+        match self {
+            CostClass::Cheap => AcquisitionCost::Cheap,
+            CostClass::Normal => AcquisitionCost::Moderate,
+            CostClass::Expensive => AcquisitionCost::Expensive,
+            CostClass::Privileged | CostClass::Remote => AcquisitionCost::External,
+        }
     }
 
     /// Whether a default `look` or `map` may follow this relation eagerly (§32.1, §34.2).

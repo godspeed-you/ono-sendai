@@ -353,3 +353,67 @@ fn should_answer_a_place_path_rather_than_looping_when_the_hierarchy_holds_a_cyc
         "§27.2: the path still starts at the host, got {path}"
     );
 }
+
+// --- v0.4.1 §36.1: a miss does not sweep what a hit never touches (issue #8) --------------------
+
+#[test]
+fn should_not_make_a_selector_hit_pay_for_the_completeness_a_miss_needs() {
+    // §36.1's normative sentence, which is the one issue #8 is about:
+    //
+    // > A selector miss MUST not be substantially more expensive than a hit solely because the
+    // > system scans an unnecessarily complete global candidate set.
+    //
+    // The qualifier is the whole of it. A miss *has* to consult every candidate, or it is not a
+    // miss; what it may not do is make every selector pay for that. So the property is that the
+    // sweep is complete only where completeness was what the answer needed, and the two rows of
+    // the recorded baseline are what say whether it is.
+    //
+    // Asserted against recorded figures rather than by running anything, for the reason ADR-0252
+    // and ADR-0431 give: the measurement was made under §37.4's rule on §37.2's named
+    // environment, and a stopwatch in `cargo test` measures whatever else the machine is doing.
+    let baseline = recorded_baseline();
+    let miss = figure(&baseline, "spatial.selector_miss", "M");
+    let hit = figure(&baseline, "spatial.selector_hit_by_sweep", "M");
+
+    assert!(
+        hit * 2.0 < miss,
+        "§36.1: a selector that resolves through the sweep must not pay for the completeness a \
+         miss needs. On the reference environment the hit is {hit:.0} ms p95 and the miss \
+         {miss:.0} ms, which is the same sweep twice rather than a bounded one."
+    );
+}
+
+/// The measurements `cargo xtask perf` recorded on the reference environment (§32.4, §37.2).
+fn recorded_baseline() -> Vec<serde_yaml_ng::Value> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/spec/hardening/performance_baseline.json");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "v0.4.1 §32.4's baseline is at {}, and §36.1's targets are measured there: {error}",
+            path.display()
+        )
+    });
+    let document: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&text).expect("the baseline is a JSON document");
+    document["measurements"]
+        .as_sequence()
+        .expect("the baseline holds a sequence of measurements")
+        .clone()
+}
+
+/// The recorded p95 of one benchmark at one profile.
+fn figure(baseline: &[serde_yaml_ng::Value], benchmark: &str, profile: &str) -> f64 {
+    baseline
+        .iter()
+        .find(|record| {
+            record["benchmark"].as_str() == Some(benchmark)
+                && record["profile"].as_str() == Some(profile)
+        })
+        .and_then(|record| record["p95_ms"].as_f64())
+        .unwrap_or_else(|| {
+            panic!(
+                "`{benchmark}` at Profile {profile} has no measurement on the reference \
+                 environment; `cargo xtask perf` is what records one"
+            )
+        })
+}

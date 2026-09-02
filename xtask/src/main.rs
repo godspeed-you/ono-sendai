@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use xtask::{
-    bindings, conformance, contracts, narrative, provenance, reference, scan, supply_chain,
+    bindings, conformance, contracts, narrative, perf, provenance, reference, scan, supply_chain,
     terminology,
 };
 
@@ -21,6 +21,7 @@ fn main() -> ExitCode {
         Some("spec-check") => spec_check(),
         Some("state-check") => state_check(),
         Some("build-manifest") => build_manifest(&rest),
+        Some("perf") => perf(&rest),
         Some("docs") => generate_docs(),
         Some("conformance") => generate_conformance(),
         Some("release-check") => run_script("release-check.sh", &rest),
@@ -44,6 +45,10 @@ fn usage() {
     eprintln!("  spec-check     contract drift between docs/spec and the implementation");
     eprintln!("  state-check    the claims docs/ACCEPTANCE.md makes about docs/STATE.md");
     eprintln!("  build-manifest write the release input manifest of Appendix H [--output <path>]");
+    eprintln!(
+        "  perf           run the performance benchmarks of spec section 37.1 \
+[--profile S|M|L] [--iterations N] [--compare <path>] [--write-baseline]"
+    );
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!(
         "  conformance    regenerate the provider conformance suite from docs/spec (spec section 35.3)"
@@ -110,6 +115,225 @@ fn build_manifest(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Runs the performance benchmarks of v0.4.1 §37.1 and reports their §32.3 records.
+///
+/// > The repository SHOULD expose performance fixtures through `xtask` … Exact syntax MAY differ,
+/// > but benchmark execution must be discoverable and reproducible.
+///
+/// Reproducible means three things here: the host is put at a declared cardinality before a
+/// benchmark runs (§32.2, ADR-0488), the figure names the environment it was measured on (§37.2),
+/// and it names how many iterations produced it (§37.4). A run against a debug binary may be
+/// inspected and may not be written into the baseline — §37.2's environment includes the release
+/// build flags, so a debug figure is a figure about a different build.
+fn perf(args: &[String]) -> ExitCode {
+    let mut profile: Option<String> = None;
+    let mut iterations = perf::MIN_ITERATIONS;
+    let mut compare: Option<PathBuf> = None;
+    let mut write = false;
+    let mut sample_completion = false;
+
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--profile" => match rest.next() {
+                Some(name) => profile = Some(name.to_uppercase()),
+                None => return usage_error("perf: --profile needs a name (S, M or L)"),
+            },
+            "--iterations" => match rest.next().and_then(|count| count.parse::<u32>().ok()) {
+                Some(count) if count > 0 => iterations = count,
+                _ => return usage_error("perf: --iterations needs a positive number"),
+            },
+            "--compare" => match rest.next() {
+                Some(path) => compare = Some(PathBuf::from(path)),
+                None => return usage_error("perf: --compare needs a path"),
+            },
+            "--write-baseline" => write = true,
+            // One cold completion, printed for the parent that spawned this process. §36.2's
+            // budget is about the *first* completion, and a completer caches what it read, so a
+            // second sample in the same process would be a different measurement (§37.3).
+            "--sample-completion" => sample_completion = true,
+            other => return usage_error(&format!("perf: unknown argument `{other}`")),
+        }
+    }
+
+    if sample_completion {
+        let (milliseconds, offered) = perf::sample_completion();
+        println!("{milliseconds} {offered}");
+        return ExitCode::SUCCESS;
+    }
+
+    let root = repo_root();
+    let environment = match perf::reference_environment(&root) {
+        Ok(environment) => environment,
+        Err(error) => {
+            eprintln!("perf: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (binary, build) = match built_binary(&root) {
+        Some(found) => found,
+        None => {
+            eprintln!("perf: no `ono` binary is built; run `cargo build --release` first");
+            return ExitCode::FAILURE;
+        }
+    };
+    if write && build != "release" {
+        eprintln!(
+            "perf: --write-baseline needs a release build. v0.4.1 §37.2 names the release build \
+             flags as part of the reference environment, so a debug figure is a figure about a \
+             different build"
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let commit = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&root)
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|text| text.trim().to_owned())
+        .unwrap_or_default();
+
+    let runner = perf::Runner::new(binary, environment.id.clone(), commit)
+        .iterations(iterations)
+        .build(&build);
+
+    println!(
+        "perf: {} build on `{}`, {iterations} iterations (v0.4.1 section 37.4 wants at least {})",
+        build,
+        environment.id,
+        perf::MIN_ITERATIONS
+    );
+
+    let wanted: Vec<&perf::Benchmark> = perf::BENCHMARKS
+        .iter()
+        .filter(|benchmark| {
+            profile
+                .as_deref()
+                .is_none_or(|name| benchmark.profile == name)
+        })
+        .collect();
+    if wanted.is_empty() {
+        eprintln!("perf: no declared benchmark runs at Profile {profile:?}");
+        return ExitCode::FAILURE;
+    }
+
+    let mut measurements = Vec::new();
+    for benchmark in wanted {
+        // The host is held at the declared cardinality for the whole of the benchmark, and the
+        // population is dropped — killed and reaped — before the next one starts.
+        let Some(declaration) = ono_testkit::declared_profiles()
+            .into_iter()
+            .find(|declaration| declaration.id == benchmark.profile)
+        else {
+            eprintln!("perf: no profile is declared as `{}`", benchmark.profile);
+            return ExitCode::FAILURE;
+        };
+        let at = declaration.profile();
+        // Each axis is built where its declaration says it can be: Profile L's ten thousand
+        // processes are the container's and its hundred thousand sockets are not (ADR-0488).
+        let processes = (declaration.built_by != ono_testkit::BuiltBy::Container)
+            .then(|| ono_testkit::ProcessPopulation::of(at));
+        let sockets = (declaration.sockets_built_by != ono_testkit::BuiltBy::Container)
+            .then(|| ono_testkit::SocketPopulation::of(at));
+        let measured = runner.run(benchmark);
+        drop(sockets);
+        drop(processes);
+
+        println!(
+            "  {:<28} {:<3} {:<9} first {:>9.3} ms  p95 {:>9.3} ms  complete {:>9.3} ms",
+            measured.benchmark,
+            measured.profile,
+            measured.temperature.as_str(),
+            measured.metric("time_to_first_ms").unwrap_or_default(),
+            measured.p95_ms,
+            measured.metric("time_to_complete_ms").unwrap_or_default(),
+        );
+        measurements.push(measured);
+    }
+
+    // §36.2's completion budget, measured by calling the completer rather than by timing a
+    // thousand registry lookups beside it (issue #21, ADR-0498). One cold sample per process, so
+    // the samples are re-runs of this executable rather than iterations in it.
+    let measured = runner.run_completion();
+    println!(
+        "  {:<28} {:<3} {:<9} first {:>9.3} ms  p95 {:>9.3} ms  candidates {}",
+        measured.benchmark,
+        measured.profile,
+        measured.temperature.as_str(),
+        measured.metric("time_to_first_ms").unwrap_or_default(),
+        measured.p95_ms,
+        measured.values,
+    );
+    measurements.push(measured);
+
+    let mut failed = false;
+    if let Some(path) = compare {
+        match std::fs::read_to_string(&path)
+            .map_err(|error| error.to_string())
+            .and_then(|text| {
+                perf::Baseline::parse(&text).map_err(|problems| {
+                    problems
+                        .into_iter()
+                        .map(|problem| problem.detail)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+            }) {
+            Ok(baseline) => {
+                for measured in &measurements {
+                    match baseline.compare(measured, perf::Tolerance::Absolute) {
+                        perf::Comparison::Held => {}
+                        other => {
+                            println!("perf: {} — {other:?}", measured.benchmark);
+                            if matches!(other, perf::Comparison::Regressed(_)) {
+                                failed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("perf: cannot compare against {}: {error}", path.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    if write {
+        let path = root.join(perf::BASELINE);
+        if let Err(error) = perf::write_baseline(&path, environment.id, &measurements) {
+            eprintln!("perf: {error}");
+            return ExitCode::FAILURE;
+        }
+        println!("perf: wrote {}", path.display());
+    }
+
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// The built `ono` binary this run should measure, preferring the release one.
+fn built_binary(root: &Path) -> Option<(PathBuf, String)> {
+    for build in ["release", "debug"] {
+        let candidate = root.join("target").join(build).join("ono");
+        if candidate.is_file() {
+            return Some((candidate, build.to_owned()));
+        }
+    }
+    None
+}
+
+/// A usage mistake, reported the way the other tasks report theirs.
+fn usage_error(message: &str) -> ExitCode {
+    eprintln!("{message}");
+    ExitCode::FAILURE
 }
 
 /// Regenerates `docs/reference/` from the machine-readable contracts (spec section 36.2).
@@ -202,6 +426,7 @@ fn spec_check() -> ExitCode {
 
     problems.extend(check_command_bindings());
     problems.extend(check_generation_claims(&root));
+    problems.extend(check_performance_baseline(&root));
 
     if root.join("docs").join("spec").is_dir() {
         problems.extend(
@@ -290,6 +515,29 @@ fn check_command_bindings() -> Vec<String> {
         .into_iter()
         .map(|problem| format!("{} — {}", problem.location, problem.detail))
         .collect()
+}
+
+/// The regression baseline of v0.4.1 §32.4 is a set of complete §32.3 results.
+///
+/// §32.3: *"A single total runtime number is insufficient for streaming operations."* A baseline
+/// holding a record that dropped one of the six metrics is a baseline a later run cannot be
+/// compared against on that metric, and nothing would say so — the comparison would simply skip
+/// it and report "held". So the file is parsed on every gate run, and a record that is not a
+/// benchmark result turns the gate red where it was written rather than where it is read.
+fn check_performance_baseline(root: &Path) -> Vec<String> {
+    let path = root.join(perf::BASELINE);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        // The baseline arrives with the benchmark command; a missing one is not an error
+        // (AGENTS.md section 14).
+        return Vec::new();
+    };
+    match perf::Baseline::parse(&text) {
+        Ok(_) => Vec::new(),
+        Err(problems) => problems
+            .into_iter()
+            .map(|problem| format!("{} — {}", problem.location, problem.detail))
+            .collect(),
+    }
 }
 
 /// Verifies that the immutable narrative specification has not been modified.

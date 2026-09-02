@@ -312,6 +312,30 @@ Delivered so far in the tranche:
   (#22); and issue **#20**'s instance measures 29.7 s at Profile M, inside §33.3's thirty-second
   budget by 0.3 s and sixty times outside §33.2's target, so it needs a phase-H7 frame-budget
   proof under a terminal rather than a watchdog that would be a coin toss (ADR-0252, #21).
+- **H7 complete (2026-09-02), #82–#87 and the five class-b defects #8, #20, #21, #22, #25.**
+  Sixteen commits on `implementation-h7-spatial-performance`, merged without a conflict. Measured
+  before optimised, on the named reference environment `ryzen-3900x-ubuntu-2604` with the run's own
+  load average recorded beside every figure: `spatial.map_first_frame` at Profile L falls from
+  **25 748 ms to 3 514 ms**, a selector miss at Profile M from **530 ms to 181 ms**, and
+  `service.enumeration` at S from **870 ms to 422 ms**.
+
+  Two diagnoses overturned the assumption in the issue that carried them. `enter compute;
+  look --json` costs **942 ms with no extra processes and 1 135 ms with sixteen hundred** — an
+  almost flat curve from the origin, so the Profile M failure was never cardinality; it was 569
+  systemd units against three *sequential* D-Bus round trips. And two thirds of the Profile L map
+  cost sat in `MapHorizon::place`, which deduplicated by scanning the vector it was building — five
+  billion comparisons at 100 000 sockets, and not the global graph build #87 named.
+
+  §33.3's floor is now met by a live map that **says it is waiting** rather than falling silent,
+  and the stillness clock resets on a value being *sent* rather than on an event arriving — timing
+  each wait never fired, because events arrive that change no picture. `Comparison` answers
+  `Unmeasured` and `ForeignEnvironment` as distinct verdicts so §65.10's skip-as-pass cannot happen
+  to a benchmark. ADR-0488 … ADR-0498, `E1401`, cases 195–198.
+
+  **#71's measured half is written**, and it was cheap once `cargo xtask perf` existed: `cancel_ms`
+  is the p95 of twenty samples rather than one measurement — 2.2–4.5 ms at S and M, 20.9 ms at L,
+  against §23.3's p95 < 100 ms. A p99 wants about a hundred samples; that is the only difference.
+
 - **H3 complete (2026-09-02), #51–#57.** One central `Limits` contract whose every setter clamps
   into the range `limits.yaml` declares, so an unlimited instance cannot be written down;
   `docs/spec/hardening/remote_limits.yaml` created as §52.1's registry holding **no numbers** — one
@@ -1775,10 +1799,6 @@ shell. Closes when the builtin stops swallowing the stages downstream of it. **E
 Splitting them moves half of `measure` onto the incremental path (ADR-0455). **Exit test:**
 `measure count` over an unbounded source answers without materializing.
 
-**`complete.rs::BUDGET` is 40 ms and Appendix A says 50 (2026-09-02).** `limits.completion_soft_ms`
-and `limits.completion_hard_ms` are declared, range-validated and read by nobody. Closes with #86.
-**Exit test:** the completion path reads its budget from the catalogue.
-
 **`history.result_cache` is a superseded duplicate of `limits.history_bytes_total`
 (2026-09-02).** It is kept declared only so existing configuration files still parse (§4.5).
 Retire it in a release that may break configuration. **Exit test:** one key names the ceiling.
@@ -1789,6 +1809,33 @@ This is **work for phase H3** (#54, one central `Limits` contract): if
 `docs/spec/hardening/remote_limits.yaml` is still wanted, it should reference these keys rather
 than restate the numbers. **Exit test:** changing a remote ceiling in the catalogue changes what
 the listener enforces.
+
+**A non-interactive completion surface (2026-09-02).** ADR-0252 named it and #21 could not
+deliver it: both routes — a flag in `crates/ono-cli/src/invocation.rs`, or a command registered in
+`crates/ono-cli/src/native.rs` — are new public surface. #21's budget is now measured directly by
+`xtask` re-running itself, so this is no longer blocking a proof; it is what would let the
+container measure a first completion end to end. **Exit test:** case `060` measures the first
+completion without a terminal.
+
+**§34.4's "visible in `explain`" is unmet (2026-09-02).** An unavoidable global build MUST be
+visible in `explain`. The estimate exists in `ono_spatial_query::cost` after H7, and `explain`
+lives in `ono-command`, which H7 did not own. **Exit test:** `explain` over a query with a global
+acquisition names it and its cost class.
+
+**§36.2's incomplete marker needs a return type that can carry it (2026-09-02).**
+`ono_command::ValueCompleter::complete` and `ono_command::complete` return a bare
+`Vec<Candidate>`, so a completion truncated at the soft budget cannot say it was truncated. §36.2
+makes the marker a MAY, which is why H7 did not force it. **Exit test:** a truncated completion is
+distinguishable from a complete one.
+
+**`observe` is sequential across provider targets (2026-09-02).** Fetching concurrently and
+absorbing sequentially would bring the selector miss from 943 ms to roughly its slowest provider.
+Like the orientation item above, it changes the observation contract rather than one call site.
+**Exit test:** a miss across N providers costs about the slowest, not the sum.
+
+**`Interest::wants` scans the relation table once per provider per observation (2026-09-02).**
+Thirty-odd rows, once per `look` — negligible today, indexable if the table grows. ADR-0495.
+**Exit test:** none needed until the table does grow; recorded so the next reader knows it was seen.
 
 **`ono_testkit`'s fixed wall-clock budgets fail under parallel load, and the failure reads like a
 product defect (2026-09-02).** Two instances on one day, and both were first reported as hangs:
@@ -3484,14 +3531,16 @@ opposite of a silenced requirement: they are the requirement, written down befor
 
 The H0 failure proofs, red by design (issue #31, ADR-0430):
 
-- **`map --live` produces nothing for the whole of §33.3's budget.**
-  `crates/ono-cli/tests/spatial_first_output.rs::should_answer_or_refuse_the_live_map_within_the_interactive_watchdog_on_profile_m`
-  is `#[ignore]`d and red at HEAD: on the `ono_testkit::PROFILE_M` population, issue #22's own
-  `map --live --json | take 3 | to json` writes zero bytes to either stream for thirty seconds and
-  is killed. The assertion is only `!silent()`, so output, progress metadata or a deterministic
-  refusal all satisfy it — the proof does not prescribe which §35.2 answer the fix picks.
-  Un-ignored by **#22** — ADR-0431, which also records why issue #20's neighbouring instance
-  (29.7 s at Profile M, inside §33.3's budget by 0.3 s) is deliberately not encoded as a watchdog.
+- **An orientation query asks a provider for every object when it needs a bounded view.**
+  `crates/ono-cli/tests/spatial_first_output.rs::should_hold_every_time_to_first_result_target_of_the_reference_targets_table`
+  is `#[ignore]`d and red: three of §33.2's four targets are missed — 595 ms against 150 ms,
+  805 ms against 500 ms, 3 514 ms against 1 500 ms — and after H7 the remaining cause is a single
+  one. `enter compute; look --json` pays 405 ms for 569 systemd units on **every** orientation, and
+  `enter network; look --json` pays 3.4 s for 100 000 socket records. Neither is cardinality in the
+  profile's sense; both are §34.4's second half. The fix is a bounded observation that **still
+  reports the true count**, because an answer that lies about how much it left out trades a latency
+  defect for an honesty defect (§2.6) — so it changes the observation contract and is its own
+  increment. ADR-0496. Un-ignored by that increment.
 
 Two entries left this section on 2026-08-29:
 
