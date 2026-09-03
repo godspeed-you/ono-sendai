@@ -1931,12 +1931,13 @@ mutable inputs.
       — `xtask/tests/provenance.rs::should_emit_a_build_input_manifest_carrying_every_field_appendix_h_requires`,
       `::should_bind_the_build_input_manifest_to_the_release_it_describes` (#103, §43.2, §57 H10,
       Appendix H, ADR-0451).
-- [ ] **P2 · The determinism inputs are fixed.** `SOURCE_DATE_EPOCH`, locale, timezone, file
-      ordering, ownership and mode are set by the workflow rather than inherited from the runner,
-      and a build that omits one is refused —
+- [x] **P2 · The determinism inputs are fixed.** `SOURCE_DATE_EPOCH`, locale, timezone, file
+      ordering, ownership and mode are set by `scripts/package.sh` rather than inherited from the
+      runner, and a build that cannot fix one is refused rather than dated by the clock —
       `xtask/tests/packaging.rs::should_set_every_determinism_input_before_a_release_build`,
       `::should_normalize_file_ownership_and_mode_in_every_produced_package`,
-      `::should_refuse_a_release_build_that_leaves_a_determinism_input_unset` (#104, §46.2–§46.4).
+      `::should_refuse_a_release_build_that_leaves_a_determinism_input_unset` (#104, §46.2–§46.4,
+      ADR-0526).
 - [ ] **P2 · Two clean builds produce identical packages.** Every published artifact is built twice
       in fresh environments from one commit and compared, a mismatch fails the release check with a
       diagnostic naming the differing member, and each supported architecture satisfies this on its

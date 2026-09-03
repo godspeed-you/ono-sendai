@@ -230,6 +230,10 @@ mod rpm {
     pub const POSTIN: i32 = 1024;
     pub const POSTUN: i32 = 1026;
     pub const REQUIRENAME: i32 = 1049;
+    pub const FILEMODES: i32 = 1030;
+    pub const FILEMTIMES: i32 = 1034;
+    pub const FILEUSERNAME: i32 = 1039;
+    pub const FILEGROUPNAME: i32 = 1040;
     const DIRINDEXES: i32 = 1116;
     const BASENAMES: i32 = 1117;
     const DIRNAMES: i32 = 1118;
@@ -240,6 +244,7 @@ mod rpm {
 
     #[derive(Debug)]
     pub enum Value {
+        Int16(Vec<u32>),
         Int32(Vec<u32>),
         Strings(Vec<String>),
     }
@@ -271,6 +276,17 @@ mod rpm {
             let offset = data + be_u32(bytes, at + 8) as usize;
             let n = be_u32(bytes, at + 12) as usize;
             let value = match kind {
+                3 => Value::Int16(
+                    (0..n)
+                        .map(|i| {
+                            u32::from(u16::from_be_bytes(
+                                bytes[offset + i * 2..offset + i * 2 + 2]
+                                    .try_into()
+                                    .expect("two bytes"),
+                            ))
+                        })
+                        .collect(),
+                ),
                 4 => Value::Int32((0..n).map(|i| be_u32(bytes, offset + i * 4)).collect()),
                 6 | 8 | 9 => {
                     let mut strings = Vec::with_capacity(n);
@@ -307,6 +323,14 @@ mod rpm {
             match self.tags.get(&tag) {
                 Some(Value::Strings(strings)) => strings.clone(),
                 other => panic!("tag {tag} is a string tag, found {other:?}"),
+            }
+        }
+
+        /// The numeric values of an int16 or int32 tag.
+        pub fn numbers(&self, tag: i32) -> Vec<u32> {
+            match self.tags.get(&tag) {
+                Some(Value::Int16(values) | Value::Int32(values)) => values.clone(),
+                other => panic!("tag {tag} is a numeric tag, found {other:?}"),
             }
         }
 
@@ -443,4 +467,251 @@ fn should_refuse_a_release_build_whose_lockfile_would_change() {
         "the same workspace does not build without --locked either, so the fixture proves \
          nothing about the flag:\n{complaint}"
     );
+}
+
+// --- the determinism inputs (spec §46.2–§46.4, ADR-0526) ----------------------------------------
+
+/// Runs `scripts/package.sh --print-determinism` under `root` and returns what it decided.
+///
+/// The flag exists so the four inputs can be read without building anything: they are fixed
+/// before the first tool runs, which is the only place a test can observe them from outside.
+fn determinism_inputs(root: &Path, environment: &[(&str, &str)]) -> (bool, String) {
+    let mut command = Command::new("bash");
+    command
+        .arg(root.join("scripts/package.sh"))
+        .arg("--print-determinism")
+        .current_dir(root);
+    command.env_remove("SOURCE_DATE_EPOCH");
+    for (name, value) in environment {
+        command.env(name, value);
+    }
+    let output = command
+        .output()
+        .unwrap_or_else(|error| panic!("bash must be runnable in the gate: {error}"));
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    (output.status.success(), text)
+}
+
+#[test]
+fn should_set_every_determinism_input_before_a_release_build() {
+    // A developer workstation in Berlin, with a German locale and a private umask. None of it
+    // may reach the artifact (spec §46.3, §46.4).
+    let (built, report) = determinism_inputs(
+        &repo(),
+        &[
+            ("LC_ALL", "de_DE.UTF-8"),
+            ("LANG", "de_DE.UTF-8"),
+            ("LANGUAGE", "de:en"),
+            ("TZ", "Europe/Berlin"),
+        ],
+    );
+    assert!(
+        built,
+        "`scripts/package.sh --print-determinism` refused a perfectly ordinary environment:\n\
+         {report}"
+    );
+
+    for setting in ["LC_ALL=C.UTF-8", "LANG=C.UTF-8", "TZ=UTC", "umask=0022"] {
+        assert!(
+            report.contains(setting),
+            "the release build does not fix `{setting}`, so the locale, timezone or file mode of \
+             whoever ran it can reach the package (spec §46.3, §46.4):\n{report}"
+        );
+    }
+
+    // §46.4: the packages carry the release's ownership, never the workstation's UID/GID.
+    assert!(
+        report.contains("owner=0:0"),
+        "the release build does not state the ownership its packages carry, so it inherits the \
+         developer's UID/GID (spec §46.4):\n{report}"
+    );
+
+    // §46.2: derived from the commit, so the same commit always yields the same timestamp. A
+    // wall clock would move between two builds of one commit, which is precisely what §46.5
+    // then fails on.
+    let committed = Command::new("git")
+        .args(["log", "-1", "--format=%ct"])
+        .current_dir(repo())
+        .output()
+        .expect("git must be runnable in the gate");
+    let epoch = String::from_utf8_lossy(&committed.stdout).trim().to_owned();
+    assert!(
+        !epoch.is_empty(),
+        "the repository has no commit to date from"
+    );
+    assert!(
+        report.contains(&format!("SOURCE_DATE_EPOCH={epoch}")),
+        "SOURCE_DATE_EPOCH is not the release commit's own timestamp, so a wall-clock build time \
+         can reach an artifact field (spec §46.2). Expected {epoch}:\n{report}"
+    );
+}
+
+#[test]
+fn should_refuse_a_release_build_that_leaves_a_determinism_input_unset() {
+    // A tree the packaging script can reach but git cannot describe: there is no commit to date
+    // the artifacts from, and §46.2 leaves exactly one alternative — the wall clock — which is
+    // the thing it forbids. So the build refuses.
+    let elsewhere = scratch();
+    std::fs::create_dir_all(elsewhere.path().join("scripts")).expect("a scratch scripts/ dir");
+    std::fs::copy(
+        repo().join("scripts/package.sh"),
+        elsewhere.path().join("scripts/package.sh"),
+    )
+    .expect("the packaging script is copied");
+
+    let (built, report) = determinism_inputs(
+        elsewhere.path(),
+        &[(
+            "GIT_DIR",
+            elsewhere
+                .path()
+                .join("there-is-no-repository-here")
+                .to_str()
+                .expect("a UTF-8 scratch path"),
+        )],
+    );
+    assert!(
+        !built,
+        "the release build proceeded with no derivable SOURCE_DATE_EPOCH, so its artifacts would \
+         carry whatever the clock said (spec §46.2):\n{report}"
+    );
+    assert!(
+        report.contains("SOURCE_DATE_EPOCH"),
+        "the refusal does not name the determinism input that was missing, so nobody can fix \
+         it:\n{report}"
+    );
+
+    // And a value that is present but not a timestamp is refused the same way: `unset` means
+    // "the pipeline cannot derive a deterministic one", not "the variable is empty".
+    let (built, report) = determinism_inputs(&repo(), &[("SOURCE_DATE_EPOCH", "yesterday")]);
+    assert!(
+        !built && report.contains("SOURCE_DATE_EPOCH"),
+        "a SOURCE_DATE_EPOCH that is not a timestamp was accepted:\n{report}"
+    );
+}
+
+#[test]
+fn should_normalize_file_ownership_and_mode_in_every_produced_package() {
+    // One fixed epoch, and both packages built from it: every member of both archives must carry
+    // it, owned by root, with the mode the manifest declares — not the mode of the file on the
+    // machine that packaged it (spec §46.4).
+    const EPOCH: &str = "1700000000";
+
+    let target_dir = staged_target_dir("determinism");
+    let deb = target_dir.join("ono.deb");
+    let deb_path = deb.to_str().expect("a UTF-8 scratch path");
+    let mut command = Command::new("cargo");
+    command
+        .args([
+            "deb",
+            "--package",
+            "ono-cli",
+            "--no-build",
+            "--no-strip",
+            "--output",
+            deb_path,
+        ])
+        .current_dir(repo())
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .env("SOURCE_DATE_EPOCH", EPOCH)
+        .env("LC_ALL", "C.UTF-8")
+        .env("TZ", "UTC");
+    let output = command.output().expect("cargo-deb must be runnable");
+    assert!(
+        output.status.success(),
+        "cargo deb failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // `dpkg-deb --contents` renders mtimes in the *reader's* timezone, so the reader is given
+    // one too. The archive itself carries the epoch; what varies here is only the rendering.
+    let listing = Command::new("dpkg-deb")
+        .args(["--contents", deb_path])
+        .env("TZ", "UTC")
+        .env("LC_ALL", "C.UTF-8")
+        .output()
+        .expect("dpkg-deb must be runnable in the gate");
+    let listing = String::from_utf8_lossy(&listing.stdout).into_owned();
+    assert!(!listing.trim().is_empty(), "the .deb lists no members");
+    for line in listing.lines() {
+        assert!(
+            line.contains(" 0/0 ") || line.contains(" root/root "),
+            "a .deb member is not owned by uid 0/gid 0, so the packager's UID/GID reached the \
+             archive (spec §46.4): {line}"
+        );
+        assert!(
+            line.contains("2023-11-14 22:13"),
+            "a .deb member does not carry SOURCE_DATE_EPOCH, so its mtime is the moment it was \
+             packaged (spec §46.2, §46.4): {line}"
+        );
+    }
+    let binary = listing
+        .lines()
+        .find(|line| line.ends_with("./usr/bin/ono"))
+        .expect("the binary is listed");
+    assert!(
+        binary.starts_with("-rwxr-xr-x"),
+        "/usr/bin/ono does not carry the declared 755: {binary}"
+    );
+
+    let rpm_path = target_dir.join("ono.rpm");
+    let output = Command::new("cargo")
+        .args([
+            "generate-rpm",
+            "--package",
+            "crates/ono-cli",
+            "--target-dir",
+            target_dir.to_str().unwrap(),
+            "--output",
+            rpm_path.to_str().unwrap(),
+        ])
+        .current_dir(repo())
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .env("SOURCE_DATE_EPOCH", EPOCH)
+        .env("LC_ALL", "C.UTF-8")
+        .env("TZ", "UTC")
+        .output()
+        .expect("cargo-generate-rpm must be runnable");
+    assert!(
+        output.status.success(),
+        "cargo generate-rpm failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = std::fs::read(&rpm_path).expect("the rpm was written");
+    let header = rpm::Header::parse(&bytes);
+
+    let owners = header.strings(rpm::FILEUSERNAME);
+    let groups = header.strings(rpm::FILEGROUPNAME);
+    assert!(
+        !owners.is_empty()
+            && owners.iter().all(|owner| owner == "root")
+            && groups.iter().all(|group| group == "root"),
+        "an rpm member is not owned by root:root, so the packager's identity reached the package \
+         (spec §46.4): {owners:?} {groups:?}"
+    );
+    let times = header.numbers(rpm::FILEMTIMES);
+    let epoch: u32 = EPOCH.parse().expect("a numeric epoch");
+    assert!(
+        !times.is_empty() && times.iter().all(|time| *time == epoch),
+        "an rpm member does not carry SOURCE_DATE_EPOCH, so its mtime is the moment it was \
+         packaged (spec §46.2, §46.4): {times:?}"
+    );
+    let modes = header.numbers(rpm::FILEMODES);
+    assert!(
+        modes.iter().all(|mode| mode & 0o7000 == 0),
+        "an rpm member carries a setuid, setgid or sticky bit: {modes:?}"
+    );
+    let files = header.files();
+    let binary = files
+        .iter()
+        .position(|path| path == "/usr/bin/ono")
+        .expect("the binary is packaged");
+    assert_eq!(
+        modes[binary] & 0o7777,
+        0o755,
+        "/usr/bin/ono does not carry the declared 755"
+    );
+
+    let _ = std::fs::remove_dir_all(&target_dir);
 }
