@@ -261,178 +261,23 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-**The v0.4.1 tranche — claimed 2026-09-02.** The build order and the H0…H12 milestones are
-recorded above. **H0, H1, H4, H5 and H10 are delivered** (29 issues; #71's measured half and H0's
-#30/#117/#118 are the exceptions, each recorded below). H2, H3, H6, H7, H8, H9, H11 and H12 are
-open. What H0 delivered:
+## What is left, and why
 
-- **#29** — `docs/ACCEPTANCE.md` §4.8 written from v0.4.1 §66.1–§66.9 and §40.3, all boxes
-  unticked. `scripts/release-check.sh` fails on its unticked-box grep from the moment §4.8
-  exists, and that is the correct state for a tranche that has just started.
-- **#31** — the four failing proofs §57 requires before any production fix: the unauthenticated
-  client, the ignored KUANG control failure, the non-streaming `each`, and the spatial
-  first-output pathology. They land `#[ignore]`d with a `// REASON:` and a *Deferred* entry, the
-  way v0.4's RED suites did (ADR-0426).
-- **#30**, **#117**, **#118** — baseline snapshot and the contract registries, behind the two above.
+*Empty.* The v0.4.1 tranche is delivered — thirteen phases, and what remains is recorded below
+rather than claimed here.
 
-**One integration commit, and why it is not thirty (2026-09-02).** AGENTS.md §4 asks for one
-increment of one kind per commit, and this batch does not meet it. Five agents worked the tranche
-in parallel **in one worktree**, and the shared contract files no longer separate: `docs/spec/errors.yaml`
-carries `E0604`/`E0605` from H1, the `K118` plugin family from H4 and `E1101`–`E1103` from H5;
-`xtask/src/scan.rs` carries H4's syscall scan and two repairs of mine; `crates/ono-cli/src/session.rs`
-carries H1's link fields and H5's result history. A commit taking any one of those files whole
-holds contract without implementation, which is not a green commit — and splitting them by hunk
-would fabricate intermediate states that were never tested.
+Two issues stay open because **no release has been signed**, and neither is work anybody can do at
+a keyboard: **#107** (signature over the checksum manifest) and **#115** (documenting installer
+verification). Keyless Sigstore needs an OIDC token that exists only inside a release run, and
+§40.2 denies the acceptance container a network. The code is complete on both sides —
+`scripts/sign-release.sh` refuses without an identity, `scripts/verify-release.sh` is
+identity-constrained and fails closed — and the first `v*` tag is the run that proves them.
+Pushing that tag is the user's action, as promoting `implementation` to `main` is (AGENTS.md
+§12.1). Their two boxes in `docs/ACCEPTANCE.md` say so in their own text.
 
-The cause is an orchestration mistake, not a property of the work: **AGENTS.md §12.1 allows
-sub-branches `implementation/<crate>` for parallel agents**, and all five were pointed at the same
-tree instead. H2, H3, H6 and the phases after them use sub-branches, so their increments separate.
-
-What replaces the granularity here: the commit body enumerates every issue with its ADR and its
-proofs, and each issue is closed on GitHub with a comment naming this commit and the evidence.
-
-Delivered so far in the tranche:
-
-- **#29 closed (2026-09-02).** `docs/ACCEPTANCE.md` §4.8 is the v0.4.1 definition of done: 118
-  unticked boxes in fourteen subsubsections following the H0–H12 phase sequence, every one of the
-  tranche's 101 issues cited by the box that closes it, and every bullet of §66.1–§66.9 covered.
-  ADR-0429 records the five decisions behind the form. Acceptance-case numbers **180–200** are
-  reserved for the tranche and ascend with the phase order.
-  `xtask/tests/spatial_evidence.rs` now reads §4.7 up to `### 4.8`, so §4.7's evidence harvester
-  stops at the tranche boundary instead of sweeping 257 not-yet-written test names into itself;
-  the v0.4.1 counterpart `xtask/tests/hardening_evidence.rs` is §4.8.1's first box and the last
-  box of the tranche to close. From here `scripts/release-check.sh` fails on §4.8's first open
-  box, and that is the correct state for a tranche that has just started.
-- **#31 closed (2026-09-02).** All four failure proofs are in, red by design, tracked under
-  *Deferred* above (ADR-0430, ADR-0431). Two diagnoses came out of writing them and belong to the
-  phases that own the fix: the `map --live` pathology is **unconditional rather than
-  cardinality-driven** — `map --live --json | take 1` answers in 0.2 s, and the second value never
-  comes because the root projection is domains and collections while `MapSnapshot` compares node
-  and edge labels only, so a picture made of names that cannot change never reports a change
-  (#22); and issue **#20**'s instance measures 29.7 s at Profile M, inside §33.3's thirty-second
-  budget by 0.3 s and sixty times outside §33.2's target, so it needs a phase-H7 frame-budget
-  proof under a terminal rather than a watchdog that would be a coin toss (ADR-0252, #21).
-- **H11 complete (2026-09-03), #104–#110.** Seven commits. The reproducibility work was *run*
-  rather than asserted, and the result was not what the issue expected: with ADR-0526's determinism
-  block deleted and a build forced under `de_DE.UTF-8`, `Australia/Eucla` (+08:45) and `umask 077`,
-  the packages came out **byte-identical anyway** — cargo-deb 3.7.0 and cargo-generate-rpm 0.21.0
-  both honour `SOURCE_DATE_EPOCH`, emit no `BUILDHOST`, write uid 0/gid 0 and sort glob-expanded
-  assets. What the probe did find is that the second build's *files* were mode `0600`, so
-  `compare-builds` now compares the artifact's mode as well as its bytes. Two smaller findings came
-  out of writing the tests: `dpkg-deb --contents` renders mtimes in the **reader's** timezone, and
-  both packaging tools write numeric `0/0` rather than `root/root`.
-
-  #109's glibc floor is **read out of the ELF** rather than assumed (first run measured
-  `GLIBC_2.34`), and #110 replaces `action-gh-release` with verify → draft → upload → download back
-  and compare digests → clear the draft, so the bytes that were tested are the bytes that are
-  published. ADR-0526 … ADR-0532, case 199, `acceptance: 127 passed, 0 failed`.
-
-  **#107's box is open on purpose** — see *Deferred* — and that is the second time this tranche a
-  phase has declined to tick a box it could not prove (H8's #94 was the first).
-
-- **H8 complete (2026-09-02), #88–#94 and the three flaky-test defects #6, #7, #27.** Eleven
-  commits on `implementation-h8-test-truthfulness`. Three findings are worth more than the boxes:
-
-  **The skip marker had never reached a log.** libtest captures the print macros and shows them
-  only for a *failed* test, so every §38.1 skip this repository thought it was announcing was
-  invisible to anything reading the output. `skipped` now writes to `std::io::stderr()` directly,
-  and `cargo xtask skip-check <log>` is §38.3's verification step. RED for #88 was 41 unannounced
-  bare `return;`s plus one multi-line `eprintln!("skipped: …")` in `spatial_map.rs` that had
-  survived ADR-0428 for a whole release.
-
-  **The 331 leaked processes were not the systemd fixture.** `ono_process::PtySession` had **no
-  `Drop` at all**, so every PTY test orphaned its session leader and everything under it, and
-  `Shell::try_run` reported an overrun and walked away from the child. Both are fixed; ADR-0431's
-  deliberate difference between `run_bounded` and `Shell` survives. Stated residual: `Shell` kills
-  the child rather than a group, because `ono-testkit` forbids `unsafe` and a group needs
-  `pre_exec`.
-
-  **#6's test was hiding a product defect.** Written so that it really needs a resize, it went red
-  *every* time and named the cause: `ready_key` called `read_event_timeout` every 5 ms during a
-  projection and dropped everything that was not a key — including the resize. `read_event_timeout`
-  now reports a size change until `remember_terminal_size` acknowledges it, which also closes the
-  case where a resize beat crossterm's SIGWINCH handler into existence. The test went from 45 s to
-  2.5 s.
-
-  Also: #27 and #7 are **one** defect — a thread forking between the test's `open` and `close`
-  inherits the descriptor and `execve` answers `ETXTBSY`, arriving as exit 126. And **eight**
-  §4.8.13 boxes named an acceptance case that does not exist under that name. ADR-0513 … ADR-0522.
-
-- **H7 complete (2026-09-02), #82–#87 and the five class-b defects #8, #20, #21, #22, #25.**
-  Sixteen commits on `implementation-h7-spatial-performance`, merged without a conflict. Measured
-  before optimised, on the named reference environment `ryzen-3900x-ubuntu-2604` with the run's own
-  load average recorded beside every figure: `spatial.map_first_frame` at Profile L falls from
-  **25 748 ms to 3 514 ms**, a selector miss at Profile M from **530 ms to 181 ms**, and
-  `service.enumeration` at S from **870 ms to 422 ms**.
-
-  Two diagnoses overturned the assumption in the issue that carried them. `enter compute;
-  look --json` costs **942 ms with no extra processes and 1 135 ms with sixteen hundred** — an
-  almost flat curve from the origin, so the Profile M failure was never cardinality; it was 569
-  systemd units against three *sequential* D-Bus round trips. And two thirds of the Profile L map
-  cost sat in `MapHorizon::place`, which deduplicated by scanning the vector it was building — five
-  billion comparisons at 100 000 sockets, and not the global graph build #87 named.
-
-  §33.3's floor is now met by a live map that **says it is waiting** rather than falling silent,
-  and the stillness clock resets on a value being *sent* rather than on an event arriving — timing
-  each wait never fired, because events arrive that change no picture. `Comparison` answers
-  `Unmeasured` and `ForeignEnvironment` as distinct verdicts so §65.10's skip-as-pass cannot happen
-  to a benchmark. ADR-0488 … ADR-0498, `E1401`, cases 195–198.
-
-  **#71's measured half is written**, and it was cheap once `cargo xtask perf` existed: `cancel_ms`
-  is the p95 of twenty samples rather than one measurement — 2.2–4.5 ms at S and M, 20.9 ms at L,
-  against §23.3's p95 < 100 ms. A p99 wants about a hundred samples; that is the only difference.
-
-- **H3 complete (2026-09-02), #51–#57.** One central `Limits` contract whose every setter clamps
-  into the range `limits.yaml` declares, so an unlimited instance cannot be written down;
-  `docs/spec/hardening/remote_limits.yaml` created as §52.1's registry holding **no numbers** — one
-  row per ceiling pointing at its `limit_key`, its refusal, its audit class and its enforcement
-  stage. A `ConnectionRegistry` behind a real 32-connection ceiling, a pending-handshake semaphore
-  that gates *TCP accept* (so nothing is spent on the peer and §13.1 is not violated by sending a
-  refusal frame), a 10 s timeout wrapping both TLS and the opening `Hello`, a per-fingerprint limit
-  keyed on the authenticated fingerprint rather than the address, and TLS moved off the accept loop
-  onto a per-connection task. `AuditKind::ConnectionLimitDenied` — declared by H2, unreachable
-  until now — is raised. `E1501`, `E1502`. ADR-0501 … ADR-0505, case 188, §4.8.4 ticked.
-
-  **Live revocation landed rather than being deferred a second time.** ADR-0470 deferred it on one
-  stated condition — that H3 would build the registry — and the agent treated the expiry of that
-  condition as binding: a one-second sweep re-reads the store and closes every session whose
-  fingerprint it no longer lists, well inside §12.5's five seconds, with ADR-0470's immutable
-  per-connection `AuthorizationContext` untouched. The *grant* is still fixed for the life of the
-  connection; only the connection's existence changes.
-
-- **H6 complete (2026-09-02), #75–#81.** `each` streams. `eval.rs::run_each_block` and its second
-  `StageList` are gone: `each { … }` is bound and assembled as a stage of its own pipeline, and the
-  stage asks the evaluator over a bounded channel of one while a driver loop answers and drains at
-  the same time. Both H0 failure proofs are un-ignored with **no assertion touched** — the diff of
-  `each_streaming.rs` is the two `#[ignore]`/`// REASON:` blocks and one paragraph of module doc —
-  and the `where` differential stayed green throughout. `each {…} | each {…}` works at all now; it
-  answered `provider.unsupported` before. Memory is measured rather than asserted: two block
-  invocations for a 200-value source and two for a 2000-value one. #78's capture inventory is 21
-  classified sites in `docs/spec/hardening/streaming.yaml` with a gate that fails in four
-  directions, and it caught two real removals as the code changed under it. ADR-0479 … ADR-0483,
-  cases 193 and 194, §4.8.7 written and ticked. No code in the reserved `E1301`–`E1319` range was
-  needed: every refusal this tranche makes already had one.
-
-- **H2 complete (2026-09-02), #40–#50.** A v0.4.1 listening agent now authenticates every client
-  **and authorizes only the ones an operator listed**: §59.1 moved from "the unknown client reads
-  the provider inventory" to "the unknown client is refused with `Ono-Sendai-E1202` before provider
-  negotiation". `authorized_clients` with a fail-closed parser that distinguishes *missing* from
-  *corrupt* and exits before `bind` on the latter; atomic updates; four `client-key` commands;
-  observe-only by default, with no option on `add` that could grant an action; `ActionGrant` as a
-  newtype whose only constructor refuses to represent a wildcard; an immutable per-connection
-  `AuthorizationContext` built from the fingerprint alone; `ServerConfig::offer()` replaced by
-  `offer_for(&PeerAuthorization)`; dispatch checked again independently on all four paths;
-  `E1201`–`E1204`; audit events whose record has no field a payload could occupy; and the four
-  trust words as four fields on `ono.link/1`. ADR-0466 … ADR-0475, cases 182–187, §4.8.3 ticked.
-
-- **#98, #99, #100 closed (2026-09-02), out of phase order and deliberately so.** H10 touches
-  `.github/`, `docker/`, `scripts/` and `xtask/` and no runtime code, so running it beside H1 and
-  H4 delays no safety work; §57's staging rule is about refactoring landing before safety work,
-  and nothing here refactors anything. Seven third-party Actions are pinned by commit SHA and four
-  release-critical images by digest, `release.yml` drops from workflow-wide `contents: write` to
-  the publishing job alone, and `pull_request_target` is banned outright. The gate scan
-  `xtask/src/supply_chain.rs` keeps all three true — 28 tests in `xtask/tests/supply_chain.rs`,
-  ADR-0433. Three boxes of §4.8.11 are ticked.
+Two class-c issues remain and are tranches of their own, which is what the label means: **#3**
+(the wasm-component tier and ten of §31.12's sixteen host API domains) and **#5**
+(`ono-model-broker`, whose design is written out in the issue and whose first line of code is not).
 
 ## Session records (2026-08-27 … 2026-08-29)
 
@@ -2076,13 +1921,6 @@ delivered and the rows are enforced by `ono-remote`. User-visible through `get c
 `apply_environment`; `config.ono` is not read, because `config::load` needs a `Session` an agent
 does not have. ADR-0504. **Exit test:** a ceiling set in `config.ono` changes what `--listen`
 enforces.
-
-**`remote_limits.yaml` is not validated by `xtask spec-check` (2026-09-02).** §52.3 asks the gate
-to validate every machine-readable contract; today only `crates/ono-remote/tests/limits.rs` checks
-its cross-references, from the crate that enforces them. Also in the same corner:
-`crates/ono-cli/src/limits.rs`'s doc comment claims `unit` and `enforced_by` come from the settings
-catalogue, and `SettingSpec` has neither field. Owed by **#117**. **Exit test:** the gate rejects a
-`limit_key` that names nothing.
 
 **A function cannot be invoked between two pipeline stages (2026-09-02).** `get process | mine |
 take 1` resolves `mine` as an external program; `call_function` is reached only for
@@ -3767,18 +3605,6 @@ opposite of a silenced requirement: they are the requirement, written down befor
   magnitude inside the target) and removed from the tree rather than left ignored — ADR-0459
   carries the measurement. **No ignored test exists for this.** Owed by **#83** and **#84**;
   §4.8.6's box stays unticked and says so.
-
-- **The §6.1 boundary-inventory gate check has nothing to check against.**
-  `docs/spec/hardening/security_boundaries.yaml` does not exist — no phase has written it — so
-  `xtask` cannot cross-check that every declared dispatch path carries an authorization check.
-  §10.2 is proven instead by
-  `crates/ono-protocol/tests/authorization.rs::should_refuse_it_on_every_dispatch_path_the_server_exposes`,
-  which exercises query, subscribe, adapt and act. Owed by **#118**, which writes the inventory.
-
-- **§52.3 asks the gate to reject an unknown capability id in an authorization fixture.**
-  `ActionGrant` refuses a malformed id at construction, so `*` and `process.` cannot be stored at
-  all; a *well-formed* id naming nothing (`process.invented`) is denied at dispatch but does not
-  fail the gate. Needs a validator in `xtask/`, which H2 did not own. Owed by **#117**.
 
 - **§47.3's end-to-end signature proof needs a tag push.** ADR-0529 implements keyless Sigstore
   signing, self-verification and identity-constrained verification; `scripts/sign-release.sh`
