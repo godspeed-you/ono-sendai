@@ -9,7 +9,10 @@
 
 use std::path::Path;
 
-use xtask::terminology::{check_decision, check_decisions, check_documents, check_text};
+use ono_testkit::scratch;
+use xtask::terminology::{
+    check_decision, check_decisions, check_documents, check_text, check_wiki, terms,
+};
 
 #[test]
 fn should_reject_a_document_that_calls_the_native_tier_a_sandbox() {
@@ -153,4 +156,115 @@ fn should_report_this_repositorys_decision_records_as_honest_about_the_native_ti
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+// --- the eight canonical terms of §19.1 (issue #112, ADR-0536) -----------------------------------
+
+#[test]
+fn should_define_every_canonical_term_of_the_specification() {
+    // §19.1's table, and the gate reads the same rows the generated page prints (§19.2).
+    let defined: Vec<&str> = terms().iter().map(|term| term.term.as_str()).collect();
+    for canonical in [
+        "authenticated",
+        "authorized",
+        "pinned",
+        "confined",
+        "isolated",
+        "sandboxed",
+        "bounded",
+        "streaming",
+    ] {
+        assert!(
+            defined.contains(&canonical),
+            "v0.4.1 §19.1 fixes `{canonical}`; the registry defines {defined:?}"
+        );
+    }
+    assert_eq!(
+        terms()
+            .iter()
+            .find(|term| term.term == "authenticated")
+            .map(|term| term.meaning.as_str()),
+        Some("cryptographic peer proof was verified"),
+        "the meaning is §19.1's, verbatim"
+    );
+}
+
+#[test]
+fn should_report_a_document_that_overstates_a_security_boundary() {
+    // Not the KUANG/11 half: §65.2 names the client's self-reported identity deciding
+    // authorization a forbidden failure mode, and §9.1 says why — holding a private key proves
+    // who you are, never that the operator wants you here.
+    let problems = check_text(
+        "Remote-Links.md",
+        "The agent reads the peer's Identity frame: a client is authorized by the identity it \
+         reports, and the store is only advisory.",
+    );
+    assert!(
+        problems.iter().any(|problem| problem
+            .detail
+            .contains("authorized by the identity it reports")),
+        "the phrase is named back, got {problems:?}"
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("§65.2")),
+        "the reason cites the failure mode it implements, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_not_read_a_negated_word_as_the_claim_it_denies() {
+    // `authorized by the identity it reports` sits inside `unauthorized by the identity it
+    // reports`, which says the opposite. Matching without word boundaries would report the
+    // sentence that gets it right.
+    assert_eq!(
+        check_text(
+            "Remote-Links.md",
+            "A client stays unauthorized by the identity it reports; only the store admits it.",
+        ),
+        Vec::new()
+    );
+}
+
+#[test]
+fn should_report_this_repositorys_documents_as_using_the_canonical_terms() {
+    // Every surface §19.1 names that the gate can reach: the repository's user-facing documents,
+    // every rendered `help` page and every generated reference page. The Wiki is a separate
+    // checkout and is checked by `check_wiki` when a path is given (ADR-0536).
+    let problems = check_documents(repo_root());
+    assert!(
+        problems.is_empty(),
+        "a document uses a §19.1 term for a boundary this build does not enforce:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_check_a_wiki_checkout_when_one_is_given() {
+    // The Wiki is a separate git repository, so no gate run can reach it on its own. What the
+    // repository can own is the rule; `check_wiki` applies it to whatever checkout it is handed.
+    let wiki = scratch();
+    wiki.write(
+        "Plugins-KUANG-11.md",
+        "A native KUANG/11 plugin is sandboxed: it runs under the host's own limits.",
+    );
+    let problems = check_wiki(wiki.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.location == "Plugins-KUANG-11.md"
+                && problem.detail.contains("is sandboxed")),
+        "the wiki page is reported by name, got {problems:?}"
+    );
+}
+
+fn repo_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
 }

@@ -21,6 +21,7 @@ fn main() -> ExitCode {
         Some("spec-check") => spec_check(),
         Some("state-check") => state_check(),
         Some("skip-check") => skip_check(&rest),
+        Some("terminology") => terminology(&rest),
         Some("build-manifest") => build_manifest(&rest),
         Some("perf") => perf(&rest),
         Some("docs") => generate_docs(),
@@ -53,6 +54,10 @@ fn usage() {
     eprintln!(
         "  perf           run the performance benchmarks of spec section 37.1 \
 [--profile S|M|L] [--iterations N] [--compare <path>] [--write-baseline]"
+    );
+    eprintln!(
+        "  terminology    the documentation terminology contract of section 19.1 over this \
+repository, and over a Wiki checkout when one is named [--wiki <path>]"
     );
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!(
@@ -529,6 +534,52 @@ fn skip_check(arguments: &[String]) -> ExitCode {
     }
     for problem in &problems {
         eprintln!("skip-check: {} — {}", problem.location, problem.detail);
+    }
+    ExitCode::FAILURE
+}
+
+/// The documentation terminology contract of v0.4.1 §19.1, run on demand.
+///
+/// `spec-check` already holds every surface a gate run can reach — the repository's user-facing
+/// documents, every rendered `help` page, every generated reference page and the accepted decision
+/// records. **The Wiki is a separate git repository**, so no gate run can reach it: this task takes
+/// the checkout as an argument, which is the only honest way to check it (ADR-0536).
+fn terminology(arguments: &[String]) -> ExitCode {
+    let root = repo_root();
+    let mut wiki: Option<PathBuf> = None;
+    let mut rest = arguments.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--wiki" => match rest.next() {
+                Some(path) => wiki = Some(PathBuf::from(path)),
+                None => return usage_error("terminology: --wiki needs the path of a checkout"),
+            },
+            other => match other.strip_prefix("--wiki=") {
+                Some(path) => wiki = Some(PathBuf::from(path)),
+                None => return usage_error(&format!("terminology: unknown argument `{other}`")),
+            },
+        }
+    }
+
+    let mut problems = terminology::check_documents(&root);
+    problems.extend(terminology::check_decisions(&root));
+    match wiki.as_deref() {
+        Some(checkout) => problems.extend(terminology::check_wiki(checkout)),
+        None => println!(
+            "terminology: no --wiki given, so the Wiki is unchecked. It is a separate git \
+             repository and the gate cannot reach it (v0.4.1 section 19.1, ADR-0536)"
+        ),
+    }
+
+    if problems.is_empty() {
+        println!(
+            "terminology: ok — {} term(s) of section 19.1 held across every surface checked",
+            terminology::terms().len()
+        );
+        return ExitCode::SUCCESS;
+    }
+    for problem in &problems {
+        eprintln!("terminology: {} — {}", problem.location, problem.detail);
     }
     ExitCode::FAILURE
 }

@@ -97,6 +97,10 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
             path: "docs/reference/streaming.md".to_owned(),
             contents: streaming_page(streaming.as_ref()),
         },
+        Page {
+            path: "docs/reference/terminology.md".to_owned(),
+            contents: terminology_page(),
+        },
     ];
     if !packs.is_empty() {
         pages.push(Page {
@@ -190,6 +194,8 @@ fn index_page() -> String {
          | [Streaming](streaming.md) | `docs/spec/hardening/streaming_classification.yaml` — what \
          each pipeline operation may do to a stream, and what the order of events means (v0.4.1 \
          Appendix E, §27) |\n\
+         | [Terminology](terminology.md) | `docs/spec/hardening/terminology.yaml` — the eight \
+         security terms of v0.4.1 §19.1 and what each one promises |\n\
          | [Errors](errors.md) | `docs/spec/errors.yaml` — the stable taxonomy of spec §43 |\n\
          | [Capabilities](capabilities.md) | `docs/spec/capabilities.yaml` — provider and KUANG/11 \
          capabilities |\n\
@@ -514,6 +520,59 @@ fn streaming_page(document: Option<&Yaml>) -> String {
                     string_at(channel, "id").unwrap_or_default(),
                     doc.trim()
                 ));
+            }
+        }
+    }
+    page
+}
+
+/// v0.4.1 §19.1's eight terms, rendered from the registry that also drives the gate.
+///
+/// §19.2: *"Where command contracts or capability tables already generate reference
+/// documentation, the security terms SHOULD be generated from the same registries rather than
+/// duplicated in prose."* So this page is the one place a reader is shown the definitions, and
+/// `xtask::terminology` reads the same rows before it judges a document — a paraphrase cannot
+/// drift from the rule because there is no paraphrase.
+fn terminology_page() -> String {
+    let mut page = header(
+        "Security terminology",
+        "Eight words with fixed meanings (v0.4.1 \u{a7}19.1). They mean this in the README, in the \
+         Wiki, in `help`, on these pages and in the architecture documentation, and nowhere in \
+         the product do they mean anything else. \u{a7}51.1 states the purpose: the goal is not to ban \
+         these words, it is to ensure they refer to a defined contract \u{2014} so the contract is \
+         `docs/spec/hardening/terminology.yaml`, this page is rendered from it, and \
+         `cargo xtask spec-check` holds every document the repository can reach to the same rows.",
+    );
+    page.push_str("\n| Term | Meaning |\n|---|---|\n");
+    for term in crate::terminology::terms() {
+        page.push_str(&format!("| `{}` | {} |\n", term.term, cell(&term.meaning)));
+    }
+    for term in crate::terminology::terms() {
+        page.push_str(&format!(
+            "\n## `{}`\n\n> {}\n\n{}\n\nFixed by {}.\n",
+            term.term,
+            term.meaning,
+            term.doc.trim(),
+            term.spec
+        ));
+        if !term.overstates.is_empty() {
+            page.push_str(
+                "\nWordings the documentation gate refuses, because they claim a boundary this \
+                 build does not enforce:\n\n",
+            );
+            for phrase in &term.overstates {
+                page.push_str(&format!("- `{phrase}`\n"));
+            }
+            if term.qualified_by.is_empty() {
+                page.push_str(
+                    "\nNo qualifier makes these true; the remedy is to state the boundary that \
+                     does exist.\n",
+                );
+            } else {
+                page.push_str("\nA claim is qualified where the document also says:\n\n");
+                for phrase in &term.qualified_by {
+                    page.push_str(&format!("- {phrase}\n"));
+                }
             }
         }
     }

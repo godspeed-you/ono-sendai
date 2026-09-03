@@ -1995,7 +1995,7 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `crates/ono-kuang-supervisor/tests/confinement.rs::should_name_the_control_that_could_not_be_installed_in_the_structured_error`,
       `xtask/tests/contracts.rs::should_find_a_deciding_boundary_on_every_declared_hardening_error`,
       case `200` (#119, §54.1, §54.2).
-- [ ] **P2 · The security terminology contract holds across every document.** README, Wiki, `help`
+- [x] **P2 · The security terminology contract holds across every document.** README, Wiki, `help`
       and the generated reference use the §19.1 canonical terms, a document that overstates a
       boundary fails the gate, and the generated pages carry the terms rather than a hand-written
       paraphrase — `xtask/tests/terminology.rs::should_report_a_document_that_overstates_a_security_boundary`,

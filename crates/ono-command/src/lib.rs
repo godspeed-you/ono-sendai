@@ -77,7 +77,9 @@ pub use explain::{
 pub use expr::{
     Scope, check_fields, evaluate, evaluate_to_value, is_now_call, is_true, nested_pipelines,
 };
-pub use help::{CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help};
+pub use help::{
+    CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help, topics,
+};
 pub use impls::meta::provenance_value;
 pub use impls::watch::{is_watchable, watch_events};
 pub use impls::{builtin_commands, builtin_commands_for};

@@ -648,7 +648,7 @@ fn overview(registry: &CommandRegistry) -> TopicHelp {
 
 /// The browsing topics `help <topic>` answers for, each with the line the landing page shows.
 ///
-/// This is the only enumeration of them: [`builtin_topic`]'s match is what answers, and a match
+/// This is the only enumeration of them: `builtin_topic`'s match is what answers, and a match
 /// arm cannot be listed. Completion needs the list (spec §15.1) and so does anything that wants
 /// to say what `help` knows about, so the two are kept beside each other and `spec-check`'s
 /// example checks keep them honest.

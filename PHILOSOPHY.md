@@ -222,8 +222,10 @@ what you meant, in a domain where the actions are irreversible.
 
 **What Ono-Sendai does.** It answers what was asked, from data it actually has, with provenance
 attached. Where an assistant or an analysis extension produces an interpretation, it is labelled
-as an interpretation and isolated by the KUANG/11 capability model — it cannot quietly become
-part of the object graph.
+as an interpretation and kept out of the object graph by the KUANG/11 capability model — it cannot
+quietly become something the machine asserted. That is capability mediation, not isolation: the
+model governs what a package may ask Ono *for*, and v0.4.1 §15.3 is explicit that it never
+governs what the package's own process may do.
 
 **What it refuses.** It never derives destructive intent from vague natural language. It does not
 autocorrect a command into a different command. It does not summarise a system's state into a

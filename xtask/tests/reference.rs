@@ -419,3 +419,55 @@ fn should_render_this_repositorys_ordering_contract_as_the_stream_module_states_
         );
     }
 }
+
+// --- the security terminology contract, generated (issue #112, v0.4.1 §19.2, ADR-0536) ----------
+
+#[test]
+fn should_render_the_security_terms_into_the_generated_reference() {
+    // §19.2: "Where command contracts or capability tables already generate reference
+    // documentation, the security terms SHOULD be generated from the same registries rather than
+    // duplicated in prose." So the eight definitions have one home and the page is rendered from
+    // it, rather than a ninth paraphrase of §19.1 written by hand.
+    let page = generate(&repo())
+        .expect("generation must succeed")
+        .into_iter()
+        .find(|page| page.path == "docs/reference/terminology.md")
+        .expect("the terminology page is generated");
+    for (term, meaning) in [
+        ("authenticated", "cryptographic peer proof was verified"),
+        (
+            "authorized",
+            "authenticated principal is permitted by policy",
+        ),
+        ("pinned", "fingerprint matches a recorded trust decision"),
+        (
+            "confined",
+            "process-level restrictions were successfully installed",
+        ),
+        (
+            "isolated",
+            "kernel policy prevents direct access outside a defined boundary",
+        ),
+        (
+            "sandboxed",
+            "MAY be used only when the specific isolation boundary is stated",
+        ),
+        (
+            "bounded",
+            "a hard enforceable limit exists for the relevant resource",
+        ),
+        (
+            "streaming",
+            "output may progress before complete upstream exhaustion",
+        ),
+    ] {
+        assert!(
+            page.contents.contains(term),
+            "§19.1's term `{term}` is on the generated page"
+        );
+        assert!(
+            page.contents.contains(meaning),
+            "§19.1's meaning of `{term}` is on the generated page, verbatim"
+        );
+    }
+}
