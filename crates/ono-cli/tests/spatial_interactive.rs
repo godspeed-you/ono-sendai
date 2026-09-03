@@ -1224,22 +1224,31 @@ fn should_paint_no_frame_at_a_new_row_count_when_the_terminal_is_not_resized() {
 
     let mark = session.seen().len();
     session.keys(DOWN);
+    // Waited for the way the resized half waits: for a frame with the geometry the assertion is
+    // about, and not for the first sign that a frame started. A repaint reaches the terminal a
+    // row at a time, and the label naming the place is written before the rows beneath it — so
+    // reading the buffer as soon as "compute" appears reads a frame that is still being written,
+    // and on a machine slow enough to split the write it had reached row 18 and no further.
+    // BUDGET is the watchdog on a repaint that never comes (ADR-0517); nothing here waits on a
+    // duration it asserts.
     assert!(
-        session.wait_until(BUDGET, |seen| seen.len() > mark
-            && plain(&seen[mark..]).to_lowercase().contains("compute")),
-        "the repaint the arrow key causes arrives; saw:\n{}",
-        plain(&session.seen()[mark.min(session.seen().len())..])
-    );
-
-    let rows: BTreeSet<usize> = frames(&session.seen()[mark..])
-        .into_iter()
-        .flat_map(rows_addressed)
-        .collect();
-    assert!(
-        rows.iter().any(|row| *row > 20),
+        session.wait_until(BUDGET, |seen| {
+            if seen.len() <= mark {
+                return false;
+            }
+            frames(&seen[mark..]).into_iter().any(|frame| {
+                rows_addressed(frame).iter().any(|row| *row > 20)
+                    && plain(frame).to_lowercase().contains("compute")
+            })
+        }),
         "§43.4: a repaint with no resize behind it is a frame at the terminal's own thirty rows, \
          and would be indistinguishable from a resized one if the assertion only asked for new \
-         output naming the place. It addressed {rows:?}"
+         output naming the place. The frames it painted addressed rows {:?}; saw:\n{}",
+        frames(&session.seen()[mark.min(session.seen().len())..])
+            .into_iter()
+            .map(rows_addressed)
+            .collect::<Vec<_>>(),
+        plain(&session.seen()[mark.min(session.seen().len())..])
     );
 
     session.keys(ESCAPE);
