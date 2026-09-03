@@ -312,6 +312,24 @@ Delivered so far in the tranche:
   (#22); and issue **#20**'s instance measures 29.7 s at Profile M, inside §33.3's thirty-second
   budget by 0.3 s and sixty times outside §33.2's target, so it needs a phase-H7 frame-budget
   proof under a terminal rather than a watchdog that would be a coin toss (ADR-0252, #21).
+- **H11 complete (2026-09-03), #104–#110.** Seven commits. The reproducibility work was *run*
+  rather than asserted, and the result was not what the issue expected: with ADR-0526's determinism
+  block deleted and a build forced under `de_DE.UTF-8`, `Australia/Eucla` (+08:45) and `umask 077`,
+  the packages came out **byte-identical anyway** — cargo-deb 3.7.0 and cargo-generate-rpm 0.21.0
+  both honour `SOURCE_DATE_EPOCH`, emit no `BUILDHOST`, write uid 0/gid 0 and sort glob-expanded
+  assets. What the probe did find is that the second build's *files* were mode `0600`, so
+  `compare-builds` now compares the artifact's mode as well as its bytes. Two smaller findings came
+  out of writing the tests: `dpkg-deb --contents` renders mtimes in the **reader's** timezone, and
+  both packaging tools write numeric `0/0` rather than `root/root`.
+
+  #109's glibc floor is **read out of the ELF** rather than assumed (first run measured
+  `GLIBC_2.34`), and #110 replaces `action-gh-release` with verify → draft → upload → download back
+  and compare digests → clear the draft, so the bytes that were tested are the bytes that are
+  published. ADR-0526 … ADR-0532, case 199, `acceptance: 127 passed, 0 failed`.
+
+  **#107's box is open on purpose** — see *Deferred* — and that is the second time this tranche a
+  phase has declined to tick a box it could not prove (H8's #94 was the first).
+
 - **H8 complete (2026-09-02), #88–#94 and the three flaky-test defects #6, #7, #27.** Eleven
   commits on `implementation-h8-test-truthfulness`. Three findings are worth more than the boxes:
 
@@ -1864,6 +1882,21 @@ Like the orientation item above, it changes the observation contract rather than
 **`Interest::wants` scans the relation table once per provider per observation (2026-09-02).**
 Thirty-odd rows, once per `look` — negligible today, indexable if the table grows. ADR-0495.
 **Exit test:** none needed until the table does grow; recorded so the next reader knows it was seen.
+
+**Two worktrees share one acceptance image tag (2026-09-03).** `scripts/acceptance.sh` defaults
+`IMAGE` to `ono-sendai:acceptance`, and a run finishing without `--keep-image` **deletes it out from
+under a concurrent run in another worktree**, which then reports every remaining case as exit 125
+`Unable to find image`. Observed: 16 spurious failures in a full run during the H11/H12 pair. The
+run that produced the green result used `ONO_ACCEPTANCE_IMAGE=ono-sendai:acceptance-h11`. This is a
+direct cost of running phases in parallel worktrees, and it fabricates failures rather than hiding
+them. **Exit test:** two concurrent `scripts/acceptance.sh` runs in two worktrees both report their
+own results — by deriving the default tag from the worktree, or by refusing to remove an image
+another run is using.
+
+**`dist/` accumulates across versions (2026-09-03).** `scripts/release-check.sh` writes into it and
+`xtask checksums` covers every file there, so a local manifest lists 0.3.0 packages beside 0.4.0.
+Truthful about that directory and wrong about a release. **Exit test:** release-check builds into a
+directory it owns.
 
 **`client_keys::should_refuse_the_next_connection_after_a_client_key_is_removed` fails about one
 run in thirty (2026-09-02).** The agent's own ephemeral port answers `Ono-Sendai-E0601
@@ -3713,6 +3746,23 @@ opposite of a silenced requirement: they are the requirement, written down befor
   `ActionGrant` refuses a malformed id at construction, so `*` and `process.` cannot be stored at
   all; a *well-formed* id naming nothing (`process.invented`) is denied at dispatch but does not
   fail the gate. Needs a validator in `xtask/`, which H2 did not own. Owed by **#117**.
+
+- **§47.3's end-to-end signature proof needs a tag push.** ADR-0529 implements keyless Sigstore
+  signing, self-verification and identity-constrained verification; `scripts/sign-release.sh`
+  refuses without an OIDC identity and `scripts/verify-release.sh` fails closed. What the gate
+  cannot do is make or check a *real* signature: that needs a Fulcio/Rekor round trip and a token
+  that exists only inside a release run, and §40.2 denies the acceptance container a network. The
+  two tests own the verification path against a stand-in `cosign`, which is honest about the
+  outside world (AGENTS.md §11) and is not the proof. **§4.8.11's box for #107 is deliberately
+  open**, with the reason written into the box. **Exit test:** the first `v*` tag's `publish` job
+  signs and verifies.
+
+- **The local rebuild comparison packages one binary twice.** ADR-0527. A second release *compile*
+  needs a second target directory this machine cannot afford, so `rebuild-check.sh` locally proves
+  the packaging layer is deterministic and not the compiler. In the release workflow the two builds
+  are **two runners** per architecture, so there the binary is compiled twice and the comparison
+  covers the whole chain — same script, both places. **Exit test:** a machine with the disk runs
+  `rebuild-check.sh` over two independent compiles.
 
 The H0 failure proofs, red by design (issue #31, ADR-0430):
 
