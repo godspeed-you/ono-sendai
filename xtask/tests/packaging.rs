@@ -925,3 +925,111 @@ fn should_require_reproducibility_of_every_supported_architecture_separately() {
          qualification:\n{release_check}"
     );
 }
+
+// --- package validation (spec §48.1–§48.3, ADR-0531) --------------------------------------------
+
+/// The nine checks §48.2 adds, each named in `scripts/package-check.sh` the way the spec names it.
+///
+/// A marker and the machinery that carries it, because a comment nobody runs is not a check.
+const NEW_PACKAGE_CHECKS: [(&str, &str); 9] = [
+    ("binary version equals release version", "ono --version"),
+    ("expected path /usr/bin/ono exists", "-x /usr/bin/ono"),
+    ("file ownership and mode are correct", "stat -c"),
+    ("no private build paths are embedded", "/home/"),
+    (
+        "package metadata matches the artifact filename",
+        "FILE_VERSION",
+    ),
+    ("uninstall leaves user configuration", ".config/ono"),
+    ("reinstall works", "reinstall"),
+    ("login-shell smoke behaviour", "getent passwd probe"),
+    ("the checksum manifest matches the file", "sha256sum"),
+];
+
+#[test]
+fn should_run_every_new_package_check_the_specification_lists() {
+    let script = support::read("scripts/package-check.sh");
+    for (check, machinery) in NEW_PACKAGE_CHECKS {
+        assert!(
+            script.contains(check),
+            "`scripts/package-check.sh` does not run the §48.2 check `{check}`, so a package can \
+             be released without it"
+        );
+        assert!(
+            script.contains(machinery),
+            "the §48.2 check `{check}` is named and nothing carries it out — `{machinery}` is \
+             absent from the script"
+        );
+    }
+
+    // §48.1: the existing real-install checks stay. The new ones are added beside them, not in
+    // place of them.
+    for existing in [
+        "dpkg-deb --info",
+        "rpm -qp",
+        "apt-get install",
+        "dnf",
+        "/etc/shells",
+    ] {
+        assert!(
+            script.contains(existing),
+            "the real-install checks of §48.1 no longer run: `{existing}` is gone"
+        );
+    }
+
+    // §48.4 in the form this script owns: what it validated is recorded by digest, so #110 can
+    // compare it with what is published rather than trusting that they are the same build.
+    assert!(
+        script.contains("package-check.sha256"),
+        "package validation does not record the digest of what it installed, so nothing can \
+         later prove the published asset is the artifact that was tested (spec §48.4, §62.6)"
+    );
+}
+
+#[test]
+fn should_run_package_validation_on_the_oldest_supported_baseline_as_well_as_a_current_one() {
+    let script = support::read("scripts/package-check.sh");
+
+    // §48.3: the oldest supported baseline *as well as* one current representative. The baseline
+    // is the binding compatibility proof, so it is the one that is named as such.
+    for (label, image) in [
+        ("the oldest supported baseline", "debian:bookworm@sha256:"),
+        ("a current representative", "debian:trixie@sha256:"),
+    ] {
+        assert!(
+            script.contains(image),
+            "package validation names no image for {label} (spec §48.3). Expected a digest-pinned \
+             `{image}…` (spec §44.1)"
+        );
+    }
+    assert!(
+        script.contains("fedora:latest@sha256:"),
+        "the .rpm is validated on no distribution at all (spec §48.1)"
+    );
+
+    // The baseline is only a compatibility proof if the binary can actually run there, so the
+    // glibc floor is stated and checked rather than assumed from the image name.
+    assert!(
+        script.contains("GLIBC_FLOOR") && script.contains("2.36"),
+        "the script does not state the glibc floor its baseline proves, so `oldest supported` is \
+         a claim about an image tag rather than about the binary (spec §48.3):\n{script}"
+    );
+
+    // And the .deb path runs in both, rather than the second image being pulled and looked at.
+    let runs = script.matches("DEBIAN_IMAGES").count();
+    assert!(
+        runs >= 2,
+        "the two Debian images are named and the checks do not run over both of them (spec \
+         §48.3)"
+    );
+
+    // The build image's own base is the baseline: a floor the release does not build on is a
+    // floor nobody has tested.
+    let build = support::read("scripts/package.sh");
+    assert!(
+        build.contains("bookworm"),
+        "the release is built on a base other than the baseline package validation proves, so \
+         the two say different things about the oldest supported distribution (spec §48.3):\n\
+         {build}"
+    );
+}

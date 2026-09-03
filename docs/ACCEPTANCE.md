@@ -1975,13 +1975,15 @@ mutable inputs.
       publication — `xtask/tests/provenance.rs::should_bind_all_seven_required_fields_to_every_artifact_digest`,
       `::should_verify_every_artifact_digest_against_the_checksum_manifest_and_the_provenance_before_publication`,
       case `199-release-provenance` (#108, §47.4, §62.5, ADR-0530).
-- [ ] **P2 · Package validation covers the nine new checks.** Version equality, the installed path,
+- [x] **P2 · Package validation covers the nine new checks.** Version equality, the installed path,
       ownership and mode, absent private build paths, metadata matching the filename, uninstall
       leaving user configuration, reinstall, the login-shell smoke behaviour and the checksum match
       all run in `scripts/package-check.sh`, on the oldest supported baseline as well as a current
-      distribution — `xtask/tests/packaging.rs::should_run_every_new_package_check_the_specification_lists`,
+      distribution — `debian:bookworm`, the base of the build image, with its glibc floor measured
+      out of the binary rather than assumed, and `debian:trixie` beside it —
+      `xtask/tests/packaging.rs::should_run_every_new_package_check_the_specification_lists`,
       `::should_run_package_validation_on_the_oldest_supported_baseline_as_well_as_a_current_one`
-      (#109, §48.1–§48.3).
+      (#109, §48.1–§48.3, ADR-0531).
 - [ ] **P2 · The tested bytes are the published bytes.** The artifact package validation installed
       hashes identically to the asset later uploaded, the workflow builds once and promotes after
       proof, a public release needs no undocumented local step, final publication reruns the
