@@ -1968,13 +1968,13 @@ mutable inputs.
       signs and verifies itself before publishing, the verification is identity-constrained and
       fails closed, and the two tests own the verification path against a stand-in `cosign`. The
       first tag push produces the end-to-end proof this box waits for.
-- [ ] **P2 · Provenance binds seven fields to every artifact digest.** Repository, source commit,
+- [x] **P2 · Provenance binds seven fields to every artifact digest.** Repository, source commit,
       release tag, workflow identity, builder and toolchain version, artifact digest and build
       timestamp are bound by provenance the trusted workflow produces, and the release check
       verifies each digest appears in both the checksum manifest and the provenance before
       publication — `xtask/tests/provenance.rs::should_bind_all_seven_required_fields_to_every_artifact_digest`,
       `::should_verify_every_artifact_digest_against_the_checksum_manifest_and_the_provenance_before_publication`,
-      case `199` (#108, §47.4, §62.5).
+      case `199-release-provenance` (#108, §47.4, §62.5, ADR-0530).
 - [ ] **P2 · Package validation covers the nine new checks.** Version equality, the installed path,
       ownership and mode, absent private build paths, metadata matching the filename, uninstall
       leaving user configuration, reinstall, the login-shell smoke behaviour and the checksum match
@@ -2110,14 +2110,15 @@ non-interactive and deterministic with no terminal attached (#91).
       renders an initial frame within 500 ms p95, Profile L answers a frame or a truthful
       progress/cost response within 1.5 s, and cancelling the heaviest Profile L view releases the
       query task promptly and stops result growth (§61.2, §61.5, #22, #20).
-- [ ] **Package signature, checksum and provenance** — 199-release-provenance, written without
-      backticks because the case does not exist yet and §4.8's convention records an absent name
-      in prose: it belongs to H11, which delivers the checksums, the signature and the provenance
-      it asserts. The release
-      fixture produces `SHA256SUMS`, a verifying signature and provenance binding the seven fields
-      to each artifact digest; verification succeeds on the published bytes, fails on a tampered
-      one, and the installed package hashes identically to the published asset (§62.5, §62.6,
-      #106, #107, #108, #110, #115).
+- [x] **Package signature, checksum and provenance** — `199-release-provenance`: the release
+      tooling runs over the `ono` binary this image built, staged as a downloadable asset, and
+      produces `SHA256SUMS` and provenance binding the seven fields to each artifact digest;
+      verification succeeds on those bytes and refuses a tampered artifact, an absent provenance
+      and an absent signature. The signature itself is made and checked by the release workflow
+      rather than here: keyless Sigstore needs an OIDC token that exists only inside a release run
+      and a route to Fulcio that §40.2 denies on purpose, so the case proves the refusal instead
+      and §4.8.11's `#107` box carries the open end-to-end proof (§62.5, §62.6, #106, #107, #108,
+      #110, #115, ADR-0528, ADR-0529, ADR-0530).
 
 #### 4.8.14 Zero unresolved P0/P1, and what may be excluded (§66.9)
 

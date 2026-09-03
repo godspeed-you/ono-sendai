@@ -1,0 +1,91 @@
+# v0.4.1 §47 and §62.5–§62.6, and the fourteenth family of §40.3: package signature, checksum
+# and provenance (ADR-0528, ADR-0529, ADR-0530).
+#
+# The release tooling is run on real bytes rather than on a fixture of them: the artifact is the
+# `ono` binary this image built, staged as a downloadable asset, and the checksum manifest and
+# the provenance are produced by the same `xtask` a release runs. Verification is the reader's
+# own command, as an unprivileged user, with networking disabled.
+#
+# What the container cannot hold is the signature: keyless Sigstore needs an OIDC token that
+# exists only inside a release run and a route to Fulcio and Rekor that §40.2 denies on purpose
+# (ADR-0529). So the case proves the two halves that are decidable here — the digests and the
+# provenance — and proves that the missing signature is a *refusal* rather than a silence, which
+# is the property §2.3 asks for and the one a fail-open verifier would lose.
+case: a release states its digests and its provenance, and verification refuses a tampered one
+timeout: 120
+env: NO_COLOR=1
+run: |
+  set -e
+  release="$(mktemp -d)"
+  trap 'rm -rf "$release"' EXIT
+
+  # The artifact is the shell this image built, published the way a standalone binary is.
+  cp /usr/local/bin/ono "$release/ono-0.4.1-linux-x86_64"
+  cp /opt/ono-fixtures/release/build-inputs.json "$release/build-inputs.json"
+  # The attested bytes are the shell: it runs, and it answers a pipeline (§40.1).
+  ono --version
+  ono -c "get process | count | to json"
+
+  echo "--- the release states what it holds"
+  ono-release-tool checksums --dir "$release"
+  ono-release-tool provenance --dir "$release"
+  cat "$release/SHA256SUMS"
+
+  echo "--- the command a reader types"
+  ( cd "$release" && sha256sum --check --strict SHA256SUMS )
+
+  echo "--- the seven fields, bound to every digest"
+  grep -E '"(repository|source_commit|release_tag|toolchain|build_timestamp)"' \
+    "$release/build-provenance.json"
+
+  echo "--- verification, without the signature this container cannot make"
+  ONO_XTASK=/usr/local/bin/ono-release-tool \
+    ono-verify-release --dir "$release" --without-signature
+
+  echo "--- a tampered artifact is refused"
+  printf 'not the binary that was attested' > "$release/ono-0.4.1-linux-x86_64"
+  if ONO_XTASK=/usr/local/bin/ono-release-tool \
+       ono-verify-release --dir "$release" --without-signature; then
+    echo "TAMPERED RELEASE ACCEPTED"; exit 1
+  fi
+  echo "tampered release refused"
+
+  echo "--- a missing provenance is refused, not skipped"
+  cp /usr/local/bin/ono "$release/ono-0.4.1-linux-x86_64"
+  ono-release-tool checksums --dir "$release"
+  rm "$release/build-provenance.json"
+  if ONO_XTASK=/usr/local/bin/ono-release-tool \
+       ono-verify-release --dir "$release" --without-signature; then
+    echo "UNATTESTED RELEASE ACCEPTED"; exit 1
+  fi
+  echo "unattested release refused"
+
+  echo "--- a missing signature is refused, not skipped"
+  ono-release-tool provenance --dir "$release"
+  if ONO_XTASK=/usr/local/bin/ono-release-tool ono-verify-release --dir "$release"; then
+    echo "UNSIGNED RELEASE ACCEPTED"; exit 1
+  fi
+  echo "unsigned release refused"
+exit: 0
+# §47.1, §47.2: the manifest names every downloadable asset, and the reader's own command agrees.
+stdout-contains: ono-0.4.1-linux-x86_64
+stdout-contains: build-inputs.json
+stdout-contains: ono-0.4.1-linux-x86_64: OK
+stdout-contains: build-inputs.json: OK
+# §47.4: the seven fields are bound, and the timestamp is the release's own rather than the clock.
+stdout-contains: "repository": "godspeed-you/ono-sendai"
+stdout-contains: "release_tag": "v0.4.1"
+stdout-contains: "source_commit": "1111111111111111111111111111111111111111"
+stdout-contains: "build_timestamp": "2026-09-02T08:35:12Z"
+# §62.5: every digest present in both the checksum manifest and the provenance, before anything
+# is published.
+stdout-contains: binds every published artifact
+stdout-contains: verify-release: green
+# §2.3: each of the three failures is a refusal that names itself.
+stdout-contains: tampered release refused
+stdout-contains: unattested release refused
+stdout-contains: unsigned release refused
+stdout-not-contains: TAMPERED RELEASE ACCEPTED
+stdout-not-contains: UNATTESTED RELEASE ACCEPTED
+stdout-not-contains: UNSIGNED RELEASE ACCEPTED
+stdout-not-contains: panicked

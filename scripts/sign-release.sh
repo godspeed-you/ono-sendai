@@ -41,15 +41,20 @@ if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
 fi
 
 cd "$dir"
-if [[ ! -f SHA256SUMS ]]; then
-  echo "sign-release: SHA256SUMS is missing; there is nothing to sign (spec §47.1)" >&2
-  exit 1
-fi
+for required in SHA256SUMS build-provenance.json; do
+  if [[ ! -f "$required" ]]; then
+    echo "sign-release: $required is missing. A release signs the manifest that lists its" >&2
+    echo "sign-release: artifacts and the provenance that binds them, and both have to exist" >&2
+    echo "sign-release: before either is signed (spec §47.1)." >&2
+    exit 1
+  fi
+done
 
-printf '\n\033[1m== signing SHA256SUMS\033[0m\n'
+printf '\n\033[1m== signing SHA256SUMS and build-provenance.json\033[0m\n'
 cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+cosign sign-blob --yes --bundle build-provenance.json.sigstore.json build-provenance.json
 
 printf '\n\033[1m== checking what was just signed\033[0m\n'
-bash "$repo/scripts/verify-release.sh" --dir "$PWD" --without-provenance
+bash "$repo/scripts/verify-release.sh" --dir "$PWD"
 
-printf '\033[1;32msign-release: SHA256SUMS carries a verifiable signature\033[0m\n'
+printf '\033[1;32msign-release: the manifest and the provenance carry a verifiable signature\033[0m\n'

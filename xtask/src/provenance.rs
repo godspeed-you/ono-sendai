@@ -280,12 +280,13 @@ pub const CHECKSUM_MANIFEST: &str = "SHA256SUMS";
 /// The manifest cannot list itself, and it cannot list a signature over itself or a provenance
 /// document that quotes its digests without becoming circular. Everything else in the directory
 /// is something a reader can download, so everything else is listed (spec §47.2).
-const NOT_AN_ARTIFACT: [&str; 5] = [
+const NOT_AN_ARTIFACT: [&str; 6] = [
     CHECKSUM_MANIFEST,
     "SHA256SUMS.sig",
     "SHA256SUMS.pem",
     "SHA256SUMS.sigstore.json",
     PROVENANCE,
+    "build-provenance.json.sigstore.json",
 ];
 
 /// The name the signed build provenance is published under (spec §47.1).
@@ -420,6 +421,326 @@ pub fn check_checksums(directory: &Path) -> Vec<Problem> {
                 detail: format!(
                     "lists `{name}`, which is not beside it. The release is incomplete, or the \
                      manifest describes a different one (spec §47.2)"
+                ),
+            });
+        }
+    }
+    problems
+}
+
+// --- build provenance (spec §47.4, §62.5, ADR-0530) ---------------------------------------------
+
+/// The statement type, so a consumer can tell what it is reading.
+const PROVENANCE_TYPE: &str = "https://in-toto.io/Statement/v1";
+
+/// This project's predicate, versioned the way ADR-0451 versions the input manifest: the name
+/// changes when a field's meaning changes.
+const PREDICATE_TYPE: &str = "https://github.com/godspeed-you/ono-sendai/provenance/v1";
+
+/// The seven fields §47.4 binds, by the JSON pointer that carries each.
+///
+/// Six of them are properties of the build. The seventh — the artifact digest — is the `subject`
+/// list, and is checked separately because there is one of it per artifact.
+const REQUIRED_FIELDS: [(&str, &str); 7] = [
+    ("/predicate/repository", "repository"),
+    ("/predicate/source_commit", "source_commit"),
+    ("/predicate/release_tag", "release_tag"),
+    ("/predicate/workflow/name", "workflow.name"),
+    ("/predicate/workflow/run_id", "workflow.run_id"),
+    ("/predicate/builder/toolchain", "builder.toolchain"),
+    ("/predicate/build_timestamp", "build_timestamp"),
+];
+
+/// Assembles the build provenance for a release directory.
+///
+/// Every field comes from the release input manifest of Appendix H (ADR-0451) or from the
+/// environment of the run that is generating it — never from the artifacts. §47.4 requires the
+/// provenance to be produced by the trusted release workflow rather than supplied by the build,
+/// so the run's own environment wins wherever it says anything: a workflow can be trusted about
+/// its own identity, and a file that travelled with the build cannot.
+///
+/// # Errors
+///
+/// Returns the reason the directory or the input manifest could not be read.
+pub fn build_provenance(directory: &Path, inputs: Option<&Path>) -> Result<Value, String> {
+    let manifest = inputs.map_or_else(|| directory.join("build-inputs.json"), Path::to_path_buf);
+    let recorded: Value = std::fs::read_to_string(&manifest)
+        .map_err(|error| {
+            format!(
+                "cannot read {}: {error}. Provenance is written from the release input manifest \
+                 of Appendix H, so the manifest has to be beside the artifacts (ADR-0451)",
+                manifest.display()
+            )
+        })
+        .and_then(|text| {
+            serde_json::from_str(&text)
+                .map_err(|error| format!("{} is not JSON: {error}", manifest.display()))
+        })?;
+
+    let recorded_at = |pointer: &str| -> Value {
+        recorded
+            .pointer(pointer)
+            .filter(|value| !value.is_null())
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let from_run = |name: &str, pointer: &str| -> Value {
+        environment(name).map_or_else(|| recorded_at(pointer), Value::String)
+    };
+
+    let repository = from_run("GITHUB_REPOSITORY", "/run/repository");
+    let reference = from_run("GITHUB_REF", "/run/ref");
+    let tag = reference
+        .as_str()
+        .and_then(|reference| reference.strip_prefix("refs/tags/"))
+        .map_or_else(
+            || recorded_at("/source/tag"),
+            |tag| Value::String(tag.to_owned()),
+        );
+
+    let mut subjects = Vec::new();
+    for (name, bytes) in downloadable(directory)? {
+        subjects.push(json!({
+            "name": name,
+            "digest": { "sha256": crate::reproducibility::digest(&bytes) },
+        }));
+    }
+    // The checksum manifest is a subject in its own right: it is the file the signature covers,
+    // and a provenance that did not bind it would leave the one file a reader trusts unattested.
+    let manifest_path = directory.join(CHECKSUM_MANIFEST);
+    if let Ok(bytes) = std::fs::read(&manifest_path) {
+        subjects.push(json!({
+            "name": CHECKSUM_MANIFEST,
+            "digest": { "sha256": crate::reproducibility::digest(&bytes) },
+        }));
+    }
+    subjects.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+
+    Ok(json!({
+        "_type": PROVENANCE_TYPE,
+        "predicateType": PREDICATE_TYPE,
+        "subject": subjects,
+        "predicate": {
+            "schema": "ono.build-provenance.v1",
+            "repository": repository.clone(),
+            "source_commit": from_run("GITHUB_SHA", "/source/commit"),
+            "release_tag": tag,
+            "workflow": {
+                "name": from_run("GITHUB_WORKFLOW", "/run/workflow"),
+                "run_id": from_run("GITHUB_RUN_ID", "/run/id"),
+                "run_attempt": from_run("GITHUB_RUN_ATTEMPT", "/run/attempt"),
+                "ref": reference,
+                "runner": recorded_at("/run/runner"),
+            },
+            "builder": {
+                "id": builder_identity(&repository),
+                "toolchain": recorded_at("/toolchain/channel"),
+                "tools": recorded_at("/tools"),
+            },
+            "build_timestamp": build_timestamp(&recorded_at("/source_date_epoch")),
+            "inputs": {
+                "manifest": manifest
+                    .file_name()
+                    .map_or(Value::Null, |name| Value::String(name.to_string_lossy().into_owned())),
+                "lockfile_sha256": recorded_at("/lockfile/sha256"),
+                "containers": recorded_at("/containers"),
+            },
+        },
+    }))
+}
+
+/// The workflow that is allowed to produce provenance, spelled the way a verifier pins it.
+///
+/// The same identity `scripts/verify-release.sh` demands of the signature, so "who signed this"
+/// and "who says it was built here" are one answer rather than two (ADR-0529).
+fn builder_identity(repository: &Value) -> Value {
+    repository.as_str().map_or(Value::Null, |repository| {
+        Value::String(format!(
+            "https://github.com/{repository}/.github/workflows/release.yml"
+        ))
+    })
+}
+
+/// `SOURCE_DATE_EPOCH` as an RFC 3339 instant in UTC.
+///
+/// §46.2 forbids a wall-clock build time where a reproducible equivalent exists, and one does:
+/// the epoch every artifact in the release is already stamped with. A provenance dated by the
+/// moment it was written would disagree with the packages it describes.
+fn build_timestamp(epoch: &Value) -> Value {
+    let Some(seconds) = epoch.as_str().and_then(|text| text.parse::<i64>().ok()) else {
+        return Value::Null;
+    };
+    let (days, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
+    let (hour, minute, second) = (rest / 3600, (rest % 3600) / 60, rest % 60);
+
+    // Days since 1970-01-01 to a civil date, by Howard Hinnant's algorithm.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = era * 400 + year_of_era + i64::from(month <= 2);
+
+    Value::String(format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
+    ))
+}
+
+/// Writes `build-provenance.json` into a release directory.
+///
+/// # Errors
+///
+/// Returns the reason the document could not be assembled or written.
+pub fn write_provenance(directory: &Path, inputs: Option<&Path>) -> Result<PathBuf, String> {
+    let document = build_provenance(directory, inputs)?;
+    let mut text = serde_json::to_string_pretty(&document)
+        .map_err(|error| format!("cannot serialise the provenance: {error}"))?;
+    text.push('\n');
+    let path = directory.join(PROVENANCE);
+    std::fs::write(&path, text)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    Ok(path)
+}
+
+/// Checks the provenance against the artifacts and the checksum manifest beside it (spec §62.5).
+///
+/// Three questions, all of which have to hold before publication: is every one of §47.4's fields
+/// bound; is every published artifact a subject at the digest it actually has; and does the
+/// checksum manifest agree with the provenance about every one of them.
+#[must_use]
+pub fn check_provenance(directory: &Path) -> Vec<Problem> {
+    let path = directory.join(PROVENANCE);
+    let location = path.display().to_string();
+    let document: Value = match std::fs::read_to_string(&path)
+        .map_err(|error| error.to_string())
+        .and_then(|text| serde_json::from_str(&text).map_err(|error| error.to_string()))
+    {
+        Ok(document) => document,
+        Err(error) => {
+            return vec![Problem {
+                location,
+                detail: format!(
+                    "cannot be read: {error}. A release publishes provenance beside the packages, \
+                     bound to every artifact digest (spec §47.1, §47.4)"
+                ),
+            }];
+        }
+    };
+
+    let mut problems = Vec::new();
+    for (pointer, field) in REQUIRED_FIELDS {
+        let bound = document
+            .pointer(pointer)
+            .is_some_and(|value| value.as_str().is_some_and(|text| !text.is_empty()));
+        if !bound {
+            problems.push(Problem {
+                location: location.clone(),
+                detail: format!(
+                    "does not bind `{field}`. §47.4 names seven things provenance binds, and an \
+                     unbound one is a question this document was written to answer"
+                ),
+            });
+        }
+    }
+
+    let subjects: Vec<(String, String)> = document["subject"]
+        .as_array()
+        .map(|subjects| {
+            subjects
+                .iter()
+                .filter_map(|subject| {
+                    Some((
+                        subject["name"].as_str()?.to_owned(),
+                        subject["digest"]["sha256"].as_str()?.to_owned(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let published = match downloadable(directory) {
+        Ok(published) => published,
+        Err(error) => {
+            return vec![Problem {
+                location,
+                detail: error,
+            }];
+        }
+    };
+    let manifest = std::fs::read(directory.join(CHECKSUM_MANIFEST)).ok();
+    let listed: Vec<(String, String)> = manifest
+        .as_ref()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.to_owned(), fields.next()?.to_owned()))
+        })
+        .collect();
+
+    // §66.7: all published artifacts, and the manifest that lists them.
+    let mut expected: Vec<(String, String)> = published
+        .iter()
+        .map(|(name, bytes)| (name.clone(), crate::reproducibility::digest(bytes)))
+        .collect();
+    if let Some(bytes) = &manifest {
+        expected.push((
+            CHECKSUM_MANIFEST.to_owned(),
+            crate::reproducibility::digest(bytes),
+        ));
+    }
+
+    for (name, digest) in &expected {
+        match subjects.iter().find(|(subject, _)| subject == name) {
+            None => problems.push(Problem {
+                location: location.clone(),
+                detail: format!(
+                    "does not name `{name}`, which the release publishes. §66.7 asks provenance \
+                     to bind all published artifacts, not the binary while the packages go \
+                     unattested"
+                ),
+            }),
+            Some((_, bound)) if bound != digest => problems.push(Problem {
+                location: location.clone(),
+                detail: format!(
+                    "binds {bound} to `{name}`, and the file beside it hashes to {digest}. The \
+                     artifact is not the one this provenance describes (spec §62.5, §48.4)"
+                ),
+            }),
+            Some(_) => {}
+        }
+        if name == CHECKSUM_MANIFEST {
+            continue;
+        }
+        match listed.iter().find(|(_, listed)| listed == name) {
+            None => {}
+            Some((checksum, _)) if checksum != digest => problems.push(Problem {
+                location: location.clone(),
+                detail: format!(
+                    "and `{CHECKSUM_MANIFEST}` disagree about `{name}`: {digest} against \
+                     {checksum} (spec §62.5)"
+                ),
+            }),
+            Some(_) => {}
+        }
+    }
+
+    for (name, _) in &subjects {
+        if !expected.iter().any(|(published, _)| published == name) {
+            problems.push(Problem {
+                location: location.clone(),
+                detail: format!(
+                    "names `{name}`, which is not in the release. The provenance describes a \
+                     different set of bytes (spec §62.5)"
                 ),
             });
         }

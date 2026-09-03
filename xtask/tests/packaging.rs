@@ -23,7 +23,7 @@ use ono_testkit::SkipReason;
 use ono_testkit::scratch;
 
 mod support;
-use support::repo;
+use support::{repo, workflow_job};
 
 /// A private target directory holding a stand-in `release/ono` — this test executable, which
 /// is a genuine ELF binary so dependency scanners see what they see on the real thing.
@@ -717,18 +717,6 @@ fn should_normalize_file_ownership_and_mode_in_every_produced_package() {
 }
 
 // --- two clean builds of one commit (spec §46.1, §46.5, §46.6, ADR-0527) ------------------------
-
-/// One job of a workflow file: everything from `  <name>:` to the next job at that indent.
-fn workflow_job(workflow: &str, name: &str) -> String {
-    let mut lines = workflow
-        .lines()
-        .skip_while(|line| *line != format!("  {name}:"));
-    let head = lines.next().unwrap_or_else(|| panic!("no `{name}` job"));
-    std::iter::once(head)
-        .chain(lines.take_while(|line| line.starts_with("   ") || line.trim().is_empty()))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 
 /// The SHA-256 of some bytes, spelled the way `sha256sum` spells it.
 fn sha256_of(bytes: &[u8]) -> String {

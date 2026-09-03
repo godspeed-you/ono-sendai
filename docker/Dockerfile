@@ -32,10 +32,11 @@ COPY docs/spec ./docs/spec
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
     find crates xtask fuzz docs/spec Cargo.toml Cargo.lock -type f -exec touch {} + && \
-    cargo build --release --package ono-cli --package ono-kuang-sdk --locked \
+    cargo build --release --package ono-cli --package ono-kuang-sdk --package xtask --locked \
     && install -m 0755 target/release/ono /usr/local/bin/ono \
     && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin \
-    && install -m 0755 target/release/kuang-sign /usr/local/bin/kuang-sign
+    && install -m 0755 target/release/kuang-sign /usr/local/bin/kuang-sign \
+    && install -m 0755 target/release/xtask /usr/local/bin/ono-release-tool
 
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS runtime
 
@@ -52,6 +53,11 @@ COPY --from=builder /usr/local/bin/ono /usr/local/bin/ono
 COPY --from=builder /usr/local/bin/kuang-example-plugin /usr/local/bin/kuang-example-plugin
 # The signing tool the SDK ships, so a case can be a package author (spec §31.36, ADR-0311).
 COPY --from=builder /usr/local/bin/kuang-sign /usr/local/bin/kuang-sign
+# The release tooling of §47, and the verification script a reader runs. Case 199 makes a release
+# out of the binary this image built and checks it the way a reader would — with no network, as
+# an unprivileged user, against real bytes (ADR-0530).
+COPY --from=builder /usr/local/bin/ono-release-tool /usr/local/bin/ono-release-tool
+COPY scripts/verify-release.sh /usr/local/bin/ono-verify-release
 
 # A non-root user, so privilege boundaries are exercised the way real users meet them.
 RUN useradd --create-home --shell /usr/local/bin/ono case

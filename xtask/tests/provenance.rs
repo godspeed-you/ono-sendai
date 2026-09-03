@@ -14,11 +14,15 @@
     reason = "AGENTS.md §16: a helper shared by tests states its preconditions the same way a test does"
 )]
 
+use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ono_testkit::{Scratch, scratch};
+
+mod support;
+use support::workflow_job;
 
 fn this_repository() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -592,5 +596,217 @@ fn should_fail_verification_when_the_checksum_manifest_is_altered() {
         !verified && report.contains("SHA256SUMS.sigstore.json"),
         "a release with no signature over its checksum manifest was accepted, so verification \
          fails open (spec §2.3, §47.1):\n{report}"
+    );
+}
+
+// --- provenance (spec §47.4, §62.5, ADR-0530) ---------------------------------------------------
+
+/// The build input manifest a release hands to provenance (ADR-0451), as a fixture.
+fn staged_build_inputs(directory: &Path) {
+    std::fs::write(
+        directory.join("build-inputs.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "ono.build-inputs.v1",
+            "source": { "commit": "0".repeat(40), "tag": "v9.9.9", "version": "9.9.9" },
+            "toolchain": { "file": "rust-toolchain.toml", "channel": "1.94" },
+            "lockfile": { "path": "Cargo.lock", "sha256": "a".repeat(64) },
+            "source_date_epoch": "1700000000",
+            "run": {
+                "workflow": "release",
+                "repository": "godspeed-you/ono-sendai",
+                "id": "424242",
+                "attempt": "1",
+                "ref": "refs/tags/v9.9.9",
+                "runner": { "os": "Linux", "arch": "X64" }
+            }
+        }))
+        .expect("the fixture serialises")
+            + "\n",
+    )
+    .expect("the build input manifest");
+}
+
+/// Runs `xtask provenance` against a release directory.
+fn provenance(arguments: &[&str]) -> (bool, String) {
+    let result = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("provenance")
+        .args(arguments)
+        .current_dir(this_repository())
+        .env_remove("GITHUB_REPOSITORY")
+        .env_remove("GITHUB_SHA")
+        .env_remove("GITHUB_REF")
+        .env_remove("GITHUB_RUN_ID")
+        .env_remove("GITHUB_WORKFLOW")
+        .output()
+        .unwrap_or_else(|error| panic!("xtask must be runnable in the gate: {error}"));
+    let mut text = String::from_utf8_lossy(&result.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&result.stderr));
+    (result.status.success(), text)
+}
+
+/// A release directory with its checksum manifest, its input manifest and its provenance.
+fn attested_release(scratch: &Scratch, name: &str) -> PathBuf {
+    let directory = release_directory(scratch, name);
+    staged_build_inputs(&directory);
+    let path = directory.to_str().expect("a UTF-8 path");
+    let (written, report) = checksums(&["--dir", path]);
+    assert!(written, "`xtask checksums` failed:\n{report}");
+    let (attested, report) = provenance(&["--dir", path]);
+    assert!(attested, "`xtask provenance` failed:\n{report}");
+    directory
+}
+
+#[test]
+fn should_bind_all_seven_required_fields_to_every_artifact_digest() {
+    let scratch = scratch();
+    let directory = attested_release(&scratch, "release");
+    let document: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(directory.join("build-provenance.json"))
+            .expect("build-provenance.json is published beside the packages (spec §47.1)"),
+    )
+    .expect("the provenance is JSON");
+
+    // §47.4's list, field by field. None of them may be null: an unbound field is a question the
+    // provenance was written to answer.
+    for (pointer, what) in [
+        ("/predicate/repository", "the repository it came from"),
+        ("/predicate/source_commit", "the commit it was built from"),
+        ("/predicate/release_tag", "the tag it is published under"),
+        ("/predicate/workflow/name", "the workflow that produced it"),
+        ("/predicate/workflow/run_id", "the run that produced it"),
+        ("/predicate/builder/id", "the builder"),
+        ("/predicate/builder/toolchain", "the toolchain version"),
+        ("/predicate/build_timestamp", "when it was built"),
+    ] {
+        let value = document.pointer(pointer);
+        assert!(
+            value.is_some_and(|value| value.as_str().is_some_and(|text| !text.is_empty())),
+            "the provenance does not bind {what} (`{pointer}` is {value:?}), so it attests to \
+             less than §47.4 requires:\n{document:#}"
+        );
+    }
+
+    // §46.2 again: the timestamp is the release's own, not the moment the document was written.
+    assert_eq!(
+        document
+            .pointer("/predicate/build_timestamp")
+            .and_then(serde_json::Value::as_str),
+        Some("2023-11-14T22:13:20Z"),
+        "the build timestamp is not SOURCE_DATE_EPOCH, so a wall clock reached the provenance"
+    );
+
+    // §66.7: all published artifacts, not the binary while the packages go unattested. The
+    // checksum manifest is a subject too — it is what the signature covers, and a provenance
+    // that did not bind it would leave the one file a reader trusts unattested.
+    let subjects: BTreeMap<String, String> = document["subject"]
+        .as_array()
+        .expect("the subjects")
+        .iter()
+        .map(|subject| {
+            (
+                subject["name"].as_str().expect("a name").to_owned(),
+                subject["digest"]["sha256"]
+                    .as_str()
+                    .expect("a sha256")
+                    .to_owned(),
+            )
+        })
+        .collect();
+    for artifact in [
+        "ono_0.4.1_amd64.deb",
+        "ono_0.4.1_arm64.deb",
+        "ono-0.4.1-1.x86_64.rpm",
+        "ono-0.4.1-1.aarch64.rpm",
+        "build-inputs.json",
+        "SHA256SUMS",
+    ] {
+        let digest = subjects
+            .get(artifact)
+            .unwrap_or_else(|| panic!("`{artifact}` is published and unattested:\n{document:#}"));
+        let bytes = std::fs::read(directory.join(artifact)).expect("the artifact");
+        assert_eq!(
+            *digest,
+            xtask::reproducibility::digest(&bytes),
+            "the provenance binds a digest `{artifact}` does not have"
+        );
+    }
+}
+
+#[test]
+fn should_verify_every_artifact_digest_against_the_checksum_manifest_and_the_provenance_before_publication()
+ {
+    let scratch = scratch();
+    let directory = attested_release(&scratch, "release");
+    let path = directory.to_str().expect("a UTF-8 path").to_owned();
+
+    let (verified, report) = provenance(&["--dir", &path, "--verify"]);
+    assert!(
+        verified,
+        "the provenance this repository just wrote does not verify:\n{report}"
+    );
+
+    // §62.5: each artifact digest is present in checksum *and* provenance output. An asset that
+    // reaches the release after the provenance was written is in neither.
+    std::fs::write(
+        directory.join("ono-0.4.1-linux-x86_64.tar.gz"),
+        "a late arrival",
+    )
+    .expect("a late artifact");
+    let (verified, report) = provenance(&["--dir", &path, "--verify"]);
+    assert!(
+        !verified && report.contains("ono-0.4.1-linux-x86_64.tar.gz"),
+        "an artifact absent from the provenance passed verification:\n{report}"
+    );
+    std::fs::remove_file(directory.join("ono-0.4.1-linux-x86_64.tar.gz")).expect("the tarball");
+
+    // A provenance that binds a digest the artifact does not have.
+    let directory = attested_release(&scratch, "swapped");
+    let path = directory.to_str().expect("a UTF-8 path").to_owned();
+    let document = std::fs::read_to_string(directory.join("build-provenance.json"))
+        .expect("the provenance")
+        .replace(
+            &xtask::reproducibility::digest(
+                &std::fs::read(directory.join("ono_0.4.1_amd64.deb")).expect("the package"),
+            ),
+            &"b".repeat(64),
+        );
+    std::fs::write(directory.join("build-provenance.json"), document).expect("the swap");
+    let (verified, report) = provenance(&["--dir", &path, "--verify"]);
+    assert!(
+        !verified && report.contains("ono_0.4.1_amd64.deb"),
+        "a provenance binding a digest no artifact has passed verification:\n{report}"
+    );
+
+    // And an unbound field is refused rather than published as an attestation of nothing.
+    let directory = attested_release(&scratch, "unbound");
+    let path = directory.to_str().expect("a UTF-8 path").to_owned();
+    let document = std::fs::read_to_string(directory.join("build-provenance.json"))
+        .expect("the provenance")
+        .replace("\"v9.9.9\"", "null");
+    std::fs::write(directory.join("build-provenance.json"), document).expect("the unbinding");
+    let (verified, report) = provenance(&["--dir", &path, "--verify"]);
+    assert!(
+        !verified && report.contains("release_tag"),
+        "a provenance with an unbound field passed verification (spec §47.4):\n{report}"
+    );
+
+    // The workflow verifies before it publishes, rather than after. §49.1 puts signing and
+    // provenance ahead of publication, and §62.5 says "before publication" in as many words.
+    let workflow = std::fs::read_to_string(this_repository().join(".github/workflows/release.yml"))
+        .expect("the release workflow");
+    let publish = workflow_job(&workflow, "publish");
+    let attested = publish
+        .find("xtask -- provenance")
+        .expect("the publishing job generates provenance (spec §47.4)");
+    let verified = publish
+        .find("verify-release.sh")
+        .expect("the publishing job verifies what it is about to publish (spec §62.5)");
+    let published = publish
+        .find("action-gh-release")
+        .expect("the publishing job attaches the assets");
+    assert!(
+        attested < verified && verified < published,
+        "the publishing job does not generate provenance, then verify, then publish, so it can \
+         attach assets nothing checked (spec §49.1, §62.5):\n{publish}"
     );
 }

@@ -24,6 +24,7 @@ fn main() -> ExitCode {
         Some("build-manifest") => build_manifest(&rest),
         Some("compare-builds") => compare_builds(&rest),
         Some("checksums") => checksums(&rest),
+        Some("provenance") => provenance_task(&rest),
         Some("perf") => perf(&rest),
         Some("docs") => generate_docs(),
         Some("conformance") => generate_conformance(),
@@ -59,6 +60,10 @@ fn usage() {
     eprintln!(
         "  checksums      write SHA256SUMS over a release directory, or check it \
 (spec section 47.2) [--dir <path>] [--verify]"
+    );
+    eprintln!(
+        "  provenance     write build provenance over a release directory, or check it \
+(spec section 47.4) [--dir <path>] [--inputs <path>] [--verify]"
     );
     eprintln!(
         "  perf           run the performance benchmarks of spec section 37.1 \
@@ -177,6 +182,61 @@ fn checksums(args: &[String]) -> ExitCode {
         }
         Err(error) => {
             eprintln!("checksums: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Writes or verifies the build provenance of a release directory (spec section 47.4, ADR-0530).
+fn provenance_task(args: &[String]) -> ExitCode {
+    let mut directory = PathBuf::from("dist");
+    let mut inputs: Option<PathBuf> = None;
+    let mut verify = false;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--dir" => match rest.next() {
+                Some(path) => directory = PathBuf::from(path),
+                None => return usage_error("provenance: --dir needs a path"),
+            },
+            "--inputs" => match rest.next() {
+                Some(path) => inputs = Some(PathBuf::from(path)),
+                None => return usage_error("provenance: --inputs needs a path"),
+            },
+            "--verify" => verify = true,
+            other => match other.strip_prefix("--dir=") {
+                Some(path) => directory = PathBuf::from(path),
+                None => match other.strip_prefix("--inputs=") {
+                    Some(path) => inputs = Some(PathBuf::from(path)),
+                    None => return usage_error(&format!("provenance: unknown argument `{other}`")),
+                },
+            },
+        }
+    }
+
+    if verify {
+        let problems = provenance::check_provenance(&directory);
+        if problems.is_empty() {
+            println!(
+                "provenance: {}/{} binds every published artifact",
+                directory.display(),
+                provenance::PROVENANCE
+            );
+            return ExitCode::SUCCESS;
+        }
+        for problem in &problems {
+            eprintln!("provenance: {} — {}", problem.location, problem.detail);
+        }
+        return ExitCode::FAILURE;
+    }
+
+    match provenance::write_provenance(&directory, inputs.as_deref()) {
+        Ok(path) => {
+            println!("provenance: wrote {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("provenance: {error}");
             ExitCode::FAILURE
         }
     }

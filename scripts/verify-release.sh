@@ -43,7 +43,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The release tooling, however this machine has it. A reader with the repository checked out
+# builds it; the acceptance container and a release runner are handed one that is already built,
+# because neither has a workspace to compile.
+release_tool() {
+  if [[ -n "${ONO_XTASK:-}" ]]; then
+    "$ONO_XTASK" "$@"
+  else
+    (cd "$repo" && cargo run --locked --quiet --package xtask -- "$@")
+  fi
+}
+
 cd "$dir"
+dir="$PWD"
 
 failed=0
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
@@ -99,8 +112,7 @@ if [[ $provenance -eq 1 ]]; then
   if [[ ! -f "$PROVENANCE" ]]; then
     fail "$PROVENANCE is not here, so nothing binds these digests to the build that made them \
 (spec §47.1, §47.4)"
-  elif output="$(cd "$repo" && cargo run --locked --quiet --package xtask -- \
-        provenance --dir "$OLDPWD" --verify 2>&1)"; then
+  elif output="$(release_tool provenance --dir "$PWD" --verify 2>&1)"; then
     printf '%s\n' "$output"
     ok "every digest appears in both $MANIFEST and $PROVENANCE"
   else
