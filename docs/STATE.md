@@ -285,6 +285,19 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#3, fourth increment (2026-09-03): `process.exec` and `network.connect`.** ADR-0570. A
+  program is checked as the resolved path against the `programs` glob scope (ADR-0015 T11) and
+  runs through the same confined spawn a native package gets, in a directory of its own with
+  only the environment the package gave it; its lines and exit status come back as a stream.
+  A connection is checked against `hosts` and `ports` — a port scope now accepts `*` and
+  `low-high` — audited either way, and held by the shell: the package reads it with
+  `streams.next` and writes it with `streams.emit`, `tcp` only. `network.request`,
+  `network.listen` and the `views` calls answer `provider.unavailable` naming the brokered path
+  that exists. Proven by two conformance cases over the fake host and two runs through the
+  binary (`/bin/echo` under the real confinement, a loopback listener through the broker) and
+  acceptance case 215. What the increment found: on a host where `/bin/echo` is a link into a
+  coreutils bundle, the resolved-path check refuses `/bin/**`, which is the check doing its job
+  and the reason the tests grant the bundle's directory.
 - **#3, third increment (2026-09-03): the wasm-component tier.** ADR-0569. `runtime.kind:
   wasm-component` loads: the component runs inside the WebAssembly component runtime Ono embeds
   (`wasmtime` 47, the release the pinned toolchain supports), with a WASI context that holds

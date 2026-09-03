@@ -39,6 +39,8 @@ capabilities:
     - object.read
     - history.read
     - secret.use: {secrets: ["api-token"]}
+    - process.exec: {programs: ["/bin/**", "/usr/bin/**"]}
+    - network.connect: {hosts: ["127.0.0.1"], ports: ["*"]}
 network:
   outbound: none
 "#,
@@ -192,6 +194,60 @@ fn should_say_the_shell_has_no_secret_store_and_record_the_attempt() {
     assert!(
         shown.contains(r#"{"result":"failed"}"#),
         "the refused request is in the trail with its outcome; stdout {shown:?} stderr {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_run_a_program_for_a_granted_package_under_the_hosts_confinement() {
+    let home = scratch();
+    plugin_home(&home);
+    // The check is against the resolved program (ADR-0015 T11), so the scope names where
+    // `/bin/echo` really lives on this host.
+    let echo = std::fs::canonicalize("/bin/echo").expect("/bin/echo exists");
+    let bundle = echo.parent().expect("a directory").display().to_string();
+    let run = ono(
+        &home,
+        &format!(
+            r#"grant capability process.exec --plugin dev.example.echo --scope "programs={bundle}/**" | count; load plugin dev.example.echo; echo:exec --program /bin/echo --arguments "[\"through\", \"the\", \"broker\"]" | to json"#
+        ),
+    );
+    run.assert_success();
+    let shown = run.stdout();
+    assert!(
+        shown.contains("\"stdout: through the broker\"") && shown.contains("\"exited: 0\""),
+        "the program's lines and its exit status come back as a stream; stdout {shown:?} stderr {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_broker_a_tcp_connection_for_a_granted_package() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+    let port = listener.local_addr().expect("addr").port();
+    std::thread::spawn(move || {
+        if let Ok((mut socket, _)) = listener.accept() {
+            let mut buffer = [0u8; 64];
+            if let Ok(count) = socket.read(&mut buffer) {
+                let _ = socket.write_all(b"pong: ");
+                let _ = socket.write_all(&buffer[..count]);
+            }
+        }
+    });
+    let home = scratch();
+    plugin_home(&home);
+    let run = ono(
+        &home,
+        &format!(
+            r#"grant capability network.connect --plugin dev.example.echo --scope "hosts=127.0.0.1" | count; load plugin dev.example.echo; echo:connect --host 127.0.0.1 --port {port} --send "ping" | to json"#
+        ),
+    );
+    run.assert_success();
+    let shown = run.stdout();
+    assert!(
+        shown.contains("\"pong: ping\""),
+        "the bytes went out and came back through the broker; stdout {shown:?} stderr {:?}",
         run.stderr()
     );
 }

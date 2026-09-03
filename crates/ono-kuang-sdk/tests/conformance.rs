@@ -87,6 +87,8 @@ capabilities:
     - history.read
     - history.write
     - secret.use: {secrets: ["api-token"]}
+    - process.exec: {programs: ["/bin/**", "/usr/bin/**"]}
+    - network.connect: {hosts: ["127.0.0.1"], ports: ["8080"]}
 network:
   outbound: none
 "#
@@ -123,6 +125,8 @@ fn fully_granted(host: TestHost) -> TestHost {
         .grant(Capability::HistoryRead)
         .grant(Capability::HistoryWrite)
         .grant(Capability::SecretUse)
+        .grant(Capability::ProcessExec)
+        .grant(Capability::NetworkConnect)
 }
 
 fn values_of(events: &[StreamEvent]) -> Vec<Value> {
@@ -1307,6 +1311,44 @@ impl ono_kuang_supervisor::HostServices for FakeHost {
             json!({"target": object, "operation": "process.signal", "status": "success", "changed": true, "message": format!("sent {signal}")}),
         )
     }
+    async fn process_exec(
+        &self,
+        _package: &str,
+        program: String,
+        arguments: Vec<String>,
+        _environment: Vec<(String, String)>,
+    ) -> Result<ono_kuang_supervisor::LiveStream, ono_kuang_supervisor::HostError> {
+        Ok(ono_kuang_supervisor::ready_stream(vec![
+            json!({"stream": "stdout", "line": format!("ran {program} {}", arguments.join(" "))}),
+            json!({"stream": "stderr", "line": "a note"}),
+            json!({"exited": 0}),
+        ]))
+    }
+    async fn network_connect(
+        &self,
+        host: String,
+        port: u16,
+        _protocol: String,
+    ) -> Result<ono_kuang_supervisor::Connection, ono_kuang_supervisor::HostError> {
+        // A loopback echo: what the package sends comes back, prefixed with where it went.
+        let (in_tx, incoming) = tokio::sync::mpsc::channel(8);
+        let (outgoing, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
+        tokio::spawn(async move {
+            while let Some(bytes) = out_rx.recv().await {
+                let mut reply = format!("{host}:{port} echoes ").into_bytes();
+                reply.extend(bytes);
+                let chunk = Value::Bytes(bytes::Bytes::from(reply));
+                if in_tx
+                    .send(Ok(json!({"bytes": ono_value::to_json(&chunk)})))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Ok(ono_kuang_supervisor::Connection { incoming, outgoing })
+    }
     async fn secret_request(
         &self,
         _package: &str,
@@ -1741,6 +1783,119 @@ async fn should_hold_a_component_to_the_capability_broker_like_a_process() {
             .iter()
             .any(|event| event.result == AuditResult::Denied),
         "the refusal is in the trail"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- process.exec and network.connect (spec §31.12, §31.21; ADR-0570) -------------------------
+
+#[tokio::test]
+async fn should_run_a_program_within_the_granted_scope_and_stream_what_it_wrote() {
+    // The check is against the resolved program (ADR-0015 T11): on a host where `/bin/echo`
+    // is a link into a coreutils bundle, the bundle's directory is what the scope has to name.
+    let echo = std::fs::canonicalize("/bin/echo").expect("/bin/echo exists");
+    let bundle = echo.parent().expect("a directory").display().to_string();
+    let mut scope = JsonMap::new();
+    scope.insert("programs".to_owned(), json!([format!("{bundle}/**")]));
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .host(std::sync::Arc::new(FakeHost::default()))
+        .grant_scoped(Capability::ProcessExec, scope)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.exec",
+            args(&[
+                ("program", json!("/bin/echo")),
+                ("arguments", json!(["hello"])),
+            ]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    let shown = strings(&events);
+    assert!(
+        shown[0].starts_with("stdout: ran ") && shown[0].ends_with("echo hello"),
+        "the resolved program ran with its arguments; got {shown:?}"
+    );
+    assert_eq!(shown.last().map(String::as_str), Some("exited: 0"));
+
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.exec",
+            args(&[
+                ("program", json!("/usr/sbin/reboot")),
+                ("arguments", json!([])),
+            ]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    assert_eq!(
+        result.error.expect("structured").name,
+        "capability.scope_violation",
+        "a program outside the granted globs never reaches the host (ADR-0015 T11)"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_broker_a_connection_within_the_granted_hosts_and_ports_and_refuse_another_port() {
+    let mut scope = JsonMap::new();
+    scope.insert("hosts".to_owned(), json!(["127.0.0.1"]));
+    scope.insert("ports".to_owned(), json!(["8080"]));
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .host(std::sync::Arc::new(FakeHost::default()))
+        .grant_scoped(Capability::NetworkConnect, scope)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.connect",
+            args(&[
+                ("host", json!("127.0.0.1")),
+                ("port", json!(8080)),
+                ("send", json!("ping")),
+            ]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(
+        strings(&events),
+        ["127.0.0.1:8080 echoes ping"],
+        "bytes go out through streams.emit and come back through streams.next"
+    );
+
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.connect",
+            args(&[("host", json!("127.0.0.1")), ("port", json!(22))]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    assert_eq!(
+        result.error.expect("structured").name,
+        "capability.scope_violation"
+    );
+    let audit = plugin.audit();
+    assert!(
+        audit
+            .iter()
+            .any(|event| event.capability == "network.connect"
+                && event.result == AuditResult::Denied),
+        "every destination is audited, the refused one too (spec §31.21)"
     );
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)

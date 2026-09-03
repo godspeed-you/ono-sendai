@@ -87,6 +87,16 @@ pub mod method {
     pub const HISTORY_APPEND: &str = "history.append";
     /// Plugin → host: a signal to a process, within the granted list (spec §31.12).
     pub const PROCESS_SIGNAL: &str = "process.signal";
+    /// Plugin → host: run a program within the granted `programs` scope (spec §31.12).
+    pub const PROCESS_EXEC: &str = "process.exec";
+    /// Plugin → host: a brokered outbound connection (spec §31.21).
+    pub const NETWORK_CONNECT: &str = "network.connect";
+    /// Plugin → host: a brokered request the host performs (spec §31.21).
+    pub const NETWORK_REQUEST: &str = "network.request";
+    /// Plugin → host: a brokered listener (spec §31.21).
+    pub const NETWORK_LISTEN: &str = "network.listen";
+    /// Plugin → host: close a brokered connection or listener.
+    pub const NETWORK_CLOSE: &str = "network.close";
     /// Plugin → host: an opaque secret handle by name (spec §31.20).
     pub const SECRETS_REQUEST: &str = "secrets.request";
     /// Plugin → host: invalidate a secret handle (spec §31.20).

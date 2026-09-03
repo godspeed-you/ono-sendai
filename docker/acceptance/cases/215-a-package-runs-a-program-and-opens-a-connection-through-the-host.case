@@ -1,0 +1,60 @@
+# Issue #3 (c), ADR-0570: `process.exec` and `network.connect`. A package granted `process.exec`
+# for a directory runs a program there through the host's own confinement and reads its lines
+# and exit status as a stream; a program outside the granted globs is refused before the host is
+# asked; a connection outside the granted ports is refused and audited; a request the host does
+# not serve says so rather than pretending.
+case: a package runs a program and opens a connection through the host
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - process.exec: {programs: ["/bin/**", "/usr/bin/**"]}
+      - network.connect: {hosts: ["127.0.0.1"], ports: ["1-1024"]}
+  network:
+    outbound: none
+  MANIFEST
+  echo=$(readlink -f /bin/echo); bundle=$(dirname "$echo")
+
+  echo "== a program inside the scope runs under the host's confinement (§31.12, ADR-0015 T11) =="
+  ono -c "grant capability process.exec --plugin dev.example.echo --scope \"programs=$bundle/**\" | count; load plugin dev.example.echo; echo:exec --program /bin/echo --arguments '[\"through\", \"the\", \"broker\"]' | to json"
+  ono -c "grant capability process.exec --plugin dev.example.echo --scope \"programs=$bundle/**\" | count; load plugin dev.example.echo; echo:exec --program /bin/echo --arguments '[\"through\", \"the\", \"broker\"]' | to json" | grep -q 'stdout: through the broker' && echo "program-ran-through-the-broker"
+  ono -c "grant capability process.exec --plugin dev.example.echo --scope \"programs=$bundle/**\" | count; load plugin dev.example.echo; echo:exec --program /bin/echo --arguments '[\"x\"]' | to json" | grep -q 'exited: 0' && echo "exit-status-reported"
+
+  echo "== a program outside the granted globs never reaches the host =="
+  export XDG_STATE_HOME="$home/state-outside"
+  ono -c "grant capability process.exec --plugin dev.example.echo --scope \"programs=$bundle/**\" | count; load plugin dev.example.echo; echo:exec --program /usr/sbin/nologin --arguments '[]' | to json; get audit --plugin dev.example.echo | where action == \"process.exec\" | select result | to json" | grep -q '"result":"denied"' && echo "program-outside-scope-denied"
+
+  echo "== a connection outside the granted ports is refused and audited (§31.21) =="
+  export XDG_STATE_HOME="$home/state-port"
+  ono -c 'grant capability network.connect --plugin dev.example.echo --scope "hosts=127.0.0.1" | count; load plugin dev.example.echo; echo:connect --host 127.0.0.1 --port 65000 | to json; get audit --plugin dev.example.echo | where action == "network.connect" | select result | to json' | grep -q '"result":"denied"' && echo "port-outside-scope-denied"
+exit: 0
+stdout-contains: program-ran-through-the-broker
+stdout-contains: exit-status-reported
+stdout-contains: program-outside-scope-denied
+stdout-contains: port-outside-scope-denied

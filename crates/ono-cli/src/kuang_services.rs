@@ -504,6 +504,137 @@ impl HostServices for ShellHost {
         }))
     }
 
+    async fn process_exec(
+        &self,
+        package: &str,
+        program: String,
+        arguments: Vec<String>,
+        environment: Vec<(String, String)>,
+    ) -> Result<LiveStream, HostError> {
+        // The program runs under the confinement a native plugin runs under (v0.4.1 §16.1),
+        // in a directory of its own, with the environment the package gave it and nothing
+        // inherited (spec §31.20). Its output is lines; a byte stream is later work.
+        let working_directory = std::env::temp_dir().join("ono-kuang-exec").join(package);
+        std::fs::create_dir_all(&working_directory).map_err(|error| HostError {
+            code: ono_core::ErrorCode::ProviderUnavailable,
+            message: format!("no working directory for the program: {error}"),
+        })?;
+        let sandbox = ono_kuang_supervisor::native_process(
+            256 * 1024 * 1024,
+            ono_kuang_protocol::CpuBudget::Interactive,
+            working_directory,
+        );
+        let mut command = tokio::process::Command::new(&program);
+        command.args(&arguments).env_clear().envs(environment);
+        let platform = ono_kuang_supervisor::NativePlatform::shared();
+        let (mut child, _report) =
+            ono_kuang_supervisor::spawn(&mut command, &sandbox, &platform, package).map_err(
+                |error| HostError {
+                    code: ono_core::ErrorCode::IoPermissionDenied,
+                    message: error.to_string(),
+                },
+            )?;
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let out_tx = tx.clone();
+            let out = tokio::spawn(async move {
+                if let Some(stdout) = stdout {
+                    let mut lines = tokio::io::BufReader::new(stdout).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        if out_tx
+                            .send(Ok(json!({"stream": "stdout", "line": line})))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            });
+            let err_tx = tx.clone();
+            let err = tokio::spawn(async move {
+                if let Some(stderr) = stderr {
+                    let mut lines = tokio::io::BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        if err_tx
+                            .send(Ok(json!({"stream": "stderr", "line": line})))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            });
+            let _ = out.await;
+            let _ = err.await;
+            let exited = child.wait().await.ok().and_then(|status| status.code());
+            let _ = tx.send(Ok(json!({"exited": exited}))).await;
+        });
+        Ok(rx)
+    }
+
+    async fn network_connect(
+        &self,
+        host: String,
+        port: u16,
+        protocol: String,
+    ) -> Result<ono_kuang_supervisor::Connection, HostError> {
+        if protocol != "tcp" {
+            return Err(HostError::unavailable(&format!(
+                "`{protocol}` connections: `tcp` is the brokered transport this build carries"
+            )));
+        }
+        let stream = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio::net::TcpStream::connect((host.as_str(), port)),
+        )
+        .await
+        .map_err(|_| HostError {
+            code: ono_core::ErrorCode::ProviderUnavailable,
+            message: format!("`{host}:{port}` did not answer within 10 s"),
+        })?
+        .map_err(|error| HostError {
+            code: ono_core::ErrorCode::ProviderUnavailable,
+            message: format!("`{host}:{port}` could not be reached: {error}"),
+        })?;
+        let (mut reader, mut writer) = stream.into_split();
+        let (in_tx, incoming) = tokio::sync::mpsc::channel(64);
+        let (outgoing, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut buffer = vec![0u8; 16 * 1024];
+            loop {
+                match reader.read(&mut buffer).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => {
+                        let chunk = Value::Bytes(bytes::Bytes::copy_from_slice(&buffer[..count]));
+                        if in_tx
+                            .send(Ok(json!({"bytes": to_json(&chunk)})))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            while let Some(bytes) = out_rx.recv().await {
+                if writer.write_all(&bytes).await.is_err() {
+                    break;
+                }
+            }
+            let _ = writer.shutdown().await;
+        });
+        Ok(ono_kuang_supervisor::Connection { incoming, outgoing })
+    }
+
     async fn secret_request(
         &self,
         _package: &str,

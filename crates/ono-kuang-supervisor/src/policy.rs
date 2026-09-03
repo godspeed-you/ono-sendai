@@ -261,13 +261,28 @@ fn scope_covers(grant: &Grant, used: &[ScopeUse]) -> Result<(), String> {
                 .any(|pattern| name_matches(pattern, value)),
             ScopeUse::Port { value, .. } => allowed_list
                 .iter()
-                .any(|allowed| allowed.parse::<u16>().is_ok_and(|port| port == *value)),
+                .any(|allowed| port_covered(allowed, *value)),
         };
         if !covered {
             return Err(use_.display());
         }
     }
     Ok(())
+}
+
+/// Whether `port` is inside one entry of a `port-list` scope: a number, a `low-high` range, or
+/// `*` for any port — the shapes a manifest declares them in.
+fn port_covered(allowed: &str, port: u16) -> bool {
+    let allowed = allowed.trim();
+    if allowed == "*" {
+        return true;
+    }
+    if let Some((low, high)) = allowed.split_once('-')
+        && let (Ok(low), Ok(high)) = (low.trim().parse::<u16>(), high.trim().parse::<u16>())
+    {
+        return (low..=high).contains(&port);
+    }
+    allowed.parse::<u16>().is_ok_and(|exact| exact == port)
 }
 
 fn path_covered(patterns: &[String], value: &str) -> bool {

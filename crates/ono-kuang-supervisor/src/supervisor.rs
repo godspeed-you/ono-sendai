@@ -1067,6 +1067,8 @@ struct OutStream {
 struct Inbound {
     values: std::collections::VecDeque<Json>,
     live: Option<crate::host::LiveStream>,
+    /// Where the plugin's own bytes go, when the stream is a connection.
+    writer: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
     complete: bool,
     error: Option<WireError>,
 }
@@ -1927,6 +1929,23 @@ impl Actor {
             method::HISTORY_QUERY => self.host_history_query(seq, params).await,
             method::HISTORY_APPEND => self.host_history_append(seq, params).await,
             method::PROCESS_SIGNAL => self.host_process_signal(seq, params).await,
+            method::PROCESS_EXEC => self.host_process_exec(seq, params).await,
+            method::NETWORK_CONNECT => self.host_network_connect(seq, params).await,
+            method::NETWORK_CLOSE => self.host_network_close(seq, params).await,
+            method::NETWORK_REQUEST | method::NETWORK_LISTEN => {
+                // Declared, not served: a request needs the operator's trust store behind a TLS
+                // client the shell does not carry, and a listener needs accepted connections
+                // delivered as handles inside a stream. Both say so rather than pretend.
+                self.reply_err(
+                    seq,
+                    WireError::from_core(
+                        ono_core::ErrorCode::ProviderUnavailable,
+                        format!("this host serves no `{method_name}` yet; `network.connect` is the brokered path"),
+                    ),
+                )
+                .await;
+                Ok(())
+            }
             method::SECRETS_REQUEST => self.host_secrets_request(seq, params).await,
             method::SECRETS_RELEASE => self.host_secrets_release(seq, params).await,
             method::MODELS_LIST => self.host_models_list(seq).await,
@@ -1996,6 +2015,42 @@ impl Actor {
 
     async fn host_emit(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let mut emit: EmitParams = Self::parse_params(params)?;
+        // A connection is written the way a stream is emitted into: the values are bytes, and
+        // they go to the socket the host holds (spec §31.21).
+        if let Some(writer) = self
+            .inbound
+            .get(&emit.handle)
+            .and_then(|stream| stream.writer.clone())
+        {
+            for value in &emit.values {
+                let bytes = match ono_value::from_json(value, &self.schemas) {
+                    Ok(Value::Bytes(bytes)) => bytes.to_vec(),
+                    Ok(Value::String(text)) => text.as_bytes().to_vec(),
+                    _ => {
+                        return Err(protocol_violation(
+                            "a connection carries bytes, and the emission was neither bytes nor text",
+                        ));
+                    }
+                };
+                if writer.send(bytes).await.is_err() {
+                    self.reply_err(
+                        seq,
+                        WireError::from_core(
+                            ono_core::ErrorCode::ProviderUnavailable,
+                            "the connection is closed",
+                        ),
+                    )
+                    .await;
+                    return Ok(());
+                }
+            }
+            self.reply_ok(
+                seq,
+                serde_json::to_value(EmitResult { credit: u32::MAX }).unwrap_or(Json::Null),
+            )
+            .await;
+            return Ok(());
+        }
         let Some(stream) = self.streams.get(&emit.handle) else {
             return Err(protocol_violation(format!(
                 "an emission into handle {} which is not the plugin's to write",
@@ -2345,6 +2400,7 @@ impl Actor {
             Inbound {
                 values: values.into(),
                 live: None,
+                writer: None,
                 complete: true,
                 error: None,
             },
@@ -2361,6 +2417,24 @@ impl Actor {
             Inbound {
                 values: std::collections::VecDeque::new(),
                 live: Some(live),
+                writer: None,
+                complete: false,
+                error: None,
+            },
+        );
+        handle
+    }
+
+    /// Opens a brokered connection as a stream the plugin reads and writes.
+    fn open_connection(&mut self, connection: crate::host::Connection) -> u64 {
+        let handle = self.next_handle;
+        self.next_handle += 1;
+        self.inbound.insert(
+            handle,
+            Inbound {
+                values: std::collections::VecDeque::new(),
+                live: Some(connection.incoming),
+                writer: Some(connection.outgoing),
                 complete: false,
                 error: None,
             },
@@ -2866,6 +2940,161 @@ impl Actor {
             outcome,
         )
         .await;
+        Ok(())
+    }
+
+    /// `process.exec`: a program within the granted `programs` scope, run under the host's own
+    /// confinement; its output and exit status come back as a stream (spec §31.12).
+    async fn host_process_exec(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let program = params
+            .get("program")
+            .and_then(Json::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let arguments: Vec<String> = params
+            .get("arguments")
+            .and_then(Json::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Json::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let environment: Vec<(String, String)> = params
+            .get("environment")
+            .and_then(Json::as_object)
+            .map(|object| {
+                object
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.clone(),
+                            value
+                                .as_str()
+                                .map_or_else(|| value.to_string(), str::to_owned),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // Checked against the value the operation will use: the resolved program, with no
+        // re-resolution between check and use (ADR-0015 T11).
+        let resolved = std::fs::canonicalize(&program)
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| program.clone());
+        let executable = std::path::Path::new(&resolved)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let target = Some(Json::String(resolved.clone()));
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::ProcessExec,
+            "process.exec",
+            &[
+                ScopeUse::Path {
+                    key: "programs",
+                    value: resolved.clone(),
+                },
+                ScopeUse::Name {
+                    key: "executables",
+                    value: executable,
+                },
+            ],
+            target.clone(),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host
+            .process_exec(&self.package_id, resolved, arguments, environment)
+            .await
+            .map(|live| {
+                let handle = self.open_live(live);
+                json!({"handle": handle})
+            });
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::ProcessExec,
+            "process.exec",
+            target,
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `network.connect`: a brokered connection within the granted `hosts` and `ports`
+    /// scopes. The package reads it with `streams.next` and writes it with `streams.emit`;
+    /// it never receives a descriptor (spec §31.21).
+    async fn host_network_connect(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let host_name = params
+            .get("host")
+            .and_then(Json::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let port = params
+            .get("port")
+            .and_then(Json::as_u64)
+            .and_then(|port| u16::try_from(port).ok())
+            .unwrap_or_default();
+        let protocol = params
+            .get("protocol")
+            .and_then(Json::as_str)
+            .unwrap_or("tcp")
+            .to_owned();
+        let target = Some(json!({"host": host_name, "port": port, "protocol": protocol}));
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::NetworkConnect,
+            "network.connect",
+            &[
+                ScopeUse::Name {
+                    key: "hosts",
+                    value: host_name.clone(),
+                },
+                ScopeUse::Port {
+                    key: "ports",
+                    value: port,
+                },
+            ],
+            target.clone(),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host
+            .network_connect(host_name, port, protocol)
+            .await
+            .map(|connection| {
+                let handle = self.open_connection(connection);
+                json!({"handle": handle})
+            });
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::NetworkConnect,
+            "network.connect",
+            target,
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `network.close`: the connection is dropped, and with it the socket the host held.
+    async fn host_network_close(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let handle = params
+            .get("connection")
+            .and_then(Json::as_u64)
+            .unwrap_or_default();
+        if self.inbound.remove(&handle).is_none() {
+            return Err(protocol_violation(format!(
+                "`network.close` on handle {handle}, which the host never opened"
+            )));
+        }
+        self.reply_ok(seq, Json::Null).await;
         Ok(())
     }
 

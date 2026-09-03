@@ -13,6 +13,7 @@ name = "ono"
 path = "src/main.rs"
 
 [dependencies]
+bytes.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 jiff.workspace = true

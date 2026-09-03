@@ -1388,6 +1388,7 @@ name = "ono-cli"
 version = "0.4.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "futures",
  "jiff",
  "ono-adapter",
@@ -1525,6 +1526,7 @@ name = "ono-kuang-sdk"
 version = "0.4.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "libc",
  "ono-kuang-protocol",
  "ono-kuang-supervisor",

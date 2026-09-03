@@ -213,6 +213,18 @@ fn honest() -> Plugin {
             &["secret.use"],
         ))
         .contribute_command(command(
+            "exec",
+            "Run a program through the host and report its output and exit status.",
+            "stream<string>",
+            &["process.exec"],
+        ))
+        .contribute_command(command(
+            "connect",
+            "Open a brokered connection, send a line, and report what came back.",
+            "stream<string>",
+            &["network.connect"],
+        ))
+        .contribute_command(command(
             "models",
             "List the model providers this package may use, through the broker.",
             "stream<string>",
@@ -568,6 +580,99 @@ fn honest() -> Plugin {
                 }
                 Err(error) => Outcome::Failed(error),
             }
+        })
+        .command(&format!("{PACKAGE}.command.exec"), |ctx| {
+            let program = ctx
+                .arguments()
+                .get("program")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("/bin/echo")
+                .to_owned();
+            let arguments = match json_argument(ctx, "arguments") {
+                serde_json::Value::Array(items) => items,
+                serde_json::Value::String(one) => vec![json!(one)],
+                _ => Vec::new(),
+            };
+            match ctx.host_call(
+                method::PROCESS_EXEC,
+                json!({"program": program, "arguments": arguments, "stdin": null, "environment": {"LANG": "C"}}),
+            ) {
+                Ok(opened) => match opened.get("handle").and_then(serde_json::Value::as_u64) {
+                    Some(handle) => pull_all(ctx, handle, |value| {
+                        if let Some(code) = value.get("exited") {
+                            format!("exited: {code}")
+                        } else {
+                            format!(
+                                "{}: {}",
+                                value.get("stream").and_then(serde_json::Value::as_str).unwrap_or("?"),
+                                value.get("line").and_then(serde_json::Value::as_str).unwrap_or("")
+                            )
+                        }
+                    }),
+                    None => Outcome::Completed,
+                },
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.connect"), |ctx| {
+            let host = ctx
+                .arguments()
+                .get("host")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("127.0.0.1")
+                .to_owned();
+            let port = int_argument(ctx, "port", 0);
+            let text = ctx
+                .arguments()
+                .get("send")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("ping\n")
+                .to_owned();
+            let handle = match ctx.host_call(
+                method::NETWORK_CONNECT,
+                json!({"host": host, "port": port, "protocol": "tcp"}),
+            ) {
+                Ok(opened) => opened.get("handle").and_then(serde_json::Value::as_u64),
+                Err(error) => return Outcome::Failed(error),
+            };
+            let Some(handle) = handle else {
+                return Outcome::Completed;
+            };
+            if let Err(error) = ctx.host_call(
+                method::STREAMS_EMIT,
+                json!({"handle": handle, "values": [text]}),
+            ) {
+                return Outcome::Failed(error);
+            }
+            match ctx.host_call(
+                method::STREAMS_NEXT,
+                json!({"handle": handle, "max": 1, "deadline": 5}),
+            ) {
+                Ok(answer) => {
+                    for value in answer
+                        .get("values")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        let hex = value
+                            .get("bytes")
+                            .and_then(|bytes| bytes.get("$bytes"))
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default();
+                        let decoded: Vec<u8> = (0..hex.len())
+                            .step_by(2)
+                            .filter_map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok())
+                            .collect();
+                        let _ = ctx.emit(&Value::String(
+                            String::from_utf8_lossy(&decoded).trim().into(),
+                        ));
+                    }
+                }
+                Err(error) => return Outcome::Failed(error),
+            }
+            let _ = ctx.host_call(method::NETWORK_CLOSE, json!({"connection": handle}));
+            Outcome::Completed
         })
         .command(&format!("{PACKAGE}.command.models"), |ctx| {
             match ctx.host_call(method::MODELS_LIST, json!({})) {

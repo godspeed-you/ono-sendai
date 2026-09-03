@@ -38,7 +38,7 @@ mod wasm;
 
 pub use adapters::{AdapterPackageError, declared_executables, validate_package};
 pub use context::{ContextSource, FixedContext};
-pub use host::{HostError, HostServices, LiveStream, NoHost, ready_stream};
+pub use host::{Connection, HostError, HostServices, LiveStream, NoHost, ready_stream};
 pub use negotiate::{HostLimits, negotiate};
 pub use platform::{
     ConfinementPlan, ConfinementPlatform, NativePlatform, PLATFORM_CONTROLS,

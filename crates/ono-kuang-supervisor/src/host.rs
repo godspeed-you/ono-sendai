@@ -60,8 +60,23 @@ impl From<HostError> for ono_kuang_protocol::WireError {
     }
 }
 
-/// What a package reaches through `objects.*`, `relations.*`, `history.*`, `process.signal`
-/// and `secrets.*`. Every method takes the wire's JSON and answers with it; the object ids,
+/// A brokered connection: what arrives, as `{"bytes": …}` values on a live stream, and where
+/// the package's own bytes go. Dropping the sender closes the connection.
+pub struct Connection {
+    /// Received bytes, chunk by chunk, as `{"bytes": {"$bytes": …}}` values.
+    pub incoming: LiveStream,
+    /// Bytes to send.
+    pub outgoing: mpsc::Sender<Vec<u8>>,
+}
+
+impl std::fmt::Debug for Connection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Connection")
+    }
+}
+
+/// What a package reaches through `objects.*`, `relations.*`, `history.*`, `process.*`,
+/// `network.*` and `secrets.*`. Every method takes the wire's JSON and answers with it; the object ids,
 /// queries and selectors are the shapes `protocol.v1.yaml` declares.
 #[async_trait::async_trait]
 pub trait HostServices: Send + Sync + std::fmt::Debug {
@@ -102,6 +117,24 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
     async fn history_append(&self, package: &str, entry: Json) -> Result<(), HostError>;
     /// `process.signal`: one `ono.action-result/1` for the object.
     async fn process_signal(&self, object: Json, signal: String) -> Result<Json, HostError>;
+    /// `process.exec`: runs `program` with `arguments` under the host's own confinement, with
+    /// `environment` and nothing inherited. The stream carries `{"stream": "stdout"|"stderr",
+    /// "line": …}` values as the program writes them and ends with `{"exited": code}`.
+    async fn process_exec(
+        &self,
+        package: &str,
+        program: String,
+        arguments: Vec<String>,
+        environment: Vec<(String, String)>,
+    ) -> Result<LiveStream, HostError>;
+    /// `network.connect`: a brokered connection to `host:port` over `protocol`; the package
+    /// never receives a descriptor.
+    async fn network_connect(
+        &self,
+        host: String,
+        port: u16,
+        protocol: String,
+    ) -> Result<Connection, HostError>;
     /// `secrets.request`: whether the named secret exists for the package. The material stays
     /// with the host; the supervisor hands the package an opaque handle.
     async fn secret_request(
@@ -173,6 +206,23 @@ impl HostServices for NoHost {
     }
     async fn process_signal(&self, _object: Json, _signal: String) -> Result<Json, HostError> {
         Err(HostError::unavailable("process control"))
+    }
+    async fn process_exec(
+        &self,
+        _package: &str,
+        _program: String,
+        _arguments: Vec<String>,
+        _environment: Vec<(String, String)>,
+    ) -> Result<LiveStream, HostError> {
+        Err(HostError::unavailable("program execution"))
+    }
+    async fn network_connect(
+        &self,
+        _host: String,
+        _port: u16,
+        _protocol: String,
+    ) -> Result<Connection, HostError> {
+        Err(HostError::unavailable("network"))
     }
     async fn secret_request(
         &self,

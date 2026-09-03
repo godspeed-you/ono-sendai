@@ -15,6 +15,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+bytes.workspace = true
+ono-value.workspace = true
 ono-testkit.workspace = true
 async-trait.workspace = true
 ono-model-broker.workspace = true
