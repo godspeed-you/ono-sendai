@@ -63,6 +63,7 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
     let commands = load_directory(&spec.join("commands"))?;
     let packs = load_packs(&spec.join("adapters").join("first-party"))?;
     let streaming = load(&spec.join("hardening").join("streaming_classification.yaml"))?;
+    let boundaries = load(&spec.join("hardening").join("security_boundaries.yaml"))?;
 
     let mut pages = vec![
         Page {
@@ -104,6 +105,10 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
         Page {
             path: "docs/reference/remote-trust.md".to_owned(),
             contents: remote_trust_page(),
+        },
+        Page {
+            path: "docs/reference/security-boundaries.md".to_owned(),
+            contents: security_boundaries_page(boundaries.as_ref()),
         },
         Page {
             path: "docs/reference/release-verification.md".to_owned(),
@@ -206,6 +211,10 @@ fn index_page() -> String {
          security terms of v0.4.1 §19.1 and what each one promises |\n\
          | [Remote trust](remote-trust.md) | `docs/spec/hardening/remote_trust.yaml` — the six \
          things a remote link keeps apart, and what each one does not establish (v0.4.1 §51.3) |\n\
+         | [Security boundaries](security-boundaries.md) | \
+         `docs/spec/hardening/security_boundaries.yaml` — where untrusted input enters, what has \
+         to hold before it goes on, which crate owns it and the test that proves the refusal \
+         (v0.4.1 §6.1, §6.2, §20) |\n\
          | [Release verification](release-verification.md) | \
          `docs/spec/hardening/release_verification.yaml` — how to check a release's checksums, \
          signature and provenance before installing it (v0.4.1 §47.5, §67.7) |\n\
@@ -651,6 +660,63 @@ fn remote_trust_page() -> String {
             ),
             concept.spec
         ));
+    }
+    page
+}
+
+/// v0.4.1 §6.1's boundary inventory, rendered from the registry that also drives the gate.
+///
+/// §6.1: *"This inventory MUST be derivable into documentation and MUST be referenced by security
+/// tests."* Both halves are here — the table is derived, and the last column is the proof, so a
+/// reader asking "what stops that" is one click from the test that answers.
+fn security_boundaries_page(document: Option<&Yaml>) -> String {
+    let mut page = header(
+        "Security boundaries",
+        "Where untrusted input enters Ono-Sendai, what must hold before it goes further, the one \
+         crate responsible for making it hold, and the automated negative test that proves the \
+         forbidden thing is refused (v0.4.1 §6.1, §6.2, §20). Derived from \
+         `docs/spec/hardening/security_boundaries.yaml`, which the contract gate reads as well: \
+         a boundary whose owner changes cannot leave this page saying otherwise.",
+    );
+    let Some(document) = document else {
+        page.push_str("\nNo boundary inventory is declared.\n");
+        return page;
+    };
+
+    page.push_str(
+        "\n| Boundary | Input trust | Required enforcement | Owner |\n|---|---|---|---|\n",
+    );
+    for boundary in sequence(document, "boundaries") {
+        let id = string_at(boundary, "id").unwrap_or_default();
+        let trust = string_at(boundary, "input_trust").unwrap_or_default();
+        let enforcement = string_at(boundary, "required_enforcement").unwrap_or_default();
+        let owner = string_at(boundary, "owner").unwrap_or_default();
+        page.push_str(&format!(
+            "| `{id}` | {} | {} | `{owner}` |\n",
+            cell(&trust),
+            cell(&enforcement)
+        ));
+    }
+
+    for boundary in sequence(document, "boundaries") {
+        let id = string_at(boundary, "id").unwrap_or_default();
+        let owner = string_at(boundary, "owner").unwrap_or_default();
+        let module = string_at(boundary, "module").unwrap_or_default();
+        page.push_str(&format!("\n## `{id}`\n\n"));
+        if let Some(doc) = string_at(boundary, "doc") {
+            page.push_str(&format!("{}\n\n", doc.trim()));
+        }
+        page.push_str(&format!(
+            "Owned by `{owner}`, enforced in `{module}`. Specified by {}.\n",
+            string_at(boundary, "spec").unwrap_or_default()
+        ));
+        let tests = string_sequence(boundary, "negative_tests");
+        if !tests.is_empty() {
+            page.push_str("\nRefusal proved by:\n\n");
+            for test in tests {
+                page.push_str(&format!("- `{test}`\n"));
+            }
+        }
     }
     page
 }

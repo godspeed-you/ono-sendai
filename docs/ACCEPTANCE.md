@@ -1190,14 +1190,21 @@ Four conventions this subsection relies on:
       `::should_reject_an_unknown_capability_id_in_an_authorization_fixture`,
       `::should_reject_an_unknown_control_id_in_a_kuang_tier_definition` (§52.3) and
       `cargo run -p xtask -- spec-check` on every gate run (#117).
-- [ ] **P2 · The security boundary inventory is generated and owned.** The twelve boundaries of
-      §6.1 — from `remote.tcp.transport` to `release.publish` — are declared with their input
-      trust, their required enforcement and the one crate that owns each (§6.2), and the page under
-      `docs/reference/` is produced by `cargo xtask docs` rather than maintained by hand —
+- [x] **P2 · The security boundary inventory is generated and owned.** The twelve boundaries of
+      §6.1 — from `remote.tcp.transport` to `release.publish` — are declared in
+      `docs/spec/hardening/security_boundaries.yaml` with their input trust, their required
+      enforcement and the one crate that owns each (§6.2), and `docs/reference/security-boundaries.md`
+      is produced by `cargo xtask docs` rather than maintained by hand —
       `xtask/tests/reference.rs::should_render_a_boundary_page_that_matches_the_inventory` and
       `xtask/tests/contracts.rs::should_name_an_owning_crate_and_a_security_test_for_every_declared_boundary`,
       which is what makes §20's acceptance principle checkable: a boundary with no test naming it
-      fails the gate (#118).
+      fails the gate, and so does one whose test is `#[ignore]`d —
+      `::should_report_a_boundary_whose_named_security_test_does_not_exist` and
+      `::should_report_a_boundary_the_specification_requires_and_the_inventory_omits`. The
+      inventory is the join key `refusals.yaml` and `remote_trust.yaml` were already writing
+      against, so a renamed boundary is renamed everywhere —
+      `::should_report_a_refusal_whose_boundary_is_not_in_the_inventory` (#118, §6.1, §6.2, §20;
+      ADR-0546).
 
 #### 4.8.2 The direct link authenticates both ends (H1 — §66.1, §7, §8, §13)
 
@@ -1336,10 +1343,15 @@ is got wrong — self-reported authorization, and authorization that exists only
       `crates/ono-protocol/tests/authorization.rs::should_refuse_a_request_for_a_capability_the_offer_omitted`,
       `::should_refuse_it_on_every_dispatch_path_the_server_exposes` — which drives query,
       subscribe, adapt and act and asserts that no provider code ran — and case `184` (#46, §10.2,
-      §20; ADR-0472). The cross-check of the §6.1 boundary inventory needs
-      `docs/spec/hardening/security_boundaries.yaml`, which no phase has written yet; it is
-      recorded under *Deferred* in `docs/STATE.md` and belongs to the phase that creates the
-      inventory.
+      §20; ADR-0472). The cross-check of the §6.1 boundary inventory now exists as well:
+      `docs/spec/hardening/security_boundaries.yaml` declares every path §10.2 governs with the
+      guard it must call, and
+      `xtask/tests/contracts.rs::should_find_the_authorization_check_on_every_declared_dispatch_path`
+      reads both directions — a declared path that never asks, and a method the served trait
+      exposes that no boundary declares —
+      `::should_report_a_dispatch_path_that_reaches_a_provider_without_asking_the_authorization_context`,
+      `::should_report_a_dispatch_path_the_inventory_does_not_declare` (#118, ADR-0546). So the
+      set is proved and not only the four paths that existed when H2 ran.
 - [x] **P0 · Refusals are stable, structured and non-interactive.**
       `remote.unauthenticated`, `remote.unauthorized` and `remote.capability_denied` are declared
       in `docs/spec/errors.yaml`, carry the deciding boundary in structured details, and never
@@ -2068,8 +2080,11 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       what §51.3 is written against —
       `xtask/tests/terminology.rs::should_find_all_six_remote_trust_concepts_described_separately`,
       `::should_report_a_remote_page_that_leaves_one_of_the_six_to_be_inferred` (#113, §51.3;
-      ADR-0538). The `boundary` each concept carries is recorded and not yet joined to §6.1's
-      inventory, which `docs/spec/hardening/security_boundaries.yaml` will hold and #118 owns.
+      ADR-0538). The `boundary` each concept carries is now joined to §6.1's inventory in
+      `docs/spec/hardening/security_boundaries.yaml`, so a concept cannot name a boundary the
+      inventory does not declare —
+      `xtask/tests/contracts.rs::should_report_this_repositorys_own_registries_as_consistent_when_checked`
+      over `check_hardening_contracts` (#118, ADR-0546).
 - [x] **P3 · `SECURITY.md` states the model and the reporting path.** Supported versions, the
       reporting channel, the response expectation, all nine protected assets of §5.1 and §5.3's
       out-of-scope statement — the compromised kernel, the root attacker on the same host,
@@ -2077,9 +2092,12 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       are stated, and the gate reports the page that drops one of them —
       `xtask/tests/terminology.rs::should_find_every_protected_asset_of_the_threat_model_in_the_security_document`,
       `::should_find_a_reporting_channel_and_a_response_expectation_in_the_security_document`
-      (#114, §51.4, §5.1, §5.3; ADR-0541). The boundary table is transcribed by hand from §6.1,
-      because no generator can read it yet: `docs/spec/hardening/security_boundaries.yaml` does not
-      exist and #118 owns it.
+      (#114, §51.4, §5.1, §5.3; ADR-0541). `SECURITY.md`'s boundary table is still transcribed by
+      hand from §6.1 and is now checkable against the generated one:
+      `docs/spec/hardening/security_boundaries.yaml` exists and `docs/reference/security-boundaries.md`
+      is rendered from it (#118, ADR-0546). Holding `SECURITY.md`'s copy to the inventory is a
+      documentation check of its own and is not part of #118's increment, so the transcription is
+      still a transcription.
 - [ ] **P2 · The status documents agree.** `docs/STATE.md`, this checklist and the release notes
       state the same thing about what is done: *In progress* is empty, the workspace holds no
       `#[ignore]`d test, every *Deferred* entry names an ADR saying why it does not block the

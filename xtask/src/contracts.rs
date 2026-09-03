@@ -2482,7 +2482,41 @@ pub fn check_hardening_contracts(root: &Path) -> Vec<Problem> {
     if let Some((location, document)) = read("cost_classes.yaml") {
         problems.extend(check_cost_classes(&location, &document));
     }
+    if let Some((location, document)) = read("remote_trust.yaml") {
+        problems.extend(check_remote_trust_boundaries(root, &location, &document));
+    }
+    problems.extend(check_security_boundaries(root));
+    problems.extend(check_dispatch_paths(root));
     problems.extend(check_refusals(root));
+    problems
+}
+
+/// Holds the `boundary` each of v0.4.1 §51.3's six remote trust concepts carries against §6.1.
+///
+/// The registry was written before the inventory existed and said so in its header: *"§6.1's
+/// inventory is owed by its own issue; this is the join key."* This is the join.
+fn check_remote_trust_boundaries(root: &Path, location: &str, document: &Yaml) -> Vec<Problem> {
+    let declared = declared_boundaries(root);
+    if declared.is_empty() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    for row in sequence(document, "concepts") {
+        // `boundary: null` is how a concept says it is metadata rather than a boundary.
+        let Some(boundary) = string_at(row, "boundary").filter(|value| value != "null") else {
+            continue;
+        };
+        if !declared.contains(&boundary) {
+            let id = string_at(row, "concept").unwrap_or_else(|| "a concept".to_owned());
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` belongs to the boundary `{boundary}`, which \
+                     `docs/spec/hardening/security_boundaries.yaml` does not declare (v0.4.1 §6.1)"
+                ),
+            });
+        }
+    }
     problems
 }
 
@@ -2933,6 +2967,7 @@ pub fn check_refusals(root: &Path) -> Vec<Problem> {
     };
 
     let declared = declared_error_names(root);
+    let boundaries = declared_boundaries(root);
     let mut covered: BTreeSet<String> = BTreeSet::new();
     let mut problems = Vec::new();
 
@@ -2962,12 +2997,10 @@ pub fn check_refusals(root: &Path) -> Vec<Problem> {
             )));
             continue;
         };
-        if !boundary
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c == '.' || c == '_')
-        {
+        if !boundaries.is_empty() && !boundaries.contains(&boundary) {
             problems.push(problem(format!(
-                "{subject} names the boundary `{boundary}`, which is not a §6.1 boundary id"
+                "{subject} names the boundary `{boundary}`, which \
+                 `docs/spec/hardening/security_boundaries.yaml` does not declare (v0.4.1 §6.1)"
             )));
         }
 
@@ -3064,4 +3097,381 @@ fn attached_metadata_keys(sources: &Path) -> BTreeSet<String> {
         }
     }
     keys
+}
+
+// --- v0.4.1 §6: the security boundary map (issue #118, ADR-0546) --------------------------------
+
+/// §6.1's table, as this repository holds it: id, input trust, required enforcement.
+///
+/// Typed from the specification rather than read from the registry, for the same reason the
+/// registry exists at all: an inventory nothing independent knows the shape of records what
+/// somebody remembered. §6.1 says *"at minimum"*, so a thirteenth boundary is welcome and a
+/// missing one of these twelve is a gate failure.
+const REQUIRED_BOUNDARIES: [(&str, &str, &str); 12] = [
+    (
+        "remote.tcp.transport",
+        "network",
+        "TLS 1.3 + mutual peer proof",
+    ),
+    (
+        "remote.tcp.authorization",
+        "authenticated peer",
+        "explicit server policy",
+    ),
+    (
+        "remote.ssh.transport",
+        "ssh channel",
+        "external SSH authentication",
+    ),
+    ("protocol.frame", "peer bytes", "size/depth/version limits"),
+    (
+        "provider.query",
+        "authorized request",
+        "provider capability contract",
+    ),
+    (
+        "provider.act",
+        "authorized request",
+        "capability + risk/elevation checks",
+    ),
+    (
+        "kuang.native.spawn",
+        "package process",
+        "manifest + fail-closed confinement",
+    ),
+    (
+        "kuang.protocol",
+        "plugin bytes",
+        "frame/credit/schema limits",
+    ),
+    (
+        "external.adapter",
+        "process output",
+        "adapter decoder and schema validation",
+    ),
+    (
+        "pipeline.materialization",
+        "value stream",
+        "count + byte budget",
+    ),
+    (
+        "release.build",
+        "CI inputs",
+        "immutable refs + locked dependencies",
+    ),
+    (
+        "release.publish",
+        "artifacts",
+        "checksum + signature + provenance",
+    ),
+];
+
+/// Reads `docs/spec/hardening/security_boundaries.yaml`, or `None` before it exists.
+fn boundary_inventory(root: &Path) -> Option<(String, Yaml)> {
+    let path = root
+        .join("docs")
+        .join("spec")
+        .join("hardening")
+        .join("security_boundaries.yaml");
+    let text = std::fs::read_to_string(&path).ok()?;
+    // The generic sweep already reports a file that is not valid YAML, with the parse error.
+    let document = serde_yaml_ng::from_str::<Yaml>(&text).ok()?;
+    Some((relative(root, &path), document))
+}
+
+/// Every boundary id the inventory declares.
+#[must_use]
+pub fn declared_boundaries(root: &Path) -> BTreeSet<String> {
+    boundary_inventory(root).map_or_else(BTreeSet::new, |(_, document)| {
+        sequence(&document, "boundaries")
+            .into_iter()
+            .filter_map(|row| string_at(row, "id"))
+            .collect()
+    })
+}
+
+/// Holds v0.4.1 §6.1's boundary inventory against the tree that implements it.
+///
+/// §6.1 requires the inventory to exist, to name twelve boundaries at minimum with their input
+/// trust and required enforcement, to be derivable into documentation, and to be *"referenced by
+/// security tests"*. §6.2 requires one owning crate per boundary. §20 says what referencing a
+/// security test has to mean: *"A security control is accepted only when there is an automated
+/// negative test proving the forbidden behavior is refused."*
+///
+/// So the check is four questions per row, and the fourth is the one that makes the file
+/// evidence rather than a table: does the named test exist, and does it run? A boundary whose
+/// proof is `#[ignore]`d has no proof (§65.10).
+#[must_use]
+pub fn check_security_boundaries(root: &Path) -> Vec<Problem> {
+    let Some((location, document)) = boundary_inventory(root) else {
+        // A missing registry is not an error before the phase that writes it (AGENTS.md §14).
+        return Vec::new();
+    };
+    let problem = |detail: String| Problem {
+        location: location.clone(),
+        detail,
+    };
+    let mut problems = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+
+    for row in sequence(&document, "boundaries") {
+        let Some(id) = string_at(row, "id") else {
+            problems.push(problem("a boundary row declares no `id`".to_owned()));
+            continue;
+        };
+        seen.insert(id.clone());
+
+        if let Some((_, trust, enforcement)) = REQUIRED_BOUNDARIES
+            .iter()
+            .find(|(required, _, _)| *required == id)
+        {
+            for (field, required) in [
+                ("input_trust", *trust),
+                ("required_enforcement", *enforcement),
+            ] {
+                let stated = string_at(row, field).unwrap_or_default();
+                if stated != required {
+                    problems.push(problem(format!(
+                        "`{id}` states `{field}: {stated}`, and v0.4.1 §6.1 says `{required}`. \
+                         The inventory is the machine-readable form of that table, so it carries \
+                         the specification's words and says its own in `doc`"
+                    )));
+                }
+            }
+        }
+
+        for field in ["input_trust", "required_enforcement", "doc", "spec"] {
+            if string_at(row, field).unwrap_or_default().trim().is_empty() {
+                problems.push(problem(format!("`{id}` states no `{field}`")));
+            }
+        }
+
+        let Some(owner) = string_at(row, "owner") else {
+            problems.push(problem(format!(
+                "`{id}` names no `owner`; v0.4.1 §6.2 gives every boundary one owning crate \
+                 responsible for enforcing the primary guarantee"
+            )));
+            continue;
+        };
+        let owner_root = if owner == "xtask" {
+            root.join("xtask")
+        } else {
+            root.join("crates").join(&owner)
+        };
+        if owner_root.join("src").is_dir() {
+            match string_at(row, "module") {
+                None => problems.push(problem(format!(
+                    "`{id}` names no `module`, so §6.2's owning module is a crate name and not a \
+                     place"
+                ))),
+                Some(module) => {
+                    if !root.join(&module).exists() {
+                        problems.push(problem(format!(
+                            "`{id}` is enforced in `{module}`, which does not exist"
+                        )));
+                    } else if !root.join(&module).starts_with(&owner_root) {
+                        problems.push(problem(format!(
+                            "`{id}` is owned by `{owner}` and enforced in `{module}`, which is \
+                             outside it. v0.4.1 §6.2 gives the guarantee one home"
+                        )));
+                    }
+                }
+            }
+        } else {
+            problems.push(problem(format!(
+                "`{id}` is owned by `{owner}`, and there is no such crate"
+            )));
+        }
+
+        let tests = string_sequence(row, "negative_tests");
+        if tests.is_empty() {
+            problems.push(problem(format!(
+                "`{id}` names no negative test. v0.4.1 §20: a security control is accepted only \
+                 when there is an automated negative test proving the forbidden behavior is \
+                 refused"
+            )));
+        }
+        for test in tests {
+            problems.extend(check_named_test(root, &location, &id, &test));
+        }
+    }
+
+    for (id, _, _) in REQUIRED_BOUNDARIES {
+        if !seen.contains(id) {
+            problems.push(problem(format!(
+                "declares no `{id}`, which v0.4.1 §6.1 requires the inventory to name"
+            )));
+        }
+    }
+    problems
+}
+
+/// One `path::name` a boundary offers as its proof, resolved against the tree.
+fn check_named_test(root: &Path, location: &str, id: &str, test: &str) -> Vec<Problem> {
+    let problem = |detail: String| {
+        vec![Problem {
+            location: location.to_owned(),
+            detail,
+        }]
+    };
+    let Some((file, name)) = test.split_once("::") else {
+        return problem(format!(
+            "`{id}` names the proof `{test}`, which is not a `path::name`"
+        ));
+    };
+    let Ok(source) = std::fs::read_to_string(root.join(file)) else {
+        return problem(format!(
+            "`{id}` names the proof `{test}`, and `{file}` does not exist"
+        ));
+    };
+    let Some(at) = source.find(&format!("fn {name}(")) else {
+        return problem(format!(
+            "`{id}` names the proof `{test}`, and `{file}` declares no such test"
+        ));
+    };
+    let ignored = source[..at]
+        .lines()
+        .rev()
+        .take_while(|line| {
+            let line = line.trim_start();
+            line.starts_with('#') || line.starts_with("//") || line.is_empty()
+        })
+        .any(|line| line.trim_start().starts_with("#[ignore"));
+    if ignored {
+        return problem(format!(
+            "`{id}` names the proof `{test}`, which is `#[ignore]`d and so proves nothing \
+             (v0.4.1 §20, §65.10)"
+        ));
+    }
+    Vec::new()
+}
+
+/// The authorization guard on every dispatch path v0.4.1 §10.2 governs.
+///
+/// §10.2: *"Every provider/adapter/action dispatch path MUST also validate that the operation is
+/// permitted by the established peer authorization context."* H2 proved the four paths that
+/// existed by driving them (ADR-0472) and could not prove the *set*, because the boundary
+/// inventory did not exist to enumerate it. This is that check, and it runs both ways:
+///
+/// - every dispatch path the inventory declares really calls its guard, inside the handler
+///   rather than somewhere else in the file;
+/// - every method the served `RemoteService` trait exposes is declared as a dispatch path, at
+///   every file the inventory names as a dispatch site.
+///
+/// The second direction is the one a future author meets: a new method on the trait is a new
+/// dispatch path the moment it compiles, and this makes the gate say so.
+#[must_use]
+pub fn check_dispatch_paths(root: &Path) -> Vec<Problem> {
+    let Some((location, document)) = boundary_inventory(root) else {
+        return Vec::new();
+    };
+    let problem = |detail: String| Problem {
+        location: location.clone(),
+        detail,
+    };
+    let mut problems = Vec::new();
+    let mut declared: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut sites: BTreeSet<String> = BTreeSet::new();
+
+    for boundary in sequence(&document, "boundaries") {
+        let id = string_at(boundary, "id").unwrap_or_else(|| "a boundary".to_owned());
+        for row in sequence(boundary, "dispatch_paths") {
+            let (Some(method), Some(path), Some(entry), Some(guard)) = (
+                string_at(row, "method"),
+                string_at(row, "path"),
+                string_at(row, "entry"),
+                string_at(row, "guard"),
+            ) else {
+                problems.push(problem(format!(
+                    "`{id}` declares a dispatch path without all of `method`, `path`, `entry` \
+                     and `guard`"
+                )));
+                continue;
+            };
+            declared.insert((path.clone(), method.clone()));
+            sites.insert(path.clone());
+
+            let Ok(source) = std::fs::read_to_string(root.join(&path)) else {
+                problems.push(problem(format!(
+                    "`{id}` dispatches `{method}` in `{path}`, which does not exist"
+                )));
+                continue;
+            };
+            let Some(body) = handler_body(&source, &entry) else {
+                problems.push(problem(format!(
+                    "`{id}` dispatches `{method}` at `{entry}` in `{path}`, and nothing there \
+                     opens with that"
+                )));
+                continue;
+            };
+            if !body.contains(&format!("{guard}(")) {
+                problems.push(problem(format!(
+                    "`{id}` dispatches `{method}` at `{entry}` in `{path}` without calling \
+                     `{guard}`. v0.4.1 §10.2: every dispatch path validates the operation \
+                     against the established peer authorization context, and §65.3 names \
+                     negotiation-only authorization as a failure mode"
+                )));
+            }
+        }
+    }
+
+    let service = root
+        .join("crates")
+        .join("ono-protocol")
+        .join("src")
+        .join("service.rs");
+    let Ok(source) = std::fs::read_to_string(&service) else {
+        return problems;
+    };
+    for method in served_methods(&source) {
+        for site in &sites {
+            if !declared.contains(&(site.clone(), method.clone())) {
+                problems.push(problem(format!(
+                    "`RemoteService::{method}` is a dispatch path the server exposes, and no \
+                     boundary declares it in `{site}`. v0.4.1 §10.2 governs it the moment it \
+                     exists, so the inventory names it or the gate is red"
+                )));
+            }
+        }
+    }
+    problems
+}
+
+/// The text of the block `entry` opens, from its first `{` to the brace that closes it.
+fn handler_body<'a>(source: &'a str, entry: &str) -> Option<&'a str> {
+    let at = source.find(entry)?;
+    let open = at + source[at..].find('{')?;
+    let mut depth = 0usize;
+    for (offset, character) in source[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&source[open..=open + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Every method declared on the `RemoteService` trait.
+///
+/// A textual reading, which is what the rest of this module does and is enough for the question
+/// asked: the trait is one block in one file, and a method added to it is a name that appears
+/// where these are read from.
+fn served_methods(source: &str) -> Vec<String> {
+    let Some(body) = handler_body(source, "pub trait RemoteService") else {
+        return Vec::new();
+    };
+    let mut methods = Vec::new();
+    for (index, _) in body.match_indices("async fn ") {
+        let rest = &body[index + "async fn ".len()..];
+        if let Some(end) = rest.find(['(', '<', ' ']) {
+            methods.push(rest[..end].to_owned());
+        }
+    }
+    methods
 }

@@ -525,3 +525,41 @@ fn should_report_a_migration_guide_that_grants_a_capability_the_registry_retired
         "the retired capability is named, got {problems:?}"
     );
 }
+
+// --- §6.1: the boundary inventory is derivable into documentation (issue #118, ADR-0546) --------
+
+#[test]
+fn should_render_a_boundary_page_that_matches_the_inventory() {
+    // §6.1: "This inventory MUST be derivable into documentation and MUST be referenced by
+    // security tests." Derivable is the operative word: the page is generated from the registry,
+    // so a boundary that changes owner cannot leave a page saying otherwise.
+    let page = generate(&repo())
+        .expect("generation must succeed")
+        .into_iter()
+        .find(|page| page.path == "docs/reference/security-boundaries.md")
+        .expect("the security boundary page is generated");
+    let inventory =
+        std::fs::read_to_string(repo().join("docs/spec/hardening/security_boundaries.yaml"))
+            .expect("the inventory");
+    let document: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&inventory).expect("the inventory is YAML");
+    let boundaries = document["boundaries"]
+        .as_sequence()
+        .expect("the inventory declares boundaries");
+    assert_eq!(
+        boundaries.len(),
+        12,
+        "v0.4.1 §6.1 names twelve boundaries at minimum"
+    );
+    for boundary in boundaries {
+        for field in ["id", "input_trust", "required_enforcement", "owner"] {
+            let value = boundary[field]
+                .as_str()
+                .unwrap_or_else(|| panic!("every boundary states `{field}`"));
+            assert!(
+                page.contents.contains(value),
+                "the generated page carries `{value}`, the inventory's `{field}`"
+            );
+        }
+    }
+}

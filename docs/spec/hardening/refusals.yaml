@@ -14,10 +14,9 @@
 #
 #   error        the dotted error name, as `docs/spec/errors.yaml` or `docs/spec/kuang/errors.v1.yaml`
 #                declares it. The code is not repeated: the registries own the mapping.
-#   boundary     the §6.1 boundary that decided. §6.1's inventory is owed by its own issue; until
-#                it lands these are §6.1's ids as the specification spells them, and the check
-#                verifies the shape rather than membership. When the inventory exists this field
-#                becomes the join key.
+#   boundary     the §6.1 boundary that decided, as `docs/spec/hardening/security_boundaries.yaml`
+#                declares it. `cargo xtask spec-check` resolves the name there, so a boundary
+#                that is renamed is renamed in both files or the gate is red (ADR-0546).
 #   decided_by   the crate that constructs the refusal — §6.2's "one owning crate/module
 #                responsible for enforcing the primary guarantee".
 #   explains     the metadata keys the refusal carries, which is the machine-readable half of

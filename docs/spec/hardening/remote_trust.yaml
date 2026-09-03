@@ -23,8 +23,10 @@
 #                rule by construction and a hand-written page satisfies it by saying the same
 #                thing in the same words. Short on purpose: a rule that demanded a whole paragraph
 #                word for word would be a rule against editing prose.
-#   boundary     the §6.1 boundary it belongs to, or `null` where it is metadata rather than a
-#                boundary. §6.1's inventory is owed by its own issue; this is the join key.
+#   boundary     the §6.1 boundary it belongs to, as
+#                `docs/spec/hardening/security_boundaries.yaml` declares it, or `null` where the
+#                concept is metadata rather than a boundary. `cargo xtask spec-check` resolves
+#                the name there (ADR-0546).
 #   commands     the commands that operate it, resolved against the command registry by the gate.
 #   spec         the sections that fix it.
 #

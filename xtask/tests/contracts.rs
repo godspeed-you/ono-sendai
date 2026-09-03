@@ -989,3 +989,242 @@ fn should_report_a_refusal_that_claims_a_field_nobody_attaches() {
         "a claimed field nobody sets is reported: {problems:?}"
     );
 }
+
+// --- §6: the security boundary inventory and its owners (issue #118, ADR-0546) ------------------
+
+/// The §6.1 table, typed from the specification rather than read from the registry.
+///
+/// Reading the twelve rows out of the file under test would make the test agree with whatever the
+/// file said, which is the failure mode §6.1 exists to prevent: an inventory is only evidence if
+/// something independent knows what it must contain.
+const REQUIRED_BOUNDARIES: [(&str, &str, &str); 12] = [
+    (
+        "remote.tcp.transport",
+        "network",
+        "TLS 1.3 + mutual peer proof",
+    ),
+    (
+        "remote.tcp.authorization",
+        "authenticated peer",
+        "explicit server policy",
+    ),
+    (
+        "remote.ssh.transport",
+        "ssh channel",
+        "external SSH authentication",
+    ),
+    ("protocol.frame", "peer bytes", "size/depth/version limits"),
+    (
+        "provider.query",
+        "authorized request",
+        "provider capability contract",
+    ),
+    (
+        "provider.act",
+        "authorized request",
+        "capability + risk/elevation checks",
+    ),
+    (
+        "kuang.native.spawn",
+        "package process",
+        "manifest + fail-closed confinement",
+    ),
+    (
+        "kuang.protocol",
+        "plugin bytes",
+        "frame/credit/schema limits",
+    ),
+    (
+        "external.adapter",
+        "process output",
+        "adapter decoder and schema validation",
+    ),
+    (
+        "pipeline.materialization",
+        "value stream",
+        "count + byte budget",
+    ),
+    (
+        "release.build",
+        "CI inputs",
+        "immutable refs + locked dependencies",
+    ),
+    (
+        "release.publish",
+        "artifacts",
+        "checksum + signature + provenance",
+    ),
+];
+
+#[test]
+fn should_name_an_owning_crate_and_a_security_test_for_every_declared_boundary() {
+    // v0.4.1 §6.1: "The repository MUST contain a machine-readable or generated boundary
+    // inventory". §6.2 gives each boundary "one owning crate/module responsible for enforcing the
+    // primary guarantee", and §20 accepts a control "only when there is an automated negative test
+    // proving the forbidden behavior is refused". The inventory is where all three meet.
+    let inventory =
+        std::fs::read_to_string(repository().join("docs/spec/hardening/security_boundaries.yaml"))
+            .expect("v0.4.1 §6.1's boundary inventory is a machine-readable contract");
+    for (id, trust, enforcement) in REQUIRED_BOUNDARIES {
+        assert!(
+            inventory.contains(id),
+            "v0.4.1 §6.1 requires the boundary `{id}` to be in the inventory"
+        );
+        assert!(
+            inventory.contains(enforcement),
+            "v0.4.1 §6.1 requires `{id}` to state `{enforcement}` as its required enforcement"
+        );
+        assert!(
+            inventory.contains(trust),
+            "v0.4.1 §6.1 requires `{id}` to state `{trust}` as its input trust"
+        );
+    }
+
+    let problems = xtask::contracts::check_security_boundaries(repository());
+    assert!(
+        problems.is_empty(),
+        "the boundary inventory does not hold against the tree:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_boundary_the_specification_requires_and_the_inventory_omits() {
+    // An inventory that can be narrowed by deleting a row records only what somebody remembered.
+    // §6.1's twelve are the floor, so a missing one is a gate failure rather than a shorter file.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text =
+        std::fs::read_to_string(repository().join("docs/spec/hardening/security_boundaries.yaml"))
+            .expect("the inventory");
+    let truncated = text
+        .split_once("  - id: release.publish")
+        .expect("the inventory declares `release.publish`")
+        .0
+        .to_owned();
+    repo.write("docs/spec/hardening/security_boundaries.yaml", &truncated);
+    let problems = xtask::contracts::check_security_boundaries(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("release.publish")),
+        "v0.4.1 §6.1 names twelve boundaries at minimum: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_boundary_whose_named_security_test_does_not_exist() {
+    // §20: "A security control is accepted only when there is an automated negative test proving
+    // the forbidden behavior is refused." A row naming a test nobody wrote is the inventory
+    // claiming that acceptance without it.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text =
+        std::fs::read_to_string(repository().join("docs/spec/hardening/security_boundaries.yaml"))
+            .expect("the inventory");
+    let text = text.replace(
+        "crates/ono-protocol/tests/framing.rs::should_refuse_a_frame_claiming_more_than_the_limit_before_allocating",
+        "crates/ono-protocol/tests/framing.rs::should_refuse_a_frame_nobody_ever_wrote_a_test_for",
+    );
+    repo.write("docs/spec/hardening/security_boundaries.yaml", &text);
+    let problems = xtask::contracts::check_security_boundaries(repo.path());
+    assert!(
+        problems.iter().any(|problem| problem
+            .detail
+            .contains("should_refuse_a_frame_nobody_ever_wrote_a_test_for")),
+        "a boundary whose negative test does not exist is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_find_the_authorization_check_on_every_declared_dispatch_path() {
+    // v0.4.1 §10.2: "Every provider/adapter/action dispatch path MUST also validate that the
+    // operation is permitted by the established peer authorization context." H2 proved it by
+    // driving the four paths (ADR-0472) and could not prove the *set*, because §6.1's inventory
+    // did not exist. This is the check that the set is complete: every method the served trait
+    // exposes is a declared dispatch path, and every declared dispatch path asks.
+    let problems = xtask::contracts::check_dispatch_paths(repository());
+    assert!(
+        problems.is_empty(),
+        "v0.4.1 §10.2: a dispatch path reaches a provider without asking the authorization \
+         context:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_dispatch_path_that_reaches_a_provider_without_asking_the_authorization_context()
+{
+    // The negative half: a handler that takes the context and never asks it is exactly §65.3's
+    // failure, and it looks correct at a glance because the parameter is right there.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "docs/spec/hardening/security_boundaries.yaml",
+        "version: 1\nboundaries:\n  - id: provider.query\n    input_trust: authorized request\n    required_enforcement: provider capability contract\n    owner: ono-protocol\n    module: crates/ono-protocol/src/service.rs\n    spec: \"v0.4.1 §6.1\"\n    doc: A query.\n    negative_tests: []\n    dispatch_paths:\n      - method: query\n        path: crates/ono-protocol/src/service.rs\n        entry: \"async fn query\"\n        guard: require_observe\n",
+    );
+    repo.write(
+        "crates/ono-protocol/src/service.rs",
+        "pub trait RemoteService {\n    async fn query(&self, peer: &PeerAuthorization) -> Result<(), ErrorValue> {\n        self.registry.snapshot()\n    }\n}\n",
+    );
+    let problems = xtask::contracts::check_dispatch_paths(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("require_observe")),
+        "a dispatch path that never asks is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_dispatch_path_the_inventory_does_not_declare() {
+    // The completeness direction, which is the one a future author trips over: a new method on
+    // the served trait is a new dispatch path, and §10.2 applies to it the moment it exists.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "docs/spec/hardening/security_boundaries.yaml",
+        "version: 1\nboundaries:\n  - id: provider.query\n    input_trust: authorized request\n    required_enforcement: provider capability contract\n    owner: ono-protocol\n    module: crates/ono-protocol/src/service.rs\n    spec: \"v0.4.1 §6.1\"\n    doc: A query.\n    negative_tests: []\n    dispatch_paths:\n      - method: query\n        path: crates/ono-protocol/src/service.rs\n        entry: \"async fn query\"\n        guard: require_observe\n",
+    );
+    repo.write(
+        "crates/ono-protocol/src/service.rs",
+        "pub trait RemoteService {\n    async fn query(&self, peer: &PeerAuthorization) -> Result<(), ErrorValue> {\n        peer.require_observe(\"get\")?;\n        Ok(())\n    }\n    async fn demolish(&self, peer: &PeerAuthorization) -> Result<(), ErrorValue> {\n        Ok(())\n    }\n}\n",
+    );
+    let problems = xtask::contracts::check_dispatch_paths(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("demolish")),
+        "a served method no boundary declares is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_refusal_whose_boundary_is_not_in_the_inventory() {
+    // §54.1's census names a boundary per refusal and §6.1 owns the vocabulary. Before the
+    // inventory existed the check could only verify the shape of the name; now it is a join.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/refusals.yaml"))
+        .expect("the refusal census");
+    let text = text.replace(
+        "boundary: pipeline.materialization",
+        "boundary: pipeline.invented",
+    );
+    repo.write("docs/spec/hardening/refusals.yaml", &text);
+    let problems = xtask::contracts::check_hardening_contracts(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("pipeline.invented")),
+        "a refusal naming a boundary the inventory does not declare is reported: {problems:?}"
+    );
+}
