@@ -87,11 +87,21 @@ run: |
     'place "$SERVICE; follow process $FIXTURE_WEB_MAIN; $SOCKET; near --type connection | take 1 | enter" \
        "near | select relation display_name | to json" > /tmp/conn-near.json;
      grep -qF "\"owner\"" /tmp/conn-near.json && grep -qF "$CLIENT_PORT" /tmp/conn-near.json'
-  prove 44.5h "closing the connection makes the connection place gone, not stale (§20.3, §35.2)" \
+  # §20.3 and §35.2: a place must not go on claiming a state its object has left. Until
+  # ADR-0554 a closed connection *vanished*, and that was an artefact rather than an answer: the
+  # kernel had released its inode, `ono.socket/1` identified a socket by that inode alone, and a
+  # record with no identity is no spatial object. The kernel has not forgotten the connection —
+  # it holds it in `time-wait` for two maximum segment lifetimes, which is the whole point of
+  # that state — so the honest claim is the one made here: the connection stops being
+  # `established`, and the place says which state it is in now rather than the one it left.
+  prove 44.5h "closing the connection ends it, and the place says so rather than claiming it is still established (§20.3, §35.2, ADR-0554)" \
     'kill "$CLIENT"; sleep 4;
      place "$SERVICE; follow process $FIXTURE_WEB_MAIN; $SOCKET" \
        "near --type connection | to json" > /tmp/conns-after.json;
-     grep -qF "[" /tmp/conns-after.json && ! grep -qF "$CLIENT_PORT" /tmp/conns-after.json'
+     ono -c "get connection | where remote.port == $CLIENT_PORT | select state | to json" \
+       > /tmp/conn-state.json;
+     grep -qF "[" /tmp/conns-after.json &&
+     ! grep -qF "established" /tmp/conn-state.json'
 
   echo "== remote systems are places, and the boundary is visible (§19) =="
   LINK='link host testbox --transport local'

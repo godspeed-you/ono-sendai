@@ -39,11 +39,14 @@ run: |
   grep -q '"remote":{"address"' /tmp/tw.json && echo "identity-names-the-remote-endpoint"
 
   echo "== and a socket the kernel did give an inode is still identified by it alone =="
-  ono --no-config -c 'get connection | where inode != null | take 1 | inspect | to json' > /tmp/live.json
+  # `get connection` needs a peer, and a container with no network may hold none that is not in
+  # `time-wait` by now — the listening socket of the agent above always has an inode, though, and
+  # the question is about the inode rather than about the peer.
+  ono --no-config -c 'get socket | where inode != null | take 1 | inspect | to json' > /tmp/live.json
   if grep -q '"identity":{"inode":[0-9]' /tmp/live.json; then
     echo "a-live-socket-is-identified-by-its-inode"
   else
-    echo "WRONG a live socket lost its inode identity"
+    echo "WRONG a live socket lost its inode identity: $(head -c 200 /tmp/live.json)"
   fi
 
   kill "$agent" 2>/dev/null || true

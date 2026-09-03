@@ -26,9 +26,17 @@ run: |
   grep -q '%' /tmp/projected.json && echo "WRONG a serialisation carries a rendering"
 
   echo "== a projected reference is still a reference =="
+  # `user` is declared `ref<ono.user/1>`, and ADR-0419 renders a reference as what a person calls
+  # that account. Which account owns pid 1 is the container's business, so what is asserted is
+  # that a name arrived rather than the diagnostic form a reference used to render as.
   ono --no-config -c 'get process 1 | select user' > /tmp/user.txt
   cat /tmp/user.txt
-  grep -qi 'root' /tmp/user.txt && echo "a-projected-reference-names-the-object"
+  named=$(tail -1 /tmp/user.txt | tr -d ' ')
+  if [ -n "$named" ] && ! printf '%s' "$named" | grep -q 'ono.user'; then
+    echo "a-projected-reference-names-the-object"
+  else
+    echo "WRONG a projected reference rendered as $named"
+  fi
   echo done=ok
 exit: 0
 stdout-contains: projected-cell-is-a-percentage
