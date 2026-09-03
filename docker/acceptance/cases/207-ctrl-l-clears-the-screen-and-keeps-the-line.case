@@ -1,0 +1,55 @@
+# Issue #121: `Ctrl-L` was bound, the editor answered it with `Outcome::Redraw`, and the REPL
+# folded that outcome into the no-ops — so the one key every shell user reaches for when the
+# screen is full did nothing at all. Now the renderer clears the whole screen, homes the cursor
+# and paints the frame again at the top; the line being typed survives.
+#
+# `script(1)` gives `ono` a terminal of its own, as case 099 does, because the effect is on the
+# screen and nowhere else: a piped `ono` draws no prompt and reads no keys.
+case: Ctrl-L clears the screen and paints the typed line again at the top
+timeout: 120
+env: TERM=xterm
+env: NO_COLOR=1
+run: |
+  session() {
+    script --quiet --return --command 'stty rows 30 cols 100 2>/dev/null; ono' /dev/null
+  }
+
+  # The typed line is sent without a newline, then Ctrl-L (\014), then Ctrl-C to abandon the
+  # line so `exit` is the whole next command.
+  {
+    sleep 2
+    printf 'get pro'; sleep 1
+    printf '\014';    sleep 1
+    printf '\003';    sleep 1
+    printf 'exit\n';  sleep 1
+  } | session > /tmp/clear-screen.out 2>&1
+
+  # `cat -v` spells the escape byte as `^[`, so the sequences can be matched as plain text.
+  seen=$(cat -v /tmp/clear-screen.out)
+  clear='^[[2J'
+  home='^[[1;1H'
+
+  if [[ "$seen" == *"$clear"* ]]; then
+    echo "PROVED 121a: Ctrl-L clears the whole screen, not just the rows below the cursor"
+  else
+    echo "FAILED 121a: no clear-screen sequence was sent"
+  fi
+
+  after=${seen##*"$clear"}
+  if [[ "$after" == *"$home"* ]]; then
+    echo "PROVED 121b: the cursor is homed after the clear"
+  else
+    echo "FAILED 121b: the cursor was not homed after the clear"
+  fi
+
+  if [[ "$after" == *"local://"*"get pro"* ]]; then
+    echo "PROVED 121c: the prompt and the line being typed are painted again at the top"
+  else
+    echo "FAILED 121c: the typed line did not survive the clear"
+  fi
+
+  printf '%s\n' "$seen" | tail -5
+exit: 0
+stdout-contains: PROVED 121a
+stdout-contains: PROVED 121b
+stdout-contains: PROVED 121c

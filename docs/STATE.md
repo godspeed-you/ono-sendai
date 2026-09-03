@@ -285,6 +285,16 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#121 closed (2026-09-03).** `Ctrl-L` clears the screen. `Renderer::redraw_from_top` clears
+  the whole screen, homes the cursor, forgets the rows above the cursor and paints the frame; the
+  `read_line` loop in `ono-cli/src/repl.rs` gives `Outcome::Redraw` its own arm instead of folding
+  it into the no-ops. Proven at three levels: the renderer's bytes
+  (`crates/ono-editor/tests/terminal.rs`), a real pseudo-terminal fed `\x0c` mid-line
+  (`crates/ono-cli/tests/clear_screen.rs`) and acceptance case 207 under `script(1)`. What the
+  issue did not know: the pty test's first draft waited for the word `local`, which the startup
+  banner already says, so it typed into the cooked terminal before the prompt existed and the
+  terminal's own echo made the assertion pass for nothing. The prompt is the first thing that
+  says `local://`, and that is what a pty test has to wait for before it types.
 - **#29 closed (2026-09-02).** `docs/ACCEPTANCE.md` §4.8 is the v0.4.1 definition of done: 118
   unticked boxes in fourteen subsubsections following the H0–H12 phase sequence, every one of the
   tranche's 101 issues cited by the box that closes it, and every bullet of §66.1–§66.9 covered.

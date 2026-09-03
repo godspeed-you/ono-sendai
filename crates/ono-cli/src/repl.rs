@@ -458,7 +458,11 @@ fn read_line(
                 drop(raw);
                 return None;
             }
-            Outcome::Cancelled | Outcome::Continue | Outcome::Redraw => {}
+            Outcome::Redraw => {
+                let frame = editor.frame(terminal_width(), presentation, theme);
+                let _ = renderer.redraw_from_top(&frame);
+            }
+            Outcome::Cancelled | Outcome::Continue => {}
         }
     }
 }

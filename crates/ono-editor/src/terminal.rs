@@ -322,6 +322,21 @@ impl<W: Write> Renderer<W> {
         Ok(())
     }
 
+    /// Clears the whole screen, homes the cursor and paints `frame` at the top.
+    ///
+    /// This is what `Outcome::Redraw` asks for: the scrollback above the prompt goes, the
+    /// typed line stays where the frame puts it.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the terminal cannot be written to.
+    pub fn redraw_from_top(&mut self, frame: &Frame) -> io::Result<()> {
+        self.out.queue(Clear(ClearType::All))?;
+        self.out.queue(cursor::MoveTo(0, 0))?;
+        self.rows_above_cursor = 0;
+        self.draw(frame)
+    }
+
     /// Moves below the frame so the shell's own output starts on a fresh line.
     ///
     /// # Errors
