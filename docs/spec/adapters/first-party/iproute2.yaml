@@ -46,7 +46,7 @@ adapters:
         match:
           words: [[address], [addr], [a]]
           flags:
-            allow: [-4, -6]
+            allow: ["-4", "-6"]
             allow_with_value: []
           positionals: allow
         plan:
@@ -89,7 +89,7 @@ adapters:
         match:
           words: [[link], [l]]
           flags:
-            allow: [-4, -6]
+            allow: ["-4", "-6"]
             allow_with_value: []
           positionals: allow
         plan:
@@ -133,7 +133,7 @@ adapters:
         match:
           words: [[route], [r]]
           flags:
-            allow: [-4]
+            allow: ["-4"]
             allow_with_value: []
           positionals: allow
         plan:
@@ -179,10 +179,10 @@ adapters:
           flags:
             allow: []
             allow_with_value: []
-            require: [-6]
+            require: ["-6"]
           positionals: allow
         plan:
-          argv: [ip, -j, -6, route, show]
+          argv: [ip, -j, "-6", route, show]
           append_user_flags: false
           env: {LC_ALL: C}
           stdin: "null"
@@ -222,7 +222,7 @@ adapters:
         match:
           words: [[neigh], [neighbour], [neighbor], [n]]
           flags:
-            allow: [-4, -6]
+            allow: ["-4", "-6"]
             allow_with_value: []
           positionals: allow
         plan:
@@ -267,7 +267,7 @@ adapters:
         match:
           words: [[]]
           flags:
-            allow: [-t, -a, -l, -n, -p, -e, -4, -6, -m, -i, -o]
+            allow: [-t, -a, -l, -n, -p, -e, "-4", "-6", -m, -i, -o]
             allow_with_value: []
             require: [-t]
             combined: true
@@ -316,7 +316,7 @@ adapters:
         match:
           words: [[]]
           flags:
-            allow: [-u, -a, -l, -n, -p, -e, -4, -6, -m, -i, -o]
+            allow: [-u, -a, -l, -n, -p, -e, "-4", "-6", -m, -i, -o]
             allow_with_value: []
             require: [-u]
             combined: true
@@ -364,7 +364,7 @@ adapters:
         match:
           words: [[]]
           flags:
-            allow: [-t, -u, -a, -l, -n, -p, -e, -4, -6, -m, -i, -o]
+            allow: [-t, -u, -a, -l, -n, -p, -e, "-4", "-6", -m, -i, -o]
             allow_with_value: []
             combined: true
           positionals: forbid

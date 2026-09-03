@@ -51,7 +51,7 @@ adapters:
         match:
           words: [[]]
           flags:
-            allow: [-s, -S, -L, --location, -k, --insecure, -f, --fail, -4, -6, --compressed, --http1.1, --http2, --no-progress-meter]
+            allow: [-s, -S, -L, --location, -k, --insecure, -f, --fail, "-4", "-6", --compressed, --http1.1, --http2, --no-progress-meter]
             allow_with_value: [-X, --request, -d, --data, --data-raw, --data-binary, -m, --max-time, --connect-timeout, --retry, -A, --user-agent, -e, --referer]
           positionals: allow
         plan:
