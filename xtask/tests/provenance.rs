@@ -215,3 +215,167 @@ fn should_bind_the_build_input_manifest_to_the_release_it_describes() {
          state its own inputs (spec §43.2, Appendix H)"
     );
 }
+
+// --- the checksum manifest (spec §47.1, §47.2, ADR-0528) ----------------------------------------
+
+/// Runs `xtask checksums` against a directory and returns its verdict and its output.
+fn checksums(arguments: &[&str]) -> (bool, String) {
+    let result = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("checksums")
+        .args(arguments)
+        .current_dir(this_repository())
+        .output()
+        .unwrap_or_else(|error| panic!("xtask must be runnable in the gate: {error}"));
+    let mut text = String::from_utf8_lossy(&result.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&result.stderr));
+    (result.status.success(), text)
+}
+
+/// A directory shaped like the assets of one release, written in an awkward order on purpose.
+fn release_directory(scratch: &Scratch, name: &str) -> PathBuf {
+    let directory = scratch.path().join(name);
+    std::fs::create_dir_all(&directory).expect("a scratch release directory");
+    // Deliberately not alphabetical, and not the order a release produces them in either: the
+    // manifest's ordering has to come from the manifest, not from the filesystem.
+    for (file, contents) in [
+        ("ono_0.4.1_arm64.deb", "the arm64 package"),
+        ("build-inputs.json", "{\"schema\":\"ono.build-inputs.v1\"}"),
+        ("ono-0.4.1-1.x86_64.rpm", "the x86_64 rpm"),
+        ("ono_0.4.1_amd64.deb", "the amd64 package"),
+        ("ono-0.4.1-1.aarch64.rpm", "the aarch64 rpm"),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("an artifact");
+    }
+    directory
+}
+
+#[test]
+fn should_list_every_downloadable_artifact_in_the_checksum_manifest() {
+    let scratch = scratch();
+    let directory = release_directory(&scratch, "dist");
+    let (written, report) = checksums(&["--dir", directory.to_str().expect("a UTF-8 path")]);
+    assert!(written, "`xtask checksums` failed:\n{report}");
+
+    let manifest = std::fs::read_to_string(directory.join("SHA256SUMS"))
+        .expect("SHA256SUMS is written beside the packages (spec §47.1)");
+    for artifact in [
+        "ono_0.4.1_amd64.deb",
+        "ono_0.4.1_arm64.deb",
+        "ono-0.4.1-1.x86_64.rpm",
+        "ono-0.4.1-1.aarch64.rpm",
+        "build-inputs.json",
+    ] {
+        assert!(
+            manifest.contains(artifact),
+            "`{artifact}` is downloadable from the release and absent from SHA256SUMS, so a \
+             reader who downloads it has nothing to check it against (spec §47.2):\n{manifest}"
+        );
+    }
+    assert!(
+        !manifest.contains("SHA256SUMS"),
+        "the manifest lists itself, which no reader can verify:\n{manifest}"
+    );
+
+    // §67.7 shows the command a user types. It is the same file and the same format, so the
+    // proof is that command succeeding rather than a claim about the format.
+    let checked = Command::new("sha256sum")
+        .args(["--check", "--strict", "SHA256SUMS"])
+        .current_dir(&directory)
+        .output()
+        .expect("sha256sum must be available in the gate");
+    assert!(
+        checked.status.success(),
+        "`sha256sum -c SHA256SUMS` — the command §67.7 documents — does not verify the manifest \
+         this release publishes:\n{}\n{}",
+        String::from_utf8_lossy(&checked.stdout),
+        String::from_utf8_lossy(&checked.stderr)
+    );
+}
+
+#[test]
+fn should_order_the_checksum_manifest_deterministically() {
+    // §46.1 names checksum manifests as a reproducibility target, so the manifest is a
+    // deterministic function of the artifacts and nothing else — not of the order they were
+    // written in, and not of the locale the release ran under.
+    let scratch = scratch();
+    let first = release_directory(&scratch, "first");
+    let second = scratch.path().join("second");
+    std::fs::create_dir_all(&second).expect("a second release directory");
+    let mut names: Vec<PathBuf> = std::fs::read_dir(&first)
+        .expect("the first directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect();
+    names.reverse();
+    for path in names {
+        std::fs::copy(&path, second.join(path.file_name().expect("a file name")))
+            .expect("the artifact is copied");
+    }
+
+    for directory in [&first, &second] {
+        let (written, report) = checksums(&["--dir", directory.to_str().expect("a UTF-8 path")]);
+        assert!(written, "`xtask checksums` failed:\n{report}");
+    }
+    let left = std::fs::read_to_string(first.join("SHA256SUMS")).expect("the first manifest");
+    let right = std::fs::read_to_string(second.join("SHA256SUMS")).expect("the second manifest");
+    assert_eq!(
+        left, right,
+        "two runs over the same artifacts produced two manifests, so the manifest is not itself \
+         reproducible (spec §46.1, §47.2)"
+    );
+
+    let listed: Vec<&str> = left
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .collect();
+    let mut sorted = listed.clone();
+    sorted.sort_unstable();
+    assert_eq!(
+        listed, sorted,
+        "the manifest is not in byte order, so its ordering depends on something other than the \
+         names it lists:\n{left}"
+    );
+}
+
+#[test]
+fn should_fail_the_release_check_when_an_artifact_is_absent_from_the_manifest() {
+    let scratch = scratch();
+    let directory = release_directory(&scratch, "dist");
+    let path = directory.to_str().expect("a UTF-8 path");
+    let (written, report) = checksums(&["--dir", path]);
+    assert!(written, "`xtask checksums` failed:\n{report}");
+
+    let (verified, report) = checksums(&["--dir", path, "--verify"]);
+    assert!(
+        verified,
+        "the manifest this repository just wrote does not verify:\n{report}"
+    );
+
+    // An artifact that reached the release after the manifest was written. §48.2 asks that
+    // package validation check the manifest against the uploaded files, and an asset nobody
+    // hashed is exactly what that check exists to catch.
+    std::fs::write(
+        directory.join("ono-0.4.1-linux-x86_64.tar.gz"),
+        "a late arrival",
+    )
+    .expect("a late artifact");
+    let (verified, report) = checksums(&["--dir", path, "--verify"]);
+    assert!(
+        !verified,
+        "an artifact absent from SHA256SUMS passed verification:\n{report}"
+    );
+    assert!(
+        report.contains("ono-0.4.1-linux-x86_64.tar.gz"),
+        "the refusal does not name the artifact that is missing from the manifest:\n{report}"
+    );
+
+    // And an artifact whose bytes no longer match the digest the manifest carries.
+    std::fs::remove_file(directory.join("ono-0.4.1-linux-x86_64.tar.gz")).expect("the tarball");
+    std::fs::write(directory.join("ono_0.4.1_amd64.deb"), "different bytes").expect("a tamper");
+    let (verified, report) = checksums(&["--dir", path, "--verify"]);
+    assert!(
+        !verified && report.contains("ono_0.4.1_amd64.deb"),
+        "an artifact whose bytes changed after the manifest was written passed \
+         verification:\n{report}"
+    );
+}

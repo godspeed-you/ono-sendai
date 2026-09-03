@@ -23,6 +23,7 @@ fn main() -> ExitCode {
         Some("skip-check") => skip_check(&rest),
         Some("build-manifest") => build_manifest(&rest),
         Some("compare-builds") => compare_builds(&rest),
+        Some("checksums") => checksums(&rest),
         Some("perf") => perf(&rest),
         Some("docs") => generate_docs(),
         Some("conformance") => generate_conformance(),
@@ -54,6 +55,10 @@ fn usage() {
     eprintln!(
         "  compare-builds two directories of build artifacts, byte for byte \
 (spec section 46.5) <first> <second>"
+    );
+    eprintln!(
+        "  checksums      write SHA256SUMS over a release directory, or check it \
+(spec section 47.2) [--dir <path>] [--verify]"
     );
     eprintln!(
         "  perf           run the performance benchmarks of spec section 37.1 \
@@ -122,6 +127,56 @@ fn build_manifest(args: &[String]) -> ExitCode {
         }
         Err(error) => {
             eprintln!("build-manifest: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Writes or verifies the checksum manifest of a release directory (spec section 47.2, ADR-0528).
+///
+/// `--verify` is the half `sha256sum -c` cannot do: it also fails when an artifact is present and
+/// unlisted, which is how an asset reaches a release unattested.
+fn checksums(args: &[String]) -> ExitCode {
+    let mut directory = PathBuf::from("dist");
+    let mut verify = false;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--dir" => match rest.next() {
+                Some(path) => directory = PathBuf::from(path),
+                None => return usage_error("checksums: --dir needs a path"),
+            },
+            "--verify" => verify = true,
+            other => match other.strip_prefix("--dir=") {
+                Some(path) => directory = PathBuf::from(path),
+                None => return usage_error(&format!("checksums: unknown argument `{other}`")),
+            },
+        }
+    }
+
+    if verify {
+        let problems = provenance::check_checksums(&directory);
+        if problems.is_empty() {
+            println!(
+                "checksums: {}/{} covers every artifact beside it",
+                directory.display(),
+                provenance::CHECKSUM_MANIFEST
+            );
+            return ExitCode::SUCCESS;
+        }
+        for problem in &problems {
+            eprintln!("checksums: {} — {}", problem.location, problem.detail);
+        }
+        return ExitCode::FAILURE;
+    }
+
+    match provenance::write_checksums(&directory) {
+        Ok(path) => {
+            println!("checksums: wrote {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("checksums: {error}");
             ExitCode::FAILURE
         }
     }

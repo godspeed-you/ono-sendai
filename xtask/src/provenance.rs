@@ -269,3 +269,160 @@ fn from_toml(value: &toml::Value) -> Value {
         other => Value::String(other.to_string()),
     }
 }
+
+// --- the checksum manifest (spec §47.1, §47.2, ADR-0528) ----------------------------------------
+
+/// The name every release publishes its digests under.
+pub const CHECKSUM_MANIFEST: &str = "SHA256SUMS";
+
+/// The assets a release publishes that are *about* the artifacts rather than artifacts.
+///
+/// The manifest cannot list itself, and it cannot list a signature over itself or a provenance
+/// document that quotes its digests without becoming circular. Everything else in the directory
+/// is something a reader can download, so everything else is listed (spec §47.2).
+const NOT_AN_ARTIFACT: [&str; 5] = [
+    CHECKSUM_MANIFEST,
+    "SHA256SUMS.sig",
+    "SHA256SUMS.pem",
+    "SHA256SUMS.sigstore.json",
+    PROVENANCE,
+];
+
+/// The name the signed build provenance is published under (spec §47.1).
+pub const PROVENANCE: &str = "build-provenance.json";
+
+/// Every downloadable artifact in `directory`, in the order the manifest lists them.
+///
+/// Byte order of the file name, which is what `LC_ALL=C sort` produces and what makes the
+/// manifest a deterministic function of the artifacts alone (spec §46.1).
+///
+/// # Errors
+///
+/// Returns the reason the directory could not be read.
+pub fn downloadable(directory: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let entries = std::fs::read_dir(directory)
+        .map_err(|error| format!("cannot read {}: {error}", directory.display()))?;
+    let mut found = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("cannot read {}: {error}", directory.display()))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !path.is_file() || NOT_AN_ARTIFACT.contains(&name.as_str()) {
+            continue;
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        found.push((name, bytes));
+    }
+    found.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(found)
+}
+
+/// The text of the checksum manifest for `directory`.
+///
+/// The format is `sha256sum`'s own — digest, two spaces, name — so the command spec §67.7
+/// documents for a user is the command that checks it.
+///
+/// # Errors
+///
+/// Returns the reason the directory could not be read.
+pub fn checksum_manifest(directory: &Path) -> Result<String, String> {
+    Ok(downloadable(directory)?
+        .iter()
+        .map(|(name, bytes)| format!("{}  {name}\n", crate::reproducibility::digest(bytes)))
+        .collect())
+}
+
+/// Writes `SHA256SUMS` into `directory`.
+///
+/// # Errors
+///
+/// Returns the reason the manifest could not be written.
+pub fn write_checksums(directory: &Path) -> Result<PathBuf, String> {
+    let text = checksum_manifest(directory)?;
+    if text.is_empty() {
+        return Err(format!(
+            "{} holds no downloadable artifact, so a manifest over it would attest to nothing \
+             (spec §47.2)",
+            directory.display()
+        ));
+    }
+    let path = directory.join(CHECKSUM_MANIFEST);
+    std::fs::write(&path, text)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    Ok(path)
+}
+
+/// Checks `SHA256SUMS` against the artifacts beside it, in both directions.
+///
+/// One direction is `sha256sum -c`: every listed artifact is present and hashes to what the
+/// manifest says. The other is the one §47.2 actually asks for and `sha256sum` cannot answer —
+/// every artifact *present* is listed. An asset that reached the release after the manifest was
+/// written is published unattested, and nothing but this direction notices.
+#[must_use]
+pub fn check_checksums(directory: &Path) -> Vec<Problem> {
+    let location = directory.join(CHECKSUM_MANIFEST).display().to_string();
+    let Ok(text) = std::fs::read_to_string(directory.join(CHECKSUM_MANIFEST)) else {
+        return vec![Problem {
+            location,
+            detail: "is missing. Every release publishes the SHA-256 of every downloadable \
+                     artifact beside the artifacts (spec §47.1, §47.2)"
+                .to_owned(),
+        }];
+    };
+    let listed: Vec<(String, String)> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.to_owned(), fields.next()?.to_owned()))
+        })
+        .collect();
+
+    let present = match downloadable(directory) {
+        Ok(present) => present,
+        Err(error) => {
+            return vec![Problem {
+                location,
+                detail: error,
+            }];
+        }
+    };
+
+    let mut problems = Vec::new();
+    for (name, bytes) in &present {
+        match listed.iter().find(|(_, listed)| listed == name) {
+            None => problems.push(Problem {
+                location: location.clone(),
+                detail: format!(
+                    "does not list `{name}`, which the release publishes. An asset nobody hashed \
+                     is an asset nobody can check (spec §47.2, §48.2)"
+                ),
+            }),
+            Some((digest, _)) if *digest != crate::reproducibility::digest(bytes) => {
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "records {digest} for `{name}` and the file hashes to {}. The bytes \
+                         changed after the manifest was written (spec §47.2, §48.4)",
+                        crate::reproducibility::digest(bytes)
+                    ),
+                });
+            }
+            Some(_) => {}
+        }
+    }
+    for (_, name) in &listed {
+        if !present.iter().any(|(present, _)| present == name) {
+            problems.push(Problem {
+                location: location.clone(),
+                detail: format!(
+                    "lists `{name}`, which is not beside it. The release is incomplete, or the \
+                     manifest describes a different one (spec §47.2)"
+                ),
+            });
+        }
+    }
+    problems
+}

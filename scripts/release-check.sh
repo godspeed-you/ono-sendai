@@ -23,6 +23,13 @@ scripts/package-check.sh
 printf '\n\033[1m== two builds of this commit\033[0m\n'
 scripts/rebuild-check.sh
 
+# §47.1-§47.2: the digest of every downloadable artifact, in one manifest, in deterministic
+# order — and the check that runs in both directions, so an artifact nobody hashed fails the
+# release rather than shipping unattested (ADR-0528).
+printf '\n\033[1m== checksum manifest\033[0m\n'
+cargo run --quiet --package xtask -- checksums --dir dist
+cargo run --quiet --package xtask -- checksums --dir dist --verify
+
 printf '\n\033[1m== release checklist\033[0m\n'
 if grep -n '^- \[ \]' docs/ACCEPTANCE.md; then
   printf '\n\033[31mrelease-check: open items remain in docs/ACCEPTANCE.md\033[0m\n'

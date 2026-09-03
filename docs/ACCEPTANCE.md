@@ -1947,13 +1947,14 @@ mutable inputs.
       `scripts/release-check.sh` locally and, across two runners per architecture, by the
       `rebuild` and `reproducibility` jobs of `.github/workflows/release.yml` (#105, §46.1, §46.5,
       §46.6, §62.4, ADR-0527).
-- [ ] **P2 · `SHA256SUMS` covers every downloadable artifact, deterministically ordered.** The
+- [x] **P2 · `SHA256SUMS` covers every downloadable artifact, deterministically ordered.** The
       manifest lists every published executable and package, its ordering is stable across runs, and
       an artifact missing from it fails the release check —
       `xtask/tests/provenance.rs::should_list_every_downloadable_artifact_in_the_checksum_manifest`,
       `::should_order_the_checksum_manifest_deterministically`,
-      `::should_fail_the_release_check_when_an_artifact_is_absent_from_the_manifest` (#106, §47.1,
-      §47.2).
+      `::should_fail_the_release_check_when_an_artifact_is_absent_from_the_manifest`, run by
+      `scripts/release-check.sh` and by the `publish` job of `.github/workflows/release.yml`
+      (#106, §47.1, §47.2, ADR-0528).
 - [ ] **P2 · The manifest is signed and the signature verifies.** A verifiable signature is
       published beside `SHA256SUMS`, verification succeeds against the published identity, a
       tampered manifest fails verification, and the signing model is keyless or else an ADR defines
