@@ -33,6 +33,7 @@
 
 use std::io::{BufRead as _, BufReader};
 use std::process::{Child, Command, Stdio};
+use std::time::Duration;
 
 use ono_cli::invocation::Invocation;
 use ono_testkit::{Scratch, scratch};
@@ -248,4 +249,81 @@ fn should_bind_the_documented_default_address_when_none_is_given() {
         panic!("`--agent` serves stdin and stdout");
     };
     assert_eq!(options.listen, None);
+}
+
+#[test]
+fn should_keep_listening_when_its_diagnostics_cannot_be_written() {
+    // §11.2's summary is what the agent *says* about the socket it just opened; §12.6 is what the
+    // agent *does* with that socket. Whether anybody can receive the commentary belongs to the
+    // operator's console — a log pipe nobody drains any more, a rotated file, a closed terminal —
+    // and never to the service, so a diagnostic that cannot be written costs its line and leaves
+    // the listener where it was (ADR-0549).
+    //
+    // `/dev/full` refuses every write with `ENOSPC`, which is the same refusal a closed log pipe
+    // gives with `EPIPE` and is the one a test can arrange without racing the summary.
+    let Ok(unwritable) = std::fs::OpenOptions::new().write(true).open("/dev/full") else {
+        ono_testkit::skipped(
+            ono_testkit::SkipReason::FixtureNotApplicable,
+            "the host has no `/dev/full`, so no stream that refuses every write can be handed to \
+             the agent",
+        );
+        return;
+    };
+
+    let home = scratch();
+    let port = free_port();
+    let address = format!("127.0.0.1:{port}");
+    let agent = Agent {
+        process: Command::new(binary())
+            .args(["--agent", "--listen", &address])
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(unwritable))
+            .spawn()
+            .expect("the agent starts"),
+        summary: Vec::new(),
+        address: address.clone(),
+    };
+
+    assert!(
+        accepts(&address),
+        "§11.2, §12.6: the agent listens on {address} even though nothing could receive its \
+         startup summary; instead it is gone{}",
+        exit_note(agent)
+    );
+}
+
+/// A loopback port nothing is listening on, released the moment its number is known.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("a loopback port")
+        .local_addr()
+        .expect("a bound listener has an address")
+        .port()
+}
+
+/// Whether `address` accepts a connection, within the time an agent needs to reach its socket.
+///
+/// A watchdog rather than an assertion (ADR-0517): what is asserted is that the listener exists
+/// at all, and how long a busy machine takes to start a process is not this test's subject.
+fn accepts(address: &str) -> bool {
+    let deadline = std::time::Instant::now() + ono_testkit::under_load(Duration::from_secs(10));
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect(address).is_ok() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    false
+}
+
+/// How the agent ended, for a failure message that says which of the two things happened.
+fn exit_note(mut agent: Agent) -> String {
+    match agent.process.try_wait() {
+        Ok(Some(status)) => format!(": it exited with {status}"),
+        Ok(None) => " while still running".to_owned(),
+        Err(error) => format!(": its status could not be read: {error}"),
+    }
 }

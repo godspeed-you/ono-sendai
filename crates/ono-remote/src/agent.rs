@@ -212,7 +212,7 @@ where
     match serve_registry(StdioTransport::new(input, output), config).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("ono --agent: {}", error.render_full());
+            ono_core::diagnostic!("ono --agent: {}", error.render_full());
             ExitCode::FAILURE
         }
     }

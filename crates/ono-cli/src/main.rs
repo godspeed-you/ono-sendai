@@ -61,7 +61,7 @@ fn main() -> ExitCode {
             {
                 Ok(runtime) => runtime,
                 Err(error) => {
-                    eprintln!(
+                    ono_core::diagnostic!(
                         "{}: cannot start the agent runtime: {error}",
                         ono_core::SHORT_NAME
                     );
@@ -82,7 +82,7 @@ fn main() -> ExitCode {
             let identity = match agent_identity(&agent_options) {
                 Ok(identity) => identity,
                 Err(error) => {
-                    eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+                    ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
                     return ExitCode::from(ExitStatus::FAILURE);
                 }
             };
@@ -287,9 +287,9 @@ async fn serve_authenticated(
     let store = match authorization_store() {
         Ok(store) => store,
         Err(error) => {
-            eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+            ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
             if let Some(help) = error.help() {
-                eprintln!("{}: {help}", ono_core::SHORT_NAME);
+                ono_core::diagnostic!("{}: {help}", ono_core::SHORT_NAME);
             }
             return ExitCode::from(ExitStatus::FAILURE);
         }
@@ -298,14 +298,14 @@ async fn serve_authenticated(
     let listener = match ono_remote::TlsListener::bind(address, identity).await {
         Ok(listener) => listener,
         Err(error) => {
-            eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+            ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
             return ExitCode::from(ExitStatus::FAILURE);
         }
     };
     let bound = match listener.local_addr() {
         Ok(bound) => bound,
         Err(error) => {
-            eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+            ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
             return ExitCode::from(ExitStatus::FAILURE);
         }
     };
@@ -322,7 +322,7 @@ async fn serve_authenticated(
         // connection without a restart, and read again by the revocation sweep of §12.5.
         .with_authorization_source(authorization_store);
     let error = agent.run().await;
-    eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+    ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
     ExitCode::from(ExitStatus::FAILURE)
 }
 
@@ -338,35 +338,35 @@ fn print_startup_summary(
     limits: &ono_protocol::Limits,
 ) {
     let name = ono_core::SHORT_NAME;
-    eprintln!("{name}: listening on {bound}");
-    eprintln!("{name}: host key {}", identity.fingerprint());
-    eprintln!(
+    ono_core::diagnostic!("{name}: listening on {bound}");
+    ono_core::diagnostic!("{name}: host key {}", identity.fingerprint());
+    ono_core::diagnostic!(
         "{name}: authorization store {}",
         authorization_store_path().map_or_else(
             || "none — this shell keeps no configuration directory".to_owned(),
             |path| path.display().to_string()
         )
     );
-    eprintln!("{name}: authorized clients {authorized}");
+    ono_core::diagnostic!("{name}: authorized clients {authorized}");
     if authorized == 0 {
         // §11.2 lets an agent listen for nobody and requires it to refuse everybody; §54.1 and
         // §2.3 say it must be legible rather than discovered from a refused client (ADR-0504).
-        eprintln!(
+        ono_core::diagnostic!(
             "{name}: no client is authorized yet, so every connection will be refused after the \
              cryptographic handshake (v0.4.1 section 11.2). `add client-key <fingerprint>` \
              authorizes one to observe (section 9.4)"
         );
     }
-    eprintln!("{name}: maximum connections {}", limits.max_connections());
-    eprintln!(
+    ono_core::diagnostic!("{name}: maximum connections {}", limits.max_connections());
+    ono_core::diagnostic!(
         "{name}: maximum connections per client {}",
         limits.max_connections_per_client()
     );
-    eprintln!(
+    ono_core::diagnostic!(
         "{name}: maximum pending handshakes {}",
         limits.max_pending_handshakes()
     );
-    eprintln!("{name}: handshake timeout {:?}", limits.handshake_timeout());
+    ono_core::diagnostic!("{name}: handshake timeout {:?}", limits.handshake_timeout());
 }
 
 /// The ceilings this agent will enforce, from the one place they are declared (§12.4, §55.1).
@@ -386,7 +386,7 @@ fn configured_limits() -> ono_protocol::Limits {
         // §55.2: a security-sensitive agent limit never silently becomes unlimited because a
         // value failed to parse. Nothing was stored, so the declared default stays in force, and
         // the operator is told which variable they have to fix.
-        eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+        ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
     });
     let read =
         |key: &str| u32::try_from(ono_cli::limits::magnitude(&settings, key)).unwrap_or(u32::MAX);

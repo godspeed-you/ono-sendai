@@ -460,7 +460,7 @@ impl ListeningAgent {
                         )
                         .with_error_code(ErrorCode::RemoteUnreachable),
                     );
-                    eprintln!(
+                    ono_core::diagnostic!(
                         "{}: a peer could not be accepted: {error}",
                         ono_core::SHORT_NAME
                     );
@@ -538,7 +538,7 @@ async fn serve_one(
                 AuditEvent::new(AuditKind::ClientVerificationFailed, "unaccepted", "denied")
                     .with_error_code(error.code()),
             );
-            eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+            ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
             return;
         }
         Err(_elapsed) => {
@@ -547,7 +547,7 @@ async fn serve_one(
                 AuditEvent::new(AuditKind::ConnectionLimitDenied, "unaccepted", "denied")
                     .with_error_code(refusal.code()),
             );
-            eprintln!("{}: {}", ono_core::SHORT_NAME, refusal.message());
+            ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, refusal.message());
             return;
         }
     };
@@ -604,7 +604,7 @@ async fn serve_one(
                 .with_peer(fingerprint)
                 .with_error_code(error.code()),
             );
-            eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+            ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
             let _ = ono_protocol::refuse(transport, &error, limits).await;
             return;
         }
@@ -622,7 +622,7 @@ async fn serve_one(
     tokio::select! {
         result = serve_registry(transport, config) => {
             if let Err(error) = result {
-                eprintln!("{}: {}", ono_core::SHORT_NAME, error.message());
+                ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
             }
         }
         _ = closed => {

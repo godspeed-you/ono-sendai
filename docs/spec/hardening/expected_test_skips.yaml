@@ -33,6 +33,9 @@
 version: 1
 
 declared:
+  - id: "crates/ono-cli/tests/agent_startup.rs::should_keep_listening_when_its_diagnostics_cannot_be_written"
+    category: fixture_not_applicable
+    prerequisite: "the host has a `/dev/full`, so a stream that refuses every write can be handed to the agent"
   - id: "crates/ono-cli/tests/network.rs::should_act_on_the_piped_interface_when_a_record_arrives_instead_of_a_selector"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
