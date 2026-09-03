@@ -1938,13 +1938,15 @@ mutable inputs.
       `::should_normalize_file_ownership_and_mode_in_every_produced_package`,
       `::should_refuse_a_release_build_that_leaves_a_determinism_input_unset` (#104, §46.2–§46.4,
       ADR-0526).
-- [ ] **P2 · Two clean builds produce identical packages.** Every published artifact is built twice
+- [x] **P2 · Two clean builds produce identical packages.** Every published artifact is built twice
       in fresh environments from one commit and compared, a mismatch fails the release check with a
       diagnostic naming the differing member, and each supported architecture satisfies this on its
       own — `xtask/tests/packaging.rs::should_produce_identical_hashes_for_two_clean_builds_of_one_commit`,
       `::should_name_the_differing_archive_member_when_a_seeded_difference_is_introduced`,
       `::should_require_reproducibility_of_every_supported_architecture_separately`, run by
-      `scripts/release-check.sh` (#105, §46.1, §46.5, §46.6, §62.4).
+      `scripts/release-check.sh` locally and, across two runners per architecture, by the
+      `rebuild` and `reproducibility` jobs of `.github/workflows/release.yml` (#105, §46.1, §46.5,
+      §46.6, §62.4, ADR-0527).
 - [ ] **P2 · `SHA256SUMS` covers every downloadable artifact, deterministically ordered.** The
       manifest lists every published executable and package, its ordering is stable across runs, and
       an artifact missing from it fails the release check —

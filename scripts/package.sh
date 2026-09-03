@@ -11,9 +11,10 @@
 # not go through `cross`: cross installs an `x86_64` toolchain inside whatever image it runs,
 # which fails on an arm64 runner where the image and the target are aarch64 (ADR-0123).
 #
-# usage: scripts/package.sh [--target <triple>] [--no-build] [--print-determinism]
+# usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--print-determinism]
 #   --target             x86_64-unknown-linux-gnu (default: the host) or aarch64-unknown-linux-gnu
-#   --no-build           package what target/<triple>/release/ono already holds
+#   --no-build           package what $CARGO_TARGET_DIR/<triple>/release/ono already holds
+#   --dist <dir>         write the packages here instead of dist/ — one rebuild of §46.5 per dir
 #   --print-determinism  print the four inputs of spec §46.2-§46.4 and exit, building nothing
 set -euo pipefail
 
@@ -69,13 +70,19 @@ require_determinism() {
 target=""
 no_build=0
 print_determinism=0
+# Where the binary is looked for and where the packages are written. Two rebuilds of one commit
+# need two of each, and §46.5 needs them not to share a directory (ADR-0527).
+target_dir="${CARGO_TARGET_DIR:-target}"
+dist_dir="dist"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target) target="$2"; shift 2 ;;
     --target=*) target="${1#--target=}"; shift ;;
     --no-build) no_build=1; shift ;;
+    --dist) dist_dir="$2"; shift 2 ;;
+    --dist=*) dist_dir="${1#--dist=}"; shift ;;
     --print-determinism) print_determinism=1; shift ;;
-    *) echo "usage: scripts/package.sh [--target <triple>] [--no-build] [--print-determinism]" >&2; exit 2 ;;
+    *) echo "usage: scripts/package.sh [--target <triple>] [--no-build] [--dist <dir>] [--print-determinism]" >&2; exit 2 ;;
   esac
 done
 
@@ -167,15 +174,15 @@ NOTE
   fi
 fi
 
-binary="target/$target/release/ono"
+binary="$target_dir/$target/release/ono"
 if [[ ! -x "$binary" ]]; then
   echo "package: $binary does not exist; build it or drop --no-build" >&2
   exit 1
 fi
 
-mkdir -p dist
-deb="dist/ono_${version}_${deb_arch}.deb"
-rpm="dist/ono-${version}-1.${rpm_arch}.rpm"
+mkdir -p "$dist_dir"
+deb="$dist_dir/ono_${version}_${deb_arch}.deb"
+rpm="$dist_dir/ono-${version}-1.${rpm_arch}.rpm"
 
 # The release profile already strips symbols; cargo-deb's own strip would need the target's
 # binutils on the host and add nothing.
@@ -183,7 +190,7 @@ step "packaging $deb"
 cargo deb --package ono-cli --no-build --no-strip --target "$target" --output "$deb"
 
 step "packaging $rpm"
-cargo generate-rpm --package crates/ono-cli --target "$target" --arch "$rpm_arch" --output "$rpm"
+cargo generate-rpm --package crates/ono-cli --target-dir "$target_dir" --target "$target" --arch "$rpm_arch" --output "$rpm"
 
 step "packages"
 ls -l "$deb" "$rpm"

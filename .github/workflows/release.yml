@@ -57,6 +57,64 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  rebuild:
+    # §46.5 wants two builds "in fresh clean environments", and the freshest clean environment
+    # this repository can reach is a second runner: a different machine, a different container
+    # daemon, a different temporary filesystem, the same commit. It builds the same artifacts
+    # with the same script and never installs them — the proving is `package`'s job, and these
+    # bytes exist only to be compared (ADR-0527).
+    name: rebuild (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch, 2026-08-05
+        with:
+          toolchain: "1.94"
+      - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        with:
+          tool: cargo-deb@3.7.0,cargo-generate-rpm@0.21.0,cross@0.2.5
+      - name: build the packages a second time
+        run: scripts/package.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rebuild-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  reproducibility:
+    # §46.6: each architecture satisfies reproducibility on its own, so the comparison is per
+    # architecture and one green x86_64 proves nothing about aarch64.
+    name: reproducibility (${{ matrix.arch }})
+    needs: [package, rebuild]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch, 2026-08-05
+        with:
+          toolchain: "1.94"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: packages-${{ matrix.arch }}
+          path: first
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rebuild-${{ matrix.arch }}
+          path: second
+      - name: compare the two builds byte for byte
+        run: scripts/rebuild-check.sh --compare first second
+
   inputs:
     # Appendix H: the release states what it was made of, before it makes anything. The manifest
     # is written by a repository-owned task from the same files the gate's pin scanners read, so
@@ -83,7 +141,7 @@ jobs:
 
   publish:
     name: attach to the release
-    needs: [package, inputs]
+    needs: [package, inputs, reproducibility]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:

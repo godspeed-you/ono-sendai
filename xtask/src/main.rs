@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use xtask::{
-    bindings, conformance, contracts, narrative, perf, provenance, reference, scan, supply_chain,
-    terminology,
+    bindings, conformance, contracts, narrative, perf, provenance, reference, reproducibility,
+    scan, supply_chain, terminology,
 };
 
 fn main() -> ExitCode {
@@ -22,6 +22,7 @@ fn main() -> ExitCode {
         Some("state-check") => state_check(),
         Some("skip-check") => skip_check(&rest),
         Some("build-manifest") => build_manifest(&rest),
+        Some("compare-builds") => compare_builds(&rest),
         Some("perf") => perf(&rest),
         Some("docs") => generate_docs(),
         Some("conformance") => generate_conformance(),
@@ -50,6 +51,10 @@ fn usage() {
 (spec section 38.3) <log>"
     );
     eprintln!("  build-manifest write the release input manifest of Appendix H [--output <path>]");
+    eprintln!(
+        "  compare-builds two directories of build artifacts, byte for byte \
+(spec section 46.5) <first> <second>"
+    );
     eprintln!(
         "  perf           run the performance benchmarks of spec section 37.1 \
 [--profile S|M|L] [--iterations N] [--compare <path>] [--write-baseline]"
@@ -117,6 +122,58 @@ fn build_manifest(args: &[String]) -> ExitCode {
         }
         Err(error) => {
             eprintln!("build-manifest: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Compares two directories of build artifacts (spec section 46.5, ADR-0527).
+///
+/// The two directories come from `scripts/rebuild-check.sh`, which builds every artifact twice.
+/// This half only reads bytes, so it can also be pointed at a published release and a local
+/// rebuild of the same tag.
+fn compare_builds(args: &[String]) -> ExitCode {
+    let [first, second] = args else {
+        eprintln!("compare-builds: needs exactly two directories");
+        return ExitCode::FAILURE;
+    };
+    let (first, second) = (PathBuf::from(first), PathBuf::from(second));
+    match reproducibility::compare(&first, &second) {
+        Err(error) => {
+            eprintln!("compare-builds: {error}");
+            ExitCode::FAILURE
+        }
+        Ok(differences) if differences.is_empty() => {
+            match reproducibility::inventory(&first) {
+                Ok(inventory) => {
+                    for (name, digest) in &inventory {
+                        println!("compare-builds: {digest}  {name}");
+                    }
+                }
+                Err(error) => {
+                    eprintln!("compare-builds: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+            println!(
+                "compare-builds: {} and {} are byte-for-byte identical",
+                first.display(),
+                second.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Ok(differences) => {
+            for difference in &differences {
+                eprintln!(
+                    "compare-builds: {} — {}",
+                    difference.artifact, difference.detail
+                );
+            }
+            eprintln!(
+                "compare-builds: {} artifact(s) differ between two builds of one commit; a \
+                 release built from these inputs is not reproducible (spec section 46.1, 46.5)",
+                differences.len()
+            );
             ExitCode::FAILURE
         }
     }

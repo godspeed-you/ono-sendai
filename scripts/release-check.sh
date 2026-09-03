@@ -17,6 +17,12 @@ printf '\n\033[1m== installable packages\033[0m\n'
 scripts/package.sh
 scripts/package-check.sh
 
+# §46.5: every publishable artifact, built twice in two clean environments that disagree about
+# locale, timezone, umask and directories, and compared byte for byte (ADR-0527). The release
+# workflow runs the same comparison across two *runners*, per architecture (§46.6).
+printf '\n\033[1m== two builds of this commit\033[0m\n'
+scripts/rebuild-check.sh
+
 printf '\n\033[1m== release checklist\033[0m\n'
 if grep -n '^- \[ \]' docs/ACCEPTANCE.md; then
   printf '\n\033[31mrelease-check: open items remain in docs/ACCEPTANCE.md\033[0m\n'

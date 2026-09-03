@@ -715,3 +715,225 @@ fn should_normalize_file_ownership_and_mode_in_every_produced_package() {
 
     let _ = std::fs::remove_dir_all(&target_dir);
 }
+
+// --- two clean builds of one commit (spec §46.1, §46.5, §46.6, ADR-0527) ------------------------
+
+/// One job of a workflow file: everything from `  <name>:` to the next job at that indent.
+fn workflow_job(workflow: &str, name: &str) -> String {
+    let mut lines = workflow
+        .lines()
+        .skip_while(|line| *line != format!("  {name}:"));
+    let head = lines.next().unwrap_or_else(|| panic!("no `{name}` job"));
+    std::iter::once(head)
+        .chain(lines.take_while(|line| line.starts_with("   ") || line.trim().is_empty()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The SHA-256 of some bytes, spelled the way `sha256sum` spells it.
+fn sha256_of(bytes: &[u8]) -> String {
+    xtask::reproducibility::digest(bytes)
+}
+
+/// Runs `scripts/rebuild-check.sh`, which builds every artifact twice and compares the bytes.
+fn rebuild_check(arguments: &[&str]) -> (bool, String) {
+    let output = Command::new("bash")
+        .arg(repo().join("scripts/rebuild-check.sh"))
+        .args(arguments)
+        .current_dir(repo())
+        .output()
+        .unwrap_or_else(|error| panic!("bash must be runnable in the gate: {error}"));
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    (output.status.success(), text)
+}
+
+#[test]
+fn should_produce_identical_hashes_for_two_clean_builds_of_one_commit() {
+    // §46.5 in the form a gate can run: one commit, one binary, two packaging runs in two clean
+    // environments that disagree about locale, timezone, umask, temporary directory and build
+    // directory — and the same bytes out of both.
+    let work = scratch();
+    let staged = staged_target_dir("rebuild");
+    let (identical, report) = rebuild_check(&[
+        "--binary",
+        staged
+            .join("release/ono")
+            .to_str()
+            .expect("a UTF-8 scratch path"),
+        "--work",
+        work.path().to_str().expect("a UTF-8 scratch path"),
+    ]);
+    assert!(
+        identical,
+        "two clean builds of one commit did not produce identical artifacts (spec §46.1, \
+         §46.5):\n{report}"
+    );
+    assert!(
+        report.contains(".deb") && report.contains(".rpm"),
+        "the comparison covered neither package, so it proved nothing about the release \
+         targets of §46.1:\n{report}"
+    );
+
+    // And what it compared is what a release publishes: both directories hold the same set of
+    // artifacts, and every pair hashes the same.
+    let left = work.path().join("a/dist");
+    let right = work.path().join("b/dist");
+    let digests = |directory: &Path| -> BTreeMap<String, String> {
+        let mut found = BTreeMap::new();
+        for entry in std::fs::read_dir(directory)
+            .unwrap_or_else(|error| panic!("{} is readable: {error}", directory.display()))
+        {
+            let entry = entry.expect("a directory entry");
+            let bytes = std::fs::read(entry.path()).expect("an artifact is readable");
+            found.insert(
+                entry.file_name().to_string_lossy().into_owned(),
+                sha256_of(&bytes),
+            );
+        }
+        found
+    };
+    let left = digests(&left);
+    assert!(
+        left.keys().any(|name| name.ends_with(".deb")) && left.keys().any(|n| n.ends_with(".rpm")),
+        "the first build produced no packages: {left:?}"
+    );
+    assert_eq!(
+        left,
+        digests(&right),
+        "the two builds disagree about at least one artifact"
+    );
+    let _ = std::fs::remove_dir_all(&staged);
+}
+
+#[test]
+fn should_name_the_differing_archive_member_when_a_seeded_difference_is_introduced() {
+    // §46.5: "A mismatch MUST fail the release check and produce a diagnostic identifying which
+    // files/archive members differ where tooling permits." A comparison that only says "these
+    // two files differ" leaves the maintainer where they started, so the difference is seeded
+    // deliberately and the diagnostic has to name the member it landed in.
+    let work = scratch();
+    let staged = staged_target_dir("seeded");
+    let (identical, report) = rebuild_check(&[
+        "--binary",
+        staged
+            .join("release/ono")
+            .to_str()
+            .expect("a UTF-8 scratch path"),
+        "--work",
+        work.path().to_str().expect("a UTF-8 scratch path"),
+    ]);
+    assert!(
+        identical,
+        "the unseeded comparison must be clean:\n{report}"
+    );
+
+    let deb = std::fs::read_dir(work.path().join("b/dist"))
+        .expect("the second build's artifacts")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "deb"))
+        .expect("a .deb to seed a difference into");
+    // The payload member, changed in place so the archive stays a well-formed `ar`: this is the
+    // shape a genuine non-reproducibility takes, not a truncated file.
+    let mut bytes = std::fs::read(&deb).expect("the package is readable");
+    let payload = seeded_payload_offset(&bytes);
+    bytes[payload] ^= 0xff;
+    std::fs::write(&deb, &bytes).expect("the seeded package is written");
+
+    let (identical, report) = rebuild_check(&[
+        "--compare",
+        work.path().join("a/dist").to_str().unwrap(),
+        work.path().join("b/dist").to_str().unwrap(),
+    ]);
+    assert!(
+        !identical,
+        "a seeded difference was not detected, so the comparison proves nothing:\n{report}"
+    );
+    assert!(
+        report.contains("data.tar"),
+        "the diagnostic does not name the archive member that differs, so it leaves the \
+         maintainer with two hashes and no lead (spec §46.5):\n{report}"
+    );
+    assert!(
+        report.contains(
+            deb.file_name()
+                .expect("a file name")
+                .to_str()
+                .expect("a UTF-8 name")
+        ),
+        "the diagnostic does not name the artifact that differs:\n{report}"
+    );
+    let _ = std::fs::remove_dir_all(&staged);
+}
+
+/// The offset of the first byte of a `.deb`'s `data.tar.*` member.
+fn seeded_payload_offset(bytes: &[u8]) -> usize {
+    let mut cursor = 8; // the `!<arch>\n` magic
+    while cursor + 60 <= bytes.len() {
+        let header = &bytes[cursor..cursor + 60];
+        let name = String::from_utf8_lossy(&header[0..16]).trim().to_owned();
+        let size: usize = String::from_utf8_lossy(&header[48..58])
+            .trim()
+            .parse()
+            .expect("an ar member length");
+        let body = cursor + 60;
+        if name.starts_with("data.tar") {
+            return body + size / 2;
+        }
+        cursor = body + size + size % 2;
+    }
+    panic!("the .deb carries no data.tar member");
+}
+
+#[test]
+fn should_require_reproducibility_of_every_supported_architecture_separately() {
+    // §46.6: "Reproducibility is not proven merely because x86_64 is stable if aarch64 artifacts
+    // differ between clean builds." The comparison therefore runs inside the per-architecture
+    // packaging job, where each runner is native, rather than once at the end.
+    let workflow = support::read(".github/workflows/release.yml");
+    assert!(
+        workflow.contains("rebuild-check.sh"),
+        "the release workflow never compares two builds, so §46.5 is asserted nowhere a release \
+         passes through:\n{workflow}"
+    );
+
+    // The comparison runs per architecture: `rebuild` builds the same commit on a second
+    // runner — the freshest clean environment this repository can reach — and `reproducibility`
+    // compares the two, once for each supported architecture.
+    for job in ["rebuild:", "reproducibility:"] {
+        assert!(
+            workflow.contains(&format!("\n  {job}")),
+            "the release workflow has no `{job}` job, so nothing builds this commit a second \
+             time (spec §46.5):\n{workflow}"
+        );
+    }
+    let comparison = workflow_job(&workflow, "reproducibility");
+    for architecture in ["x86_64", "aarch64"] {
+        assert!(
+            comparison.contains(architecture),
+            "the comparison does not cover {architecture}, so that architecture can differ \
+             between two clean builds without the release noticing (spec §46.6):\n{comparison}"
+        );
+    }
+    assert!(
+        comparison.contains("--compare"),
+        "the comparison job does not compare two builds:\n{comparison}"
+    );
+
+    // And publication waits for it: a release that ships before the comparison finishes has
+    // learned nothing from it.
+    let publish = workflow_job(&workflow, "publish");
+    assert!(
+        publish.contains("reproducibility"),
+        "publication does not wait for the reproducibility comparison:\n{publish}"
+    );
+
+    // And the local release gate runs it too, so the rule is not something only CI knows.
+    let release_check = support::read("scripts/release-check.sh");
+    assert!(
+        release_check.contains("rebuild-check.sh"),
+        "scripts/release-check.sh does not compare two builds, so §46.5 is not part of release \
+         qualification:\n{release_check}"
+    );
+}
