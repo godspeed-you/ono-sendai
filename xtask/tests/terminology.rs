@@ -310,3 +310,31 @@ fn should_report_a_remote_page_that_leaves_one_of_the_six_to_be_inferred() {
         "the concept nobody separated is named, got {problems:?}"
     );
 }
+
+#[test]
+fn should_not_read_a_denial_as_the_claim_it_denies() {
+    // v0.4.1 §5.3's own words are "is also not treated as fully isolated from that account", and
+    // §51.1's goal is claims: "The goal is not to ban these words. The goal is to ensure they
+    // refer to a defined contract." A sentence that uses the phrase in order to deny it is the
+    // intended shape — it is what §15.2's statement does — so a rule that reported it would be a
+    // rule against saying the true thing plainly.
+    assert_eq!(
+        check_text(
+            "SECURITY.md",
+            "A native KUANG/11 plugin is not fully isolated from your user account: native \
+             execution is not a complete filesystem or network sandbox.",
+        ),
+        Vec::new()
+    );
+    // And the claim itself is still reported, so the exemption is about the word `not` next to
+    // the phrase and not about the phrase appearing anywhere in a document that also denies it.
+    assert!(
+        !check_text(
+            "SECURITY.md",
+            "A native KUANG/11 plugin is not a toy. It is fully isolated from your user account, \
+             and native execution is not a complete filesystem or network sandbox.",
+        )
+        .is_empty(),
+        "a denial elsewhere in the document does not excuse the claim"
+    );
+}

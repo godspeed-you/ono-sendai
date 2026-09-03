@@ -398,7 +398,7 @@ pub fn check_decision(name: &str, text: &str) -> Vec<Problem> {
     let mut problems = Vec::new();
     for term in terms() {
         for phrase in &term.overstates {
-            if !mentions(&claimed, phrase) {
+            if !claims(&claimed, phrase) {
                 continue;
             }
             problems.push(Problem::new(
@@ -463,7 +463,7 @@ pub fn check_text(location: &str, text: &str) -> Vec<Problem> {
 
     for term in terms() {
         for phrase in &term.overstates {
-            if mentions(&claimed, phrase) {
+            if claims(&claimed, phrase) {
                 problems.push(Problem::new(location.to_owned(), reason(term, phrase)));
             }
         }
@@ -527,17 +527,45 @@ fn normalise(text: &str) -> String {
 /// `unauthorized by the identity it reports`, which says the opposite, and `no limit` is found
 /// inside `Ono limits`. A rule that reported the sentence getting it right is worse than no rule.
 fn mentions(haystack: &str, phrase: &str) -> bool {
-    let bounded = |index: usize| {
-        let before = haystack[..index].chars().next_back();
-        let after = haystack[index + phrase.len()..].chars().next();
-        let free = |character: Option<char>| {
-            character.is_none_or(|character| !character.is_alphanumeric())
-        };
-        free(before) && free(after)
-    };
     haystack
         .match_indices(phrase)
-        .any(|(index, _)| bounded(index))
+        .any(|(index, _)| bounded(haystack, index, phrase.len()))
+}
+
+/// Whether the match at `index` stands on word boundaries.
+fn bounded(haystack: &str, index: usize, length: usize) -> bool {
+    let before = haystack[..index].chars().next_back();
+    let after = haystack[index + length..].chars().next();
+    let free =
+        |character: Option<char>| character.is_none_or(|character| !character.is_alphanumeric());
+    free(before) && free(after)
+}
+
+/// Whether `haystack` *claims* `phrase`, rather than denying it.
+///
+/// v0.4.1 §51.1: *"The goal is not to ban these words. The goal is to ensure they refer to a
+/// defined contract."* A sentence that uses the phrase in order to deny it is the intended shape
+/// — §5.3's own words are "is also not treated as fully isolated from that account", and §15.2's
+/// statement is built the same way. So a match whose immediately preceding word is a negation is
+/// a denial and not a claim.
+///
+/// Immediately preceding, and nothing looser. A denial in another paragraph does not excuse a
+/// claim in this one: §17.3 asks for a qualifier that is *immediate*, and the same tightness is
+/// what keeps the exemption from becoming a way past the rule.
+fn claims(haystack: &str, phrase: &str) -> bool {
+    const NEGATIONS: [&str; 4] = ["not", "never", "isn't", "aren't"];
+    haystack.match_indices(phrase).any(|(index, _)| {
+        if !bounded(haystack, index, phrase.len()) {
+            return false;
+        }
+        let preceding = haystack[..index]
+            .trim_end()
+            .rsplit(char::is_whitespace)
+            .next()
+            .unwrap_or_default()
+            .trim_matches(|c: char| !c.is_alphanumeric() && c != '\'');
+        !NEGATIONS.contains(&preceding)
+    })
 }
 
 /// Every page `help` can render, which is one of the surfaces §19.1 names.
