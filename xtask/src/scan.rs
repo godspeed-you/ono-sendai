@@ -166,7 +166,7 @@ fn is_scanner_source(relative: &str) -> bool {
 /// layout of AGENTS.md §2 and spec §35.6 reserve for cross-crate suites, examples and fuzzing.
 const RUST_TREES: &[&str] = &["crates", "xtask", "tests", "examples", "fuzz"];
 
-/// Every `.rs` file under the trees of [`RUST_TREES`], excluding build output.
+/// Every `.rs` file under the trees of `RUST_TREES`, excluding build output.
 ///
 /// Public so `xtask::metrics` counts the same tree the scanners read: a metric measured over a
 /// different set of files from the one the gate walks is a metric about a different repository.
@@ -423,7 +423,7 @@ fn disables_authentication(flag: &str) -> bool {
 /// output rather than a claim. The range separates a case number from a number: a `200-column`
 /// terminal and a `512-byte` frame are shaped exactly like case names and are not cases, and no
 /// wording rule could tell them apart. Where the range no longer can either — case `200` exists
-/// now — [`NOT_A_CASE`] names the two tokens outright.
+/// now — `NOT_A_CASE` names the two tokens outright.
 ///
 /// An **unticked box names what its increment must write**, so its references are not resolved.
 /// `docs/ACCEPTANCE.md` §4.7 established the convention and §4.8 depends on it: a checklist is
