@@ -579,3 +579,57 @@ fn should_say_nothing_when_the_pipeline_dropped_nothing() {
         run.stderr()
     );
 }
+
+// --- a projection keeps the declaration the renderer reads (issue #23, ADR-0419) --------------
+
+/// The last non-empty line of a rendered table: the one row a single-object query answers with.
+fn last_row(run: &ono_testkit::Run) -> String {
+    run.stdout()
+        .lines()
+        .rfind(|line| !line.trim().is_empty())
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
+#[test]
+fn should_render_a_projected_field_the_way_the_field_it_was_projected_from_is_rendered() {
+    // `ono.process/1` declares `cpu` as a `float` carrying `unit: percent`, and ADR-0419 made a
+    // cell read that declaration. A projection of `cpu` is still that field.
+    let whole = Shell::new()
+        .args(["-c", "get process 1"])
+        .env("NO_COLOR", "1")
+        .run();
+    whole.assert_success();
+    let projected = Shell::new()
+        .args(["-c", "get process 1 | select cpu"])
+        .env("NO_COLOR", "1")
+        .run();
+    projected.assert_success();
+
+    let cell = last_row(&projected);
+    assert!(
+        cell.ends_with('%') && cell.matches('.').count() == 1,
+        "spec §13.2 prints a percentage for this field, and a projection of it is the same \
+         field; `get process 1` printed {:?} and `select cpu` printed {cell:?}",
+        last_row(&whole)
+    );
+}
+
+#[test]
+fn should_leave_the_serialisation_of_a_projected_field_untouched() {
+    // The rounding above is the human rendering only (spec §33.5): `to json` keeps every digit.
+    let run = Shell::new()
+        .args(["-c", "get process 1 | select cpu | to json"])
+        .run();
+    run.assert_success();
+    let text = run.stdout();
+    assert!(
+        text.contains("\"cpu\":"),
+        "the projected field keeps its name: {text:?}"
+    );
+    assert!(
+        !text.contains('%'),
+        "a serialisation carries the number, never the rendering: {text:?}"
+    );
+}
