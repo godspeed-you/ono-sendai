@@ -1228,3 +1228,205 @@ fn should_report_a_refusal_whose_boundary_is_not_in_the_inventory() {
         "a refusal naming a boundary the inventory does not declare is reported: {problems:?}"
     );
 }
+
+// --- §52: every machine-readable hardening contract is validated by the gate (issue #117) -------
+
+/// The seven contract domains v0.4.1 §52.1 names, typed from the specification.
+const REQUIRED_DOMAINS: [&str; 7] = [
+    "security_boundaries",
+    "remote_limits",
+    "materialization_limits",
+    "kuang_confinement_controls",
+    "performance_profiles",
+    "expected_test_skips",
+    "release_inputs",
+];
+
+#[test]
+fn should_validate_every_machine_readable_hardening_contract_in_the_gate() {
+    // v0.4.1 §52.3: "`scripts/gate.sh` MUST validate every machine-readable contract for schema
+    // correctness and cross-reference integrity." *Every* is the word this checks. §52.1 named
+    // seven domains; fifteen registries arrived as the phases needed them, and until now each was
+    // validated by whichever crate happened to consume it — which leaves a registry nobody
+    // consumes validated by nobody.
+    let index = std::fs::read_to_string(repository().join("docs/spec/hardening/registries.yaml"))
+        .expect("the registry index is itself a machine-readable contract");
+    for domain in REQUIRED_DOMAINS {
+        assert!(
+            index.contains(domain),
+            "v0.4.1 §52.1 names the contract domain `{domain}`, and the index says nothing about \
+             where it lives"
+        );
+    }
+
+    let problems = xtask::contracts::check_registry_inventory(repository());
+    assert!(
+        problems.is_empty(),
+        "a hardening contract is not validated by the gate:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_hardening_registry_no_gate_check_validates() {
+    // The failure §52.3 is written against, and the one this repository actually had: a registry
+    // lands with the phase that needs it, the crate that consumes it checks its own corner, and
+    // nothing holds the file as a whole. A new file with no row in the index is that state.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "docs/spec/hardening/invented_ceilings.yaml",
+        "version: 1\nceilings: []\n",
+    );
+    let problems = xtask::contracts::check_registry_inventory(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("invented_ceilings.yaml")),
+        "a registry the index does not name is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_registry_index_naming_a_gate_check_that_does_not_exist() {
+    // An index is only evidence if `validated_by` is resolved. A row naming a function nobody
+    // wrote reads exactly like a row naming one that runs.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/registries.yaml"))
+        .expect("the registry index");
+    let text = text.replace(
+        "xtask/src/contracts.rs::check_refusals",
+        "xtask/src/contracts.rs::check_refusals_nobody_wrote",
+    );
+    repo.write("docs/spec/hardening/registries.yaml", &text);
+    let problems = xtask::contracts::check_registry_inventory(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("check_refusals_nobody_wrote")),
+        "a validator that does not exist is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_hold_every_hardening_limit_against_the_value_the_shell_uses() {
+    // §52.2: "A number such as `max_connections = 32` MUST not be independently typed into five
+    // files if one contract can generate the others." `remote_limits.yaml` is the shape that
+    // obeys it — one row per ceiling, pointing at the `limits.yaml` key that holds its number —
+    // and until now nothing in the gate resolved those pointers.
+    let problems = xtask::contracts::check_remote_limits(repository());
+    assert!(
+        problems.is_empty(),
+        "a remote ceiling does not resolve against the catalogue that holds its number:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_remote_ceiling_whose_limit_key_names_nothing() {
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/remote_limits.yaml"))
+        .expect("the ceilings");
+    let text = text.replace(
+        "limit_key: limits.remote_connections\n",
+        "limit_key: limits.remote_connexions\n",
+    );
+    repo.write("docs/spec/hardening/remote_limits.yaml", &text);
+    let problems = xtask::contracts::check_remote_limits(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("limits.remote_connexions")),
+        "a `limit_key` that names nothing is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_remote_ceiling_that_types_its_number_instead_of_pointing_at_it() {
+    // The whole point of the file: §52.2's five copies start with the second one. A row that
+    // states a value has stopped being a pointer.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/remote_limits.yaml"))
+        .expect("the ceilings");
+    let text = text.replace(
+        "    field: max_connections\n",
+        "    field: max_connections\n    default: 32\n",
+    );
+    repo.write("docs/spec/hardening/remote_limits.yaml", &text);
+    let problems = xtask::contracts::check_remote_limits(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("default")),
+        "a ceiling that types a number is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_reject_an_unknown_capability_id_in_an_authorization_fixture() {
+    // v0.4.1 §52.3, verbatim: "Unknown capability IDs in an authorization fixture or unknown
+    // control IDs in a KUANG tier definition MUST fail the gate." `ActionGrant` refuses a
+    // malformed id at construction, so `*` and `process.` cannot be stored; a *well-formed* id
+    // naming nothing is denied at dispatch and, until this check, cost the gate nothing.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "crates/ono-cli/tests/authorized_clients.rs",
+        "fn store() {\n    write(\"sha256:9ab4 observe=true actions=process.invented label=deploy\\n\");\n}\n",
+    );
+    let problems = xtask::contracts::check_authorization_fixtures(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("process.invented")),
+        "a fixture granting a capability nothing declares is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_find_every_capability_this_repositorys_authorization_fixtures_grant() {
+    // The repository's own side of the same check: every capability id a fixture stores is one
+    // `docs/spec/capabilities.yaml` declares, or one the index records as deliberately invalid
+    // with the test whose subject is the refusal.
+    let problems = xtask::contracts::check_authorization_fixtures(repository());
+    assert!(
+        problems.is_empty(),
+        "an authorization fixture grants something the capability registry does not declare:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_deliberately_invalid_fixture_id_the_registry_actually_declares() {
+    // The exemption cannot become a hiding place: an id listed as deliberately invalid must
+    // really be invalid, or a typo for a real capability could be waved through by adding it to
+    // the list.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/registries.yaml"))
+        .expect("the registry index");
+    let text = text.replace("    - id: \"process.*\"", "    - id: \"process.list\"");
+    repo.write("docs/spec/hardening/registries.yaml", &text);
+    let problems = xtask::contracts::check_authorization_fixtures(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("process.list")),
+        "an exemption for an id the registry declares is reported: {problems:?}"
+    );
+}

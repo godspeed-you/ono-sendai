@@ -2488,6 +2488,10 @@ pub fn check_hardening_contracts(root: &Path) -> Vec<Problem> {
     problems.extend(check_security_boundaries(root));
     problems.extend(check_dispatch_paths(root));
     problems.extend(check_refusals(root));
+    problems.extend(check_registry_inventory(root));
+    problems.extend(check_remote_limits(root));
+    problems.extend(check_authorization_fixtures(root));
+    problems.extend(crate::perf::check_registries(root));
     problems
 }
 
@@ -3474,4 +3478,431 @@ fn served_methods(source: &str) -> Vec<String> {
         }
     }
     methods
+}
+
+// --- v0.4.1 §52: the machine-readable hardening contracts (issue #117, ADR-0547) ----------------
+
+/// The seven contract domains of v0.4.1 §52.1, typed from the specification.
+const REQUIRED_DOMAINS: [&str; 7] = [
+    "security_boundaries",
+    "remote_limits",
+    "materialization_limits",
+    "kuang_confinement_controls",
+    "performance_profiles",
+    "expected_test_skips",
+    "release_inputs",
+];
+
+/// Holds `docs/spec/hardening/registries.yaml` against the directory it indexes.
+///
+/// §52.3: *"`scripts/gate.sh` MUST validate every machine-readable contract for schema
+/// correctness and cross-reference integrity."* The word doing the work is **every**. §52.1 named
+/// seven domains; fifteen registries arrived as the phases needed them, and each was validated by
+/// whichever crate happened to consume it — so a registry nothing consumes was validated by
+/// nothing, which is the state `remote_limits.yaml` was in.
+///
+/// The index is what makes *every* checkable: a file in the directory with no row is a contract
+/// nobody claimed, and a row whose `validated_by` names no function is a claim nobody honoured.
+#[must_use]
+pub fn check_registry_inventory(root: &Path) -> Vec<Problem> {
+    let directory = root.join("docs").join("spec").join("hardening");
+    if !directory.is_dir() {
+        return Vec::new();
+    }
+    let location = "docs/spec/hardening/registries.yaml".to_owned();
+    let problem = |detail: String| Problem {
+        location: location.clone(),
+        detail,
+    };
+    let Ok(text) = std::fs::read_to_string(directory.join("registries.yaml")) else {
+        return vec![problem(
+            "does not exist; v0.4.1 §52.3 asks the gate to validate every machine-readable \
+             contract, and the index is what says which they are"
+                .to_owned(),
+        )];
+    };
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        // The generic sweep already reports a file that is not valid YAML, with the parse error.
+        return Vec::new();
+    };
+
+    let mut problems = Vec::new();
+    let mut indexed: BTreeSet<String> = BTreeSet::new();
+
+    for row in sequence(&document, "registries") {
+        let Some(file) = string_at(row, "file") else {
+            problems.push(problem("a registry row names no `file`".to_owned()));
+            continue;
+        };
+        indexed.insert(file.clone());
+        if !directory.join(&file).is_file() {
+            problems.push(problem(format!(
+                "names `{file}`, and `docs/spec/hardening/{file}` does not exist"
+            )));
+        }
+        for field in ["doc", "spec"] {
+            if string_at(row, field).unwrap_or_default().trim().is_empty() {
+                problems.push(problem(format!("`{file}` states no `{field}`")));
+            }
+        }
+        let validators = string_sequence(row, "validated_by");
+        if validators.is_empty() {
+            problems.push(problem(format!(
+                "`{file}` names no `validated_by`, so nothing in the gate holds it (v0.4.1 §52.3)"
+            )));
+        }
+        for validator in validators {
+            let Some((path, function)) = validator.split_once("::") else {
+                problems.push(problem(format!(
+                    "`{file}` is validated by `{validator}`, which is not a `path::function`"
+                )));
+                continue;
+            };
+            if !path.starts_with("xtask/") {
+                problems.push(problem(format!(
+                    "`{file}` is validated by `{validator}`, which is outside `xtask/`. v0.4.1 \
+                     §52.3 puts the validation in the gate; a crate that happens to consume the \
+                     registry belongs in `consumed_by`"
+                )));
+                continue;
+            }
+            match std::fs::read_to_string(root.join(path)) {
+                Err(_) => problems.push(problem(format!(
+                    "`{file}` is validated by `{validator}`, and `{path}` does not exist"
+                ))),
+                Ok(source) => {
+                    if !source.contains(&format!("fn {function}(")) {
+                        problems.push(problem(format!(
+                            "`{file}` is validated by `{validator}`, and `{path}` declares no \
+                             `{function}`"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut declared_domains: BTreeSet<String> = BTreeSet::new();
+    for row in sequence(&document, "domains") {
+        let Some(domain) = string_at(row, "domain") else {
+            problems.push(problem("a domain row names no `domain`".to_owned()));
+            continue;
+        };
+        declared_domains.insert(domain.clone());
+        match string_at(row, "file").filter(|file| file != "null") {
+            Some(file) => {
+                if !indexed.contains(&file) {
+                    problems.push(problem(format!(
+                        "§52.1's domain `{domain}` lives in `{file}`, which no registry row names"
+                    )));
+                }
+            }
+            None => {
+                if string_at(row, "generated")
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+                {
+                    problems.push(problem(format!(
+                        "§52.1's domain `{domain}` names neither a `file` in this directory nor \
+                         a `generated` artifact, so nothing says where it lives"
+                    )));
+                }
+            }
+        }
+    }
+    for domain in REQUIRED_DOMAINS {
+        if !declared_domains.contains(domain) {
+            problems.push(problem(format!(
+                "says nothing about §52.1's contract domain `{domain}`"
+            )));
+        }
+    }
+
+    for entry in std::fs::read_dir(&directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !(name.ends_with(".yaml") || name.ends_with(".json")) || indexed.contains(name) {
+            continue;
+        }
+        problems.push(problem(format!(
+            "says nothing about `{name}`, which is a machine-readable contract in this directory. \
+             v0.4.1 §52.3 asks the gate to validate every one of them, so a registry arrives with \
+             its validator or it does not arrive"
+        )));
+    }
+    problems
+}
+
+/// Resolves `docs/spec/hardening/remote_limits.yaml` against everything it points at.
+///
+/// The registry holds no numbers deliberately — §52.2's *"a number such as `max_connections = 32`
+/// MUST not be independently typed into five files"* — so each row is a set of pointers: at the
+/// `limits.yaml` key that holds the figure, at the accessor the runtime answers with, at the
+/// stable error a refused peer receives and at the audit class the decision is recorded under.
+/// A pointer nothing follows is worse than a copy, because it reads as a cross-reference.
+#[must_use]
+pub fn check_remote_limits(root: &Path) -> Vec<Problem> {
+    let directory = root.join("docs").join("spec").join("hardening");
+    let Ok(text) = std::fs::read_to_string(directory.join("remote_limits.yaml")) else {
+        // A missing registry is not an error before the phase that writes it (AGENTS.md §14).
+        return Vec::new();
+    };
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        return Vec::new();
+    };
+    let location = "docs/spec/hardening/remote_limits.yaml".to_owned();
+    let problem = |detail: String| Problem {
+        location: location.clone(),
+        detail,
+    };
+
+    let keys: BTreeSet<String> = std::fs::read_to_string(directory.join("limits.yaml"))
+        .ok()
+        .and_then(|text| serde_yaml_ng::from_str::<Yaml>(&text).ok())
+        .map(|catalogue| {
+            sequence(&catalogue, "limits")
+                .into_iter()
+                .filter_map(|row| string_at(row, "key"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let errors = declared_error_names(root);
+    let protocol = {
+        let mut text = String::new();
+        collect_rust_sources(
+            &root.join("crates").join("ono-protocol").join("src"),
+            &mut text,
+        );
+        text
+    };
+
+    let mut problems = Vec::new();
+    for row in sequence(&document, "ceilings") {
+        let id = string_at(row, "id").unwrap_or_else(|| "a ceiling".to_owned());
+
+        // §52.2 in one assertion: this file points, it does not state.
+        if let Some(mapping) = row.as_mapping() {
+            for (key, value) in mapping {
+                if value.is_number() {
+                    let field = key.as_str().unwrap_or("a field");
+                    problems.push(problem(format!(
+                        "`{id}` states `{field}` as a number. This registry holds no figures: \
+                         v0.4.1 §52.2 puts every one of them in \
+                         `docs/spec/hardening/limits.yaml`, once, and this file points at the key"
+                    )));
+                }
+            }
+        }
+
+        match string_at(row, "limit_key") {
+            None => problems.push(problem(format!(
+                "`{id}` names no `limit_key`, so nothing says which figure it bounds"
+            ))),
+            Some(key) => {
+                if !keys.is_empty() && !keys.contains(&key) {
+                    problems.push(problem(format!(
+                        "`{id}` points at `{key}`, which \
+                         `docs/spec/hardening/limits.yaml` does not declare (v0.4.1 §52.2, §52.3)"
+                    )));
+                }
+            }
+        }
+
+        match string_at(row, "field") {
+            None => problems.push(problem(format!(
+                "`{id}` names no `field`, so nothing says what answers its effective value"
+            ))),
+            Some(field) => {
+                if !protocol.is_empty() && !protocol.contains(&format!("fn {field}(")) {
+                    problems.push(problem(format!(
+                        "`{id}` is answered by `Limits::{field}`, and `crates/ono-protocol/src` \
+                         has no such accessor"
+                    )));
+                }
+            }
+        }
+
+        // `refusal: null` is how a row says the peer is dropped before a frame can carry one.
+        if let Some(refusal) = string_at(row, "refusal").filter(|value| value != "null")
+            && !errors.contains_key(&refusal)
+        {
+            problems.push(problem(format!(
+                "`{id}` refuses with `{refusal}`, which `docs/spec/errors.yaml` does not \
+                 declare (v0.4.1 §53.1)"
+            )));
+        }
+
+        match string_at(row, "audit") {
+            None => problems.push(problem(format!(
+                "`{id}` names no `audit` class, and v0.4.1 §14.1 records every connection decision"
+            ))),
+            Some(audit) => {
+                if !protocol.is_empty() && !protocol.contains(&format!("\"{audit}\"")) {
+                    problems.push(problem(format!(
+                        "`{id}` is recorded as `{audit}`, and no audit class in \
+                         `crates/ono-protocol/src` is spelled that way"
+                    )));
+                }
+            }
+        }
+
+        if let Some(owner) = string_at(row, "enforced_by")
+            && !root.join("crates").join(&owner).join("src").is_dir()
+        {
+            problems.push(problem(format!(
+                "`{id}` is enforced by `{owner}`, and there is no such crate"
+            )));
+        }
+    }
+    problems
+}
+
+/// v0.4.1 §52.3's first named failure: an unknown capability id in an authorization fixture.
+///
+/// §52.3: *"Unknown capability IDs in an authorization fixture or unknown control IDs in a KUANG
+/// tier definition MUST fail the gate."* The second half has been checked since H4. The first had
+/// no checker, and the reason it was easy to leave is that it looks covered: `ActionGrant` refuses
+/// a malformed id at construction, so `*` and `process.` cannot be stored, and an id naming
+/// nothing is denied at dispatch. Both are runtime behaviour. A fixture that grants
+/// `process.invented` is a *test* asserting against a capability the product does not have, and
+/// the day the id was a typo for a real one nobody would be told.
+///
+/// The fixture format is §9.3's store line, so the scan is for `actions=` — the way an
+/// authorization fixture is written, in a test, in a doc comment and in an acceptance case alike.
+#[must_use]
+pub fn check_authorization_fixtures(root: &Path) -> Vec<Problem> {
+    let capabilities: BTreeSet<String> =
+        std::fs::read_to_string(root.join("docs").join("spec").join("capabilities.yaml"))
+            .ok()
+            .and_then(|text| serde_yaml_ng::from_str::<Yaml>(&text).ok())
+            .map(|document| {
+                sequence(&document, "provider_capabilities")
+                    .into_iter()
+                    .filter_map(|row| string_at(row, "id"))
+                    .collect()
+            })
+            .unwrap_or_default();
+    if capabilities.is_empty() {
+        return Vec::new();
+    }
+
+    let mut problems = Vec::new();
+    let exempt = deliberately_invalid_ids(root, &capabilities, &mut problems);
+
+    let mut sources: Vec<(String, String)> = Vec::new();
+    for directory in [root.join("crates"), root.join("docker").join("acceptance")] {
+        collect_fixture_sources(root, &directory, &mut sources);
+    }
+    for (location, text) in sources {
+        for grant in text.match_indices("actions=") {
+            let rest = &text[grant.0 + "actions=".len()..];
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || ".,_-*".contains(c)))
+                .unwrap_or(rest.len());
+            for id in rest[..end].split(',').filter(|id| !id.is_empty()) {
+                if capabilities.contains(id) || exempt.contains(id) {
+                    continue;
+                }
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "an authorization fixture grants `{id}`, which \
+                         `docs/spec/capabilities.yaml` does not declare. v0.4.1 §52.3: an unknown \
+                         capability id in an authorization fixture fails the gate. If the \
+                         fixture's subject *is* the refusal, say so in \
+                         `docs/spec/hardening/registries.yaml`"
+                    ),
+                });
+            }
+        }
+    }
+    problems
+}
+
+/// The ids a fixture may name although nothing declares them, and the reason each is allowed.
+///
+/// The exemption cannot become a hiding place, so an entry must really be undeclared: adding a
+/// typo for a real capability to the list would otherwise wave the typo through.
+fn deliberately_invalid_ids(
+    root: &Path,
+    capabilities: &BTreeSet<String>,
+    problems: &mut Vec<Problem>,
+) -> BTreeSet<String> {
+    let location = "docs/spec/hardening/registries.yaml";
+    let Ok(text) = std::fs::read_to_string(
+        root.join("docs")
+            .join("spec")
+            .join("hardening")
+            .join("registries.yaml"),
+    ) else {
+        return BTreeSet::new();
+    };
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        return BTreeSet::new();
+    };
+    let Some(fixtures) = document.get("authorization_fixtures") else {
+        return BTreeSet::new();
+    };
+
+    let mut exempt = BTreeSet::new();
+    for row in sequence(fixtures, "deliberately_invalid") {
+        let Some(id) = string_at(row, "id") else {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: "a `deliberately_invalid` row names no `id`".to_owned(),
+            });
+            continue;
+        };
+        if capabilities.contains(&id) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "exempts `{id}` from the authorization fixture check, and \
+                     `docs/spec/capabilities.yaml` declares it. An exemption is for an id the \
+                     product does not have; one that resolves would let a typo through"
+                ),
+            });
+            continue;
+        }
+        if string_at(row, "reason")
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!("exempts `{id}` and gives no `reason`"),
+            });
+        }
+        exempt.insert(id);
+    }
+    exempt
+}
+
+/// Every file an authorization fixture can be written in, with its repository-relative path.
+fn collect_fixture_sources(root: &Path, directory: &Path, into: &mut Vec<(String, String)>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_fixture_sources(root, &path, into);
+            continue;
+        }
+        let extension = path.extension().and_then(|value| value.to_str());
+        if !matches!(extension, Some("rs" | "case")) {
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            into.push((relative(root, &path), text));
+        }
+    }
 }

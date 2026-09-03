@@ -1181,15 +1181,30 @@ Four conventions this subsection relies on:
       `xtask/tests/perf.rs::should_read_the_frozen_v041_baseline_and_find_every_metric_it_declares`
       and `::should_compare_a_benchmark_result_against_the_baseline_for_its_reference_environment`
       (#30).
-- [ ] **P2 · The hardening policy data lives in machine-readable registries.** The seven contract
+- [x] **P2 · The hardening policy data lives in machine-readable registries.** The seven contract
       domains of §52.1 — `security_boundaries`, `remote_limits`, `materialization_limits`,
       `kuang_confinement_controls`, `performance_profiles`, `expected_test_skips`, `release_inputs`
-      — exist under `docs/spec/hardening/`, and runtime defaults, generated reference and tests read
-      the same source (§52.2), so `max_connections = 32` is typed once —
+      — each have a home `docs/spec/hardening/registries.yaml` names, and runtime defaults,
+      generated reference and tests read the same source (§52.2), so `max_connections = 32` is
+      typed once —
       `xtask/tests/contracts.rs::should_hold_every_hardening_limit_against_the_value_the_shell_uses`,
+      `::should_report_a_remote_ceiling_whose_limit_key_names_nothing`,
+      `::should_report_a_remote_ceiling_that_types_its_number_instead_of_pointing_at_it`,
       `::should_reject_an_unknown_capability_id_in_an_authorization_fixture`,
+      `::should_find_every_capability_this_repositorys_authorization_fixtures_grant`,
+      `::should_report_a_deliberately_invalid_fixture_id_the_registry_actually_declares`,
       `::should_reject_an_unknown_control_id_in_a_kuang_tier_definition` (§52.3) and
-      `cargo run -p xtask -- spec-check` on every gate run (#117).
+      `cargo run -p xtask -- spec-check` on every gate run (#117). §52.3's *every* is held by the
+      index itself: seventeen registries are named with the `xtask` check that validates each, a
+      contract in the directory with no row fails the gate and so does a row whose validator
+      nobody wrote —
+      `::should_validate_every_machine_readable_hardening_contract_in_the_gate`,
+      `::should_report_a_hardening_registry_no_gate_check_validates`,
+      `::should_report_a_registry_index_naming_a_gate_check_that_does_not_exist` (ADR-0547).
+      `release_inputs` is the one domain that is not a committed registry: Appendix H's manifest
+      is a property of one build, written by `cargo xtask build-manifest` and published beside
+      the packages (ADR-0451), and the index says so rather than leaving the domain unaccounted
+      for.
 - [x] **P2 · The security boundary inventory is generated and owned.** The twelve boundaries of
       §6.1 — from `remote.tcp.transport` to `release.publish` — are declared in
       `docs/spec/hardening/security_boundaries.yaml` with their input trust, their required

@@ -121,9 +121,18 @@ impl Default for HistoryLimits {
 /// The effective non-secret limits, as objects (§54.3).
 ///
 /// One row per declared `limits.*` key, carrying what the shell will actually enforce rather than
-/// a second table of the same numbers. `unit` and `enforced_by` come from the same registry the
-/// gate compares the catalogue against, so a user reading this and a test reading
-/// `docs/spec/hardening/limits.yaml` are reading one thing.
+/// a second table of the same numbers: the key, the effective value and its byte magnitude, the
+/// declared type, the configuration layer that set it, the permitted range and the one-line
+/// description. Every one of them comes from [`CATALOGUE`], which `spec-check` compares against
+/// `docs/spec/hardening/limits.yaml` in both directions, so a user reading this and a test reading
+/// the registry are reading one thing.
+///
+/// The registry's `unit` and `enforced_by` are deliberately **not** here:
+/// [`SettingSpec`](crate::settings::SettingSpec) has neither field. `unit` is a rendering hint the
+/// declared type already implies for a byte size, and `enforced_by` names a crate, which is a fact
+/// about the product rather than about this session's configuration. §54.3 asks what the shell
+/// will enforce; who enforces it is `docs/spec/hardening/limits.yaml` and, for a boundary,
+/// `security_boundaries.yaml` (ADR-0547).
 #[must_use]
 pub fn rows(settings: &Settings) -> Vec<Value> {
     CATALOGUE

@@ -638,7 +638,6 @@ fn spec_check() -> ExitCode {
 
     problems.extend(check_command_bindings());
     problems.extend(check_generation_claims(&root));
-    problems.extend(check_performance_baseline(&root));
 
     if root.join("docs").join("spec").is_dir() {
         problems.extend(
@@ -878,22 +877,6 @@ fn check_command_bindings() -> Vec<String> {
 /// compared against on that metric, and nothing would say so — the comparison would simply skip
 /// it and report "held". So the file is parsed on every gate run, and a record that is not a
 /// benchmark result turns the gate red where it was written rather than where it is read.
-fn check_performance_baseline(root: &Path) -> Vec<String> {
-    let path = root.join(perf::BASELINE);
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        // The baseline arrives with the benchmark command; a missing one is not an error
-        // (AGENTS.md section 14).
-        return Vec::new();
-    };
-    match perf::Baseline::parse(&text) {
-        Ok(_) => Vec::new(),
-        Err(problems) => problems
-            .into_iter()
-            .map(|problem| format!("{} — {}", problem.location, problem.detail))
-            .collect(),
-    }
-}
-
 /// Verifies that the immutable narrative specification has not been modified.
 ///
 /// The specification is read-only for every agent (AGENTS.md section 5.1): ambiguities are

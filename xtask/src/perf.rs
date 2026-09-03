@@ -1432,3 +1432,132 @@ impl Runner {
 /// value-size estimation deterministic and approximate, and a benchmark that serialized every
 /// candidate to count its bytes would be measuring the counter.
 const AVERAGE_CANDIDATE_BYTES: f64 = 64.0;
+
+/// The three performance registries, validated where the gate can see them (v0.4.1 §52.3).
+///
+/// §52.3: *"`scripts/gate.sh` MUST validate every machine-readable contract for schema
+/// correctness **and cross-reference integrity**."* The baseline was already parsed on every gate
+/// run (ADR-0489); the environment it names and the profiles its records name were checked only
+/// by the crates that consume them, which leaves the cross-references between the three
+/// unverified by anything.
+///
+/// The three questions, in the order a reader asks them: does the baseline parse, does the
+/// machine it names exist with §37.2's seven facts stated, and is every profile a record or a
+/// declared benchmark names a profile Appendix F declares?
+#[must_use]
+pub fn check_registries(root: &std::path::Path) -> Vec<Problem> {
+    let mut problems = Vec::new();
+
+    let declared = match reference_environment(root) {
+        Ok(environment) => Some(environment),
+        Err(detail) => {
+            // The registry arrives with the benchmark command; a missing one is not an error
+            // (AGENTS.md §14), but an unreadable one is.
+            if root.join(ENVIRONMENT).exists() {
+                problems.push(Problem::new(ENVIRONMENT, detail));
+            }
+            None
+        }
+    };
+    if let Some(environment) = &declared {
+        for field in [
+            "cpu_model",
+            "cpu_cores",
+            "ram_bytes",
+            "kernel",
+            "distribution",
+            "rust_toolchain",
+            "release_build_flags",
+        ] {
+            if !environment.states(field) {
+                problems.push(Problem::new(
+                    ENVIRONMENT,
+                    format!(
+                        "states no `{field}`; v0.4.1 §37.2 requires the reference environment to \
+                         name it, because §32.4 puts release qualification on a named machine \
+                         with absolute targets"
+                    ),
+                ));
+            }
+        }
+    }
+
+    let profiles = declared_profiles(root);
+    let baseline = match std::fs::read_to_string(root.join(BASELINE)) {
+        // The baseline arrives with the benchmark command (AGENTS.md §14).
+        Err(_) => None,
+        Ok(text) => match Baseline::parse(&text) {
+            Ok(baseline) => Some(baseline),
+            Err(found) => {
+                problems.extend(found);
+                None
+            }
+        },
+    };
+
+    if let Some(baseline) = &baseline {
+        if let Some(environment) = &declared
+            && baseline.environment != environment.id
+        {
+            problems.push(Problem::new(
+                BASELINE,
+                format!(
+                    "is tied to the environment `{}`, and \
+                     `docs/spec/hardening/performance_environment.yaml` names `{}` (§32.4)",
+                    baseline.environment, environment.id
+                ),
+            ));
+        }
+        for record in &baseline.measurements {
+            if !profiles.is_empty() && !profiles.contains(&record.profile) {
+                problems.push(Problem::new(
+                    BASELINE,
+                    format!(
+                        "records `{}` at profile `{}`, which \
+                         `docs/spec/hardening/performance_profiles.yaml` does not declare \
+                         (Appendix F)",
+                        record.benchmark, record.profile
+                    ),
+                ));
+            }
+        }
+    }
+
+    if !profiles.is_empty() {
+        for benchmark in BENCHMARKS {
+            if !profiles.contains(benchmark.profile) {
+                problems.push(Problem::new(
+                    "docs/spec/hardening/performance_profiles.yaml",
+                    format!(
+                        "declares no profile `{}`, which the benchmark `{}` is measured at \
+                         (v0.4.1 §32.2, Appendix F)",
+                        benchmark.profile, benchmark.id
+                    ),
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// Every topology profile `docs/spec/hardening/performance_profiles.yaml` declares.
+fn declared_profiles(root: &std::path::Path) -> std::collections::BTreeSet<String> {
+    let Ok(text) =
+        std::fs::read_to_string(root.join("docs/spec/hardening/performance_profiles.yaml"))
+    else {
+        return std::collections::BTreeSet::new();
+    };
+    let Ok(document) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&text) else {
+        return std::collections::BTreeSet::new();
+    };
+    document
+        .get("profiles")
+        .and_then(serde_yaml_ng::Value::as_sequence)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.get("id").and_then(serde_yaml_ng::Value::as_str))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
