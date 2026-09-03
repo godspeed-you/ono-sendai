@@ -150,6 +150,9 @@ declared:
   - id: "crates/ono-cli/tests/spatial_map.rs::should_report_how_many_objects_a_cluster_stands_for_when_the_view_budget_is_exceeded"
     category: fixture_not_applicable
     prerequisite: "the host has more processes than the text map's view budget"
+  - id: "crates/ono-cli/tests/spatial_map.rs::should_return_the_same_node_identities_when_the_terminal_width_changes"
+    category: fixture_not_applicable
+    prerequisite: "the host's ranked object population holds still across two reads at one width, so a difference at another width can be attributed to the width"
   - id: "crates/ono-cli/tests/spatial_map.rs::should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded"
     category: fixture_not_applicable
     prerequisite: "the host has more processes than the text map's view budget"
@@ -289,6 +292,15 @@ canonical_ci:
         the soft limit toward the hard one first, so this skips only where the *hard* limit is
         short — which the development machine's 524 288 is not and the GitHub runner's may be.
         Reported as `missing_privilege` because only a privileged process can raise a hard limit.
+    - id: "crates/ono-cli/tests/spatial_map.rs::should_return_the_same_node_identities_when_the_terminal_width_changes"
+      condition: "the host's ranked object population holds still across two `map --json` reads at the same width, in at least one of three attempts"
+      doc: >-
+        `COLUMNS` is read from the process environment, so the two widths are two runs, and the
+        default map is relevance-ranked and cut at the §34.2 node budget. A host churning
+        processes fast enough that two identical reads disagree cannot say whether a third read
+        at another width disagreed because of the width. Three attempts on a machine at load 124
+        of 8 processors never reached it; a busier one might, and the honest answer there is that
+        the run could not observe what the test is about (ADR-0552).
     - id: "crates/ono-spatial-query/tests/profiles.rs::should_build_every_declared_profile_at_the_cardinality_the_registry_states"
       condition: "`ulimit -Hn` is at least 101024"
       doc: >-

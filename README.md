@@ -362,10 +362,10 @@ canonical CI environment expects to.
 crates=30
 workspace_members=32
 tests=3348
-tests_that_can_skip=72
+tests_that_can_skip=73
 expected_ci_skips=3
 acceptance_cases=128
-adrs=372
+adrs=373
 command_contract_files=13
 commands=193
 ```
