@@ -213,6 +213,33 @@ impl Drop for SleepChild {
     }
 }
 
+/// A `sleep` child that has written a status line over its own command line, the way OpenSSH,
+/// PostgreSQL and Sendmail do — so the host does not have to be running one for the test to have
+/// one.
+struct RenamedChild(Child);
+
+impl RenamedChild {
+    fn spawn(line: &str) -> Self {
+        use std::os::unix::process::CommandExt as _;
+        let child = Command::new("sleep")
+            .arg0(line)
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("`sleep` is available on every test host");
+        Self(child)
+    }
+}
+
+impl Drop for RenamedChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// A child that burns CPU for as long as the test holds it, so the premise "at least one
 /// process on this host is in state `running`" is one the test establishes itself. A sleeping
 /// child sits in state S, and an otherwise idle CI runner has been observed answering a
@@ -887,6 +914,27 @@ fn should_answer_ambiguous_selector_when_a_script_selector_matches_several_place
         run.stdout().trim().is_empty(),
         "§29.3: a script gets an error, never a picker — nothing is offered on stdout, got {:?}",
         run.stdout()
+    );
+}
+
+#[test]
+fn should_not_let_a_process_that_rewrote_its_command_line_answer_to_a_number() {
+    // §27.1's "exact" step matches a process by its pid and by the names its provider stated —
+    // and a process may state anything, because `argv[0]` is memory the process owns. OpenSSH
+    // writes a status line there: `sshd-session: william@pts/1`. Reading the last path segment
+    // of that as a program name gives the alias `1`, and then `enter process/1` names two places
+    // on any host with a login session and refuses with `spatial.ambiguous_selector`.
+    //
+    // The decoy below states its own line, so the host does not have to have an ssh session for
+    // this to be a test. pid 1 is on every Linux.
+    let _decoy = RenamedChild::spawn("fixture-session: nobody@pts/1");
+    let place = place_after("enter process/1");
+    assert_eq!(
+        place["canonical_ref"]["pid"].as_u64(),
+        Some(1),
+        "§27.1: `process/1` is the process whose pid is 1. A name a process wrote over its own \
+         command line is not a path, so its last slash-separated segment is not one of the names \
+         it answers to. Got {place:?}"
     );
 }
 
