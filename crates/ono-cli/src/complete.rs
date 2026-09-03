@@ -167,36 +167,50 @@ fn objects(
     // stops looking for more, which is §36.2's "at the hard budget it MUST stop additional
     // discovery work and return what it has".
     std::thread::spawn(move || {
-        let values = read(&environment, &owned_target, &owned_fields, deadline);
-        remember(&owned_target, &values);
+        let (values, whole) = read(&environment, &owned_target, &owned_fields, deadline);
+        // Only a read that asked every provider is what the target holds; one the hard budget
+        // stopped is how far this keystroke got. Keeping the second would make one impatient Tab
+        // the shell's answer for the whole of `FRESH`, which is the opposite of what the cache is
+        // for — and it is what made `get user <TAB>` offer nothing for five seconds after a
+        // completion that ran out of budget (ADR-0550).
+        if whole {
+            remember(&owned_target, &values);
+        }
         let _ = answer.send(values);
     });
 
     wait.recv_timeout(soft).unwrap_or_default()
 }
 
-/// The values of `fields` that the providers for `target` report.
+/// The values of `fields` that the providers for `target` report, and whether it asked them all.
+///
+/// The second half is `false` when the hard budget stopped the walk with providers left to ask,
+/// or when there was no runtime to ask them on. What came back is then a fragment of the answer
+/// rather than the answer, which is the difference between what a keystroke may show and what
+/// the next keystroke may be told (§36.2).
 fn read(
     environment: &[(String, String)],
     target: &str,
     fields: &[String],
     deadline: Instant,
-) -> Vec<String> {
+) -> (Vec<String>, bool) {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     else {
-        return Vec::new();
+        return (Vec::new(), false);
     };
     let registry = providers(environment);
     runtime.block_on(async {
         let mut found: Vec<String> = Vec::new();
+        let mut whole = true;
         for provider in registry.for_target(target) {
             // §36.2: "At the hard budget it MUST stop additional discovery work and return what
             // it has." One provider that has begun is allowed to finish — a read cannot be
             // interrupted halfway without leaving the value half-read — and no further provider
             // is asked.
             if Instant::now() >= deadline {
+                whole = false;
                 break;
             }
             if !provider.availability().is_available() {
@@ -218,7 +232,7 @@ fn read(
         }
         found.sort_unstable();
         found.dedup();
-        found
+        (found, whole)
     })
 }
 
