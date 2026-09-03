@@ -49,6 +49,8 @@ ono-testkit = { path = "crates/ono-testkit", version = "0.4.0" }
 
 # Third-party. Choices and rationale: ADR-0005.
 async-trait = "0.1"
+wasmtime = { version = "47", default-features = false, features = ["runtime", "cranelift", "component-model", "async", "std", "parallel-compilation"] }
+wasmtime-wasi = { version = "47", default-features = false, features = ["p2"] }
 bytes = "1"
 crossterm = "0.29"
 csv = "1"

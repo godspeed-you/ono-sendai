@@ -46,6 +46,11 @@ allow = [
     "ISC",          # the `ring` half of `Apache-2.0 AND ISC`
     "BSD-3-Clause",
     "Unicode-3.0",  # the character tables of `icu_*`, as `(MIT OR Apache-2.0) AND Unicode-3.0`
+    # The component runtime (ADR-0569): `wasmtime` and `cranelift` carry the LLVM exception,
+    # which only *removes* Apache-2.0's notice condition for binaries — nothing it asks for is
+    # beyond what distributing an MIT binary already permits.
+    "Apache-2.0 WITH LLVM-exception",
+    "Zlib",         # `foldhash-0.2.0`, a leaf of the component runtime; attribution only, like MIT
 ]
 confidence-threshold = 0.93
 

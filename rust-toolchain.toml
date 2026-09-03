@@ -1,4 +1,7 @@
 [toolchain]
 channel = "1.94"
 components = ["rustfmt", "clippy"]
+# The example package is also built as a component for the wasm tier's conformance cases
+# (ADR-0569); a host without the target skips them and says so.
+targets = ["wasm32-wasip2"]
 profile = "minimal"

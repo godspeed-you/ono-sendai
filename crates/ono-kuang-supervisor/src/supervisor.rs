@@ -20,7 +20,8 @@ use ono_value::{SchemaRegistry, Value, from_json, to_json};
 use serde_json::{Map as JsonMap, Value as Json, json};
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::negotiate::{HostLimits, negotiate};
@@ -30,6 +31,7 @@ use crate::report::ConfinementReport;
 use crate::sandbox::Sandbox;
 use crate::state::StateStore;
 use crate::trail::{AuditTrail, HostClock};
+use ono_kuang_protocol::ExecutionTier;
 
 /// Whether an instance was at its memory ceiling when the host last looked (spec §31.34).
 ///
@@ -224,17 +226,67 @@ impl Supervisor {
                 }),
             crate::sandbox::working_directory(private_dir.as_deref(), &program),
         );
-        let mut command = Command::new(&program);
-        command.args(&args);
-        // v0.4.1 §2.3, §16.3, §18.1: a mandatory control that could not be installed abandons the
-        // spawn here, before a single plugin instruction runs. The package is not quarantined —
-        // it never started, so there is nothing to hold (ADR-0444).
-        let (mut child, confinement) =
-            crate::sandbox::spawn(&mut command, &sandbox, &confinement, &manifest.package.id)?;
-        let stdin = child.stdin.take().ok_or_else(broken_pipes)?;
-        let stdout = child.stdout.take().ok_or_else(broken_pipes)?;
+        let is_component = manifest
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.kind == ono_kuang_protocol::RuntimeKind::WasmComponent);
         let (frame_tx, frame_rx) = mpsc::channel(64);
-        tokio::spawn(read_frames(stdout, frame_limits, frame_tx));
+        let (mut child, stdin, confinement, sandbox): (Runtime, Stdin, ConfinementReport, Sandbox) =
+            if is_component {
+                // Spec §31.10's T2: the component runs inside the runtime Ono embeds, with
+                // nothing but its standard streams (ADR-0569). What the shell reports is the
+                // component's sandbox, and the report says which controls the runtime installs.
+                let sandbox = crate::sandbox::wasm_component(
+                    sandbox.memory_max,
+                    sandbox.cpu_class,
+                    sandbox.working_directory.clone(),
+                );
+                let confinement =
+                    crate::report::parent_only(ExecutionTier::Wasm, &component_controls(&sandbox));
+                if let Some(refusal) = confinement.refusal(&manifest.package.id) {
+                    return Err(refusal);
+                }
+                let (instance, host_in, host_out) =
+                    crate::wasm::WasmInstance::spawn(&program, sandbox.memory_max).map_err(
+                        |why| {
+                            KuangError::new(
+                                KuangErrorCode::PluginConfinementFailed,
+                                format!(
+                                    "`{}` could not be started as a component: {why}",
+                                    manifest.package.id
+                                ),
+                            )
+                        },
+                    )?;
+                tokio::spawn(read_frames(host_out, frame_limits, frame_tx));
+                (
+                    Runtime::Wasm(instance),
+                    Box::new(host_in),
+                    confinement,
+                    sandbox,
+                )
+            } else {
+                let mut command = Command::new(&program);
+                command.args(&args);
+                // v0.4.1 §2.3, §16.3, §18.1: a mandatory control that could not be installed
+                // abandons the spawn here, before a single plugin instruction runs. The package
+                // is not quarantined — it never started, so there is nothing to hold (ADR-0444).
+                let (mut child, confinement) = crate::sandbox::spawn(
+                    &mut command,
+                    &sandbox,
+                    &confinement,
+                    &manifest.package.id,
+                )?;
+                let stdin = child.stdin.take().ok_or_else(broken_pipes)?;
+                let stdout = child.stdout.take().ok_or_else(broken_pipes)?;
+                tokio::spawn(read_frames(stdout, frame_limits, frame_tx));
+                (
+                    Runtime::Native(child),
+                    Box::new(stdin),
+                    confinement,
+                    sandbox,
+                )
+            };
 
         let deadline = Duration::from_millis(contract.limits.call_deadline_ms);
         let handshake = Handshake {
@@ -387,12 +439,94 @@ fn validate_command_contribution(
     Ok(())
 }
 
+// --- the instance's runtime ---------------------------------------------------------------------
+
+/// What runs the package: a confined process of the Ono user, or a component inside the
+/// runtime Ono embeds (spec §31.10, ADR-0569). The actor treats both alike: a writer for its
+/// standard input, frames from its standard output, and a way to end it and learn how it ended.
+enum Runtime {
+    Native(Child),
+    Wasm(crate::wasm::WasmInstance),
+}
+
+/// How an instance ended, in the terms the actor reports (spec §31.34).
+enum Ended {
+    Native(Option<std::process::ExitStatus>),
+    Wasm(crate::wasm::Exit),
+}
+
+impl Runtime {
+    async fn kill(&mut self) {
+        match self {
+            Runtime::Native(child) => {
+                let _ = child.kill().await;
+            }
+            Runtime::Wasm(instance) => instance.kill(),
+        }
+    }
+
+    async fn wait(&mut self) -> Ended {
+        match self {
+            Runtime::Native(child) => Ended::Native(child.wait().await.ok()),
+            Runtime::Wasm(instance) => Ended::Wasm(instance.wait().await),
+        }
+    }
+}
+
+/// The writer the actor sends frames through: a process's pipe, or a component's stdin.
+type Stdin = Box<dyn AsyncWrite + Send + Unpin>;
+
+/// The controls the component tier installs by construction, and the ones it does not
+/// (v0.4.1 §16.4, ADR-0569): the report an `inspect plugin` shows for a component.
+fn component_controls(
+    sandbox: &Sandbox,
+) -> Vec<(
+    ono_kuang_protocol::Control,
+    crate::report::ControlResult,
+    Option<String>,
+)> {
+    use crate::report::ControlResult;
+    use ono_kuang_protocol::{Control, Requirement};
+    Control::ALL
+        .iter()
+        .map(|control| {
+            let detail = match control {
+                Control::RlimitData => Some(format!(
+                    "the runtime refuses every growth of linear memory beyond {} bytes",
+                    sandbox.memory_max
+                )),
+                Control::FilesystemIsolation => {
+                    Some("the WASI context preopens no directory".to_owned())
+                }
+                Control::NetworkIsolation => Some("the WASI context allows no address".to_owned()),
+                Control::FdHygiene => Some("a component holds no descriptor at all".to_owned()),
+                Control::ProtocolStdio => Some(
+                    "the component's standard input and output are the protocol streams".to_owned(),
+                ),
+                Control::EnvironmentSanitization => {
+                    Some("the WASI context carries no environment".to_owned())
+                }
+                Control::ProcessLifetime => {
+                    Some("the component's task ends with the instance".to_owned())
+                }
+                _ => None,
+            };
+            let result = if ExecutionTier::Wasm.requirement(*control) == Requirement::NotProvided {
+                ControlResult::NotAttempted
+            } else {
+                ControlResult::Applied
+            };
+            (*control, result, detail)
+        })
+        .collect()
+}
+
 // --- handshake ---------------------------------------------------------------------------------
 
 struct Handshake<'a> {
-    child: &'a mut Child,
+    child: &'a mut Runtime,
     frames: mpsc::Receiver<Result<Envelope, FrameError>>,
-    stdin: ChildStdin,
+    stdin: Stdin,
     manifest: &'a Manifest,
     contract: &'a PluginContract,
     frame_limits: FrameLimits,
@@ -405,7 +539,7 @@ impl Handshake<'_> {
     ) -> Result<
         (
             mpsc::Receiver<Result<Envelope, FrameError>>,
-            ChildStdin,
+            Stdin,
             Hello,
             InitResult,
         ),
@@ -415,7 +549,7 @@ impl Handshake<'_> {
         match result {
             Ok((hello, init)) => Ok((self.frames, self.stdin, hello, init)),
             Err(error) => {
-                let _ = self.child.kill().await;
+                self.child.kill().await;
                 Err(error)
             }
         }
@@ -506,7 +640,7 @@ impl Handshake<'_> {
 }
 
 async fn write_envelope(
-    stdin: &mut ChildStdin,
+    stdin: &mut Stdin,
     envelope: &Envelope,
     limits: FrameLimits,
 ) -> Result<(), KuangError> {
@@ -527,7 +661,7 @@ async fn write_envelope(
 }
 
 async fn read_frames(
-    mut stdout: ChildStdout,
+    mut stdout: impl AsyncRead + Unpin + Send + 'static,
     limits: FrameLimits,
     tx: mpsc::Sender<Result<Envelope, FrameError>>,
 ) {
@@ -1019,8 +1153,8 @@ enum Expected {
 }
 
 struct Actor {
-    child: Child,
-    stdin: ChildStdin,
+    child: Runtime,
+    stdin: Stdin,
     frames: mpsc::Receiver<Result<Envelope, FrameError>>,
     msgs: mpsc::Receiver<ActorMsg>,
     shared: Arc<Mutex<Shared>>,
@@ -1114,7 +1248,7 @@ impl Actor {
                     None => {
                         // The handle is gone; stop the instance quietly.
                         self.shutting_down = true;
-                        let _ = self.child.kill().await;
+                        self.child.kill().await;
                         break;
                     }
                 },
@@ -1164,11 +1298,20 @@ impl Actor {
     /// Reads the instance's health from the kernel: what it has allocated, its high-water mark,
     /// and the CPU time it has used (spec §31.33).
     fn sample_memory(&mut self) {
-        let Some(pid) = self.child.id() else {
-            return;
+        let (allocated, cpu) = match &self.child {
+            Runtime::Native(child) => {
+                let Some(pid) = child.id() else {
+                    return;
+                };
+                (
+                    crate::sandbox::allocated_bytes(pid),
+                    crate::sandbox::cpu_nanoseconds(pid),
+                )
+            }
+            // The runtime accounts a component's memory itself: every growth passes its
+            // limiter, so the gauge is exact rather than sampled.
+            Runtime::Wasm(instance) => (Some(instance.gauge().current()), None),
         };
-        let allocated = crate::sandbox::allocated_bytes(pid);
-        let cpu = crate::sandbox::cpu_nanoseconds(pid);
         let mut shared = lock(&self.shared);
         if let Some(allocated) = allocated {
             shared.current_memory = Some(allocated);
@@ -1193,8 +1336,12 @@ impl Actor {
     /// the signal, the ceiling that was in force and the high-water mark it did observe, so the
     /// operator sees the relationship between them instead of being told a story about it.
     async fn death(&mut self) -> KuangError {
-        let status = self.child.wait().await.ok();
+        let ended = self.child.wait().await;
         let peak = lock(&self.shared).peak_memory;
+        let status = match ended {
+            Ended::Native(status) => status,
+            Ended::Wasm(exit) => return self.component_death(exit, peak),
+        };
         let signal = status.and_then(|status| {
             #[cfg(unix)]
             {
@@ -1277,10 +1424,49 @@ impl Actor {
         }
     }
 
+    /// How a component's end reads (spec §31.34): the ceiling when it reached it, the trap
+    /// otherwise, and its own status when it simply returned.
+    fn component_death(&self, exit: crate::wasm::Exit, peak: Option<u64>) -> KuangError {
+        let at_ceiling = peak.is_some_and(|peak| at_memory_ceiling(peak, self.sandbox.memory_max));
+        match exit {
+            _ if at_ceiling => KuangError::new(
+                KuangErrorCode::RuntimeMemoryLimit,
+                format!(
+                    "the component reached its memory ceiling of {} bytes and ended",
+                    self.sandbox.memory_max
+                ),
+            )
+            .with_metadata("resource_class", json!("memory"))
+            .with_help(
+                "`runtime.memory_max` in the package's manifest declares the ceiling; the host \
+                 caps it and never raises it",
+            ),
+            crate::wasm::Exit::Trapped(trap) => KuangError::new(
+                KuangErrorCode::RuntimeTrap,
+                format!(
+                    "the component trapped: {trap}; {}",
+                    self.memory_account(peak)
+                ),
+            ),
+            crate::wasm::Exit::Returned { success } => KuangError::new(
+                KuangErrorCode::RuntimeTrap,
+                format!(
+                    "the component returned {} while the host still needed it; {}",
+                    if success { "success" } else { "failure" },
+                    self.memory_account(peak)
+                ),
+            ),
+            crate::wasm::Exit::Killed => KuangError::new(
+                KuangErrorCode::RuntimeTrap,
+                "the component was stopped by the host",
+            ),
+        }
+    }
+
     /// Ends the instance for a protocol violation: kill, quarantine, close every stream with
     /// the violation, resolve every pending invocation as failed (spec §31.34, ADR-0041).
     async fn quarantine(&mut self, violation: KuangError) {
-        let _ = self.child.kill().await;
+        self.child.kill().await;
         {
             let mut shared = lock(&self.shared);
             shared.lifecycle.quarantine(violation.message());
@@ -1292,7 +1478,7 @@ impl Actor {
     /// Ends the instance for a crash: streams close with `runtime.trap`, the package is not
     /// quarantined — failure degrades the plugin, not the shell (spec §31.34).
     async fn fail_instance(&mut self, failure: KuangError) {
-        let _ = self.child.kill().await;
+        self.child.kill().await;
         {
             let mut shared = lock(&self.shared);
             shared.last_failure = Some(failure.clone());
@@ -1430,7 +1616,7 @@ impl Actor {
                 })
                 .await;
                 let _ = acknowledged;
-                let _ = self.child.kill().await;
+                self.child.kill().await;
                 {
                     let mut shared = lock(&self.shared);
                     while shared.lifecycle.end_invocation().is_ok() {}

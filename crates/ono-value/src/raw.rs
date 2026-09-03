@@ -75,7 +75,7 @@ fn append(value: &Value, out: &mut BytesMut) -> Result<(), ErrorValue> {
         Value::Bytes(raw) => out.put_slice(raw),
         Value::String(text) => out.put_slice(text.as_bytes()),
         Value::Path(path) => {
-            out.put_slice(std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()));
+            out.put_slice(crate::os_bytes::as_bytes(path.as_os_str()));
         }
         Value::List(items) => {
             for item in items.iter() {

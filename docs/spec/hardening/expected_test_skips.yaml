@@ -33,6 +33,18 @@
 version: 1
 
 declared:
+  - id: "crates/ono-cli/tests/plugins.rs::should_load_a_component_package_under_the_wasm_tier_and_run_its_command"
+    category: external_tool_unavailable
+    prerequisite: "the `wasm32-wasip2` target of the pinned toolchain, so the example package can be built as a component (ADR-0569)"
+  - id: "crates/ono-kuang-sdk/tests/conformance.rs::should_load_a_component_under_the_wasm_tier_with_the_controls_the_runtime_installs"
+    category: external_tool_unavailable
+    prerequisite: "the `wasm32-wasip2` target of the pinned toolchain, so the example package can be built as a component (ADR-0569)"
+  - id: "crates/ono-kuang-sdk/tests/conformance.rs::should_stream_typed_values_from_a_component_over_its_protocol_streams"
+    category: external_tool_unavailable
+    prerequisite: "the `wasm32-wasip2` target of the pinned toolchain, so the example package can be built as a component (ADR-0569)"
+  - id: "crates/ono-kuang-sdk/tests/conformance.rs::should_hold_a_component_to_the_capability_broker_like_a_process"
+    category: external_tool_unavailable
+    prerequisite: "the `wasm32-wasip2` target of the pinned toolchain, so the example package can be built as a component (ADR-0569)"
   - id: "crates/ono-cli/tests/agent_startup.rs::should_keep_listening_when_its_diagnostics_cannot_be_written"
     category: fixture_not_applicable
     prerequisite: "the host has a `/dev/full`, so a stream that refuses every write can be handed to the agent"

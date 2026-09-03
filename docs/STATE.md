@@ -285,6 +285,18 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#3, third increment (2026-09-03): the wasm-component tier.** ADR-0569. `runtime.kind:
+  wasm-component` loads: the component runs inside the WebAssembly component runtime Ono embeds
+  (`wasmtime` 47, the release the pinned toolchain supports), with a WASI context that holds
+  nothing but its standard streams, and speaks the same framed protocol a native process speaks.
+  The actor drives both through one `Runtime`. `ExecutionTier::Wasm` is available; its rows in
+  `kuang_confinement_controls.yaml` are what a component has by construction (`mandatory`) and
+  what only a process could have (`not_provided`); memory is exact through the runtime's
+  limiter; CPU is preempted at every epoch and not capped, and the boundary says so. Proven by
+  three conformance cases over the example package built for `wasm32-wasip2` into its own
+  target directory — tier and controls, typed values over the streams, the broker holding a
+  component like a process — declared as skips where the target is absent. Still open:
+  `network`, `views`, `process.exec`, and an acceptance case with a component in the image.
 - **#3, second increment (2026-09-03): `objects`, `relations`, `history`, `process.signal`,
   `secrets`.** ADR-0568. The supervisor reaches them through one JSON service the loader is
   handed (`HostServices`): check the grant against the value the operation will use, audit it,

@@ -149,6 +149,28 @@ pub fn native_process(
 /// it not.
 const ENVIRONMENT: &[&str] = &["PATH", "HOME", "LC_ALL", "TZ"];
 
+/// The sandbox of a component (ADR-0569): the ceilings the runtime enforces, and the ones a
+/// process would have and a component has no use for.
+#[must_use]
+pub fn wasm_component(
+    memory_max: u64,
+    cpu_class: CpuBudget,
+    working_directory: PathBuf,
+) -> Sandbox {
+    Sandbox {
+        tier: ExecutionTier::Wasm,
+        memory_max,
+        cpu_class,
+        nice: 0,
+        open_files: 0,
+        file_size: 0,
+        working_directory,
+        environment: &[],
+        filesystem: Confinement::Kernel,
+        network: Confinement::Kernel,
+    }
+}
+
 /// Spawns `command` under `sandbox`, or fails before a single plugin instruction runs.
 ///
 /// This is the boundary v0.4.1 §2.3 talks about: *"If Ono claims that a safety control is applied

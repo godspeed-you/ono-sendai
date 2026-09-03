@@ -228,7 +228,8 @@ pub enum ExecutionTier {
     /// the model can express it; not implemented, and [`ExecutionTier::is_available`] says so
     /// (§17.1, §17.3).
     NativeIsolated,
-    /// The capability-limited component tier of spec §31.10. Not implemented in this build.
+    /// The capability-limited component tier of spec §31.10: a component inside the runtime Ono
+    /// embeds, with nothing but its protocol streams (ADR-0569).
     Wasm,
 }
 
@@ -262,7 +263,7 @@ impl ExecutionTier {
     /// isolation the implementation does not have.
     #[must_use]
     pub const fn is_available(self) -> bool {
-        matches!(self, ExecutionTier::NativeConfined)
+        matches!(self, ExecutionTier::NativeConfined | ExecutionTier::Wasm)
     }
 
     /// The sentence §15.2 requires wherever this tier is described.
@@ -280,8 +281,12 @@ impl ExecutionTier {
                  v0.4.1, and §17.3 forbids describing an isolation boundary that does not exist."
             }
             ExecutionTier::Wasm => {
-                "Not implemented in this build. A package declaring `wasm-component` is refused \
-                 at load rather than served by the native path."
+                "A wasm-component KUANG/11 plugin executes inside the WebAssembly component \
+                 runtime Ono embeds, not as a process: it holds no descriptor, no filesystem, no \
+                 network and no environment, reaches the host only through the capability broker \
+                 over its protocol streams, and its linear memory is capped by the runtime at the \
+                 negotiated ceiling. It has no CPU ceiling: a component that spins is preempted at \
+                 every epoch, not stopped."
             }
         }
     }
@@ -291,9 +296,10 @@ impl ExecutionTier {
     pub const fn requirement(self, control: Control) -> Requirement {
         match self {
             ExecutionTier::NativeConfined => native_confined_requirement(control),
+            ExecutionTier::Wasm => wasm_requirement(control),
             // A tier that installs nothing claims nothing. §17.3 is the reason this is not a
             // guess at what the tier will one day require.
-            ExecutionTier::NativeIsolated | ExecutionTier::Wasm => Requirement::NotProvided,
+            ExecutionTier::NativeIsolated => Requirement::NotProvided,
         }
     }
 
@@ -337,6 +343,36 @@ impl ExecutionTier {
 /// Kept as one exhaustive `match` so that adding a [`Control`] variant without deciding what this
 /// tier does about it does not compile — the compiler is the first referee, `spec-check` the
 /// second.
+/// The component tier's rows (ADR-0569). What a component has by construction is mandatory —
+/// the runtime refuses to start without it — and what only a process could have is not
+/// provided, never inferred: a component is not a process, so session separation, rlimits on
+/// files, cores and children, and the kernel allowlists do not apply to it.
+const fn wasm_requirement(control: Control) -> Requirement {
+    match control {
+        Control::CapabilityBroker
+        | Control::ProtocolLimits
+        | Control::FdHygiene
+        | Control::ProtocolStdio
+        | Control::RlimitData
+        | Control::EnvironmentSanitization
+        | Control::ProcessLifetime
+        | Control::FilesystemIsolation
+        | Control::NetworkIsolation => Requirement::Mandatory,
+        Control::SessionSeparation
+        | Control::NoNewPrivs
+        | Control::RlimitAddressSpace
+        | Control::RlimitCpu
+        | Control::RlimitOpenFiles
+        | Control::RlimitProcesses
+        | Control::RlimitFileSize
+        | Control::RlimitCore
+        | Control::SchedulingPriority
+        | Control::WorkingDirectory
+        | Control::SeccompAllowlist
+        | Control::LandlockAllowlist => Requirement::NotProvided,
+    }
+}
+
 const fn native_confined_requirement(control: Control) -> Requirement {
     match control {
         Control::CapabilityBroker
@@ -384,7 +420,7 @@ mod tests {
         // describing kernel policy this build does not install.
         assert!(ExecutionTier::NativeConfined.is_available());
         assert!(!ExecutionTier::NativeIsolated.is_available());
-        assert!(!ExecutionTier::Wasm.is_available());
+        assert!(ExecutionTier::Wasm.is_available());
     }
 
     #[test]

@@ -33,6 +33,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
     find crates xtask fuzz docs/spec Cargo.toml Cargo.lock -type f -exec touch {} + && \
     cargo build --release --package ono-cli --package ono-kuang-sdk --package xtask --locked \
+    && rustup target add wasm32-wasip2 \
+    && cargo build --release --target wasm32-wasip2 --package ono-kuang-sdk --bin kuang-example-plugin --locked \
+    && install -m 0644 target/wasm32-wasip2/release/kuang-example-plugin.wasm /usr/local/lib/kuang-example-plugin.wasm \
     && install -m 0755 target/release/ono /usr/local/bin/ono \
     && install -m 0755 target/release/kuang-example-plugin /usr/local/bin/kuang-example-plugin \
     && install -m 0755 target/release/kuang-sign /usr/local/bin/kuang-sign \
@@ -51,6 +54,7 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
 
 COPY --from=builder /usr/local/bin/ono /usr/local/bin/ono
 COPY --from=builder /usr/local/bin/kuang-example-plugin /usr/local/bin/kuang-example-plugin
+COPY --from=builder /usr/local/lib/kuang-example-plugin.wasm /usr/local/lib/kuang-example-plugin.wasm
 # The signing tool the SDK ships, so a case can be a package author (spec §31.36, ADR-0311).
 COPY --from=builder /usr/local/bin/kuang-sign /usr/local/bin/kuang-sign
 # The release tooling of §47, and the verification script a reader runs. Case 199 makes a release

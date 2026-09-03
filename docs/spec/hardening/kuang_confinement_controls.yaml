@@ -236,13 +236,40 @@ tiers:
     controls: []
 
   - id: wasm
-    available: false
+    available: true
     manifest_kind: wasm-component
     summary: >-
-      The capability-limited component tier of spec §31.10, where confinement is a property of
-      the runtime rather than of a process.
+      The capability-limited component tier of spec §31.10: a component inside the WebAssembly
+      runtime Ono embeds, where confinement is a property of the runtime rather than of a process
+      (ADR-0569).
     boundary: >-
-      Not implemented in this build. Issue #3 carries the wasm-component tier; until it exists,
-      declaring `runtime.kind: wasm-component` is refused at load rather than silently served by
-      the native path.
-    controls: []
+      A wasm-component KUANG/11 plugin executes inside the WebAssembly component runtime Ono
+      embeds, not as a process: it holds no descriptor, no filesystem, no network and no
+      environment, reaches the host only through the capability broker over its protocol
+      streams, and its linear memory is capped by the runtime at the negotiated ceiling. It has
+      no CPU ceiling: a component that spins is preempted at every epoch, not stopped. The rows
+      a process would have — session separation, the rlimits on files, cores and children, the
+      kernel allowlists — are `not_provided` because a component is not a process, and a row that
+      does not apply is written down rather than inferred (§16.4, Appendix D).
+    controls:
+      - {control: capability_broker, requirement: mandatory, failure: refuse_brokered_operation}
+      - {control: protocol_limits, requirement: mandatory, failure: quarantine}
+      - {control: fd_hygiene, requirement: mandatory, failure: spawn_fails}
+      - {control: protocol_stdio, requirement: mandatory, failure: spawn_fails}
+      - {control: session_separation, requirement: not_provided, failure: none}
+      - {control: no_new_privs, requirement: not_provided, failure: none}
+      - {control: rlimit_data, requirement: mandatory, failure: spawn_fails}
+      - {control: rlimit_address_space, requirement: not_provided, failure: none}
+      - {control: rlimit_cpu, requirement: not_provided, failure: none}
+      - {control: rlimit_open_files, requirement: not_provided, failure: none}
+      - {control: rlimit_processes, requirement: not_provided, failure: none}
+      - {control: rlimit_file_size, requirement: not_provided, failure: none}
+      - {control: rlimit_core, requirement: not_provided, failure: none}
+      - {control: scheduling_priority, requirement: not_provided, failure: none}
+      - {control: environment_sanitization, requirement: mandatory, failure: spawn_fails}
+      - {control: working_directory, requirement: not_provided, failure: none}
+      - {control: process_lifetime, requirement: mandatory, failure: spawn_fails}
+      - {control: filesystem_isolation, requirement: mandatory, failure: spawn_fails}
+      - {control: network_isolation, requirement: mandatory, failure: spawn_fails}
+      - {control: seccomp_allowlist, requirement: not_provided, failure: none}
+      - {control: landlock_allowlist, requirement: not_provided, failure: none}

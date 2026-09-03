@@ -1,0 +1,65 @@
+# Issue #3 (b), ADR-0569: the wasm-component tier of spec §31.10. The example package, built as a
+# WebAssembly component, is installed with `runtime.kind: wasm-component`, loads inside the
+# runtime Ono embeds, streams typed values through the same protocol a native process speaks,
+# is held to the capability broker like one, and `inspect plugin` names the tier and the
+# controls the runtime installs — with the rows a process would have marked not attempted.
+case: a component package runs under the wasm tier
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/lib/kuang-example-plugin.wasm "$home/plugins/dev.example.echo/runtime/echo.wasm"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: wasm-component
+    entry: runtime/echo.wasm
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - clock.read
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== the tier is a name the registry knows (§17.2) =="
+  ono -c 'get plugin | select id execution_tier isolation | to json'
+  ono -c 'get plugin | to json' | grep -q '"execution_tier":"wasm"' && echo "tier-named"
+
+  echo "== the component loads and streams through the protocol (§31.10, §31.61) =="
+  ono -c 'load plugin dev.example.echo; echo:emit --count 3 | to json'
+  ono -c 'load plugin dev.example.echo; echo:emit --count 3 | to json' | grep -q '^\[1,2,3\]$' && echo "component-streams"
+
+  echo "== the broker holds a component like a process (§31.19) =="
+  ono -c 'load plugin dev.example.echo; echo:clock' 2>&1 | grep -q 'Ono-Sendai-K11301' && echo "component-denied-by-default"
+  ono -c 'grant capability clock.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:clock | count | to json' | grep -q '^\[1\]$' && echo "component-granted-call-served"
+
+  echo "== inspect names the runtime's controls (§16.5, §17.3) =="
+  ono -c 'load plugin dev.example.echo; inspect plugin dev.example.echo | to json' | grep -q '"control":"filesystem_isolation","required":true,"attempted":true,"result":"applied"' && echo "runtime-controls-applied"
+  ono -c 'load plugin dev.example.echo; inspect plugin dev.example.echo | to json' | grep -q '"control":"session_separation","required":false,"attempted":false,"result":"not_attempted"' && echo "process-rows-not-inferred"
+  ono -c 'load plugin dev.example.echo; inspect plugin dev.example.echo | to json' | grep -q '"filesystem":"kernel","network":"kernel"' && echo "confinement-is-the-runtimes"
+exit: 0
+stdout-contains: tier-named
+stdout-contains: component-streams
+stdout-contains: component-denied-by-default
+stdout-contains: component-granted-call-served
+stdout-contains: runtime-controls-applied
+stdout-contains: process-rows-not-inferred
+stdout-contains: confinement-is-the-runtimes

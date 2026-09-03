@@ -322,7 +322,10 @@ fn honest() -> Plugin {
             // it. Both are real, so the host can resolve both through the process provider; a
             // package that made them up would contribute nothing, which is the point of §36.2.
             let me = std::process::id();
+            #[cfg(unix)]
             let parent = std::os::unix::process::parent_id();
+            #[cfg(not(unix))]
+            let parent = 0u32;
             match ctx.emit(&relation_record(&me.to_string(), &parent.to_string())) {
                 Ok(()) => Outcome::Completed,
                 Err(ono_kuang_sdk::EmitError::Refused(error)) => Outcome::Failed(*error),

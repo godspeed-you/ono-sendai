@@ -733,6 +733,27 @@ fn should_fail_the_dependency_policy_on_a_denied_license_fixture() {
 
 /// The first crate in a lockfile that a registry supplied, with its version.
 fn first_registry_crate(lock: &str) -> (String, String) {
+    // The lock file is the union over every feature and platform, so a crate it names may be
+    // one nothing in the default build activates — and `cargo deny` checks the build that is
+    // active. The fixture has to name a crate the policy will actually see.
+    let active = std::process::Command::new("cargo")
+        .args([
+            "tree",
+            "--workspace",
+            "-e",
+            "normal",
+            "--prefix",
+            "none",
+            "--offline",
+        ])
+        .current_dir(this_repository())
+        .output()
+        .expect("cargo tree must be runnable in the gate");
+    let active: std::collections::BTreeSet<String> = String::from_utf8_lossy(&active.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_owned)
+        .collect();
     let mut name = None;
     let mut version = None;
     for line in lock.lines() {
@@ -742,11 +763,12 @@ fn first_registry_crate(lock: &str) -> (String, String) {
             version = rest.strip_suffix('"').map(str::to_owned);
         } else if line.starts_with("source = \"registry+")
             && let (Some(name), Some(version)) = (name.clone(), version.clone())
+            && active.contains(&name)
         {
             return (name, version);
         }
     }
-    panic!("Cargo.lock names no crate that came from a registry");
+    panic!("Cargo.lock names no crate that came from a registry and is in the active build");
 }
 
 // --- exact tool versions and locked builds (spec §44.2, §44.3, §44.4) ---------------------------

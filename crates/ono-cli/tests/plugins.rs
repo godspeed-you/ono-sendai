@@ -596,3 +596,83 @@ fn should_report_what_a_running_instance_has_allocated_and_used() {
         run.stdout()
     );
 }
+
+// --- the wasm-component tier through the shell (spec §31.10; ADR-0569) -----------------------
+
+/// The example package built as a component, or why it could not be (see the conformance
+/// suite's `component_fixture`, which this mirrors).
+fn component_fixture() -> Result<std::path::PathBuf, String> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the workspace root")
+        .to_path_buf();
+    let installed = std::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .map_err(|error| format!("rustup could not be run: {error}"))?;
+    if !String::from_utf8_lossy(&installed.stdout).contains("wasm32-wasip2") {
+        return Err("the wasm32-wasip2 target is not installed".to_owned());
+    }
+    let target_dir = root.join("target").join("wasm-fixture");
+    let status = std::process::Command::new("cargo")
+        .args([
+            "build",
+            "--quiet",
+            "--target",
+            "wasm32-wasip2",
+            "-p",
+            "ono-kuang-sdk",
+            "--bin",
+            "kuang-example-plugin",
+        ])
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .current_dir(&root)
+        .status()
+        .map_err(|error| format!("cargo could not be run: {error}"))?;
+    if !status.success() {
+        return Err(format!("the component build ended with {status}"));
+    }
+    Ok(target_dir
+        .join("wasm32-wasip2")
+        .join("debug")
+        .join("kuang-example-plugin.wasm"))
+}
+
+#[test]
+fn should_load_a_component_package_under_the_wasm_tier_and_run_its_command() {
+    let component = match component_fixture() {
+        Ok(path) => path,
+        Err(why) => {
+            ono_testkit::skipped(ono_testkit::SkipReason::ExternalToolUnavailable, &why);
+            return;
+        }
+    };
+    let home = plugin_home();
+    let manifest = std::fs::read_to_string(home.path().join("dev.example.echo/manifest.yaml"))
+        .expect("the manifest")
+        .replace("kind: native-process", "kind: wasm-component")
+        .replace("entry: runtime/echo", "entry: runtime/echo.wasm");
+    home.write("dev.example.echo/manifest.yaml", manifest);
+    std::fs::copy(
+        &component,
+        home.path().join("dev.example.echo/runtime/echo.wasm"),
+    )
+    .expect("the component");
+
+    let run = ono(
+        &home,
+        "load plugin dev.example.echo; echo:emit --count 2 | to json; get plugin | select execution_tier | to json",
+    );
+    run.assert_success();
+    let shown = run.stdout();
+    assert!(
+        shown.contains("[1,2]"),
+        "the component's command streams through the shell; stdout {shown:?} stderr {:?}",
+        run.stderr()
+    );
+    assert!(
+        shown.contains("\"execution_tier\":\"wasm\""),
+        "the tier a component runs in is named (v0.4.1 §17.2); stdout {shown:?}"
+    );
+}

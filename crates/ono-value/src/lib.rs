@@ -73,6 +73,7 @@ mod hex;
 mod json;
 mod map;
 mod net;
+mod os_bytes;
 mod provenance;
 mod raw;
 mod record;

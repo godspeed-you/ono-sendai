@@ -47,8 +47,10 @@ fields:
       no-new-privileges from one behind a kernel filesystem allowlist, and v0.4.1 §17.3 forbids
       calling either "sandboxed" without saying which boundary is meant. `native-confined` is
       what this build runs native packages in: capability mediation and process confinement, and
-      no kernel isolation of the filesystem or the network. `native-isolated` and `wasm` are
-      names the model can express and this build does not offer.
+      no kernel isolation of the filesystem or the network. `wasm` is the component tier this
+      build runs `wasm-component` packages in: no descriptors, no filesystem, no network and no
+      environment by construction, memory capped by the runtime, no CPU ceiling (ADR-0569).
+      `native-isolated` is a name the model can express and this build does not offer.
   execution_boundary:
     type: string
     required: true

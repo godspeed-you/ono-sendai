@@ -90,7 +90,7 @@ pub fn to_json(value: &Value) -> Json {
             Some(text) => tagged("$path", Json::String(text.to_owned())),
             None => tagged(
                 "$path_bytes",
-                Json::String(crate::hex::encode(std::os::unix::ffi::OsStrExt::as_bytes(
+                Json::String(crate::hex::encode(crate::os_bytes::as_bytes(
                     value.as_os_str(),
                 ))),
             ),
@@ -151,7 +151,7 @@ pub fn to_json_data(value: &Value) -> Json {
             Some(text) => Json::String(text.to_owned()),
             // A path is bytes on Unix, so one that is not text falls back to the same hex form
             // for the same reason.
-            None => Json::String(crate::hex::encode(std::os::unix::ffi::OsStrExt::as_bytes(
+            None => Json::String(crate::hex::encode(crate::os_bytes::as_bytes(
                 value.as_os_str(),
             ))),
         },
@@ -517,7 +517,7 @@ fn tagged_from_json(
         "$path" => Value::Path(Arc::from(std::path::Path::new(text()?))),
         "$path_bytes" => {
             let raw = crate::hex::decode(text()?).ok_or_else(|| bad_tag(tag, payload))?;
-            let os: &std::ffi::OsStr = std::os::unix::ffi::OsStrExt::from_bytes(raw.as_slice());
+            let os: &std::ffi::OsStr = crate::os_bytes::from_bytes(raw.as_slice());
             Value::Path(Arc::from(std::path::Path::new(os)))
         }
         "$timestamp" => Value::Timestamp(

@@ -755,7 +755,9 @@ async fn should_report_a_named_execution_tier_rather_than_a_sandboxed_boolean() 
         "§17.3: a tier this build cannot install must not be offered, and this one it can"
     );
     assert!(!ExecutionTier::NativeIsolated.is_available());
-    assert!(!ExecutionTier::Wasm.is_available());
+    // ADR-0569: the component tier is available now; the name is what says which controls are in
+    // force, and `native-isolated` stays a name only.
+    assert!(ExecutionTier::Wasm.is_available());
 
     // The name is not a synonym for "sandboxed": it stands for a list of controls, and it says
     // in as many words which boundary it does not have.

@@ -1575,3 +1575,174 @@ async fn should_say_a_domain_is_unavailable_when_the_host_serves_none() {
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;
 }
+
+// --- the wasm-component tier (spec §31.10; ADR-0569) ------------------------------------------
+
+/// The example package built as a component, or the reason it could not be.
+///
+/// The build goes to its own target directory, so it never contends for the lock of the one
+/// this test runs from, and it is cached there between runs.
+fn component_fixture() -> Result<std::path::PathBuf, String> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the workspace root")
+        .to_path_buf();
+    let installed = std::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .map_err(|error| format!("rustup could not be run: {error}"))?;
+    if !String::from_utf8_lossy(&installed.stdout).contains("wasm32-wasip2") {
+        return Err("the wasm32-wasip2 target is not installed".to_owned());
+    }
+    let target_dir = root.join("target").join("wasm-fixture");
+    let status = std::process::Command::new("cargo")
+        .args([
+            "build",
+            "--quiet",
+            "--target",
+            "wasm32-wasip2",
+            "-p",
+            "ono-kuang-sdk",
+            "--bin",
+            "kuang-example-plugin",
+        ])
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .current_dir(&root)
+        .status()
+        .map_err(|error| format!("cargo could not be run: {error}"))?;
+    if !status.success() {
+        return Err(format!("the component build ended with {status}"));
+    }
+    Ok(target_dir
+        .join("wasm32-wasip2")
+        .join("debug")
+        .join("kuang-example-plugin.wasm"))
+}
+
+fn component_manifest() -> String {
+    manifest()
+        .replace("kind: native-process", "kind: wasm-component")
+        .replace("entry: runtime/echo", "entry: runtime/echo.wasm")
+}
+
+/// Loads the component under the test host, or announces the skip and returns `None`.
+async fn component_host(grants: &[Capability]) -> Option<ono_kuang_supervisor::LoadedPlugin> {
+    let component = match component_fixture() {
+        Ok(path) => path,
+        Err(why) => {
+            ono_testkit::skipped(ono_testkit::SkipReason::ExternalToolUnavailable, &why);
+            return None;
+        }
+    };
+    let mut host = TestHost::new(component, &component_manifest());
+    for capability in grants {
+        host = host.grant(*capability);
+    }
+    Some(host.load().await.expect("the component loads"))
+}
+
+#[tokio::test]
+async fn should_load_a_component_under_the_wasm_tier_with_the_controls_the_runtime_installs() {
+    let Some(plugin) = component_host(&[]).await else {
+        return;
+    };
+    let report = plugin.confinement();
+    assert_eq!(report.tier(), ono_kuang_protocol::ExecutionTier::Wasm);
+    for control in [
+        ono_kuang_protocol::Control::FilesystemIsolation,
+        ono_kuang_protocol::Control::NetworkIsolation,
+        ono_kuang_protocol::Control::RlimitData,
+        ono_kuang_protocol::Control::ProtocolStdio,
+    ] {
+        let entry = report.entry(control).expect("every control has a row");
+        assert_eq!(
+            entry.result(),
+            ono_kuang_supervisor::ControlResult::Applied,
+            "{control:?}: the runtime installs it by construction"
+        );
+    }
+    assert_eq!(
+        report
+            .entry(ono_kuang_protocol::Control::SessionSeparation)
+            .expect("a row")
+            .result(),
+        ono_kuang_supervisor::ControlResult::NotAttempted,
+        "a component is not a process, and a row that does not apply says so"
+    );
+    assert!(
+        plugin.sandbox().tier == ono_kuang_protocol::ExecutionTier::Wasm,
+        "the sandbox the shell reports is the component's"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_stream_typed_values_from_a_component_over_its_protocol_streams() {
+    let Some(plugin) = component_host(&[]).await else {
+        return;
+    };
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(3))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(
+        values_of(&events),
+        vec![Value::Int(1), Value::Int(2), Value::Int(3)],
+        "the same protocol, over WASI stdio instead of a process's pipes"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_hold_a_component_to_the_capability_broker_like_a_process() {
+    let Some(plugin) = component_host(&[Capability::ClockRead]).await else {
+        return;
+    };
+    // Granted: the host call is served, and the virtual clock answers.
+    let invocation = plugin
+        .invoke("dev.example.echo.command.clock", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(
+        values_of(&events),
+        vec![Value::String(ono_kuang_testhost::VIRTUAL_NOW.into())]
+    );
+    // Not granted: the same deny-by-default a process meets (spec §31.19).
+    let refused = match plugin
+        .invoke(
+            "dev.example.echo.command.read-file",
+            args(&[("path", json!("/etc/hostname"))]),
+        )
+        .await
+    {
+        Err(error) => error.name,
+        Ok(invocation) => {
+            let (_, result) = invocation.collect().await;
+            assert_eq!(result.status, InvokeStatus::Failed);
+            result.error.expect("structured").name
+        }
+    };
+    assert_eq!(refused, "capability.denied");
+    let audit = plugin.audit();
+    assert!(
+        audit
+            .iter()
+            .any(|event| event.result == AuditResult::Denied),
+        "the refusal is in the trail"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
