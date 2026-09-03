@@ -21,6 +21,7 @@
 //! zypper decides when both front ends are present: Fedora and RHEL never ship it, while dnf
 //! installs anywhere, so a machine that has zypper is a SUSE machine (ADR-0422 §2).
 
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -483,8 +484,165 @@ async fn answer(rpm: &Rpm, plan: &Plan) -> Result<Vec<RecordValue>, ErrorValue> 
         .collect()
 }
 
+/// Compares two rpm version strings the way rpm itself does.
+///
+/// The algorithm is `rpmvercmp` from rpm's `lib/rpmvercmp.c`, which is the only thing that can
+/// answer "is this version older" for a package manager: `1.0~rc1` is *before* `1.0`, `1.0^` is
+/// after it, `10` is after `9` and after any word, and every other character is a separator.
+/// A string comparison gets each of those wrong (ADR-0560).
+fn version_compare(left: &str, right: &str) -> Ordering {
+    let (mut a, mut b) = (left.as_bytes(), right.as_bytes());
+    let is_separator = |byte: u8| !byte.is_ascii_alphanumeric() && byte != b'~' && byte != b'^';
+
+    loop {
+        while a.first().is_some_and(|byte| is_separator(*byte)) {
+            a = &a[1..];
+        }
+        while b.first().is_some_and(|byte| is_separator(*byte)) {
+            b = &b[1..];
+        }
+
+        // `~` sorts before everything, the empty string included: `1.0~rc1` precedes `1.0`.
+        if a.first() == Some(&b'~') || b.first() == Some(&b'~') {
+            if a.first() != Some(&b'~') {
+                return Ordering::Greater;
+            }
+            if b.first() != Some(&b'~') {
+                return Ordering::Less;
+            }
+            a = &a[1..];
+            b = &b[1..];
+            continue;
+        }
+
+        // `^` is the same idea the other way up: after the end of a string, before anything else.
+        if a.first() == Some(&b'^') || b.first() == Some(&b'^') {
+            if a.is_empty() {
+                return Ordering::Less;
+            }
+            if b.is_empty() {
+                return Ordering::Greater;
+            }
+            if a.first() != Some(&b'^') {
+                return Ordering::Greater;
+            }
+            if b.first() != Some(&b'^') {
+                return Ordering::Less;
+            }
+            a = &a[1..];
+            b = &b[1..];
+            continue;
+        }
+
+        if a.is_empty() || b.is_empty() {
+            break;
+        }
+
+        // One whole run of digits, or one whole run of letters, from each side.
+        let numeric = a[0].is_ascii_digit();
+        fn split(slice: &[u8], numeric: bool) -> (&[u8], &[u8]) {
+            let end = slice
+                .iter()
+                .position(|byte| {
+                    if numeric {
+                        !byte.is_ascii_digit()
+                    } else {
+                        !byte.is_ascii_alphabetic()
+                    }
+                })
+                .unwrap_or(slice.len());
+            slice.split_at(end)
+        }
+        let (mut head_a, rest_a) = split(a, numeric);
+        let (mut head_b, rest_b) = split(b, numeric);
+
+        // A digit run against a letter run: the number is the newer of the two, whichever side
+        // it is on.
+        if head_b.is_empty() {
+            return if numeric {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            };
+        }
+
+        if numeric {
+            while head_a.first() == Some(&b'0') {
+                head_a = &head_a[1..];
+            }
+            while head_b.first() == Some(&b'0') {
+                head_b = &head_b[1..];
+            }
+            match head_a.len().cmp(&head_b.len()) {
+                Ordering::Equal => {}
+                other => return other,
+            }
+        }
+        match head_a.cmp(head_b) {
+            Ordering::Equal => {}
+            other => return other,
+        }
+        a = rest_a;
+        b = rest_b;
+    }
+
+    // Everything compared equal; whichever string still has something left is the newer.
+    match (a.is_empty(), b.is_empty()) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => Ordering::Equal,
+    }
+}
+
+/// `epoch:version-release`, split into the parts that were actually written.
+///
+/// A user who writes `--version 8.6.0` means "8.6.0, whatever the release", so the release is
+/// compared only when both sides carry one. Comparing a written `8.6.0` against an installed
+/// `8.6.0-8.fc40` on the release would call the installed one newer and downgrade a package
+/// nobody asked to move.
+fn evr(version: &str) -> (Option<&str>, &str, Option<&str>) {
+    let (epoch, rest) = match version.split_once(':') {
+        Some((epoch, rest)) if epoch.bytes().all(|byte| byte.is_ascii_digit()) => {
+            (Some(epoch), rest)
+        }
+        _ => (None, version),
+    };
+    match rest.split_once('-') {
+        Some((version, release)) => (epoch, version, Some(release)),
+        None => (epoch, rest, None),
+    }
+}
+
+/// Whether `wanted` names a version older than `installed`, as rpm orders them.
+fn is_older(wanted: &str, installed: &str) -> bool {
+    let (wanted_epoch, wanted_version, wanted_release) = evr(wanted);
+    let (installed_epoch, installed_version, installed_release) = evr(installed);
+
+    if let (Some(left), Some(right)) = (wanted_epoch, installed_epoch)
+        && let ordering = version_compare(left, right)
+        && ordering != Ordering::Equal
+    {
+        return ordering == Ordering::Less;
+    }
+    match version_compare(wanted_version, installed_version) {
+        Ordering::Less => return true,
+        Ordering::Greater => return false,
+        Ordering::Equal => {}
+    }
+    match (wanted_release, installed_release) {
+        (Some(left), Some(right)) => version_compare(left, right) == Ordering::Less,
+        _ => false,
+    }
+}
+
 /// The front end invocations a `package` action asks for.
-fn mutation_of(action: &Action, rpm: &Rpm, name: &str) -> Result<Mutation, ErrorValue> {
+fn mutation_of(
+    action: &Action,
+    rpm: &Rpm,
+    name: &str,
+    installed: Option<&str>,
+) -> Result<Mutation, ErrorValue> {
     let frontend = rpm.frontend()?;
     let unsupported = |message: String, help: &str| {
         Err(ErrorValue::new(ErrorCode::ProviderUnsupported, message).with_help(help))
@@ -502,10 +660,17 @@ fn mutation_of(action: &Action, rpm: &Rpm, name: &str) -> Result<Mutation, Error
     // dnf's. Neither may ever be left off: a package manager waiting for an answer at a pipe
     // that has nobody behind it is a hung shell.
     let install = |version: Option<&str>| match frontend {
+        // dnf and yum refuse to `install` a version older than the one that is there, and the
+        // documented spelling for that direction is `downgrade`. Which direction a version
+        // string points is rpm's own question, and `is_older` asks it rpm's way (ADR-0560).
         Frontend::RedHat(program) => (
             program.clone(),
             vec![
-                "install".to_owned(),
+                match (version, installed) {
+                    (Some(version), Some(installed)) if is_older(version, installed) => "downgrade",
+                    _ => "install",
+                }
+                .to_owned(),
                 "-y".to_owned(),
                 version.map_or_else(|| name.to_owned(), |version| format!("{name}-{version}")),
             ],
@@ -572,7 +737,12 @@ fn mutation_of(action: &Action, rpm: &Rpm, name: &str) -> Result<Mutation, Error
             let mut versioned = false;
             if let Some(version) = text("version") {
                 commands.push(install(Some(&version)));
-                described.push(format!("move `{name}` to {version}"));
+                described.push(match installed {
+                    Some(installed) if is_older(&version, installed) => {
+                        format!("move `{name}` back to {version} from {installed}")
+                    }
+                    _ => format!("move `{name}` to {version}"),
+                });
                 versioned = true;
             }
             if let Some(hold) = flag("hold") {
@@ -729,7 +899,10 @@ impl Provider for RpmPackageProvider {
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
         let rpm = self.manager()?;
         let name = package_name(action.target())?.to_owned();
-        let mutation = mutation_of(action, &rpm, &name)?;
+        // What is installed decides which direction a `--version` points, and it is the same
+        // reading the outcome compares against afterwards (ADR-0560).
+        let before = installed_version(&rpm, &name).await?;
+        let mutation = mutation_of(action, &rpm, &name, before.as_deref())?;
         if action.is_dry_run() {
             return Ok(ActionOutcome::skipped(
                 action,
@@ -755,7 +928,6 @@ impl Provider for RpmPackageProvider {
                 ),
             ));
         }
-        let before = installed_version(&rpm, &name).await?;
         for (program, arguments) in &mutation.commands {
             let answer = run(program, arguments).await?;
             if answer.status != Some(0) {
@@ -783,6 +955,9 @@ impl Provider for RpmPackageProvider {
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 mod tests {
+    use ono_provider_api::ObjectId;
+    use ono_value::SchemaId;
+
     use super::*;
 
     #[test]
@@ -871,6 +1046,155 @@ mod tests {
                 "{garbage:?}"
             );
         }
+    }
+
+    // --- rpm's own version ordering (ADR-0560) ------------------------------------------------
+
+    /// The cases rpm's own `tests/rpmvercmp.at` fixes, plus the two the issue turns on.
+    #[test]
+    fn should_order_versions_the_way_rpm_orders_them() {
+        for (left, right, expected) in [
+            ("1.0", "1.0", Ordering::Equal),
+            ("1.0", "2.0", Ordering::Less),
+            ("2.0", "1.0", Ordering::Greater),
+            ("2.0.1", "2.0.1", Ordering::Equal),
+            ("2.0", "2.0.1", Ordering::Less),
+            ("2.0.1", "2.0", Ordering::Greater),
+            ("2.0.1a", "2.0.1", Ordering::Greater),
+            ("5.5p1", "5.5p2", Ordering::Less),
+            ("10xyz", "10.1xyz", Ordering::Less),
+            ("xyz10", "xyz10.1", Ordering::Less),
+            ("1.0", "1.0.0", Ordering::Less),
+            // A number is newer than a word, whichever side it is on.
+            ("a", "1", Ordering::Less),
+            ("1", "a", Ordering::Greater),
+            // Leading zeros are not a number.
+            ("01", "1", Ordering::Equal),
+            // `~` sorts before everything, the empty string included.
+            ("1.0~rc1", "1.0", Ordering::Less),
+            ("1.0", "1.0~rc1", Ordering::Greater),
+            ("1.0~rc1", "1.0~rc2", Ordering::Less),
+            ("1.0~rc1~git123", "1.0~rc1", Ordering::Less),
+            // `^` is the same idea the other way up.
+            ("1.0^", "1.0", Ordering::Greater),
+            ("1.0^", "1.0^1", Ordering::Less),
+            ("1.0^git1", "1.0", Ordering::Greater),
+            // Separators are separators, whichever they are.
+            ("1b.fc17", "1.fc17", Ordering::Less),
+            ("1_0", "1.0", Ordering::Equal),
+        ] {
+            assert_eq!(
+                version_compare(left, right),
+                expected,
+                "rpmvercmp({left:?}, {right:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn should_call_a_version_older_only_on_the_parts_the_caller_wrote() {
+        // `--version 8.6.0` against an installed `8.6.0-8.fc40` means "8.6.0, whatever the
+        // release": comparing the missing release against `8.fc40` would call the installed one
+        // newer and move a package nobody asked to move.
+        assert!(!is_older("8.6.0", "8.6.0-8.fc40"));
+        assert!(is_older("8.5.0", "8.6.0-8.fc40"));
+        assert!(!is_older("8.7.0", "8.6.0-8.fc40"));
+        // Where both sides carry a release, the release decides.
+        assert!(is_older("8.6.0-7.fc40", "8.6.0-8.fc40"));
+        assert!(!is_older("8.6.0-9.fc40", "8.6.0-8.fc40"));
+        // An epoch outranks the version, as rpm has it.
+        assert!(is_older("1:2.0", "2:1.0"));
+        assert!(!is_older("2:1.0", "1:2.0"));
+    }
+
+    /// The action `set package <name> --version <v>` asks for.
+    fn set_version(version: &str) -> Action {
+        Action::new(
+            "package",
+            "set",
+            ObjectId::new(
+                SchemaId::new("ono.package", 1),
+                [Value::string("rpm"), Value::string("curl")],
+            ),
+        )
+        .with("version", Value::string(version))
+    }
+
+    #[test]
+    fn should_downgrade_when_the_named_version_is_older_than_the_installed_one() {
+        let rpm = Rpm {
+            rpm: PathBuf::from("/usr/bin/rpm"),
+            frontend: Some(Frontend::RedHat(PathBuf::from("/usr/bin/dnf"))),
+        };
+        let mutation = mutation_of(
+            &set_version("8.5.0-1.fc40"),
+            &rpm,
+            "curl",
+            Some("8.6.0-8.fc40"),
+        )
+        .expect("a named version is a mutation this provider performs");
+
+        assert_eq!(
+            mutation.commands[0].1,
+            [
+                "downgrade".to_owned(),
+                "-y".to_owned(),
+                "curl-8.5.0-1.fc40".to_owned()
+            ],
+            "dnf refuses to `install` a version older than the one that is there"
+        );
+    }
+
+    #[test]
+    fn should_install_when_the_named_version_is_newer_than_the_installed_one() {
+        let rpm = Rpm {
+            rpm: PathBuf::from("/usr/bin/rpm"),
+            frontend: Some(Frontend::RedHat(PathBuf::from("/usr/bin/dnf"))),
+        };
+        let mutation = mutation_of(
+            &set_version("8.7.0-1.fc40"),
+            &rpm,
+            "curl",
+            Some("8.6.0-8.fc40"),
+        )
+        .expect("a named version is a mutation this provider performs");
+
+        assert_eq!(
+            mutation.commands[0].1,
+            [
+                "install".to_owned(),
+                "-y".to_owned(),
+                "curl-8.7.0-1.fc40".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn should_keep_zyppers_one_command_for_both_directions() {
+        // zypper is given `--oldpackage` and does both directions in one command, so nothing
+        // about the SUSE path changes.
+        let zypper = Rpm {
+            rpm: PathBuf::from("/usr/bin/rpm"),
+            frontend: Some(Frontend::Suse(PathBuf::from("/usr/bin/zypper"))),
+        };
+        let mutation = mutation_of(
+            &set_version("8.5.0-1.1"),
+            &zypper,
+            "curl",
+            Some("8.6.0-1.1"),
+        )
+        .expect("a named version is a mutation this provider performs");
+
+        assert!(
+            mutation.commands[0].1.contains(&"--oldpackage".to_owned()),
+            "got {:?}",
+            mutation.commands[0].1
+        );
+        assert!(
+            !mutation.commands[0].1.contains(&"downgrade".to_owned()),
+            "got {:?}",
+            mutation.commands[0].1
+        );
     }
 
     #[test]
