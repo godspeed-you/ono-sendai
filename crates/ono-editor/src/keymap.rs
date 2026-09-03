@@ -62,8 +62,12 @@ pub enum EditAction {
     InsertNewline,
     /// The previous history entry, anchored on what has been typed.
     HistoryPrevious,
-    /// The next history entry.
+    /// The next history entry, anchored on what has been typed.
     HistoryNext,
+    /// The previous history entry, whatever has been typed (ADR-0564).
+    HistoryPreviousUnanchored,
+    /// The next history entry, whatever has been typed (ADR-0564).
+    HistoryNextUnanchored,
     /// Start, or continue, an incremental search backwards through the history.
     ReverseSearch,
     /// Complete the word before the cursor.
@@ -154,6 +158,14 @@ impl Keymap {
             (KeyPress::key(KeyCode::Up), EditAction::HistoryPrevious),
             (KeyPress::ctrl('n'), EditAction::HistoryNext),
             (KeyPress::key(KeyCode::Down), EditAction::HistoryNext),
+            (
+                KeyPress::new(KeyCode::Up, Modifiers::CTRL),
+                EditAction::HistoryPreviousUnanchored,
+            ),
+            (
+                KeyPress::new(KeyCode::Down, Modifiers::CTRL),
+                EditAction::HistoryNextUnanchored,
+            ),
             (KeyPress::ctrl('r'), EditAction::ReverseSearch),
             (KeyPress::key(KeyCode::Tab), EditAction::Complete),
             (KeyPress::ctrl('i'), EditAction::Complete),

@@ -306,7 +306,10 @@ impl Editor {
         if action.changes_text()
             && !matches!(
                 action,
-                EditAction::HistoryPrevious | EditAction::HistoryNext
+                EditAction::HistoryPrevious
+                    | EditAction::HistoryNext
+                    | EditAction::HistoryPreviousUnanchored
+                    | EditAction::HistoryNextUnanchored
             )
         {
             self.navigation = None;
@@ -419,11 +422,19 @@ impl Editor {
                 Outcome::Continue
             }
             EditAction::HistoryPrevious => {
-                self.history_previous();
+                self.history_previous(true);
                 Outcome::Continue
             }
             EditAction::HistoryNext => {
-                self.history_next();
+                self.history_next(true);
+                Outcome::Continue
+            }
+            EditAction::HistoryPreviousUnanchored => {
+                self.history_previous(false);
+                Outcome::Continue
+            }
+            EditAction::HistoryNextUnanchored => {
+                self.history_next(false);
                 Outcome::Continue
             }
             EditAction::ReverseSearch => {
@@ -488,7 +499,9 @@ impl Editor {
         Outcome::Continue
     }
 
-    fn history_previous(&mut self) {
+    /// Steps to the previous entry. An anchored step takes only an entry that starts with what
+    /// had been typed when the walk began; an unanchored one takes any (ADR-0564).
+    fn history_previous(&mut self, anchored: bool) {
         let (anchor, saved, index) = match self.navigation.take() {
             Some(navigation) => (navigation.anchor, navigation.saved, navigation.index),
             None => {
@@ -503,7 +516,7 @@ impl Editor {
             .get(..end)
             .unwrap_or(&[])
             .iter()
-            .rposition(|entry| entry.starts_with(&anchor));
+            .rposition(|entry| !anchored || entry.starts_with(&anchor));
         let index = match found {
             Some(position) => {
                 if let Some(entry) = self.history.get(position) {
@@ -521,7 +534,7 @@ impl Editor {
         });
     }
 
-    fn history_next(&mut self) {
+    fn history_next(&mut self, anchored: bool) {
         let Some(navigation) = self.navigation.take() else {
             return;
         };
@@ -543,7 +556,7 @@ impl Editor {
             .iter()
             .enumerate()
             .skip(current + 1)
-            .find(|(_, entry)| entry.starts_with(&anchor))
+            .find(|(_, entry)| !anchored || entry.starts_with(&anchor))
             .map(|(position, _)| position);
         match found {
             Some(position) => {

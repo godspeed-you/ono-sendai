@@ -285,6 +285,18 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#122 closed (2026-09-03).** `Ctrl-Up` and `Ctrl-Down` walk the history without an anchor
+  (ADR-0564). The bare arrows were already readline's `history-search-backward` — anchored on
+  the text before the cursor — and nothing was bound to the modified arrows, so the walk that
+  steps to the previous entry whatever was typed did not exist. Two actions,
+  `HistoryPreviousUnanchored` and `HistoryNextUnanchored`, share the existing `HistoryNav`: the
+  anchor is taken once when a walk starts and applied only by the anchored steps, so the two
+  kinds of step mix inside one walk and the saved line comes back either way. Proven by four
+  editor tests (`crates/ono-editor/tests/history.rs`), a pseudo-terminal sending xterm's
+  `\x1b[1;5A` (`crates/ono-cli/tests/history_keys.rs`, red without the fix) and acceptance case
+  209. What the issue did not know: it offered the inputrc reading — `Ctrl-Up` as a second key
+  for the prefix search — as the alternative, and ADR-0564 rejects it because it would leave the
+  unanchored walk unreachable, which is the defect itself; a user who wants it has `Keymap::bind`.
 - **#123 closed (2026-09-03).** Tab after `cd ..` answers `../`. `path_candidates` is now
   `path_candidates_in(root, prefix)` — the same split at the last `/` and the same `read_dir`,
   plus one rule: a prefix that itself names an existing directory and does not end in `/` is

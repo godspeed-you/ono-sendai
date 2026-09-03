@@ -2,7 +2,7 @@
 
 mod support;
 
-use ono_editor::{Editor, KeyCode, KeyPress, Outcome};
+use ono_editor::{Editor, KeyCode, KeyPress, Modifiers, Outcome};
 use ono_render::{Presentation, Theme};
 use support::{DemoHighlighter, type_text};
 
@@ -174,4 +174,94 @@ fn should_remember_a_submitted_line_when_it_is_pushed_into_the_history() {
     editor.push_history("uptime");
     editor.feed(KeyPress::key(KeyCode::Up));
     assert_eq!(editor.line(), "uptime");
+}
+
+#[test]
+fn should_walk_past_an_entry_that_does_not_match_when_ctrl_up_is_pressed() {
+    // Issue #122, ADR-0564: the bare arrow is anchored on what has been typed, so with `get `
+    // typed it can only ever reach `get x`. Ctrl-Up is the walk that reaches the rest.
+    let mut editor = Editor::new().with_highlighter(DemoHighlighter);
+    editor.set_history(vec!["a".to_owned(), "b".to_owned(), "get x".to_owned()]);
+    type_text(&mut editor, "get ");
+
+    editor.feed(KeyPress::new(KeyCode::Up, Modifiers::CTRL));
+    assert_eq!(editor.line(), "get x");
+    editor.feed(KeyPress::new(KeyCode::Up, Modifiers::CTRL));
+    assert_eq!(
+        editor.line(),
+        "b",
+        "the unanchored walk reaches an entry the anchor excludes"
+    );
+    editor.feed(KeyPress::new(KeyCode::Up, Modifiers::CTRL));
+    assert_eq!(editor.line(), "a");
+    editor.feed(KeyPress::new(KeyCode::Up, Modifiers::CTRL));
+    assert_eq!(editor.line(), "a", "there is nothing older");
+}
+
+#[test]
+fn should_keep_the_bare_arrow_anchored_when_ctrl_up_exists_beside_it() {
+    let mut editor = Editor::new().with_highlighter(DemoHighlighter);
+    editor.set_history(vec!["a".to_owned(), "b".to_owned(), "get x".to_owned()]);
+    type_text(&mut editor, "get ");
+
+    editor.feed(KeyPress::key(KeyCode::Up));
+    assert_eq!(editor.line(), "get x");
+    editor.feed(KeyPress::key(KeyCode::Up));
+    assert_eq!(
+        editor.line(),
+        "get x",
+        "the anchored walk stops where the anchor stops"
+    );
+}
+
+#[test]
+fn should_restore_the_line_being_typed_when_ctrl_down_walks_past_the_newest_entry() {
+    let mut editor = Editor::new().with_highlighter(DemoHighlighter);
+    editor.set_history(vec!["a".to_owned(), "b".to_owned(), "get x".to_owned()]);
+    type_text(&mut editor, "get ");
+
+    editor.feed(KeyPress::new(KeyCode::Up, Modifiers::CTRL));
+    editor.feed(KeyPress::new(KeyCode::Up, Modifiers::CTRL));
+    assert_eq!(editor.line(), "b");
+    editor.feed(KeyPress::new(KeyCode::Down, Modifiers::CTRL));
+    assert_eq!(editor.line(), "get x");
+    editor.feed(KeyPress::new(KeyCode::Down, Modifiers::CTRL));
+    assert_eq!(
+        editor.line(),
+        "get ",
+        "the saved line comes back, as it does for the bare arrow"
+    );
+    editor.feed(KeyPress::new(KeyCode::Down, Modifiers::CTRL));
+    assert_eq!(editor.line(), "get ", "and stays");
+}
+
+#[test]
+fn should_let_the_anchored_walk_continue_from_where_ctrl_up_left_it() {
+    // One walk, two kinds of step: the anchor is taken when the walk starts and applied only
+    // by the anchored steps (ADR-0564).
+    let mut editor = Editor::new().with_highlighter(DemoHighlighter);
+    editor.set_history(vec![
+        "get a".to_owned(),
+        "b".to_owned(),
+        "get c".to_owned(),
+        "d".to_owned(),
+    ]);
+    type_text(&mut editor, "get ");
+
+    editor.feed(KeyPress::new(KeyCode::Up, Modifiers::CTRL));
+    assert_eq!(editor.line(), "d");
+    editor.feed(KeyPress::key(KeyCode::Up));
+    assert_eq!(
+        editor.line(),
+        "get c",
+        "the anchored step skips what the anchor excludes"
+    );
+    editor.feed(KeyPress::key(KeyCode::Up));
+    assert_eq!(editor.line(), "get a");
+    editor.feed(KeyPress::new(KeyCode::Down, Modifiers::CTRL));
+    assert_eq!(
+        editor.line(),
+        "b",
+        "and the unanchored step takes the next entry whatever it is"
+    );
 }

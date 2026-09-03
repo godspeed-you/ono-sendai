@@ -1,0 +1,35 @@
+# Issue #122, ADR-0564: the bare Up arrow is anchored on what has been typed — with `get ` on the
+# line it reaches only entries that start with `get ` — and nothing at all was bound to Ctrl-Up,
+# so the walk that steps to the previous entry whatever was typed did not exist. Ctrl-Up and
+# Ctrl-Down are that walk now.
+#
+# `script(1)` gives `ono` a terminal of its own, as case 099 does; `\033[1;5A` is what an xterm
+# sends for Ctrl-Up.
+case: Ctrl-Up reaches a history entry the typed prefix excludes
+timeout: 120
+env: TERM=xterm
+env: NO_COLOR=1
+run: |
+  session() {
+    script --quiet --return --command 'stty rows 30 cols 100 2>/dev/null; ono' /dev/null
+  }
+
+  {
+    sleep 2
+    printf 'echo first\n';   sleep 1
+    printf 'echo second\n';  sleep 1
+    printf 'get ';           sleep 1
+    printf '\033[1;5A';      sleep 1
+    printf '\003';           sleep 1
+    printf 'exit\n';         sleep 1
+  } | session > /tmp/history-keys.out 2>&1
+
+  seen=$(cat -v /tmp/history-keys.out)
+  if [[ "$seen" == *"> echo second"* ]]; then
+    echo "PROVED 122a: Ctrl-Up with 'get ' typed recalls 'echo second'"
+  else
+    echo "FAILED 122a: Ctrl-Up did not recall the previous entry"
+    printf '%s\n' "$seen" | tail -6
+  fi
+exit: 0
+stdout-contains: PROVED 122a
