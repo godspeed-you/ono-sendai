@@ -9,6 +9,7 @@
 pub mod bindings;
 pub mod conformance;
 pub mod contracts;
+pub mod metrics;
 pub mod narrative;
 pub mod perf;
 pub mod provenance;

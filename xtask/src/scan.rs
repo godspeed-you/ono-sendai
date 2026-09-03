@@ -167,7 +167,11 @@ fn is_scanner_source(relative: &str) -> bool {
 const RUST_TREES: &[&str] = &["crates", "xtask", "tests", "examples", "fuzz"];
 
 /// Every `.rs` file under the trees of [`RUST_TREES`], excluding build output.
-fn rust_sources(root: &Path) -> Vec<PathBuf> {
+///
+/// Public so `xtask::metrics` counts the same tree the scanners read: a metric measured over a
+/// different set of files from the one the gate walks is a metric about a different repository.
+#[must_use]
+pub fn rust_sources(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for top in RUST_TREES {
         collect_rust(&root.join(top), &mut files);

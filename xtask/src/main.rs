@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use xtask::{
-    bindings, conformance, contracts, narrative, perf, provenance, reference, scan, supply_chain,
-    terminology, verification,
+    bindings, conformance, contracts, metrics as repo_metrics, narrative, perf, provenance,
+    reference, scan, supply_chain, terminology, verification,
 };
 
 fn main() -> ExitCode {
@@ -22,6 +22,7 @@ fn main() -> ExitCode {
         Some("state-check") => state_check(),
         Some("skip-check") => skip_check(&rest),
         Some("terminology") => terminology(&rest),
+        Some("metrics") => metrics(&rest),
         Some("build-manifest") => build_manifest(&rest),
         Some("perf") => perf(&rest),
         Some("docs") => generate_docs(),
@@ -58,6 +59,10 @@ fn usage() {
     eprintln!(
         "  terminology    the documentation terminology contract of section 19.1 over this \
 repository, and over a Wiki checkout when one is named [--wiki <path>]"
+    );
+    eprintln!(
+        "  metrics        the generated repository metrics of section 50 [--write] to update the \
+README block"
     );
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!(
@@ -438,6 +443,7 @@ fn spec_check() -> ExitCode {
             .chain(verification::check_sequence())
             .chain(check_release_verification_documents(&root))
             .chain(reference::check_migration_guide(&root))
+            .chain(repo_metrics::check_readme(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 
@@ -595,6 +601,33 @@ fn terminology(arguments: &[String]) -> ExitCode {
         eprintln!("terminology: {} — {}", problem.location, problem.detail);
     }
     ExitCode::FAILURE
+}
+
+/// The generated repository metrics of v0.4.1 §50.
+///
+/// §50.2 asks `xtask` to compute the volatile counts, and §50.3 lets the README keep them as long
+/// as the gate fails when they disagree — which `spec-check` does. This task prints them, and
+/// `--write` puts them back into the README's generated block.
+fn metrics(arguments: &[String]) -> ExitCode {
+    let root = repo_root();
+    let write = match arguments.first().map(String::as_str) {
+        None => false,
+        Some("--write") => true,
+        Some(other) => return usage_error(&format!("metrics: unknown argument `{other}`")),
+    };
+    print!("{}", repo_metrics::measure(&root).render());
+    if !write {
+        return ExitCode::SUCCESS;
+    }
+    match repo_metrics::write_readme(&root) {
+        Ok(true) => println!("metrics: README.md updated"),
+        Ok(false) => println!("metrics: README.md already agrees"),
+        Err(error) => {
+            eprintln!("metrics: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 /// The documents that carry v0.4.1 §47.5's verification sequence, held against the registry.

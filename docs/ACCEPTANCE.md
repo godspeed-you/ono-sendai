@@ -2027,12 +2027,17 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `::should_report_a_migration_guide_that_grants_a_capability_the_registry_retired`,
       `crates/ono-cli/tests/client_keys.rs::should_accept_the_migration_sequence_the_documentation_prints`
       and case `182` end to end (#116, §63.1–§63.5, §66.8; ADR-0543).
-- [ ] **P3 · The repository metrics are computed, not typed.** Crate, test, acceptance-case, ADR and
-      command-contract counts come from `cargo xtask metrics`, the gate fails when README disagrees
-      with it, and an executed test is distinguished from a skip so no count claims proof it does
-      not have — `xtask/tests/metrics.rs::should_compute_every_metric_the_readme_states`,
+- [x] **P3 · The repository metrics are computed, not typed.** Crate, test, acceptance-case, ADR and
+      command-contract counts come from `cargo xtask metrics`, the README carries them in a block
+      that `--write` regenerates and `spec-check` compares, and the test figure is named for what a
+      static reading can know — declared, with the count that can skip and the count the canonical
+      CI environment expects to skip beside it, so no number claims proof of execution it does not
+      have (§50.4) — `xtask/tests/metrics.rs::should_compute_every_metric_the_readme_states`,
       `::should_fail_when_the_readme_disagrees_with_the_computed_metrics`,
-      `::should_count_executed_tests_apart_from_skipped_ones` (#111, §50.1–§50.4).
+      `::should_count_executed_tests_apart_from_skipped_ones`,
+      `::should_report_a_readme_that_carries_no_generated_block_at_all`,
+      `::should_rewrite_the_block_and_leave_the_prose_around_it_alone`,
+      `::should_not_count_a_test_written_inside_a_string_literal` (#111, §50.1–§50.4; ADR-0544).
 - [x] **P3 · The remote documentation separates the six trust concepts.** §51.3's six — the
       SSH-carried stdio transport, the direct mutual-TLS transport, server host pinning, client
       authorization, runtime user/UID metadata and capability negotiation — are each named *and*
