@@ -126,9 +126,16 @@ they are public identity material and they are what an operator pastes into `add
 
 ## Verifying what you install
 
-Every release publishes `SHA256SUMS`, a signature over it and signed build provenance. Verify
+Every release publishes `SHA256SUMS`, a keyless Sigstore signature over it, and signed build
+provenance binding every artifact digest to the commit and workflow run that produced it. Verify
 before you install: the copyable sequence lives with the installation instructions, in this
 repository's [README](README.md) and in the Wiki's
-[Install](https://github.com/godspeed-you/ono-sendai/wiki/Install) page. An artifact whose digest
-is not in a signed manifest is an artifact nobody has vouched for, whatever it was downloaded
-from.
+[Install](https://github.com/godspeed-you/ono-sendai/wiki/Install) page, and
+`scripts/verify-release.sh` is the same check the release workflow runs on itself. An artifact
+whose digest is not in a signed manifest is an artifact nobody has vouched for, whatever it was
+downloaded from.
+
+There is no private signing key, in this repository or in its secrets: the signing is keyless and
+OIDC-backed, so the material exists only for the ten minutes of a release run. What you verify
+against is an identity — this repository's release workflow, on a version tag — and the identity
+regexp in the documented command is the whole of that check.

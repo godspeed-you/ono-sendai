@@ -8,10 +8,11 @@ Every release publishes the digest of every artifact, a signature over that mani
 
 | File | Contents |
 |---|---|
-| `SHA256SUMS` | the SHA-256 digest of every downloadable artifact in the release, in a deterministic order (v0.4.1 §47.1, §47.2) |
-| `SHA256SUMS.sig` | the signature over the checksum manifest (v0.4.1 §47.1, §47.3) |
-| `SHA256SUMS.pem` | the short-lived certificate the keyless signature was made with, which is what makes it verifiable without a published public key (v0.4.1 §47.3) |
-| `build-provenance.intoto.jsonl` | signed provenance binding the repository, the source commit, the release tag, the workflow identity, the builder and toolchain version, every artifact digest and the build timestamp (v0.4.1 §47.1, §47.4) |
+| `SHA256SUMS` | the SHA-256 digest of every downloadable artifact in the release, in byte order of the file name, in `sha256sum`'s own format (v0.4.1 §47.1, §47.2; ADR-0528) |
+| `SHA256SUMS.sigstore.json` | the keyless Sigstore bundle over the checksum manifest — the signature, the short-lived certificate and the transparency-log entry in one file, which is why no public key has to be published (v0.4.1 §47.1, §47.3; ADR-0529) |
+| `build-provenance.json` | provenance binding the repository, the source commit, the release tag, the workflow identity, the builder and toolchain version, every artifact digest and the build timestamp (v0.4.1 §47.1, §47.4; ADR-0530) |
+| `build-provenance.json.sigstore.json` | the Sigstore bundle over the provenance, signed in the same run by the same identity (v0.4.1 §47.1, §47.3; ADR-0529) |
+| `build-inputs.json` | the Appendix H record of what the build was given — the action commits, the image digests, the toolchain and the lockfile digest. Listed in the manifest like any other published file (v0.4.1 Appendix H, §43.2; ADR-0451, ADR-0528) |
 
 ## The sequence
 
@@ -24,8 +25,9 @@ VERSION=0.4.1; ARCH=amd64
 BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
 curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
 curl -fLO $BASE/SHA256SUMS
-curl -fLO $BASE/SHA256SUMS.sig
-curl -fLO $BASE/SHA256SUMS.pem
+curl -fLO $BASE/SHA256SUMS.sigstore.json
+curl -fLO $BASE/build-provenance.json
+curl -fLO $BASE/build-provenance.json.sigstore.json
 ```
 
 **Proves.** nothing yet — this is the download, and everything below is the reason not to install it straight away
@@ -39,29 +41,24 @@ Needs `curl`.
 ### 2. `verify_signature`
 
 ```bash
-cosign verify-blob \
-  --certificate SHA256SUMS.pem \
-  --signature SHA256SUMS.sig \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v' \
-  SHA256SUMS
+cosign verify-blob         --bundle SHA256SUMS.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         SHA256SUMS
 ```
 
-**Proves.** the checksum manifest was signed by this repository's release workflow, running on a tag, and not by anyone else. The identity regexp is the whole of the check: a signature that verifies against a different workflow or a different repository is a valid signature by somebody else.
+**Proves.** the checksum manifest was signed by this repository's release workflow, running on a version tag, and by nobody else. The identity regexp is the whole of the check: without it a verification accepts a signature from anyone Fulcio has ever issued a certificate to. The bundle carries the signature, the short-lived certificate and the log entry together, so there is no public key to fetch and no key for the project to keep.
 
 **If it fails.** stop. A manifest that does not verify is a manifest you have no reason to believe, and the checksums below would then only prove the artifacts match what whoever wrote the manifest intended. Report it privately (SECURITY.md).
 
 Needs `cosign`.
 
-*Not run by this repository's own tests: cosign is not a build dependency of this repository, and verifying a real signature needs Sigstore's transparency log over the network.*
+*Not run by this repository's own tests: cosign is not a build dependency of this repository, and verifying a real signature needs Fulcio and Rekor over the network.*
 
 ### 3. `verify_checksums`
 
 ```bash
-sha256sum --check --ignore-missing SHA256SUMS
+sha256sum --check --strict --ignore-missing SHA256SUMS
 ```
 
-**Proves.** the artifacts you downloaded are byte-for-byte the ones the signed manifest names. `--ignore-missing` is what lets a reader download one package rather than all eight and still get a real answer about that one.
+**Proves.** the artifacts you downloaded are byte-for-byte the ones the signed manifest names. `--strict` fails on a malformed line rather than warning about it; `--ignore-missing` is what lets you download one package rather than all of them and still get a real answer about that one.
 
 **If it fails.** the file was altered or truncated after the manifest was signed. Delete it and download it again; if it fails a second time, report it privately (SECURITY.md).
 
@@ -70,21 +67,17 @@ Needs `sha256sum`.
 ### 4. `verify_provenance`
 
 ```bash
-cosign verify-blob-attestation \
-  --type slsaprovenance \
-  --bundle build-provenance.intoto.jsonl \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v' \
-  ono_${VERSION}_${ARCH}.deb
+cosign verify-blob         --bundle build-provenance.json.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         build-provenance.json
+grep -o "$(sha256sum ono_${VERSION}_${ARCH}.deb | cut -d' ' -f1)" build-provenance.json
 ```
 
-**Proves.** which commit, which workflow run and which toolchain produced this exact artifact. The checksum says the bytes are the ones the manifest names; the provenance says where those bytes came from.
+**Proves.** which commit, which workflow run and which toolchain produced this exact artifact. The checksum says the bytes are the ones the manifest names; the provenance says where those bytes came from, and the `grep` is the reader's own confirmation that their file's digest is one of the ones it binds.
 
-**If it fails.** an artifact with no provenance, or provenance naming a commit that is not the tag you expected, is an artifact nobody has vouched for. Do not install it.
+**If it fails.** an artifact whose digest is not in the provenance is an artifact this release does not account for. Do not install it. With the repository checked out, `scripts/verify-release.sh --dir <dir>` runs all three checks and cross-checks the manifest and the provenance against each other, which is what the release runs on itself.
 
-Needs `cosign`.
+Needs `cosign`, `sha256sum`, `grep`.
 
-*Not run by this repository's own tests: same as the signature step — cosign, and the network.*
+*Not run by this repository's own tests: same as the signature step — cosign, Fulcio and Rekor, over a network the acceptance container does not have.*
 
 ### 5. `install`
 
@@ -92,7 +85,7 @@ Needs `cosign`.
 sudo apt install ./ono_${VERSION}_${ARCH}.deb
 ```
 
-**Proves.** nothing about trust — it is the step the four above exist to earn
+**Proves.** nothing about trust — it is the step the three above exist to earn
 
 **If it fails.** see the Install page; a failure here is a packaging problem rather than a trust one
 

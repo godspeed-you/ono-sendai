@@ -2019,9 +2019,12 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `::should_leave_the_other_artifacts_verifiable_when_one_is_missing`,
       `::should_declare_a_sequence_that_fits_in_a_document_and_needs_no_proprietary_service`,
       `::should_print_the_same_commands_in_the_readme_and_the_generated_reference` (#115, §47.5,
-      §67.7; ADR-0542). **The box stays open** because the two `cosign` steps have nothing to run
-      against: no release publishes a signature or provenance yet, which is #107 and #108, and the
-      exact invocation is ADR-0542's decision rather than the specification's.
+      §67.7; ADR-0542, ADR-0545). **The box stays open**, for the reason ADR-0529 left #107's open:
+      keyless signing needs an OIDC token that exists only inside a run of the release workflow,
+      and verifying one needs Sigstore over a network §40.2 denies the container — so no release
+      has been signed and the two `cosign` steps have never been executed against one. The first
+      `v*` tag is the run that closes both boxes. The commands are `scripts/verify-release.sh`'s,
+      byte for byte, rather than a guess at them.
 - [x] **P2 · The migration path is written down.** §63's five migrations — existing users, existing
       direct listening-agent users, an existing host identity, existing KUANG plugins, existing test
       infrastructure — are documented in `docs/MIGRATION.md` and on the Wiki's Install page with

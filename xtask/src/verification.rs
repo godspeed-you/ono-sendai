@@ -102,14 +102,30 @@ pub fn check_sequence() -> Vec<Problem> {
     };
     let mut problems = Vec::new();
 
-    // §47.1's three, plus the certificate a keyless signature is verified with.
-    for required in ["SHA256SUMS", "SHA256SUMS.sig"] {
-        if !sequence.files.iter().any(|file| file.name == required) {
-            problems.push(Problem::new(
-                location,
-                format!("does not name `{required}`, which v0.4.1 §47.1 requires every release to publish"),
-            ));
-        }
+    // §47.1's three. The second and third are named "or equivalent" — `SHA256SUMS.sig or
+    // equivalent verifiable signature`, `build-provenance.json / .intoto.jsonl or equivalent` —
+    // so what is checked is that a signature over the manifest and a provenance are published,
+    // not which spelling. This repository signs keyless and publishes a Sigstore bundle
+    // (ADR-0529), which is the equivalent §47.1 leaves room for.
+    if !sequence.files.iter().any(|file| file.name == "SHA256SUMS") {
+        problems.push(Problem::new(
+            location,
+            "does not name `SHA256SUMS`, which v0.4.1 §47.1 requires every release to publish"
+                .to_owned(),
+        ));
+    }
+    if !sequence
+        .files
+        .iter()
+        .any(|file| file.name.starts_with("SHA256SUMS") && file.name.contains("sig"))
+    {
+        problems.push(Problem::new(
+            location,
+            "names no signature over the checksum manifest. v0.4.1 §47.1 requires \
+             `SHA256SUMS.sig or equivalent verifiable signature`, and a manifest nobody signed is \
+             a manifest an attacker can rewrite"
+                .to_owned(),
+        ));
     }
     if !sequence
         .files

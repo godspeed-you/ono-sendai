@@ -1,6 +1,6 @@
 # ADR-0542: The verification sequence is one registry, three documents and a test that runs it
 
-- Status: accepted
+- Status: superseded by ADR-0545 (in part: the `cosign` invocations, the published file names and the claim that no release path existed to describe)
 - Date: 2026-09-03
 - Spec refs: v0.4.1 §47.1, §47.2, §47.3, §47.4, §47.5, §67.7, §20
 - Decided by: agent (autonomous)

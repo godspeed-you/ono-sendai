@@ -121,38 +121,32 @@ functions and aliases, and cannot run commands at startup.
 
 ## Verifying a release
 
-Every release publishes `SHA256SUMS`, a signature over it, the certificate that signature was made
-with, and signed build provenance. Check them before you install anything:
+Every release publishes the SHA-256 digest of every artifact, a keyless Sigstore signature over
+that manifest, signed build provenance, and the record of what the build was given. Check them
+before you install anything. `cosign` is the one tool you add
+([sigstore/cosign](https://github.com/sigstore/cosign)); everything else is coreutils.
 
 ```bash
 VERSION=0.4.1; ARCH=amd64
 BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
 curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
 curl -fLO $BASE/SHA256SUMS
-curl -fLO $BASE/SHA256SUMS.sig
-curl -fLO $BASE/SHA256SUMS.pem
+curl -fLO $BASE/SHA256SUMS.sigstore.json
+curl -fLO $BASE/build-provenance.json
+curl -fLO $BASE/build-provenance.json.sigstore.json
 ```
 
 ```bash
-cosign verify-blob \
-  --certificate SHA256SUMS.pem \
-  --signature SHA256SUMS.sig \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v' \
-  SHA256SUMS
+cosign verify-blob         --bundle SHA256SUMS.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         SHA256SUMS
 ```
 
 ```bash
-sha256sum --check --ignore-missing SHA256SUMS
+sha256sum --check --strict --ignore-missing SHA256SUMS
 ```
 
 ```bash
-cosign verify-blob-attestation \
-  --type slsaprovenance \
-  --bundle build-provenance.intoto.jsonl \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v' \
-  ono_${VERSION}_${ARCH}.deb
+cosign verify-blob         --bundle build-provenance.json.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         build-provenance.json
+grep -o "$(sha256sum ono_${VERSION}_${ARCH}.deb | cut -d' ' -f1)" build-provenance.json
 ```
 
 ```bash
@@ -162,8 +156,19 @@ sudo apt install ./ono_${VERSION}_${ARCH}.deb
 **The order is the point.** The signature over the manifest is verified first, and the artifacts
 are checked against the manifest second. Reversed, the sequence proves only that the download was
 not corrupted in transit — a manifest an attacker wrote agrees perfectly with the artifacts that
-attacker also wrote. `cosign` is the one thing you install: the signing is keyless and OIDC-backed,
-so there is no long-lived private key anywhere and no account with anyone to verify a download.
+attacker also wrote. And the identity regexp is the whole of the signature check: without it, a
+verification accepts a signature from anyone Sigstore has ever issued a certificate to.
+
+The signing is keyless, so the project holds no private signing key and you need no public one —
+the bundle carries the signature, the short-lived certificate and the transparency-log entry
+together. With this repository checked out, `scripts/verify-release.sh --dir <dir>` runs all three
+checks and cross-checks the manifest against the provenance; it is the same script the release
+workflow runs on itself before it publishes anything.
+
+**Not yet proven end to end.** No release has been signed: keyless signing needs a token that
+exists only inside a run of the release workflow, and verifying one needs Sigstore over a network
+the acceptance container does not have. The sequence above is what a reader will run, and the
+first `v*` tag is the run that proves it passes.
 
 → What each step proves and what to do when one fails:
 [`docs/reference/release-verification.md`](docs/reference/release-verification.md) ·
@@ -360,7 +365,7 @@ tests=3289
 tests_that_can_skip=71
 expected_ci_skips=3
 acceptance_cases=127
-adrs=357
+adrs=358
 command_contract_files=13
 commands=193
 ```
