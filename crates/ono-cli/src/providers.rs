@@ -73,10 +73,14 @@ pub fn registry_with_tables(
 /// rather than being made synchronous, because pretending an I/O-bound constructor is not one is
 /// how a shell acquires a hang at startup.
 pub async fn register_async(registry: &mut ProviderRegistry) {
-    registry.register(Arc::new(
-        ono_provider_systemd::SystemdProvider::connect().await,
-    ));
-    registry.register(Arc::new(
-        ono_provider_systemd::SessionProvider::connect().await,
-    ));
+    // Two connections to the same bus, each a handshake and a round trip to its manager, and
+    // neither waiting on the other: opened side by side, they cost one of them (spec §34).
+    // Registration order is what decides which provider answers a target (see `registry`), and
+    // it is kept.
+    let (systemd, logind) = tokio::join!(
+        ono_provider_systemd::SystemdProvider::connect(),
+        ono_provider_systemd::SessionProvider::connect(),
+    );
+    registry.register(Arc::new(systemd));
+    registry.register(Arc::new(logind));
 }

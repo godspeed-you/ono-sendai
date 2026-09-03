@@ -261,13 +261,6 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [claude | 2026-09-03] One-shot startup cost (`ono -c '…'` 27 ms against 4 ms for `bash -c`):
-  contracts transcoded to JSON at build time (ADR-0571), the pre-flight check building providers
-  only for native stages, systemd and logind connected concurrently — files:
-  `crates/ono-command/{build.rs,src/registry.rs}`, `crates/ono-value/{build.rs,src/builtin.rs}`,
-  `crates/ono-adapter/{build.rs,src/contract.rs}`, `crates/ono-cli/src/eval/native/mod.rs`,
-  `crates/ono-cli/src/providers.rs`, `docs/spec/adapters/first-party/{curl,iproute2}.yaml`.
-
 ## What is left, and why
 
 *Empty.* The v0.4.1 tranche is delivered — thirteen phases, and what remains is recorded below
@@ -3377,6 +3370,23 @@ records. It was removed from this board rather than carried as an open box.
 ---
 
 ## Done
+
+**A one-shot command no longer pays for a shell it does not use (2026-09-03, ADR-0571).**
+`ono -c 'echo ready'` took 26,8 ms first / 30,1 ms p95 where `bash -c` takes 4 ms on the same
+machine, and `ono --version` 0,9 ms — so the binary was not the cost, the first pipeline was.
+Measured in-process: 15 ms parsing 465 KB of embedded YAML (command families, ninety schema
+contracts, adapter packs), 7 ms connecting to systemd and logind over D-Bus, 1 ms for a tokio
+thread pool, all of it for a pipeline with nothing native in it. Three increments, one kind
+each: (1) `perf(contracts)` — the three crates that embed `docs/spec/` documents transcode them to
+JSON in a `build.rs` and read that, with a fidelity test per crate against the YAML on disk;
+26,8 → 13,8 ms. (2) `perf(cli)` — the §11.3 pre-flight check resolves the stage heads first and
+plans against the providers only when one is native; 13,8 → 4,8 ms, and an external-only
+pipeline now starts no runtime (`tests/one_shot_startup.rs`). (3) `perf(providers)` — the two
+D-Bus connections are opened side by side with `tokio::join!`, which is what a native pipeline
+still pays. Found on the way and recorded above: `limit.v1.yaml` is not embedded, and two
+timing-sensitive tests fail under a concurrent release build. The `-4`/`-6` flags of two adapter
+packs are quoted now, in a `spec` commit ahead of the rest, because JSON does not read an
+integer into a string field the way YAML did.
 
 **A skip is visible or it is not a skip (2026-09-01, ADR-0428).** Eight hand-written
 `eprintln!("skipped: …")` lines in six suites, in eight formats, each followed by an early return.
