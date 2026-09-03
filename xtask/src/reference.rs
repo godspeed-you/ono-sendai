@@ -101,6 +101,10 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
             path: "docs/reference/terminology.md".to_owned(),
             contents: terminology_page(),
         },
+        Page {
+            path: "docs/reference/remote-trust.md".to_owned(),
+            contents: remote_trust_page(),
+        },
     ];
     if !packs.is_empty() {
         pages.push(Page {
@@ -196,6 +200,8 @@ fn index_page() -> String {
          Appendix E, §27) |\n\
          | [Terminology](terminology.md) | `docs/spec/hardening/terminology.yaml` — the eight \
          security terms of v0.4.1 §19.1 and what each one promises |\n\
+         | [Remote trust](remote-trust.md) | `docs/spec/hardening/remote_trust.yaml` — the six \
+         things a remote link keeps apart, and what each one does not establish (v0.4.1 §51.3) |\n\
          | [Errors](errors.md) | `docs/spec/errors.yaml` — the stable taxonomy of spec §43 |\n\
          | [Capabilities](capabilities.md) | `docs/spec/capabilities.yaml` — provider and KUANG/11 \
          capabilities |\n\
@@ -575,6 +581,65 @@ fn terminology_page() -> String {
                 }
             }
         }
+    }
+    page
+}
+
+/// v0.4.1 §51.3's six remote trust concepts, rendered from the registry.
+///
+/// §51.3 requires remote-link documentation to distinguish them, and the reason each one is on
+/// the list is that it is easy to mistake for one of the others. So the page is a table of what
+/// each establishes beside what it does not, which is the shape a conflation cannot survive.
+fn remote_trust_page() -> String {
+    let mut page = header(
+        "Remote trust",
+        "Six things a remote link keeps apart (v0.4.1 \u{a7}51.3). Each says what a reader may \
+         conclude when it is in place and \u{2014} the column that does the work \u{2014} what a reader may \
+         not. \u{a7}7.3 is why: the transport identity and the runtime identity are different fields, \
+         one is a cryptographic credential and the other is a self-report, and \u{a7}65.1 and \u{a7}65.2 \
+         are the two ways confusing them goes wrong. Rendered from \
+         `docs/spec/hardening/remote_trust.yaml`, which the documentation gate reads as well.",
+    );
+    let Some(concepts) = crate::terminology::remote_trust() else {
+        page.push_str("\nNo remote trust model is declared.\n");
+        return page;
+    };
+
+    page.push_str("\n| Concept | Establishes | Does not establish |\n|---|---|---|\n");
+    for concept in &concepts {
+        page.push_str(&format!(
+            "| **{}** | {} | {} |\n",
+            cell(&concept.name),
+            cell(concept.establishes.trim()),
+            cell(concept.does_not.trim()),
+        ));
+    }
+    for concept in &concepts {
+        page.push_str(&format!(
+            "\n## {}\n\n{}\n\n**It does not establish.** {}\n",
+            concept.name,
+            concept.establishes.trim(),
+            concept.does_not.trim(),
+        ));
+        if !concept.commands.is_empty() {
+            page.push_str(&format!(
+                "\nOperated by {}.\n",
+                concept
+                    .commands
+                    .iter()
+                    .map(|command| format!("`{command}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        page.push_str(&format!(
+            "\nBoundary: {}. Fixed by {}.\n",
+            concept.boundary.as_deref().map_or_else(
+                || "none \u{2014} this is metadata, not a boundary".to_owned(),
+                |id| format!("`{id}`")
+            ),
+            concept.spec
+        ));
     }
     page
 }

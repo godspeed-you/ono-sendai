@@ -11,7 +11,8 @@ use std::path::Path;
 
 use ono_testkit::scratch;
 use xtask::terminology::{
-    check_decision, check_decisions, check_documents, check_text, check_wiki, terms,
+    check_decision, check_decisions, check_documents, check_remote_trust, check_text, check_wiki,
+    terms,
 };
 
 #[test]
@@ -267,4 +268,45 @@ fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root")
+}
+
+// --- §51.3: the six remote trust concepts stay apart (issue #113, ADR-0538) ----------------------
+
+#[test]
+fn should_find_all_six_remote_trust_concepts_described_separately() {
+    // §51.3 lists six things a remote-link page must distinguish. The generated page is the copy
+    // a gate run can reach; the Wiki's is `check_wiki_remote_trust`'s, for ADR-0536's reason.
+    let page = xtask::reference::generate(repo_root())
+        .expect("generation must succeed")
+        .into_iter()
+        .find(|page| page.path == "docs/reference/remote-trust.md")
+        .expect("the remote trust page is generated");
+    let problems = check_remote_trust(&page.path, &page.contents);
+    assert!(
+        problems.is_empty(),
+        "v0.4.1 §51.3: the remote documentation conflates two of the six:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_remote_page_that_leaves_one_of_the_six_to_be_inferred() {
+    // Five of the six described, and the runtime identity left for the reader to work out — which
+    // is §65.2's failure mode with the documentation's name on it.
+    let problems = check_remote_trust(
+        "Remote-Links.md",
+        "Over ssh, OpenSSH authenticates. Over tcp, Ono proves the peer itself. Host keys are \
+         pinned deliberately, clients are authorized by fingerprint, and the negotiated offer is \
+         filtered by that policy.",
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("runtime_identity")),
+        "the concept nobody separated is named, got {problems:?}"
+    );
 }

@@ -44,6 +44,9 @@ use crate::scan::Problem;
 /// different copies of the contract.
 const REGISTRY: &str = include_str!("../../docs/spec/hardening/terminology.yaml");
 
+/// The six remote trust concepts of §51.3, compiled in for the same reason.
+const REMOTE_TRUST: &str = include_str!("../../docs/spec/hardening/remote_trust.yaml");
+
 /// One of §19.1's canonical terms.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Term {
@@ -67,6 +70,128 @@ pub struct Term {
 #[derive(Debug, Deserialize)]
 struct Registry {
     terms: Vec<Term>,
+}
+
+/// One of v0.4.1 §51.3's six remote trust concepts.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RemoteConcept {
+    /// The id, used for the generated page's anchors and by the gate.
+    pub concept: String,
+    /// The heading a reader sees.
+    pub name: String,
+    /// The §6.1 boundary it belongs to, absent where it is metadata rather than a boundary.
+    #[serde(default)]
+    pub boundary: Option<String>,
+    /// The sections that fix it.
+    pub spec: String,
+    /// The commands that operate it.
+    #[serde(default)]
+    pub commands: Vec<String>,
+    /// What a reader may conclude when it is in place.
+    pub establishes: String,
+    /// What a reader may not conclude — the conflation it is listed against.
+    pub does_not: String,
+    /// The shortest phrase that proves a page made the distinction.
+    pub distinguisher: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteTrust {
+    concepts: Vec<RemoteConcept>,
+}
+
+/// §51.3's six concepts, or `None` if the registry did not parse.
+///
+/// `None` rather than an empty list, so the generated page says the model is undeclared instead
+/// of silently rendering a page with nothing on it.
+#[must_use]
+pub fn remote_trust() -> Option<Vec<RemoteConcept>> {
+    serde_yaml_ng::from_str::<RemoteTrust>(REMOTE_TRUST)
+        .ok()
+        .map(|registry| registry.concepts)
+}
+
+/// The six concepts §51.3 requires a remote page to keep apart.
+const REMOTE_CONCEPTS: [&str; 6] = [
+    "ssh_transport",
+    "tls_transport",
+    "host_pinning",
+    "client_authorization",
+    "runtime_identity",
+    "capability_negotiation",
+];
+
+/// Reports remote documentation that does not keep §51.3's six concepts apart.
+///
+/// §51.3 lists six things and requires the documentation to distinguish them. "Distinguish" is
+/// checkable as a shape: the page names each concept, and for each one it says what that concept
+/// does *not* establish — because every entry on §51.3's list is there for being mistakable for
+/// another, and a page that describes five of them and lets the sixth be inferred is the page the
+/// section exists against.
+///
+/// `pages` are the documents that carry the remote model. The generated reference page is one and
+/// is checked by the gate; the Wiki's is [`check_wiki_remote_trust`]'s, for the reason ADR-0536
+/// records.
+#[must_use]
+pub fn check_remote_trust(location: &str, text: &str) -> Vec<Problem> {
+    let Some(concepts) = remote_trust() else {
+        return vec![Problem::new(
+            "docs/spec/hardening/remote_trust.yaml",
+            "does not parse, so v0.4.1 §51.3's six concepts cannot be checked".to_owned(),
+        )];
+    };
+    let mut problems = Vec::new();
+    for id in REMOTE_CONCEPTS {
+        if !concepts.iter().any(|concept| concept.concept == id) {
+            problems.push(Problem::new(
+                "docs/spec/hardening/remote_trust.yaml",
+                format!("does not declare `{id}`, which v0.4.1 §51.3 lists"),
+            ));
+        }
+    }
+
+    let lower = normalise(text);
+    for concept in &concepts {
+        let named = mentions(&lower, &normalise(&concept.name));
+        let distinguished = mentions(&lower, &normalise(&concept.distinguisher));
+        if named && distinguished {
+            continue;
+        }
+        problems.push(Problem::new(
+            location.to_owned(),
+            format!(
+                "does not keep `{}` apart from the other five. v0.4.1 §51.3 requires remote-link \
+                 documentation to distinguish {REMOTE_CONCEPTS:?}, and every one of them is on \
+                 that list for being mistakable for another — so the page names it ({}) and says \
+                 what it does not establish ({}): `{}`.",
+                concept.concept,
+                if named { "it does" } else { "it does not" },
+                if distinguished {
+                    "it does"
+                } else {
+                    "it does not"
+                },
+                concept.distinguisher,
+            ),
+        ));
+    }
+    problems
+}
+
+/// Reports a Wiki checkout whose remote page does not keep §51.3's six concepts apart.
+///
+/// Same argument as [`check_wiki`]: the Wiki is a separate git repository and no gate run reaches
+/// it, so the checkout is named rather than guessed (ADR-0536).
+#[must_use]
+pub fn check_wiki_remote_trust(checkout: &Path) -> Vec<Problem> {
+    let page = checkout.join("Remote-Links.md");
+    match std::fs::read_to_string(&page) {
+        Ok(text) => check_remote_trust("Remote-Links.md", &text),
+        Err(error) => vec![Problem::new(
+            "Remote-Links.md",
+            format!("cannot be read from the named Wiki checkout: {error}"),
+        )],
+    }
 }
 
 /// §19.1's eight terms, as the registry declares them.
@@ -171,6 +296,11 @@ pub fn check_documents(root: &Path) -> Vec<Problem> {
     }
     for page in crate::reference::generate(root).unwrap_or_default() {
         problems.extend(check_text(&page.path, &page.contents));
+        // §51.3 applies to the page that carries the remote trust model, and the generated one is
+        // the copy a gate run can reach.
+        if page.path == "docs/reference/remote-trust.md" {
+            problems.extend(check_remote_trust(&page.path, &page.contents));
+        }
     }
     problems
 }

@@ -564,7 +564,10 @@ fn terminology(arguments: &[String]) -> ExitCode {
     let mut problems = terminology::check_documents(&root);
     problems.extend(terminology::check_decisions(&root));
     match wiki.as_deref() {
-        Some(checkout) => problems.extend(terminology::check_wiki(checkout)),
+        Some(checkout) => {
+            problems.extend(terminology::check_wiki(checkout));
+            problems.extend(terminology::check_wiki_remote_trust(checkout));
+        }
         None => println!(
             "terminology: no --wiki given, so the Wiki is unchecked. It is a separate git \
              repository and the gate cannot reach it (v0.4.1 section 19.1, ADR-0536)"

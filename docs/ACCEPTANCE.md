@@ -2021,12 +2021,16 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       not have — `xtask/tests/metrics.rs::should_compute_every_metric_the_readme_states`,
       `::should_fail_when_the_readme_disagrees_with_the_computed_metrics`,
       `::should_count_executed_tests_apart_from_skipped_ones` (#111, §50.1–§50.4).
-- [ ] **P3 · The remote documentation separates the six trust concepts.** Transport encryption,
-      transport authentication, host pinning, client authorization, self-reported identity and
-      runtime user are described as six distinct things, and the page is held against the §6.1
-      boundary inventory — `xtask/tests/terminology.rs::should_find_all_six_remote_trust_concepts_described_separately`,
-      `xtask/tests/reference.rs::should_hold_the_remote_documentation_against_the_boundary_inventory`
-      (#113, §51.3).
+- [x] **P3 · The remote documentation separates the six trust concepts.** §51.3's six — the
+      SSH-carried stdio transport, the direct mutual-TLS transport, server host pinning, client
+      authorization, runtime user/UID metadata and capability negotiation — are each named *and*
+      each say what they do not establish, in `docs/reference/remote-trust.md` and on the Wiki's
+      `Remote-Links` page, because a page that names six headings and conflates two of them is
+      what §51.3 is written against —
+      `xtask/tests/terminology.rs::should_find_all_six_remote_trust_concepts_described_separately`,
+      `::should_report_a_remote_page_that_leaves_one_of_the_six_to_be_inferred` (#113, §51.3;
+      ADR-0538). The `boundary` each concept carries is recorded and not yet joined to §6.1's
+      inventory, which `docs/spec/hardening/security_boundaries.yaml` will hold and #118 owns.
 - [ ] **P3 · `SECURITY.md` states the model and the reporting path.** Supported versions, the
       reporting channel, the response expectation and the boundaries §5 protects are stated, and the
       file is held against the boundary inventory so a new boundary cannot be added without

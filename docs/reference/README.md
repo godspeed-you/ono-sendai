@@ -13,6 +13,7 @@ Derived from the machine-readable contracts in `docs/spec/`, which are the publi
 | [Adapters](adapters/README.md) | `docs/spec/adapters/first-party/*.yaml` — what each external tool adapts, at which versions, through which invocations (spec v0.3 §1.66) |
 | [Streaming](streaming.md) | `docs/spec/hardening/streaming_classification.yaml` — what each pipeline operation may do to a stream, and what the order of events means (v0.4.1 Appendix E, §27) |
 | [Terminology](terminology.md) | `docs/spec/hardening/terminology.yaml` — the eight security terms of v0.4.1 §19.1 and what each one promises |
+| [Remote trust](remote-trust.md) | `docs/spec/hardening/remote_trust.yaml` — the six things a remote link keeps apart, and what each one does not establish (v0.4.1 §51.3) |
 | [Errors](errors.md) | `docs/spec/errors.yaml` — the stable taxonomy of spec §43 |
 | [Capabilities](capabilities.md) | `docs/spec/capabilities.yaml` — provider and KUANG/11 capabilities |
 
