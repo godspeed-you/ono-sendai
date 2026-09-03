@@ -1985,7 +1985,7 @@ mutable inputs.
 §66.8's five bullets. A document is closed here by the gate check that fails when the document and
 the tree disagree, so no box in this subsubsection is ticked by someone having read something.
 
-- [ ] **P1 · A refusal names the boundary that decided it.** The four examples of §54.1 — the
+- [x] **P1 · A refusal names the boundary that decided it.** The four examples of §54.1 — the
       authenticated client that is not authorized for an action, the plugin whose mandatory control
       could not be installed, the finite-input requirement against an unbounded upstream, the
       history budget that kept part of a result — appear in ordinary structured errors, with no

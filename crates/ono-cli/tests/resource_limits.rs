@@ -617,3 +617,105 @@ fn interactive_shell() -> ono_process::PtySession {
         .run_pty(&command, ono_process::WindowSize::new(24, 80))
         .expect("a pseudo-terminal must be available")
 }
+
+// --- §54.1, §54.2: a refusal says which boundary decided (issue #119) --------------------------
+
+#[test]
+fn should_name_the_deciding_boundary_in_every_hardening_refusal() {
+    // §54.1 gives four example refusals and §54.2 gives the constraint: "Important refusal
+    // explanations MUST appear in normal structured errors. Users must not need `RUST_LOG=debug`
+    // to understand why a security policy denied them."
+    //
+    // Three of the four are reachable from a plain shell run and are asserted here. The fourth —
+    // the remote client that is authenticated and not authorized — needs a second process, and is
+    // `crates/ono-protocol/tests/authorization.rs::should_say_which_policy_refused_an_authenticated_client`
+    // and case `200`.
+    //
+    // Nothing below sets `RUST_LOG`, and `isolated` strips the environment, so every sentence
+    // asserted is one an ordinary user sees on an ordinary run.
+    let dir = scratch();
+
+    // §54.1, example three: "sort requires finite input; upstream is declared unbounded". The
+    // source is the shell's own `tail --follow`, which never ends.
+    let path = dir.write("waiting/source.log", "one\n");
+    let unbounded = run(
+        &dir,
+        &format!(
+            "tail file {} --lines 1 --follow | sort name | to json",
+            path.display()
+        ),
+    );
+    for fragment in [UNBOUNDED, "sort", "finite input", "unbounded"] {
+        assert!(
+            unbounded.stderr().contains(fragment),
+            "§54.1: the refusal names `{fragment}` — which stage decided, and what about the \
+             upstream decided it: {:?}",
+            unbounded.stderr()
+        );
+    }
+
+    // §54.1, example four: "result history kept 10,000 of 84,212 values because the 16 MiB
+    // history budget was reached". Both figures, *and* which of the four retention ceilings
+    // stopped it — a notice that says "its retention budget" leaves the user with four settings
+    // and no way to tell which one to raise.
+    let history = scratch();
+    history.write(
+        "ono/config.ono",
+        "set config limits.history_bytes_per_result = 512\n",
+    );
+    let kept = shell(&history)
+        .args(["-c", "get process | take 20 | select pid"])
+        .run();
+    kept.assert_success();
+    for fragment in [
+        "result history kept",
+        "of 20 values",
+        "512 bytes",
+        "limits.history_bytes_per_result",
+        "the command's own output was complete",
+    ] {
+        assert!(
+            kept.stderr().contains(fragment),
+            "§54.1: the notice names `{fragment}` — which budget was reached, at what figure, and \
+             that the user's own output was not what was shortened: {:?}",
+            kept.stderr()
+        );
+    }
+
+    // The same run, stopped by the item ceiling instead, names *that* one. §54.2 is not satisfied
+    // by a sentence that is identical whichever boundary decided.
+    let items = scratch();
+    items.write(
+        "ono/config.ono",
+        "set config limits.history_items_per_result = 4\n",
+    );
+    let counted = shell(&items)
+        .args(["-c", "get process | take 20 | select pid"])
+        .run();
+    counted.assert_success();
+    assert!(
+        counted.stderr().contains("limits.history_items_per_result")
+            && counted.stderr().contains("4 values"),
+        "§54.1: the item ceiling is named as the item ceiling: {:?}",
+        counted.stderr()
+    );
+    assert!(
+        !counted.stderr().contains("limits.history_bytes_per_result"),
+        "a notice that named both ceilings would name neither: {:?}",
+        counted.stderr()
+    );
+
+    // §21.4's own refusal already does this, and it stays proven here so the three sentences are
+    // read as one contract rather than three coincidences.
+    let budget = run(
+        &dir,
+        "set config limits.materialize_items = 2\nget process | sort pid | count | to json",
+    );
+    for fragment in [ITEM_LIMIT, "sort", "limits.materialize_items"] {
+        assert!(
+            budget.stderr().contains(fragment),
+            "§54.1: the budget refusal names `{fragment}`: {:?}",
+            budget.stderr()
+        );
+    }
+}

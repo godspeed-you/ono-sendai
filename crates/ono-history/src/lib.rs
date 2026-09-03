@@ -41,5 +41,5 @@ mod store;
 pub use cursor::{Cursor, Direction};
 pub use entry::{Entry, Outcome};
 pub use policy::Policy;
-pub use results::{ResultHistory, Retained, RetentionLimits, value_size};
+pub use results::{ResultHistory, Retained, RetentionLimits, StoppedBy, value_size};
 pub use store::{History, HistoryError};
