@@ -25,6 +25,7 @@
 
 mod adapters;
 mod context;
+mod host;
 mod negotiate;
 mod platform;
 mod policy;
@@ -36,6 +37,7 @@ mod trail;
 
 pub use adapters::{AdapterPackageError, declared_executables, validate_package};
 pub use context::{ContextSource, FixedContext};
+pub use host::{HostError, HostServices, LiveStream, NoHost, ready_stream};
 pub use negotiate::{HostLimits, negotiate};
 pub use platform::{
     ConfinementPlan, ConfinementPlatform, NativePlatform, PLATFORM_CONTROLS,

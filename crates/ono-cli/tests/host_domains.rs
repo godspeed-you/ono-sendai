@@ -36,6 +36,9 @@ capabilities:
   optional:
     - context.read
     - schema.read
+    - object.read
+    - history.read
+    - secret.use: {secrets: ["api-token"]}
 network:
   outbound: none
 "#,
@@ -121,6 +124,74 @@ fn should_refuse_the_context_to_a_package_without_the_grant() {
     assert!(
         run.stderr().contains("Ono-Sendai-K11301"),
         "deny by default (spec §31.19); stderr {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_stream_the_sessions_objects_to_a_granted_package_with_its_limit() {
+    let home = scratch();
+    plugin_home(&home);
+    let run = ono(
+        &home,
+        "grant capability object.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:objects --target env --limit 2 | to json",
+    );
+    run.assert_success();
+    let shown = run.stdout();
+    let listed: Vec<&str> = shown
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .split("\",\"")
+        .collect();
+    assert_eq!(
+        listed.len(),
+        2,
+        "two env objects, the limit honoured through the stream; stdout {shown:?} stderr {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_hand_a_granted_package_the_redacted_history_the_session_keeps() {
+    let home = scratch();
+    plugin_home(&home);
+    home.write(
+        "state/ono/history.jsonl",
+        "{\"id\":\"h1\",\"at\":\"2026-09-03T10:00:00Z\",\"command\":\"get process\",\"cwd\":\"/\",\"status\":0,\"session\":\"s1\"}\n{\"id\":\"h2\",\"at\":\"2026-09-03T10:01:00Z\",\"command\":\"curl -H \\\"Authorization: Bearer sk-live-123\\\" https://x\",\"cwd\":\"/\",\"status\":0,\"session\":\"s1\"}\n",
+    );
+    let run = ono(
+        &home,
+        "grant capability history.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:history | to json",
+    );
+    run.assert_success();
+    let shown = run.stdout();
+    assert!(
+        shown.contains("get process"),
+        "the history reaches the package; stdout {shown:?}"
+    );
+    assert!(
+        !shown.contains("sk-live-123"),
+        "a secret-bearing value reaches a package redacted (ADR-0015 T8); stdout {shown:?}"
+    );
+}
+
+#[test]
+fn should_say_the_shell_has_no_secret_store_and_record_the_attempt() {
+    let home = scratch();
+    plugin_home(&home);
+    let run = ono(
+        &home,
+        r#"grant capability secret.use --plugin dev.example.echo --scope "secrets=api-token" | count; load plugin dev.example.echo; echo:secret --name api-token | to json; get audit --plugin dev.example.echo | where action == "secrets.request" | select result | to json"#,
+    );
+    let shown = run.stdout();
+    assert!(
+        !shown.contains("released"),
+        "no handle is issued by a host without a secret store; stdout {shown:?}"
+    );
+    assert!(
+        shown.contains(r#"{"result":"failed"}"#),
+        "the refused request is in the trail with its outcome; stdout {shown:?} stderr {:?}",
         run.stderr()
     );
 }

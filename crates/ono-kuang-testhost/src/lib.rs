@@ -38,6 +38,7 @@ pub struct TestHost {
     confinement: std::sync::Arc<dyn ConfinementPlatform>,
     models: Option<std::sync::Arc<dyn ono_model_broker::ModelBroker>>,
     context: Option<std::sync::Arc<dyn ono_kuang_supervisor::ContextSource>>,
+    host: Option<std::sync::Arc<dyn ono_kuang_supervisor::HostServices>>,
 }
 
 impl std::fmt::Debug for TestHost {
@@ -68,6 +69,7 @@ impl TestHost {
             confinement: NativePlatform::shared(),
             models: None,
             context: None,
+            host: None,
         }
     }
 
@@ -79,6 +81,17 @@ impl TestHost {
     #[must_use]
     pub fn confinement(mut self, platform: std::sync::Arc<dyn ConfinementPlatform>) -> Self {
         self.confinement = platform;
+        self
+    }
+
+    /// What the object, relation, history, process and secret domains reach. Without one,
+    /// every such call answers `provider.unavailable`.
+    #[must_use]
+    pub fn host(
+        mut self,
+        services: std::sync::Arc<dyn ono_kuang_supervisor::HostServices>,
+    ) -> Self {
+        self.host = Some(services);
         self
     }
 
@@ -162,6 +175,9 @@ impl TestHost {
         }
         if let Some(context) = self.context {
             config.context = context;
+        }
+        if let Some(host) = self.host {
+            config.host = host;
         }
         if let Some(platform) = self.platform {
             config.platform = platform;

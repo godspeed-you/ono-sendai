@@ -285,6 +285,21 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#3, second increment (2026-09-03): `objects`, `relations`, `history`, `process.signal`,
+  `secrets`.** ADR-0568. The supervisor reaches them through one JSON service the loader is
+  handed (`HostServices`): check the grant against the value the operation will use, audit it,
+  hand the JSON over, put what comes back on the wire — a live stream where the contract says
+  stream, pulled with `streams.next` with a deadline for the first value. The shell implements
+  the service over its provider registry (objects: get, query, resolve, snapshot, subscribe,
+  watch), the kernel relationship sources one hop from an object, the history file scrubbed of
+  credentials in flags, assignments, headers and bare tokens, and `act` for a signal; `NoHost`
+  answers `provider.unavailable`. A secret handle names a secret and the material stays with
+  the host; this shell has no secret store and says so. Proven by six conformance cases under a
+  fake host, three more runs through the binary and acceptance case 213. Honest gaps, each
+  answered `provider.unavailable` rather than faked: `relations.contribute` (no store for a
+  package's edges), `history.append` (the history record has no field for a package's
+  authorship), `secrets.request` (no store). `network`, `views`, `process.exec` and the wasm
+  tier remain.
 - **#3, first increment (2026-09-03): host streams, `context`, `schemas`.** ADR-0567. The
   supervisor keeps the streams it opens for a plugin by handle; `streams.next {handle, max}`
   pulls at most `max` values and says whether the stream is complete, `streams.cancel` drops it,

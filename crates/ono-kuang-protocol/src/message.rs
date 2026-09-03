@@ -65,6 +65,32 @@ pub mod method {
     pub const SCHEMAS_GET: &str = "schemas.get";
     /// Plugin → host: the registered schemas, as a stream (spec §31.12, §31.64).
     pub const SCHEMAS_LIST: &str = "schemas.list";
+    /// Plugin → host: one object by identity (spec §31.13).
+    pub const OBJECTS_GET: &str = "objects.get";
+    /// Plugin → host: a finite stream of records for a query (spec §31.13).
+    pub const OBJECTS_QUERY: &str = "objects.query";
+    /// Plugin → host: the object references a selector matches (spec §31.13).
+    pub const OBJECTS_RESOLVE: &str = "objects.resolve";
+    /// Plugin → host: a bounded stream of snapshot events (spec §31.14).
+    pub const OBJECTS_SNAPSHOT: &str = "objects.snapshot";
+    /// Plugin → host: an unbounded stream of changes (spec §31.14).
+    pub const OBJECTS_SUBSCRIBE: &str = "objects.subscribe";
+    /// Plugin → host: a snapshot followed by changes (spec §31.14).
+    pub const OBJECTS_WATCH: &str = "objects.watch";
+    /// Plugin → host: the edges around an object (spec §31.26).
+    pub const RELATIONS_QUERY: &str = "relations.query";
+    /// Plugin → host: edges the package asserts, attributed to it (spec §31.26).
+    pub const RELATIONS_CONTRIBUTE: &str = "relations.contribute";
+    /// Plugin → host: bounded history, redacted (spec §31.12).
+    pub const HISTORY_QUERY: &str = "history.query";
+    /// Plugin → host: a history entry, attributed to the package (spec §31.12).
+    pub const HISTORY_APPEND: &str = "history.append";
+    /// Plugin → host: a signal to a process, within the granted list (spec §31.12).
+    pub const PROCESS_SIGNAL: &str = "process.signal";
+    /// Plugin → host: an opaque secret handle by name (spec §31.20).
+    pub const SECRETS_REQUEST: &str = "secrets.request";
+    /// Plugin → host: invalidate a secret handle (spec §31.20).
+    pub const SECRETS_RELEASE: &str = "secrets.release";
     /// Plugin → host: the model providers this package may use (spec §31.43).
     pub const MODELS_LIST: &str = "models.list";
     /// Plugin → host: operator-approved inference through the model broker (spec §31.43).

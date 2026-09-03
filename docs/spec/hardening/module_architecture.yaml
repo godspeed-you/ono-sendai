@@ -131,6 +131,7 @@ composition_root:
     - hosts.rs
     - invocation.rs
     - kuang_host.rs
+    - kuang_services.rs
     - kuang_trust.rs
     - lib.rs
     - limits.rs

@@ -177,6 +177,42 @@ fn honest() -> Plugin {
             &["schema.read"],
         ))
         .contribute_command(command(
+            "objects",
+            "Query the host's objects of a target and report their labels, pulled as a stream.",
+            "stream<string>",
+            &["object.read"],
+        ))
+        .contribute_command(command(
+            "object",
+            "Fetch one object by identity and report its record.",
+            "stream<string>",
+            &["object.read"],
+        ))
+        .contribute_command(command(
+            "edges",
+            "Report the edges around an object, pulled as a stream.",
+            "stream<string>",
+            &["relation.read"],
+        ))
+        .contribute_command(command(
+            "history",
+            "Report the bounded history the host shares, pulled as a stream.",
+            "stream<string>",
+            &["history.read"],
+        ))
+        .contribute_command(command(
+            "signal",
+            "Send a signal to a process through the host.",
+            "stream<string>",
+            &["process.signal"],
+        ))
+        .contribute_command(command(
+            "secret",
+            "Request a secret handle by name and release it again.",
+            "stream<string>",
+            &["secret.use"],
+        ))
+        .contribute_command(command(
             "models",
             "List the model providers this package may use, through the broker.",
             "stream<string>",
@@ -419,6 +455,117 @@ fn honest() -> Plugin {
                 Err(error) => Outcome::Failed(error),
             }
         })
+        .command(&format!("{PACKAGE}.command.objects"), |ctx| {
+            let target = ctx
+                .arguments()
+                .get("target")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("item")
+                .to_owned();
+            let limit = int_argument(ctx, "limit", 0);
+            let mut query = json!({"target": target, "selectors": [], "options": {}});
+            if limit > 0 {
+                query["limit"] = json!(limit);
+            }
+            match ctx.host_call(method::OBJECTS_QUERY, json!({"query": query})) {
+                Ok(opened) => match opened.get("handle").and_then(serde_json::Value::as_u64) {
+                    Some(handle) => pull_all(ctx, handle, |record| {
+                        record
+                            .get("label")
+                            .or_else(|| record.get("name"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| record.to_string())
+                    }),
+                    None => Outcome::Completed,
+                },
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.object"), |ctx| {
+            let id = json_argument(ctx, "id");
+            match ctx.host_call(method::OBJECTS_GET, json!({"id": id})) {
+                Ok(record) => {
+                    let _ = ctx.emit(&Value::String(record.to_string().into()));
+                    Outcome::Completed
+                }
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.edges"), |ctx| {
+            let from = json_argument(ctx, "from");
+            match ctx.host_call(method::RELATIONS_QUERY, json!({"from": from, "to": null, "relations": null, "depth": 1})) {
+                Ok(opened) => match opened.get("handle").and_then(serde_json::Value::as_u64) {
+                    Some(handle) => pull_all(ctx, handle, |edge| {
+                        format!(
+                            "{} -[{}]-> {}",
+                            edge.get("from").map_or(String::new(), |v| v.to_string()),
+                            edge.get("relation").and_then(serde_json::Value::as_str).unwrap_or("?"),
+                            edge.get("to").map_or(String::new(), |v| v.to_string()),
+                        )
+                    }),
+                    None => Outcome::Completed,
+                },
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.history"), |ctx| {
+            match ctx.host_call(method::HISTORY_QUERY, json!({"window": null, "filter": null})) {
+                Ok(opened) => match opened.get("handle").and_then(serde_json::Value::as_u64) {
+                    Some(handle) => pull_all(ctx, handle, |entry| {
+                        entry
+                            .get("command")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| entry.to_string())
+                    }),
+                    None => Outcome::Completed,
+                },
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.signal"), |ctx| {
+            let object = json_argument(ctx, "object");
+            let signal = ctx
+                .arguments()
+                .get("signal")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("SIGTERM")
+                .to_owned();
+            match ctx.host_call(method::PROCESS_SIGNAL, json!({"object": object, "signal": signal})) {
+                Ok(result) => {
+                    let _ = ctx.emit(&Value::String(result.to_string().into()));
+                    Outcome::Completed
+                }
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.secret"), |ctx| {
+            let name = ctx
+                .arguments()
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("api-token")
+                .to_owned();
+            match ctx.host_call(
+                method::SECRETS_REQUEST,
+                json!({"name": name, "purpose": "the example package proving the broker"}),
+            ) {
+                Ok(issued) => {
+                    let handle = issued.get("handle").and_then(serde_json::Value::as_u64);
+                    let _ = ctx.emit(&Value::String(
+                        format!("handle:{}", handle.map_or("none".to_owned(), |h| h.to_string())).into(),
+                    ));
+                    if let Some(handle) = handle
+                        && ctx.host_call(method::SECRETS_RELEASE, json!({"secret": handle})).is_ok()
+                    {
+                        let _ = ctx.emit(&Value::String("released".into()));
+                    }
+                    Outcome::Completed
+                }
+                Err(error) => Outcome::Failed(error),
+            }
+        })
         .command(&format!("{PACKAGE}.command.models"), |ctx| {
             match ctx.host_call(method::MODELS_LIST, json!({})) {
                 Ok(listed) => {
@@ -577,6 +724,47 @@ enum Mode {
     /// ordinary crash — is the one where the package does nothing *wrong* on the wire and simply
     /// stops being there, which is exactly what §18.4 says must not corrupt the shell.
     Die,
+}
+
+/// An argument that is an object: given as one, or as a string holding JSON — the shell has
+/// no single text form for a map, so a script writes the JSON in quotes.
+fn json_argument(ctx: &Ctx<'_>, name: &str) -> serde_json::Value {
+    match ctx.arguments().get(name) {
+        Some(serde_json::Value::String(text)) => {
+            serde_json::from_str(text).unwrap_or(serde_json::Value::String(text.clone()))
+        }
+        Some(value) => value.clone(),
+        None => serde_json::Value::Null,
+    }
+}
+
+/// Pulls a host stream to its end, three values at a time, emitting `shown` of each.
+fn pull_all(
+    ctx: &mut Ctx<'_>,
+    handle: u64,
+    shown: impl Fn(&serde_json::Value) -> String,
+) -> Outcome {
+    loop {
+        match ctx.host_call(method::STREAMS_NEXT, json!({"handle": handle, "max": 3})) {
+            Ok(answer) => {
+                for value in answer
+                    .get("values")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let _ = ctx.emit(&Value::String(shown(value).into()));
+                }
+                if answer.get("complete").and_then(serde_json::Value::as_bool) == Some(true) {
+                    if let Some(error) = answer.get("error").filter(|error| !error.is_null()) {
+                        let _ = ctx.emit(&Value::String(format!("stream failed: {error}").into()));
+                    }
+                    return Outcome::Completed;
+                }
+            }
+            Err(error) => return Outcome::Failed(error),
+        }
+    }
 }
 
 /// Emits what a model answered: the text of each part, and the kind of every other part.

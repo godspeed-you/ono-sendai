@@ -99,6 +99,9 @@ pub struct LoadConfig {
     /// What `context.get` answers with (spec §31.12, ADR-0567). The shell publishes its
     /// session's context; the default is the fixed context of the test host.
     pub context: Arc<dyn crate::context::ContextSource>,
+    /// What `objects.*`, `relations.*`, `history.*`, `process.signal` and `secrets.*` reach
+    /// (ADR-0568). The default serves nothing and says so.
+    pub host: Arc<dyn crate::host::HostServices>,
 }
 
 impl std::fmt::Debug for LoadConfig {
@@ -134,6 +137,7 @@ impl LoadConfig {
             confinement: NativePlatform::shared(),
             models: Arc::new(ono_model_broker::NoModels),
             context: Arc::new(crate::context::FixedContext::test_host()),
+            host: Arc::new(crate::host::NoHost),
         }
     }
 }
@@ -198,6 +202,7 @@ impl Supervisor {
             confinement,
             models,
             context,
+            host,
         } = config;
         manifest.check_host(HOST_API, &platform)?;
         // Negotiation before code: a denied required capability means nothing is spawned.
@@ -309,6 +314,8 @@ impl Supervisor {
             clock,
             models,
             context,
+            host,
+            secrets: HashMap::new(),
             inbound: HashMap::new(),
             disclosed_remote: false,
             contract: contract.clone(),
@@ -921,11 +928,51 @@ struct OutStream {
     expected: Expected,
 }
 
-/// A stream the host produced and the plugin pulls with `streams.next` (ADR-0567).
+/// A stream the host produced and the plugin pulls with `streams.next` (ADR-0567): what has
+/// arrived and not been read, the live source it arrives from, whether it is over, and how.
 struct Inbound {
     values: std::collections::VecDeque<Json>,
+    live: Option<crate::host::LiveStream>,
     complete: bool,
     error: Option<WireError>,
+}
+
+impl Inbound {
+    /// Pulls from the live source: the first value with a deadline, the rest as they are there,
+    /// up to `wanted`. A closed source completes the stream; a failure ends it with the error.
+    async fn fill(&mut self, wanted: usize, deadline: Duration) {
+        let Some(live) = self.live.as_mut() else {
+            return;
+        };
+        while self.values.len() < wanted {
+            let next = if self.values.is_empty() {
+                match tokio::time::timeout(deadline, live.recv()).await {
+                    Ok(next) => next,
+                    Err(_) => break,
+                }
+            } else {
+                match live.try_recv() {
+                    Ok(next) => Some(next),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => None,
+                }
+            };
+            match next {
+                Some(Ok(value)) => self.values.push_back(value),
+                Some(Err(error)) => {
+                    self.error = Some(error);
+                    self.complete = true;
+                    self.live = None;
+                    break;
+                }
+                None => {
+                    self.complete = true;
+                    self.live = None;
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// A schema as `schemas.get` and `schemas.list` describe it: fields, types, units, nullability,
@@ -984,6 +1031,10 @@ struct Actor {
     models: Arc<dyn ono_model_broker::ModelBroker>,
     /// What `context.get` answers with (ADR-0567).
     context: Arc<dyn crate::context::ContextSource>,
+    /// What the object, relation, history, process and secret domains reach (ADR-0568).
+    host: Arc<dyn crate::host::HostServices>,
+    /// The secret handles this instance holds, by handle: the name, never the material.
+    secrets: HashMap<u64, String>,
     /// The streams the host produces and the plugin pulls with `streams.next`, by handle
     /// (spec §31.15, ADR-0567).
     inbound: HashMap<u64, Inbound>,
@@ -1673,6 +1724,25 @@ impl Actor {
             method::CONTEXT_GET => self.host_context_get(seq).await,
             method::SCHEMAS_GET => self.host_schemas_get(seq, params).await,
             method::SCHEMAS_LIST => self.host_schemas_list(seq, params).await,
+            method::OBJECTS_GET => self.host_objects_get(seq, params).await,
+            method::OBJECTS_QUERY => self.host_objects_stream(seq, params, "objects.query").await,
+            method::OBJECTS_RESOLVE => self.host_objects_resolve(seq, params).await,
+            method::OBJECTS_SNAPSHOT => {
+                self.host_objects_stream(seq, params, "objects.snapshot")
+                    .await
+            }
+            method::OBJECTS_SUBSCRIBE => {
+                self.host_objects_stream(seq, params, "objects.subscribe")
+                    .await
+            }
+            method::OBJECTS_WATCH => self.host_objects_stream(seq, params, "objects.watch").await,
+            method::RELATIONS_QUERY => self.host_relations_query(seq, params).await,
+            method::RELATIONS_CONTRIBUTE => self.host_relations_contribute(seq, params).await,
+            method::HISTORY_QUERY => self.host_history_query(seq, params).await,
+            method::HISTORY_APPEND => self.host_history_append(seq, params).await,
+            method::PROCESS_SIGNAL => self.host_process_signal(seq, params).await,
+            method::SECRETS_REQUEST => self.host_secrets_request(seq, params).await,
+            method::SECRETS_RELEASE => self.host_secrets_release(seq, params).await,
             method::MODELS_LIST => self.host_models_list(seq).await,
             method::MODELS_INFER => self.host_models_infer(seq, params).await,
             unknown => Err(protocol_violation(format!(
@@ -2088,7 +2158,24 @@ impl Actor {
             handle,
             Inbound {
                 values: values.into(),
+                live: None,
                 complete: true,
+                error: None,
+            },
+        );
+        handle
+    }
+
+    /// Opens a stream over a live source the host service produced.
+    fn open_live(&mut self, live: crate::host::LiveStream) -> u64 {
+        let handle = self.next_handle;
+        self.next_handle += 1;
+        self.inbound.insert(
+            handle,
+            Inbound {
+                values: std::collections::VecDeque::new(),
+                live: Some(live),
+                complete: false,
                 error: None,
             },
         );
@@ -2099,6 +2186,11 @@ impl Actor {
     /// pulled rather than pushed, so the plugin decides how much it is ready for.
     async fn host_streams_next(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
         let next: NextParams = Self::parse_params(params)?;
+        let deadline = next
+            .deadline
+            .as_ref()
+            .and_then(duration_of)
+            .unwrap_or(Duration::from_millis(self.contract.limits.call_deadline_ms));
         let Some(stream) = self.inbound.get_mut(&next.handle) else {
             return Err(protocol_violation(format!(
                 "`streams.next` on handle {}, which the host never opened",
@@ -2106,6 +2198,7 @@ impl Actor {
             )));
         };
         let max = usize::try_from(next.max).unwrap_or(usize::MAX);
+        stream.fill(max, deadline).await;
         let mut values = Vec::with_capacity(max.min(stream.values.len()));
         while values.len() < max {
             let Some(value) = stream.values.pop_front() else {
@@ -2233,6 +2326,420 @@ impl Actor {
             .collect();
         let handle = self.open_inbound(records);
         self.reply_ok(seq, json!({"handle": handle})).await;
+        Ok(())
+    }
+
+    /// Records a host service's failure after the check passed: the broker said yes and the
+    /// operation did not happen, which the trail has to say too (spec §31.37).
+    fn audit_failed(
+        &mut self,
+        capability: ono_kuang_protocol::Capability,
+        action: &str,
+        target: Option<Json>,
+        error: &WireError,
+    ) {
+        let label = self.invocation_label();
+        self.audit.record(
+            &self.package_id,
+            &label,
+            capability.id(),
+            None,
+            Enforcement::Broker,
+            action,
+            target,
+            self.now(),
+            AuditResult::Failed,
+            Some(error.clone()),
+        );
+    }
+
+    /// Answers a host service's result: the value on success, the failure audited and answered.
+    async fn reply_service(
+        &mut self,
+        seq: u64,
+        capability: ono_kuang_protocol::Capability,
+        action: &str,
+        target: Option<Json>,
+        outcome: Result<Json, crate::host::HostError>,
+    ) {
+        match outcome {
+            Ok(value) => self.reply_ok(seq, value).await,
+            Err(error) => {
+                let error: WireError = error.into();
+                self.audit_failed(capability, action, target, &error);
+                self.reply_err(seq, error).await;
+            }
+        }
+    }
+
+    /// `objects.get`: one object by identity, through the host's providers.
+    async fn host_objects_get(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let id = params.get("id").cloned().unwrap_or(Json::Null);
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::ObjectRead,
+            "objects.get",
+            &[],
+            Some(id.clone()),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host.object_get(id.clone()).await;
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::ObjectRead,
+            "objects.get",
+            Some(id),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `objects.query`, `objects.snapshot`, `objects.subscribe`, `objects.watch`: a stream the
+    /// plugin pulls, over what the host's providers produce.
+    async fn host_objects_stream(
+        &mut self,
+        seq: u64,
+        params: Json,
+        action: &'static str,
+    ) -> Result<(), KuangError> {
+        let query = params.get("query").cloned().unwrap_or(Json::Null);
+        let target = query
+            .get("target")
+            .and_then(Json::as_str)
+            .map(str::to_owned);
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::ObjectRead,
+            action,
+            &[],
+            target.map(Json::String),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let audited_target = query
+            .get("target")
+            .and_then(Json::as_str)
+            .map(|target| Json::String(target.to_owned()));
+        let opened = match action {
+            "objects.snapshot" => host.object_snapshot(query).await,
+            "objects.subscribe" => {
+                let overflow = params
+                    .get("overflow")
+                    .and_then(Json::as_str)
+                    .map(str::to_owned);
+                host.object_subscribe(query, overflow).await
+            }
+            "objects.watch" => {
+                let policy = params.get("policy").cloned().unwrap_or(Json::Null);
+                host.object_watch(query, policy).await
+            }
+            _ => host.object_query(query).await,
+        };
+        let outcome = opened.map(|live| {
+            let handle = self.open_live(live);
+            json!({"handle": handle})
+        });
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::ObjectRead,
+            action,
+            audited_target,
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `objects.resolve`: the references a selector matches. A selector needs a target to be
+    /// resolved against; one that names an identity carries its schema and needs none.
+    async fn host_objects_resolve(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let selector = params.get("selector").cloned().unwrap_or(Json::Null);
+        let target = params
+            .get("target")
+            .and_then(Json::as_str)
+            .map(str::to_owned)
+            .or_else(|| {
+                selector
+                    .get("identity")
+                    .and_then(|identity| identity.get("schema"))
+                    .and_then(Json::as_str)
+                    .and_then(|schema| schema.strip_prefix("ono."))
+                    .and_then(|rest| rest.split('/').next())
+                    .map(str::to_owned)
+            });
+        let Some(target) = target else {
+            self.reply_err(
+                seq,
+                WireError::from_core(
+                    ono_core::ErrorCode::TypeMismatch,
+                    "`objects.resolve` needs a `target`, or a selector that names an identity",
+                ),
+            )
+            .await;
+            return Ok(());
+        };
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::ObjectRead,
+            "objects.resolve",
+            &[],
+            Some(Json::String(target.clone())),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host
+            .object_resolve(target.clone(), selector)
+            .await
+            .map(Json::Array);
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::ObjectRead,
+            "objects.resolve",
+            Some(Json::String(target)),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `relations.query`: the edges around an object, as a stream of `ono.graph-edge/1`.
+    async fn host_relations_query(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let from = params.get("from").filter(|v| !v.is_null()).cloned();
+        let to = params.get("to").filter(|v| !v.is_null()).cloned();
+        let relations = params
+            .get("relations")
+            .and_then(Json::as_array)
+            .map(|names| {
+                names
+                    .iter()
+                    .filter_map(Json::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            });
+        let depth = params.get("depth").and_then(Json::as_u64);
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::RelationRead,
+            "relations.query",
+            &[],
+            from.clone().or_else(|| to.clone()),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let target = from.clone().or_else(|| to.clone());
+        let outcome = host
+            .relations_query(from, to, relations, depth)
+            .await
+            .map(|live| {
+                let handle = self.open_live(live);
+                json!({"handle": handle})
+            });
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::RelationRead,
+            "relations.query",
+            target,
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `relations.contribute`: edges the package asserts; the host sets `provider` to it.
+    async fn host_relations_contribute(
+        &mut self,
+        seq: u64,
+        params: Json,
+    ) -> Result<(), KuangError> {
+        let edges: Vec<Json> = params
+            .get("edges")
+            .and_then(Json::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::RelationWrite,
+            "relations.contribute",
+            &[],
+            Some(Json::from(edges.len())),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let count = edges.len();
+        let outcome = host
+            .relations_contribute(&self.package_id, edges)
+            .await
+            .map(Json::from);
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::RelationWrite,
+            "relations.contribute",
+            Some(Json::from(count)),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `history.query`: bounded history, redacted by the host before it is assembled.
+    async fn host_history_query(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let window = params
+            .get("window")
+            .and_then(Json::as_str)
+            .map(str::to_owned);
+        let filter = params.get("filter").filter(|v| !v.is_null()).cloned();
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::HistoryRead,
+            "history.query",
+            &[],
+            window.clone().map(Json::String),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let target = window.clone().map(Json::String);
+        let outcome = host.history_query(window, filter).await.map(|live| {
+            let handle = self.open_live(live);
+            json!({"handle": handle})
+        });
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::HistoryRead,
+            "history.query",
+            target,
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `history.append`: an entry the host attributes to the package.
+    async fn host_history_append(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let entry = params.get("entry").cloned().unwrap_or(Json::Null);
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::HistoryWrite,
+            "history.append",
+            &[],
+            None,
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host
+            .history_append(&self.package_id, entry)
+            .await
+            .map(|()| Json::Null);
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::HistoryWrite,
+            "history.append",
+            None,
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `process.signal`: a signal within the granted `signals` scope, to an object the host
+    /// resolves again before it acts.
+    async fn host_process_signal(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let object = params.get("object").cloned().unwrap_or(Json::Null);
+        let signal = params
+            .get("signal")
+            .and_then(Json::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::ProcessSignal,
+            "process.signal",
+            &[ScopeUse::Name {
+                key: "signals",
+                value: signal.clone(),
+            }],
+            Some(object.clone()),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host.process_signal(object.clone(), signal).await;
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::ProcessSignal,
+            "process.signal",
+            Some(object),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `secrets.request`: an opaque handle for a named secret; the material never crosses.
+    async fn host_secrets_request(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let name = params
+            .get("name")
+            .and_then(Json::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let purpose = params
+            .get("purpose")
+            .and_then(Json::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::SecretUse,
+            "secrets.request",
+            &[ScopeUse::Name {
+                key: "secrets",
+                value: name.clone(),
+            }],
+            Some(Json::String(name.clone())),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let host = Arc::clone(&self.host);
+        let outcome = host
+            .secret_request(&self.package_id, &name, &purpose)
+            .await
+            .map(|()| {
+                let handle = self.next_handle;
+                self.next_handle += 1;
+                self.secrets.insert(handle, name.clone());
+                json!({"handle": handle})
+            });
+        self.reply_service(
+            seq,
+            ono_kuang_protocol::Capability::SecretUse,
+            "secrets.request",
+            Some(Json::String(name)),
+            outcome,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `secrets.release`: the handle is invalidated; releasing early is hygiene, not a duty.
+    async fn host_secrets_release(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let handle = params
+            .get("secret")
+            .and_then(Json::as_u64)
+            .unwrap_or_default();
+        if self.secrets.remove(&handle).is_none() {
+            return Err(protocol_violation(format!(
+                "`secrets.release` on handle {handle}, which the host never issued"
+            )));
+        }
+        self.reply_ok(seq, Json::Null).await;
         Ok(())
     }
 
@@ -2621,6 +3128,22 @@ mod tests {
     #[test]
     fn should_not_claim_a_ceiling_that_does_not_exist() {
         assert!(!at_memory_ceiling(0, 0));
+    }
+}
+
+/// A duration as the wire spells it: seconds, a span like `30s`, or `{"$duration": …}`.
+fn duration_of(value: &Json) -> Option<Duration> {
+    match value {
+        Json::Number(seconds) => seconds
+            .as_f64()
+            .filter(|seconds| *seconds > 0.0)
+            .map(Duration::from_secs_f64),
+        Json::String(text) => text
+            .parse::<jiff::SignedDuration>()
+            .ok()
+            .and_then(|span| Duration::try_from(span).ok()),
+        Json::Object(object) => object.get("$duration").and_then(duration_of),
+        _ => None,
     }
 }
 

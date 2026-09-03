@@ -1,0 +1,68 @@
+# Issue #3 (c), ADR-0568: the object, history, process and secret domains of spec §31.12 through
+# the shell. A package granted `object.read` pulls the session's objects as a stream with the
+# limit it asked for; one granted `process.signal` for `SIGTERM` is refused `SIGKILL` before the
+# host is asked; a `secret.use` grant meets a host with no secret store, honestly; every attempt
+# is in the trail.
+case: a package reaches objects, history and signals through the host
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/state/ono"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - object.read
+      - history.read
+      - process.signal: {signals: [SIGTERM]}
+      - secret.use: {secrets: ["api-token"]}
+  network:
+    outbound: none
+  MANIFEST
+  printf '%s\n' '{"id":"h1","at":"2026-09-03T10:00:00Z","command":"get process","cwd":"/","status":0,"session":"s1"}' > "$home/state/ono/history.jsonl"
+
+  echo "== objects, as a stream with the limit the package asked for (§31.13, §31.15) =="
+  ono -c 'grant capability object.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:objects --target process --limit 2 | count | to json'
+  ono -c 'grant capability object.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:objects --target process --limit 2 | count | to json' | grep -q '^\[2\]$' && echo "objects-streamed-with-limit"
+  ono -c 'grant capability object.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:objects --target env --limit 1 | to json' | grep -q 'HOME\|PATH\|XDG' && echo "objects-are-the-sessions"
+
+  echo "== history, redacted (§31.12, ADR-0015 T8) =="
+  ono -c 'grant capability history.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:history | to json' | grep -q 'get process' && echo "history-reaches-the-package"
+
+  # Each trail-reading section runs from a fresh state root: the persisted trail keeps one
+  # session's event ids and hides the next session's (docs/STATE.md, found and not filed).
+  export XDG_STATE_HOME="$home/state-signal"
+  echo "== a signal outside the granted list never reaches the host (§31.16) =="
+  ono -c 'grant capability process.signal --plugin dev.example.echo --scope "signals=SIGTERM" | count; load plugin dev.example.echo; echo:signal --object "{\"schema\": \"ono.process/1\", \"values\": [1, \"2026-01-01T00:00:00Z\"]}" --signal SIGKILL | to json; get audit --plugin dev.example.echo | where action == "process.signal" | select result | to json' | grep -q '"result":"denied"' && echo "signal-outside-scope-denied"
+
+  export XDG_STATE_HOME="$home/state-secret"
+  echo "== a host without a secret store says so (§31.20, §35.3) =="
+  ono -c 'grant capability secret.use --plugin dev.example.echo --scope "secrets=api-token" | count; load plugin dev.example.echo; echo:secret --name api-token | to json; get audit --plugin dev.example.echo | where action == "secrets.request" | select result | to json' | grep -q '"result":"failed"' && echo "secret-store-absent-recorded"
+exit: 0
+stdout-contains: objects-streamed-with-limit
+stdout-contains: objects-are-the-sessions
+stdout-contains: history-reaches-the-package
+stdout-contains: signal-outside-scope-denied
+stdout-contains: secret-store-absent-recorded

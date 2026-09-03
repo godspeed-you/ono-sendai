@@ -295,6 +295,12 @@ pub fn load_plugin_with(
     config.private_dir = session.with_kuang(|host| host.private_dir(id));
     // What `models.list` and `models.infer` reach: the operator's catalogue (ADR-0566).
     config.models = session.with_kuang(|host| host.model_broker());
+    // What the object, relation, history, process and secret domains reach: the session's
+    // providers as they stand now, and its history file (ADR-0568).
+    let history =
+        crate::config::state_dir(session).map(|directory| directory.join("history.jsonl"));
+    let registry = session.providers().clone();
+    config.host = std::sync::Arc::new(crate::kuang_services::ShellHost::new(registry, history));
     // What `context.get` answers with: the session's published context (ADR-0567).
     config.context = std::sync::Arc::new(crate::kuang_host::SharedContext(std::sync::Arc::clone(
         session.tables(),

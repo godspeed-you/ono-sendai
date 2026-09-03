@@ -15,6 +15,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 ono-model-broker.workspace = true
 libc.workspace = true
 ono-kuang-supervisor.workspace = true

@@ -81,6 +81,12 @@ capabilities:
     - model.infer: {providers: ["*"]}
     - context.read
     - schema.read
+    - object.read
+    - relation.read
+    - relation.write
+    - history.read
+    - history.write
+    - secret.use: {secrets: ["api-token"]}
 network:
   outbound: none
 "#
@@ -111,6 +117,12 @@ fn fully_granted(host: TestHost) -> TestHost {
         .grant(Capability::ModelInfer)
         .grant(Capability::ContextRead)
         .grant(Capability::SchemaRead)
+        .grant(Capability::ObjectRead)
+        .grant(Capability::RelationRead)
+        .grant(Capability::RelationWrite)
+        .grant(Capability::HistoryRead)
+        .grant(Capability::HistoryWrite)
+        .grant(Capability::SecretUse)
 }
 
 fn values_of(events: &[StreamEvent]) -> Vec<Value> {
@@ -1128,6 +1140,435 @@ async fn should_refuse_the_context_and_the_schemas_to_a_package_without_the_gran
         assert_eq!(
             refused, "capability.denied",
             "{command}: deny by default (spec §31.19)"
+        );
+    }
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- the object, relation, history, process and secret domains (spec §31.12; ADR-0568) --------
+
+/// A host with two items, one edge, two history entries, a process that takes signals and one
+/// secret — deterministic, so the domains are proven without a machine behind them.
+#[derive(Debug, Default)]
+struct FakeHost {
+    signals: std::sync::Mutex<Vec<(Json, String)>>,
+    appended: std::sync::Mutex<Vec<(String, Json)>>,
+    contributed: std::sync::Mutex<Vec<(String, Json)>>,
+}
+
+fn item(seq: i64, label: &str) -> Json {
+    json!({"schema": "dev.example.echo.item/1", "seq": seq, "label": label})
+}
+
+#[async_trait::async_trait]
+impl ono_kuang_supervisor::HostServices for FakeHost {
+    async fn object_get(&self, id: Json) -> Result<Json, ono_kuang_supervisor::HostError> {
+        match id
+            .get("values")
+            .and_then(Json::as_array)
+            .and_then(|v| v.first())
+            .and_then(Json::as_i64)
+        {
+            Some(1) => Ok(item(1, "first")),
+            Some(2) => Ok(item(2, "second")),
+            _ => Err(ono_kuang_supervisor::HostError::not_found(format!(
+                "no item {id}"
+            ))),
+        }
+    }
+    async fn object_query(
+        &self,
+        query: Json,
+    ) -> Result<ono_kuang_supervisor::LiveStream, ono_kuang_supervisor::HostError> {
+        if query.get("target").and_then(Json::as_str) != Some("item") {
+            return Err(ono_kuang_supervisor::HostError::not_found(
+                "the fake host has only `item`",
+            ));
+        }
+        let limit = query
+            .get("limit")
+            .and_then(Json::as_u64)
+            .unwrap_or(u64::MAX);
+        let mut items = vec![
+            item(1, "first"),
+            item(2, "second"),
+            item(3, "third"),
+            item(4, "fourth"),
+        ];
+        items.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        Ok(ono_kuang_supervisor::ready_stream(items))
+    }
+    async fn object_resolve(
+        &self,
+        target: String,
+        selector: Json,
+    ) -> Result<Vec<Json>, ono_kuang_supervisor::HostError> {
+        let wanted = selector
+            .get("field")
+            .and_then(|f| f.get("value"))
+            .and_then(Json::as_str);
+        Ok(match (target.as_str(), wanted) {
+            ("item", Some("second")) => vec![
+                json!({"id": {"schema": "dev.example.echo.item/1", "values": [2]}, "label": "second"}),
+            ],
+            _ => Vec::new(),
+        })
+    }
+    async fn object_snapshot(
+        &self,
+        query: Json,
+    ) -> Result<ono_kuang_supervisor::LiveStream, ono_kuang_supervisor::HostError> {
+        self.object_query(query).await
+    }
+    async fn object_subscribe(
+        &self,
+        _query: Json,
+        _overflow: Option<String>,
+    ) -> Result<ono_kuang_supervisor::LiveStream, ono_kuang_supervisor::HostError> {
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        tokio::spawn(async move {
+            for seq in 5..7 {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                let _ = tx
+                    .send(Ok(json!({"kind": "added", "object": item(seq, "late")})))
+                    .await;
+            }
+        });
+        Ok(rx)
+    }
+    async fn object_watch(
+        &self,
+        query: Json,
+        _policy: Json,
+    ) -> Result<ono_kuang_supervisor::LiveStream, ono_kuang_supervisor::HostError> {
+        self.object_query(query).await
+    }
+    async fn relations_query(
+        &self,
+        from: Option<Json>,
+        _to: Option<Json>,
+        _relations: Option<Vec<String>>,
+        _depth: Option<u64>,
+    ) -> Result<ono_kuang_supervisor::LiveStream, ono_kuang_supervisor::HostError> {
+        let from = from.ok_or_else(|| {
+            ono_kuang_supervisor::HostError::malformed("the fake host walks from an object")
+        })?;
+        Ok(ono_kuang_supervisor::ready_stream(vec![json!({
+            "from": from, "to": {"schema": "dev.example.echo.item/1", "values": [2]},
+            "relation": "follows", "direction": "directed", "confidence": "exact",
+            "provider": "fake", "metadata": {}
+        })]))
+    }
+    async fn relations_contribute(
+        &self,
+        package: &str,
+        edges: Vec<Json>,
+    ) -> Result<u64, ono_kuang_supervisor::HostError> {
+        let count = edges.len() as u64;
+        self.contributed
+            .lock()
+            .expect("lock")
+            .extend(edges.into_iter().map(|edge| (package.to_owned(), edge)));
+        Ok(count)
+    }
+    async fn history_query(
+        &self,
+        _window: Option<String>,
+        _filter: Option<Json>,
+    ) -> Result<ono_kuang_supervisor::LiveStream, ono_kuang_supervisor::HostError> {
+        Ok(ono_kuang_supervisor::ready_stream(vec![
+            json!({"command": "get process", "cwd": "/", "status": 0}),
+            json!({"command": "curl -H 'Authorization: [redacted]'", "cwd": "/", "status": 0}),
+        ]))
+    }
+    async fn history_append(
+        &self,
+        package: &str,
+        entry: Json,
+    ) -> Result<(), ono_kuang_supervisor::HostError> {
+        self.appended
+            .lock()
+            .expect("lock")
+            .push((package.to_owned(), entry));
+        Ok(())
+    }
+    async fn process_signal(
+        &self,
+        object: Json,
+        signal: String,
+    ) -> Result<Json, ono_kuang_supervisor::HostError> {
+        self.signals
+            .lock()
+            .expect("lock")
+            .push((object.clone(), signal.clone()));
+        Ok(
+            json!({"target": object, "operation": "process.signal", "status": "success", "changed": true, "message": format!("sent {signal}")}),
+        )
+    }
+    async fn secret_request(
+        &self,
+        _package: &str,
+        name: &str,
+        _purpose: &str,
+    ) -> Result<(), ono_kuang_supervisor::HostError> {
+        if name == "api-token" {
+            Ok(())
+        } else {
+            Err(ono_kuang_supervisor::HostError::not_found(format!(
+                "no secret `{name}`"
+            )))
+        }
+    }
+}
+
+fn strings(events: &[StreamEvent]) -> Vec<String> {
+    values_of(events)
+        .into_iter()
+        .filter_map(|value| match value {
+            Value::String(text) => Some(text.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn should_stream_the_hosts_objects_to_a_granted_package_and_honour_its_limit() {
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .host(std::sync::Arc::new(FakeHost::default()))
+        .grant(Capability::ObjectRead)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.objects",
+            args(&[("target", json!("item")), ("limit", json!(3))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(
+        strings(&events),
+        ["first", "second", "third"],
+        "three, pulled three at a time"
+    );
+    let audit = plugin.audit();
+    assert!(
+        audit
+            .iter()
+            .any(|event| event.action == "objects.query" && event.result == AuditResult::Success),
+        "the query is audited under object.read with its target"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_fetch_one_object_by_identity_and_refuse_one_that_is_not_there() {
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .host(std::sync::Arc::new(FakeHost::default()))
+        .grant(Capability::ObjectRead)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.object",
+            args(&[(
+                "id",
+                json!({"schema": "dev.example.echo.item/1", "values": [2]}),
+            )]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert!(strings(&events)[0].contains("\"label\":\"second\""));
+
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.object",
+            args(&[(
+                "id",
+                json!({"schema": "dev.example.echo.item/1", "values": [9]}),
+            )]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    assert_eq!(
+        result.error.expect("structured").name,
+        "resolve.target_not_found"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_walk_the_edges_and_the_history_the_host_shares() {
+    let host = std::sync::Arc::new(FakeHost::default());
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .host(host.clone())
+        .grant(Capability::RelationRead)
+        .grant(Capability::HistoryRead)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.edges",
+            args(&[(
+                "from",
+                json!({"schema": "dev.example.echo.item/1", "values": [1]}),
+            )]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert!(
+        strings(&events)[0].contains("-[follows]->"),
+        "got {:?}",
+        strings(&events)
+    );
+
+    let invocation = plugin
+        .invoke("dev.example.echo.command.history", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    let shown = strings(&events);
+    assert_eq!(shown.len(), 2);
+    assert!(
+        shown[1].contains("[redacted]"),
+        "secret-bearing values reach a package redacted (ADR-0015 T8); got {shown:?}"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_signal_a_process_within_the_granted_signals_and_refuse_one_outside() {
+    let host = std::sync::Arc::new(FakeHost::default());
+    let mut scope = JsonMap::new();
+    scope.insert("signals".to_owned(), json!(["SIGTERM"]));
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .host(host.clone())
+        .grant_scoped(Capability::ProcessSignal, scope)
+        .load()
+        .await
+        .expect("loads");
+    let object = json!({"schema": "ono.process/1", "values": [4242, "2026-08-26T12:00:00Z"]});
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.signal",
+            args(&[("object", object.clone()), ("signal", json!("SIGTERM"))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert!(strings(&events)[0].contains("\"status\":\"success\""));
+    assert_eq!(
+        host.signals.lock().expect("lock").len(),
+        1,
+        "one signal reached the host"
+    );
+
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.signal",
+            args(&[("object", object), ("signal", json!("SIGKILL"))]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    assert_eq!(
+        result.error.expect("structured").name,
+        "capability.scope_violation"
+    );
+    assert_eq!(
+        host.signals.lock().expect("lock").len(),
+        1,
+        "the refused signal never reached the host"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_issue_a_secret_handle_within_the_scope_and_never_the_material() {
+    let mut scope = JsonMap::new();
+    scope.insert("secrets".to_owned(), json!(["api-token"]));
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .host(std::sync::Arc::new(FakeHost::default()))
+        .grant_scoped(Capability::SecretUse, scope)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.secret",
+            args(&[("name", json!("api-token"))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    let shown = strings(&events);
+    assert!(
+        shown[0].starts_with("handle:") && shown[0] != "handle:none",
+        "got {shown:?}"
+    );
+    assert_eq!(shown.get(1).map(String::as_str), Some("released"));
+
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.secret",
+            args(&[("name", json!("db-password"))]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    assert_eq!(
+        result.error.expect("structured").name,
+        "capability.scope_violation"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_say_a_domain_is_unavailable_when_the_host_serves_none() {
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .grant(Capability::ObjectRead)
+        .grant(Capability::HistoryRead)
+        .load()
+        .await
+        .expect("loads");
+    for command in ["objects", "history"] {
+        let invocation = plugin
+            .invoke(&format!("dev.example.echo.command.{command}"), args(&[]))
+            .await
+            .expect("starts");
+        let (_, result) = invocation.collect().await;
+        assert_eq!(result.status, InvokeStatus::Failed, "{command}");
+        assert_eq!(
+            result.error.expect("structured").name,
+            "provider.unavailable",
+            "{command}: the honest answer of a host that serves none (spec §35.3)"
         );
     }
     plugin

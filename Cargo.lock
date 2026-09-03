@@ -889,6 +889,7 @@ dependencies = [
 name = "ono-kuang-sdk"
 version = "0.4.0"
 dependencies = [
+ "async-trait",
  "libc",
  "ono-kuang-protocol",
  "ono-kuang-supervisor",
@@ -905,6 +906,7 @@ dependencies = [
 name = "ono-kuang-supervisor"
 version = "0.4.0"
 dependencies = [
+ "async-trait",
  "globset",
  "jiff",
  "libc",
