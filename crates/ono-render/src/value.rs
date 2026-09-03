@@ -226,6 +226,9 @@ impl Renderer {
         // A field the schema does not declare renders as unknown rather than as a blank: the
         // default view is a rendering hint and a stale one must not silently produce empty cells.
         let value = record.get(name).unwrap_or(&Value::Null);
+        if let Some(token) = outcome_token(record, name, value) {
+            return self.cell(value).with_token(token);
+        }
         match record.schema().field(name) {
             Some(field) => self.declared_cell(field, value),
             None => self.cell(value),
@@ -458,6 +461,31 @@ fn type_label(value: &Value) -> String {
     match value {
         Value::Record(record) => record.schema_id().to_string(),
         other => other.type_name().to_owned(),
+    }
+}
+
+/// The token that says whether a mutation did what was asked, where a cell is that answer.
+///
+/// Spec §44 names three tokens for exactly these three meanings and requires that no
+/// functionality depend on colour alone, so each of them carries a marker a reader without
+/// colour gets instead (ADR-0332, ADR-0558). `ono.action-result/1`'s `status` is the shell's own
+/// report of what it did to one object, its three values are those three meanings, and it is the
+/// one column in the shell where a reader has to be told good from bad.
+///
+/// It is this field of this schema and nothing else. `state` on a service, `state` on a socket
+/// and `installed` on a package are descriptions of a system, not verdicts on an action, and
+/// painting a stopped unit as danger would be the renderer asserting more than the value says
+/// (spec §10.5).
+#[must_use]
+fn outcome_token(record: &RecordValue, name: &str, value: &Value) -> Option<Token> {
+    if name != "status" || record.schema_id() != &ono_value::SchemaId::new("ono.action-result", 1) {
+        return None;
+    }
+    match value.as_str().ok()? {
+        "success" => Some(Token::Success),
+        "skipped" => Some(Token::Warning),
+        "failed" => Some(Token::Danger),
+        _ => None,
     }
 }
 

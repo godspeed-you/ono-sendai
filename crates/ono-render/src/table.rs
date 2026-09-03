@@ -421,6 +421,15 @@ impl Layout {
         self.paint_full(&shorten(text, self.width), token, paint)
     }
 
+    /// Colours text that has already been marked, or that is part of the frame rather than a
+    /// value: a header, a key, a connector. The frame carries no meaning a marker could add.
+    fn colour_full(&self, text: &str, token: Token, paint: Option<Paint<'_>>) -> String {
+        match paint {
+            Some(paint) => paint.theme.colour(text, token, paint.presentation),
+            None => text.to_owned(),
+        }
+    }
+
     fn paint_full(&self, text: &str, token: Token, paint: Option<Paint<'_>>) -> String {
         match paint {
             Some(paint) => paint.theme.paint(text, token, paint.presentation),
@@ -469,7 +478,11 @@ impl Layout {
             .unwrap_or(table.rows.len())
             .min(table.rows.len());
         let omitted = table.rows.len() - shown;
-        let rows = &table.rows[..shown];
+        // A marker is part of what the cell says, so it is added before the widths are measured
+        // and the colour is added after (ADR-0558). Doing it the other way round would let a
+        // theme move a column, which is exactly what the escapes-added-last rule prevents.
+        let marked = marked_rows(&table.rows[..shown], paint);
+        let rows = marked.as_deref().unwrap_or(&table.rows[..shown]);
 
         let mut lines = match self.column_widths(table, rows) {
             Some(widths) => self.render_table(table, rows, &widths, paint),
@@ -570,7 +583,7 @@ impl Layout {
             let shortened = shorten(text, *width);
             let padding = width.saturating_sub(shortened.width());
             let token = cell.map_or(Token::Foreground, Cell::token);
-            let shortened = self.paint_full(&shortened, token, paint);
+            let shortened = self.colour_full(&shortened, token, paint);
             let align = table
                 .columns
                 .get(index)
@@ -616,8 +629,8 @@ impl Layout {
                 let padding = label_width.saturating_sub(label.width());
                 let available = self.width.saturating_sub(label_width + 1);
                 let value = shorten(cell.text(), available);
-                let label = self.paint_full(&label, Token::TableKey, paint);
-                let value = self.paint_full(&value, cell.token(), paint);
+                let label = self.colour_full(&label, Token::TableKey, paint);
+                let value = self.colour_full(&value, cell.token(), paint);
                 lines.push(format!("{label}{} {value}", " ".repeat(padding)));
             }
         }
@@ -639,6 +652,29 @@ pub enum Detail {
 struct Paint<'a> {
     theme: &'a Theme,
     presentation: Presentation,
+}
+
+/// The rows with every value cell carrying its token's marker, where the destination has no
+/// colour to carry the meaning instead (spec §44, ADR-0558).
+///
+/// `None` where nothing would change, so the ordinary run neither copies the rows nor allocates.
+fn marked_rows(rows: &[Vec<Cell>], paint: Option<Paint<'_>>) -> Option<Vec<Vec<Cell>>> {
+    let paint = paint.filter(|paint| paint.presentation.marks())?;
+    Some(
+        rows.iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| {
+                        let marked =
+                            paint
+                                .theme
+                                .mark(cell.text(), cell.token(), paint.presentation);
+                        Cell::new(marked).with_token(cell.token())
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
 }
 
 /// A `hexdump -C`-shaped view of `bytes`: offset, sixteen bytes, and their printable form.

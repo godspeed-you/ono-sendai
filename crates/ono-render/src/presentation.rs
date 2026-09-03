@@ -66,6 +66,27 @@ impl Presentation {
         matches!(self, Presentation::Terminal)
     }
 
+    /// Whether a person is reading this and cannot be shown colour (spec §44, ADR-0558).
+    ///
+    /// A `Plain` destination is a terminal the user asked to keep plain or one that cannot do
+    /// better: someone is reading it, and every meaning a theme would have carried in a hue has
+    /// to arrive some other way. That is what a token's marker is for.
+    ///
+    /// A pipe, a redirect and a script are not people. There the structure is the answer, the
+    /// bytes must not depend on which theme happens to be configured, and a mark in the middle
+    /// of them would be noise a reader downstream has to strip.
+    ///
+    /// ```
+    /// use ono_render::Presentation;
+    /// assert!(Presentation::Plain.marks());
+    /// assert!(!Presentation::Pipe.marks());
+    /// assert!(!Presentation::Terminal.marks());
+    /// ```
+    #[must_use]
+    pub const fn marks(self) -> bool {
+        matches!(self, Presentation::Plain)
+    }
+
     /// Whether a command may offer an interactive selection here (spec §13.5).
     #[must_use]
     pub const fn allows_interaction(self) -> bool {
