@@ -60,6 +60,8 @@ Two vocabularies that are not the same thing. A **provider capability** is what 
 | `package.list` | read | none | Enumerate installed and known packages. |
 | `package.search` | read | none | Search the provider's repositories. |
 | `package.manage` | mutate | required | Install, remove or transition the version of a package. |
+| `package-source.list` | read | none | Enumerate the repositories the package manager reads its index from. |
+| `package-source.refresh` | mutate | required | Bring the local package index up to date from a repository. |
 | `container.list` | read | conditional | Enumerate containers through an installed container provider. |
 | `container.manage` | mutate | conditional | Start, stop, restart, remove or reconfigure a container. |
 | `container.exec` | mutate | conditional | Execute inside a container's namespaces. |

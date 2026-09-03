@@ -182,6 +182,7 @@ fn should_leave_unbound_only_the_delivered_commands_nothing_here_can_answer() {
             "ono.limits.inspect",
             // A provider delivers the package mutations by advertising `package.manage`
             // (ADR-0068 §3); a table built without providers binds none of them.
+            "ono.package-source.refresh",
             "ono.package.add",
             "ono.package.remove",
             "ono.package.set",

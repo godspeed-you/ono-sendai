@@ -3699,6 +3699,66 @@ Request a version transition where the provider supports it.
 set package nginx --version 1.24.0
 ```
 
+### `get package-source`
+
+Enumerate the repositories the package manager reads its index from.
+
+| | |
+|---|---|
+| id | `ono.package-source.get` |
+| stability | stable |
+| phase | C |
+| input | `null` |
+| output | `stream<ono.package-source/1>` |
+| provider capability | `package-source.list` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `id` | `string` | Resolve one repository by its id. |
+
+**Examples**
+
+```text
+get package-source
+```
+
+### `refresh package-source`
+
+Bring the local package index up to date from a repository.
+
+| | |
+|---|---|
+| id | `ono.package-source.refresh` |
+| stability | stable |
+| phase | C |
+| input | `null | stream<ono.package-source/1>` |
+| output | `stream<ono.action-result/1>` |
+| provider capability | `package-source.refresh` |
+| privilege | elevated |
+| arguments | parsed in words mode (ADR-0009) |
+
+**Selectors**
+
+| name | type | meaning |
+|---|---|---|
+| `id` | `string` | The repository to refresh. |
+
+**Options**
+
+| name | type | meaning |
+|---|---|---|
+| `--dry-run` | `bool` | Report what would be run without running it. The provider answers `skipped` with the command it would have run (ADR-0088). |
+
+**Examples**
+
+```text
+refresh package-source updates
+```
+
 ## process
 
 ### `get process`

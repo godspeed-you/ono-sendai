@@ -3,7 +3,9 @@
 # Source: spec §7.1, the core verb table, transcribed complete and unaltered in meaning.
 # Spec §7 makes the registry deliberately small and curated: third-party modules reuse an
 # existing verb whenever the semantics match, and §40.1 requires a verb review before a new one
-# is added. Nothing here is invented; nothing from §7.1 is dropped.
+# is added. Nothing from §7.1 is dropped, and one verb has been added under that review:
+# `refresh` (ADR-0562, ADR-0565), because no existing verb means "bring a local copy of remote
+# metadata up to date" and `update` means the other thing in every package manager.
 #
 # `id`              stable identity, `ono.verb.<verb>`. Only the Ono project may claim `ono.*`
 #                   (spec §31.5).
@@ -230,6 +232,13 @@ verbs:
     verb: set
     semantics: Modify properties or configuration.
     typical_targets: [env, service, file metadata]
+    pipeline_role: mutation
+    mutating: true
+    stability: stable
+  - id: ono.verb.refresh
+    verb: refresh
+    semantics: Bring a local copy of remote metadata up to date.
+    typical_targets: [package-source]
     pipeline_role: mutation
     mutating: true
     stability: stable

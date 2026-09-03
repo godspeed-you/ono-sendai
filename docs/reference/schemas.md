@@ -1166,6 +1166,23 @@ Default view: `pid`, `process`, `fd`, `kind`, `name`
 | `name` | `string` | — | required | What lsof prints in its NAME column — a path, a socket endpoint, a device. |
 | `path` | `path` | — | nullable | The name as a path, when the kind is a filesystem object. |
 
+## PackageSource — `ono.package-source/1`
+
+A repository the package manager reads its index from.
+
+Identity: `provider`, `id`
+
+Default view: `id`, `name`, `url`, `enabled`, `refreshed`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `id` | `string` | — | required | The repository's id in the manager's own terms: dnf's and zypper's repository id, or for apt the repository root, suite and component joined by `/`, as in `archive.ubuntu.com/ubuntu/noble/main`. |
+| `name` | `string` | — | nullable | The label the repository gives itself; null when the manager records none. |
+| `url` | `string` | — | nullable | Where the index comes from — the repository URI, base URL, metalink or mirror list; null when the manager records none. |
+| `enabled` | `bool` | — | nullable | Whether the manager reads this repository. Null when the manager could not say. |
+| `refreshed` | `timestamp` | — | nullable | When the local index for this repository was last brought up to date, read from the index file the manager keeps; null when no index has been fetched yet or the manager keeps none the shell can read. |
+| `provider` | `string` | — | required | The package database this repository feeds, such as `dpkg` or `rpm`; part of the identity. |
+
 ## Package — `ono.package/1`
 
 A package the active package manager knows, installed or available.

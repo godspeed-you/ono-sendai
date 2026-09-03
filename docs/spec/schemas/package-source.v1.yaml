@@ -1,0 +1,46 @@
+# Canonical PackageSource schema: a repository the package manager reads its index from. Spec
+# §9.1 names the package family and no verb for the index; ADR-0562 found that a refresh has no
+# package to name and needs the repository to be an object first, and ADR-0565 makes it one.
+# The records come from the managers' machine interfaces — `apt-get indextargets --format`,
+# `zypper --xmlout lr` — or from their own configuration files (`/etc/yum.repos.d/*.repo`),
+# never from a human listing (spec §31.58, ADR-0115). Identity is `provider + id`, as a
+# package's is: a machine can carry more than one package database.
+id: ono.package-source/1
+name: PackageSource
+summary: A repository the package manager reads its index from.
+identity: [provider, id]
+fields:
+  id:
+    type: string
+    required: true
+    doc: >-
+      The repository's id in the manager's own terms: dnf's and zypper's repository id, or for
+      apt the repository root, suite and component joined by `/`, as in
+      `archive.ubuntu.com/ubuntu/noble/main`.
+  name:
+    type: string
+    nullable: true
+    doc: The label the repository gives itself; null when the manager records none.
+  url:
+    type: string
+    nullable: true
+    doc: >-
+      Where the index comes from — the repository URI, base URL, metalink or mirror list; null
+      when the manager records none.
+  enabled:
+    type: bool
+    nullable: true
+    doc: Whether the manager reads this repository. Null when the manager could not say.
+  refreshed:
+    type: timestamp
+    nullable: true
+    doc: >-
+      When the local index for this repository was last brought up to date, read from the index
+      file the manager keeps; null when no index has been fetched yet or the manager keeps none
+      the shell can read.
+  provider:
+    type: string
+    required: true
+    doc: The package database this repository feeds, such as `dpkg` or `rpm`; part of the identity.
+default_view:
+  columns: [id, name, url, enabled, refreshed]

@@ -2,8 +2,8 @@
 #
 # Source: spec §8.1 (system targets), §8.2 (development targets), §8.3 (infrastructure
 # targets), with the design rule of §8.4. Every name the three lists give is present; nothing
-# is invented beyond the two entries marked `# not in §8.x` below, which spec §7.1 and §9.1
-# name as targets of an actual verb.
+# is invented beyond the entries marked `# not in §8.x` below, which spec §7.1 and §9.1 name as
+# targets of an actual verb, and `package-source`, the object a `refresh` acts on (ADR-0565).
 #
 # `id`        stable identity, `ono.target.<name>` (spec §31.5 reserves `ono.*`).
 # `category`  system | development | infrastructure, as spec §8 groups them.
@@ -175,6 +175,12 @@ targets:
     category: system
     summary: An installed or available package, through a package provider.
     schema: ono.package/1
+    phase: C
+  - id: ono.target.package-source   # not in §8.x: the object `refresh` acts on (ADR-0562, ADR-0565)
+    name: package-source
+    category: system
+    summary: A repository the package manager reads its index from.
+    schema: ono.package-source/1
     phase: C
   - id: ono.target.kernel
     name: kernel

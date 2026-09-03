@@ -17,6 +17,7 @@
 //! Only dpkg is served by this build; the refusal says so about rpm rather than pretending to
 //! have looked (ADR-0115).
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -30,6 +31,9 @@ use ono_provider_api::{
     Selector,
 };
 use ono_value::{ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value, builtin_schemas};
+use tokio::sync::Mutex;
+
+use crate::package_sources::{self, AptRun, Source, SourcePlan};
 
 /// The id this provider signs its records with.
 pub const PACKAGE_PROVIDER_ID: &str = "linux.packages";
@@ -70,6 +74,7 @@ pub(crate) struct Dpkg {
     pub(crate) apt_cache: Option<PathBuf>,
     pub(crate) apt_get: Option<PathBuf>,
     pub(crate) apt_mark: Option<PathBuf>,
+    pub(crate) apt_config: Option<PathBuf>,
 }
 
 /// The package provider: `ono.package/1` records from dpkg and apt.
@@ -85,6 +90,8 @@ pub(crate) struct Dpkg {
 #[derive(Debug)]
 pub struct PackageProvider {
     manager: Option<Dpkg>,
+    /// The last `apt-get update`, for the results of one pipeline that follow it (ADR-0565).
+    runs: Mutex<Option<AptRun>>,
 }
 
 impl Default for PackageProvider {
@@ -109,8 +116,153 @@ impl PackageProvider {
             apt_cache: find("apt-cache"),
             apt_get: find("apt-get"),
             apt_mark: find("apt-mark"),
+            apt_config: find("apt-config"),
         });
-        Self { manager }
+        Self {
+            manager,
+            runs: Mutex::new(None),
+        }
+    }
+
+    /// The `package-source` records: apt's sources, from `apt-get indextargets`.
+    fn snapshot_sources(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+        let dpkg = self.manager()?;
+        let plan = SourcePlan::of(query);
+        let limit = query.max();
+        Ok(ValueStream::spawn(
+            PipelineConfig::new(),
+            Boundedness::Bounded,
+            move |sink| async move {
+                let sources = match list_sources(&dpkg).await {
+                    Ok(sources) => sources,
+                    Err(error) => {
+                        let _ = sink.fail(error).await;
+                        return;
+                    }
+                };
+                let mut emitted = 0usize;
+                for source in sources {
+                    if limit.is_some_and(|limit| emitted >= limit) {
+                        return;
+                    }
+                    if plan.named.as_ref().is_some_and(|named| named != &source.id) {
+                        continue;
+                    }
+                    let record = match package_sources::source_record(
+                        &source,
+                        DPKG,
+                        PACKAGE_PROVIDER_ID,
+                        "apt-get update --print-uris",
+                    ) {
+                        Ok(record) => record,
+                        Err(error) => {
+                            let _ = sink.fail(error).await;
+                            return;
+                        }
+                    };
+                    if !plan.keeps(&record) {
+                        continue;
+                    }
+                    emitted += 1;
+                    if sink.send(record.into_value()).await.is_err() {
+                        return;
+                    }
+                }
+            },
+        ))
+    }
+
+    /// Resolves a `package-source` selector to the sources apt lists.
+    async fn resolve_source(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
+        let query = Query::target(package_sources::TARGET).with(selector.clone());
+        let collected = self.snapshot_sources(&query)?.collect().await;
+        if let Some(error) = collected.errors().first()
+            && collected.values().is_empty()
+        {
+            return Err(error.clone());
+        }
+        Ok(collected
+            .values()
+            .iter()
+            .filter_map(|value| match value {
+                Value::Record(record) => ObjectRef::of(record),
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// `refresh package-source`: `apt-get update`, and what it did to the named source's index.
+    ///
+    /// apt refreshes every source in one run. The results of one pipeline share that run
+    /// (ADR-0565): the first result makes it, the ones that follow within
+    /// [`package_sources::APT_RUN_WINDOW`] read their own index against what it was before.
+    async fn refresh_source(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let dpkg = self.manager()?;
+        let id = package_sources::source_id(action.target())?.to_owned();
+        if action.is_dry_run() {
+            return Ok(ActionOutcome::skipped(
+                action,
+                format!("would run `apt-get update` to refresh `{id}`"),
+            ));
+        }
+        // Spec §17.2: elevation is explicit. apt's lists are root's, and the outcome of asking
+        // apt-get as anyone else is known before it runs (ADR-0115 §5).
+        let uid = nix::unistd::geteuid();
+        if !uid.is_root() {
+            return Ok(ActionOutcome::failed(
+                action,
+                ErrorValue::new(
+                    ErrorCode::IoPermissionDenied,
+                    format!("to refresh `{id}` needs root, and this shell runs as uid {uid}"),
+                )
+                .with_help(
+                    "run it as root — `sudo ono -c '…'` — after `explain` has shown you the                      privilege it needs (spec §17.2)",
+                ),
+            ));
+        }
+        let Some(apt_get) = dpkg.apt_get.clone() else {
+            return Ok(ActionOutcome::failed(
+                action,
+                ErrorValue::new(
+                    ErrorCode::ProviderUnsupported,
+                    "no `apt-get` is on PATH, so the index cannot be refreshed here",
+                ),
+            ));
+        };
+        let sources = list_sources(&dpkg).await?;
+        let Some(source) = sources.iter().find(|source| source.id == id) else {
+            return Ok(ActionOutcome::failed(
+                action,
+                ErrorValue::new(
+                    ErrorCode::ResolveTargetNotFound,
+                    format!("apt reads no source `{id}`"),
+                )
+                .with_help("`get package-source` lists the sources apt reads, by id"),
+            ));
+        };
+        let mut runs = self.runs.lock().await;
+        let before = match runs.as_ref().and_then(|run| run.before(&id)) {
+            Some(before) => before,
+            None => {
+                let before_all: BTreeMap<String, Option<Timestamp>> = sources
+                    .iter()
+                    .map(|source| (source.id.clone(), source.refreshed()))
+                    .collect();
+                let answer = run(&apt_get, &["update".to_owned()]).await?;
+                if answer.status != Some(0) {
+                    return Ok(ActionOutcome::failed(
+                        action,
+                        manager_failure(&apt_get, &answer),
+                    ));
+                }
+                let before = before_all.get(&id).copied().flatten();
+                *runs = Some(AptRun::new(before_all));
+                before
+            }
+        };
+        // What changed is the index's to say, not apt's prose: its time before against after.
+        let changed = source.refreshed() != before;
+        Ok(ActionOutcome::succeeded(action, changed))
     }
 
     pub(crate) fn manager(&self) -> Result<Dpkg, ErrorValue> {
@@ -307,6 +459,64 @@ pub(crate) async fn run(program: &Path, arguments: &[String]) -> Result<Answer, 
         stdout: output.stdout,
         stderr: output.stderr,
     })
+}
+
+/// The sources apt reads: the index files `apt-get update --print-uris` would fetch, grouped
+/// by repository root, suite and component (apt-get(8)); their destination under
+/// `Dir::State::lists` as `apt-config shell` reports it; and the labels `apt-get indextargets`
+/// knows for the indexes that have been fetched already (ADR-0565).
+pub(crate) async fn list_sources(dpkg: &Dpkg) -> Result<Vec<Source>, ErrorValue> {
+    let Some(apt_get) = &dpkg.apt_get else {
+        return Err(ErrorValue::new(
+            ErrorCode::ProviderUnsupported,
+            "no `apt-get` is on PATH, so the sources apt reads cannot be listed",
+        )
+        .with_help("`get package` still lists what dpkg has installed"));
+    };
+    let arguments = vec!["update".to_owned(), "--print-uris".to_owned()];
+    let answer = run(apt_get, &arguments).await?;
+    if answer.status != Some(0) {
+        return Err(ErrorValue::new(
+            ErrorCode::ProviderUnavailable,
+            format!(
+                "`apt-get update --print-uris` failed: {}",
+                String::from_utf8_lossy(&answer.stderr).trim()
+            ),
+        ));
+    }
+    let indexes = package_sources::parse_print_uris(&answer.stdout)?;
+
+    let mut lists_dir = PathBuf::from(package_sources::APT_LISTS_DIR);
+    if let Some(apt_config) = &dpkg.apt_config {
+        let arguments = vec![
+            "shell".to_owned(),
+            "LISTS".to_owned(),
+            "Dir::State::lists/f".to_owned(),
+        ];
+        if let Ok(answer) = run(apt_config, &arguments).await
+            && answer.status == Some(0)
+            && let Some(directory) = package_sources::parse_apt_lists_dir(&answer.stdout)
+        {
+            lists_dir = directory;
+        }
+    }
+
+    // Labels are a courtesy: `indextargets` answers only for indexes that have been fetched,
+    // and a source is a source before its first update.
+    let arguments = vec![
+        "indextargets".to_owned(),
+        "--format".to_owned(),
+        package_sources::APT_INDEXTARGETS_FORMAT.to_owned(),
+    ];
+    let labelled = match run(apt_get, &arguments).await {
+        Ok(answer) if answer.status == Some(0) => {
+            package_sources::parse_indextargets(&answer.stdout).unwrap_or_default()
+        }
+        _ => Vec::new(),
+    };
+    Ok(package_sources::apt_sources(
+        &indexes, &lists_dir, &labelled,
+    ))
 }
 
 /// The installed set, or the named packages' entries, from `dpkg-query -W -f`.
@@ -645,11 +855,11 @@ impl Provider for PackageProvider {
     }
 
     fn targets(&self) -> &[&str] {
-        &["package"]
+        &["package", package_sources::TARGET]
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
-        vec![package_schema()]
+        vec![package_schema(), package_sources::package_source_schema()]
     }
 
     fn capabilities(&self) -> Vec<Capability> {
@@ -660,6 +870,9 @@ impl Provider for PackageProvider {
             // database is root's, and the provider says so before it runs anything
             // (ADR-0115 §5).
             Capability::new("package.manage", Risk::Mutate).needing_elevation(),
+            Capability::new("package-source.list", Risk::Read),
+            // apt's lists are root's too (ADR-0565).
+            Capability::new("package-source.refresh", Risk::Mutate).needing_elevation(),
         ]
     }
 
@@ -671,6 +884,9 @@ impl Provider for PackageProvider {
     }
 
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+        if query.target_name() == package_sources::TARGET {
+            return self.snapshot_sources(query);
+        }
         let dpkg = self.manager()?;
         let plan = Plan::of(query);
         let limit = query.max();
@@ -703,6 +919,9 @@ impl Provider for PackageProvider {
     }
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
+        if package_sources::is_source_selector(selector) {
+            return self.resolve_source(selector).await;
+        }
         let query = Query::target("package").with(selector.clone());
         let collected = self.snapshot(&query)?.collect().await;
         if let Some(error) = collected.errors().first()
@@ -743,6 +962,9 @@ impl Provider for PackageProvider {
         Ok(Vec::new())
     }
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        if action.target_name() == package_sources::TARGET {
+            return self.refresh_source(action).await;
+        }
         let dpkg = self.manager()?;
         let name = package_name(action.target())?.to_owned();
         let mutation = Mutation::of(action, &dpkg, &name)?;

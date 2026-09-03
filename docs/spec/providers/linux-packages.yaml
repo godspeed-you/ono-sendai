@@ -17,16 +17,17 @@ providers:
     doc: >-
       Packages, from dpkg and apt. A listing that is not in the declared machine format is a
       provider defect (E0403), never a source of invented records.
-    targets: [package]
+    targets: [package, package-source]
     # `ono.package/1` identifies by `provider + name`, and this is the value these records give
     # for `provider`: the database that answered, not this entry's id. A machine can carry both
     # databases, and an action on a record is performed by the provider the record names rather
     # than by whichever answers first (ADR-0559).
     identity_token: dpkg
-    capabilities: [package.list, package.search, package.manage]
-    schemas: [ono.package/1]
+    capabilities: [package.list, package.search, package.manage, package-source.list, package-source.refresh]
+    schemas: [ono.package/1, ono.package-source/1]
     conformance:
       package: enumerable
+      package-source: enumerable
 
   - id: linux.packages.rpm
     doc: >-
@@ -34,9 +35,10 @@ providers:
       yum or zypper for what the repositories carry and for changes. The records name `rpm` as
       their provider on both Red Hat and SUSE, because that is the one database both families
       keep.
-    targets: [package]
+    targets: [package, package-source]
     identity_token: rpm
-    capabilities: [package.list, package.search, package.manage]
-    schemas: [ono.package/1]
+    capabilities: [package.list, package.search, package.manage, package-source.list, package-source.refresh]
+    schemas: [ono.package/1, ono.package-source/1]
     conformance:
       package: enumerable
+      package-source: enumerable

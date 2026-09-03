@@ -208,6 +208,12 @@ impl ActionOutcome {
         self.status
     }
 
+    /// The one-line summary the outcome carries: why it was skipped, or what failed.
+    #[must_use]
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
+
     /// Whether anything actually changed. A successful action that changed nothing is a
     /// distinction scripts need: running `start service` twice should not report two changes.
     #[must_use]

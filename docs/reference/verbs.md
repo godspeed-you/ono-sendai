@@ -35,6 +35,7 @@ The controlled vocabulary of spec §7. The registry is deliberately small: a mod
 | `add` | Create a membership or association. | user, route, group, repo | mutation | yes |
 | `remove` | Delete a resource or a membership. | file, route, package | mutation | yes |
 | `set` | Modify properties or configuration. | env, service, file metadata | mutation | yes |
+| `refresh` | Bring a local copy of remote metadata up to date. | package-source | mutation | yes |
 | `move` | Relocate an object. | file, dir | mutation | yes |
 | `copy` | Duplicate an object. | file, dir | mutation | yes |
 | `rename` | Change an identity label or name. | file, link | mutation | yes |

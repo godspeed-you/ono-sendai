@@ -36,6 +36,7 @@ use ono_value::{ErrorValue, RecordValue, Schema, Value};
 use quick_xml::events::Event;
 use quick_xml::{Reader, XmlVersion};
 
+use crate::package_sources::{self, Source, SourcePlan};
 use crate::packages::{
     Listed, Mutation, Plan, manager_failure, on_path, package_name, package_record, package_schema,
     run,
@@ -71,6 +72,9 @@ enum Frontend {
 struct Rpm {
     rpm: PathBuf,
     frontend: Option<Frontend>,
+    /// Where the repository configuration and the metadata cache are read from: `/` on a real
+    /// machine, a scratch tree under test.
+    root: PathBuf,
 }
 
 impl Rpm {
@@ -118,6 +122,13 @@ impl RpmPackageProvider {
     /// A provider over the managers found on `path`, or none.
     #[must_use]
     pub fn with_path(path: Option<OsString>) -> Self {
+        Self::with_path_and_root(path, Path::new("/"))
+    }
+
+    /// A provider over the managers found on `path`, reading dnf's repository files and the
+    /// managers' metadata caches under `root` rather than `/`.
+    #[must_use]
+    pub fn with_path_and_root(path: Option<OsString>, root: &Path) -> Self {
         let find = |name: &str| on_path(path.as_ref(), name);
         let manager = find("rpm").map(|rpm| Rpm {
             rpm,
@@ -127,8 +138,155 @@ impl RpmPackageProvider {
                 .map(Frontend::Suse)
                 .or_else(|| find("dnf").map(Frontend::RedHat))
                 .or_else(|| find("yum").map(Frontend::RedHat)),
+            root: root.to_path_buf(),
         });
         Self { manager }
+    }
+
+    /// The `package-source` records: the repositories the front end reads.
+    fn snapshot_sources(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+        let rpm = self.manager()?;
+        let plan = SourcePlan::of(query);
+        let limit = query.max();
+        Ok(ValueStream::spawn(
+            PipelineConfig::new(),
+            Boundedness::Bounded,
+            move |sink| async move {
+                let (sources, origin) = match list_sources(&rpm).await {
+                    Ok(listed) => listed,
+                    Err(error) => {
+                        let _ = sink.fail(error).await;
+                        return;
+                    }
+                };
+                let mut emitted = 0usize;
+                for source in sources {
+                    if limit.is_some_and(|limit| emitted >= limit) {
+                        return;
+                    }
+                    if plan.named.as_ref().is_some_and(|named| named != &source.id) {
+                        continue;
+                    }
+                    let record =
+                        match package_sources::source_record(&source, RPM, RPM_PROVIDER_ID, origin)
+                        {
+                            Ok(record) => record,
+                            Err(error) => {
+                                let _ = sink.fail(error).await;
+                                return;
+                            }
+                        };
+                    if !plan.keeps(&record) {
+                        continue;
+                    }
+                    emitted += 1;
+                    if sink.send(record.into_value()).await.is_err() {
+                        return;
+                    }
+                }
+            },
+        ))
+    }
+
+    /// Resolves a `package-source` selector to the repositories the front end reads.
+    async fn resolve_source(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
+        let query = Query::target(package_sources::TARGET).with(selector.clone());
+        let collected = self.snapshot_sources(&query)?.collect().await;
+        if let Some(error) = collected.errors().first()
+            && collected.values().is_empty()
+        {
+            return Err(error.clone());
+        }
+        Ok(collected
+            .values()
+            .iter()
+            .filter_map(|value| match value {
+                Value::Record(record) => ObjectRef::of(record),
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// `refresh package-source`: one repository's metadata, through the front end that reads it.
+    ///
+    /// dnf and zypper can each refresh one repository, so no run is shared (ADR-0565). What
+    /// changed is read from the `repomd.xml` the front end keeps for it, before against after.
+    async fn refresh_source(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        let rpm = self.manager()?;
+        let id = package_sources::source_id(action.target())?.to_owned();
+        let frontend = rpm.frontend()?;
+        let (program, arguments, described) = match frontend {
+            Frontend::RedHat(program) => (
+                program.clone(),
+                vec![
+                    "-y".to_owned(),
+                    "makecache".to_owned(),
+                    "--refresh".to_owned(),
+                    "--disablerepo=*".to_owned(),
+                    format!("--enablerepo={id}"),
+                ],
+                format!("run `dnf makecache --refresh` for `{id}`"),
+            ),
+            Frontend::Suse(program) => (
+                program.clone(),
+                vec![
+                    "--non-interactive".to_owned(),
+                    "refresh".to_owned(),
+                    id.clone(),
+                ],
+                format!("run `zypper refresh {id}`"),
+            ),
+        };
+        if action.is_dry_run() {
+            return Ok(ActionOutcome::skipped(action, format!("would {described}")));
+        }
+        // Spec §17.2: elevation is explicit. The metadata cache is root's, and the outcome of
+        // asking dnf or zypper as anyone else is known before it runs.
+        let uid = nix::unistd::geteuid();
+        if !uid.is_root() {
+            return Ok(ActionOutcome::failed(
+                action,
+                ErrorValue::new(
+                    ErrorCode::IoPermissionDenied,
+                    format!("to refresh `{id}` needs root, and this shell runs as uid {uid}"),
+                )
+                .with_help(
+                    "run it as root — `sudo ono -c '…'` — after `explain` has shown you the                      privilege it needs (spec §17.2)",
+                ),
+            ));
+        }
+        let (sources, _) = list_sources(&rpm).await?;
+        let Some(source) = sources.into_iter().find(|source| source.id == id) else {
+            return Ok(ActionOutcome::failed(
+                action,
+                ErrorValue::new(
+                    ErrorCode::ResolveTargetNotFound,
+                    format!("the package manager reads no repository `{id}`"),
+                )
+                .with_help("`get package-source` lists the repositories it reads, by id"),
+            ));
+        };
+        let before = source.refreshed();
+        let answer = run(&program, &arguments).await?;
+        if answer.status != Some(0) {
+            return Ok(ActionOutcome::failed(
+                action,
+                manager_failure(&program, &answer),
+            ));
+        }
+        // The cache directory a first refresh creates is named after the repository, so it is
+        // looked for again afterwards; a cache the shell cannot find leaves the index's word
+        // for it, which is that it was written.
+        let after = match frontend {
+            Frontend::RedHat(_) => Source {
+                index_files: package_sources::dnf_index_files(&rpm.root, &id),
+                ..source
+            }
+            .refreshed(),
+            Frontend::Suse(_) => source.refreshed(),
+        };
+        let changed = after.is_none() || after != before;
+        Ok(ActionOutcome::succeeded(action, changed))
     }
 
     fn manager(&self) -> Result<Rpm, ErrorValue> {
@@ -334,6 +492,33 @@ fn parse_zypper_search(bytes: &[u8]) -> Result<Vec<String>, ErrorValue> {
         return Err(violation(tool, "the document has no `stream` element"));
     }
     Ok(names)
+}
+
+/// The repositories the front end reads, and where the answer came from.
+async fn list_sources(rpm: &Rpm) -> Result<(Vec<Source>, &'static str), ErrorValue> {
+    match rpm.frontend()? {
+        Frontend::RedHat(_) => Ok((
+            package_sources::read_repo_files(&rpm.root)?,
+            "/etc/yum.repos.d/*.repo",
+        )),
+        Frontend::Suse(program) => {
+            let arguments = vec!["--xmlout".to_owned(), "lr".to_owned()];
+            let answer = run(program, &arguments).await?;
+            if answer.status != Some(0) {
+                return Err(ErrorValue::new(
+                    ErrorCode::ProviderUnavailable,
+                    format!(
+                        "`zypper --xmlout lr` failed: {}",
+                        String::from_utf8_lossy(&answer.stderr).trim()
+                    ),
+                ));
+            }
+            Ok((
+                package_sources::parse_zypper_repos(&answer.stdout, &rpm.root)?,
+                "zypper --xmlout lr",
+            ))
+        }
+    }
 }
 
 /// The installed set, or one package's entry, from `rpm --queryformat`.
@@ -799,11 +984,11 @@ impl Provider for RpmPackageProvider {
     }
 
     fn targets(&self) -> &[&str] {
-        &["package"]
+        &["package", package_sources::TARGET]
     }
 
     fn schemas(&self) -> Vec<Arc<Schema>> {
-        vec![package_schema()]
+        vec![package_schema(), package_sources::package_source_schema()]
     }
 
     fn capabilities(&self) -> Vec<Capability> {
@@ -813,6 +998,9 @@ impl Provider for RpmPackageProvider {
             // `docs/spec/capabilities.yaml` gives `package.manage` elevation `required`: the rpm
             // database is root's, and the provider says so before it runs anything.
             Capability::new("package.manage", Risk::Mutate).needing_elevation(),
+            Capability::new("package-source.list", Risk::Read),
+            // The metadata cache is root's too (ADR-0565).
+            Capability::new("package-source.refresh", Risk::Mutate).needing_elevation(),
         ]
     }
 
@@ -824,6 +1012,9 @@ impl Provider for RpmPackageProvider {
     }
 
     fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+        if query.target_name() == package_sources::TARGET {
+            return self.snapshot_sources(query);
+        }
         let rpm = self.manager()?;
         let plan = Plan::of(query);
         let limit = query.max();
@@ -856,6 +1047,9 @@ impl Provider for RpmPackageProvider {
     }
 
     async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
+        if package_sources::is_source_selector(selector) {
+            return self.resolve_source(selector).await;
+        }
         let query = Query::target("package").with(selector.clone());
         let collected = self.snapshot(&query)?.collect().await;
         if let Some(error) = collected.errors().first()
@@ -897,6 +1091,9 @@ impl Provider for RpmPackageProvider {
     }
 
     async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+        if action.target_name() == package_sources::TARGET {
+            return self.refresh_source(action).await;
+        }
         let rpm = self.manager()?;
         let name = package_name(action.target())?.to_owned();
         // What is installed decides which direction a `--version` points, and it is the same
@@ -1123,6 +1320,7 @@ mod tests {
     #[test]
     fn should_downgrade_when_the_named_version_is_older_than_the_installed_one() {
         let rpm = Rpm {
+            root: std::path::PathBuf::from("/"),
             rpm: PathBuf::from("/usr/bin/rpm"),
             frontend: Some(Frontend::RedHat(PathBuf::from("/usr/bin/dnf"))),
         };
@@ -1148,6 +1346,7 @@ mod tests {
     #[test]
     fn should_install_when_the_named_version_is_newer_than_the_installed_one() {
         let rpm = Rpm {
+            root: std::path::PathBuf::from("/"),
             rpm: PathBuf::from("/usr/bin/rpm"),
             frontend: Some(Frontend::RedHat(PathBuf::from("/usr/bin/dnf"))),
         };
@@ -1174,6 +1373,7 @@ mod tests {
         // zypper is given `--oldpackage` and does both directions in one command, so nothing
         // about the SUSE path changes.
         let zypper = Rpm {
+            root: std::path::PathBuf::from("/"),
             rpm: PathBuf::from("/usr/bin/rpm"),
             frontend: Some(Frontend::Suse(PathBuf::from("/usr/bin/zypper"))),
         };

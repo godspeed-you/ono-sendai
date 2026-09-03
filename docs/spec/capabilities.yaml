@@ -272,6 +272,14 @@ provider_capabilities:
     summary: Install, remove or transition the version of a package.
     risk: mutate
     elevation: required
+  - id: package-source.list
+    summary: Enumerate the repositories the package manager reads its index from.
+    risk: read
+    elevation: none
+  - id: package-source.refresh
+    summary: Bring the local package index up to date from a repository.
+    risk: mutate
+    elevation: required
 
   # container
   - id: container.list

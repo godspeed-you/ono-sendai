@@ -285,6 +285,24 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#17 closed (2026-09-03).** `apt update` has a spelling: `refresh package-source <id>`, or
+  `get package-source | refresh package-source` over all of them. ADR-0562's sequence, delivered,
+  with its first point corrected by ADR-0565: the target is `package-source`, not `repo`, because
+  `targets.yaml` already gives `repo` to §8.2's source repository. `ono.package-source/1` is
+  `provider + id` with `name`, `url`, `enabled` and `refreshed`; the verb `refresh` is in
+  `verbs.yaml` under the §40.1 review; `package-source.list` and `package-source.refresh` are
+  capabilities both package providers advertise. apt is listed through `apt-get update --print-uris`
+  (`indextargets` lists only fetched indexes and is empty on a fresh machine; it supplies labels)
+  and refreshed by one shared `apt-get update` per pipeline (the run is reused for five
+  seconds after it finishes); dnf's repositories are read from `/etc/yum.repos.d/*.repo` because
+  `dnf repolist` is a table for people; zypper's through `zypper --xmlout lr`. `changed` is the
+  index file's modification time before against after, never the command's prose. Proven by
+  seven unit tests over the three parsers, two rpm-provider tests under a scratch root
+  (`crates/ono-provider-linux/tests/package_sources.rs`), eight tests through the binary with
+  fake managers on PATH (`crates/ono-cli/tests/package_sources.rs`) and acceptance case 210 over
+  the image's real apt. What the issue did not know: apt cannot refresh one source, and a
+  mutation that gives one result per source would have fetched the same indexes once per source;
+  the shared run is the honest compromise, and the ADR says how short its window is and why.
 - **#122 closed (2026-09-03).** `Ctrl-Up` and `Ctrl-Down` walk the history without an anchor
   (ADR-0564). The bare arrows were already readline's `history-search-backward` — anchored on
   the text before the cursor — and nothing was bound to the modified arrows, so the walk that

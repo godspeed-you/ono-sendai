@@ -74,6 +74,10 @@ const BOUND_ELSEWHERE: &[(&str, &str)] = &[
         "a provider advertising `package.manage` (ADR-0068 §3)",
     ),
     (
+        "ono.package-source.refresh",
+        "a provider advertising `package-source.refresh` (ADR-0068 §3, ADR-0565)",
+    ),
+    (
         "ono.process.set",
         "a provider advertising `process.set` (ADR-0068 §3, ADR-0092)",
     ),

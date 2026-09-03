@@ -54,6 +54,7 @@ mod file;
 mod file_mutations;
 mod file_watch;
 mod identity;
+mod package_sources;
 mod packages;
 mod packages_rpm;
 mod process;
@@ -95,6 +96,7 @@ pub use device::DeviceProvider;
 pub use env::{EnvBinding, EnvProvider, EnvSource};
 pub use file::FileProvider;
 pub use identity::IdentityProvider;
+pub use package_sources::package_source_schema;
 pub use packages::{PACKAGE_PROVIDER_ID, PackageProvider, package_schema};
 pub use packages_rpm::{RPM_PROVIDER_ID, RpmPackageProvider};
 pub use process::{

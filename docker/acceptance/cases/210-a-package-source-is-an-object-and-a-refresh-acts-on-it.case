@@ -1,0 +1,48 @@
+# Issue #17, ADR-0562, ADR-0565: `apt update` had no spelling. The repository is now an object,
+# `ono.package-source/1`, read from apt's machine interface (`apt-get update --print-uris`, spec
+# §31.58, which answers before any index was ever fetched — the image has fetched none), and
+# `refresh package-source` acts on it. The image has no network and the case
+# runs unprivileged, so what this proves is that the sources are listed from the real apt, that
+# a dry run names the command, that an unprivileged refresh is one structured refusal rather than
+# a hang (spec §16.5, §17.2, ADR-0006), and that `explain` shows the privilege first.
+case: a package source is an object, and a refresh acts on it
+timeout: 120
+run: |
+  ono -c 'get package-source | to json'; echo "list-status=$?"
+  ono -c 'get package-source | to json' | grep -q '"provider":"dpkg"' && echo "names-dpkg"
+  ono -c 'get package-source | to json' | grep -q '"id":"deb.debian.org/debian/bookworm/main"' && echo "lists-debian"
+  ono -c 'get package-source | to json' | grep -q '"refreshed":null' && echo "nothing-fetched-is-null"
+  n=$(ono -c 'get package-source | count | to json' | tr -d '[]')
+  if [ "$n" -ge 1 ] 2>/dev/null; then echo "listed-some"; fi
+
+  id=$(ono -c 'get package-source | select id | take 1 | to json' | sed 's/.*"id":"\([^"]*\)".*/\1/')
+  echo "first-id=$id"
+  ono -c "get package-source $id | count | to json" | grep -q '1' && echo "resolves-by-id"
+
+  # A dry run says what it would run and changes nothing.
+  ono -c "refresh package-source $id --dry-run | to json" | grep -q '"status":"skipped"' && echo "dry-run-skipped"
+  ono -c "refresh package-source $id --dry-run | to json" | grep -q 'apt-get update' && echo "dry-run-names-the-command"
+
+  # An unprivileged refresh: one failed row with E0302, and the exit status is 1.
+  ono -c "refresh package-source $id | to json" | grep -q 'Ono-Sendai-E0302' && echo "refresh-denied-structured"
+  ono -c "refresh package-source $id | to json" > /dev/null; echo "refresh-status=$?"
+
+  # Nothing named, nothing piped: a mutation acts on what it names (§11.5).
+  ono -c 'refresh package-source | to json' > /dev/null 2>&1; echo "bare-status=$?"
+
+  ono -c "explain refresh package-source $id" | grep -q 'elevated' && echo "explain-shows-elevated"
+  ono -c "explain refresh package-source $id" | grep -q 'linux.packages' && echo "explain-names-provider"
+exit: 0
+stdout-contains: list-status=0
+stdout-contains: names-dpkg
+stdout-contains: lists-debian
+stdout-contains: nothing-fetched-is-null
+stdout-contains: listed-some
+stdout-contains: resolves-by-id
+stdout-contains: dry-run-skipped
+stdout-contains: dry-run-names-the-command
+stdout-contains: refresh-denied-structured
+stdout-contains: refresh-status=1
+stdout-contains: bare-status=1
+stdout-contains: explain-shows-elevated
+stdout-contains: explain-names-provider

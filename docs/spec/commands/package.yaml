@@ -104,3 +104,43 @@ commands:
     phase: C
     examples:
       - set package nginx --version 1.24.0
+
+  # The repository as an object, and the refresh that acts on it (ADR-0562, ADR-0565). Spec §9.1
+  # names no verb for the index; a mutation acts on the object it names (§11.5), and the object
+  # of a refresh is the repository, not a package.
+  - id: ono.package-source.get
+    verb: get
+    target: package-source
+    summary: Enumerate the repositories the package manager reads its index from.
+    stability: stable
+    argument_mode: words
+    input: "null"
+    output: stream<ono.package-source/1>
+    provider_capability: package-source.list
+    selectors:
+      - {name: id, type: string, doc: "Resolve one repository by its id."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: C
+    examples:
+      - get package-source
+
+  - id: ono.package-source.refresh
+    verb: refresh
+    target: package-source
+    summary: Bring the local package index up to date from a repository.
+    stability: stable
+    argument_mode: words
+    input: "null | stream<ono.package-source/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: package-source.refresh
+    selectors:
+      - {name: id, type: string, doc: "The repository to refresh."}
+    options:
+      - {name: dry-run, type: bool, doc: "Report what would be run without running it. The provider answers `skipped` with the command it would have run (ADR-0088)."}
+    privilege: elevated
+    streaming: true
+    phase: C
+    examples:
+      - refresh package-source updates
