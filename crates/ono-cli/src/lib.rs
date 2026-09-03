@@ -19,6 +19,7 @@ pub mod invocation;
 pub mod kuang_host;
 mod kuang_services;
 pub mod kuang_trust;
+pub mod kuang_views;
 pub mod limits;
 pub mod live;
 pub mod meta;

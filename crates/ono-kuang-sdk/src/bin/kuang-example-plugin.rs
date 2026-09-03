@@ -20,7 +20,7 @@ use std::io::Write;
 use ono_kuang_protocol::{
     CommandContribution, ContributionSet, EmitParams, Envelope, FrameLimits, Hello, InitResult,
     InvokeParams, InvokeResult, InvokeStatus, PACKAGE_FORMAT, SchemaContribution,
-    SchemaFieldContribution, TargetContribution, method,
+    SchemaFieldContribution, TargetContribution, ViewContribution, method,
 };
 use ono_kuang_sdk::{Ctx, Outcome, Plugin};
 use ono_value::{Provenance, RecordValue, Value};
@@ -229,6 +229,12 @@ fn honest() -> Plugin {
             "Listen on a brokered port, answer the first connection, and report what it said.",
             "stream<string>",
             &["network.listen"],
+        ))
+        .contribute_command(command(
+            "browse",
+            "Browse the items in the package's view; the items as a stream when redirected.",
+            "stream<string>",
+            &["ui.view"],
         ))
         .contribute_command(command(
             "models",
@@ -652,7 +658,7 @@ fn honest() -> Plugin {
             }
             match ctx.host_call(
                 method::STREAMS_NEXT,
-                json!({"handle": handle, "max": 1, "deadline": 5}),
+                json!({"handle": handle, "max": 1, "deadline": 2000}),
             ) {
                 Ok(answer) => {
                     for value in answer
@@ -696,7 +702,7 @@ fn honest() -> Plugin {
             // The first connection: read one chunk, answer it, and close both.
             let accepted = match ctx.host_call(
                 method::STREAMS_NEXT,
-                json!({"handle": listener, "max": 1, "deadline": 10}),
+                json!({"handle": listener, "max": 1, "deadline": 2000}),
             ) {
                 Ok(answer) => answer
                     .get("values")
@@ -713,7 +719,7 @@ fn honest() -> Plugin {
             };
             if let Ok(answer) = ctx.host_call(
                 method::STREAMS_NEXT,
-                json!({"handle": connection, "max": 1, "deadline": 5}),
+                json!({"handle": connection, "max": 1, "deadline": 2000}),
             ) {
                 for value in answer
                     .get("values")
@@ -740,6 +746,71 @@ fn honest() -> Plugin {
             }
             let _ = ctx.host_call(method::NETWORK_CLOSE, json!({"connection": connection}));
             let _ = ctx.host_call(method::NETWORK_CLOSE, json!({"connection": listener}));
+            Outcome::Completed
+        })
+        .contribute_view(ViewContribution {
+            id: format!("{PACKAGE}.view.items"),
+            accepts: "stream<string>".to_owned(),
+            mode: "interactive".to_owned(),
+            keys: Some(
+                json!({"up": "move-up", "down": "move-down", "enter": "inspect", "q": "close"})
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            fallback: "stream<string>".to_owned(),
+            summary: "The items as a list with a cursor; enter inspects one, q closes.".to_owned(),
+        })
+        .command(&format!("{PACKAGE}.command.browse"), |ctx| {
+            // A view with the full lens (ADR-0572): the package submits trees and keeps the
+            // selection; the host draws, forwards keys, and owns the exits.
+            let count = int_argument(ctx, "count", 3).clamp(1, 1000);
+            let broken = int_argument(ctx, "broken", 0) != 0;
+            let items: Vec<String> = (1..=count).map(|at| format!("item {at}")).collect();
+            let opened = match ctx.open_view(&format!("{PACKAGE}.view.items"), None) {
+                Ok(opened) => opened,
+                Err(error) => return Outcome::Failed(error),
+            };
+            if !opened.mounted {
+                // Redirected output: the declared fallback, deterministic (spec §31.28).
+                for item in &items {
+                    let _ = ctx.emit(&Value::String(item.as_str().into()));
+                }
+                return Outcome::Completed;
+            }
+            let mut selected = 0usize;
+            let mut inspecting = false;
+            let mut size = opened.size;
+            loop {
+                let tree = if broken {
+                    json!({"component": "Marquee", "text": "not a component"})
+                } else {
+                    items_tree(&items, selected, inspecting, size)
+                };
+                if let Err(error) = ctx.submit_view(opened.handle, tree) {
+                    return Outcome::Failed(error);
+                }
+                let notice = match ctx.next_view_event() {
+                    Ok(notice) => notice,
+                    Err(error) => return Outcome::Failed(error),
+                };
+                match notice.kind.as_str() {
+                    "key" => match notice.key.as_deref() {
+                        Some("down" | "j") => selected = (selected + 1).min(items.len() - 1),
+                        Some("up" | "k") => selected = selected.saturating_sub(1),
+                        Some("enter") => inspecting = !inspecting,
+                        Some("q") => break,
+                        _ => {}
+                    },
+                    "resize" => size = notice.size,
+                    "cancel" | "close" | "unmount" => break,
+                    _ => {}
+                }
+            }
+            let _ = ctx.close_view(opened.handle);
+            let _ = ctx.emit(&Value::String(
+                format!("selected: {}", items[selected]).into(),
+            ));
             Outcome::Completed
         })
         .command(&format!("{PACKAGE}.command.models"), |ctx| {
@@ -964,6 +1035,36 @@ fn emit_parts(ctx: &mut Ctx<'_>, answer: &serde_json::Value) {
     }
 }
 
+/// The items as a table with a cursor, a status line, and an inspection pane when asked.
+fn items_tree(
+    items: &[String],
+    selected: usize,
+    inspecting: bool,
+    size: Option<ono_kuang_protocol::ViewSize>,
+) -> serde_json::Value {
+    let mut panes = vec![json!({
+        "component": "Table",
+        "columns": ["item"],
+        "rows": items.iter().map(|item| json!([item])).collect::<Vec<_>>(),
+        "selected": selected,
+    })];
+    if inspecting {
+        panes.push(json!({
+            "component": "KeyValue",
+            "title": "inspect",
+            "pairs": [["item", items[selected]], ["position", format!("{}/{}", selected + 1, items.len())]],
+        }));
+    }
+    let geometry = size.map_or_else(String::new, |size| {
+        format!(" · {}x{}", size.rows, size.columns)
+    });
+    panes.push(json!({
+        "component": "StatusLine",
+        "text": format!("{}/{}{geometry} · up/down move · enter inspect · q close", selected + 1, items.len()),
+    }));
+    json!({"component": "Split", "direction": "vertical", "panes": panes})
+}
+
 fn misbehave(mode: Mode) {
     let limits = FrameLimits::default();
     let stdin = std::io::stdin();
@@ -984,6 +1085,7 @@ fn misbehave(mode: Mode) {
             commands: vec![command("flood", "Emit beyond credit.", "stream<int>", &[])],
             targets: Vec::new(),
             schemas: Vec::new(),
+            views: Vec::new(),
         },
     });
     if ono_kuang_protocol::write_frame(&mut writer, &hello, limits).is_err() {

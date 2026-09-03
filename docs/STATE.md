@@ -275,9 +275,7 @@ identity-constrained and fails closed — and the first `v*` tag is the run that
 Pushing that tag is the user's action, as promoting `implementation` to `main` is (AGENTS.md
 §12.1). Their two boxes in `docs/ACCEPTANCE.md` say so in their own text.
 
-One class-c issue remains and is a tranche of its own, which is what the label means: **#3**
-(the wasm-component tier and nine of §31.12's sixteen host API domains — `models` is delivered
-by #5, below).
+No class-c issue remains: **#3** closed with its sixth increment, below.
 
 ## What the tranche delivered
 
@@ -285,6 +283,22 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#3, sixth increment and close (2026-09-03): `views`, the full lens.** ADR-0572, decided
+  with the user ("views with the full lens"). A package contributes a view beside its commands
+  and drives it by events: `views.open` mounts it when a terminal is there and answers
+  `mounted: false` when output is redirected, so the package emits its declared fallback;
+  `views.submit` takes a tree of the thirteen components, validated and sanitised by the host,
+  and an invalid one is `view.protocol_error` with the terminal restored; `view.mount`,
+  `view.event` and `view.unmount` go to the package as requests it answers and the SDK queues
+  for `next_view_event`. `Esc` and `Ctrl-C` are the host's and arrive as `cancel`; a view the
+  package does not close within the call deadline, or leaves open when its invocation ends, the
+  host closes. The shell's view host runs the terminal on a thread of its own — raw mode and the
+  alternate screen, a layout for each component, keys named as `view.event` names them — and the
+  test host's records every tree and injects events, so the conformance suite proves the
+  lifecycle without a terminal. Proven by four conformance cases, the renderer's unit tests, a
+  pseudo-terminal test through the binary, and acceptance case 217. With it, every call
+  `protocol.v1.yaml` declares is served or answered with ADR-0571's honest refusal, and the
+  manifest no longer refuses a view contribution. Closed with `gh issue close 3`.
 - **#3, fifth increment (2026-09-03): `network.listen`, and `network.request` decided.**
   ADR-0571, decided with the user: a request is the package's own protocol over the brokered
   connection, so the host carries no HTTP client and answers `network.request` with
@@ -1985,6 +1999,16 @@ the provider samples — and no assertion changed.
 
 ## Found, not yet filed
 
+- **A failing streamed adapter child reports exit 0 under load (2026-09-03).** Gate run after
+  the #3 views increment: `adapters.rs::should_report_a_failing_streamed_child_after_its_records`
+  — a `journalctl` shim of `echo '<entry>'; exit 3` — came back with status **0** and the
+  assertion `run.status().code() != 0` failed; the record itself had arrived. In isolation the
+  test passes 3/3 in 40 ms; it failed once in one gate run with the whole workspace's tests
+  beside it. Spec v0.3 §1.20 says the child's status still stands after its records, so if
+  this is the product, a failing adapter's status is lost when the shell is under load, which
+  is the class the board's 2026-09-03 entry on load-sensitive tests warns about. Not
+  investigated here: it is outside #3's scope and the user triages. Reproduce with
+  `scripts/gate.sh` or `cargo test -p ono-cli` under CPU load.
 - **`host_domains.rs::should_broker_a_tcp_connection_for_a_granted_package` fails once in
   eight in the gate and never alone.** In the gate run of 2026-09-03 the plugin loaded as
   `degraded` and `echo:connect` produced no `pong`; five runs of the test on its own pass in

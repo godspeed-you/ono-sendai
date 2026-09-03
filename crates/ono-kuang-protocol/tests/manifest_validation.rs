@@ -281,25 +281,18 @@ fn should_accept_an_annotation_key_inside_the_packages_namespace() {
 }
 
 #[test]
-fn should_refuse_a_view_contribution_this_host_cannot_register() {
-    // §31.27 views need `views.open`/`views.submit`/`views.close`, and this host implements no
-    // view protocol at all. Accepting the declaration, listing it in `inspect plugin` and then
-    // registering nothing tells the operator a view exists when none does — §2.17's rule, and
-    // the reason `package.incompatible` names a host feature the system does not provide.
+fn should_accept_a_view_contribution_now_that_the_host_serves_views() {
+    // §31.27 views are served since ADR-0572: the declaration registers, the view mounts at a
+    // terminal, and falls back when output is redirected. Refusing it would tell the operator a
+    // capability is missing that the host has.
     let manifest = valid_manifest().replace(
         "roles: [provider]",
         "contributions:\n  views: [views/flow.yaml]\nroles: [provider]",
     );
     let parsed = Manifest::parse(&manifest).expect("the shape is valid");
-    let error = parsed
+    parsed
         .check_host(HOST_API, "linux-amd64")
-        .expect_err("a view contribution has nowhere to be registered");
-    assert_eq!(error.code(), KuangErrorCode::PackageIncompatible);
-    assert!(
-        error.message().contains("view"),
-        "the refusal names what is missing, got {}",
-        error.message()
-    );
+        .expect("a view contribution has a host to register in");
 }
 
 #[test]

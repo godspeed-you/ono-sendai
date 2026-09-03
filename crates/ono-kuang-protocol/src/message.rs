@@ -32,6 +32,12 @@ pub mod method {
     pub const STREAM_CANCEL: &str = "stream.cancel";
     /// Host → plugin: health check (spec §31.35).
     pub const HEALTH_PROBE: &str = "health.probe";
+    /// Host → plugin: a view was mounted at a size (spec §31.28).
+    pub const VIEW_MOUNT: &str = "view.mount";
+    /// Host → plugin: a key, a resize, focus, blur or cancellation for a view (spec §31.28).
+    pub const VIEW_EVENT: &str = "view.event";
+    /// Host → plugin: a view was torn down (spec §31.28).
+    pub const VIEW_UNMOUNT: &str = "view.unmount";
 
     /// Plugin → host: emit values against granted credit.
     pub const STREAMS_EMIT: &str = "streams.emit";
@@ -87,6 +93,12 @@ pub mod method {
     pub const HISTORY_APPEND: &str = "history.append";
     /// Plugin → host: a signal to a process, within the granted list (spec §31.12).
     pub const PROCESS_SIGNAL: &str = "process.signal";
+    /// Plugin → host: open a contributed view (spec §31.27).
+    pub const VIEWS_OPEN: &str = "views.open";
+    /// Plugin → host: submit a view tree (spec §31.27).
+    pub const VIEWS_SUBMIT: &str = "views.submit";
+    /// Plugin → host: close a view (spec §31.28).
+    pub const VIEWS_CLOSE: &str = "views.close";
     /// Plugin → host: run a program within the granted `programs` scope (spec §31.12).
     pub const PROCESS_EXEC: &str = "process.exec";
     /// Plugin → host: a brokered outbound connection (spec §31.21).
@@ -158,6 +170,9 @@ pub struct Hello {
 /// The contribution documents a plugin surfaces at handshake.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ContributionSet {
+    /// Views and lenses (spec §31.27).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<ViewContribution>,
     /// Contributed commands (spec §31.22).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<CommandContribution>,
@@ -744,4 +759,124 @@ pub struct SchemaListParams {
     /// Restrict to ids under a namespace. Absent lists every registered schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
+}
+
+/// A contributed view (spec §31.27; `contributions.v1.yaml` → `view.declaration`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewContribution {
+    /// `<package.id>.view.<kebab-name>`.
+    pub id: String,
+    /// The input type, e.g. `stream<packet-eye.flow/2>`.
+    pub accepts: String,
+    /// `interactive` or `static`: whether the view takes key input.
+    pub mode: String,
+    /// Key bindings to view actions, e.g. `{enter: inspect-selected, q: close}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keys: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The deterministic output when stdout is redirected (spec §31.28).
+    pub fallback: String,
+    /// One line, for `help`.
+    pub summary: String,
+}
+
+/// The components a view tree may be built of (spec §31.27), complete.
+pub const VIEW_COMPONENTS: [&str; 13] = [
+    "Text",
+    "Table",
+    "Tree",
+    "Graph",
+    "KeyValue",
+    "LogStream",
+    "Sparkline",
+    "Gauge",
+    "Tabs",
+    "Split",
+    "CommandPalette",
+    "ObjectPicker",
+    "StatusLine",
+];
+
+/// Parameters of [`method::VIEWS_OPEN`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewOpenParams {
+    /// A contributed view id.
+    pub view: String,
+    /// The stream the view renders, when it renders one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<u64>,
+}
+
+/// The answer to [`method::VIEWS_OPEN`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewOpenResult {
+    /// The view's handle.
+    pub handle: u64,
+    /// Whether a terminal took it. False when output is redirected: the package emits its
+    /// declared fallback instead (spec §31.28).
+    pub mounted: bool,
+    /// The terminal's size when mounted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<ViewSize>,
+}
+
+/// A terminal size, as `view.mount` and a `resize` event carry it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewSize {
+    /// Rows.
+    pub rows: u16,
+    /// Columns.
+    pub columns: u16,
+}
+
+/// Parameters of [`method::VIEWS_SUBMIT`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewSubmitParams {
+    /// The view to update.
+    pub view: u64,
+    /// A view tree of the components in `contributions.v1.yaml`.
+    pub tree: serde_json::Value,
+}
+
+/// Parameters of [`method::VIEWS_CLOSE`], [`method::VIEW_UNMOUNT`] and the like.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewHandleParams {
+    /// The view.
+    pub view: u64,
+}
+
+/// Parameters of [`method::VIEW_MOUNT`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewMountParams {
+    /// The view being mounted.
+    pub view: u64,
+    /// The terminal's size.
+    pub size: ViewSize,
+    /// The stream to render, when the view was opened over one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<u64>,
+}
+
+/// Parameters of [`method::VIEW_EVENT`]: `{kind, key?, size?}` with `kind` one of `key`,
+/// `resize`, `focus`, `blur`, `cancel`, `close`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewEventParams {
+    /// The view the event is for.
+    pub view: u64,
+    /// The event.
+    pub event: ViewEvent,
+}
+
+/// One event a view receives (spec §31.28).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewEvent {
+    /// `key`, `resize`, `focus`, `blur`, `cancel` or `close`.
+    pub kind: String,
+    /// The key, for `key`: a character, or `enter`, `esc`, `tab`, `backtab`, `backspace`,
+    /// `delete`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, or
+    /// `ctrl-<char>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// The new size, for `resize`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<ViewSize>,
 }

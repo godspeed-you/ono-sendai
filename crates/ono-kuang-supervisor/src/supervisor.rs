@@ -104,6 +104,9 @@ pub struct LoadConfig {
     /// What `objects.*`, `relations.*`, `history.*`, `process.signal` and `secrets.*` reach
     /// (ADR-0568). The default serves nothing and says so.
     pub host: Arc<dyn crate::host::HostServices>,
+    /// What takes a view (spec §31.27, ADR-0572): the shell's terminal, or a recorder under
+    /// test. The default takes none, so every view falls back.
+    pub views: Arc<dyn crate::view::ViewHost>,
 }
 
 impl std::fmt::Debug for LoadConfig {
@@ -140,6 +143,7 @@ impl LoadConfig {
             models: Arc::new(ono_model_broker::NoModels),
             context: Arc::new(crate::context::FixedContext::test_host()),
             host: Arc::new(crate::host::NoHost),
+            views: Arc::new(crate::view::NoViews),
         }
     }
 }
@@ -205,6 +209,7 @@ impl Supervisor {
             models,
             context,
             host,
+            views,
         } = config;
         manifest.check_host(HOST_API, &platform)?;
         // Negotiation before code: a denied required capability means nothing is spawned.
@@ -322,6 +327,24 @@ impl Supervisor {
                 provider: provider.clone(),
             });
         }
+        for view in &hello.contributions.views {
+            ono_kuang_protocol::validate_contributed_id(&package_id, "view", &view.id)?;
+            if !view.id.starts_with(&format!("{package_id}.view.")) {
+                return Err(KuangError::new(
+                    KuangErrorCode::PackageInvalid,
+                    format!(
+                        "view id `{}` is not `<package.id>.view.<kebab-name>` (spec §31.27)",
+                        view.id
+                    ),
+                ));
+            }
+            if !matches!(view.mode.as_str(), "interactive" | "static") {
+                return Err(KuangError::new(
+                    KuangErrorCode::PackageInvalid,
+                    format!("view `{}` declares the mode `{}`", view.id, view.mode),
+                ));
+            }
+        }
         for target in &hello.contributions.targets {
             if !target.schema.starts_with(&format!("{package_id}."))
                 && !target.schema.starts_with("ono.")
@@ -367,6 +390,9 @@ impl Supervisor {
             models,
             context,
             host,
+            views,
+            open_views: HashMap::new(),
+            contributed_views: hello.contributions.views.clone(),
             secrets: HashMap::new(),
             inbound: HashMap::new(),
             disclosed_remote: false,
@@ -389,6 +415,7 @@ impl Supervisor {
         };
         tokio::spawn(actor.run());
         Ok(LoadedPlugin {
+            views: hello.contributions.views.clone(),
             package_id,
             shared,
             sandbox,
@@ -742,6 +769,7 @@ pub struct LoadedPlugin {
     disabled_features: Vec<String>,
     commands: Vec<RegisteredCommand>,
     targets: Vec<RegisteredTarget>,
+    views: Vec<ono_kuang_protocol::ViewContribution>,
     audit: AuditTrail,
     to_actor: mpsc::Sender<ActorMsg>,
 }
@@ -751,6 +779,12 @@ impl LoadedPlugin {
     #[must_use]
     pub fn package_id(&self) -> &str {
         &self.package_id
+    }
+
+    /// The views the package contributed (spec §31.27).
+    #[must_use]
+    pub fn views(&self) -> &[ono_kuang_protocol::ViewContribution] {
+        &self.views
     }
 
     /// What the instance was started inside (spec §31.10).
@@ -1042,6 +1076,15 @@ enum ActorMsg {
         policy: Policy,
         respond: oneshot::Sender<()>,
     },
+    /// An event the terminal produced for a view, to be forwarded to the package.
+    ViewEvent {
+        view: u64,
+        event: ono_kuang_protocol::ViewEvent,
+    },
+    /// A cancelled view the package did not close in time: the host closes it (§31.27).
+    ForceCloseView {
+        view: u64,
+    },
 }
 
 enum Pending {
@@ -1060,6 +1103,14 @@ struct OutStream {
     credit: u32,
     cancelled: bool,
     expected: Expected,
+}
+
+/// A view the instance has open (ADR-0572).
+struct OpenView {
+    #[allow(dead_code, reason = "named for the trail and diagnostics that follow")]
+    id: String,
+    mounted: Option<Box<dyn crate::view::MountedView>>,
+    forwarder: tokio::task::JoinHandle<()>,
 }
 
 /// A stream the host produced and the plugin pulls with `streams.next` (ADR-0567): what has
@@ -1171,6 +1222,12 @@ struct Actor {
     context: Arc<dyn crate::context::ContextSource>,
     /// What the object, relation, history, process and secret domains reach (ADR-0568).
     host: Arc<dyn crate::host::HostServices>,
+    /// What takes a view (ADR-0572).
+    views: Arc<dyn crate::view::ViewHost>,
+    /// The views this instance has open, by handle.
+    open_views: HashMap<u64, OpenView>,
+    /// The views the package contributed in its hello.
+    contributed_views: Vec<ono_kuang_protocol::ViewContribution>,
     /// The secret handles this instance holds, by handle: the name, never the material.
     secrets: HashMap<u64, String>,
     /// The streams the host produces and the plugin pulls with `streams.next`, by handle
@@ -1545,6 +1602,30 @@ impl Actor {
                 let _ = respond.send(());
                 LoopStep::Continue
             }
+            ActorMsg::ViewEvent { view, event } => {
+                if self.open_views.contains_key(&view) {
+                    if event.kind == "cancel" {
+                        // The package has the call deadline to close it; then the host does.
+                        let deadline = Duration::from_millis(self.contract.limits.call_deadline_ms);
+                        let sender = self.msg_sender.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(deadline).await;
+                            let _ = sender.send(ActorMsg::ForceCloseView { view }).await;
+                        });
+                    }
+                    let params =
+                        serde_json::to_value(ono_kuang_protocol::ViewEventParams { view, event })
+                            .unwrap_or(Json::Null);
+                    self.notify_plugin(method::VIEW_EVENT, params).await;
+                }
+                LoopStep::Continue
+            }
+            ActorMsg::ForceCloseView { view } => {
+                if self.open_views.contains_key(&view) {
+                    self.close_view(view, true).await;
+                }
+                LoopStep::Continue
+            }
             ActorMsg::Demand { handle, credit } => {
                 if let Some(stream) = self.streams.get_mut(&handle)
                     && !stream.cancelled
@@ -1859,6 +1940,9 @@ impl Actor {
                         }
                         self.invocations.remove(&invocation);
                         self.streams.remove(&output);
+                        // A view outlives no invocation (spec §31.28): the terminal comes back
+                        // however the command ended.
+                        self.close_all_views(false).await;
                         let _ = result_tx.send(outcome);
                         Ok(LoopStep::Continue)
                     }
@@ -1931,6 +2015,9 @@ impl Actor {
             method::HISTORY_QUERY => self.host_history_query(seq, params).await,
             method::HISTORY_APPEND => self.host_history_append(seq, params).await,
             method::PROCESS_SIGNAL => self.host_process_signal(seq, params).await,
+            method::VIEWS_OPEN => self.host_views_open(seq, params).await,
+            method::VIEWS_SUBMIT => self.host_views_submit(seq, params).await,
+            method::VIEWS_CLOSE => self.host_views_close(seq, params).await,
             method::PROCESS_EXEC => self.host_process_exec(seq, params).await,
             method::NETWORK_CONNECT => self.host_network_connect(seq, params).await,
             method::NETWORK_CLOSE => self.host_network_close(seq, params).await,
@@ -2984,6 +3071,200 @@ impl Actor {
         )
         .await;
         Ok(())
+    }
+
+    /// A request to the package the host does not wait for: `view.mount`, `view.event`,
+    /// `view.unmount`.
+    async fn notify_plugin(&mut self, method_name: &str, params: Json) {
+        let seq = self.next_seq(Pending::FireAndForget);
+        let envelope = Envelope::Request {
+            seq,
+            method: method_name.to_owned(),
+            params,
+        };
+        let _ = self.send(&envelope).await;
+    }
+
+    /// `views.open`: a contributed view, taken by the host when a terminal is there and
+    /// answered `mounted: false` when output is redirected (spec §31.27, §31.28).
+    async fn host_views_open(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let open: ono_kuang_protocol::ViewOpenParams = Self::parse_params(params)?;
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::UiView,
+            "views.open",
+            &[],
+            Some(Json::String(open.view.clone())),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let Some(contribution) = self
+            .contributed_views
+            .iter()
+            .find(|view| view.id == open.view)
+            .cloned()
+        else {
+            self.reply_err(
+                seq,
+                KuangError::new(
+                    KuangErrorCode::ViewProtocolError,
+                    format!("the package contributes no view `{}`", open.view),
+                )
+                .into(),
+            )
+            .await;
+            return Ok(());
+        };
+        let (events_tx, mut events_rx) = mpsc::channel(32);
+        let mounted = match self.views.open(&self.package_id, &contribution, events_tx) {
+            Ok(mounted) => mounted,
+            Err(why) => {
+                self.reply_err(
+                    seq,
+                    KuangError::new(
+                        KuangErrorCode::ViewProtocolError,
+                        format!("the terminal refused the view: {why}"),
+                    )
+                    .into(),
+                )
+                .await;
+                return Ok(());
+            }
+        };
+        let handle = self.next_handle;
+        self.next_handle += 1;
+        let size = mounted.as_ref().map(|view| view.size());
+        let forwarder = {
+            let sender = self.msg_sender.clone();
+            tokio::spawn(async move {
+                while let Some(event) = events_rx.recv().await {
+                    if sender
+                        .send(ActorMsg::ViewEvent {
+                            view: handle,
+                            event,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+        };
+        let is_mounted = mounted.is_some();
+        self.open_views.insert(
+            handle,
+            OpenView {
+                id: contribution.id.clone(),
+                mounted,
+                forwarder,
+            },
+        );
+        self.reply_ok(
+            seq,
+            serde_json::to_value(ono_kuang_protocol::ViewOpenResult {
+                handle,
+                mounted: is_mounted,
+                size,
+            })
+            .unwrap_or(Json::Null),
+        )
+        .await;
+        if let Some(size) = size {
+            let params = serde_json::to_value(ono_kuang_protocol::ViewMountParams {
+                view: handle,
+                size,
+                input: open.input,
+            })
+            .unwrap_or(Json::Null);
+            self.notify_plugin(method::VIEW_MOUNT, params).await;
+        }
+        Ok(())
+    }
+
+    /// `views.submit`: a tree, validated and drawn; an invalid one tears the view down.
+    async fn host_views_submit(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let submit: ono_kuang_protocol::ViewSubmitParams = Self::parse_params(params)?;
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::UiView,
+            "views.submit",
+            &[],
+            Some(Json::from(submit.view)),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        if !self.open_views.contains_key(&submit.view) {
+            self.reply_err(
+                seq,
+                KuangError::new(
+                    KuangErrorCode::ViewProtocolError,
+                    format!("view {} is not open", submit.view),
+                )
+                .into(),
+            )
+            .await;
+            return Ok(());
+        }
+        let drawn = crate::view::validate_tree(&submit.tree, 0).and_then(|()| {
+            self.open_views
+                .get(&submit.view)
+                .and_then(|view| view.mounted.as_ref())
+                .map_or(Ok(()), |mounted| mounted.submit(&submit.tree))
+        });
+        match drawn {
+            Ok(()) => self.reply_ok(seq, Json::Null).await,
+            Err(why) => {
+                // Spec §31.27: an invalid layout is the package's defect, and the terminal is
+                // restored whatever the package does next.
+                self.close_view(submit.view, true).await;
+                self.reply_err(
+                    seq,
+                    KuangError::new(
+                        KuangErrorCode::ViewProtocolError,
+                        format!("the view tree was refused: {why}"),
+                    )
+                    .into(),
+                )
+                .await;
+            }
+        }
+        Ok(())
+    }
+
+    /// `views.close`: idempotent; the host closes a view its invocation leaves open anyway.
+    async fn host_views_close(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let close: ono_kuang_protocol::ViewHandleParams = Self::parse_params(params)?;
+        if self.open_views.contains_key(&close.view) {
+            self.close_view(close.view, false).await;
+        }
+        self.reply_ok(seq, Json::Null).await;
+        Ok(())
+    }
+
+    /// Tears a view down: the terminal is restored, the package is told when the host decided.
+    async fn close_view(&mut self, handle: u64, tell_plugin: bool) {
+        let Some(view) = self.open_views.remove(&handle) else {
+            return;
+        };
+        if let Some(mounted) = view.mounted {
+            mounted.close();
+        }
+        view.forwarder.abort();
+        if tell_plugin {
+            let params =
+                serde_json::to_value(ono_kuang_protocol::ViewHandleParams { view: handle })
+                    .unwrap_or(Json::Null);
+            self.notify_plugin(method::VIEW_UNMOUNT, params).await;
+        }
+    }
+
+    /// Every view the instance has open is closed: an invocation ended, or the instance did.
+    async fn close_all_views(&mut self, tell_plugin: bool) {
+        let handles: Vec<u64> = self.open_views.keys().copied().collect();
+        for handle in handles {
+            self.close_view(handle, tell_plugin).await;
+        }
     }
 
     /// `process.exec`: a program within the granted `programs` scope, run under the host's own

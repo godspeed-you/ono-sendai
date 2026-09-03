@@ -39,6 +39,7 @@ pub struct TestHost {
     models: Option<std::sync::Arc<dyn ono_model_broker::ModelBroker>>,
     context: Option<std::sync::Arc<dyn ono_kuang_supervisor::ContextSource>>,
     host: Option<std::sync::Arc<dyn ono_kuang_supervisor::HostServices>>,
+    views: Option<std::sync::Arc<dyn ono_kuang_supervisor::ViewHost>>,
 }
 
 impl std::fmt::Debug for TestHost {
@@ -70,6 +71,7 @@ impl TestHost {
             models: None,
             context: None,
             host: None,
+            views: None,
         }
     }
 
@@ -92,6 +94,14 @@ impl TestHost {
         services: std::sync::Arc<dyn ono_kuang_supervisor::HostServices>,
     ) -> Self {
         self.host = Some(services);
+        self
+    }
+
+    /// What takes a view (spec §31.27). Without one, nothing does and every view falls back;
+    /// [`RecordingViews`] takes them all and records every tree.
+    #[must_use]
+    pub fn views(mut self, views: std::sync::Arc<dyn ono_kuang_supervisor::ViewHost>) -> Self {
+        self.views = Some(views);
         self
     }
 
@@ -178,6 +188,9 @@ impl TestHost {
         }
         if let Some(host) = self.host {
             config.host = host;
+        }
+        if let Some(views) = self.views {
+            config.views = views;
         }
         if let Some(platform) = self.platform {
             config.platform = platform;
@@ -339,4 +352,137 @@ fn spatial_kind(name: &str) -> Option<&'static str> {
         .iter()
         .find(|kind| kind.as_str().eq_ignore_ascii_case(name.trim()))
         .map(|kind| kind.as_str())
+}
+
+/// A view host that takes every view and records every tree (spec §31.73): what a
+/// conformance test looks at instead of a terminal, and where it injects the events.
+#[derive(Debug, Default)]
+pub struct RecordingViews {
+    inner: std::sync::Arc<std::sync::Mutex<RecordedViews>>,
+    /// When set, nothing takes a view: the redirected-output case of spec §31.28.
+    redirected: bool,
+}
+
+#[derive(Debug, Default)]
+struct RecordedViews {
+    opened: Vec<String>,
+    trees: Vec<Json>,
+    closed: usize,
+    events: Vec<tokio::sync::mpsc::Sender<ono_kuang_protocol::ViewEvent>>,
+}
+
+impl RecordingViews {
+    /// A host with a terminal of 24 rows and 80 columns.
+    #[must_use]
+    pub fn terminal() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self::default())
+    }
+
+    /// A host whose output is redirected: `views.open` answers `mounted: false`.
+    #[must_use]
+    pub fn redirected() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            inner: std::sync::Arc::default(),
+            redirected: true,
+        })
+    }
+
+    /// The ids of the views opened so far.
+    #[must_use]
+    pub fn opened(&self) -> Vec<String> {
+        lock(&self.inner).opened.clone()
+    }
+
+    /// Every tree submitted so far, in order.
+    #[must_use]
+    pub fn trees(&self) -> Vec<Json> {
+        lock(&self.inner).trees.clone()
+    }
+
+    /// How many views were closed.
+    #[must_use]
+    pub fn closed(&self) -> usize {
+        lock(&self.inner).closed
+    }
+
+    /// Sends a key to the view opened last; nothing when no view is open.
+    pub fn press(&self, key: &str) {
+        self.send(ono_kuang_protocol::ViewEvent {
+            kind: "key".to_owned(),
+            key: Some(key.to_owned()),
+            size: None,
+        });
+    }
+
+    /// Sends an event of `kind` — `cancel`, `focus`, `blur` — to the view opened last.
+    pub fn signal(&self, kind: &str) {
+        self.send(ono_kuang_protocol::ViewEvent {
+            kind: kind.to_owned(),
+            key: None,
+            size: None,
+        });
+    }
+
+    /// Resizes the view opened last.
+    pub fn resize(&self, rows: u16, columns: u16) {
+        self.send(ono_kuang_protocol::ViewEvent {
+            kind: "resize".to_owned(),
+            key: None,
+            size: Some(ono_kuang_protocol::ViewSize { rows, columns }),
+        });
+    }
+
+    fn send(&self, event: ono_kuang_protocol::ViewEvent) {
+        // Nothing to send to when no view is open: the test asserts on what it recorded.
+        if let Some(sender) = lock(&self.inner).events.last().cloned() {
+            let _ = sender.try_send(event);
+        }
+    }
+}
+
+fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+struct RecordedView {
+    inner: std::sync::Arc<std::sync::Mutex<RecordedViews>>,
+}
+
+impl ono_kuang_supervisor::MountedView for RecordedView {
+    fn size(&self) -> ono_kuang_protocol::ViewSize {
+        ono_kuang_protocol::ViewSize {
+            rows: 24,
+            columns: 80,
+        }
+    }
+
+    fn submit(&self, tree: &Json) -> Result<(), String> {
+        lock(&self.inner).trees.push(tree.clone());
+        Ok(())
+    }
+
+    fn close(&self) {
+        lock(&self.inner).closed += 1;
+    }
+}
+
+impl ono_kuang_supervisor::ViewHost for RecordingViews {
+    fn open(
+        &self,
+        _package: &str,
+        view: &ono_kuang_protocol::ViewContribution,
+        events: tokio::sync::mpsc::Sender<ono_kuang_protocol::ViewEvent>,
+    ) -> Result<Option<Box<dyn ono_kuang_supervisor::MountedView>>, String> {
+        let mut inner = lock(&self.inner);
+        inner.opened.push(view.id.clone());
+        if self.redirected {
+            return Ok(None);
+        }
+        inner.events.push(events);
+        Ok(Some(Box::new(RecordedView {
+            inner: std::sync::Arc::clone(&self.inner),
+        })))
+    }
 }

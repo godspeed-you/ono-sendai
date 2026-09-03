@@ -90,6 +90,7 @@ capabilities:
     - process.exec: {programs: ["/bin/**", "/usr/bin/**"]}
     - network.connect: {hosts: ["127.0.0.1"], ports: ["8080"]}
     - network.listen: {ports: ["9090"]}
+    - ui.view
 network:
   outbound: none
 "#
@@ -129,6 +130,7 @@ fn fully_granted(host: TestHost) -> TestHost {
         .grant(Capability::ProcessExec)
         .grant(Capability::NetworkConnect)
         .grant(Capability::NetworkListen)
+        .grant(Capability::UiView)
 }
 
 fn values_of(events: &[StreamEvent]) -> Vec<Value> {
@@ -1985,6 +1987,170 @@ async fn should_broker_a_listener_and_hand_each_accepted_connection_to_the_packa
         "capability.scope_violation",
         "a port outside the granted list is refused before the host"
     );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- views (spec §31.27, §31.28; ADR-0572) ------------------------------------------------------
+
+async fn wait_until(mut condition: impl FnMut() -> bool, what: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !condition() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "waited ten seconds for {what}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+fn selected_row(tree: &serde_json::Value) -> Option<u64> {
+    tree.get("panes")?
+        .as_array()?
+        .iter()
+        .find(|pane| pane.get("component") == Some(&json!("Table")))?
+        .get("selected")?
+        .as_u64()
+}
+
+#[tokio::test]
+async fn should_mount_a_contributed_view_and_drive_it_by_the_keys_the_host_forwards() {
+    let views = ono_kuang_testhost::RecordingViews::terminal();
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .views(views.clone())
+        .grant(Capability::UiView)
+        .load()
+        .await
+        .expect("loads");
+    assert_eq!(
+        plugin
+            .views()
+            .iter()
+            .map(|view| view.id.as_str())
+            .collect::<Vec<_>>(),
+        ["dev.example.echo.view.items"],
+        "the hello's view contribution registers"
+    );
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("count", json!(3))]),
+        )
+        .await
+        .expect("starts");
+    wait_until(|| !views.trees().is_empty(), "the first tree").await;
+    assert_eq!(
+        selected_row(&views.trees()[0]),
+        Some(0),
+        "the first tree selects the first row"
+    );
+    views.press("down");
+    wait_until(
+        || views.trees().last().and_then(selected_row) == Some(1),
+        "a tree with the second row selected",
+    )
+    .await;
+    views.press("q");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(
+        strings(&events),
+        ["selected: item 2"],
+        "the package kept the selection and reported it when the view closed"
+    );
+    assert_eq!(views.opened(), ["dev.example.echo.view.items"]);
+    assert_eq!(views.closed(), 1, "the terminal was given back once");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_answer_not_mounted_when_output_is_redirected_so_the_package_emits_its_fallback() {
+    let views = ono_kuang_testhost::RecordingViews::redirected();
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .views(views.clone())
+        .grant(Capability::UiView)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("count", json!(2))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(
+        strings(&events),
+        ["item 1", "item 2"],
+        "the declared fallback: the items as a stream (spec §31.28)"
+    );
+    assert!(views.trees().is_empty(), "nothing was drawn");
+    assert_eq!(views.closed(), 0);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_tear_a_view_down_and_fail_the_call_when_the_tree_is_not_of_the_components() {
+    let views = ono_kuang_testhost::RecordingViews::terminal();
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .views(views.clone())
+        .grant(Capability::UiView)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("count", json!(1)), ("broken", json!(1))]),
+        )
+        .await
+        .expect("starts");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    let error = result.error.expect("structured");
+    assert_eq!(error.name, "view.protocol_error");
+    assert!(
+        error.message.contains("Marquee"),
+        "the refusal names the component: {}",
+        error.message
+    );
+    assert_eq!(
+        views.closed(),
+        1,
+        "the terminal is restored whatever the package does next (spec §31.27)"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_a_view_without_the_ui_view_grant() {
+    let views = ono_kuang_testhost::RecordingViews::terminal();
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .views(views.clone())
+        .load()
+        .await
+        .expect("loads");
+    let refused = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("count", json!(1))]),
+        )
+        .await
+        .expect_err("a command that declares `ui.view` is refused before it starts");
+    assert_eq!(
+        refused.name, "capability.denied",
+        "the broker answers before any terminal is touched"
+    );
+    assert!(views.opened().is_empty());
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;

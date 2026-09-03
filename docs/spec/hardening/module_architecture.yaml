@@ -133,6 +133,7 @@ composition_root:
     - kuang_host.rs
     - kuang_services.rs
     - kuang_trust.rs
+    - kuang_views.rs
     - lib.rs
     - limits.rs
     - live.rs

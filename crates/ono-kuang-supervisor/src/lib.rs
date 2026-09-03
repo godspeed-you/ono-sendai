@@ -34,6 +34,7 @@ mod sandbox;
 mod state;
 mod supervisor;
 mod trail;
+mod view;
 mod wasm;
 
 pub use adapters::{AdapterPackageError, declared_executables, validate_package};
@@ -56,4 +57,5 @@ pub use supervisor::{
     Supervisor, host_platform,
 };
 pub use trail::{AuditTrail, HostClock};
+pub use view::{MAX_DEPTH, MountedView, NoViews, ViewHost, validate_tree};
 pub use wasm::{Exit as WasmExit, Gauge as WasmGauge, WasmInstance};

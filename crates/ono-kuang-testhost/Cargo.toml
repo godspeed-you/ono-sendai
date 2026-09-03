@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+tokio.workspace = true
 ono-adapter.workspace = true
 ono-spatial-core.workspace = true
 ono-kuang-protocol.workspace = true

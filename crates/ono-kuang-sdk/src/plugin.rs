@@ -6,8 +6,10 @@ use std::io::{Read, Write};
 use ono_kuang_protocol::{
     CancelParams, CheckAnswer, CheckParams, CommandContribution, ContributionSet, DemandParams,
     EmitParams, EmitResult, Envelope, FrameLimits, HealthState, Hello, InitResult, InvokeParams,
-    InvokeResult, InvokeStatus, PACKAGE_FORMAT, PluginContract, ProbeResult, QueryParams,
-    SchemaContribution, TargetContribution, WireError, method,
+    InvokeResult, InvokeStatus, KuangError, KuangErrorCode, PACKAGE_FORMAT, PluginContract,
+    ProbeResult, QueryParams, SchemaContribution, TargetContribution, ViewContribution, ViewEvent,
+    ViewHandleParams, ViewOpenParams, ViewOpenResult, ViewSize, ViewSubmitParams, WireError,
+    method,
 };
 use ono_value::{Value, to_json};
 use serde_json::{Map as JsonMap, Value as Json, json};
@@ -116,6 +118,13 @@ impl Plugin {
         self
     }
 
+    /// Declares a contributed view (spec §31.27).
+    #[must_use]
+    pub fn contribute_view(mut self, contribution: ViewContribution) -> Self {
+        self.contributions.views.push(contribution);
+        self
+    }
+
     /// Declares a contributed schema.
     #[must_use]
     pub fn contribute_schema(mut self, contribution: SchemaContribution) -> Self {
@@ -151,6 +160,7 @@ impl Plugin {
             contract: None,
             current: None,
             shutdown: false,
+            view_events: std::collections::VecDeque::new(),
         };
         let hello = Envelope::Hello(Hello {
             format: PACKAGE_FORMAT.to_owned(),
@@ -298,6 +308,8 @@ struct Io<R, W> {
     contract: Option<PluginContract>,
     current: Option<Current>,
     shutdown: bool,
+    /// View events the host sent while a command was busy, in order (ADR-0572).
+    view_events: std::collections::VecDeque<Json>,
 }
 
 impl<R: Read, W: Write> Io<R, W> {
@@ -432,6 +444,23 @@ impl<R: Read, W: Write> Io<R, W> {
                             current.cancelled = true;
                         }
                     }
+                    method::VIEW_MOUNT | method::VIEW_EVENT | method::VIEW_UNMOUNT => {
+                        // Queued for `next_view_event`; the host does not wait for the answer.
+                        self.reply(seq, Json::Null)?;
+                        let mut event = params;
+                        if let Some(object) = event.as_object_mut() {
+                            let kind = match method_name.as_str() {
+                                method::VIEW_MOUNT => "mount",
+                                method::VIEW_UNMOUNT => "unmount",
+                                _ => "",
+                            };
+                            if !kind.is_empty() {
+                                object
+                                    .insert("event".to_owned(), serde_json::json!({"kind": kind}));
+                            }
+                        }
+                        self.view_events.push_back(event);
+                    }
                     _ => {
                         self.reply(seq, Json::Null)?;
                     }
@@ -483,6 +512,7 @@ trait IoDyn {
     fn call_host(&mut self, method_name: &str, params: Json) -> Result<Json, WireError>;
     fn is_cancelled(&self) -> bool;
     fn contract(&self) -> Option<&PluginContract>;
+    fn next_view_event(&mut self) -> Result<Json, WireError>;
 }
 
 impl<R: Read, W: Write> IoDyn for Io<R, W> {
@@ -539,6 +569,24 @@ impl<R: Read, W: Write> IoDyn for Io<R, W> {
         self.call(method_name, params)
     }
 
+    fn next_view_event(&mut self) -> Result<Json, WireError> {
+        loop {
+            if let Some(event) = self.view_events.pop_front() {
+                return Ok(event);
+            }
+            if self.shutdown {
+                return Ok(serde_json::json!({"event": {"kind": "close"}}));
+            }
+            self.pump(None).map_err(|_| WireError {
+                code: "Ono-Sendai-K11201".to_owned(),
+                name: "runtime.trap".to_owned(),
+                message: "the host connection ended".to_owned(),
+                help: None,
+                metadata: Box::default(),
+            })?;
+        }
+    }
+
     fn is_cancelled(&self) -> bool {
         self.current
             .as_ref()
@@ -590,6 +638,84 @@ impl Ctx<'_> {
         self.io.call_host(method_name, params)
     }
 
+    /// Opens a contributed view (spec §31.27). `mounted` is false when output is redirected,
+    /// and the command emits the view's declared fallback instead (spec §31.28).
+    ///
+    /// # Errors
+    ///
+    /// The host's refusal: no `ui.view` grant, or a view the package does not contribute.
+    pub fn open_view(&mut self, view: &str, input: Option<u64>) -> Result<OpenedView, WireError> {
+        let params = serde_json::to_value(ViewOpenParams {
+            view: view.to_owned(),
+            input,
+        })
+        .unwrap_or(Json::Null);
+        let answer = self.host_call(method::VIEWS_OPEN, params)?;
+        let opened: ViewOpenResult = serde_json::from_value(answer).map_err(|error| {
+            WireError::from(KuangError::new(
+                KuangErrorCode::ViewProtocolError,
+                format!("the host's answer to views.open is not one: {error}"),
+            ))
+        })?;
+        Ok(OpenedView {
+            handle: opened.handle,
+            mounted: opened.mounted,
+            size: opened.size,
+        })
+    }
+
+    /// Submits a tree of the components in `contributions.v1.yaml` for the host to draw.
+    ///
+    /// # Errors
+    ///
+    /// `view.protocol_error` when the tree is invalid; the host has torn the view down.
+    pub fn submit_view(&mut self, view: u64, tree: Json) -> Result<(), WireError> {
+        let params = serde_json::to_value(ViewSubmitParams { view, tree }).unwrap_or(Json::Null);
+        self.host_call(method::VIEWS_SUBMIT, params).map(|_| ())
+    }
+
+    /// Closes a view; the terminal comes back. Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Transport failures only.
+    pub fn close_view(&mut self, view: u64) -> Result<(), WireError> {
+        let params = serde_json::to_value(ViewHandleParams { view }).unwrap_or(Json::Null);
+        self.host_call(method::VIEWS_CLOSE, params).map(|_| ())
+    }
+
+    /// The next event of any open view, in the order the host sent them: `mount`, `key`,
+    /// `resize`, `focus`, `blur`, `cancel`, `close` and `unmount`. Blocks until one arrives;
+    /// answers `close` once the host has asked the plugin to shut down.
+    ///
+    /// # Errors
+    ///
+    /// Transport failures only.
+    pub fn next_view_event(&mut self) -> Result<ViewNotice, WireError> {
+        let raw = self.io.next_view_event()?;
+        let view = raw.get("view").and_then(Json::as_u64).unwrap_or_default();
+        let event: ViewEvent = raw
+            .get("event")
+            .cloned()
+            .and_then(|event| serde_json::from_value(event).ok())
+            .unwrap_or(ViewEvent {
+                kind: "close".to_owned(),
+                key: None,
+                size: None,
+            });
+        let size = event.size.or_else(|| {
+            raw.get("size")
+                .cloned()
+                .and_then(|size| serde_json::from_value(size).ok())
+        });
+        Ok(ViewNotice {
+            view,
+            kind: event.kind,
+            key: event.key,
+            size,
+        })
+    }
+
     /// Checks a grant without prompting (spec §31.61's `capabilities.check`).
     ///
     /// # Errors
@@ -625,4 +751,28 @@ impl Ctx<'_> {
             .unwrap_or_default()
             .to_owned())
     }
+}
+
+/// What `views.open` answered (spec §31.27).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenedView {
+    /// The view's handle.
+    pub handle: u64,
+    /// Whether a terminal took it; when not, emit the declared fallback.
+    pub mounted: bool,
+    /// The terminal's size when mounted.
+    pub size: Option<ViewSize>,
+}
+
+/// One event for a view, as [`Ctx::next_view_event`] hands it over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewNotice {
+    /// The view it concerns.
+    pub view: u64,
+    /// `mount`, `key`, `resize`, `focus`, `blur`, `cancel`, `close` or `unmount`.
+    pub kind: String,
+    /// The key, for `key`.
+    pub key: Option<String>,
+    /// The size, for `mount` and `resize`.
+    pub size: Option<ViewSize>,
 }

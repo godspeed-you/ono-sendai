@@ -1770,6 +1770,8 @@ pub struct Contributions {
     pub targets: Vec<String>,
     /// Schema ids.
     pub schemas: Vec<String>,
+    /// View ids (spec §31.27).
+    pub views: Vec<String>,
 }
 
 impl Contributions {
@@ -1792,6 +1794,7 @@ impl Contributions {
                 .iter()
                 .map(|target| target.contribution.schema.clone())
                 .collect(),
+            views: plugin.views().iter().map(|view| view.id.clone()).collect(),
         }
     }
 
@@ -1800,6 +1803,7 @@ impl Contributions {
             ("commands", string_list(&self.commands)),
             ("targets", string_list(&self.targets)),
             ("schemas", string_list(&self.schemas)),
+            ("views", string_list(&self.views)),
         ])
     }
 }

@@ -1,0 +1,100 @@
+# Issue #3 (c), ADR-0572: a package's view with the full lens. The package submits a tree of the
+# components `contributions.v1.yaml` names; the host draws it on the alternate screen, forwards
+# the keys, and gives the terminal back when the package closes the view. With output redirected
+# nothing mounts and the package emits its declared fallback, deterministically (spec §31.28).
+# The interactive half is driven through `script(1)`, which puts a real terminal between the
+# keys and the shell.
+case: a package view is drawn by the host and falls back when redirected
+pty: true
+columns: 100
+lines: 30
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  export HOME="$home"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - ui.view
+  network:
+    outbound: none
+  MANIFEST
+
+  # Redirected: the fallback stream, and not one escape sequence.
+  ono -c "grant capability ui.view --plugin dev.example.echo | count; load plugin dev.example.echo; echo:browse --count 2" > /tmp/redirected.txt 2>&1
+  if grep -q "item 1" /tmp/redirected.txt && grep -q "item 2" /tmp/redirected.txt; then
+    echo "fallback-emitted"
+  else
+    echo "NO FALLBACK"; cat /tmp/redirected.txt
+  fi
+  if LC_ALL=C awk 'index($0, "\033[?1049h") {found=1} END {exit !found}' /tmp/redirected.txt; then
+    echo "SCREEN SWITCH IN A FILE"
+  else
+    echo "no-screen-switch-when-redirected"
+  fi
+
+  # Interactive: a terminal from script(1), keys typed with time for the package to answer.
+  (
+    printf 'grant capability ui.view --plugin dev.example.echo | count; load plugin dev.example.echo\n'
+    sleep 3
+    printf 'echo:browse --count 3\n'
+    sleep 3
+    printf '\033[B'
+    sleep 2
+    printf 'q'
+    sleep 2
+    printf 'exit\n'
+  ) | script -q -e -c "stty cols 100 rows 30; ono" /tmp/typescript >/dev/null 2>&1 || true
+
+  if LC_ALL=C awk 'index($0, "\033[?1049h") {found=1} END {exit !found}' /tmp/typescript; then
+    echo "drawn-on-the-alternate-screen"
+  else
+    echo "NO ALTERNATE SCREEN"; LC_ALL=C cat -v /tmp/typescript | head -c 2500
+  fi
+  if LC_ALL=C tr -d '\r' < /tmp/typescript | grep -q "item 3"; then
+    echo "table-on-screen"
+  else
+    echo "NO TABLE"; LC_ALL=C cat -v /tmp/typescript | head -c 2500
+  fi
+  if LC_ALL=C tr -d '\r' < /tmp/typescript | grep -q "2/3"; then
+    echo "key-reached-the-package"
+  else
+    echo "NO KEY"
+  fi
+  # After the main screen is back, what the package emitted is printed like any result.
+  after=$(LC_ALL=C tr -d '\r' < /tmp/typescript | awk 'BEGIN{seen=0} { if (index($0, "\033[?1049l")) seen=1; if (seen) print }')
+  if printf '%s' "$after" | grep -q "selected: item 2"; then
+    echo "terminal-given-back"
+  else
+    echo "NOT GIVEN BACK"; LC_ALL=C cat -v /tmp/typescript | tail -n 20
+  fi
+stdout-contains: fallback-emitted
+stdout-contains: no-screen-switch-when-redirected
+stdout-contains: drawn-on-the-alternate-screen
+stdout-contains: table-on-screen
+stdout-contains: key-reached-the-package
+stdout-contains: terminal-given-back

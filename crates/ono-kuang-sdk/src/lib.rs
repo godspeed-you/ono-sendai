@@ -27,4 +27,4 @@
 mod plugin;
 
 pub use ono_kuang_protocol as protocol;
-pub use plugin::{Ctx, EmitError, Outcome, Plugin};
+pub use plugin::{Ctx, EmitError, OpenedView, Outcome, Plugin, ViewNotice};

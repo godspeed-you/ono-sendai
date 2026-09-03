@@ -436,31 +436,8 @@ impl Manifest {
             )
             .with_metadata("dimension", Json::String("platforms".into())));
         }
-        // §31.27's views need `views.open`, `views.submit` and `views.close`, and this host
-        // implements no view protocol at all. Accepting the declaration, listing it in
-        // `inspect plugin` and registering nothing would tell an operator a lens exists where
-        // none does; §31.62 makes the view protocol its own version dimension, and a host that
-        // does not provide it says so (spec §31.7).
-        if let Some(views) = self
-            .contributions
-            .as_ref()
-            .and_then(|paths| paths.views.as_ref())
-            .filter(|views| !views.is_empty())
-        {
-            return Err(KuangError::new(
-                KuangErrorCode::PackageIncompatible,
-                format!(
-                    "the package contributes the view `{}` and this host implements no view \
-                     protocol to register it in",
-                    views.join("`, `")
-                ),
-            )
-            .with_metadata("dimension", Json::String("view_protocol".into()))
-            .with_help(
-                "spec §31.27: a contributed view needs `views.open`/`views.submit`/`views.close`, \
-                 which this build does not serve",
-            ));
-        }
+        // §31.27's views are served since ADR-0572: a contributed view registers, mounts at a
+        // terminal and falls back when output is redirected. Nothing here refuses one.
         Ok(())
     }
 

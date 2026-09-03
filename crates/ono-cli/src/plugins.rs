@@ -305,6 +305,9 @@ pub fn load_plugin_with(
     config.context = std::sync::Arc::new(crate::kuang_host::SharedContext(std::sync::Arc::clone(
         session.tables(),
     )));
+    config.views = std::sync::Arc::new(crate::kuang_views::ShellViews::new(std::sync::Arc::clone(
+        session.theme(),
+    )));
     let (runtime, _) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,
