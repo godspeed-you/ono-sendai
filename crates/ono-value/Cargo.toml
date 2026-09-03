@@ -17,6 +17,10 @@ regex.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 
+[build-dependencies]
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+
 [dev-dependencies]
 bytes.workspace = true
 jiff.workspace = true

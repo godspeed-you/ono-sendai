@@ -21,101 +21,132 @@ use serde_yaml_ng::Value as Yaml;
 use crate::error::ErrorValue;
 use crate::schema::{FieldDef, FieldType, Schema, SchemaId, SchemaRegistry, Unit};
 
-/// Every schema contract, embedded at compile time.
+/// Every schema contract, by file stem, embedded at compile time.
 ///
 /// A schema whose file is missing is a compile error rather than an empty registry at run time,
-/// which is the point of embedding them.
+/// which is the point of embedding them. They are embedded as JSON, transcoded from the YAML by
+/// `build.rs`, because reading ninety YAML documents cost a quarter of a cold start (ADR-0571).
 const CONTRACTS: &[&str] = &[
-    include_str!("../../../docs/spec/schemas/action-result.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/assistant.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/assistant-action.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/assistant-turn.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/capability-grant.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/evidence.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/finding.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/model-provider.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/plugin.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/plugin-audit-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/plugin-inspection.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/plugin-package.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/plugin-runtime.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/recommendation.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/verification-result.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/block-device.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/cgroup.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/command.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/commit.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/change-summary.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/config-setting.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/container-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/container.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/context.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/device.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/dns-record.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/endpoint.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/env-var.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/error.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/file-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/file.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/filesystem.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/git-status-entry.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/graph-edge.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/graph-node.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/graph.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/host-key.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/client-key.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/group-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/group.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/host.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/host-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/http-exchange.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/image.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/interface-address.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/interface-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/interface.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/job.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/journal-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/link-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/link-place.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/link.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/mount-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/landmark.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/log-record.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/hidden-summary.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/map-cluster.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/map-edge.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/map-node.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/mount.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/namespace.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/navigation-step.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/neighbor.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/neighborhood.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/neighborhood-group.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/mount-boundary.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/open-file.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/place-view.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/probe-result.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/package.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/package-source.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/process-detail.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/process-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/process.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/provider.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/route-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/route.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/service-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/service.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/session.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/socket-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/socket.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/spatial-neighbor.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/spatial-change.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/spatial-map.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/spatial-place.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/spatial-relation.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/system.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/user-event.v1.yaml"),
-    include_str!("../../../docs/spec/schemas/user.v1.yaml"),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/action-result.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/assistant.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/assistant-action.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/assistant-turn.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/capability-grant.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/evidence.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/finding.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/model-provider.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/plugin-audit-event.v1.json"
+    )),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/plugin-inspection.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin-package.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/plugin-runtime.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/recommendation.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/verification-result.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/block-device.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/cgroup.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/command.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/commit.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/change-summary.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/config-setting.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/container-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/container.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/context.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/device.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/dns-record.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/endpoint.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/env-var.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/error.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/file-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/file.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/filesystem.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/git-status-entry.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/graph-edge.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/graph-node.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/graph.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/host-key.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/client-key.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/group-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/group.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/host.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/host-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/http-exchange.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/image.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/interface-address.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/interface-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/interface.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/job.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/journal-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/link-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/link-place.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/link.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/mount-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/landmark.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/log-record.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/hidden-summary.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/map-cluster.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/map-edge.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/map-node.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/mount.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/namespace.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/navigation-step.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/neighbor.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/neighborhood.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/neighborhood-group.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/mount-boundary.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/open-file.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/place-view.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/probe-result.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/package.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/package-source.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/process-detail.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/process-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/process.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/provider.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/route-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/route.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/service-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/service.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/session.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/socket-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/socket.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/spatial-neighbor.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/spatial-change.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/spatial-map.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/spatial-place.v1.json")),
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/schemas/spatial-relation.v1.json"
+    )),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/system.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/user-event.v1.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/schemas/user.v1.json")),
 ];
 
 /// The schemas every provider and command can rely on.
@@ -178,12 +209,12 @@ pub fn action_result_schema() -> Arc<Schema> {
         })
 }
 
-/// Reads one contract into a [`Schema`].
+/// Reads one contract, as the JSON the build script wrote, into a [`Schema`].
 fn parse_schema(contract: &str) -> Result<Schema, ErrorValue> {
-    let document: Yaml = serde_yaml_ng::from_str(contract).map_err(|error| {
+    let document: Yaml = serde_json::from_str(contract).map_err(|error| {
         ErrorValue::new(
             ErrorCode::ProviderSchemaViolation,
-            format!("a schema contract is not valid YAML: {error}"),
+            format!("a schema contract does not read: {error}"),
         )
     })?;
 
@@ -361,6 +392,62 @@ mod tests {
             builtin_schemas().len(),
             CONTRACTS.len(),
             "every contract must reach the registry; a missing one means two declared the same id"
+        );
+    }
+}
+
+#[cfg(test)]
+mod embedded_documents {
+    use super::CONTRACTS;
+
+    /// One JSON spelling per document, so two value trees compare as text: the mapping order
+    /// is the file's on both sides, and `serde_json` keeps it (`preserve_order`).
+    fn canonical(value: &serde_yaml_ng::Value) -> String {
+        serde_json::to_string(value).expect("a schema document serializes as JSON")
+    }
+
+    /// What the binary carries is what `docs/spec/schemas/` says, value for value (ADR-0571).
+    ///
+    /// A subset, not an equality: the directory also holds `deferred.yaml`, the register of
+    /// schemas a later phase will write, and whether every schema there is embedded is
+    /// `spec-check`'s question, not this crate's.
+    #[test]
+    fn should_embed_every_schema_contract_as_the_spec_states_it() {
+        let directory =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/schemas");
+        let mut on_disk: Vec<String> = std::fs::read_dir(&directory)
+            .expect("docs/spec/schemas/ exists")
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "yaml")
+            })
+            .map(|path| {
+                let text = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{} should read: {error}", path.display()));
+                let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text)
+                    .unwrap_or_else(|error| panic!("{} should be YAML: {error}", path.display()));
+                canonical(&value)
+            })
+            .collect();
+        let mut embedded: Vec<String> = CONTRACTS
+            .iter()
+            .map(|json| {
+                let value: serde_yaml_ng::Value =
+                    serde_json::from_str(json).expect("the build script writes valid JSON");
+                canonical(&value)
+            })
+            .collect();
+        on_disk.sort();
+        embedded.sort();
+        let missing: Vec<&String> = embedded
+            .iter()
+            .filter(|document| on_disk.binary_search(document).is_err())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "embedded, but not as on disk: {missing:#?}"
         );
     }
 }

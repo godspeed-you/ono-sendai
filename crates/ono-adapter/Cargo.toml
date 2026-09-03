@@ -18,6 +18,10 @@ serde_json.workspace = true
 serde = { workspace = true }
 serde_yaml_ng.workspace = true
 
+[build-dependencies]
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+
 [dev-dependencies]
 ono-testkit.workspace = true
 

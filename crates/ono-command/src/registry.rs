@@ -3,7 +3,9 @@
 //! The files are embedded at compile time. Spec §34 budgets a cold start of under 100 ms with a
 //! target of 50 ms, which a dozen YAML reads would spend before the prompt appears; and a shell
 //! whose command set depends on files being installed correctly is a shell that breaks when they
-//! are not. The registry is therefore part of the binary, parsed once on first use.
+//! are not. The registry is therefore part of the binary, parsed once on first use — and parsed
+//! from JSON, which `build.rs` transcodes from the YAML at build time, because the YAML parse
+//! alone cost a quarter of a cold start (ADR-0571).
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -18,26 +20,26 @@ use crate::contract::{
 };
 use crate::suggest::closest;
 
-/// The command families of `docs/spec/commands/`, embedded verbatim.
+/// The command families of `docs/spec/commands/`, embedded as the JSON `build.rs` wrote.
 const COMMAND_FILES: &[&str] = &[
-    include_str!("../../../docs/spec/commands/container.yaml"),
-    include_str!("../../../docs/spec/commands/data.yaml"),
-    include_str!("../../../docs/spec/commands/file.yaml"),
-    include_str!("../../../docs/spec/commands/identity.yaml"),
-    include_str!("../../../docs/spec/commands/kuang.yaml"),
-    include_str!("../../../docs/spec/commands/meta.yaml"),
-    include_str!("../../../docs/spec/commands/network.yaml"),
-    include_str!("../../../docs/spec/commands/package.yaml"),
-    include_str!("../../../docs/spec/commands/process.yaml"),
-    include_str!("../../../docs/spec/commands/remote.yaml"),
-    include_str!("../../../docs/spec/commands/service.yaml"),
-    include_str!("../../../docs/spec/commands/spatial.yaml"),
-    include_str!("../../../docs/spec/commands/storage.yaml"),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/container.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/data.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/file.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/identity.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/kuang.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/meta.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/network.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/package.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/process.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/remote.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/service.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/spatial.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/commands/storage.json")),
 ];
 
-const VERB_FILE: &str = include_str!("../../../docs/spec/verbs.yaml");
-const TARGET_FILE: &str = include_str!("../../../docs/spec/targets.yaml");
-const CAPABILITY_FILE: &str = include_str!("../../../docs/spec/capabilities.yaml");
+const VERB_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/verbs.json"));
+const TARGET_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/targets.json"));
+const CAPABILITY_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/capabilities.json"));
 
 static EMBEDDED: OnceLock<Result<CommandRegistry, String>> = OnceLock::new();
 
@@ -104,15 +106,15 @@ impl CommandRegistry {
     pub fn load() -> Result<Self, ErrorValue> {
         let mut commands = Vec::new();
         for source in COMMAND_FILES {
-            let family: RawFamily = serde_yaml_ng::from_str(source).map_err(yaml_error)?;
+            let family: RawFamily = serde_json::from_str(source).map_err(document_error)?;
             for raw in family.commands {
                 commands.push(raw.into_contract(&family.family)?);
             }
         }
-        let verbs: RawVerbFile = serde_yaml_ng::from_str(VERB_FILE).map_err(yaml_error)?;
-        let targets: RawTargetFile = serde_yaml_ng::from_str(TARGET_FILE).map_err(yaml_error)?;
+        let verbs: RawVerbFile = serde_json::from_str(VERB_FILE).map_err(document_error)?;
+        let targets: RawTargetFile = serde_json::from_str(TARGET_FILE).map_err(document_error)?;
         let capabilities: RawCapabilityFile =
-            serde_yaml_ng::from_str(CAPABILITY_FILE).map_err(yaml_error)?;
+            serde_json::from_str(CAPABILITY_FILE).map_err(document_error)?;
 
         let mut by_id = BTreeMap::new();
         let mut by_spelling = BTreeMap::new();
@@ -412,10 +414,10 @@ impl CommandRegistry {
     }
 }
 
-fn yaml_error(error: serde_yaml_ng::Error) -> ErrorValue {
+fn document_error(error: serde_json::Error) -> ErrorValue {
     ErrorValue::new(
         ErrorCode::ProviderSchemaViolation,
-        format!("an embedded contract file is not valid YAML: {error}"),
+        format!("an embedded contract file does not read: {error}"),
     )
 }
 
@@ -452,4 +454,66 @@ fn contested_error(contribution: &CommandContract) -> ErrorValue {
             .next()
             .unwrap_or(contribution.id())
     ))
+}
+
+#[cfg(test)]
+mod embedded_documents {
+    use super::{CAPABILITY_FILE, COMMAND_FILES, TARGET_FILE, VERB_FILE};
+
+    fn spec_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec")
+    }
+
+    /// One JSON spelling per document, so two value trees compare as text: the mapping order
+    /// is the file's on both sides, and `serde_json` keeps it (`preserve_order`).
+    fn canonical(value: &serde_yaml_ng::Value) -> String {
+        serde_json::to_string(value).expect("a contract document serializes as JSON")
+    }
+
+    fn on_disk(path: &std::path::Path) -> String {
+        let text = std::fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("{} should read: {error}", path.display()));
+        let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text)
+            .unwrap_or_else(|error| panic!("{} should be YAML: {error}", path.display()));
+        canonical(&value)
+    }
+
+    fn embedded(json: &str) -> String {
+        let value: serde_yaml_ng::Value =
+            serde_json::from_str(json).expect("the build script writes valid JSON");
+        canonical(&value)
+    }
+
+    /// What the binary carries is what `docs/spec/commands/` says, value for value, and no
+    /// family on disk is left out (ADR-0571).
+    #[test]
+    fn should_embed_every_command_family_as_the_spec_states_it() {
+        let mut families: Vec<String> = std::fs::read_dir(spec_dir().join("commands"))
+            .expect("docs/spec/commands/ exists")
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "yaml")
+            })
+            .map(|path| on_disk(&path))
+            .collect();
+        let mut carried: Vec<String> = COMMAND_FILES.iter().map(|json| embedded(json)).collect();
+        families.sort();
+        carried.sort();
+        assert_eq!(carried, families);
+    }
+
+    #[test]
+    fn should_embed_the_verb_target_and_capability_registers_as_the_spec_states_them() {
+        assert_eq!(embedded(VERB_FILE), on_disk(&spec_dir().join("verbs.yaml")));
+        assert_eq!(
+            embedded(TARGET_FILE),
+            on_disk(&spec_dir().join("targets.yaml"))
+        );
+        assert_eq!(
+            embedded(CAPABILITY_FILE),
+            on_disk(&spec_dir().join("capabilities.yaml"))
+        );
+    }
 }

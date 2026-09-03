@@ -13,17 +13,19 @@ use serde::Deserialize;
 
 use crate::version::VersionRange;
 
-/// The first-party packs bundled with the shell, as data (spec v0.3 §1.66).
+/// The first-party packs bundled with the shell, as data (spec v0.3 §1.66) — the JSON that
+/// `build.rs` transcodes from `docs/spec/adapters/first-party/`, because the YAML parse was a
+/// measurable slice of every cold start (ADR-0571).
 const FIRST_PARTY: &[&str] = &[
-    include_str!("../../../docs/spec/adapters/first-party/util-linux.yaml"),
-    include_str!("../../../docs/spec/adapters/first-party/iproute2.yaml"),
-    include_str!("../../../docs/spec/adapters/first-party/systemd.yaml"),
-    include_str!("../../../docs/spec/adapters/first-party/procps.yaml"),
-    include_str!("../../../docs/spec/adapters/first-party/coreutils.yaml"),
-    include_str!("../../../docs/spec/adapters/first-party/findutils.yaml"),
-    include_str!("../../../docs/spec/adapters/first-party/git.yaml"),
-    include_str!("../../../docs/spec/adapters/first-party/lsof.yaml"),
-    include_str!("../../../docs/spec/adapters/first-party/curl.yaml"),
+    include_str!(concat!(env!("OUT_DIR"), "/adapters/util-linux.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/adapters/iproute2.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/adapters/systemd.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/adapters/procps.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/adapters/coreutils.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/adapters/findutils.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/adapters/git.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/adapters/lsof.json")),
+    include_str!(concat!(env!("OUT_DIR"), "/adapters/curl.json")),
 ];
 
 /// The decoders implemented in Rust that a `builtin` decoder may name.
@@ -400,12 +402,24 @@ impl AdapterPack {
                 ono_value::MAX_YAML_DEPTH
             ));
         }
-        let mut pack: Self = serde_yaml_ng::from_str(yaml).map_err(|error| error.to_string())?;
-        for adapter in &mut pack.adapters {
-            adapter.pack_id.clone_from(&pack.package.id);
-            adapter.pack_version.clone_from(&pack.package.version);
+        let pack: Self = serde_yaml_ng::from_str(yaml).map_err(|error| error.to_string())?;
+        Ok(pack.stamped())
+    }
+
+    /// A bundled pack, from the JSON `build.rs` wrote for it: our own document, already depth-
+    /// checked as YAML by the transcoding, so it is read and nothing more.
+    fn embedded(json: &str) -> Result<Self, String> {
+        let pack: Self = serde_json::from_str(json).map_err(|error| error.to_string())?;
+        Ok(pack.stamped())
+    }
+
+    /// Every adapter carries the id and version of the pack it came from.
+    fn stamped(mut self) -> Self {
+        for adapter in &mut self.adapters {
+            adapter.pack_id.clone_from(&self.package.id);
+            adapter.pack_version.clone_from(&self.package.version);
         }
-        Ok(pack)
+        self
     }
 
     /// The pack id, `org.ono.compat.util-linux`.
@@ -875,7 +889,7 @@ pub fn first_party() -> &'static [AdapterPack] {
     PACKS.get_or_init(|| {
         FIRST_PARTY
             .iter()
-            .filter_map(|yaml| AdapterPack::parse(yaml).ok())
+            .filter_map(|json| AdapterPack::embedded(json).ok())
             .collect()
     })
 }
@@ -1292,4 +1306,62 @@ fn is_kebab(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+#[cfg(test)]
+mod embedded_documents {
+    use super::{AdapterPack, FIRST_PARTY};
+
+    /// A pack that did not read would be left out of `first_party()` quietly, by design; this
+    /// is where being left out is loud.
+    #[test]
+    fn should_read_every_first_party_pack_it_embeds() {
+        let problems: Vec<String> = FIRST_PARTY
+            .iter()
+            .filter_map(|json| AdapterPack::embedded(json).err())
+            .collect();
+        assert!(problems.is_empty(), "{problems:#?}");
+        assert_eq!(super::first_party().len(), FIRST_PARTY.len());
+    }
+
+    /// One JSON spelling per document, so two value trees compare as text: the mapping order
+    /// is the file's on both sides, and `serde_json` keeps it (`preserve_order`).
+    fn canonical(value: &serde_yaml_ng::Value) -> String {
+        serde_json::to_string(value).expect("a pack document serializes as JSON")
+    }
+
+    /// What the binary carries is what `docs/spec/adapters/first-party/` says, value for value,
+    /// and no pack on disk is left out (ADR-0571).
+    #[test]
+    fn should_embed_every_first_party_pack_as_the_spec_states_it() {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/spec/adapters/first-party");
+        let mut on_disk: Vec<String> = std::fs::read_dir(&directory)
+            .expect("docs/spec/adapters/first-party/ exists")
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "yaml")
+            })
+            .map(|path| {
+                let text = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{} should read: {error}", path.display()));
+                let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text)
+                    .unwrap_or_else(|error| panic!("{} should be YAML: {error}", path.display()));
+                canonical(&value)
+            })
+            .collect();
+        let mut embedded: Vec<String> = FIRST_PARTY
+            .iter()
+            .map(|json| {
+                let value: serde_yaml_ng::Value =
+                    serde_json::from_str(json).expect("the build script writes valid JSON");
+                canonical(&value)
+            })
+            .collect();
+        on_disk.sort();
+        embedded.sort();
+        assert_eq!(embedded, on_disk);
+    }
 }

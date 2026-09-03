@@ -261,6 +261,13 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [claude | 2026-09-03] One-shot startup cost (`ono -c '…'` 27 ms against 4 ms for `bash -c`):
+  contracts transcoded to JSON at build time (ADR-0571), the pre-flight check building providers
+  only for native stages, systemd and logind connected concurrently — files:
+  `crates/ono-command/{build.rs,src/registry.rs}`, `crates/ono-value/{build.rs,src/builtin.rs}`,
+  `crates/ono-adapter/{build.rs,src/contract.rs}`, `crates/ono-cli/src/eval/native/mod.rs`,
+  `crates/ono-cli/src/providers.rs`, `docs/spec/adapters/first-party/{curl,iproute2}.yaml`.
+
 ## What is left, and why
 
 *Empty.* The v0.4.1 tranche is delivered — thirteen phases, and what remains is recorded below
@@ -1972,6 +1979,27 @@ the provider samples — and no assertion changed.
 
 
 ## Found, not yet filed
+
+- **`host_domains.rs::should_broker_a_tcp_connection_for_a_granted_package` fails once in
+  eight in the gate and never alone.** In the gate run of 2026-09-03 the plugin loaded as
+  `degraded` and `echo:connect` produced no `pong`; five runs of the test on its own pass in
+  0,07 s. The test binary runs its eight tests in parallel, each loading `dev.example.echo` from
+  its own scratch home, so the suspects are a shared resource the loads contend for (the
+  supervisor's port or socket, or the fixture package's private directory) rather than the
+  broker itself. Evidence: `target/gate-test.log` of that run.
+- **`docs/spec/schemas/limit.v1.yaml` is not embedded.** `ono_value::builtin_schemas()` lists
+  ninety contracts by hand and this one is not among them, so `ono.limit/1` is a schema the
+  registry cannot answer for although the document exists. Found while writing the fidelity test
+  of ADR-0571, which therefore checks that every embedded document matches disk and leaves
+  completeness to `spec-check` — which does not ask this question either. Either embed it or
+  have `spec-check` compare the directory with the list.
+- **`files.rs::should_report_a_created_file_before_the_next_poll_would_have_come` fails under
+  load.** It asserts a wall-clock bound of 3,5 s around a 2,5 s sleep, and failed once in the gate
+  while a release build (`lto = "thin"`, `codegen-units = 1`) ran beside it on the same 8 cores;
+  it passes alone in 2,55 s. A test of §18.2's subscription-versus-poll distinction that depends
+  on one second of free CPU is a coin toss on a shared runner (ADR-0431's argument) — the bound
+  should be measured against the poll interval the shell actually configured, or the test should
+  read `source` alone and leave the clock out of it.
 
 - **The persisted audit trail keeps one session's events and drops the next session's.** Three
   `ono -c 'load plugin dev.example.echo; echo:clock | count'` runs under one `XDG_STATE_HOME`,

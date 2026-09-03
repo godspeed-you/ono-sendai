@@ -26,6 +26,10 @@ serde_yaml_ng.workspace = true
 
 tokio = { workspace = true, features = ["time"] }
 
+[build-dependencies]
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+
 [dev-dependencies]
 ono-testkit.workspace = true
 
