@@ -250,6 +250,11 @@ impl AuthorizedClients {
                 ),
             )
             .with_retryable(false)
+            .with_metadata(
+                "denied_because",
+                Value::string("authorization_store_unreadable"),
+            )
+            .with_metadata("store_path", Value::string(&path.display().to_string()))
             .with_help(
                 "a listening agent that cannot read its policy authorizes nobody and does not \
                  fall back to permissive access (v0.4.1 section 9.2)",
@@ -337,6 +342,7 @@ pub fn unauthenticated_refusal() -> ErrorValue {
         "the client proved possession of no key, so there is no identity to authorize",
     )
     .with_retryable(false)
+    .with_metadata("denied_because", Value::string("no_authenticated_identity"))
     .with_help(
         "authorization follows authentication and never replaces it (v0.4.1 section 2.2). A \
          direct link presents a peer identity on both ends.",
@@ -448,6 +454,12 @@ fn malformed(path: &Path, line: usize, detail: &str) -> ErrorValue {
         ),
     )
     .with_retryable(false)
+    .with_metadata(
+        "denied_because",
+        Value::string("authorization_store_malformed"),
+    )
+    .with_metadata("store_path", Value::string(&path.display().to_string()))
+    .with_metadata("store_line", Value::Int(i128::try_from(line).unwrap_or(-1)))
     .with_help(
         "the whole store is refused, and no client is authorized by the lines that did parse: a \
          store read past the line it could not understand is a store that silently grants \
@@ -617,9 +629,11 @@ impl PeerAuthorization {
             return Ok(());
         }
         Err(self
-            .denial(format!(
-                "this client is authorized, but not to observe, so `{what}` is refused"
-            ))
+            .denial(|who| {
+                format!(
+                    "{who} is authenticated but not authorized to observe, so `{what}` is refused"
+                )
+            })
             .with_metadata("denied_because", Value::string("observe_not_allowed"))
             .with_help(
                 "on the agent's host, `set client-key <fingerprint> --observe true` grants query \
@@ -639,10 +653,12 @@ impl PeerAuthorization {
     pub fn require_action(&self, capability: Option<&str>, what: &str) -> Result<(), ErrorValue> {
         let Some(capability) = capability else {
             return Err(self
-                .denial(format!(
-                    "`{what}` needs a capability this agent cannot name, and an unnamed \
-                     capability is never granted"
-                ))
+                .denial(|who| {
+                    format!(
+                        "{who} is authenticated, and `{what}` needs a capability this agent \
+                         cannot name; an unnamed capability is never granted"
+                    )
+                })
                 .with_metadata("denied_because", Value::string("capability_unknown"))
                 .with_help(
                     "Appendix C: an unknown capability id is always denied. The agent grants \
@@ -653,9 +669,12 @@ impl PeerAuthorization {
             return Ok(());
         }
         Err(self
-            .denial(format!(
-                "this client is authorized, but not for `{capability}`, so `{what}` is refused"
-            ))
+            .denial(|who| {
+                format!(
+                    "{who} is authenticated but not authorized for `{capability}`, so `{what}` \
+                     is refused"
+                )
+            })
             .with_metadata("requested_capability", Value::string(capability))
             .with_metadata("denied_because", Value::string("action_not_granted"))
             .with_help(format!(
@@ -665,9 +684,23 @@ impl PeerAuthorization {
             )))
     }
 
-    fn denial(&self, message: String) -> ErrorValue {
-        let error =
-            ErrorValue::new(ErrorCode::RemoteCapabilityDenied, message).with_retryable(false);
+    /// A capability denial whose sentence names the peer that was refused.
+    ///
+    /// `message` is handed the subject to write the sentence about, because §54.1's example is
+    /// *"remote client sha256:… is authenticated but not authorized for service.restart"* and
+    /// §54.2 requires that explanation in the ordinary structured error. The fingerprint is in the
+    /// metadata as well (ADR-0473), but nothing on the default rendering path prints metadata, so
+    /// a refusal that carried the boundary only there would be a refusal a user cannot read.
+    ///
+    /// §53.3 permits it in full: a public key fingerprint is public identity material, and it is
+    /// the exact string the operator types into `add client-key` to fix the refusal.
+    fn denial(&self, message: impl FnOnce(&str) -> String) -> ErrorValue {
+        let subject = match self.context() {
+            None => "this client".to_owned(),
+            Some(context) => format!("remote client {}", context.peer_fingerprint()),
+        };
+        let error = ErrorValue::new(ErrorCode::RemoteCapabilityDenied, message(&subject))
+            .with_retryable(false);
         match self.context() {
             None => error,
             Some(context) => error

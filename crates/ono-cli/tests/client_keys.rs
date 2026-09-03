@@ -432,3 +432,93 @@ fn should_refuse_the_next_connection_after_a_client_key_is_removed() {
         refused.stdout()
     );
 }
+
+// --- §63.2: the migration the documentation prints (issue #116, ADR-0543) -----------------------
+
+/// The `ono -c '…'` scripts `docs/MIGRATION.md` prints, in the order it prints them.
+///
+/// Read from the guide rather than retyped: a test that carried its own copy would pass while the
+/// document rotted, which is the failure §63.2 is a release criterion against.
+fn documented_scripts() -> Vec<String> {
+    let guide = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/MIGRATION.md");
+    let text = std::fs::read_to_string(&guide).expect("docs/MIGRATION.md is the migration guide");
+    let mut fenced = false;
+    let mut scripts = Vec::new();
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if !fenced {
+            continue;
+        }
+        if let Some(rest) = line.trim().strip_prefix("ono -c ") {
+            scripts.push(rest.trim().trim_matches('\'').trim_matches('"').to_owned());
+        }
+    }
+    scripts
+}
+
+#[test]
+fn should_accept_the_migration_sequence_the_documentation_prints() {
+    // v0.4.1 §63.2, and §66.8 makes it a release criterion: "Direct TCP users MUST perform a
+    // one-time client authorization step because v0.4.1 intentionally stops accepting anonymous
+    // TLS clients." The guide prints `--print-peer-key` on the client and `add client-key` on the
+    // agent host; this runs both against the real binary, with the fingerprint the first one
+    // actually produced substituted for the guide's placeholder.
+    let home = scratch();
+    let printed = ono_testkit::Shell::new()
+        .env("HOME", home.path().to_string_lossy().into_owned())
+        .env(
+            "XDG_CONFIG_HOME",
+            home.path().to_string_lossy().into_owned(),
+        )
+        .args(["--print-peer-key"])
+        .run();
+    printed.assert_success();
+    let peer = last_line(&printed).trim().to_owned();
+    assert!(
+        peer.starts_with("sha256:") && peer.len() > 20,
+        "§8.5: `--print-peer-key` prints the fingerprint an operator pastes, got {peer:?}"
+    );
+
+    let scripts = documented_scripts();
+    assert!(
+        !scripts.is_empty(),
+        "docs/MIGRATION.md prints no `ono -c` script, so §63.2's sequence is not documented"
+    );
+    let mut ran = 0usize;
+    for script in &scripts {
+        // The guide writes the fingerprint as `sha256:...`, which is what an operator replaces.
+        let Some(script) = script
+            .contains("sha256:...")
+            .then(|| script.replace("sha256:...", &peer))
+        else {
+            continue;
+        };
+        ono_at_home(&home, &script).assert_success();
+        ran += 1;
+    }
+    assert!(
+        ran >= 2,
+        "§63.2's sequence is the authorization step and the grant that follows it; the guide \
+         printed {ran} runnable command(s)"
+    );
+
+    // And the store now says what the guide said it would: observation by default (§9.4), plus
+    // exactly the action the second command named (§9.5).
+    let listed = ono_at_home(
+        &home,
+        "get client-key | select label observe actions | to json",
+    );
+    listed.assert_success();
+    let shown = last_line(&listed);
+    assert!(
+        shown.contains("my-laptop") && shown.contains("\"observe\":true"),
+        "§63.2: the client the documented sequence authorized is in the store: {shown}"
+    );
+    assert!(
+        shown.contains("service.manage"),
+        "§9.5: the one action the guide grants is granted by name: {shown}"
+    );
+}

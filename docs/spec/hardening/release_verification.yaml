@@ -1,0 +1,140 @@
+# How to verify a release before installing it (v0.4.1 §47.1, §47.5, §67.7), as data.
+#
+# §47.5: "The Wiki/install documentation MUST show how to verify checksums and signatures before
+# package installation. Verification instructions SHOULD fit in a short copyable sequence and MUST
+# not require a proprietary service."
+#
+# So the sequence lives here once. `docs/reference/release-verification.md` is rendered from it,
+# the README and the Wiki's Install page carry the same commands, and the gate compares them — a
+# release that publishes evidence nobody is told how to check has published nothing.
+#
+# ORDER IS THE POINT. The signature over the manifest is verified first, and the artifacts are
+# checked against the manifest second. Reversed, the sequence proves only that the download was
+# not corrupted in transit: a manifest an attacker wrote agrees perfectly with the artifacts that
+# attacker also wrote.
+#
+# Fields
+#
+#   id           the step's name, used by the gate and by the generated page.
+#   command      the exact command, as a reader pastes it. `$VERSION` and `$ARCH` are the two
+#                things a reader substitutes, and nothing else is a placeholder.
+#   proves       what a reader knows after it succeeds.
+#   on_failure   what a reader should do when it does not — never "try again".
+#   requires     the programs the step needs. `sha256sum` is coreutils; `curl` is everywhere;
+#                `cosign` is the one thing a reader installs, and §47.3 chose it because keyless
+#                OIDC signing needs no long-lived private key in a repository secret.
+#   executable   whether `xtask/tests/release_verification.rs` runs the step against a fixture.
+#                False where the step needs the network or a tool this repository does not build
+#                with, and the reason is stated rather than implied.
+#
+# THIS DESCRIBES WHAT THE RELEASE WORKFLOW ACTUALLY DOES, not what §47 leaves open. The file
+# names, the bundle format, the identity regexp and the issuer are `scripts/verify-release.sh`'s
+# and `scripts/sign-release.sh`'s, which ADR-0528, ADR-0529 and ADR-0530 decided: one manifest in
+# byte order of the file name, a keyless Sigstore signature over it in a `.sigstore.json` bundle,
+# and provenance signed the same way. An earlier draft of this file guessed at `SHA256SUMS.sig`
+# with a detached certificate and an in-toto attestation; ADR-0545 records the correction and
+# supersedes that half of ADR-0542.
+#
+# ONE THING IS NOT YET PROVEN END TO END, and the documents say so rather than implying otherwise.
+# No release has been signed: keyless signing needs an OIDC token that exists only inside a run of
+# this repository's release workflow, and verification needs Fulcio and Rekor over a network the
+# acceptance container does not have (§40.2, ADR-0529). The signature and provenance steps below
+# are what a reader will run; the first `v*` tag is what proves they pass.
+#
+# Decisions: ADR-0528, ADR-0529, ADR-0530, ADR-0542, ADR-0545.
+
+version: 1
+
+# §47.1's required release files, beside the packages themselves.
+files:
+  - name: SHA256SUMS
+    contents: the SHA-256 digest of every downloadable artifact in the release, in byte order of the file name, in `sha256sum`'s own format
+    spec: "v0.4.1 §47.1, §47.2; ADR-0528"
+  - name: SHA256SUMS.sigstore.json
+    contents: the keyless Sigstore bundle over the checksum manifest — the signature, the short-lived certificate and the transparency-log entry in one file, which is why no public key has to be published
+    spec: "v0.4.1 §47.1, §47.3; ADR-0529"
+  - name: build-provenance.json
+    contents: provenance binding the repository, the source commit, the release tag, the workflow identity, the builder and toolchain version, every artifact digest and the build timestamp
+    spec: "v0.4.1 §47.1, §47.4; ADR-0530"
+  - name: build-provenance.json.sigstore.json
+    contents: the Sigstore bundle over the provenance, signed in the same run by the same identity
+    spec: "v0.4.1 §47.1, §47.3; ADR-0529"
+  - name: build-inputs.json
+    contents: the Appendix H record of what the build was given — the action commits, the image digests, the toolchain and the lockfile digest. Listed in the manifest like any other published file
+    spec: "v0.4.1 Appendix H, §43.2; ADR-0451, ADR-0528"
+
+repository: godspeed-you/ono-sendai
+issuer: https://token.actions.githubusercontent.com
+workflow: .github/workflows/release.yml
+
+steps:
+  - id: download
+    command: |
+      VERSION=0.4.1; ARCH=amd64
+      BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
+      curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
+      curl -fLO $BASE/SHA256SUMS
+      curl -fLO $BASE/SHA256SUMS.sigstore.json
+      curl -fLO $BASE/build-provenance.json
+      curl -fLO $BASE/build-provenance.json.sigstore.json
+    requires: [curl]
+    executable: false
+    executable_because: it reaches the network, and the acceptance container runs with networking disabled (v0.4.1 §40.2)
+    proves: nothing yet — this is the download, and everything below is the reason not to install it straight away
+    on_failure: a 404 on `SHA256SUMS` means the release did not publish one. Do not install the package; open an issue.
+
+  - id: verify_signature
+    command: |
+      cosign verify-blob         --bundle SHA256SUMS.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         SHA256SUMS
+    requires: [cosign]
+    executable: false
+    executable_because: cosign is not a build dependency of this repository, and verifying a real signature needs Fulcio and Rekor over the network
+    proves: >-
+      the checksum manifest was signed by this repository's release workflow, running on a version
+      tag, and by nobody else. The identity regexp is the whole of the check: without it a
+      verification accepts a signature from anyone Fulcio has ever issued a certificate to. The
+      bundle carries the signature, the short-lived certificate and the log entry together, so
+      there is no public key to fetch and no key for the project to keep.
+    on_failure: >-
+      stop. A manifest that does not verify is a manifest you have no reason to believe, and the
+      checksums below would then only prove the artifacts match what whoever wrote the manifest
+      intended. Report it privately (SECURITY.md).
+
+  - id: verify_checksums
+    command: sha256sum --check --strict --ignore-missing SHA256SUMS
+    requires: [sha256sum]
+    executable: true
+    proves: >-
+      the artifacts you downloaded are byte-for-byte the ones the signed manifest names.
+      `--strict` fails on a malformed line rather than warning about it; `--ignore-missing` is
+      what lets you download one package rather than all of them and still get a real answer
+      about that one.
+    on_failure: >-
+      the file was altered or truncated after the manifest was signed. Delete it and download it
+      again; if it fails a second time, report it privately (SECURITY.md).
+
+  - id: verify_provenance
+    command: |
+      cosign verify-blob         --bundle build-provenance.json.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         build-provenance.json
+      grep -o "$(sha256sum ono_${VERSION}_${ARCH}.deb | cut -d' ' -f1)" build-provenance.json
+    requires: [cosign, sha256sum, grep]
+    executable: false
+    executable_because: same as the signature step — cosign, Fulcio and Rekor, over a network the acceptance container does not have
+    proves: >-
+      which commit, which workflow run and which toolchain produced this exact artifact. The
+      checksum says the bytes are the ones the manifest names; the provenance says where those
+      bytes came from, and the `grep` is the reader's own confirmation that their file's digest is
+      one of the ones it binds.
+    on_failure: >-
+      an artifact whose digest is not in the provenance is an artifact this release does not
+      account for. Do not install it. With the repository checked out,
+      `scripts/verify-release.sh --dir <dir>` runs all three checks and cross-checks the manifest
+      and the provenance against each other, which is what the release runs on itself.
+
+  - id: install
+    command: sudo apt install ./ono_${VERSION}_${ARCH}.deb
+    requires: []
+    executable: false
+    executable_because: it installs a package, which is `scripts/package-check.sh`'s job and not this sequence's
+    proves: nothing about trust — it is the step the three above exist to earn
+    on_failure: see the Install page; a failure here is a packaging problem rather than a trust one

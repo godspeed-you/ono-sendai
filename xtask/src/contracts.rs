@@ -2482,6 +2482,7 @@ pub fn check_hardening_contracts(root: &Path) -> Vec<Problem> {
     if let Some((location, document)) = read("cost_classes.yaml") {
         problems.extend(check_cost_classes(&location, &document));
     }
+    problems.extend(check_refusals(root));
     problems
 }
 
@@ -2886,4 +2887,181 @@ fn check_confinement_controls(location: &str, document: &Yaml) -> Vec<Problem> {
         }
     }
     problems
+}
+
+// --- v0.4.1 §54.1: a refusal says which boundary decided ----------------------------------------
+
+/// Holds `docs/spec/hardening/refusals.yaml` against the errors registries and the crates.
+///
+/// §54.1 asks that "a refusal should tell the user which boundary made the decision", and §54.2
+/// says where: *"Important refusal explanations MUST appear in normal structured errors. Users
+/// must not need `RUST_LOG=debug` to understand why a security policy denied them."*
+///
+/// Four phases each delivered one family of these refusals and each proved its own. The property
+/// that spans them is a census, and this is the check that the census is complete and true:
+///
+/// - every error inside the blocks `covers` declares has a row, so the census cannot be narrowed
+///   by deleting one;
+/// - every row names an error the registries declare, or is a notice rather than an error;
+/// - `decided_by` names a crate that exists, which is §6.2's owning module;
+/// - every key in `explains` is attached somewhere in that crate's own sources, so a row cannot
+///   claim a field nobody sets — §53.2 forbids string matching for policy, which only works if
+///   the field is really there.
+///
+/// The rendered `says` fragment is asserted where the refusal is constructed rather than here: a
+/// gate cannot read a `format!` and know what it produces, and the tests §4.8.12 names run the
+/// shell and read the sentence.
+#[must_use]
+pub fn check_refusals(root: &Path) -> Vec<Problem> {
+    let path = root
+        .join("docs")
+        .join("spec")
+        .join("hardening")
+        .join("refusals.yaml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        // A missing registry is not an error before the phase that writes it (AGENTS.md §14).
+        return Vec::new();
+    };
+    let location = relative(root, &path);
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        // The generic sweep already reports a file that is not valid YAML, with the parse error.
+        return Vec::new();
+    };
+    let problem = |detail: String| Problem {
+        location: location.clone(),
+        detail,
+    };
+
+    let declared = declared_error_names(root);
+    let mut covered: BTreeSet<String> = BTreeSet::new();
+    let mut problems = Vec::new();
+
+    for row in sequence(&document, "refusals") {
+        // `error: null` is how a row says it describes a notice rather than an error, so the
+        // absent value and the explicit null have to read the same.
+        let error = row.get("error").and_then(Yaml::as_str).map(str::to_owned);
+        let subject = error
+            .clone()
+            .or_else(|| string_at(row, "notice").map(|notice| format!("the `{notice}` notice")))
+            .unwrap_or_else(|| "a row with neither `error` nor `notice`".to_owned());
+
+        if let Some(name) = &error {
+            covered.insert(name.clone());
+            if !declared.contains_key(name) {
+                problems.push(problem(format!(
+                    "names `{name}`, which neither `docs/spec/errors.yaml` nor \
+                     `docs/spec/kuang/errors.v1.yaml` declares"
+                )));
+            }
+        }
+
+        let Some(boundary) = string_at(row, "boundary") else {
+            problems.push(problem(format!(
+                "{subject} names no `boundary`, so it does not say which boundary decided \
+                 (v0.4.1 §54.1)"
+            )));
+            continue;
+        };
+        if !boundary
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c == '.' || c == '_')
+        {
+            problems.push(problem(format!(
+                "{subject} names the boundary `{boundary}`, which is not a §6.1 boundary id"
+            )));
+        }
+
+        let Some(owner) = string_at(row, "decided_by") else {
+            problems.push(problem(format!(
+                "{subject} names no `decided_by`; v0.4.1 §6.2 gives every boundary one owning \
+                 crate responsible for enforcing it"
+            )));
+            continue;
+        };
+        let sources = root.join("crates").join(&owner).join("src");
+        if !sources.is_dir() {
+            problems.push(problem(format!(
+                "{subject} is decided by `{owner}`, and `crates/{owner}/src` does not exist"
+            )));
+            continue;
+        }
+        let attached = attached_metadata_keys(&sources);
+        for key in string_sequence(row, "explains") {
+            if !attached.contains(&key) {
+                problems.push(problem(format!(
+                    "{subject} claims to carry `{key}`, and nothing in `crates/{owner}/src` \
+                     attaches it. v0.4.1 §53.2 forbids matching on the message text, so a field a \
+                     script is told to read has to exist"
+                )));
+            }
+        }
+    }
+
+    for (name, code) in &declared {
+        if covered.contains(name) || !is_covered(&document, code) {
+            continue;
+        }
+        problems.push(problem(format!(
+            "`{name}` ({code}) is a hardening refusal this registry covers and says nothing \
+             about, so nothing states which boundary decided it (v0.4.1 §54.1)"
+        )));
+    }
+    problems
+}
+
+/// Whether `code` falls inside the scope `covers` declares.
+fn is_covered(document: &Yaml, code: &str) -> bool {
+    let Some(covers) = document.get("covers") else {
+        return false;
+    };
+    string_sequence(covers, "prefixes")
+        .iter()
+        .any(|prefix| code.starts_with(prefix))
+        || string_sequence(covers, "codes")
+            .iter()
+            .any(|named| named == code)
+}
+
+/// Every error the two registries declare, as `name -> code`.
+fn declared_error_names(root: &Path) -> BTreeMap<String, String> {
+    let spec = root.join("docs").join("spec");
+    let mut declared = BTreeMap::new();
+    for path in [
+        spec.join("errors.yaml"),
+        spec.join("kuang").join("errors.v1.yaml"),
+    ] {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        for entry in sequence(&document, "errors") {
+            if let (Some(name), Some(code)) = (string_at(entry, "name"), string_at(entry, "code")) {
+                declared.insert(name, code);
+            }
+        }
+    }
+    declared
+}
+
+/// The metadata keys attached anywhere under `sources`.
+///
+/// A textual reading of `with_metadata("key", …)`, which is what both error types spell it as.
+/// Crude on purpose: the question is whether a claimed field exists at all, and a row naming a
+/// key no crate ever sets is the failure worth catching.
+fn attached_metadata_keys(sources: &Path) -> BTreeSet<String> {
+    let mut text = String::new();
+    collect_rust_sources(sources, &mut text);
+    let mut keys = BTreeSet::new();
+    for (index, _) in text.match_indices("with_metadata(") {
+        let trimmed = text[index + "with_metadata(".len()..].trim_start();
+        let Some(quoted) = trimmed.strip_prefix('"') else {
+            continue;
+        };
+        if let Some(end) = quoted.find('"') {
+            keys.insert(quoted[..end].to_owned());
+        }
+    }
+    keys
 }

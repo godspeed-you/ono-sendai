@@ -9,7 +9,11 @@
 
 use std::path::Path;
 
-use xtask::terminology::{check_decision, check_decisions, check_documents, check_text};
+use ono_testkit::scratch;
+use xtask::terminology::{
+    check_decision, check_decisions, check_documents, check_remote_trust, check_security_document,
+    check_security_text, check_text, check_wiki, terms,
+};
 
 #[test]
 fn should_reject_a_document_that_calls_the_native_tier_a_sandbox() {
@@ -153,4 +157,223 @@ fn should_report_this_repositorys_decision_records_as_honest_about_the_native_ti
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+// --- the eight canonical terms of §19.1 (issue #112, ADR-0536) -----------------------------------
+
+#[test]
+fn should_define_every_canonical_term_of_the_specification() {
+    // §19.1's table, and the gate reads the same rows the generated page prints (§19.2).
+    let defined: Vec<&str> = terms().iter().map(|term| term.term.as_str()).collect();
+    for canonical in [
+        "authenticated",
+        "authorized",
+        "pinned",
+        "confined",
+        "isolated",
+        "sandboxed",
+        "bounded",
+        "streaming",
+    ] {
+        assert!(
+            defined.contains(&canonical),
+            "v0.4.1 §19.1 fixes `{canonical}`; the registry defines {defined:?}"
+        );
+    }
+    assert_eq!(
+        terms()
+            .iter()
+            .find(|term| term.term == "authenticated")
+            .map(|term| term.meaning.as_str()),
+        Some("cryptographic peer proof was verified"),
+        "the meaning is §19.1's, verbatim"
+    );
+}
+
+#[test]
+fn should_report_a_document_that_overstates_a_security_boundary() {
+    // Not the KUANG/11 half: §65.2 names the client's self-reported identity deciding
+    // authorization a forbidden failure mode, and §9.1 says why — holding a private key proves
+    // who you are, never that the operator wants you here.
+    let problems = check_text(
+        "Remote-Links.md",
+        "The agent reads the peer's Identity frame: a client is authorized by the identity it \
+         reports, and the store is only advisory.",
+    );
+    assert!(
+        problems.iter().any(|problem| problem
+            .detail
+            .contains("authorized by the identity it reports")),
+        "the phrase is named back, got {problems:?}"
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("§65.2")),
+        "the reason cites the failure mode it implements, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_not_read_a_negated_word_as_the_claim_it_denies() {
+    // `authorized by the identity it reports` sits inside `unauthorized by the identity it
+    // reports`, which says the opposite. Matching without word boundaries would report the
+    // sentence that gets it right.
+    assert_eq!(
+        check_text(
+            "Remote-Links.md",
+            "A client stays unauthorized by the identity it reports; only the store admits it.",
+        ),
+        Vec::new()
+    );
+}
+
+#[test]
+fn should_report_this_repositorys_documents_as_using_the_canonical_terms() {
+    // Every surface §19.1 names that the gate can reach: the repository's user-facing documents,
+    // every rendered `help` page and every generated reference page. The Wiki is a separate
+    // checkout and is checked by `check_wiki` when a path is given (ADR-0536).
+    let problems = check_documents(repo_root());
+    assert!(
+        problems.is_empty(),
+        "a document uses a §19.1 term for a boundary this build does not enforce:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_check_a_wiki_checkout_when_one_is_given() {
+    // The Wiki is a separate git repository, so no gate run can reach it on its own. What the
+    // repository can own is the rule; `check_wiki` applies it to whatever checkout it is handed.
+    let wiki = scratch();
+    wiki.write(
+        "Plugins-KUANG-11.md",
+        "A native KUANG/11 plugin is sandboxed: it runs under the host's own limits.",
+    );
+    let problems = check_wiki(wiki.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.location == "Plugins-KUANG-11.md"
+                && problem.detail.contains("is sandboxed")),
+        "the wiki page is reported by name, got {problems:?}"
+    );
+}
+
+fn repo_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+}
+
+// --- §51.3: the six remote trust concepts stay apart (issue #113, ADR-0538) ----------------------
+
+#[test]
+fn should_find_all_six_remote_trust_concepts_described_separately() {
+    // §51.3 lists six things a remote-link page must distinguish. The generated page is the copy
+    // a gate run can reach; the Wiki's is `check_wiki_remote_trust`'s, for ADR-0536's reason.
+    let page = xtask::reference::generate(repo_root())
+        .expect("generation must succeed")
+        .into_iter()
+        .find(|page| page.path == "docs/reference/remote-trust.md")
+        .expect("the remote trust page is generated");
+    let problems = check_remote_trust(&page.path, &page.contents);
+    assert!(
+        problems.is_empty(),
+        "v0.4.1 §51.3: the remote documentation conflates two of the six:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_remote_page_that_leaves_one_of_the_six_to_be_inferred() {
+    // Five of the six described, and the runtime identity left for the reader to work out — which
+    // is §65.2's failure mode with the documentation's name on it.
+    let problems = check_remote_trust(
+        "Remote-Links.md",
+        "Over ssh, OpenSSH authenticates. Over tcp, Ono proves the peer itself. Host keys are \
+         pinned deliberately, clients are authorized by fingerprint, and the negotiated offer is \
+         filtered by that policy.",
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("runtime_identity")),
+        "the concept nobody separated is named, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_not_read_a_denial_as_the_claim_it_denies() {
+    // v0.4.1 §5.3's own words are "is also not treated as fully isolated from that account", and
+    // §51.1's goal is claims: "The goal is not to ban these words. The goal is to ensure they
+    // refer to a defined contract." A sentence that uses the phrase in order to deny it is the
+    // intended shape — it is what §15.2's statement does — so a rule that reported it would be a
+    // rule against saying the true thing plainly.
+    assert_eq!(
+        check_text(
+            "SECURITY.md",
+            "A native KUANG/11 plugin is not fully isolated from your user account: native \
+             execution is not a complete filesystem or network sandbox.",
+        ),
+        Vec::new()
+    );
+    // And the claim itself is still reported, so the exemption is about the word `not` next to
+    // the phrase and not about the phrase appearing anywhere in a document that also denies it.
+    assert!(
+        !check_text(
+            "SECURITY.md",
+            "A native KUANG/11 plugin is not a toy. It is fully isolated from your user account, \
+             and native execution is not a complete filesystem or network sandbox.",
+        )
+        .is_empty(),
+        "a denial elsewhere in the document does not excuse the claim"
+    );
+}
+
+// --- §51.4: the security page states the model and the reporting path (issue #114, ADR-0541) ----
+
+#[test]
+fn should_find_every_protected_asset_of_the_threat_model_in_the_security_document() {
+    // §51.4 asks for "high-level trust boundaries" on the front page, and §5.1 is the list of
+    // what they protect. A security page that names eight of the nine has silently dropped one
+    // from the model a reader is being shown.
+    let problems = check_security_document(repo_root());
+    assert!(
+        problems.is_empty(),
+        "v0.4.1 §51.4: SECURITY.md does not state the model it is the front door to:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_find_a_reporting_channel_and_a_response_expectation_in_the_security_document() {
+    // §51.4's four points, three of which are about the reporting path rather than the model: how
+    // to report privately, which versions are supported, and that a public issue is the wrong
+    // place for an unpatched exploitable vulnerability. A page that says "report responsibly" and
+    // names no channel and no timescale has told a finder nothing they can act on.
+    let silent = check_security_text(
+        "SECURITY.md\n\nPlease report vulnerabilities responsibly. The trust boundaries are \
+         described in the specification.",
+    );
+    for expected in ["report", "supported", "public issue"] {
+        assert!(
+            silent
+                .iter()
+                .any(|problem| problem.detail.contains(expected)),
+            "a page missing `{expected}` is reported, got {silent:?}"
+        );
+    }
 }

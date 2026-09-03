@@ -1998,7 +1998,7 @@ mutable inputs.
 §66.8's five bullets. A document is closed here by the gate check that fails when the document and
 the tree disagree, so no box in this subsubsection is ticked by someone having read something.
 
-- [ ] **P1 · A refusal names the boundary that decided it.** The four examples of §54.1 — the
+- [x] **P1 · A refusal names the boundary that decided it.** The four examples of §54.1 — the
       authenticated client that is not authorized for an action, the plugin whose mandatory control
       could not be installed, the finite-input requirement against an unbounded upstream, the
       history budget that kept part of a result — appear in ordinary structured errors, with no
@@ -2008,52 +2008,88 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `crates/ono-kuang-supervisor/tests/confinement.rs::should_name_the_control_that_could_not_be_installed_in_the_structured_error`,
       `xtask/tests/contracts.rs::should_find_a_deciding_boundary_on_every_declared_hardening_error`,
       case `200` (#119, §54.1, §54.2).
-- [ ] **P2 · The security terminology contract holds across every document.** README, Wiki, `help`
-      and the generated reference use the §19.1 canonical terms, a document that overstates a
-      boundary fails the gate, and the generated pages carry the terms rather than a hand-written
-      paraphrase — `xtask/tests/terminology.rs::should_report_a_document_that_overstates_a_security_boundary`,
+- [x] **P2 · The security terminology contract holds across every document.** The §19.1 terms are
+      defined once in `docs/spec/hardening/terminology.yaml`, rendered into
+      `docs/reference/terminology.md` rather than paraphrased (§19.2), and every surface a gate run
+      can reach is held to them: README, PHILOSOPHY, CONTRIBUTING, SECURITY, every page `help`
+      renders, every generated reference page and the accepted decision records —
+      `xtask/tests/terminology.rs::should_report_a_document_that_overstates_a_security_boundary`,
       `::should_report_this_repositorys_documents_as_using_the_canonical_terms`,
+      `::should_define_every_canonical_term_of_the_specification`,
       `xtask/tests/reference.rs::should_render_the_security_terms_into_the_generated_reference`
-      (#112, §19.1, §19.2, §51.1).
+      (#112, §19.1, §19.2, §51.1; ADR-0536). **The Wiki is a separate git repository and no gate run
+      reaches it**: `cargo xtask terminology --wiki <path>` applies the identical rules to a named
+      checkout — `::should_check_a_wiki_checkout_when_one_is_given` — and running it stays a manual
+      step until the release workflow clones the Wiki.
 - [ ] **P2 · Verification instructions exist and work.** The install documentation shows a short
       copyable sequence that verifies `SHA256SUMS` and its signature before installation, needs no
-      proprietary service, and is executed rather than merely printed —
-      `xtask/tests/provenance.rs::should_execute_the_documented_verification_sequence_against_a_release_fixture`,
-      `::should_fail_the_documented_verification_sequence_on_a_tampered_artifact`, case `199`
-      (#115, §47.5, §67.7).
-- [ ] **P2 · The migration path is written down.** §63's five migrations — existing users, existing
+      proprietary service, and is executed rather than merely printed. Written, checked and half
+      executed: `docs/spec/hardening/release_verification.yaml` holds the five steps once, the
+      README, the Wiki's Install page and `docs/reference/release-verification.md` are compared
+      against it, and the checksum step is run against a release fixture and against a tampered one
+      — `xtask/tests/release_verification.rs::should_execute_the_documented_verification_sequence_against_a_release_fixture`,
+      `::should_fail_the_documented_verification_sequence_on_a_tampered_artifact`,
+      `::should_leave_the_other_artifacts_verifiable_when_one_is_missing`,
+      `::should_declare_a_sequence_that_fits_in_a_document_and_needs_no_proprietary_service`,
+      `::should_print_the_same_commands_in_the_readme_and_the_generated_reference` (#115, §47.5,
+      §67.7; ADR-0542, ADR-0545). **The box stays open**, for the reason ADR-0529 left #107's open:
+      keyless signing needs an OIDC token that exists only inside a run of the release workflow,
+      and verifying one needs Sigstore over a network §40.2 denies the container — so no release
+      has been signed and the two `cosign` steps have never been executed against one. The first
+      `v*` tag is the run that closes both boxes. The commands are `scripts/verify-release.sh`'s,
+      byte for byte, rather than a guess at them.
+- [x] **P2 · The migration path is written down.** §63's five migrations — existing users, existing
       direct listening-agent users, an existing host identity, existing KUANG plugins, existing test
-      infrastructure — are documented with the commands an operator runs, and the commands are
-      checked against the command registry so a renamed flag turns the gate red —
+      infrastructure — are documented in `docs/MIGRATION.md` and on the Wiki's Install page with
+      the commands an operator runs, every command, capability id and flag they print is resolved
+      against the contracts so a rename turns the gate red where the guide is, and the §63.2
+      sequence is run against the real binary with the fingerprint `--print-peer-key` produced —
       `xtask/tests/reference.rs::should_resolve_every_command_the_migration_guide_prints_against_the_registry`,
+      `::should_report_a_migration_guide_that_prints_a_command_nobody_answers_to`,
+      `::should_report_a_migration_guide_that_grants_a_capability_the_registry_retired`,
       `crates/ono-cli/tests/client_keys.rs::should_accept_the_migration_sequence_the_documentation_prints`
-      (#116, §63.1–§63.5).
-- [ ] **P3 · The repository metrics are computed, not typed.** Crate, test, acceptance-case, ADR and
-      command-contract counts come from `cargo xtask metrics`, the gate fails when README disagrees
-      with it, and an executed test is distinguished from a skip so no count claims proof it does
-      not have — `xtask/tests/metrics.rs::should_compute_every_metric_the_readme_states`,
+      and case `182` end to end (#116, §63.1–§63.5, §66.8; ADR-0543).
+- [x] **P3 · The repository metrics are computed, not typed.** Crate, test, acceptance-case, ADR and
+      command-contract counts come from `cargo xtask metrics`, the README carries them in a block
+      that `--write` regenerates and `spec-check` compares, and the test figure is named for what a
+      static reading can know — declared, with the count that can skip and the count the canonical
+      CI environment expects to skip beside it, so no number claims proof of execution it does not
+      have (§50.4) — `xtask/tests/metrics.rs::should_compute_every_metric_the_readme_states`,
       `::should_fail_when_the_readme_disagrees_with_the_computed_metrics`,
-      `::should_count_executed_tests_apart_from_skipped_ones` (#111, §50.1–§50.4).
-- [ ] **P3 · The remote documentation separates the six trust concepts.** Transport encryption,
-      transport authentication, host pinning, client authorization, self-reported identity and
-      runtime user are described as six distinct things, and the page is held against the §6.1
-      boundary inventory — `xtask/tests/terminology.rs::should_find_all_six_remote_trust_concepts_described_separately`,
-      `xtask/tests/reference.rs::should_hold_the_remote_documentation_against_the_boundary_inventory`
-      (#113, §51.3).
-- [ ] **P3 · `SECURITY.md` states the model and the reporting path.** Supported versions, the
-      reporting channel, the response expectation and the boundaries §5 protects are stated, and the
-      file is held against the boundary inventory so a new boundary cannot be added without
-      appearing there — `xtask/tests/terminology.rs::should_find_every_protected_asset_of_the_threat_model_in_the_security_document`,
+      `::should_count_executed_tests_apart_from_skipped_ones`,
+      `::should_report_a_readme_that_carries_no_generated_block_at_all`,
+      `::should_rewrite_the_block_and_leave_the_prose_around_it_alone`,
+      `::should_not_count_a_test_written_inside_a_string_literal` (#111, §50.1–§50.4; ADR-0544).
+- [x] **P3 · The remote documentation separates the six trust concepts.** §51.3's six — the
+      SSH-carried stdio transport, the direct mutual-TLS transport, server host pinning, client
+      authorization, runtime user/UID metadata and capability negotiation — are each named *and*
+      each say what they do not establish, in `docs/reference/remote-trust.md` and on the Wiki's
+      `Remote-Links` page, because a page that names six headings and conflates two of them is
+      what §51.3 is written against —
+      `xtask/tests/terminology.rs::should_find_all_six_remote_trust_concepts_described_separately`,
+      `::should_report_a_remote_page_that_leaves_one_of_the_six_to_be_inferred` (#113, §51.3;
+      ADR-0538). The `boundary` each concept carries is recorded and not yet joined to §6.1's
+      inventory, which `docs/spec/hardening/security_boundaries.yaml` will hold and #118 owns.
+- [x] **P3 · `SECURITY.md` states the model and the reporting path.** Supported versions, the
+      reporting channel, the response expectation, all nine protected assets of §5.1 and §5.3's
+      out-of-scope statement — the compromised kernel, the root attacker on the same host,
+      malicious hardware, and the native plugin that is not isolated from the account it runs as —
+      are stated, and the gate reports the page that drops one of them —
+      `xtask/tests/terminology.rs::should_find_every_protected_asset_of_the_threat_model_in_the_security_document`,
       `::should_find_a_reporting_channel_and_a_response_expectation_in_the_security_document`
-      (#114, §51.4, §5.1).
+      (#114, §51.4, §5.1, §5.3; ADR-0541). The boundary table is transcribed by hand from §6.1,
+      because no generator can read it yet: `docs/spec/hardening/security_boundaries.yaml` does not
+      exist and #118 owns it.
 - [ ] **P2 · The status documents agree.** `docs/STATE.md`, this checklist and the release notes
       state the same thing about what is done: *In progress* is empty, the workspace holds no
       `#[ignore]`d test, every *Deferred* entry names an ADR saying why it does not block the
       release, and the release notes name the same tranche state — the bar §4.5, §4.6.5 and §4.7.2
       already set, checked by `cargo xtask state-check` on every `scripts/release-check.sh` run
-      (ADR-0402, `xtask/tests/scan.rs`), extended by
-      `xtask/tests/scan.rs::should_report_release_notes_that_disagree_with_the_checklist` (§66.8's
-      fifth bullet).
+      (ADR-0402, `xtask/tests/scan.rs`). **The extension this box names,
+      `xtask/tests/scan.rs::should_report_release_notes_that_disagree_with_the_checklist`, does not
+      exist**, and neither does a `docs/releases/v0.4.1.md` for it to read — §66.8's fifth bullet is
+      owed by whichever increment writes the release notes, and this box cannot be ticked before
+      then. Found on 2026-09-03 while closing §4.8.12's seven documentation boxes.
 
 #### 4.8.13 The fourteen acceptance families (§40.3) and the scenarios they carry
 

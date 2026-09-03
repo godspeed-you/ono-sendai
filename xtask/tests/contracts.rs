@@ -921,3 +921,71 @@ fn should_reject_a_limit_whose_default_lies_outside_its_own_range() {
         "v0.4.1 §55.2: a default a user cannot restore is not a default: {problems:?}"
     );
 }
+
+// --- §54.1: a refusal says which boundary decided (issue #119, ADR-0537) -------------------------
+
+#[test]
+fn should_find_a_deciding_boundary_on_every_declared_hardening_error() {
+    // The property no single phase could prove: every hardening refusal names its boundary, in
+    // the message a user reads (§54.2) and in metadata a script can match on (§53.2). The
+    // registry is the census and this is the tree it is held against.
+    let problems = xtask::contracts::check_refusals(repository());
+    assert!(
+        problems.is_empty(),
+        "v0.4.1 §54.1: a hardening refusal does not say which boundary decided it:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_hardening_error_that_no_refusal_row_covers() {
+    // `covers` is the scope, so the census cannot be narrowed by deleting a row: an error code
+    // inside one of the declared blocks with nothing said about it is the gap this exists for.
+    let repo = consistent();
+    repo.write(
+        "docs/spec/hardening/refusals.yaml",
+        "version: 1\ncovers:\n  prefixes: [Ono-Sendai-E11]\n  codes: []\nrefusals: []\n",
+    );
+    repo.write(
+        "docs/spec/errors.yaml",
+        "version: 1\nerrors:\n  - code: Ono-Sendai-E1101\n    name: resource.item_limit\n    kind: resource\n    summary: A ceiling was reached.\n    help: Narrow the input.\n",
+    );
+    let problems = xtask::contracts::check_refusals(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("resource.item_limit")
+                && problem.detail.contains("which boundary decided")),
+        "an uncovered hardening error is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_refusal_that_claims_a_field_nobody_attaches() {
+    // §53.2 forbids string matching for policy, which only works if the field is really there. A
+    // row naming a metadata key the owning crate never sets is a contract with nothing behind it.
+    let repo = consistent();
+    repo.write(
+        "docs/spec/hardening/refusals.yaml",
+        "version: 1\ncovers:\n  prefixes: []\n  codes: []\nrefusals:\n  - error: resource.item_limit\n    boundary: pipeline.materialization\n    decided_by: ono-value\n    explains: [invented_key]\n    says: budget after\n",
+    );
+    repo.write(
+        "docs/spec/errors.yaml",
+        "version: 1\nerrors:\n  - code: Ono-Sendai-E1101\n    name: resource.item_limit\n    kind: resource\n    summary: A ceiling was reached.\n    help: Narrow the input.\n",
+    );
+    repo.write(
+        "crates/ono-value/src/budget.rs",
+        "fn refuse() { error.with_metadata(\"stage\", stage) }\n",
+    );
+    let problems = xtask::contracts::check_refusals(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("invented_key")),
+        "a claimed field nobody sets is reported: {problems:?}"
+    );
+}

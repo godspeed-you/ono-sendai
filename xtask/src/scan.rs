@@ -166,8 +166,12 @@ fn is_scanner_source(relative: &str) -> bool {
 /// layout of AGENTS.md §2 and spec §35.6 reserve for cross-crate suites, examples and fuzzing.
 const RUST_TREES: &[&str] = &["crates", "xtask", "tests", "examples", "fuzz"];
 
-/// Every `.rs` file under the trees of [`RUST_TREES`], excluding build output.
-fn rust_sources(root: &Path) -> Vec<PathBuf> {
+/// Every `.rs` file under the trees of `RUST_TREES`, excluding build output.
+///
+/// Public so `xtask::metrics` counts the same tree the scanners read: a metric measured over a
+/// different set of files from the one the gate walks is a metric about a different repository.
+#[must_use]
+pub fn rust_sources(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for top in RUST_TREES {
         collect_rust(&root.join(top), &mut files);
@@ -418,7 +422,8 @@ fn disables_authentication(flag: &str) -> bool {
 /// has to record a name as *absent* writes it plain; a name inside a fenced code block is sample
 /// output rather than a claim. The range separates a case number from a number: a `200-column`
 /// terminal and a `512-byte` frame are shaped exactly like case names and are not cases, and no
-/// wording rule could tell them apart.
+/// wording rule could tell them apart. Where the range no longer can either — case `200` exists
+/// now — `NOT_A_CASE` names the two tokens outright.
 ///
 /// An **unticked box names what its increment must write**, so its references are not resolved.
 /// `docs/ACCEPTANCE.md` §4.7 established the convention and §4.8 depends on it: a checklist is
@@ -481,7 +486,10 @@ pub fn check_acceptance_case_references(root: &Path) -> Vec<Problem> {
                 continue;
             }
             for name in case_references(line) {
-                if existing.contains(&name) || case_number(&name).is_none_or(|n| n > highest) {
+                if existing.contains(&name)
+                    || NOT_A_CASE.contains(&name.as_str())
+                    || case_number(&name).is_none_or(|n| n > highest)
+                {
                     continue;
                 }
                 problems.push(Problem::new(
@@ -494,6 +502,21 @@ pub fn check_acceptance_case_references(root: &Path) -> Vec<Problem> {
     problems.sort_by(|left, right| left.location.cmp(&right.location));
     problems
 }
+
+/// Tokens shaped like an acceptance case name that are not one, and will not become one.
+///
+/// ADR-0401 built the check on a range — a token numbered above the highest case is a number in
+/// prose — and called it "one documented hole". Case `200` opened it. Both ADR-0401 and ADR-0463
+/// write `200-column` in backticks, as the counter-example they are *about*: they are the two
+/// records that decided how a case name is told from a figure, and naming the figure is how they
+/// argue. `512-byte` is the other half of the same sentence in both.
+///
+/// AGENTS.md §8 forbids editing an accepted decision record, so the sentences cannot be rewritten
+/// and the range can no longer tell them apart. Naming them here is the correction: one reviewed
+/// list, in the checker, rather than a heuristic that guesses at English. The cost is stated —
+/// were a case ever numbered and named `200-column`, a reference that went dangling would be
+/// ignored (ADR-0539).
+const NOT_A_CASE: &[&str] = &["200-column", "512-byte"];
 
 /// Whether this line is inside an unticked checklist box, given whether the previous one was.
 ///

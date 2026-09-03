@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use xtask::{
-    architecture, bindings, conformance, contracts, narrative, perf, provenance, reference,
-    reproducibility, scan, supply_chain, terminology,
+    architecture, bindings, conformance, contracts, metrics as repo_metrics, narrative, perf,
+    provenance, reference, reproducibility, scan, supply_chain, terminology, verification,
 };
 
 fn main() -> ExitCode {
@@ -21,6 +21,8 @@ fn main() -> ExitCode {
         Some("spec-check") => spec_check(),
         Some("state-check") => state_check(),
         Some("skip-check") => skip_check(&rest),
+        Some("terminology") => terminology(&rest),
+        Some("metrics") => metrics(&rest),
         Some("build-manifest") => build_manifest(&rest),
         Some("compare-builds") => compare_builds(&rest),
         Some("checksums") => checksums(&rest),
@@ -68,6 +70,14 @@ fn usage() {
     eprintln!(
         "  perf           run the performance benchmarks of spec section 37.1 \
 [--profile S|M|L] [--iterations N] [--compare <path>] [--write-baseline]"
+    );
+    eprintln!(
+        "  terminology    the documentation terminology contract of section 19.1 over this \
+repository, and over a Wiki checkout when one is named [--wiki <path>]"
+    );
+    eprintln!(
+        "  metrics        the generated repository metrics of section 50 [--write] to update the \
+README block"
     );
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!(
@@ -619,6 +629,10 @@ fn spec_check() -> ExitCode {
         narrative::check(&root)
             .into_iter()
             .chain(narrative::check_readme_examples(&root))
+            .chain(verification::check_sequence())
+            .chain(check_release_verification_documents(&root))
+            .chain(reference::check_migration_guide(&root))
+            .chain(repo_metrics::check_readme(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 
@@ -720,6 +734,101 @@ fn skip_check(arguments: &[String]) -> ExitCode {
         eprintln!("skip-check: {} — {}", problem.location, problem.detail);
     }
     ExitCode::FAILURE
+}
+
+/// The documentation terminology contract of v0.4.1 §19.1, run on demand.
+///
+/// `spec-check` already holds every surface a gate run can reach — the repository's user-facing
+/// documents, every rendered `help` page, every generated reference page and the accepted decision
+/// records. **The Wiki is a separate git repository**, so no gate run can reach it: this task takes
+/// the checkout as an argument, which is the only honest way to check it (ADR-0536).
+fn terminology(arguments: &[String]) -> ExitCode {
+    let root = repo_root();
+    let mut wiki: Option<PathBuf> = None;
+    let mut rest = arguments.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--wiki" => match rest.next() {
+                Some(path) => wiki = Some(PathBuf::from(path)),
+                None => return usage_error("terminology: --wiki needs the path of a checkout"),
+            },
+            other => match other.strip_prefix("--wiki=") {
+                Some(path) => wiki = Some(PathBuf::from(path)),
+                None => return usage_error(&format!("terminology: unknown argument `{other}`")),
+            },
+        }
+    }
+
+    let mut problems = terminology::check_documents(&root);
+    problems.extend(terminology::check_decisions(&root));
+    match wiki.as_deref() {
+        Some(checkout) => {
+            problems.extend(terminology::check_wiki(checkout));
+            problems.extend(terminology::check_wiki_remote_trust(checkout));
+            let install = checkout.join("Install.md");
+            match std::fs::read_to_string(&install) {
+                Ok(text) => problems.extend(verification::check_document("Install.md", &text)),
+                Err(error) => eprintln!(
+                    "terminology: Install.md cannot be read from the named Wiki checkout: {error}"
+                ),
+            }
+        }
+        None => println!(
+            "terminology: no --wiki given, so the Wiki is unchecked. It is a separate git \
+             repository and the gate cannot reach it (v0.4.1 section 19.1, ADR-0536)"
+        ),
+    }
+
+    if problems.is_empty() {
+        println!(
+            "terminology: ok — {} term(s) of section 19.1 held across every surface checked",
+            terminology::terms().len()
+        );
+        return ExitCode::SUCCESS;
+    }
+    for problem in &problems {
+        eprintln!("terminology: {} — {}", problem.location, problem.detail);
+    }
+    ExitCode::FAILURE
+}
+
+/// The generated repository metrics of v0.4.1 §50.
+///
+/// §50.2 asks `xtask` to compute the volatile counts, and §50.3 lets the README keep them as long
+/// as the gate fails when they disagree — which `spec-check` does. This task prints them, and
+/// `--write` puts them back into the README's generated block.
+fn metrics(arguments: &[String]) -> ExitCode {
+    let root = repo_root();
+    let write = match arguments.first().map(String::as_str) {
+        None => false,
+        Some("--write") => true,
+        Some(other) => return usage_error(&format!("metrics: unknown argument `{other}`")),
+    };
+    print!("{}", repo_metrics::measure(&root).render());
+    if !write {
+        return ExitCode::SUCCESS;
+    }
+    match repo_metrics::write_readme(&root) {
+        Ok(true) => println!("metrics: README.md updated"),
+        Ok(false) => println!("metrics: README.md already agrees"),
+        Err(error) => {
+            eprintln!("metrics: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// The documents that carry v0.4.1 §47.5's verification sequence, held against the registry.
+///
+/// The generated page is compared by `reference::check_committed` like every other generated
+/// page; this is the hand-written copy. The Wiki's is `cargo xtask terminology --wiki <path>`'s,
+/// for the reason ADR-0536 records.
+fn check_release_verification_documents(root: &Path) -> Vec<scan::Problem> {
+    match std::fs::read_to_string(root.join("README.md")) {
+        Ok(text) => verification::check_document("README.md", &text),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Every "generated from" claim in `docs/ACCEPTANCE.md` names something that is generated.

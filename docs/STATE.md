@@ -1883,6 +1883,34 @@ Like the orientation item above, it changes the observation contract rather than
 Thirty-odd rows, once per `look` — negligible today, indexable if the table grows. ADR-0495.
 **Exit test:** none needed until the table does grow; recorded so the next reader knows it was seen.
 
+**Error metadata is never rendered by any production path (2026-09-03).** `Reporter::error`
+prints only `metadata["details"]`. `ono_render::Layout::render_error` with `Detail::Full` — which
+prints `metadata key = value`, and whose own doc comment says it is what `inspect @error` shows —
+has callers **only in `crates/ono-render/tests/error_rendering.rs`**. So H2's `denied_because`,
+H4's `control` and `execution_tier`, and H5's `limit` and `consumed` reach no screen. Three phases
+each proved their metadata exists and none proved a user can see it, because a test that reads the
+structured value never passes through the renderer. **Exit test:** a refusal shown to a user
+carries the field that names the deciding boundary.
+
+**`Ono-Sendai-E1502` never reaches the peer (2026-09-03).**
+`crates/ono-remote/src/listener.rs:544-552` builds `handshake_timed_out`, audits it, `eprintln!`s
+it on the **agent's** stderr and returns — without calling `ono_protocol::refuse`, unlike the
+E1501 path directly beside it. `refusal_guidance(RemoteHandshakeTimeout)` is therefore
+unreachable. **Exit test:** a client whose handshake times out receives E1502.
+
+**Handshake-time refusals lose all metadata over the wire (2026-09-03).** `Reject { code, message }`
+carries none, so `store_present` — which E1202's registry help explicitly promises the client —
+never arrives. **Exit test:** an unauthorized client can tell an empty store from a store that
+lists somebody else.
+
+**`Ono-Sendai-E1103 resource.materialization_limit` is declared and never constructed
+(2026-09-03).** Its only occurrences are the enum and a code/name test. Recorded as
+`raised: false` in `docs/spec/hardening/refusals.yaml` rather than quietly deleted. **Exit test:**
+either a path raises it, or it leaves the taxonomy.
+
+**`docs/spec/kuang/errors.v1.yaml:20` says "Nothing here is implemented" (2026-09-03).** Stale for
+the K118xx block, which H4 delivered. One line. **Exit test:** the file describes what is there.
+
 **Two worktrees share one acceptance image tag (2026-09-03).** `scripts/acceptance.sh` defaults
 `IMAGE` to `ono-sendai:acceptance`, and a run finishing without `--keep-image` **deletes it out from
 under a concurrent run in another worktree**, which then reports every remaining case as exit 125
@@ -1892,6 +1920,11 @@ direct cost of running phases in parallel worktrees, and it fabricates failures 
 them. **Exit test:** two concurrent `scripts/acceptance.sh` runs in two worktrees both report their
 own results — by deriving the default tag from the worktree, or by refusing to remove an image
 another run is using.
+
+  **It can also produce a false _green_.** H12 saw case 200 pass while carrying the message from
+  *before* its own change — the run had used the other worktree's binary. A `docker builder prune
+  -af` and a clean rebuild corrected it. A tool that lies green under parallel use is worse than
+  one that lies red, because nothing prompts a second look.
 
 **`dist/` accumulates across versions (2026-09-03).** `scripts/release-check.sh` writes into it and
 `xtask checksums` covers every file there, so a local manifest lists 0.3.0 packages beside 0.4.0.

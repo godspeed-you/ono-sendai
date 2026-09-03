@@ -11,7 +11,7 @@
 //! the policy here rather than at the evaluator's call sites, so there is one place that decides
 //! what is kept and one place that knows what was dropped.
 
-use ono_value::{Budget, Value, estimated_size};
+use ono_value::{Budget, Ceiling, Value, estimated_size};
 
 /// What the retained history may hold (v0.4.1 §24.1, Appendix A).
 ///
@@ -44,11 +44,39 @@ impl Default for RetentionLimits {
     }
 }
 
+/// Which retention ceiling stopped a result being kept whole (v0.4.1 §24.2, §54.1).
+///
+/// §54.1's example names the budget that decided — *"because the 16 MiB history budget was
+/// reached"* — and there are four of them, fixed by four different settings. A notice that said
+/// only "its retention budget" would leave the reader four numbers and no way to tell which one
+/// to raise, which is the shape §54.2 exists against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoppedBy {
+    ceiling: Ceiling,
+    configured: u64,
+    setting: &'static str,
+}
+
+impl StoppedBy {
+    /// The ceiling that was reached, in the words §54.1 writes one in.
+    #[must_use]
+    pub fn written(self) -> String {
+        self.ceiling.written(self.configured)
+    }
+
+    /// The configuration key that moves it (§55.1).
+    #[must_use]
+    pub const fn setting(self) -> &'static str {
+        self.setting
+    }
+}
+
 /// What retaining one result did (v0.4.1 §24.2, §24.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Retained {
     kept: usize,
     total: usize,
+    stopped_by: Option<StoppedBy>,
 }
 
 impl Retained {
@@ -76,17 +104,35 @@ impl Retained {
         self.kept < self.total
     }
 
+    /// Which ceiling stopped the retention, where one did.
+    #[must_use]
+    pub const fn stopped_by(self) -> Option<StoppedBy> {
+        self.stopped_by
+    }
+
     /// The sentence §24.3 requires, or `None` when the whole result was kept.
     ///
     /// §54.1 writes the shape: *"result history kept 10,000 of 84,212 values because the 16 MiB
     /// history budget was reached"*. The command's own output is not what was shortened, and the
-    /// wording says "history kept" for that reason.
+    /// wording says "history kept" for that reason. The budget is named because §54.1 names it
+    /// and §54.2 asks that the explanation reach the user without a debug log: four settings can
+    /// stop a retention, and a sentence that does not say which one leaves the reader guessing.
     #[must_use]
     pub fn notice(self) -> Option<String> {
         self.truncated_for_history().then(|| {
+            let because = match self.stopped_by {
+                Some(stop) => format!(
+                    "because the {} history budget (`{}`) was reached",
+                    stop.written(),
+                    stop.setting()
+                ),
+                // Unreachable through `retain_mapped`, which always records the ceiling it
+                // stopped at. Stated rather than unwrapped, because a notice is not worth a panic.
+                None => "because a retention budget was reached".to_owned(),
+            };
             format!(
-                "result history kept {} of {} values because its retention budget was reached; \
-                 the command's own output was complete",
+                "result history kept {} of {} values {because}; the command's own output was \
+                 complete",
                 self.kept, self.total
             )
         })
@@ -217,9 +263,15 @@ impl ResultHistory {
             "limits.history_bytes_per_result",
         );
         let mut kept = Vec::new();
+        let mut stopped_by = None;
         for value in values {
             let stored = map(value);
-            if budget.charge(&stored).is_err() {
+            if let Err(exceeded) = budget.charge(&stored) {
+                stopped_by = Some(StoppedBy {
+                    ceiling: exceeded.ceiling(),
+                    configured: exceeded.configured(),
+                    setting: exceeded.setting(),
+                });
                 break;
             }
             kept.push(stored);
@@ -227,6 +279,7 @@ impl ResultHistory {
         let outcome = Retained {
             kept: kept.len(),
             total,
+            stopped_by,
         };
 
         if kept.is_empty() {

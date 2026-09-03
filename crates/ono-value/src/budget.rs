@@ -113,6 +113,20 @@ impl Ceiling {
             Ceiling::Bytes => "bytes",
         }
     }
+
+    /// A ceiling of `configured`, written the way §54.1 writes one.
+    ///
+    /// §54.1's example refusal names the figure — *"because the 16 MiB history budget was
+    /// reached"* — so a byte ceiling is rendered in base units with the human reading beside it,
+    /// as Appendix A requires, and a count is rendered as a count. This is the one place that
+    /// spelling lives, because a refusal and a notice about the same ceiling have to agree.
+    #[must_use]
+    pub fn written(self, configured: u64) -> String {
+        match self {
+            Ceiling::Items => format!("{configured} values"),
+            Ceiling::Bytes => format!("{configured} bytes ({})", human_bytes(configured)),
+        }
+    }
 }
 
 /// A budget ceiling that was reached: which one, what it was, and what crossed it.
@@ -176,10 +190,7 @@ impl Exceeded {
             observed,
             setting,
         } = self;
-        let rendered = match ceiling {
-            Ceiling::Items => format!("{configured} values"),
-            Ceiling::Bytes => format!("{configured} bytes ({})", human_bytes(configured)),
-        };
+        let rendered = ceiling.written(configured);
         ErrorValue::new(
             ceiling.code(),
             format!(

@@ -609,3 +609,66 @@ async fn should_refuse_without_prompting_when_no_terminal_is_attached() {
         );
     }
 }
+
+// --- §54.1, §54.2: the refusal says which policy decided (issue #119) --------------------------
+
+#[tokio::test]
+async fn should_say_which_policy_refused_an_authenticated_client() {
+    // §54.1's first example, and the sentence it asks for:
+    //
+    //     remote client sha256:... is authenticated but not authorized for service.restart
+    //
+    // §54.2 puts it in the ordinary structured error rather than behind `RUST_LOG=debug`, and
+    // ADR-0473 already put the boundary in the metadata. The gap this closes is the *message*:
+    // metadata is machine-readable and nothing on the default rendering path prints it, so a
+    // refusal whose sentence says only "this client" tells a user neither who was refused nor
+    // that they were authenticated at all.
+    let peer = ono_protocol::PeerAuthorization::Policy(Arc::new(
+        AuthorizedClients::of([AuthorizedClient::observing(client_key().fingerprint())])
+            .authorize(client_key().fingerprint())
+            .expect("the listed client"),
+    ));
+    let fingerprint = client_key().fingerprint().to_string();
+
+    let denied = peer
+        .require_action(Some("service.manage"), "restart service")
+        .expect_err("an ungranted action is denied");
+    let message = denied.message().to_owned();
+    for fragment in [
+        fingerprint.as_str(),
+        "authenticated",
+        "not authorized",
+        "service.manage",
+    ] {
+        assert!(
+            message.contains(fragment),
+            "§54.1: the refusal's own sentence carries `{fragment}`, so the boundary that decided \
+             is readable without inspecting metadata: {message:?}"
+        );
+    }
+
+    // §10.4: observe-off and action-not-granted are different boundaries and are fixed by
+    // different commands, so the sentence has to tell them apart too.
+    let closed = ono_protocol::PeerAuthorization::Policy(Arc::new(
+        AuthorizedClients::of([
+            AuthorizedClient::observing(client_key().fingerprint()).with_observe(false)
+        ])
+        .authorize(client_key().fingerprint())
+        .expect("the listed client"),
+    ));
+    let refused = closed
+        .require_observe("get process")
+        .expect_err("observe is off");
+    for fragment in [fingerprint.as_str(), "authenticated", "not authorized"] {
+        assert!(
+            refused.message().contains(fragment),
+            "§54.1: the observe refusal names `{fragment}` too: {:?}",
+            refused.message()
+        );
+    }
+    assert!(
+        refused.message().contains("observe"),
+        "§10.4: and says which of the two decisions this was: {:?}",
+        refused.message()
+    );
+}

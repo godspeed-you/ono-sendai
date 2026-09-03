@@ -287,6 +287,40 @@ fn should_ignore_a_case_name_inside_a_fenced_code_block() {
 }
 
 #[test]
+fn should_ignore_a_token_the_decision_records_name_as_not_being_a_case() {
+    // ADR-0401 called the range heuristic "one documented hole", and case `200` opened it: both
+    // ADR-0401 and ADR-0463 write `200-column` in backticks, as the counter-example they are
+    // *about*. Both are accepted records AGENTS.md §8 forbids editing, so the token is named once
+    // in the checker instead (ADR-0539).
+    let repo = fixture(&[
+        (
+            "docker/acceptance/cases/200-refusals-name-the-deciding-boundary.case",
+            "run\n",
+        ),
+        (
+            "docs/decisions/ADR-0401-a-named-acceptance-case-must-exist.md",
+            "A `200-column` terminal and a `512-byte` frame are shaped exactly like case names.\n",
+        ),
+    ]);
+    assert_eq!(check_acceptance_case_references(repo.path()), Vec::new());
+
+    // And a real dangling reference at the same number is still reported, so the exemption is
+    // about two named tokens rather than about the number two hundred.
+    let renamed = fixture(&[
+        (
+            "docker/acceptance/cases/200-refusals-name-the-deciding-boundary.case",
+            "run\n",
+        ),
+        (
+            "docs/decisions/ADR-0401-a-named-acceptance-case-must-exist.md",
+            "Encoded by case `200-refusals-say-which`.\n",
+        ),
+    ]);
+    let problems = check_acceptance_case_references(renamed.path());
+    assert_eq!(problems.len(), 1, "got {problems:?}");
+}
+
+#[test]
 fn should_ignore_the_board_and_the_narrative_specifications_when_scanning_case_references() {
     // The board records names that never existed on purpose, and the specifications are
     // immutable (AGENTS.md §5.1), so a name in either is not a claim this check could close.
