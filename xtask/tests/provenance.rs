@@ -14,6 +14,7 @@
     reason = "AGENTS.md §16: a helper shared by tests states its preconditions the same way a test does"
 )]
 
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -377,5 +378,219 @@ fn should_fail_the_release_check_when_an_artifact_is_absent_from_the_manifest() 
         !verified && report.contains("ono_0.4.1_amd64.deb"),
         "an artifact whose bytes changed after the manifest was written passed \
          verification:\n{report}"
+    );
+}
+
+// --- the signature over the manifest (spec §47.3, ADR-0529) -------------------------------------
+
+/// A stand-in for `cosign` on `PATH`.
+///
+/// The gate has no OIDC token and no route to Fulcio or Rekor, so it cannot make or check a real
+/// Sigstore signature — that is what the release workflow does, on a tag, and ADR-0529 says so.
+/// What these tests own is the *verification path*: that `scripts/verify-release.sh` asks for a
+/// keyless verification constrained to this repository's release workflow, and that it reports
+/// what the tool reports rather than deciding for itself.
+///
+/// The stand-in therefore implements the one property the real tool implements — the bundle was
+/// made over exactly these bytes — and records every argument it was called with. Faking the
+/// outside world is allowed; faking our own layer is not (AGENTS.md §11).
+fn cosign_stub(scratch: &Scratch) -> PathBuf {
+    let bin = scratch.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("a scratch bin directory");
+    let stub = bin.join("cosign");
+    std::fs::write(
+        &stub,
+        "#!/usr/bin/env bash\n\
+         printf '%s\\n' \"$*\" >> \"$ONO_COSIGN_LOG\"\n\
+         [ \"$1\" = verify-blob ] || { echo \"unexpected cosign subcommand $1\" >&2; exit 64; }\n\
+         shift\n\
+         bundle=\"\"; blob=\"\"\n\
+         while [ $# -gt 0 ]; do\n\
+         \x20 case \"$1\" in\n\
+         \x20   --bundle) bundle=\"$2\"; shift 2 ;;\n\
+         \x20   --certificate-identity-regexp|--certificate-oidc-issuer) shift 2 ;;\n\
+         \x20   --*) shift ;;\n\
+         \x20   *) blob=\"$1\"; shift ;;\n\
+         \x20 esac\n\
+         done\n\
+         want=\"$(sha256sum \"$blob\" | cut -d' ' -f1)\"\n\
+         if grep -qx \"$want\" \"$bundle\"; then echo 'Verified OK'; exit 0; fi\n\
+         echo 'Error: signature verification failed' >&2\n\
+         exit 1\n",
+    )
+    .expect("the cosign stand-in is written");
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
+        .expect("the stand-in is executable");
+    bin
+}
+
+/// A release directory with its checksum manifest and a signature over it.
+fn signed_release(scratch: &Scratch) -> PathBuf {
+    let directory = release_directory(scratch, "release");
+    let (written, report) = checksums(&["--dir", directory.to_str().expect("a UTF-8 path")]);
+    assert!(written, "`xtask checksums` failed:\n{report}");
+    let manifest = std::fs::read(directory.join("SHA256SUMS")).expect("the manifest");
+    std::fs::write(
+        directory.join("SHA256SUMS.sigstore.json"),
+        format!("{}\n", xtask::reproducibility::digest(&manifest)),
+    )
+    .expect("the signature bundle");
+    directory
+}
+
+/// Runs `scripts/verify-release.sh` with the cosign stand-in ahead of anything on `PATH`.
+fn verify_release(scratch: &Scratch, arguments: &[&str]) -> (bool, String, String) {
+    let bin = cosign_stub(scratch);
+    let log = scratch.path().join("cosign.log");
+    let _ = std::fs::write(&log, "");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = Command::new("bash")
+        .arg(this_repository().join("scripts/verify-release.sh"))
+        .args(arguments)
+        .current_dir(this_repository())
+        .env("PATH", path)
+        .env("ONO_COSIGN_LOG", &log)
+        .output()
+        .unwrap_or_else(|error| panic!("bash must be runnable in the gate: {error}"));
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    (output.status.success(), text, calls)
+}
+
+#[test]
+fn should_verify_the_published_signature_over_the_checksum_manifest() {
+    let scratch = scratch();
+    let directory = signed_release(&scratch);
+    let (verified, report, calls) = verify_release(
+        &scratch,
+        &[
+            "--dir",
+            directory.to_str().expect("a UTF-8 path"),
+            // The provenance is a separate promise and a separate test (#108).
+            "--without-provenance",
+        ],
+    );
+    assert!(
+        verified,
+        "a release carrying a manifest and a signature over it did not verify:\n{report}"
+    );
+
+    // §47.3: keyless, and bound to an identity rather than to whatever certificate happens to
+    // be in the bundle. A verification with no `--certificate-identity*` constraint accepts a
+    // signature from anybody Fulcio has ever issued a certificate to.
+    assert!(
+        calls.contains("verify-blob"),
+        "the signature was never checked:\n{calls}"
+    );
+    assert!(
+        calls.contains("--certificate-identity-regexp")
+            && calls.contains("--certificate-oidc-issuer"),
+        "the verification is not constrained to a signing identity, so it accepts a signature \
+         from anyone (spec §47.3):\n{calls}"
+    );
+    assert!(
+        calls.contains("godspeed-you/ono-sendai")
+            && calls.contains(r"workflows/release\.yml@refs/tags/v")
+            && calls.contains("token.actions.githubusercontent.com"),
+        "the identity the verification demands is not this repository's release workflow \
+         authenticated by GitHub's OIDC issuer:\n{calls}"
+    );
+    assert!(
+        !calls.contains("--key "),
+        "the verification uses a long-lived key rather than a keyless identity (spec \
+         §47.3):\n{calls}"
+    );
+
+    // And the signing half is the trusted workflow's, needs no repository secret, and holds the
+    // OIDC permission on the publishing job alone.
+    let workflow = std::fs::read_to_string(this_repository().join(".github/workflows/release.yml"))
+        .expect("the release workflow");
+    assert!(
+        workflow.contains("sign-release.sh") && workflow.contains("id-token: write"),
+        "the release workflow does not sign the checksum manifest with an OIDC identity (spec \
+         §47.1, §47.3):\n{workflow}"
+    );
+    assert!(
+        !workflow.contains("secrets."),
+        "the release workflow reaches for a repository secret. §47.3 asks the reference \
+         implementation to sign without a long-lived private key stored as one:\n{workflow}"
+    );
+    let signing = std::fs::read_to_string(this_repository().join("scripts/sign-release.sh"))
+        .expect("the signing script");
+    assert!(
+        !signing.contains("--key "),
+        "signing hands cosign a key file, so the release depends on a secret somebody has to \
+         hold, rotate and revoke (spec §47.3):\n{signing}"
+    );
+    assert!(
+        signing.contains("verify-release.sh"),
+        "the release signs without checking its own signature, so an unverifiable signature \
+         would be published rather than failing the run:\n{signing}"
+    );
+}
+
+#[test]
+fn should_fail_verification_when_the_checksum_manifest_is_altered() {
+    let scratch = scratch();
+    let directory = signed_release(&scratch);
+    let path = directory.to_str().expect("a UTF-8 path").to_owned();
+
+    // The manifest itself, rewritten to bless different bytes. The digests still describe the
+    // artifacts beside them, so only the signature can tell.
+    let manifest = std::fs::read_to_string(directory.join("SHA256SUMS")).expect("the manifest");
+    std::fs::write(
+        directory.join("ono_0.4.1_amd64.deb"),
+        "an amd64 package somebody else built",
+    )
+    .expect("the substituted artifact");
+    let (written, report) = checksums(&["--dir", &path]);
+    assert!(written, "`xtask checksums` failed:\n{report}");
+    assert_ne!(
+        manifest,
+        std::fs::read_to_string(directory.join("SHA256SUMS")).expect("the manifest"),
+        "the substitution did not change the manifest, so the test proves nothing"
+    );
+
+    let (verified, report, calls) =
+        verify_release(&scratch, &["--dir", &path, "--without-provenance"]);
+    assert!(
+        !verified,
+        "a checksum manifest that is not the one that was signed verified anyway:\n{report}\n\
+         {calls}"
+    );
+    assert!(
+        report.contains("SHA256SUMS"),
+        "the refusal does not say the signature over the manifest is what failed:\n{report}"
+    );
+
+    // An artifact whose bytes no longer match a manifest that is still correctly signed.
+    let directory = signed_release(&scratch);
+    let path = directory.to_str().expect("a UTF-8 path").to_owned();
+    std::fs::write(
+        directory.join("ono-0.4.1-1.x86_64.rpm"),
+        "not what was hashed",
+    )
+    .expect("the tampered artifact");
+    let (verified, report, _) = verify_release(&scratch, &["--dir", &path, "--without-provenance"]);
+    assert!(
+        !verified && report.contains("ono-0.4.1-1.x86_64.rpm"),
+        "an artifact that does not hash to what the signed manifest says verified \
+         anyway:\n{report}"
+    );
+
+    // And a release with no signature at all is refused rather than reported as checksummed.
+    let directory = signed_release(&scratch);
+    let path = directory.to_str().expect("a UTF-8 path").to_owned();
+    std::fs::remove_file(directory.join("SHA256SUMS.sigstore.json")).expect("the signature");
+    let (verified, report, _) = verify_release(&scratch, &["--dir", &path, "--without-provenance"]);
+    assert!(
+        !verified && report.contains("SHA256SUMS.sigstore.json"),
+        "a release with no signature over its checksum manifest was accepted, so verification \
+         fails open (spec §2.3, §47.1):\n{report}"
     );
 }

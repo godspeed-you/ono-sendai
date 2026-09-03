@@ -1209,8 +1209,23 @@ pub fn check_tool_versions(root: &Path) -> Vec<Problem> {
                 }
             }
             for (tool, version) in &register {
-                for mention in line.match_indices(&format!("{tool}@")).map(|(at, _)| at) {
-                    let found: String = line[mention + tool.len() + 1..]
+                // Two spellings, because a tool is installed two ways in a release path: by
+                // cargo, as `<tool>@<version>`, and by an installer action, as
+                // `<tool>-release: "v<version>"`. §44.2 is about the version being exact, not
+                // about who typed it.
+                let by_cargo = format!("{tool}@");
+                let by_action = format!("{tool}-release:");
+                let mentions: Vec<usize> = line
+                    .match_indices(by_cargo.as_str())
+                    .map(|(at, _)| at + by_cargo.len())
+                    .chain(
+                        line.match_indices(by_action.as_str())
+                            .map(|(at, _)| at + by_action.len()),
+                    )
+                    .collect();
+                for mention in mentions {
+                    let found: String = line[mention..]
+                        .trim_start_matches([' ', '"', '\'', 'v'])
                         .chars()
                         .take_while(|c| c.is_ascii_digit() || *c == '.')
                         .collect();

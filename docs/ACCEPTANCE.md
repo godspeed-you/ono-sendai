@@ -1960,7 +1960,14 @@ mutable inputs.
       tampered manifest fails verification, and the signing model is keyless or else an ADR defines
       custody, rotation, revocation and offline verification and is named in this box —
       `xtask/tests/provenance.rs::should_verify_the_published_signature_over_the_checksum_manifest`,
-      `::should_fail_verification_when_the_checksum_manifest_is_altered` (#107, §47.3).
+      `::should_fail_verification_when_the_checksum_manifest_is_altered` (#107, §47.3, ADR-0529).
+      **Deliberately open.** The signing model is keyless Sigstore, so there is no key to define
+      custody for — and the token it needs exists only inside a run of `publish`, and verifying
+      one needs Fulcio and Rekor, which the gate and the networkless acceptance container (§40.2)
+      have no route to. Everything up to the signature is implemented and green: the workflow
+      signs and verifies itself before publishing, the verification is identity-constrained and
+      fails closed, and the two tests own the verification path against a stand-in `cosign`. The
+      first tag push produces the end-to-end proof this box waits for.
 - [ ] **P2 · Provenance binds seven fields to every artifact digest.** Repository, source commit,
       release tag, workflow identity, builder and toolchain version, artifact digest and build
       timestamp are bound by provenance the trusted workflow produces, and the release check
