@@ -1,0 +1,35 @@
+# Issue #123: Tab after `cd ..` offered nothing. `path_candidates` read the current directory and
+# kept the entries whose name starts with `..`, and `read_dir` never yields one; `cd ../` and
+# `cd .` both answered, which made the hole look like a quirk. A prefix that names an existing
+# directory is now offered with its `/`, as readline does, which covers `.`, `..` and `../..`.
+#
+# `script(1)` gives `ono` a terminal of its own, as case 099 does, because completion only
+# happens at a prompt and Tab has to arrive as a key.
+case: Tab after `cd ..` offers the parent directory with its slash
+timeout: 120
+env: TERM=xterm
+env: NO_COLOR=1
+run: |
+  session() {
+    script --quiet --return --command 'stty rows 30 cols 100 2>/dev/null; ono' /dev/null
+  }
+  mkdir -p /tmp/dots/child
+  cd /tmp/dots/child
+
+  {
+    sleep 2
+    printf 'cd ..';   sleep 1
+    printf '\t';      sleep 2
+    printf '\003';    sleep 1
+    printf 'exit\n';  sleep 1
+  } | session > /tmp/dots.out 2>&1
+
+  seen=$(cat -v /tmp/dots.out)
+  if [[ "$seen" == *"cd ../"* ]]; then
+    echo "PROVED 123a: cd ..<Tab> completes to the parent directory with its slash"
+  else
+    echo "FAILED 123a: the parent directory was not offered"
+    printf '%s\n' "$seen" | tail -5
+  fi
+exit: 0
+stdout-contains: PROVED 123a

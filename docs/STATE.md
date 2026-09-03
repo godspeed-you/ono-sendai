@@ -285,6 +285,15 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#123 closed (2026-09-03).** Tab after `cd ..` answers `../`. `path_candidates` is now
+  `path_candidates_in(root, prefix)` — the same split at the last `/` and the same `read_dir`,
+  plus one rule: a prefix that itself names an existing directory and does not end in `/` is
+  offered with its `/`, which is readline's behaviour and covers `.`, `..` and `../..` alike. An
+  ordinary directory is not offered twice; the list is deduplicated. Proven by three unit tests
+  over a scratch tree (`crates/ono-cli/src/repl.rs`), a pseudo-terminal typing `cd ..<Tab>`
+  (`crates/ono-cli/tests/completion.rs`, red without the fix) and acceptance case 208. What the
+  issue did not know: `.`'s answer sorts `./` ahead of the hidden entries, because `/` orders
+  before every letter — so the current directory is the first offer, not the last.
 - **#121 closed (2026-09-03).** `Ctrl-L` clears the screen. `Renderer::redraw_from_top` clears
   the whole screen, homes the cursor, forgets the rows above the cursor and paints the frame; the
   `read_line` loop in `ono-cli/src/repl.rs` gives `Outcome::Redraw` its own arm instead of folding

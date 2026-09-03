@@ -283,3 +283,27 @@ fn declared(key: &str) -> u64 {
         other => panic!("`{key}` is a duration in milliseconds, got {other:?}"),
     }
 }
+
+#[test]
+fn should_complete_two_dots_to_the_parent_directory_at_the_prompt() {
+    // Issue #123: `cd ..<Tab>` offered nothing because `read_dir` never yields `..`. A prefix
+    // that names a directory is offered with its `/`, as under bash.
+    let directory = scratch();
+    std::fs::create_dir_all(directory.path().join("child")).expect("fixture");
+    let mut shell = interactive_shell_in(&directory);
+    let _ = read_until(&mut shell, "local://", Duration::from_secs(10));
+
+    shell.write_all(b"cd child\n").expect("input");
+    let _ = read_until(&mut shell, "child", Duration::from_secs(10));
+
+    shell.write_all(b"cd ..\t").expect("input");
+    let seen = read_until(&mut shell, "cd ../", Duration::from_secs(10));
+    assert!(
+        seen.contains("cd ../"),
+        "issue #123: `cd ..<TAB>` completes to the parent directory with its slash; saw:\n{seen:?}"
+    );
+
+    shell.write_all(b"\x03").expect("abandon the line");
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}

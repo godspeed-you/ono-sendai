@@ -5,6 +5,7 @@
 //! has already been made somewhere that can be tested without a terminal.
 
 use std::io::{IsTerminal, Write};
+use std::path::Path;
 
 use ono_core::{ExitStatus, Span};
 use ono_editor::{Completer, Completion, Editor, Highlighter, Outcome};
@@ -294,15 +295,28 @@ fn spatial_offers(line: &str, start: usize, prefix: &str) -> Vec<crate::spatial:
 }
 
 fn path_candidates(prefix: &str) -> Vec<String> {
+    path_candidates_in(Path::new("."), prefix)
+}
+
+/// The paths `prefix` can become, read relative to `root`.
+///
+/// The word is split at its last `/`; the directory half is read and the entries whose name
+/// starts with the stem are offered, a directory with its `/`. `read_dir` never yields `.` or
+/// `..`, so a prefix that itself names an existing directory — `.`, `..`, `../..` — is offered
+/// with its `/` as well, which is what readline does and what makes `cd ..<Tab>` answer.
+fn path_candidates_in(root: &Path, prefix: &str) -> Vec<String> {
     let (directory, stem) = match prefix.rfind('/') {
         Some(at) => (&prefix[..=at], &prefix[at + 1..]),
         None => ("", prefix),
     };
-    let base = if directory.is_empty() { "." } else { directory };
-    let Ok(entries) = std::fs::read_dir(base) else {
-        return Vec::new();
+    let base = if directory.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(directory)
     };
-    let mut found: Vec<String> = entries
+    let mut found: Vec<String> = std::fs::read_dir(base)
+        .into_iter()
+        .flatten()
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -313,7 +327,11 @@ fn path_candidates(prefix: &str) -> Vec<String> {
             Some(format!("{directory}{name}{suffix}"))
         })
         .collect();
+    if !prefix.is_empty() && !prefix.ends_with('/') && root.join(prefix).is_dir() {
+        found.push(format!("{prefix}/"));
+    }
     found.sort_unstable();
+    found.dedup();
     found
 }
 
@@ -798,7 +816,7 @@ mod tests {
 
     use ono_editor::Completer;
 
-    use super::{ShellCompleter, short_path};
+    use super::{ShellCompleter, path_candidates_in, short_path};
 
     fn completer() -> ShellCompleter {
         ShellCompleter {
@@ -895,6 +913,50 @@ mod tests {
                 .all(|candidate| !candidate.contains('/')),
             "got {:?}",
             completion.candidates
+        );
+    }
+
+    #[test]
+    fn should_offer_the_parent_directory_with_its_slash_when_two_dots_are_typed() {
+        // Issue #123: `read_dir` never yields `..`, so nothing could ever start with it and Tab
+        // after `cd ..` was silent. The prefix names a directory; it is offered as one.
+        let directory = ono_testkit::scratch();
+        std::fs::create_dir_all(directory.path().join("child")).expect("fixture");
+        let here = directory.path().join("child");
+
+        assert_eq!(path_candidates_in(&here, ".."), vec!["../".to_owned()]);
+        assert_eq!(
+            path_candidates_in(&here, "../.."),
+            vec!["../../".to_owned()]
+        );
+    }
+
+    #[test]
+    fn should_offer_the_current_directory_beside_its_hidden_entries_when_a_dot_is_typed() {
+        let directory = ono_testkit::scratch();
+        directory.write(".hidden", "");
+        std::fs::create_dir_all(directory.path().join(".git")).expect("fixture");
+
+        assert_eq!(
+            path_candidates_in(directory.path(), "."),
+            vec!["./".to_owned(), ".git/".to_owned(), ".hidden".to_owned()]
+        );
+    }
+
+    #[test]
+    fn should_offer_an_ordinary_directory_once_however_it_is_reached() {
+        // The entry branch already answers `src/`; the directory rule must not answer it twice.
+        let directory = ono_testkit::scratch();
+        std::fs::create_dir_all(directory.path().join("src")).expect("fixture");
+        directory.write("srv.txt", "");
+
+        assert_eq!(
+            path_candidates_in(directory.path(), "src"),
+            vec!["src/".to_owned()]
+        );
+        assert_eq!(
+            path_candidates_in(directory.path(), "sr"),
+            vec!["src/".to_owned(), "srv.txt".to_owned()]
         );
     }
 
