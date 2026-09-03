@@ -1138,3 +1138,166 @@ fn backticked(passage: &str) -> Vec<&str> {
         .filter(|token| token.contains('/') && !token.contains(' '))
         .collect()
 }
+
+// --- v0.4.1 §63: the migration guide prints commands that exist (issue #116, ADR-0543) ----------
+
+/// Where the migration guide lives.
+pub const MIGRATION_GUIDE: &str = "docs/MIGRATION.md";
+
+/// Resolves every command `docs/MIGRATION.md` prints against the contracts (v0.4.1 §63, §66.8).
+///
+/// §66.8 makes "remote client authorization migration is documented" a release criterion, and
+/// §63.2 prints the sequence an operator runs. A migration guide is the one document nobody reads
+/// until they are already stuck, which is exactly when a renamed flag or a retired capability id
+/// is most expensive: the reader has an agent refusing connections and a command that does not
+/// exist.
+///
+/// So every `ono` invocation in a fenced block is resolved. A command spelling has to be one the
+/// registry answers to; a capability id named in a grant has to be one the registry declares; a
+/// flag has to be one the binary's own usage text lists. Nothing here checks that the *sequence*
+/// works — that is `crates/ono-cli/tests/client_keys.rs` and case `182`.
+#[must_use]
+pub fn check_migration_guide(root: &Path) -> Vec<Problem> {
+    let Ok(text) = std::fs::read_to_string(root.join(MIGRATION_GUIDE)) else {
+        return vec![Problem {
+            location: MIGRATION_GUIDE.to_owned(),
+            detail: "does not exist. v0.4.1 §63 has five migrations and §66.8 makes the remote \
+                     client authorization one a release criterion."
+                .to_owned(),
+        }];
+    };
+    let Ok(registry) = ono_command::CommandRegistry::load() else {
+        return vec![Problem {
+            location: MIGRATION_GUIDE.to_owned(),
+            detail: "cannot be resolved: the command registry does not load".to_owned(),
+        }];
+    };
+    let usage = ono_cli::usage_text();
+
+    let mut problems = Vec::new();
+    let mut invocations = 0usize;
+    for invocation in ono_invocations(&text) {
+        invocations += 1;
+        let problem = |detail: String| Problem {
+            location: MIGRATION_GUIDE.to_owned(),
+            detail,
+        };
+        match &invocation {
+            Invocation::Flag(flag) => {
+                if !usage.contains(flag.as_str()) {
+                    problems.push(problem(format!(
+                        "prints `ono {flag}`, and the binary's own usage text does not list that \
+                         flag. A migration guide is read by somebody who is already stuck."
+                    )));
+                }
+            }
+            Invocation::Script(script) => {
+                let parsed = ono_parser::parse(script);
+                if parsed.has_errors() || !parsed.is_complete() {
+                    problems.push(problem(format!(
+                        "prints `ono -c '{script}'`, which does not parse"
+                    )));
+                    continue;
+                }
+                for (verb, target) in spellings(script) {
+                    if registry.find(&verb, Some(&target)).is_none()
+                        && registry.find(&verb, None).is_none()
+                    {
+                        problems.push(problem(format!(
+                            "prints `{verb} {target}`, which the command registry does not answer \
+                             to. Either the guide is stale or the command was renamed without it."
+                        )));
+                    }
+                }
+                for capability in granted_capabilities(script) {
+                    if registry.capability(&capability).is_none() {
+                        problems.push(problem(format!(
+                            "grants `{capability}`, which `docs/spec/capabilities.yaml` does not \
+                             declare. v0.4.1 §9.5: grants name exact capability ids, so a guide \
+                             that prints a retired one teaches an operator a command that fails."
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    if invocations == 0 {
+        problems.push(Problem {
+            location: MIGRATION_GUIDE.to_owned(),
+            detail: "prints no `ono` invocation at all. v0.4.1 §63.2 is a sequence of commands, \
+                     and a migration described without them is one nobody can follow."
+                .to_owned(),
+        });
+    }
+    problems
+}
+
+/// One `ono` invocation a document prints.
+enum Invocation {
+    /// A command-line flag, as in `ono --print-peer-key`.
+    Flag(String),
+    /// The script `ono -c` was given.
+    Script(String),
+}
+
+/// Every `ono` invocation inside a fenced block of `markdown`.
+fn ono_invocations(markdown: &str) -> Vec<Invocation> {
+    let mut invocations = Vec::new();
+    let mut fenced = false;
+    for line in markdown.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if !fenced {
+            continue;
+        }
+        let Some(rest) = line.trim().strip_prefix("ono ") else {
+            continue;
+        };
+        if let Some(script) = rest.strip_prefix("-c ") {
+            let script = script.trim().trim_matches('\'').trim_matches('"');
+            invocations.push(Invocation::Script(script.to_owned()));
+            continue;
+        }
+        for word in rest.split_whitespace() {
+            if word.starts_with("--") {
+                invocations.push(Invocation::Flag(word.to_owned()));
+            }
+        }
+    }
+    invocations
+}
+
+/// The `verb target` spellings a script names, one per statement.
+///
+/// A textual reading of the first two words of each statement, which is how the registry is
+/// addressed and how every example in this repository writes one. A word beginning with `-` or
+/// `$` is an argument rather than a target, and a statement that has only a verb is resolved as
+/// one.
+fn spellings(script: &str) -> Vec<(String, String)> {
+    script
+        .split(['\n', ';'])
+        .filter_map(|statement| {
+            let mut words = statement.split_whitespace();
+            let verb = words.next()?.to_owned();
+            let target = words
+                .next()
+                .filter(|word| !word.starts_with('-') && !word.starts_with('$'))
+                .unwrap_or_default()
+                .to_owned();
+            Some((verb, target))
+        })
+        .collect()
+}
+
+/// The capability ids a script grants with `--allow`.
+fn granted_capabilities(script: &str) -> Vec<String> {
+    let words: Vec<&str> = script.split_whitespace().collect();
+    words
+        .windows(2)
+        .filter(|pair| pair[0] == "--allow")
+        .map(|pair| pair[1].to_owned())
+        .collect()
+}

@@ -471,3 +471,57 @@ fn should_render_the_security_terms_into_the_generated_reference() {
         );
     }
 }
+
+// --- §63: the migration guide's commands resolve (issue #116, ADR-0543) -------------------------
+
+#[test]
+fn should_resolve_every_command_the_migration_guide_prints_against_the_registry() {
+    // §66.8 makes the remote client authorization migration a release criterion, and §63.2 prints
+    // the sequence. A migration guide is the one document nobody reads until they are already
+    // stuck — an agent refusing connections and a command that no longer exists is the worst
+    // moment for a stale example.
+    let problems = xtask::reference::check_migration_guide(&repo());
+    assert!(
+        problems.is_empty(),
+        "v0.4.1 §63: the migration guide prints something the contracts do not answer to:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_migration_guide_that_prints_a_command_nobody_answers_to() {
+    let repo = ono_testkit::scratch();
+    repo.write(
+        "docs/MIGRATION.md",
+        "# Migrating\n\n```bash\nono -c 'authorise client-key sha256:abc'\n```\n",
+    );
+    let problems = xtask::reference::check_migration_guide(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("authorise")),
+        "the spelling nobody answers to is named, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_migration_guide_that_grants_a_capability_the_registry_retired() {
+    // §9.5: grants name exact capability ids. A guide printing a retired one teaches an operator
+    // a command that fails after they have already turned anonymous access off.
+    let repo = ono_testkit::scratch();
+    repo.write(
+        "docs/MIGRATION.md",
+        "# Migrating\n\n```bash\nono -c 'set client-key sha256:abc --allow service.invented'\n```\n",
+    );
+    let problems = xtask::reference::check_migration_guide(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("service.invented")),
+        "the retired capability is named, got {problems:?}"
+    );
+}

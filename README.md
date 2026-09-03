@@ -321,6 +321,7 @@ Inside the shell itself: `help`, `help <command>`, `type <pipeline>`, `inspect` 
 | [`docs/spec/`](docs/spec/) | machine-readable contracts: commands, schemas, verbs, errors, providers |
 | [`docs/decisions/`](docs/decisions/) | architecture decision records, including every deliberate spec deviation |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | what "finished" means, in boxes a script can check |
+| [`docs/MIGRATION.md`](docs/MIGRATION.md) | what changes for someone upgrading, version by version |
 | [`docs/STATE.md`](docs/STATE.md) | the work board: the release verdict, and the backlog |
 | [`HISTORY.md`](HISTORY.md) | how the shell was built, phase by phase |
 
@@ -369,10 +370,13 @@ full development contract. AI implementation agents should start at [`AGENTS.md`
 ## Security
 
 Ono-Sendai executes commands, adapts external tools, links to remote hosts and loads extensions.
-There is no published security contact yet: please report a suspected vulnerability privately to
-the maintainers — through GitHub's private vulnerability reporting on this repository where it is
-available — rather than in a public issue. If you must open one publicly, describe the impact
-without a working exploit.
+Report a suspected vulnerability privately, through [GitHub's private vulnerability
+reporting](https://github.com/godspeed-you/ono-sendai/security/advisories/new) on this repository,
+rather than in a public issue — the tracker is world-readable, so a working reproduction posted
+there is a working reproduction handed to everyone running an unpatched shell.
+
+→ [**SECURITY.md**](SECURITY.md): the supported versions, what is protected, what is deliberately
+not, and what to expect after a report.
 
 ## License
 

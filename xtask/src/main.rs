@@ -437,6 +437,7 @@ fn spec_check() -> ExitCode {
             .chain(narrative::check_readme_examples(&root))
             .chain(verification::check_sequence())
             .chain(check_release_verification_documents(&root))
+            .chain(reference::check_migration_guide(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 

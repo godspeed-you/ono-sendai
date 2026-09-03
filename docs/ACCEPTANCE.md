@@ -2016,13 +2016,17 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       §67.7; ADR-0542). **The box stays open** because the two `cosign` steps have nothing to run
       against: no release publishes a signature or provenance yet, which is #107 and #108, and the
       exact invocation is ADR-0542's decision rather than the specification's.
-- [ ] **P2 · The migration path is written down.** §63's five migrations — existing users, existing
+- [x] **P2 · The migration path is written down.** §63's five migrations — existing users, existing
       direct listening-agent users, an existing host identity, existing KUANG plugins, existing test
-      infrastructure — are documented with the commands an operator runs, and the commands are
-      checked against the command registry so a renamed flag turns the gate red —
+      infrastructure — are documented in `docs/MIGRATION.md` and on the Wiki's Install page with
+      the commands an operator runs, every command, capability id and flag they print is resolved
+      against the contracts so a rename turns the gate red where the guide is, and the §63.2
+      sequence is run against the real binary with the fingerprint `--print-peer-key` produced —
       `xtask/tests/reference.rs::should_resolve_every_command_the_migration_guide_prints_against_the_registry`,
+      `::should_report_a_migration_guide_that_prints_a_command_nobody_answers_to`,
+      `::should_report_a_migration_guide_that_grants_a_capability_the_registry_retired`,
       `crates/ono-cli/tests/client_keys.rs::should_accept_the_migration_sequence_the_documentation_prints`
-      (#116, §63.1–§63.5).
+      and case `182` end to end (#116, §63.1–§63.5, §66.8; ADR-0543).
 - [ ] **P3 · The repository metrics are computed, not typed.** Crate, test, acceptance-case, ADR and
       command-contract counts come from `cargo xtask metrics`, the gate fails when README disagrees
       with it, and an executed test is distinguished from a skip so no count claims proof it does
