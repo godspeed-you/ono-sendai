@@ -127,6 +127,49 @@ async fn should_keep_streaming_transforms_available_on_an_unbounded_stream() {
 }
 
 #[tokio::test]
+async fn should_refuse_an_unbounded_upstream_before_waiting_when_the_operation_requires_finite_input()
+ {
+    // v0.4.1 §22.3: "It MUST NOT wait forever to discover that an unbounded stream never ends."
+    // The proof that it did not wait is that the source is still running and has been asked for
+    // nothing: `transform` answers from the declared boundedness alone, before a task is spawned.
+    let source = endless();
+    assert_eq!(source.boundedness(), Boundedness::Unbounded);
+
+    let error = source
+        .transform(Sort::new(|value: &Value| Ok(value.clone())))
+        .expect_err("`sort` requires finite input");
+
+    assert_eq!(error.code(), ErrorCode::StreamUnboundedOperation);
+    let message = error.render_full();
+    assert!(
+        message.contains("sort") && message.contains("finite"),
+        "§54.1: the refusal names the operation and the requirement it could not meet: {message}"
+    );
+    assert!(
+        message.contains("unbounded"),
+        "§54.1: the refusal says what the upstream declared itself to be: {message}"
+    );
+    assert!(
+        error.help().is_some(),
+        "a refusal tells the user how to satisfy the requirement (§54.1)"
+    );
+}
+
+#[tokio::test]
+async fn should_refuse_before_a_value_is_drawn_when_a_materializer_meets_an_unbounded_upstream() {
+    // The same refusal through the §22 helper rather than through `transform`, so an evaluator
+    // that materializes without a `Transform` cannot be the path that waits forever.
+    within(async {
+        let error =
+            ono_pipeline::materialize(endless(), ono_pipeline::Budget::materialization("collect"))
+                .await
+                .expect_err("the materialization helper refuses an unbounded upstream");
+        assert_eq!(error.code(), ErrorCode::StreamUnboundedOperation);
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn should_report_a_finite_source_as_bounded() {
     let stream = ValueStream::from_values([Value::Int(1)]);
     assert_eq!(stream.boundedness(), Boundedness::Bounded);

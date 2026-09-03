@@ -1,0 +1,49 @@
+# v0.4.1 §59.5: "a malformed line in `authorized_clients` MUST cause deterministic
+# startup/configuration failure. The agent MUST NOT treat it as zero restrictions or ignore only
+# the malformed entry." §9.2 forbids reading a malformed store as an empty one and forbids falling
+# back to permissive access; §65.4 names the fail-open variant as a failure mode with a name; §2.3
+# requires a safety control that could not be applied to prevent the operation from starting.
+case: a corrupt authorization store stops the agent instead of opening it
+timeout: 120
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+  CLIENT=$(ono --print-peer-key)
+  ono -c "add client-key $CLIENT --label deploy | select status" > /dev/null
+
+  echo "== a good store loads =="
+  ono -c 'get client-key | select label observe | to json'
+
+  echo "== one malformed line refuses the whole file, naming the line =="
+  cp "$HOME/ono/authorized_clients" "$HOME/good"
+  printf '%s observe=true\nthis line is not an entry\n' "$CLIENT" > "$HOME/ono/authorized_clients"
+  ono -c 'try { get client-key } catch e { $e | select code name | to json }'
+  ono -c 'try { get client-key } catch e { $e | select message }' | grep -o 'line 2'
+
+  echo "== and it is not read as an empty store =="
+  ono -c 'try { get client-key } catch e { $e | select code | to json }' | grep -v '^\[\]$' > /dev/null && echo "a corrupt store is not an empty store"
+
+  echo "== the agent refuses to listen rather than listening permissively =="
+  ono --agent --listen 127.0.0.1:7739 2> "$HOME/agent.log"; echo "agent exit status $?"
+  grep -c 'listening on' "$HOME/agent.log" || true
+  cat "$HOME/agent.log"
+
+  echo "== an unknown field is refused too =="
+  printf '%s observe=true elevated=true\n' "$CLIENT" > "$HOME/ono/authorized_clients"
+  ono -c 'try { get client-key } catch e { $e | select code | to json }'
+
+  echo "== repaired, it loads again =="
+  cp "$HOME/good" "$HOME/ono/authorized_clients"
+  ono -c 'get client-key | select label | to json'
+exit: 0
+stdout-contains: [{"label":"deploy","observe":true}]
+stdout-contains: "code":"Ono-Sendai-E1204"
+stdout-contains: "name":"remote.authorization_store_invalid"
+stdout-contains: line 2
+stdout-contains: a corrupt store is not an empty store
+stdout-contains: agent exit status 1
+stdout-contains: [{"label":"deploy"}]
+stdout-not-contains: listening on
+stdout-not-contains: panicked

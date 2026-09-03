@@ -20,8 +20,9 @@ use ono_adapter::OutputDemand;
 use ono_core::ErrorCode;
 use ono_pipeline::StreamEvent;
 use ono_protocol::{
-    ActRequest, AdaptRequest, Identity, Limits, ProviderDescriptor, RemoteQuery, RemoteService,
-    ServerConfig, StreamResponder, Transport,
+    ActRequest, AdaptRequest, Audit, Identity, Limits, NoAudit, PeerAuthorization,
+    ProviderDescriptor, RemoteQuery, RemoteService, ServerAuthorization, ServerConfig,
+    StreamResponder, Transport,
 };
 use ono_provider_api::{ActionOutcome, Availability, ProviderRegistry};
 use ono_value::{ErrorValue, SchemaRegistry, Value};
@@ -46,6 +47,10 @@ pub struct AgentConfig {
     identity: Identity,
     limits: Limits,
     adapters: Option<Arc<ono_adapter::Registry>>,
+    authorization: ServerAuthorization,
+    action_capabilities: Vec<(String, String, String)>,
+    audit: Audit,
+    source_address: Option<String>,
 }
 
 impl AgentConfig {
@@ -62,7 +67,52 @@ impl AgentConfig {
             identity: Identity::new(user),
             limits: Limits::default(),
             adapters: None,
+            authorization: ServerAuthorization::CarriedByTransport,
+            action_capabilities: Vec::new(),
+            audit: Arc::new(NoAudit),
+            source_address: None,
         }
+    }
+
+    /// Where this agent's audit events go (v0.4.1 §14.1).
+    #[must_use]
+    pub fn with_audit(mut self, audit: Audit) -> Self {
+        self.audit = audit;
+        self
+    }
+
+    /// Where the connection this configuration serves came from (§14.2's `source_address`).
+    #[must_use]
+    pub fn with_source_address(mut self, address: impl Into<String>) -> Self {
+        self.source_address = Some(address.into());
+        self
+    }
+
+    /// Who decides which clients this agent serves (v0.4.1 §9.2).
+    ///
+    /// A listening agent passes its `authorized_clients` store; the stdio agent of §4.3 leaves
+    /// the default, because the carrier that ran it already decided who may.
+    #[must_use]
+    pub fn with_authorization(mut self, authorization: ServerAuthorization) -> Self {
+        self.authorization = authorization;
+        self
+    }
+
+    /// Declares which capability an action on `target` spelled `operation` needs (§9.5, §56.4).
+    ///
+    /// Provider capabilities stay the canonical authorization unit, so this is a restatement of
+    /// the command registry rather than a second taxonomy: the CLI fills it from the same
+    /// `provider_capability` field `docs/spec/commands/` already declares.
+    #[must_use]
+    pub fn with_action_capability(
+        mut self,
+        target: impl Into<String>,
+        operation: impl Into<String>,
+        capability: impl Into<String>,
+    ) -> Self {
+        self.action_capabilities
+            .push((target.into(), operation.into(), capability.into()));
+        self
     }
 
     /// The adapters this agent negotiates and runs on its own side (spec v0.3 §1.54).
@@ -102,7 +152,15 @@ impl AgentConfig {
         let mut config = ServerConfig::new()
             .with_identity(self.identity.clone())
             .with_schemas(Arc::new(schemas))
-            .with_limits(self.limits.clone());
+            .with_limits(self.limits.clone())
+            .with_authorization(self.authorization.clone())
+            .with_audit(Arc::clone(&self.audit));
+        if let Some(address) = &self.source_address {
+            config = config.with_source_address(address);
+        }
+        for (target, operation, capability) in &self.action_capabilities {
+            config = config.with_action_capability(target, operation, capability);
+        }
         for provider in self.registry.providers() {
             let mut descriptor = ProviderDescriptor::new(provider.id())
                 .with_targets(provider.targets().iter().copied());
@@ -135,6 +193,7 @@ pub async fn serve_registry<T: Transport>(
     let service = RegistryService {
         registry: Arc::clone(&config.registry),
         adapters: config.adapters.clone(),
+        action_capabilities: config.action_capabilities.clone(),
     };
     ono_protocol::serve(transport, server, service).await
 }
@@ -153,7 +212,7 @@ where
     match serve_registry(StdioTransport::new(input, output), config).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("ono --agent: {}", error.render_full());
+            ono_core::diagnostic!("ono --agent: {}", error.render_full());
             ExitCode::FAILURE
         }
     }
@@ -164,15 +223,33 @@ where
 struct RegistryService {
     registry: Arc<ProviderRegistry>,
     adapters: Option<Arc<ono_adapter::Registry>>,
+    action_capabilities: Vec<(String, String, String)>,
+}
+
+impl RegistryService {
+    /// The capability an action needs, as this side declares it.
+    fn action_capability(&self, target: &str, operation: &str) -> Option<&str> {
+        self.action_capabilities
+            .iter()
+            .find(|(declared_target, declared_operation, _)| {
+                declared_target == target && declared_operation == operation
+            })
+            .map(|(_, _, capability)| capability.as_str())
+    }
 }
 
 #[async_trait::async_trait]
 impl RemoteService for RegistryService {
     async fn query(
         &self,
+        peer: &PeerAuthorization,
         query: RemoteQuery,
         responder: &StreamResponder,
     ) -> Result<(), ErrorValue> {
+        // Asked again, here, from the same context the protocol loop asked it with. §10.2 is
+        // explicit that negotiation filtering "is not sufficient by itself"; two checks on two
+        // sides of the crate boundary are what makes a missed one a bug rather than a breach.
+        peer.require_observe(&format!("get {}", query.target_name()))?;
         let mut stream = self.registry.snapshot(&query.to_query())?;
         // The provider may honour the limit or ignore it (its documented liberty); the caller's
         // bound is enforced here either way, so an endless remote target with a limit ends.
@@ -206,9 +283,13 @@ impl RemoteService for RegistryService {
 
     async fn adapt(
         &self,
+        peer: &PeerAuthorization,
         request: AdaptRequest,
         responder: &StreamResponder,
     ) -> Result<(), ErrorValue> {
+        if matches!(peer, PeerAuthorization::Policy(_)) {
+            peer.require_action(None, &format!("adapt {}", request.argv().join(" ")))?;
+        }
         let Some(adapters) = &self.adapters else {
             return Err(ErrorValue::new(
                 ErrorCode::ProviderUnsupported,
@@ -268,9 +349,11 @@ impl RemoteService for RegistryService {
 
     async fn subscribe(
         &self,
+        peer: &PeerAuthorization,
         query: RemoteQuery,
         responder: &StreamResponder,
     ) -> Result<(), ErrorValue> {
+        peer.require_observe(&format!("watch {}", query.target_name()))?;
         let mut events = self.registry.subscribe(&query.to_query())?;
         loop {
             let event = tokio::select! {
@@ -289,7 +372,17 @@ impl RemoteService for RegistryService {
         Ok(())
     }
 
-    async fn act(&self, request: ActRequest) -> Result<ActionOutcome, ErrorValue> {
+    async fn act(
+        &self,
+        peer: &PeerAuthorization,
+        request: ActRequest,
+    ) -> Result<ActionOutcome, ErrorValue> {
+        if matches!(peer, PeerAuthorization::Policy(_)) {
+            peer.require_action(
+                self.action_capability(request.target_name(), request.operation()),
+                &format!("{} {}", request.operation(), request.target_name()),
+            )?;
+        }
         self.registry.act(&request.to_action()).await
     }
 }

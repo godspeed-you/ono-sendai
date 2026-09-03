@@ -23,6 +23,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `dns` | system | `—` | C | The name-resolution service, queried explicitly rather than implicitly. |
 | `host` | system | `—` | H | A known host from a configured source, reachable or not. |
 | `host-key` | system | `ono.host-key/1` | H | A host key this shell has pinned, and the fingerprint it was pinned by. |
+| `client-key` | system | `ono.client-key/1` | H | A client key this machine authorizes to reach its listening agent, and what it may do. |
 | `user` | system | `ono.user/1` | C | A user account, identified by uid, with the numeric identity kept when NSS cannot resolve it. |
 | `group` | system | `ono.group/1` | C | A group account, identified by gid. |
 | `session` | system | `—` | C | A login or seat session. |
@@ -51,6 +52,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `links` | system | `ono.spatial-map/1` | S | The federated map of this host and the hosts it holds links to (v0.4 §19.3). |
 | `context` | system | `—` | E | An entry on the context stack. |
 | `config` | system | `ono.config-setting/1` | A | A resolved configuration setting with its provenance. |
+| `limits` | system | `ono.limit/1` | A | An effective runtime resource limit. |
 | `repo` | development | `—` | planned | A source repository. |
 | `branch` | development | `—` | planned | A branch within a repository. |
 | `commit` | development | `—` | planned | A commit within a repository. |

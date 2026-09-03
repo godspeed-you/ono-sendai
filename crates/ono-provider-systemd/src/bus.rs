@@ -33,6 +33,11 @@ pub struct UnitListing {
     pub active_state: Option<String>,
     /// `SubState`, the unit-type-specific state such as `running`, `exited` or `dead`.
     pub sub_state: Option<String>,
+    /// The unit's D-Bus object path, which `ListUnits` already answered with.
+    ///
+    /// Reading a unit's properties needs its path, and asking `Manager.LoadUnit` for a path the
+    /// listing has already given is a round trip per unit that buys nothing (ADR-0561).
+    pub path: Option<String>,
 }
 
 /// The properties of one unit, read from `org.freedesktop.DBus.Properties.GetAll`.
@@ -87,6 +92,9 @@ impl UnitProperties {
             load_state: self.load_state.clone(),
             active_state: self.active_state.clone(),
             sub_state: self.sub_state.clone(),
+            // A listing made from properties already in hand is not one `ListUnits` answered,
+            // so it names no path: whoever holds these properties has nothing left to read.
+            path: None,
         }
     }
 }
@@ -244,6 +252,24 @@ pub trait SystemdBus: Send + Sync + fmt::Debug {
     ///
     /// Whatever the bus reported, other than "no such unit".
     async fn unit_properties(&self, unit: &str) -> Result<Option<UnitProperties>, BusError>;
+
+    /// The same, for a unit whose object path is already known.
+    ///
+    /// An enumeration has the path from `ListUnits` and does not have to ask `LoadUnit` for it
+    /// again. The default answers through [`SystemdBus::unit_properties`], so a bus that has no
+    /// cheaper way to do it — and every test double — is correct without knowing about this.
+    ///
+    /// # Errors
+    ///
+    /// As [`SystemdBus::unit_properties`].
+    async fn unit_properties_at(
+        &self,
+        unit: &str,
+        path: &str,
+    ) -> Result<Option<UnitProperties>, BusError> {
+        let _ = path;
+        self.unit_properties(unit).await
+    }
 
     /// Queues a job through the `Manager` interface, in `replace` mode.
     ///

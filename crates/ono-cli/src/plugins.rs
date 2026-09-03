@@ -53,6 +53,23 @@ pub fn error_value(error: &KuangError) -> ErrorValue {
     if let Some(help) = error.help() {
         value = value.with_help(help);
     }
+    // v0.4.1 §53.2 and §54.1: the detail is what a script branches on, and a refusal that names
+    // the boundary that decided it has to name it somewhere other than the sentence. The
+    // supervisor puts the control, the execution tier and the platform's own reason in the
+    // metadata; dropping them here would leave string matching as the only way to read them.
+    for (key, detail) in error.metadata() {
+        let detail = match detail {
+            serde_json::Value::String(text) => Value::string(text),
+            serde_json::Value::Bool(flag) => Value::Bool(*flag),
+            serde_json::Value::Number(number) => number
+                .as_i64()
+                .map_or(Value::Null, |number| Value::Int(i128::from(number))),
+            // Nested detail is rendered as the text it is; the shell's error metadata is a flat
+            // map of facts, not a second value tree.
+            other => Value::string(&other.to_string()),
+        };
+        value = value.with_metadata(key, detail);
+    }
     value
 }
 
@@ -1026,7 +1043,7 @@ pub fn contributed_command(stage: &ono_parser::Stage) -> Option<&'static Command
     if name.namespace.is_some() {
         return None;
     }
-    let registry = crate::native::registry().ok()?;
+    let registry = crate::eval::native::registry().ok()?;
     let target = stage
         .arguments
         .first()
@@ -1043,7 +1060,7 @@ pub fn contributed_by_namespace(
     namespace: &str,
     command: &str,
 ) -> Option<&'static CommandContract> {
-    let registry = crate::native::registry().ok()?;
+    let registry = crate::eval::native::registry().ok()?;
     registry.commands().iter().find(|contract| {
         let Some(package) = contract.origin().package() else {
             return false;

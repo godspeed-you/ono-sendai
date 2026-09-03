@@ -27,12 +27,14 @@
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use ono_testkit::ono_within;
-use ono_testkit::{Shell, scratch};
+use ono_testkit::{Shell, SkipReason, scratch};
 use serde_yaml_ng::Value;
+
+mod support;
+use support::SleepChild;
 
 /// Runs a one-liner in `directory`, so `pwd` has a value the test chose.
 fn ono_in(directory: &Path, script: &str) -> ono_testkit::Run {
@@ -224,33 +226,6 @@ fn boundary_mount() -> Option<Mount> {
             && path.is_dir()
             && std::fs::read_dir(path).is_ok()
     })
-}
-
-/// A `sleep` child: a process place that is emphatically not a directory.
-struct SleepChild(Child);
-
-impl SleepChild {
-    fn spawn() -> Self {
-        let child = Command::new("sleep")
-            .arg("30")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("`sleep` is available on every test host");
-        Self(child)
-    }
-
-    fn pid(&self) -> u32 {
-        self.0.id()
-    }
-}
-
-impl Drop for SleepChild {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 /// The canonical form of a scratch path, so a comparison against `pwd` cannot fail over a
@@ -489,7 +464,10 @@ fn should_list_the_mounts_the_providers_report_when_walking_into_the_storage_dom
     // mount place it shows must be one `get mount` also reports, and the root mount must be
     // among them.
     let Some(boundary) = boundary_mount() else {
-        ono_testkit::skipped("this host reports no mount below `/` to discover");
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            "this host reports no mount below `/` to discover",
+        );
         return;
     };
     let run = ono("home; enter storage; enter mounts; near --all | to json");
@@ -562,7 +540,10 @@ fn should_show_the_source_device_and_filesystem_when_the_place_is_a_mount_bounda
     // carries the local path, the filesystem and the source. The expected values come from
     // `get mount` at runtime, so the test names no device of the developer's machine.
     let Some(mount) = boundary_mount() else {
-        ono_testkit::skipped("this host reports no mount below `/` to enter");
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            "this host reports no mount below `/` to enter",
+        );
         return;
     };
     let run = ono(&format!("enter {}; look --json", mount.target));
@@ -592,7 +573,10 @@ fn should_record_the_boundary_crossing_when_traversing_from_the_root_into_a_moun
     // observable in the navigation trail and prompt/HUD" — and invariant 18 repeats it for mount
     // boundaries. So the step from `/` into the mount is a trail step that names the crossing.
     let Some(mount) = boundary_mount() else {
-        ono_testkit::skipped("this host reports no mount below `/` to traverse into");
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            "this host reports no mount below `/` to traverse into",
+        );
         return;
     };
     let run = ono(&format!("enter /; enter {}; trail --json", mount.target));

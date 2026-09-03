@@ -15,6 +15,8 @@
 //!   [`Join`] and [`Diff`].
 //! - [`Diagnostics`] — what the pipeline counted while it ran, so a surprising row count has an
 //!   explanation (ADR-0014).
+//! - [`Budget`] and [`materialize`] — the shared resource budget of v0.4.1 §21 and the one place
+//!   a global operation turns a finite stream into memory (§22, §30.2).
 //!
 //! # Three properties, and the tests that hold them
 //!
@@ -72,6 +74,7 @@
 
 #![forbid(unsafe_code)]
 
+mod budget;
 mod cancel;
 mod diagnostics;
 mod function;
@@ -81,9 +84,17 @@ mod stream;
 mod transform;
 mod transforms;
 
+pub use budget::{materialize, materialize_with};
+// The budget lives in `ono-value`, beside the estimator it spends (ADR-0453). It is re-exported
+// here because a pipeline stage is its first caller and `ono_pipeline::Budget` is where a reader
+// of §21.1 looks for it.
 pub use cancel::CancelToken;
 pub use diagnostics::Diagnostics;
 pub use function::{Folder, KeyFn, Mapper, Predicate};
+pub use ono_value::{
+    Budget, COMMAND_CAPTURE_MAX_BYTES, COMMAND_CAPTURE_MAX_ITEMS, Ceiling, Exceeded,
+    MATERIALIZE_MAX_BYTES, MATERIALIZE_MAX_ITEMS, MaterializationLimits,
+};
 pub use order::Direction;
 pub use stream::{
     Boundedness, Collected, DEFAULT_CAPACITY, PipelineConfig, SinkClosed, StreamEvent, StreamSink,

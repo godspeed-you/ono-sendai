@@ -1,11 +1,12 @@
 //! `select`: project fields and expressions into records (spec §53).
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
-use ono_value::{ErrorValue, FieldStep, RecordValue, Value};
+use ono_value::{ErrorValue, FieldDef, FieldStep, RecordValue, Schema, SchemaId, Value};
 
 use crate::function::KeyFn;
-use crate::schemas::{provenance, selection_schema};
+use crate::schemas::{projection_schema, provenance, selection_schema};
 use crate::{Transform, ValueStream};
 
 /// One step of a projected field path, as written with `.` or `?.` (spec §11.4).
@@ -130,7 +131,14 @@ impl SelectField {
 /// the error channel as if the row had failed — the row did not fail, one of its fields did.
 pub struct Select {
     fields: Vec<SelectField>,
-    schema: Arc<ono_value::Schema>,
+    /// The shape a projection has when nothing better is known: every field `any`, no unit.
+    schema: Arc<Schema>,
+    /// The shape a projection has over records of one source schema, which carries the source
+    /// field's declaration wherever a projected field is one field of it (ADR-0555).
+    ///
+    /// Derived on first sight of a source schema and kept, because a stream is almost always
+    /// homogeneous and deriving it per record would be a schema build per row.
+    derived: Mutex<HashMap<SchemaId, Arc<Schema>>>,
 }
 
 impl Select {
@@ -144,7 +152,11 @@ impl Select {
         let fields: Vec<SelectField> = fields.into_iter().collect();
         let names: Vec<Arc<str>> = fields.iter().map(|field| field.name.clone()).collect();
         let schema = selection_schema(&names)?;
-        Ok(Self { fields, schema })
+        Ok(Self {
+            fields,
+            schema,
+            derived: Mutex::new(HashMap::new()),
+        })
     }
 }
 
@@ -168,8 +180,47 @@ impl Transform for Select {
 }
 
 impl Select {
+    /// The declaration of the one source field `field` reads, where it reads one.
+    ///
+    /// A single-segment path names a field of the source schema, and that is the whole of what
+    /// can be carried through: a nested path ends in a field of another schema this record only
+    /// refers to, and a computed expression produces a value no field declared.
+    fn source_field<'a>(field: &SelectField, source: &'a Schema) -> Option<&'a FieldDef> {
+        match &field.source {
+            Source::Path(segments) => match segments.as_slice() {
+                [segment] => source.field(segment.name()),
+                _ => None,
+            },
+            Source::Computed(_) => None,
+        }
+    }
+
+    /// The projection schema for records of `source`, derived once and then remembered.
+    fn schema_for(&self, source: &Schema) -> Arc<Schema> {
+        if let Ok(cache) = self.derived.lock()
+            && let Some(schema) = cache.get(source.id())
+        {
+            return Arc::clone(schema);
+        }
+        let derived = projection_schema(self.fields.iter().map(|field| {
+            (
+                field.name.clone(),
+                Self::source_field(field, source).cloned(),
+            )
+        }))
+        .unwrap_or_else(|_| Arc::clone(&self.schema));
+        if let Ok(mut cache) = self.derived.lock() {
+            cache.insert(source.id().clone(), Arc::clone(&derived));
+        }
+        derived
+    }
+
     fn project(&self, value: &Value) -> Value {
-        let mut builder = RecordValue::builder(Arc::clone(&self.schema), provenance(&self.schema));
+        let schema = value.as_record().map_or_else(
+            |_| Arc::clone(&self.schema),
+            |record| self.schema_for(record.schema()),
+        );
+        let mut builder = RecordValue::builder(Arc::clone(&schema), provenance(&schema));
         for field in &self.fields {
             let projected = match field.read(value) {
                 Ok(projected) => projected,

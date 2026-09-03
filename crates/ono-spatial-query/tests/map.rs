@@ -12,11 +12,11 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{NOW, bridge, index, process};
+use common::{NOW, bridge, draw, index, process};
 use ono_spatial_core::{HierarchyKind, SpatialId, SpatialType};
-use ono_spatial_index::{PinRegistry, SpatialIndex};
+use ono_spatial_index::SpatialIndex;
 use ono_spatial_query::{
-    HorizonPlace, MAP_NODE_BUDGET, MapHorizon, MapRequest, SpatialMap, TEXT_MAP_BUDGET, project_map,
+    HorizonPlace, MAP_NODE_BUDGET, MapHorizon, MapRequest, SpatialMap, TEXT_MAP_BUDGET,
 };
 
 /// The root, its COMPUTE domain, the processes collection and `count` processes inside it — the
@@ -62,18 +62,6 @@ fn host(count: usize) -> (SpatialIndex, MapHorizon) {
         ));
     }
     (index, horizon)
-}
-
-fn draw(index: &SpatialIndex, horizon: &MapHorizon, request: &MapRequest) -> SpatialMap {
-    project_map(
-        index,
-        &SpatialId::of_space("system"),
-        horizon,
-        request,
-        &PinRegistry::new(),
-        MAP_NODE_BUDGET,
-        NOW,
-    )
 }
 
 fn node_ids(map: &SpatialMap) -> BTreeSet<String> {

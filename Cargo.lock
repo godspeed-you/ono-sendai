@@ -830,6 +830,7 @@ name = "ono-fuzz"
 version = "0.4.0"
 dependencies = [
  "bytes",
+ "ono-adapter",
  "ono-kuang-protocol",
  "ono-parser",
  "ono-protocol",
@@ -862,6 +863,7 @@ dependencies = [
  "jiff",
  "ono-core",
  "ono-testkit",
+ "ono-value",
  "regex",
  "serde",
  "serde_json",
@@ -886,6 +888,7 @@ dependencies = [
 name = "ono-kuang-sdk"
 version = "0.4.0"
 dependencies = [
+ "libc",
  "ono-kuang-protocol",
  "ono-kuang-supervisor",
  "ono-kuang-testhost",
@@ -909,6 +912,7 @@ dependencies = [
  "ono-value",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "thiserror",
  "tokio",
 ]
@@ -947,6 +951,7 @@ version = "0.4.0"
 dependencies = [
  "nix",
  "ono-core",
+ "ono-testkit",
  "tempfile",
  "thiserror",
 ]
@@ -1053,11 +1058,13 @@ name = "ono-provider-systemd"
 version = "0.4.0"
 dependencies = [
  "async-trait",
+ "futures",
  "jiff",
  "ono-adapter",
  "ono-core",
  "ono-pipeline",
  "ono-provider-api",
+ "ono-testkit",
  "ono-value",
  "tokio",
  "zbus",
@@ -1079,6 +1086,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-pemfile",
+ "serde_yaml_ng",
  "tokio",
  "tokio-rustls",
 ]
@@ -1146,6 +1154,7 @@ dependencies = [
  "ono-spatial-index",
  "ono-testkit",
  "ono-value",
+ "serde_yaml_ng",
  "sha2",
 ]
 
@@ -1160,7 +1169,9 @@ dependencies = [
 name = "ono-testkit"
 version = "0.4.0"
 dependencies = [
+ "nix",
  "ono-core",
+ "serde_yaml_ng",
 ]
 
 [[package]]
@@ -2036,15 +2047,21 @@ name = "xtask"
 version = "0.4.0"
 dependencies = [
  "ono-adapter",
+ "ono-cli",
  "ono-command",
  "ono-core",
+ "ono-fuzz",
  "ono-kuang-protocol",
  "ono-parser",
  "ono-spatial-core",
+ "ono-spatial-query",
  "ono-testkit",
  "ono-value",
  "serde",
+ "serde_json",
  "serde_yaml_ng",
+ "sha2",
+ "toml",
 ]
 
 [[package]]

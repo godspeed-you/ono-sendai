@@ -181,6 +181,22 @@ Default view: `window`, `state`, `source`
 | `source` | `string` | — | nullable | What the changes were observed through — an event stream or a snapshot comparison (§25.4). |
 | `entries` | `list<record>` | — | required | The changes themselves, each carrying the object it happened to and when it was observed. |
 
+## ClientKey — `ono.client-key/1`
+
+One client key this machine authorizes, and what it is authorized to do.
+
+Identity: `fingerprint`
+
+Default view: `fingerprint`, `label`, `observe`, `actions`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `fingerprint` | `string` | — | required | The full SHA-256 fingerprint of the client's key, `sha256:` and 64 hex digits. Never truncated: a shortened fingerprint is one an impersonator can search for a collision against. §53.3 makes a fingerprint public identity material that MAY be shown in full. |
+| `label` | `string` | — | nullable | What the operator called this client, for their own reading and for the audit trail. Null when they named it nothing; a label is a convenience and never part of the decision. |
+| `observe` | `bool` | — | required | Whether the client may run queries and subscriptions — the default grant of §9.4, which `add client-key` gives and nothing else. False means listed and permitted nothing. |
+| `actions` | `list<string>` | — | required | The exact provider capability ids the client may act with (§9.5). Empty for an observe-only client, which is what adding one produces. Every entry is one capability from docs/spec/capabilities.yaml; there is no wildcard, no prefix and no risk class, so a capability introduced in a later version stays denied until someone grants it by name. |
+| `path` | `path` | — | nullable | The `authorized_clients` file the grant is recorded in (§9.2); null when the session has no configuration directory and therefore keeps no store. |
+
 ## Command — `ono.command/1`
 
 One command of the registry, or what a head word resolves to.
@@ -449,6 +465,8 @@ A filesystem and its capacity, mounted or not.
 
 Identity: `uuid`, `source`
 
+When that identity is incomplete, it is joined by: `device_number`
+
 Default view: `source`, `type`, `size`, `used`, `available`, `target`
 
 | field | type | unit | presence | meaning |
@@ -462,6 +480,7 @@ Default view: `source`, `type`, `size`, `used`, `available`, `target`
 | `used` | `bytesize` | — | nullable | Space in use. |
 | `available` | `bytesize` | — | nullable | Space available to this user. Distinct from `size - used`, because reserved blocks are counted as used space nobody unprivileged can have. |
 | `read_only` | `bool` | — | nullable | Whether the filesystem is currently mounted read-only; null when not mounted. |
+| `device_number` | `string` | — | nullable | The `major:minor` number of the superblock, as `mountinfo(5)` prints it. Unlike `device` this is present for anonymous devices too — `0:31` is a pstore mount — which is what makes it the discriminator for filesystems that carry no UUID. Null when the provider cannot read it. |
 | `device` | `ref<ono.device/1>` | — | nullable | The backing device; null for network and pseudo-filesystems. |
 
 ## Finding — `ono.finding/1`
@@ -791,6 +810,25 @@ Default view: `name`, `reason`, `evidence`
 | `evidence` | `string` | — | required | The observation that made the rule fire — the number, the state, the pin (§26.1). |
 | `source` | `string` | — | required | Who claimed it — a built-in rule, the user's pin, or a plugin id (§26.5, §35.5). |
 
+## Limit — `ono.limit/1`
+
+One effective runtime limit, with the range it must lie in and the layer that set it.
+
+Identity: `key`
+
+Default view: `key`, `value`, `layer`, `min`, `max`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `key` | `string` | — | required | The dotted configuration key, as v0.4.1 §55.1 spells it, e.g. `limits.materialize_bytes`. |
+| `value` | `value` | — | required | The figure in force, in its own type — a byte ceiling is a bytesize, a count and a duration are ints. This is what the shell enforces, not what a default says it would. |
+| `bytes` | `int` | — | nullable | The same figure in base units, for a limit counted in bytes; null for one counted in values, results or milliseconds, which are already base units (Appendix A). |
+| `type` | `string` | — | required | The declared type of the setting, so a caller knows how to read `value`. |
+| `layer` | `enum` | — | required | Which of ADR-0010's five layers supplied the figure. `default` means Appendix A's own value is what the shell will enforce. |
+| `min` | `value` | — | nullable | The smallest permitted value, in the setting's own type (v0.4.1 §55.2). Null for a setting that is not range-checked. |
+| `max` | `value` | — | nullable | The largest permitted value, in the setting's own type; null where `min` is null. |
+| `description` | `string` | — | nullable | One line describing what the limit bounds, and which section fixes its default. |
+
 ## LinkEvent — `ono.link-event/1`
 
 One change to one link this session holds, as a live stream emits it.
@@ -844,6 +882,13 @@ Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 | `targets` | `list<string>` | — | required | The targets the remote negotiated (spec §21.2), which is what its context can answer. Empty for a link that was never established: nothing was negotiated. |
 | `protocol` | `int` | — | nullable | The link protocol version the handshake settled on (spec §21.2); null until it did. |
 | `providers` | `list<string>` | — | nullable | The ids of the providers the remote offers (spec §21.2), which keep their ids across the link (ADR-0036); null until the handshake settled them. |
+| `transport_fingerprint` | `string` | — | nullable | The `sha256:` fingerprint of the key the far side proved it holds, during this link's own handshake (v0.4.1 §7.3). Null where the transport authenticated nobody to this process — `ssh`, where OpenSSH did the authenticating in its own `known_hosts` and will not say which key it accepted (§4.3), and `local`, where the far side is this shell's own child. Null is the honest answer there and not a missing value. |
+| `transport_trust` | `enum` | — | nullable | What the trust store concluded about that key (v0.4.1 §7.3): `pinned` for a key already recorded for this host, `newly_pinned` for one recorded on first contact, and `unauthenticated` for a transport that proved nothing and a policy that said so by name. Null until a handshake settled it. |
+| `authenticated` | `bool` | — | nullable | Whether *this process* verified the far side's key during this link's own handshake (v0.4.1 §19.1: "authenticated — cryptographic peer proof was verified"). True exactly where `transport_fingerprint` names a key. False over `ssh` and `local`, where something else did the authenticating and §4.3 requires the link to say so rather than borrow it. Not the same question as `transport_trust`, which says what was *decided* about that key. |
+| `authorized` | `bool` | — | nullable | Whether the far side's own policy admitted this connection (v0.4.1 §19.1: "authorized — authenticated principal is permitted by policy"). True for an established direct link, where the agent resolved its `authorized_clients` store for this client before it negotiated anything (§9.4, §10.1). Null where no policy this process can see decided — `ssh` and `local`, where the carrier decided — and null for a link that was never established. A client the agent refuses never becomes a row: the refusal is `remote.unauthorized` (E1202), which is where an unauthorized authenticated peer is seen. |
+| `runtime_user` | `string` | — | nullable | The user the far side reports it is running as. v0.4.1 §7.3: "the runtime identity is useful context but MUST NOT grant authority" — it is what the peer said about itself, and `transport_fingerprint` is what it proved. |
+| `runtime_uid` | `int` | — | nullable | The numeric user id the far side reports, where it reports one. Context, not authority. |
+| `runtime_elevated` | `bool` | — | nullable | Whether the far side reports it is running with elevated privilege (spec §17.2). Self- reported, and §2.1 forbids it from satisfying the word authenticated. |
 
 ## LogRecord — `ono.log-record/1`
 
@@ -1257,7 +1302,7 @@ The contract negotiated when a package was loaded — what it may do, and within
 
 Identity: `instance`
 
-Default view: `plugin`, `host_api`, `isolation`, `degraded`, `started_at`
+Default view: `plugin`, `host_api`, `execution_tier`, `degraded`, `started_at`
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
@@ -1265,7 +1310,10 @@ Default view: `plugin`, `host_api`, `isolation`, `degraded`, `started_at`
 | `plugin` | `ref<ono.plugin/1>` | — | required | The installed package version this instance runs. |
 | `host_api` | `string` | — | required | The negotiated host API version, e.g. `kuang-host/11.1` — one version, not the range the package asked for (spec §31.63). |
 | `value_protocol` | `string` | — | required | The negotiated value protocol, e.g. `ono-value/1` (spec §31.62). |
-| `isolation` | `enum` | — | required | The tier this instance actually runs in (spec §31.10). |
+| `isolation` | `enum` | — | required | The tier the package's manifest declares, in spec §31.10's own vocabulary. It says what kind of thing the artifact is; `execution_tier` says what was actually installed around it, and the two are different questions (v0.4.1 §17.2). |
+| `execution_tier` | `enum` | — | required | The named execution tier this instance ran in (v0.4.1 §17.2). A name rather than a boolean, because `sandboxed: true` cannot distinguish a process under resource ceilings and no-new-privileges from one behind a kernel filesystem allowlist, and v0.4.1 §17.3 forbids calling either "sandboxed" without saying which boundary is meant. `native-confined` is what this build runs native packages in: capability mediation and process confinement, and no kernel isolation of the filesystem or the network. `native-isolated` and `wasm` are names the model can express and this build does not offer. |
+| `execution_boundary` | `string` | — | required | One sentence saying what the tier is and what it is not, from `docs/spec/hardening/kuang_confinement_controls.yaml` (v0.4.1 §15.2, §19.2). Generated from the tier rather than written beside it, so the record and the documentation cannot drift. |
+| `confinement` | `list<record>` | — | required | The confinement report of v0.4.1 §16.5, one row per control the tier claimed: `{control, required, attempted, result, platform_detail}`. `result` is `applied`, `failed`, `skipped` or `not_attempted`, and a successful spawn implies every `required` row reads `applied` — a load for which that did not hold produced no instance at all (§2.3). The control ids are the ones `docs/spec/hardening/kuang_confinement_controls.yaml` declares. |
 | `granted` | `list<record>` | — | required | Every granted capability as `{capability, class, scope, enforcement}`. `enforcement` is `broker` or `advisory` per `capabilities.v1.yaml`, so an advisory scope is visible as one in the contract and not only in the prompt. |
 | `denied` | `list<record>` | — | required | Every requested capability that was not granted, as `{capability, class, reason}`. Empty when everything was granted. A denied `required` capability means the load failed and no instance exists, so entries here are always `optional` or `runtime-requested`. |
 | `disabled_features` | `list<string>` | — | required | The features the package switched off because of a denial — spec §31.63's `model.infer denied -> feature disabled: explain-flow`. Empty when nothing was disabled. The package supplies this in its `lifecycle.init` answer; it is the plugin's own account of what it gave up. |
@@ -1293,7 +1341,8 @@ Default view: `id`, `version`, `state`, `trust`, `jobs`, `memory`
 | `publisher` | `string` | — | required | The publisher namespace `id` begins with. |
 | `state` | `enum` | — | required | The lifecycle state of spec §31.8. `installed` and `enabled` mean no code of this package has run. See `docs/spec/kuang/lifecycle.v1.yaml` for the transitions. |
 | `trust` | `enum` | — | required | What is known about who produced the artifact (spec §31.8's table, §31.36). `signed` means a valid signature from a key this system does not vouch for; `verified` means a valid signature from a trusted publisher; `local` is an unsigned development package; `untrusted` is a package quarantined on trust grounds. It is a separate question from `isolation`, deliberately (spec §31.36). |
-| `isolation` | `enum` | — | required | What the code can do even if it is not trusted — the tiers of spec §31.10. A package cannot declare `core-built-in`. |
+| `isolation` | `enum` | — | required | What kind of thing the artifact is — the tiers of spec §31.10, as the manifest declares them. A package cannot declare `core-built-in`. It is not a statement about what is installed around the artifact; `execution_tier` is. |
+| `execution_tier` | `enum` | — | required | The named tier a loaded instance of this package runs in (v0.4.1 §17.2), and the name that reaches audit, diagnostics and documentation. A name rather than a boolean: v0.4.1 §17.3 forbids describing a tier as "sandboxed" without stating the boundary, and `native-confined` states it — capability mediation and process confinement, no kernel isolation of the filesystem or the network. `inspect plugin` shows the controls that name stands for. |
 | `roles` | `list<string>` | — | required | The extension roles of spec §31.4 the package declares, at least one. |
 | `enabled` | `bool` | — | required | Whether policy makes it eligible for loading. Distinct from `state`, which says what is happening now: a package can be enabled and unloaded, which is the normal resting state under lazy loading (spec §31.68). |
 | `active_version` | `bool` | — | required | Whether this is the version contributions currently resolve to. During an upgrade two versions are installed and exactly one is active (spec §31.35). |
@@ -1562,6 +1611,8 @@ Default view: `kind`, `at`, `socket`, `changed`
 A socket with its endpoints, owner and state.
 
 Identity: `inode`
+
+When that identity is incomplete, it is joined by: `protocol`, `local`, `remote`
 
 Default view: `protocol`, `local`, `remote`, `state`, `process`
 

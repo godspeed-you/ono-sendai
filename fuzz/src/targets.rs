@@ -10,6 +10,7 @@
 //! spans must stay inside the source, and the byte decoders must stay inside a plausible bound
 //! rather than growing with a length field an attacker wrote.
 
+use ono_adapter::{Adapter, Trace};
 use ono_kuang_protocol::{FrameLimits, Manifest, PackageSignature, decode_payload, read_frame};
 use ono_parser::{parse, tokens, words_arguments};
 use ono_protocol::{FrameKind, Limits, decode, decode_message};
@@ -25,7 +26,9 @@ use ono_value::{builtin_schemas, from_csv, from_json_str, from_yaml};
 pub struct Target {
     /// The name the runner and the corpus directory use.
     pub name: &'static str,
-    /// The area of spec §35.6 this target covers, in the specification's own words.
+    /// The area this target covers, in the specification's own words — spec §35.6 for the five
+    /// the deterministic gate tier was built for, v0.4.1 §41.2 for the two the coverage-guided
+    /// tier adds.
     pub area: &'static str,
     /// The body. It must return for every input, and must never panic.
     pub run: fn(&[u8]),
@@ -57,6 +60,20 @@ pub const TARGETS: &[Target] = &[
         name: "system-decoders",
         area: "procfs/netlink decoders",
         run: system_decoders,
+    },
+    // v0.4.1 §41.2 names two more entry points the coverage-guided tier must cover. Both are
+    // reachable through the targets above and neither is *reached* by them: a handshake decoder
+    // fed frame bytes spends its budget on framing, and an adapter decoder is not on the remote
+    // path at all. Attacker classes 7 and 8 of §5.2 are exactly these two.
+    Target {
+        name: "remote-handshake",
+        area: "remote handshake decoder",
+        run: remote_handshake,
+    },
+    Target {
+        name: "adapter-decoders",
+        area: "adapter machine-readable decoders",
+        run: adapter_decoders,
     },
 ];
 
@@ -180,4 +197,66 @@ fn system_decoders(data: &[u8]) {
     let _ = procfs::parse_cmdline(data);
     let _ = procfs::parse_mountinfo(&text);
     let _ = procfs::parse_fstab(&text);
+}
+
+/// The handshake a remote agent and a client exchange before anything else (v0.4.1 §41.2, §13.1).
+///
+/// The framing is `remote-protocol`'s subject; this one hands the *payload* straight to each
+/// handshake message's decoder, so an input reaches the version list, the provider descriptors
+/// and the capability descriptors rather than spending itself on a length prefix.
+fn remote_handshake(data: &[u8]) {
+    let limits = Limits::new()
+        .with_max_frame_payload(4096)
+        .with_max_value_depth(16);
+    let schemas = builtin_schemas();
+    for kind in [FrameKind::Hello, FrameKind::Accept, FrameKind::Reject] {
+        // A handshake message that decodes must survive being asked what it agreed to: §13.2
+        // binds the negotiated version to the authenticated handshake, and a descriptor that
+        // panics when it is read is that binding falling over on attacker bytes.
+        if let Ok(message) = decode_message(kind, data, schemas, &limits) {
+            let _ = message.kind();
+            let _ = ono_protocol::encode_message(&message, &limits);
+        }
+    }
+}
+
+/// The adapter decoders, fed bytes an external program could have written (v0.4.1 §41.2, §5.2's
+/// attacker class 8: "an adapter producing malformed machine-readable output").
+///
+/// The first byte chooses an adapter from the first-party packs, so one corpus reaches every
+/// decoder kind the packs declare — JSON, JSON lines, key/value and the table readers — and the
+/// rest is what the program is imagined to have printed.
+fn adapter_decoders(data: &[u8]) {
+    let Some((selector, rest)) = data.split_first() else {
+        return;
+    };
+    let adapters: Vec<&'static Adapter> = ono_adapter::first_party()
+        .iter()
+        .flat_map(|pack| pack.adapters().iter())
+        .collect();
+    if adapters.is_empty() {
+        return;
+    }
+    let adapter = adapters[usize::from(*selector) % adapters.len()];
+    let trace = Trace {
+        executable: std::path::PathBuf::from("/usr/bin/fuzzed"),
+        version: None,
+        user_invocation: vec!["fuzzed".to_owned()],
+        actual_invocation: vec!["fuzzed".to_owned()],
+        host: None,
+    };
+    let schemas = builtin_schemas();
+    // Whole-output decoding, and the incremental path beside it: a streaming decoder that
+    // disagrees with the batch one about the same bytes is a finding, and neither may panic.
+    let _ = ono_adapter::decode(adapter, rest, &trace, schemas);
+    if let Ok(mut decoding) = ono_adapter::Decoding::borrowed(adapter, trace, schemas) {
+        for chunk in rest.chunks(7) {
+            for outcome in decoding.feed(chunk) {
+                let _ = outcome;
+            }
+        }
+        for outcome in decoding.finish() {
+            let _ = outcome;
+        }
+    }
 }

@@ -262,10 +262,13 @@ impl RecordValue {
     }
 
     /// The identity fields and their values (spec §27.3).
+    ///
+    /// Which fields those are can depend on the record: a schema may declare a fallback for the
+    /// records its identity cannot tell apart (ADR-0553).
     #[must_use]
     pub fn identity(&self) -> MapValue {
         self.schema
-            .identity()
+            .identity_for(self)
             .iter()
             .map(|name| {
                 (

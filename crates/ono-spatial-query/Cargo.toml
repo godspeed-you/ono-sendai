@@ -19,6 +19,7 @@ sha2.workspace = true
 
 [dev-dependencies]
 ono-testkit.workspace = true
+serde_yaml_ng.workspace = true
 
 [lints]
 workspace = true

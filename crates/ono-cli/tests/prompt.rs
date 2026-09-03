@@ -12,24 +12,10 @@
 
 use std::time::Duration;
 
-use ono_process::{Command, Executor, PtySession, WindowSize};
-use ono_testkit::{Scratch, scratch};
+use ono_testkit::scratch;
 
 mod support;
-use support::read_until;
-
-/// Starts `ono` interactively on a pseudo-terminal, in `directory`.
-fn interactive_shell_in(directory: &Scratch) -> PtySession {
-    let mut executor = Executor::detached();
-    let command = Command::new(ono_testkit::ono_binary())
-        .env("TERM", "xterm")
-        .env("NO_COLOR", "1")
-        .env("HOME", directory.path().display().to_string())
-        .current_dir(directory.path());
-    executor
-        .run_pty(&command, WindowSize::new(24, 100))
-        .expect("a pseudo-terminal must be available")
-}
+use support::{interactive_shell_in, read_until};
 
 /// Reads from the terminal until `needle` appears or `budget` runs out.
 #[test]

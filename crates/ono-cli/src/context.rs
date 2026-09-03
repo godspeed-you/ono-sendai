@@ -84,7 +84,8 @@ fn enters_a_declared_target(stage: &Stage) -> bool {
     else {
         return false;
     };
-    crate::native::registry().is_ok_and(|registry| registry.find("enter", Some(word)).is_some())
+    crate::eval::native::registry()
+        .is_ok_and(|registry| registry.find("enter", Some(word)).is_some())
 }
 
 /// Runs `enter`, validating that the entered object exists before anything narrows to it.
@@ -197,7 +198,7 @@ fn enter_link(session: &mut Session, name: String) -> Eval<ExitStatus> {
 /// `path` for a file, `target` for a mount — and the provider that serves the target answers
 /// (ADR-0075).
 fn enter_object(session: &mut Session, stage: &Stage, target: &str) -> Eval<ExitStatus> {
-    let registry = crate::native::registry().map_err(Flow::Failed)?;
+    let registry = crate::eval::native::registry().map_err(Flow::Failed)?;
     let contract = registry.find("enter", Some(target)).ok_or_else(|| {
         Flow::Failed(
             ErrorValue::new(
@@ -382,7 +383,7 @@ pub fn enter_piped(
             .with_help("`get socket 443 | enter socket` (spec §14.3)"),
         ));
     };
-    let registry = crate::native::registry().map_err(Flow::Failed)?;
+    let registry = crate::eval::native::registry().map_err(Flow::Failed)?;
     if registry.find("enter", Some(&target)).is_none() {
         return Err(Flow::Failed(
             ErrorValue::new(
@@ -434,7 +435,7 @@ fn canonical_twin(
     if !record.provenance().provider().starts_with("adapter:") {
         return None;
     }
-    let registry = crate::native::registry().ok()?;
+    let registry = crate::eval::native::registry().ok()?;
     let field = registry
         .find("enter", Some(target))?
         .selectors()
@@ -477,7 +478,7 @@ fn enter_record(
     {
         runtime.block_on(crate::spatial::enter_observed(record));
     }
-    let registry = crate::native::registry().map_err(Flow::Failed)?;
+    let registry = crate::eval::native::registry().map_err(Flow::Failed)?;
     let handle = registry.find("enter", Some(target)).and_then(|contract| {
         contract
             .selectors()
@@ -784,7 +785,11 @@ fn connect_over_tcp(
     timeout: Option<std::time::Duration>,
 ) -> Result<crate::session::LinkConnection, AgentFailure> {
     let failed = |error: ErrorValue| AgentFailure { error, exit: None };
-    let store = crate::trust::open(&session.host_sources()).map_err(failed)?;
+    let sources = session.host_sources();
+    let store = crate::trust::open(&sources).map_err(failed)?;
+    // v0.4.1 §7.1: both ends present a certificate. This shell's is the persistent identity of
+    // §8.1, so the agent on the far side can authorize the same peer across connections.
+    let identity = crate::trust::identity(&sources).map_err(failed)?;
     let (name, _) = ono_remote::split_address(address);
     let schemas = std::sync::Arc::new(ono_value::builtin_schemas().clone());
     let config = ono_protocol::ClientConfig::new(&name)
@@ -803,7 +808,7 @@ fn connect_over_tcp(
     let address = address.to_owned();
     let connected = runtime.block_on(async {
         let connect = async {
-            let transport = ono_remote::tls_connect(&address).await?;
+            let transport = ono_remote::tls_connect(&address, &identity).await?;
             ono_remote::RemoteLink::connect(transport, config).await
         };
         match timeout {

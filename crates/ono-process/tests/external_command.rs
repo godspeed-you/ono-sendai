@@ -41,6 +41,25 @@ fn write_script(dir: &Path, name: &str, body: &str, mode: u32) -> std::path::Pat
     path
 }
 
+/// Runs a script this suite has just written, waiting out a thread that is still holding it open.
+///
+/// A thread that forks between this thread's `open` and `close` of the script inherits the write
+/// descriptor, and until that child execs, `execve` answers ETXTBSY — which ADR-0008 maps to 126,
+/// "found and not executable", about a file that is executable. Issue #27 is one sighting of that
+/// under a `cargo test --workspace` with a container build beside it. Every other failure is
+/// answered on the first attempt (ADR-0520).
+fn captured_script(script: &Path) -> PipelineOutcome {
+    ono_testkit::while_text_file_busy(
+        |outcome: &PipelineOutcome| {
+            outcome.stages()[0]
+                .failure
+                .as_ref()
+                .is_some_and(|failure| failure.message().contains("Text file busy"))
+        },
+        || captured(Command::new(script)),
+    )
+}
+
 #[test]
 fn should_report_success_when_the_command_exits_zero() {
     let outcome = run(Command::new("/bin/true"));
@@ -119,7 +138,7 @@ fn should_report_126_when_the_file_is_executable_but_not_a_program() {
 fn should_run_a_text_script_without_a_shebang_through_the_shell() {
     let dir = tempfile::tempdir().expect("a scratch directory");
     let script = write_script(dir.path(), "plain", "echo from-plain-text\n", 0o755);
-    let outcome = captured(Command::new(&script));
+    let outcome = captured_script(&script);
     assert_eq!(outcome.status().code(), 0);
     assert_eq!(text(outcome.stdout()), "from-plain-text\n");
 }
@@ -128,7 +147,7 @@ fn should_run_a_text_script_without_a_shebang_through_the_shell() {
 fn should_run_a_shebang_script_when_it_is_executable() {
     let dir = tempfile::tempdir().expect("a scratch directory");
     let script = write_script(dir.path(), "greet", "#!/bin/sh\necho from-shebang\n", 0o755);
-    let outcome = captured(Command::new(&script));
+    let outcome = captured_script(&script);
     assert_eq!(outcome.status().code(), 0);
     assert_eq!(text(outcome.stdout()), "from-shebang\n");
 }

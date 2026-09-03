@@ -1,0 +1,54 @@
+# v0.4.1 §10.1: "the protocol handshake MUST NOT advertise the full server capability set and then
+# rely only on later dispatch checks. The `Offer` used to negotiate a direct link MUST first be
+# intersected with the authenticated client's authorization." §59.1 says why it matters beyond
+# tidiness: an inventory is information about a machine.
+#
+# Two authorized clients of one agent, differing only in policy: one may observe, one is listed
+# and permitted nothing. The negotiated contract differs, so the difference is visible before any
+# request is made rather than only in a later refusal (ADR-0471).
+case: the negotiated contract carries only what the client's policy allows
+timeout: 180
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+  NARROW=$(mktemp -d)
+  export NARROW
+
+  OBSERVER=$(ono --print-peer-key)
+  LISTED=$(ONO_CONFIG_DIR=$NARROW ono --print-peer-key)
+
+  ono --agent --listen 127.0.0.1:7736 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/agent.log" && break; sleep 0.2; done
+  HOSTKEY=$(sed -n 's/.*host key //p' "$HOME/agent.log" | head -1)
+  ono -c "add host-key 127.0.0.1 --fingerprint $HOSTKEY | select status" > /dev/null
+  ONO_CONFIG_DIR=$NARROW ono -c "add host-key 127.0.0.1 --fingerprint $HOSTKEY | select status" > /dev/null
+
+  ono -c "add client-key $OBSERVER --label observer | select status" > /dev/null
+  ono -c "add client-key $LISTED --label listed-for-nothing | select status" > /dev/null
+  ono -c "set client-key $LISTED --observe false | select changed | to json"
+
+  echo "== the observer is offered the machine's providers =="
+  ono -c 'link host 127.0.0.1:7736 --transport tcp; get link | select providers | to json' | tail -1 > "$HOME/observer.json"
+  cat "$HOME/observer.json"
+  if grep -q 'linux.procfs' "$HOME/observer.json"; then echo "observer was offered linux.procfs"; fi
+
+  echo "== the client that may do nothing is offered nothing =="
+  ONO_CONFIG_DIR=$NARROW ono -c 'link host 127.0.0.1:7736 --transport tcp; get link | select providers | to json' | tail -1 > "$HOME/narrow.json"
+  cat "$HOME/narrow.json"
+  if grep -q '"providers":\[\]' "$HOME/narrow.json"; then echo "a client permitted nothing is offered nothing"; fi
+
+  echo "== so the client permitted nothing has nothing to ask, and asking says so =="
+  ONO_CONFIG_DIR=$NARROW ono -c 'link host 127.0.0.1:7736 --transport tcp; enter link 127.0.0.1:7736; try { get process } catch e { $e | select code | to json }' | tail -1
+
+  kill "$AGENT" 2>/dev/null || true
+  true
+exit: 0
+stdout-contains: [{"changed":true}]
+stdout-contains: observer was offered linux.procfs
+stdout-contains: a client permitted nothing is offered nothing
+stdout-contains: "providers":[]
+stdout-contains: "code":"Ono-Sendai-E0102"
+stdout-not-contains: panicked

@@ -6,9 +6,18 @@
 
 #![forbid(unsafe_code)]
 
+pub mod architecture;
+pub mod baseline;
 pub mod bindings;
 pub mod conformance;
 pub mod contracts;
+pub mod metrics;
 pub mod narrative;
+pub mod perf;
+pub mod provenance;
 pub mod reference;
+pub mod reproducibility;
 pub mod scan;
+pub mod supply_chain;
+pub mod terminology;
+pub mod verification;

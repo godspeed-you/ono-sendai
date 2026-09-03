@@ -67,7 +67,8 @@ pub use check::{check_pipeline, check_pipeline_with};
 pub use complete::{Candidate, CandidateKind, StageContext, ValueCompleter, complete};
 pub use contract::{
     ArgumentMode, CapabilitySpec, CommandContract, Confirmation, ContributedCommand, DeclaredType,
-    Elevation, IoType, Origin, ParameterSpec, Phase, Privilege, Stability, TargetSpec, VerbSpec,
+    Elevation, ExecutionClass, IoType, Origin, ParameterSpec, Phase, Privilege, Stability,
+    TargetSpec, VerbSpec,
 };
 pub use explain::{
     Adaptation, ExecutionPlan, PlanContext, Resolution, StagePlan, adapt_program, is_adapt, is_raw,
@@ -76,7 +77,9 @@ pub use explain::{
 pub use expr::{
     Scope, check_fields, evaluate, evaluate_to_value, is_now_call, is_true, nested_pipelines,
 };
-pub use help::{CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help};
+pub use help::{
+    CommandHelp, HelpPage, ParameterHelp, TargetHelp, TopicHelp, VerbHelp, help, topics,
+};
 pub use impls::meta::provenance_value;
 pub use impls::watch::{is_watchable, watch_events};
 pub use impls::{builtin_commands, builtin_commands_for};

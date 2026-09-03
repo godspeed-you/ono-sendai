@@ -43,6 +43,19 @@ fn isolated(dir: &Scratch) -> Shell {
         )
         .env_remove("ONO_CONFIG")
         .env_remove("ONO_RENDER_TABLE_MAX_ROWS")
+        .env_remove("ONO_LIMITS_MATERIALIZE_ITEMS")
+        .env_remove("ONO_LIMITS_MATERIALIZE_BYTES")
+        .env_remove("ONO_LIMITS_COMMAND_CAPTURE_BYTES")
+        .env_remove("ONO_LIMITS_HISTORY_RESULTS")
+        .env_remove("ONO_LIMITS_HISTORY_ITEMS_PER_RESULT")
+        .env_remove("ONO_LIMITS_HISTORY_BYTES_PER_RESULT")
+        .env_remove("ONO_LIMITS_HISTORY_BYTES_TOTAL")
+        .env_remove("ONO_LIMITS_COMPLETION_SOFT_MS")
+        .env_remove("ONO_LIMITS_COMPLETION_HARD_MS")
+        .env_remove("ONO_LIMITS_REMOTE_CONNECTIONS")
+        .env_remove("ONO_LIMITS_REMOTE_PENDING_HANDSHAKES")
+        .env_remove("ONO_LIMITS_REMOTE_CONNECTIONS_PER_CLIENT")
+        .env_remove("ONO_LIMITS_REMOTE_HANDSHAKE_TIMEOUT_MS")
 }
 
 /// Parses a `to json` document (spec §33.5); JSON is YAML, so the YAML parser reads it.
@@ -773,5 +786,161 @@ fn should_truncate_the_rendered_table_when_the_user_file_sets_the_row_count() {
         rows.len() <= 1 && marker.is_some(),
         "spec §30: a setting from the user's config.ono is read by the renderer, and truncation is visible (§13.3):\n{}",
         run.stdout()
+    );
+}
+
+// --- the hardening limits of v0.4.1 §55.1 (issue #74) -----------------------------------------
+
+/// The twelve canonical keys of v0.4.1 §55.1, plus the §23.4 capture ceiling Appendix A fixes.
+///
+/// Written out rather than read from the registry, so that a key silently dropped from both the
+/// registry and the catalogue still fails here. The registry-to-catalogue comparison is
+/// `resource_limits.rs`'s, and this is the third opinion that keeps the two honest.
+const LIMIT_KEYS: [(&str, i64); 13] = [
+    ("limits.materialize_items", 100_000),
+    ("limits.materialize_bytes", 134_217_728),
+    ("limits.command_capture_bytes", 268_435_456),
+    ("limits.history_results", 16),
+    ("limits.history_items_per_result", 10_000),
+    ("limits.history_bytes_per_result", 16_777_216),
+    ("limits.history_bytes_total", 67_108_864),
+    ("limits.completion_soft_ms", 50),
+    ("limits.completion_hard_ms", 150),
+    ("limits.remote_connections", 32),
+    ("limits.remote_pending_handshakes", 16),
+    ("limits.remote_connections_per_client", 4),
+    ("limits.remote_handshake_timeout_ms", 10_000),
+];
+
+#[test]
+fn should_accept_every_documented_limits_key_and_reject_an_unknown_one() {
+    let dir = scratch();
+    let run = isolated(&dir)
+        .args(["-c", "get config limits. | to json"])
+        .run();
+    assert_not_the_placeholder(&run);
+    run.assert_success();
+
+    let declared = rows(&run);
+    for (key, default) in LIMIT_KEYS {
+        let setting = declared
+            .iter()
+            .find(|row| text(row, "key") == key)
+            .unwrap_or_else(|| {
+                panic!("v0.4.1 §55.1 requires `{key}`; `get config limits.` answered {declared:?}")
+            });
+        assert_eq!(
+            field(setting, "value").as_i64(),
+            Some(default),
+            "Appendix A fixes the default of `{key}`: {setting:?}"
+        );
+        assert_eq!(
+            text(setting, "layer"),
+            "default",
+            "an isolated shell reads Appendix A's value, not a file's: {setting:?}"
+        );
+    }
+
+    // A key that looks like one of the family but is not declared is still refused (ADR-0094).
+    let refused = isolated(&dir)
+        .args(["-c", "set config limits.materialize_everything = 1"])
+        .run();
+    assert!(
+        refused.stderr().contains("Ono-Sendai-E0202"),
+        "an undeclared `limits.` key is an unknown setting, not a silent no-op: {:?}",
+        refused.stderr()
+    );
+}
+
+#[test]
+fn should_refuse_a_limits_value_outside_its_permitted_range_and_name_the_range() {
+    let dir = scratch();
+    dir.write(
+        "ono/config.ono",
+        "set config limits.materialize_items = -1\n",
+    );
+    let run = isolated(&dir)
+        .args(["-c", "get config limits.materialize_items | to json"])
+        .run();
+    assert_not_the_placeholder(&run);
+    run.assert_success();
+
+    let setting = single(&run);
+    assert_eq!(
+        field(&setting, "value").as_i64(),
+        Some(100_000),
+        "§55.2: a limit outside its range leaves the earlier layer's value in force: {setting:?}"
+    );
+    assert_eq!(text(&setting, "layer"), "default");
+    let diagnostic = run.stderr();
+    assert!(
+        diagnostic.contains("limits.materialize_items")
+            && diagnostic.contains('0')
+            && diagnostic.contains("1000000000"),
+        "§55.2: the diagnostic names the key and the range it is outside: {diagnostic:?}"
+    );
+
+    // §55.2's binding sentence: "A security-sensitive agent limit MUST NOT silently become
+    // unlimited because a value failed to parse."
+    for garbage in ["not-a-number", "0", "-5", "99999999999"] {
+        let dir = scratch();
+        dir.write(
+            "ono/config.ono",
+            format!("set config limits.remote_connections = {garbage}\n"),
+        );
+        let run = isolated(&dir)
+            .args(["-c", "get config limits.remote_connections | to json"])
+            .run();
+        run.assert_success();
+        let setting = single(&run);
+        assert_eq!(
+            field(&setting, "value").as_i64(),
+            Some(32),
+            "`limits.remote_connections = {garbage}` must leave Appendix A's 32 in force and \
+             never resolve to unlimited: {setting:?}"
+        );
+    }
+}
+
+#[test]
+fn should_apply_the_documented_environment_override_for_a_limits_key() {
+    // §55.4: no new security-sensitive variable is invented. Every `limits.*` key is reachable
+    // through the mechanical `ONO_*` mapping ADR-0010 already documents, and through nothing else.
+    let dir = scratch();
+    let run = isolated(&dir)
+        .env("ONO_LIMITS_MATERIALIZE_ITEMS", "500")
+        .args(["-c", "get config limits.materialize_items | to json"])
+        .run();
+    assert_not_the_placeholder(&run);
+    run.assert_success();
+
+    let setting = single(&run);
+    assert_eq!(field(&setting, "value").as_i64(), Some(500));
+    assert_eq!(
+        text(&setting, "layer"),
+        "environment",
+        "§55.4: the precedence follows the existing architecture, and says so: {setting:?}"
+    );
+
+    // The same variable carrying an out-of-range value is refused at the same place a file is.
+    let refused = isolated(&dir)
+        .env("ONO_LIMITS_REMOTE_HANDSHAKE_TIMEOUT_MS", "0")
+        .args([
+            "-c",
+            "get config limits.remote_handshake_timeout_ms | to json",
+        ])
+        .run();
+    refused.assert_success();
+    assert_eq!(
+        field(&single(&refused), "value").as_i64(),
+        Some(10_000),
+        "an environment variable is not a way around the range check (§55.2)"
+    );
+    assert!(
+        refused
+            .stderr()
+            .contains("ONO_LIMITS_REMOTE_HANDSHAKE_TIMEOUT_MS"),
+        "the diagnostic names the variable that set it (ADR-0010): {:?}",
+        refused.stderr()
     );
 }

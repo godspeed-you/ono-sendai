@@ -130,7 +130,7 @@ pub fn resolve(
 /// `resolve.command_not_found` with discovery suggestions when no stage answers (spec §15.4).
 pub fn describe(session: &Session, namespace: Namespace, name: &str) -> Result<Value, ErrorValue> {
     let native = || {
-        let verb = crate::native::registry()
+        let verb = crate::eval::native::registry()
             .ok()
             .and_then(|registry| registry.verb(name))
             .map(|verb| verb.semantics().to_owned());

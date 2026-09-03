@@ -1,0 +1,80 @@
+# v0.4.1 §60.4 and §60.5, through the real binary as an unprivileged user.
+#
+# §65.6 names the defect these two scenarios exist against: "Allowing `N` values while each may
+# contain arbitrarily large payloads, with no byte budget, is forbidden for retained/materialized
+# collections." So a materializer is bounded twice, the first ceiling reached wins, and the byte
+# ceiling really can stop a stage whose item count is nowhere near its own — which is the whole
+# reason §2.4 asks for two bounds instead of one.
+#
+# The ceilings are narrowed through `limits.*` rather than reached with real data (§55.1,
+# ADR-0456): Appendix A's defaults are 100 000 values and 128 MiB, and a case that allocated
+# 128 MiB inside the container to prove a byte ceiling would be a case nobody runs. That the
+# defaults are Appendix A's is what case 192 shows.
+#
+# §21.4 and §53.2 are the other half: the refusal is a stable code an automation matches on, it
+# carries the configured limit and the observed consumption, and it carries none of the values it
+# was holding — a resource error that printed its payload would be a second resource problem.
+#
+# Decisions: ADR-0452, ADR-0453, ADR-0454, ADR-0455, ADR-0456.
+case: a materializer is bounded in values and in bytes, and refuses with a stable code
+timeout: 120
+env: NO_COLOR=1
+run: |
+  # The case builds the collection it bounds. `get process` reads the host, and the container is
+  # an unprivileged user with two or three processes — so the item ceiling of 2 was crossed on a
+  # developer machine and not in the container, and `"consumed":3` was a coincidence rather than
+  # a fact. Three files the case creates itself are three values on every host.
+  pop="$HOME/case-190-pop"
+  rm -rf "$pop" && mkdir -p "$pop"
+  for name in one two three; do head -c 4096 /dev/zero | tr '\0' 'x' > "$pop/$name"; done
+  ono -c "get file $pop/* | count | to json"
+
+  echo "== 60.4: the item ceiling stops a global collection =="
+  ono -c "set config limits.materialize_items = 2
+          try { get file $pop/* | sort name | count } catch e { \$e | select name | to json }"
+  ono -c "set config limits.materialize_items = 2
+          try { get file $pop/* | group kind | count } catch e { \$e | select name | to json }"
+
+  echo "== and the refusal names the limit and what crossed it (21.4) =="
+  ono -c "set config limits.materialize_items = 2
+          get file $pop/* | sort name | count" 2>&1 | head -2
+
+  echo "== 60.5: the byte ceiling stops it while the item count is far below its own =="
+  ono -c "set config limits.materialize_items = 100000
+          set config limits.materialize_bytes = 512
+          try { get file $pop/* | sort name | count } catch e { \$e | select name | to json }"
+  ono -c "set config limits.materialize_bytes = 512
+          get file $pop/* | sort name | count" 2>&1 | tail -1
+
+  echo "== 21.4: the details are the limit and the consumption, never the payload =="
+  ono -c "set config limits.materialize_items = 2
+          try { get file $pop/* | sort name | count } catch e { \$e | to json }" | tr ',' '\n' | grep -E '"limit"|"consumed"|"stage"'
+  ono -c "set config limits.materialize_items = 2
+          try { get file $pop/* | sort name | count } catch e { \$e | to json }" | grep -c '"path"' || true
+
+  echo "== 53.2: the same condition answers the same code every time =="
+  for attempt in 1 2 3; do
+    ono -c "set config limits.materialize_items = 1
+            get file $pop/* | sort name | count" 2>&1 | head -1 | cut -d" " -f2
+  done
+
+  echo "== 22.3, 65.8: an unbounded upstream is refused before anything is consumed =="
+  printf 'one\n' > "$HOME/case-190.log"
+  ono -c "try { tail file $HOME/case-190.log --lines 1 --follow | sort name | count } catch e { \$e | select name message | to json }"
+  wc -l < "$HOME/case-190.log"
+
+  echo "== and the defaults hold ordinary work (Appendix A) =="
+  ono -c "get file $pop/* | sort name | count | to json"
+exit: 0
+stdout-contains: [3]
+stdout-contains: [{"name":"resource.item_limit"}]
+stdout-contains: [{"name":"resource.byte_limit"}]
+stdout-contains: Ono-Sendai-E1101 resource.item_limit sort reached its 2 values budget
+stdout-contains: raise `limits.materialize_items` deliberately
+stdout-contains: "limit":2
+stdout-contains: "consumed":3
+stdout-contains: "stage":"sort"
+stdout-contains: [{"name":"stream.unbounded_operation","message":"`sort` requires finite input; the upstream is declared unbounded"}]
+stdout-contains: Ono-Sendai-E1101
+stdout-contains: raise `limits.materialize_bytes` deliberately
+stdout-not-contains: panicked

@@ -308,6 +308,44 @@ async fn should_answer_once_per_filesystem_when_one_is_mounted_twice() {
 }
 
 #[tokio::test]
+async fn should_tell_two_pseudo_filesystems_apart_when_they_share_a_source() {
+    let fixture = StorageFixture::new("");
+    let pstore = fixture.mount_point("pstore");
+    let credentials = fixture.mount_point("credentials");
+    fs::write(
+        fixture.path().join("proc/self/mountinfo"),
+        format!(
+            "26 5 0:31 / {} rw,nosuid - pstore none rw\n\
+             27 5 0:35 / {} ro,nosuid - tmpfs none ro\n",
+            pstore.display(),
+            credentials.display()
+        ),
+    )
+    .expect("the mount table");
+
+    let collected = drain(
+        provider(&fixture)
+            .snapshot(&Query::target("filesystem"))
+            .expect("a snapshot"),
+    )
+    .await;
+    let filesystems = records(&collected);
+    assert_eq!(
+        filesystems.len(),
+        2,
+        "two mounts of two filesystem types are two filesystems"
+    );
+
+    let first = ObjectId::of(&filesystems[0]).expect("a pseudo filesystem is still an object");
+    let second = ObjectId::of(&filesystems[1]).expect("a pseudo filesystem is still an object");
+    assert_ne!(
+        first, second,
+        "a filesystem with no UUID and the source `none` must still be told apart from another \
+         one: two observations of different things are not the same object"
+    );
+}
+
+#[tokio::test]
 async fn should_answer_for_one_mount_point_when_a_selector_names_it() {
     let fixture = StorageFixture::new("");
     let wanted = fixture.mount_point("wanted");

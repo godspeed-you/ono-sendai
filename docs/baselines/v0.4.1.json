@@ -1,0 +1,418 @@
+{
+  "schema": "ono.baseline.v1",
+  "tranche": "v0.4.1",
+  "note": "The v0.4.1 tranche as it stands, captured by `cargo xtask baseline --write`. §57's phase H0 asked for a snapshot of the state before the hardening work; this is the state after it, because H0's last issue was worked after H1-H12 and measuring today's tree cannot produce yesterday's figures (§2.6, ADR-0548). It restates nothing: the performance figures live in `docs/spec/hardening/performance_baseline.json` and the build inputs are captured from `cargo xtask build-manifest`, so the file is a binding rather than a copy (§52.2).",
+  "captured": {
+    "commit": "3ffb4d7664fc17522412ddb16174d131093d67dc",
+    "state": "the v0.4.1 tranche complete"
+  },
+  "tests": {
+    "source": "cargo xtask metrics",
+    "checked_by": "xtask/src/metrics.rs::check_readme",
+    "note": "History, not a claim about today. §50.1 makes the README's generated block the live figure and `spec-check` compares it against the tree on every gate run, so a count here that had to equal the present would be that same number typed twice (§52.2).",
+    "at_capture": {
+      "crates": 30,
+      "workspace_members": 32,
+      "tests": 3345,
+      "tests_that_can_skip": 71,
+      "expected_ci_skips": 3,
+      "acceptance_cases": 128,
+      "adrs": 369,
+      "command_contract_files": 13,
+      "commands": 193
+    }
+  },
+  "performance": {
+    "source": "docs/spec/hardening/performance_baseline.json",
+    "written_by": "cargo xtask perf --write-baseline",
+    "checked_by": "xtask/src/perf.rs::check_registries",
+    "environment": "ryzen-3900x-ubuntu-2604",
+    "load_average": 1.57,
+    "note": "§32.4's regression baseline is the machine-readable baseline #30 asked for, and H7 wrote it. This names every figure it holds, so a benchmark that disappears from it is visible here, and holds no numbers of its own.",
+    "measurements": [
+      {
+        "benchmark": "shell.cold_start",
+        "profile": "S",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.look",
+        "profile": "S",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.look",
+        "profile": "S",
+        "temperature": "cache_hit",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.map_first_frame",
+        "profile": "S",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.selector_miss",
+        "profile": "S",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "process.enumeration",
+        "profile": "S",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "service.enumeration",
+        "profile": "S",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.query",
+        "profile": "M",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.query",
+        "profile": "M",
+        "temperature": "cache_hit",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.query",
+        "profile": "M",
+        "temperature": "warm",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.map_first_frame",
+        "profile": "M",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.selector_miss",
+        "profile": "M",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.selector_hit_by_sweep",
+        "profile": "M",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "spatial.map_first_frame",
+        "profile": "L",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      },
+      {
+        "benchmark": "completion.first_candidate",
+        "profile": "S",
+        "temperature": "cold",
+        "commit": "786933dc6fe20b09b45d9713f25ef0ca4fab1b13"
+      }
+    ]
+  },
+  "release_inputs": {
+    "source": "cargo xtask build-manifest",
+    "artifact": "dist/build-inputs.json",
+    "note": "Appendix H's manifest, captured from the generator the release workflow runs rather than transcribed (ADR-0451). A manifest generated outside a workflow run has no tag and no run identity, and says null for both.",
+    "at_capture": {
+      "schema": "ono.build-inputs.v1",
+      "source": {
+        "commit": "3ffb4d7664fc17522412ddb16174d131093d67dc",
+        "tag": null,
+        "version": "0.4.0"
+      },
+      "toolchain": {
+        "file": "rust-toolchain.toml",
+        "channel": "1.94",
+        "components": [
+          "rustfmt",
+          "clippy"
+        ],
+        "profile": "minimal"
+      },
+      "lockfile": {
+        "path": "Cargo.lock",
+        "sha256": "6b941dd5869c66354b6075861ac52e520aeb58008752289a67ff4388ae6ee9b8"
+      },
+      "containers": {
+        "build": [
+          {
+            "file": "docker/Dockerfile",
+            "reference": "rust:1.94-slim-bookworm@sha256:cf9dd0ec73e75f827fe59123fff9dc65af1a1c8363c3c31ee8d7f8ad0b6a5fb2"
+          },
+          {
+            "file": "docker/Dockerfile",
+            "reference": "debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171"
+          },
+          {
+            "file": "scripts/package.sh",
+            "reference": "rust:1.94-slim-bookworm@sha256:cf9dd0ec73e75f827fe59123fff9dc65af1a1c8363c3c31ee8d7f8ad0b6a5fb2"
+          }
+        ],
+        "package_test": [
+          {
+            "file": "scripts/package-check.sh",
+            "reference": "fedora:latest@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "file": ".github/workflows/audit.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/audit.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/audit.yml",
+          "uses": "taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b",
+          "version": "v2.87.4"
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "uses": "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
+          "version": "v2.9.2"
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "uses": "taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b",
+          "version": "v2.87.4"
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/ci.yml",
+          "uses": "taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b",
+          "version": "v2.87.4"
+        },
+        {
+          "file": ".github/workflows/fuzz.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/fuzz.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/fuzz.yml",
+          "uses": "taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b",
+          "version": "v2.87.4"
+        },
+        {
+          "file": ".github/workflows/fuzz.yml",
+          "uses": "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830",
+          "version": "v4.3.0"
+        },
+        {
+          "file": ".github/workflows/fuzz.yml",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "version": "v4.6.2"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b",
+          "version": "v2.87.4"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "version": "v4.6.2"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "version": "v4.6.2"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b",
+          "version": "v2.87.4"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "version": "v4.6.2"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+          "version": "v4.3.0"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+          "version": "v4.3.0"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "version": "v4.6.2"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+          "version": "v4.3.0"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+          "version": "v4.3.0"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+          "version": "v4.3.0"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "uses": "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+          "version": "v4.1.2"
+        },
+        {
+          "file": ".github/workflows/verification.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/verification.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/verification.yml",
+          "uses": "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
+          "version": "v2.9.2"
+        },
+        {
+          "file": ".github/workflows/verification.yml",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "version": "v4.4.0"
+        },
+        {
+          "file": ".github/workflows/verification.yml",
+          "uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+          "version": "stable branch, 2026-08-05"
+        },
+        {
+          "file": ".github/workflows/verification.yml",
+          "uses": "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
+          "version": "v2.9.2"
+        }
+      ],
+      "tools": {
+        "cargo-deb": "3.7.0",
+        "cargo-deny": "0.20.2",
+        "cargo-generate-rpm": "0.21.0",
+        "cosign": "3.1.3",
+        "cross": "0.2.5"
+      },
+      "source_date_epoch": "1788422967",
+      "run": {
+        "workflow": null,
+        "repository": null,
+        "id": null,
+        "attempt": null,
+        "ref": null,
+        "runner": {
+          "os": null,
+          "arch": null
+        }
+      }
+    }
+  },
+  "artifacts": {
+    "hashes": null,
+    "reason": "No v0.4.1 release has been published: no `v*` tag exists, so no artifact has been built by the release workflow and there are no hashes to record. v0.4.1 §2.6 keeps an unknown unknown, so this is null with a reason rather than an empty list that would read as `nothing was published`. The first `v*` tag writes `SHA256SUMS`, the provenance and the signature (§47), and `scripts/verify-release.sh` checks them; re-running `cargo xtask baseline --write` after that tag records the digests here."
+  }
+}

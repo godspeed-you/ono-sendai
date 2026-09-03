@@ -127,6 +127,22 @@ impl CapabilityDescriptor {
         &self.id
     }
 
+    /// The risk the declaring side put on it, as `docs/spec/capabilities.yaml` names it.
+    ///
+    /// A name this build does not know reads as `destructive` through
+    /// [`to_capability`](Self::to_capability): a claim that cannot be understood is over-stated,
+    /// never under-stated, and authorization asks the same question through the same door.
+    #[must_use]
+    pub fn risk(&self) -> ono_provider_api::Risk {
+        self.to_capability().risk()
+    }
+
+    /// Whether the declaring side says the capability needs elevated privilege.
+    #[must_use]
+    pub const fn needs_elevation(&self) -> bool {
+        self.elevation
+    }
+
     /// The capability as a provider declares it, for mounting a remote provider locally.
     #[must_use]
     pub fn to_capability(&self) -> ono_provider_api::Capability {
@@ -219,6 +235,17 @@ impl ProviderDescriptor {
         S: Into<CapabilityDescriptor>,
     {
         self.capabilities = capabilities.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Replaces the declared capabilities with exactly these.
+    ///
+    /// Used by the authorization filter of §10.1, which narrows a descriptor to the capabilities
+    /// one client is permitted; it never adds one, because the set it chooses from is the set the
+    /// provider declared.
+    #[must_use]
+    pub fn with_exact_capabilities(mut self, capabilities: Vec<CapabilityDescriptor>) -> Self {
+        self.capabilities = capabilities;
         self
     }
 

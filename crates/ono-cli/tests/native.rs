@@ -469,7 +469,8 @@ fn should_say_so_when_a_result_is_too_large_to_retain_whole() {
     // Spec §20.2 bounds a result's values as well as the number of results. Truncating in
     // silence is the failure mode this pins: `@-1` would come up short of what the screen just
     // showed and nothing would connect the two. The notice goes to stderr, so stdout is still
-    // only the answer (spec §33.2).
+    // only the answer (spec §33.2). v0.4.1 §24.3 fixes the wording: the sentence has to say which
+    // side was shortened, because the command's own output was not (ADR-0458).
     let directory = ono_testkit::scratch();
     let document: String = (0..10_005)
         .map(|n| format!("{{\"n\":{n}}}"))
@@ -488,8 +489,15 @@ fn should_say_so_when_a_result_is_too_large_to_retain_whole() {
 
     assert!(
         run.stderr()
-            .contains("retained the first 10000 of 10005 values"),
-        "spec §20.2: a truncated retention says so, got stderr {:?}",
+            .contains("result history kept 10000 of 10005 values"),
+        "spec §20.2, v0.4.1 §24.3: a truncated retention says so, got stderr {:?}",
+        run.stderr()
+    );
+    assert!(
+        run.stderr()
+            .contains("the command's own output was complete"),
+        "v0.4.1 §24.3, §60.6: and says the emitted result was not the thing shortened, got \
+         stderr {:?}",
         run.stderr()
     );
     assert_eq!(

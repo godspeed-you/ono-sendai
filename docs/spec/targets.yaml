@@ -134,6 +134,12 @@ targets:
     summary: A host key this shell has pinned, and the fingerprint it was pinned by.
     schema: ono.host-key/1
     phase: H
+  - id: ono.target.client-key
+    name: client-key
+    category: system
+    summary: A client key this machine authorizes to reach its listening agent, and what it may do.
+    schema: ono.client-key/1
+    phase: H
   - id: ono.target.user
     name: user
     category: system
@@ -318,6 +324,12 @@ targets:
     category: system
     summary: A resolved configuration setting with its provenance. # spec §30, ADR-0010
     schema: ono.config-setting/1
+    phase: A
+  - id: ono.target.limits
+    name: limits
+    category: system
+    summary: An effective runtime resource limit. # v0.4.1 §54.3, §12.4, Appendix A
+    schema: ono.limit/1
     phase: A
 
   # --- development, spec §8.2 --------------------------------------------------------------

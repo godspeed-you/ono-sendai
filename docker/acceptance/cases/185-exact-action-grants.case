@@ -1,0 +1,45 @@
+# v0.4.1 §59.3 and §9.5. "After the operator grants `service.restart` to client A, that action MAY
+# succeed according to provider/elevation rules. `process.signal` remains refused unless separately
+# granted." And §9.5: "wildcards MUST NOT be the storage default […] newly introduced future
+# capabilities MUST therefore remain denied until explicitly authorized."
+#
+# The type that carries a grant has no way to spell a pattern (ADR-0469), so this case checks both
+# doors: the file an operator edits, and the command that writes it.
+case: an action grant is one exact capability id, and nothing that stands for several
+timeout: 120
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+  CLIENT=$(ono --print-peer-key)
+
+  ono -c "add client-key $CLIENT --label deploy | select status" > /dev/null
+  echo "== a grant names one capability =="
+  ono -c "set client-key $CLIENT --allow service.manage | select changed | to json"
+  ono -c 'get client-key | select observe actions | to json'
+
+  echo "== every pattern is refused by the command that writes the store =="
+  for PATTERN in '*' 'process.*' '*.signal' 'mutate' 'destructive'; do
+    ono -c "try { set client-key $CLIENT --allow \"$PATTERN\" } catch e { \$e | select code | to json }"
+  done
+  echo "== and the grant is exactly what it was =="
+  ono -c 'get client-key | select actions | to json'
+
+  echo "== a pattern written into the file by hand refuses the whole store =="
+  cp "$HOME/ono/authorized_clients" "$HOME/good"
+  printf '%s observe=true actions=process.*\n' "$CLIENT" > "$HOME/ono/authorized_clients"
+  ono -c 'try { get client-key } catch e { $e | select code name | to json }'
+  cp "$HOME/good" "$HOME/ono/authorized_clients"
+
+  echo "== granting one action leaves every other refused =="
+  ono -c "set client-key $CLIENT --allow process.signal | select changed | to json"
+  ono -c 'get client-key | select actions | to json'
+exit: 0
+stdout-contains: [{"observe":true,"actions":["service.manage"]}]
+stdout-contains: "code":"Ono-Sendai-E1204"
+stdout-contains: "name":"remote.authorization_store_invalid"
+stdout-contains: [{"actions":["process.signal"]}]
+stdout-not-contains: "actions":["*"]
+stdout-not-contains: "actions":["process.*"]
+stdout-not-contains: panicked

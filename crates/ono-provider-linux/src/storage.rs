@@ -49,6 +49,9 @@ pub struct MountInfo {
     pub options: Vec<String>,
     /// The `major:minor` of the device backing the mount.
     pub device: Option<String>,
+    /// The `major:minor` of the superblock, as `mountinfo(5)` prints it — including the
+    /// anonymous `0:N` a pseudo filesystem carries, which `device` deliberately drops.
+    pub device_number: String,
     /// The propagation peer group of `mountinfo(5)`'s `shared:N`, where the mount is in one.
     pub peer_group: Option<i64>,
 }
@@ -105,6 +108,7 @@ fn parse_mountinfo_line(line: &str) -> Option<MountInfo> {
 
     Some(MountInfo {
         source,
+        device_number: (*device).to_owned(),
         target: PathBuf::from(target),
         filesystem: (*filesystem).to_owned(),
         options,
@@ -172,6 +176,8 @@ fn capacity(target: &Path) -> Result<Capacity, ErrorValue> {
 struct UnmountedFilesystem {
     device: PathBuf,
     fs_type: String,
+    /// The `major:minor` `/sys/class/block/<name>/dev` records, when it records one.
+    device_number: Option<String>,
 }
 
 /// Mounts and filesystems.
@@ -398,6 +404,7 @@ impl StorageProvider {
         .set("used", used)?
         .set("available", available)?
         .set("read_only", Value::Bool(mount.read_only()))?
+        .set("device_number", Value::string(&mount.device_number))?
         .set(
             "device",
             mount
@@ -447,6 +454,7 @@ impl StorageProvider {
             found.push(UnmountedFilesystem {
                 device: device.clone(),
                 fs_type,
+                device_number: number,
             });
         }
         found
@@ -493,6 +501,13 @@ impl StorageProvider {
         .set("used", Value::Null)?
         .set("available", Value::Null)?
         .set("read_only", Value::Null)?
+        .set(
+            "device_number",
+            filesystem
+                .device_number
+                .as_ref()
+                .map_or(Value::Null, |number| Value::string(number)),
+        )?
         .set("device", Value::string(&device))?
         .build())
     }

@@ -124,6 +124,32 @@ struct Ui<'a> {
     waiting: &'a mut VecDeque<Key>,
 }
 
+/// The frame drawn before the first projection exists (v0.4.1 §33.1, §35.2).
+///
+/// §35.2 permits a first frame that does not hold every edge, and requires it to be "truthful
+/// about omitted/pending detail". Nothing is projected yet, so the only truthful thing to draw is
+/// where the user is and that the picture is on its way — which is exactly §65.9's "results,
+/// progress or a bounded refusal", in the one of the three that fits.
+fn opening_frame(place: &str, columns: usize, rows: usize) -> Vec<String> {
+    let width = columns.max(1);
+    let mut frame = Vec::with_capacity(rows);
+    frame.push(truncated(place, width));
+    frame.push(String::new());
+    frame.push(truncated(
+        "projecting this place — no detail is drawn yet",
+        width,
+    ));
+    while frame.len() < rows {
+        frame.push(String::new());
+    }
+    frame
+}
+
+/// `text`, cut to `width` characters so a narrow terminal is not written past its edge.
+fn truncated(text: &str, width: usize) -> String {
+    text.chars().take(width).collect()
+}
+
 /// The next key the terminal has ready, without waiting for one.
 fn ready_key() -> Option<Key> {
     match ono_editor::read_event_timeout(Duration::ZERO) {
@@ -183,24 +209,49 @@ pub async fn run_map_view(
     let charset = crate::sink::map_charset();
     let mut request = request;
     let mut center = center;
-    let mut record = crate::spatial::map::projection(ctx, session, &center, &request, now).await?;
 
     let (columns, rows) = ono_editor::terminal_size().unwrap_or((80, 24));
     let keymap = configured_keymap();
+
+    // Both guards, and in this order: the screen is given back before the line discipline, so a
+    // terminal that dies mid-view is left cooked either way.
+    //
+    // They are taken *before* the opening projection, and a frame is painted before it too. v0.4
+    // §34 requires the shell to "remain interactive and progressively update rather than block
+    // unnecessarily", and v0.4.1 §33.1 makes time to first useful result a first-class target;
+    // projecting COMPUTE on a busy host takes about a second, and doing it with the terminal
+    // still cooked meant no frame, no key read and nothing on the screen for the whole of it
+    // (issue #20, ADR-0493).
+    let _raw = RawMode::enter().map_err(terminal_refused)?;
+    let _screen = AlternateScreen::enter().map_err(terminal_refused)?;
+
+    // Keys typed while an observation was running. They are answered in order once it is done,
+    // so nothing a user pressed is lost to a slow provider (ADR-0424).
+    let mut waiting: VecDeque<Key> = VecDeque::new();
+    let opening = opening_frame(&place_path(session, &center), columns, rows);
+    let _ = ono_editor::paint(&opening);
+    let mut painted: Vec<String> = opening;
+
+    // The projection now runs where a key can reach it: §35.2's "the UI MAY progressively refine
+    // after the first frame", with the first frame saying that the detail is still pending rather
+    // than pretending the place is empty (§2.17).
+    let mut record = match while_answering(
+        crate::spatial::map::projection(ctx, session, &center, &request, now),
+        ready_key,
+        &keymap,
+        &mut waiting,
+    )
+    .await
+    {
+        Awaited::Done(projected) => projected?,
+        Awaited::Left => return Ok(()),
+    };
+
     let mut view = MapView::new(&record, columns, rows, charset, keymap.clone());
     view.set_live(live, "polled");
     view.set_place(place_path(session, &center));
 
-    // Both guards, and in this order: the screen is given back before the line discipline, so a
-    // terminal that dies mid-view is left cooked either way.
-    let _raw = RawMode::enter().map_err(terminal_refused)?;
-    let _screen = AlternateScreen::enter().map_err(terminal_refused)?;
-
     let mut refreshed = std::time::Instant::now();
-    let mut painted: Vec<String> = Vec::new();
-    // Keys typed while an observation was running. They are answered in order once it is done,
-    // so nothing a user pressed is lost to a slow provider (ADR-0424).
-    let mut waiting: VecDeque<Key> = VecDeque::new();
     loop {
         // §25.2 forbids motion that is not a state change, and §39.4 asks that a reduced-motion
         // setting leave nothing moving. A frame identical to the one already on the screen is
@@ -265,6 +316,11 @@ pub async fn run_map_view(
                         }
                         view.set_place(place_path(session, &center));
                         view.resize(&record, columns, rows, charset);
+                        // The view has drawn itself at the new size, so the change is answered.
+                        // Until this is said, the terminal keeps reporting it — which is what
+                        // stops `ready_key` from swallowing a resize that arrives while a
+                        // projection is running (issue #6).
+                        ono_editor::remember_terminal_size(columns, rows);
                         continue;
                     }
                     TerminalEvent::Key(press) => press,

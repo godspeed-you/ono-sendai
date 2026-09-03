@@ -15,6 +15,9 @@
 //! - [`RecordValue`] with [`FieldAccess`] — fields stored by schema position (spec §25.1), read
 //!   through the three-way distinction spec §10.5 insists on.
 //! - [`Provenance`] — where a record came from, so `inspect` can be trusted (spec §25.2).
+//! - [`estimated_size`] — the deterministic approximate retained size of spec v0.4.1 §21.2, the
+//!   one figure every byte budget in the shell is spent against, and [`Budget`], the shared
+//!   ceiling of §21.1 that spends it.
 //! - [`ErrorValue`] — the structured error of spec §16.1, carried as data.
 //! - [`ActionResult`] — the acknowledgement a mutating command returns (spec §11.5).
 //! - [`builtin_schemas`] — the canonical object schemas of spec §28.
@@ -61,6 +64,7 @@
 
 mod action;
 mod arith;
+mod budget;
 mod builtin;
 mod csv;
 mod decimal;
@@ -74,6 +78,7 @@ mod raw;
 mod record;
 mod regex_value;
 mod schema;
+mod size;
 mod text;
 mod units;
 mod uuid;
@@ -81,6 +86,10 @@ mod value;
 mod yaml;
 
 pub use action::{ActionResult, ActionStatus};
+pub use budget::{
+    Budget, COMMAND_CAPTURE_MAX_BYTES, COMMAND_CAPTURE_MAX_ITEMS, Ceiling, Exceeded,
+    MATERIALIZE_MAX_BYTES, MATERIALIZE_MAX_ITEMS, MaterializationLimits,
+};
 pub use builtin::{action_result_schema, builtin_schemas};
 pub use csv::{from_csv, to_csv};
 pub use decimal::Decimal;
@@ -96,6 +105,7 @@ pub use schema::{
     Compatibility, FieldDef, FieldType, Schema, SchemaBuilder, SchemaChange, SchemaChangeKind,
     SchemaDiff, SchemaId, SchemaRegistry, Unit, classify_change,
 };
+pub use size::{MAX_ESTIMATE_DEPTH, estimated_size};
 pub use text::{canonical_text, to_text};
 pub use units::{ByteSize, ByteUnit, Duration, DurationUnit, Percent};
 pub use uuid::Uuid;

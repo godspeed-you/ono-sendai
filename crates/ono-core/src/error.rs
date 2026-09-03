@@ -39,6 +39,8 @@ pub enum ErrorKind {
     Safety,
     /// The operation is not valid for a stream with these properties.
     Stream,
+    /// A resource budget — items retained, bytes retained, values materialized — was reached.
+    Resource,
 }
 
 impl ErrorKind {
@@ -56,6 +58,7 @@ impl ErrorKind {
         ErrorKind::Cancelled,
         ErrorKind::Safety,
         ErrorKind::Stream,
+        ErrorKind::Resource,
     ];
 
     /// The kind's name, spelled as spec §16.1 spells it.
@@ -74,6 +77,7 @@ impl ErrorKind {
             ErrorKind::Cancelled => "cancelled",
             ErrorKind::Safety => "safety",
             ErrorKind::Stream => "stream",
+            ErrorKind::Resource => "resource",
         }
     }
 
@@ -178,6 +182,10 @@ error_codes! {
         "The remote peer speaks an incompatible protocol version.";
     RemoteHostKeyChanged => "Ono-Sendai-E0603", "remote.host_key_changed", Safety,
         "The remote host presented a different key than the one recorded for it.";
+    RemoteIdentityPermissions => "Ono-Sendai-E0604", "remote.identity_permissions", Safety,
+        "The peer identity file is readable or writable by someone other than its owner.";
+    RemotePeerUnauthenticated => "Ono-Sendai-E0605", "remote.peer_unauthenticated", Safety,
+        "The remote peer did not prove possession of a peer key.";
     SafetyConfirmationRequired => "Ono-Sendai-E0701", "safety.confirmation_required", Safety,
         "The operation needs explicit confirmation that this context cannot ask for.";
     SafetyPolicyDenied => "Ono-Sendai-E0702", "safety.policy_denied", Safety,
@@ -239,8 +247,38 @@ error_codes! {
         "The movement would cross a scope boundary this session may not cross.";
     SpatialMapTooLarge => "Ono-Sendai-E1013", "spatial.map_too_large", Stream,
         "The requested map exceeds its node budget and cannot be drawn honestly.";
+    SpatialCostRefused => "Ono-Sendai-E1401", "spatial.cost_refused", Resource,
+        "The planner estimated this query beyond the interactive budget and refused it.";
     SpatialIdentityConflict => "Ono-Sendai-E1014", "spatial.identity_conflict", Conflict,
         "Two observations claim to be the same object and their identities disagree.";
+
+    // --- resource budgets, v0.4.1 §21.4: the three refusals a byte-bounded shell owes automation
+    // (ADR-0453). The block after spatial, which ADR-0125 left free for the next family.
+    ResourceItemLimit => "Ono-Sendai-E1101", "resource.item_limit", Resource,
+        "An operation reached the number of values it is allowed to retain.";
+    ResourceByteLimit => "Ono-Sendai-E1102", "resource.byte_limit", Resource,
+        "An operation reached the number of bytes it is allowed to retain.";
+    ResourceMaterializationLimit => "Ono-Sendai-E1103", "resource.materialization_limit", Resource,
+        "An operation that must see its whole input may not materialize this input.";
+
+    // --- server-side client authorization, v0.4.1 §9 and §10.4: the three refusals §53.1 names
+    // as one family, plus the store that would not load (ADR-0466). E12xx, after the resource
+    // block ADR-0453 opened.
+    RemoteUnauthenticated => "Ono-Sendai-E1201", "remote.unauthenticated", Safety,
+        "The connecting client proved possession of no key, so there is no identity to authorize.";
+    RemoteUnauthorized => "Ono-Sendai-E1202", "remote.unauthorized", Safety,
+        "The client is authenticated but is not listed in the agent's authorization store.";
+    RemoteCapabilityDenied => "Ono-Sendai-E1203", "remote.capability_denied", Safety,
+        "The client is authorized, but not for the capability this request needs.";
+    RemoteAuthorizationStoreInvalid => "Ono-Sendai-E1204", "remote.authorization_store_invalid", Safety,
+        "The authorization store could not be loaded, so nothing is authorized.";
+
+    // --- listening-agent resource limits, v0.4.1 §12: the ceilings an exposed agent enforces on
+    // everyone who reaches it (ADR-0502). E15xx, the block H3 reserved.
+    RemoteConnectionLimit => "Ono-Sendai-E1501", "remote.connection_limit", Resource,
+        "The listening agent is already holding as many connections as it may.";
+    RemoteHandshakeTimeout => "Ono-Sendai-E1502", "remote.handshake_timeout", Timeout,
+        "The peer did not complete TLS and Ono negotiation within the time a handshake is given.";
 
     // --- KUANG/11, spec §31.79: the K11 family of docs/spec/kuang/errors.v1.yaml, folded into
     // the global model (ADR-0108). Numbering follows §31.79's families.
@@ -298,6 +336,12 @@ error_codes! {
         "The remote agent cannot run the requested extension component.";
     KuangRemotePolicyDenied => "Ono-Sendai-K11702", "remote.policy_denied", Safety,
         "The remote host's policy denies the capability, whatever the local grant says.";
+    KuangPluginConfinementFailed => "Ono-Sendai-K11801", "plugin.confinement_failed", Safety,
+        "A mandatory confinement control could not be installed, so the plugin was not started.";
+    KuangPluginResourceLimitFailed => "Ono-Sendai-K11802", "plugin.resource_limit_failed", Safety,
+        "A mandatory resource limit could not be installed, so the plugin was not started.";
+    KuangPluginNoNewPrivsFailed => "Ono-Sendai-K11803", "plugin.no_new_privs_failed", Safety,
+        "`PR_SET_NO_NEW_PRIVS` could not be installed, so the plugin was not started.";
 }
 
 impl ErrorCode {

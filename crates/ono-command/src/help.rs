@@ -640,6 +640,7 @@ fn overview(registry: &CommandRegistry) -> TopicHelp {
             "help raw               the escape hatch that bypasses adaptation".to_owned(),
             "help adapt             force a program's output into values".to_owned(),
             "help spatial           moving through the system as a space".to_owned(),
+            "help plugin-trust      what a KUANG/11 plugin can and cannot reach".to_owned(),
             "help here              what the place you are standing in offers".to_owned(),
         ],
     }
@@ -647,7 +648,7 @@ fn overview(registry: &CommandRegistry) -> TopicHelp {
 
 /// The browsing topics `help <topic>` answers for, each with the line the landing page shows.
 ///
-/// This is the only enumeration of them: [`builtin_topic`]'s match is what answers, and a match
+/// This is the only enumeration of them: `builtin_topic`'s match is what answers, and a match
 /// arm cannot be listed. Completion needs the list (spec §15.1) and so does anything that wants
 /// to say what `help` knows about, so the two are kept beside each other and `spec-check`'s
 /// example checks keep them honest.
@@ -660,6 +661,10 @@ pub fn topics() -> &'static [(&'static str, &'static str)] {
         ("commands", "every stable command"),
         ("raw", "the escape hatch that bypasses adaptation"),
         ("adapt", "force a program's output into values"),
+        (
+            "plugin-trust",
+            "what a KUANG/11 plugin can and cannot reach",
+        ),
         ("spatial", "moving through the system as a space"),
         ("here", "what the place you are standing in offers"),
     ]
@@ -757,6 +762,44 @@ fn builtin_topic(registry: &CommandRegistry, topic: &str) -> Option<TopicHelp> {
             see_also: vec![
                 "explain adapt <program>  the plan, the adapter chosen, the demand forced"
                     .to_owned(),
+            ],
+        },
+        // v0.4.1 §15.1 fixes three concepts the documentation has to keep apart, §15.2 requires
+        // the native trust statement to be stated, and §17.3 forbids calling a tier "sandboxed"
+        // without saying which boundary is meant. This page is where `help` says it (ADR-0447).
+        "plugin-trust" => TopicHelp {
+            name: "plugin-trust".to_owned(),
+            summary: "What a KUANG/11 plugin can and cannot reach (spec v0.4.1 §15).".to_owned(),
+            entries: vec![
+                (
+                    "capability mediation".to_owned(),
+                    "Ono decides which operations the plugin protocol may ask Ono to perform.                      `get capability` is the table, default-deny; a call outside a grant is                      refused and audited."
+                        .to_owned(),
+                ),
+                (
+                    "process confinement".to_owned(),
+                    "resource ceilings, no-new-privileges, session separation, descriptor and                      environment hygiene, a private working directory — installed before the                      plugin's first instruction, and each one able to refuse the launch.                      `inspect plugin <id>` shows which are in force."
+                        .to_owned(),
+                ),
+                (
+                    "kernel isolation".to_owned(),
+                    "kernel policy preventing direct filesystem or network access outside an                      allowlist. The native tier does NOT provide this."
+                        .to_owned(),
+                ),
+                (
+                    "what that means".to_owned(),
+                    "A native KUANG/11 plugin executes as a process of the Ono user. Ono limits                      its brokered capabilities and applies process confinement, but native                      execution is not a complete filesystem or network sandbox. Install native                      plugins only from sources you are willing to run as your user account."
+                        .to_owned(),
+                ),
+                (
+                    "brokered vs. direct".to_owned(),
+                    "a denied capability means `brokered capability: denied`; it does not mean                      the process cannot make the equivalent syscall itself. That is                      `native direct OS access: not isolated by this execution tier`."
+                        .to_owned(),
+                ),
+            ],
+            see_also: vec![
+                "inspect plugin <id>    the execution tier and the controls in force".to_owned(),
+                "get capability         the broker's table, default-deny".to_owned(),
             ],
         },
         // v0.4 §38.1: the overview a user reaches for before they know a verb to ask about. The

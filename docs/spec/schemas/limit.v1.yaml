@@ -1,0 +1,57 @@
+# Limit. Derived from v0.4.1 §54.3 — "A diagnostic surface such as `inspect limits`, `get limit`,
+# or existing equivalent SHOULD expose effective non-secret runtime limits" — and from §12.4,
+# which wants the centralized limits printed by a diagnostic command or test fixture rather than
+# reconstructed from a second copy. Appendix A closes with the rule that shapes the fields:
+# "Limits MUST be expressed internally in integer base units and rendered in human-readable units
+# separately", so `value` carries the typed figure and `bytes` its base-unit form.
+#
+# Every row is derived from `ono_cli::settings::CATALOGUE`, which is also what the shell enforces,
+# so this is a view of the limits in force and never a second table of the same numbers.
+id: ono.limit/1
+name: Limit
+summary: One effective runtime limit, with the range it must lie in and the layer that set it.
+identity: [key]
+fields:
+  key:
+    type: string
+    required: true
+    doc: The dotted configuration key, as v0.4.1 §55.1 spells it, e.g. `limits.materialize_bytes`.
+  value:
+    type: value
+    required: true
+    doc: >-
+      The figure in force, in its own type — a byte ceiling is a bytesize, a count and a duration
+      are ints. This is what the shell enforces, not what a default says it would.
+  bytes:
+    type: int
+    nullable: true
+    doc: >-
+      The same figure in base units, for a limit counted in bytes; null for one counted in values,
+      results or milliseconds, which are already base units (Appendix A).
+  type:
+    type: string
+    required: true
+    doc: The declared type of the setting, so a caller knows how to read `value`.
+  layer:
+    type: enum
+    required: true
+    values: [default, system, user, environment, invocation]
+    doc: >-
+      Which of ADR-0010's five layers supplied the figure. `default` means Appendix A's own
+      value is what the shell will enforce.
+  min:
+    type: value
+    nullable: true
+    doc: >-
+      The smallest permitted value, in the setting's own type (v0.4.1 §55.2). Null for a setting
+      that is not range-checked.
+  max:
+    type: value
+    nullable: true
+    doc: The largest permitted value, in the setting's own type; null where `min` is null.
+  description:
+    type: string
+    nullable: true
+    doc: One line describing what the limit bounds, and which section fixes its default.
+default_view:
+  columns: [key, value, layer, min, max]

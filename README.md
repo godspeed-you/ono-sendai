@@ -119,6 +119,61 @@ functions and aliases, and cannot run commands at startup.
 → Packaging details, uninstalling, `chsh` caveats and building your own packages:
 [**Install**](https://github.com/godspeed-you/ono-sendai/wiki/Install) in the Wiki.
 
+## Verifying a release
+
+Every release publishes the SHA-256 digest of every artifact, a keyless Sigstore signature over
+that manifest, signed build provenance, and the record of what the build was given. Check them
+before you install anything. `cosign` is the one tool you add
+([sigstore/cosign](https://github.com/sigstore/cosign)); everything else is coreutils.
+
+```bash
+VERSION=0.4.1; ARCH=amd64
+BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
+curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
+curl -fLO $BASE/SHA256SUMS
+curl -fLO $BASE/SHA256SUMS.sigstore.json
+curl -fLO $BASE/build-provenance.json
+curl -fLO $BASE/build-provenance.json.sigstore.json
+```
+
+```bash
+cosign verify-blob         --bundle SHA256SUMS.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         SHA256SUMS
+```
+
+```bash
+sha256sum --check --strict --ignore-missing SHA256SUMS
+```
+
+```bash
+cosign verify-blob         --bundle build-provenance.json.sigstore.json         --certificate-oidc-issuer https://token.actions.githubusercontent.com         --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v'         build-provenance.json
+grep -o "$(sha256sum ono_${VERSION}_${ARCH}.deb | cut -d' ' -f1)" build-provenance.json
+```
+
+```bash
+sudo apt install ./ono_${VERSION}_${ARCH}.deb
+```
+
+**The order is the point.** The signature over the manifest is verified first, and the artifacts
+are checked against the manifest second. Reversed, the sequence proves only that the download was
+not corrupted in transit — a manifest an attacker wrote agrees perfectly with the artifacts that
+attacker also wrote. And the identity regexp is the whole of the signature check: without it, a
+verification accepts a signature from anyone Sigstore has ever issued a certificate to.
+
+The signing is keyless, so the project holds no private signing key and you need no public one —
+the bundle carries the signature, the short-lived certificate and the transparency-log entry
+together. With this repository checked out, `scripts/verify-release.sh --dir <dir>` runs all three
+checks and cross-checks the manifest against the provenance; it is the same script the release
+workflow runs on itself before it publishes anything.
+
+**Not yet proven end to end.** No release has been signed: keyless signing needs a token that
+exists only inside a run of the release workflow, and verifying one needs Sigstore over a network
+the acceptance container does not have. The sequence above is what a reader will run, and the
+first `v*` tag is the run that proves it passes.
+
+→ What each step proves and what to do when one fails:
+[`docs/reference/release-verification.md`](docs/reference/release-verification.md) ·
+[**Install**](https://github.com/godspeed-you/ono-sendai/wiki/Install) in the Wiki.
+
 ## Quick start
 
 ```bash
@@ -227,10 +282,19 @@ proven offline against a real second process.
 
 The extension runtime is named after the icebreaker Case rides through Straylight's ICE. It loads
 analysis programs, providers, lenses, automations and AI assistants into the shell under an
-explicit capability and isolation model: manifests, declared capabilities, sandboxed execution, an
-audit trail, and a deterministic test host every package must pass. Extensions contribute real
-objects and real relationships to the same typed pipeline as native commands — a plugin that
-inspects Postgres internals produces `Stream<T>` you can filter and sort like anything else.
+explicit capability model: manifests, declared capabilities, brokered host calls, process
+confinement, an audit trail, and a deterministic test host every package must pass. Extensions
+contribute real objects and real relationships to the same typed pipeline as native commands — a
+plugin that inspects Postgres internals produces `Stream<T>` you can filter and sort like anything
+else.
+
+**What the native tier is, exactly.** A native KUANG/11 plugin executes as a process of the Ono
+user. Ono limits its brokered capabilities and applies process confinement — resource ceilings,
+no-new-privileges, its own session, a sanitized environment, a private working directory, each one
+installed before the plugin's first instruction and each one able to refuse the launch. It is not
+a complete filesystem or network sandbox: kernel isolation is not part of this tier, so a native
+plugin can reach whatever your user account can reach without asking Ono for it. Install native
+plugins only from sources you are willing to run as your user account.
 
 > **Ono is the deck. KUANG/11 is the software you load into it.**
 
@@ -262,6 +326,7 @@ Inside the shell itself: `help`, `help <command>`, `type <pipeline>`, `inspect` 
 | [`docs/spec/`](docs/spec/) | machine-readable contracts: commands, schemas, verbs, errors, providers |
 | [`docs/decisions/`](docs/decisions/) | architecture decision records, including every deliberate spec deviation |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | what "finished" means, in boxes a script can check |
+| [`docs/MIGRATION.md`](docs/MIGRATION.md) | what changes for someone upgrading, version by version |
 | [`docs/STATE.md`](docs/STATE.md) | the work board: the release verdict, and the backlog |
 | [`HISTORY.md`](HISTORY.md) | how the shell was built, phase by phase |
 
@@ -284,6 +349,28 @@ and every box of `docs/ACCEPTANCE.md` is ticked by a named automated proof. Prim
 Linux (x86_64 and aarch64). Two further enhancement specifications — the Temporal & Causal
 Systems Interface (v0.5) and Prospective Change, Protection & Recovery (v0.6) — are specified but
 not yet implemented.
+
+**By the numbers.** These are measured, not typed: `cargo xtask metrics` reads them out of the
+tree and the quality gate fails when this block and the repository disagree. `tests` counts test
+functions *declared* — what a run actually executed is `cargo test`'s own summary to report, and
+the two figures beside it say how many of those tests can announce a skip and how many the
+canonical CI environment expects to.
+
+<!-- generated by `cargo xtask metrics`. -->
+
+```text
+crates=30
+workspace_members=32
+tests=3380
+tests_that_can_skip=75
+expected_ci_skips=3
+acceptance_cases=134
+adrs=384
+command_contract_files=13
+commands=193
+```
+
+<!-- end generated -->
 
 → Known issues and the backlog: [open issues](https://github.com/godspeed-you/ono-sendai/issues) ·
 detailed implementation status: [`docs/STATE.md`](docs/STATE.md) ·
@@ -310,10 +397,13 @@ full development contract. AI implementation agents should start at [`AGENTS.md`
 ## Security
 
 Ono-Sendai executes commands, adapts external tools, links to remote hosts and loads extensions.
-There is no published security contact yet: please report a suspected vulnerability privately to
-the maintainers — through GitHub's private vulnerability reporting on this repository where it is
-available — rather than in a public issue. If you must open one publicly, describe the impact
-without a working exploit.
+Report a suspected vulnerability privately, through [GitHub's private vulnerability
+reporting](https://github.com/godspeed-you/ono-sendai/security/advisories/new) on this repository,
+rather than in a public issue — the tracker is world-readable, so a working reproduction posted
+there is a working reproduction handed to everyone running an unpatched shell.
+
+→ [**SECURITY.md**](SECURITY.md): the supported versions, what is protected, what is deliberately
+not, and what to expect after a report.
 
 ## License
 

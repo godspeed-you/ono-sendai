@@ -45,7 +45,7 @@
 
 use std::process::{Child, Command, Stdio};
 
-use ono_testkit::scratch;
+use ono_testkit::{SkipReason, scratch};
 use serde_yaml_ng::Value;
 
 mod support;
@@ -213,6 +213,33 @@ impl Drop for SleepChild {
     }
 }
 
+/// A `sleep` child that has written a status line over its own command line, the way OpenSSH,
+/// PostgreSQL and Sendmail do — so the host does not have to be running one for the test to have
+/// one.
+struct RenamedChild(Child);
+
+impl RenamedChild {
+    fn spawn(line: &str) -> Self {
+        use std::os::unix::process::CommandExt as _;
+        let child = Command::new("sleep")
+            .arg0(line)
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("`sleep` is available on every test host");
+        Self(child)
+    }
+}
+
+impl Drop for RenamedChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// A child that burns CPU for as long as the test holds it, so the premise "at least one
 /// process on this host is in state `running`" is one the test establishes itself. A sleeping
 /// child sits in state S, and an otherwise idle CI runner has been observed answering a
@@ -257,9 +284,10 @@ fn on_path(name: &str) -> bool {
     };
     let found = std::env::split_paths(&path).any(|dir| dir.join(name).is_file());
     if !found {
-        ono_testkit::skipped(&format!(
-            "the external half needs `{name}`, which is not installed on this host"
-        ));
+        ono_testkit::skipped(
+            SkipReason::ExternalToolUnavailable,
+            &format!("the external half needs `{name}`, which is not installed on this host"),
+        );
     }
     found
 }
@@ -890,6 +918,27 @@ fn should_answer_ambiguous_selector_when_a_script_selector_matches_several_place
 }
 
 #[test]
+fn should_not_let_a_process_that_rewrote_its_command_line_answer_to_a_number() {
+    // §27.1's "exact" step matches a process by its pid and by the names its provider stated —
+    // and a process may state anything, because `argv[0]` is memory the process owns. OpenSSH
+    // writes a status line there: `sshd-session: william@pts/1`. Reading the last path segment
+    // of that as a program name gives the alias `1`, and then `enter process/1` names two places
+    // on any host with a login session and refuses with `spatial.ambiguous_selector`.
+    //
+    // The decoy below states its own line, so the host does not have to have an ssh session for
+    // this to be a test. pid 1 is on every Linux.
+    let _decoy = RenamedChild::spawn("fixture-session: nobody@pts/1");
+    let place = place_after("enter process/1");
+    assert_eq!(
+        place["canonical_ref"]["pid"].as_u64(),
+        Some(1),
+        "§27.1: `process/1` is the process whose pid is 1. A name a process wrote over its own \
+         command line is not a path, so its last slash-separated segment is not one of the names \
+         it answers to. Got {place:?}"
+    );
+}
+
+#[test]
 fn should_resolve_the_ambiguity_when_the_script_explicitly_selects_the_first_match() {
     // §29.3: ambiguity is an error "unless the script explicitly selects first/unique or uses an
     // exact ID". The explicit first selection is spelled with the v0.2 pipeline §28.3 already
@@ -1234,6 +1283,75 @@ fn should_answer_an_empty_stream_for_an_exit_that_exists_and_holds_nothing() {
     assert!(
         run.stdout().lines().any(|line| line.starts_with('[')),
         "an exit that exists answers with a stream, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_refuse_a_withheld_group_when_it_was_asked_for_by_type_rather_than_by_relation() {
+    // §42.4 and §35.2: a group this user may not read is not an empty one. ADR-0271 turned the
+    // false empty into a structured refusal for `near <relation>`, and the guard was written
+    // `if named_relation.is_some()`, so `near --type socket` — the other spelling of the same
+    // question — still fell through to an empty stream at status 0 (issue #26, ADR-0557).
+    let by_relation = ono("enter process 1; near sockets");
+    if by_relation.status().is_success() {
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "this run may read pid 1's descriptors, so no group of that place is withheld",
+        );
+        return;
+    }
+    assert!(
+        by_relation.stderr().contains("Ono-Sendai-E1008"),
+        "the premise: the `sockets` exit of pid 1 is refused to this user, got {:?}",
+        by_relation.stderr()
+    );
+
+    let by_type = ono("enter process 1; near --type socket");
+
+    assert!(
+        !by_type.status().is_success(),
+        "a refused group answered through `--type` is a refusal, not an empty stream at status \
+         0: stdout {:?}, stderr {:?}",
+        by_type.stdout(),
+        by_type.stderr()
+    );
+    assert!(
+        by_type.stderr().contains("Ono-Sendai-E1008"),
+        "the two spellings of one question give one answer, got {:?}",
+        by_type.stderr()
+    );
+}
+
+#[test]
+fn should_answer_an_empty_stream_when_the_type_asked_for_is_not_what_a_refused_exit_leads_to() {
+    // The other half of the same rule. `--type` filters *members*, so a place's other exits are
+    // still in the answer with nothing in them, and a refusal taken from any of them would
+    // answer `near --type mount` with "the `files` of this place could not be read" — a refusal
+    // about a question nobody asked (ADR-0557). A group is asked about by type when the type it
+    // leads to is the type that was asked for.
+    let denied = ono("enter process 1; near files");
+    if denied.status().is_success() {
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "this run may read pid 1's descriptors, so no exit of that place is refused",
+        );
+        return;
+    }
+
+    let run = ono("enter process 1; near --type mount | count | to json");
+
+    assert!(
+        run.status().is_success(),
+        "pid 1 has no mount exit, and that is an answer rather than a refusal about its files: \
+         stdout {:?}, stderr {:?}",
+        run.stdout(),
+        run.stderr()
+    );
+    assert_eq!(
+        run.stdout().lines().rfind(|line| line.starts_with('[')),
+        Some("[0]"),
+        "got {:?}",
         run.output()
     );
 }

@@ -13,9 +13,7 @@
 )]
 
 use std::path::Path;
-use std::time::Duration;
 
-use ono_testkit::Shell;
 use serde_yaml_ng::Value;
 
 const PACKAGE: &str = "dev.example.signed";
@@ -66,25 +64,6 @@ fn scratch() -> ono_testkit::Scratch {
     scratch
 }
 
-fn ono(home: &ono_testkit::Scratch, script: &str) -> ono_testkit::Run {
-    let root = home.path();
-    Shell::new()
-        .args(["-c", script])
-        .env(
-            "ONO_PLUGIN_PATH",
-            root.join("plugins").display().to_string(),
-        )
-        .env("HOME", root.join("home").display().to_string())
-        .env("XDG_STATE_HOME", root.join("state").display().to_string())
-        .env("XDG_CONFIG_HOME", root.join("config").display().to_string())
-        .env(
-            "ONO_CONFIG_DIR",
-            root.join("config/ono").display().to_string(),
-        )
-        .timeout(Duration::from_secs(30))
-        .run()
-}
-
 fn last_json(run: &ono_testkit::Run) -> Value {
     let line = run
         .stdout()
@@ -115,7 +94,7 @@ fn str_field<'a>(value: &'a Value, name: &str) -> &'a str {
 
 /// Installs the package from a path source, so an integrity hash is recorded.
 fn install(home: &ono_testkit::Scratch, source: &Path) -> ono_testkit::Run {
-    ono(
+    ono_with_plugins(
         home,
         &format!(
             "install plugin path:{} --confirm | select status | to json",
@@ -131,7 +110,7 @@ fn should_answer_integrity_invalid_when_a_file_the_manifest_never_declared_chang
     let installed = install(&home, &source);
     installed.assert_success();
 
-    let before = ono(&home, &format!("verify plugin {PACKAGE} | to json"));
+    let before = ono_with_plugins(&home, &format!("verify plugin {PACKAGE} | to json"));
     assert_eq!(
         str_field(only(&last_json(&before)), "integrity"),
         "valid",
@@ -149,7 +128,7 @@ fn should_answer_integrity_invalid_when_a_file_the_manifest_never_declared_chang
     )
     .expect("the fixture is rewritten in the plugin home");
 
-    let after = ono(&home, &format!("verify plugin {PACKAGE} | to json"));
+    let after = ono_with_plugins(&home, &format!("verify plugin {PACKAGE} | to json"));
     let record = last_json(&after);
     let record = only(&record);
     assert_eq!(
@@ -176,7 +155,7 @@ fn should_keep_integrity_valid_when_nothing_of_the_package_changed() {
     let source = lay_out(&home.path().join("source"), PACKAGE);
     install(&home, &source).assert_success();
     for _ in 0..2 {
-        let run = ono(&home, &format!("verify plugin {PACKAGE} | to json"));
+        let run = ono_with_plugins(&home, &format!("verify plugin {PACKAGE} | to json"));
         assert_eq!(
             str_field(only(&last_json(&run)), "integrity"),
             "valid",
@@ -188,6 +167,9 @@ fn should_keep_integrity_valid_when_nothing_of_the_package_changed() {
 // --- signing, and what a bad answer does (spec §31.36, ADR-0311, ADR-0312) --------------------
 
 use ono_kuang_protocol::{Manifest, PublicKey, SIGNATURE_FILE, SecretKey, SignedPackage};
+
+mod support;
+use support::ono_with_plugins;
 
 /// A key whose bytes are fixed, so a test never depends on the machine's entropy.
 fn key(seed: u8) -> SecretKey {
@@ -228,7 +210,7 @@ fn enrol(home: &ono_testkit::Scratch, publisher: &str, key: &PublicKey, standing
 
 /// Verifies the installed package and answers its `ono.verification-result/1` record.
 fn verified(home: &ono_testkit::Scratch) -> (ono_testkit::Run, Value) {
-    let run = ono(home, &format!("verify plugin {PACKAGE} | to json"));
+    let run = ono_with_plugins(home, &format!("verify plugin {PACKAGE} | to json"));
     let record = last_json(&run);
     let record = only(&record).clone();
     (run, record)
@@ -287,7 +269,7 @@ fn should_answer_trust_user_trusted_when_the_operator_enrolled_the_key() {
         "user-trusted",
         "ADR-0312: a key in the operator's store is `user-trusted`, got {record:?}"
     );
-    let table = ono(
+    let table = ono_with_plugins(
         &home,
         &format!("get plugin {PACKAGE} | select trust | to json"),
     );
@@ -337,7 +319,7 @@ fn should_call_an_unsigned_package_local_and_let_it_install_and_load() {
             .is_some_and(Vec::is_empty),
         "spec §31.36: `absent` is not a failure, got {record:?}"
     );
-    let table = ono(
+    let table = ono_with_plugins(
         &home,
         &format!("get plugin {PACKAGE} | select trust | to json"),
     );
@@ -393,7 +375,7 @@ fn should_refuse_to_load_a_package_whose_signature_broke_after_it_was_installed(
         "invalid",
         "the signature no longer covers what is on disk, got {record:?}"
     );
-    let run = ono(&home, &format!("load plugin {PACKAGE}"));
+    let run = ono_with_plugins(&home, &format!("load plugin {PACKAGE}"));
     assert!(
         run.stderr().contains("Ono-Sendai-K11004"),
         "lifecycle.v1: verification is re-run at load, not only at install, got {:?}",
@@ -425,7 +407,7 @@ fn should_refuse_a_package_signed_by_a_revoked_key() {
         "spec §31.79: a key this system does not trust is `publisher.untrusted`, got {:?}",
         run.output()
     );
-    let load = ono(&home, &format!("load plugin {PACKAGE}"));
+    let load = ono_with_plugins(&home, &format!("load plugin {PACKAGE}"));
     assert!(
         load.stderr().contains("Ono-Sendai-K11005"),
         "a revoked key prevents loading too, got {:?}",
@@ -439,7 +421,7 @@ fn should_show_the_signature_state_and_its_publisher_in_the_install_plan() {
     let signed_source = lay_out(&home.path().join("source"), PACKAGE);
     sign(&signed_source, &key(1));
     // Without `--confirm` a script gets the plan back rather than an installation.
-    let refused = ono(
+    let refused = ono_with_plugins(
         &home,
         &format!(
             "try {{ install plugin path:{} }} catch e {{ $e | to json }}",
@@ -453,7 +435,7 @@ fn should_show_the_signature_state_and_its_publisher_in_the_install_plan() {
     );
 
     let unsigned_source = lay_out(&home.path().join("other"), "dev.example.unsigned");
-    let plain = ono(
+    let plain = ono_with_plugins(
         &home,
         &format!(
             "try {{ install plugin path:{} }} catch e {{ $e | to json }}",
@@ -481,7 +463,7 @@ fn should_report_a_trust_store_it_cannot_read_rather_than_treating_its_keys_as_a
     )
     .expect("the trust store");
 
-    let run = ono(&home, &format!("verify plugin {PACKAGE} | to json"));
+    let run = ono_with_plugins(&home, &format!("verify plugin {PACKAGE} | to json"));
     assert!(
         run.stderr().contains("trust.yaml"),
         "a store that does not parse is named, not silently skipped, got {:?}",

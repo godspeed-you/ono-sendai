@@ -16,13 +16,8 @@ use std::path::Path;
 use ono_testkit::{Scratch, scratch};
 use xtask::reference::{check_committed, generate};
 
-/// The workspace root.
-fn repo() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask sits in the workspace")
-        .to_path_buf()
-}
+mod support;
+use support::repo;
 
 fn registries() -> Scratch {
     let repo = scratch();
@@ -330,4 +325,241 @@ fn should_find_every_generation_claim_of_this_repositorys_checklist_true() {
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+// --- the streaming and event-ordering contract (v0.4.1 §27.4, Appendix E) ----------------------
+
+#[test]
+fn should_render_the_stream_ordering_contract_from_the_registry() {
+    // v0.4.1 §27.4: "the stream module documentation MUST state this rule". It is stated in one
+    // place — `docs/spec/hardening/streaming_classification.yaml` — and the page a user reads is
+    // rendered from it, so the two cannot drift into two different contracts (ADR-0483).
+    let repo = registries();
+    repo.write(
+        "docs/spec/hardening/streaming_classification.yaml",
+        "version: 1\n\
+         classes:\n  \
+           - id: item_transform\n    \
+             appendix_e: Item transform\n    \
+             requires_finite_input: false\n    \
+             may_materialize: false\n    \
+             doc: One value in, zero or more out.\n\
+         operations:\n  \
+           - command: ono.data.each\n    \
+             class: item_transform\n\
+         ordering:\n  \
+           per_channel: Total within one channel.\n  \
+           cross_kind: No total temporal ordering between the two channels.\n  \
+           causality: Consumers must not infer causality from observation order.\n  \
+           total_order: One sequence-bearing path when the order is part of the answer.\n  \
+           channels:\n    \
+             - id: value\n      \
+               carries: The values a stage produced.\n      \
+               ordered_within_itself: true\n",
+    );
+
+    let pages = generate(repo.path()).expect("generation");
+    let page = pages
+        .iter()
+        .find(|page| page.path.ends_with("streaming.md"))
+        .expect("a streaming reference page");
+
+    for expected in [
+        "item_transform",
+        "ono.data.each",
+        "Total within one channel.",
+        "No total temporal ordering between the two channels.",
+        "Consumers must not infer causality from observation order.",
+        "One sequence-bearing path when the order is part of the answer.",
+    ] {
+        assert!(
+            page.contents.contains(expected),
+            "the rendered contract does not carry {expected:?}:\n{}",
+            page.contents
+        );
+    }
+}
+
+#[test]
+fn should_render_this_repositorys_ordering_contract_as_the_stream_module_states_it() {
+    // The two texts §27.4 requires to agree, compared: the sentence in the registry and the
+    // sentence in `stream.rs`. A change to either that the other does not follow fails here.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    // Both texts are wrapped for their own medium, so they are compared with their line breaks
+    // and comment markers flattened: what has to agree is the sentence, not the column it broke at.
+    let flatten = |text: &str| {
+        text.replace("//!", " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let registry = flatten(
+        &std::fs::read_to_string(root.join("docs/spec/hardening/streaming_classification.yaml"))
+            .expect("the streaming classification is committed"),
+    );
+    let module = flatten(
+        &std::fs::read_to_string(root.join("crates/ono-pipeline/src/stream.rs"))
+            .expect("the stream module is committed"),
+    );
+
+    for claim in [
+        "does not promise a total temporal ordering between",
+        "MUST NOT infer causality from the relative observation order",
+    ] {
+        assert!(
+            registry.contains(claim),
+            "the registry no longer states {claim:?}"
+        );
+        assert!(
+            module.contains(claim),
+            "v0.4.1 §27.4: the stream module documentation must state the rule, and it does not \
+             carry {claim:?}"
+        );
+    }
+}
+
+// --- the security terminology contract, generated (issue #112, v0.4.1 §19.2, ADR-0536) ----------
+
+#[test]
+fn should_render_the_security_terms_into_the_generated_reference() {
+    // §19.2: "Where command contracts or capability tables already generate reference
+    // documentation, the security terms SHOULD be generated from the same registries rather than
+    // duplicated in prose." So the eight definitions have one home and the page is rendered from
+    // it, rather than a ninth paraphrase of §19.1 written by hand.
+    let page = generate(&repo())
+        .expect("generation must succeed")
+        .into_iter()
+        .find(|page| page.path == "docs/reference/terminology.md")
+        .expect("the terminology page is generated");
+    for (term, meaning) in [
+        ("authenticated", "cryptographic peer proof was verified"),
+        (
+            "authorized",
+            "authenticated principal is permitted by policy",
+        ),
+        ("pinned", "fingerprint matches a recorded trust decision"),
+        (
+            "confined",
+            "process-level restrictions were successfully installed",
+        ),
+        (
+            "isolated",
+            "kernel policy prevents direct access outside a defined boundary",
+        ),
+        (
+            "sandboxed",
+            "MAY be used only when the specific isolation boundary is stated",
+        ),
+        (
+            "bounded",
+            "a hard enforceable limit exists for the relevant resource",
+        ),
+        (
+            "streaming",
+            "output may progress before complete upstream exhaustion",
+        ),
+    ] {
+        assert!(
+            page.contents.contains(term),
+            "§19.1's term `{term}` is on the generated page"
+        );
+        assert!(
+            page.contents.contains(meaning),
+            "§19.1's meaning of `{term}` is on the generated page, verbatim"
+        );
+    }
+}
+
+// --- §63: the migration guide's commands resolve (issue #116, ADR-0543) -------------------------
+
+#[test]
+fn should_resolve_every_command_the_migration_guide_prints_against_the_registry() {
+    // §66.8 makes the remote client authorization migration a release criterion, and §63.2 prints
+    // the sequence. A migration guide is the one document nobody reads until they are already
+    // stuck — an agent refusing connections and a command that no longer exists is the worst
+    // moment for a stale example.
+    let problems = xtask::reference::check_migration_guide(&repo());
+    assert!(
+        problems.is_empty(),
+        "v0.4.1 §63: the migration guide prints something the contracts do not answer to:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_migration_guide_that_prints_a_command_nobody_answers_to() {
+    let repo = ono_testkit::scratch();
+    repo.write(
+        "docs/MIGRATION.md",
+        "# Migrating\n\n```bash\nono -c 'authorise client-key sha256:abc'\n```\n",
+    );
+    let problems = xtask::reference::check_migration_guide(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("authorise")),
+        "the spelling nobody answers to is named, got {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_migration_guide_that_grants_a_capability_the_registry_retired() {
+    // §9.5: grants name exact capability ids. A guide printing a retired one teaches an operator
+    // a command that fails after they have already turned anonymous access off.
+    let repo = ono_testkit::scratch();
+    repo.write(
+        "docs/MIGRATION.md",
+        "# Migrating\n\n```bash\nono -c 'set client-key sha256:abc --allow service.invented'\n```\n",
+    );
+    let problems = xtask::reference::check_migration_guide(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("service.invented")),
+        "the retired capability is named, got {problems:?}"
+    );
+}
+
+// --- §6.1: the boundary inventory is derivable into documentation (issue #118, ADR-0546) --------
+
+#[test]
+fn should_render_a_boundary_page_that_matches_the_inventory() {
+    // §6.1: "This inventory MUST be derivable into documentation and MUST be referenced by
+    // security tests." Derivable is the operative word: the page is generated from the registry,
+    // so a boundary that changes owner cannot leave a page saying otherwise.
+    let page = generate(&repo())
+        .expect("generation must succeed")
+        .into_iter()
+        .find(|page| page.path == "docs/reference/security-boundaries.md")
+        .expect("the security boundary page is generated");
+    let inventory =
+        std::fs::read_to_string(repo().join("docs/spec/hardening/security_boundaries.yaml"))
+            .expect("the inventory");
+    let document: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&inventory).expect("the inventory is YAML");
+    let boundaries = document["boundaries"]
+        .as_sequence()
+        .expect("the inventory declares boundaries");
+    assert_eq!(
+        boundaries.len(),
+        12,
+        "v0.4.1 §6.1 names twelve boundaries at minimum"
+    );
+    for boundary in boundaries {
+        for field in ["id", "input_trust", "required_enforcement", "owner"] {
+            let value = boundary[field]
+                .as_str()
+                .unwrap_or_else(|| panic!("every boundary states `{field}`"));
+            assert!(
+                page.contents.contains(value),
+                "the generated page carries `{value}`, the inventory's `{field}`"
+            );
+        }
+    }
 }

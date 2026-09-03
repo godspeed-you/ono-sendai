@@ -118,7 +118,7 @@ impl ShellCompleter {
         if upstream.is_empty() || upstream.ends_with([';', '&']) {
             return Vec::new();
         }
-        let Ok(registry) = crate::native::registry() else {
+        let Ok(registry) = crate::eval::native::registry() else {
             return Vec::new();
         };
         // Planned with a structured consumer after it, because that is what the stage under
@@ -145,6 +145,7 @@ impl ShellCompleter {
                 adapters: self.adapters.as_deref(),
                 executables: Some(&executables),
                 context: &[],
+                limits: ono_pipeline::MaterializationLimits::default(),
             },
         );
         let stages = plan.stages();
@@ -202,7 +203,7 @@ impl Completer for ShellCompleter {
 
         let mut candidates: Vec<String> = Vec::new();
 
-        if let Ok(registry) = crate::native::registry() {
+        if let Ok(registry) = crate::eval::native::registry() {
             let context = ono_command::StageContext::from_line(line, cursor);
             let fields = SelectorCompleter {
                 fields: if is_head {
@@ -327,18 +328,22 @@ pub fn run(session: &mut Session, options: &Options, reporter: &Reporter) -> Exi
         .with_highlighter(ParserHighlighter)
         .with_completer(ShellCompleter {
             commands: resolve::candidates(session, ""),
-            values: Some(crate::complete::ProviderValues::new(
-                session
-                    .env()
-                    .iter()
-                    .map(|(name, value)| {
-                        (
-                            name.to_string_lossy().into_owned(),
-                            value.to_string_lossy().into_owned(),
-                        )
-                    })
-                    .collect(),
-            )),
+            values: Some({
+                let (soft, hard) = crate::limits::completion(session.settings());
+                crate::complete::ProviderValues::new(
+                    session
+                        .env()
+                        .iter()
+                        .map(|(name, value)| {
+                            (
+                                name.to_string_lossy().into_owned(),
+                                value.to_string_lossy().into_owned(),
+                            )
+                        })
+                        .collect(),
+                )
+                .budgeted(soft, hard)
+            }),
             adapters: Some(session.shared_adapters()),
             resolver: Some(resolve::resolver(session)),
         });

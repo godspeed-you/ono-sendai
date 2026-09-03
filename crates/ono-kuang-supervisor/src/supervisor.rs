@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,7 +23,9 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::negotiate::{HostLimits, negotiate};
+use crate::platform::{ConfinementPlatform, NativePlatform};
 use crate::policy::{Evaluation, Policy, ScopeUse, denial_error};
+use crate::report::ConfinementReport;
 use crate::sandbox::Sandbox;
 use crate::state::StateStore;
 use crate::trail::{AuditTrail, HostClock};
@@ -64,7 +65,6 @@ pub fn host_platform() -> String {
 
 /// Everything a load needs (spec §31.63). The manifest arrives already parsed — and therefore
 /// already validated — because [`Manifest::parse`] is the only way to build one.
-#[derive(Debug)]
 pub struct LoadConfig {
     /// The runtime artifact to spawn.
     pub program: PathBuf,
@@ -85,6 +85,30 @@ pub struct LoadConfig {
     /// directory is made. `None` when the host has no state root, and then the artifact's own
     /// directory serves (spec §31.10, ADR-0283).
     pub private_dir: Option<PathBuf>,
+    /// What installs the process-level confinement controls of v0.4.1 §16.1.
+    ///
+    /// The shell passes [`NativePlatform`], which is also the default. §59.7 requires an
+    /// acceptance scenario in which `PR_SET_NO_NEW_PRIVS` fails and the plugin never runs, and
+    /// no arrangement outside the process can make that call fail — so the platform is a seam
+    /// the caller supplies rather than a constant this module reaches for (ADR-0443).
+    pub confinement: Arc<dyn ConfinementPlatform>,
+}
+
+impl std::fmt::Debug for LoadConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `dyn ConfinementPlatform` is not `Debug`, and requiring it of every implementation
+        // would buy nothing: what a reader wants from this is the artifact and the manifest.
+        f.debug_struct("LoadConfig")
+            .field("program", &self.program)
+            .field("args", &self.args)
+            .field("manifest", &self.manifest)
+            .field("policy", &self.policy)
+            .field("limits", &self.limits)
+            .field("clock", &self.clock)
+            .field("platform", &self.platform)
+            .field("private_dir", &self.private_dir)
+            .finish_non_exhaustive()
+    }
 }
 
 impl LoadConfig {
@@ -100,6 +124,7 @@ impl LoadConfig {
             clock: HostClock::System,
             platform: host_platform(),
             private_dir: None,
+            confinement: NativePlatform::shared(),
         }
     }
 }
@@ -161,6 +186,7 @@ impl Supervisor {
             clock,
             platform,
             private_dir,
+            confinement,
         } = config;
         manifest.check_host(HOST_API, &platform)?;
         // Negotiation before code: a denied required capability means nothing is spawned.
@@ -183,19 +209,12 @@ impl Supervisor {
             crate::sandbox::working_directory(private_dir.as_deref(), &program),
         );
         let mut command = Command::new(&program);
-        command
-            .args(&args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        crate::sandbox::apply(&mut command, &sandbox);
-        let mut child = command.spawn().map_err(|error| {
-            KuangError::new(
-                KuangErrorCode::LoadRuntimeUnavailable,
-                format!("cannot start `{}`: {error}", program.display()),
-            )
-        })?;
+        command.args(&args);
+        // v0.4.1 §2.3, §16.3, §18.1: a mandatory control that could not be installed abandons the
+        // spawn here, before a single plugin instruction runs. The package is not quarantined —
+        // it never started, so there is nothing to hold (ADR-0444).
+        let (mut child, confinement) =
+            crate::sandbox::spawn(&mut command, &sandbox, &confinement, &manifest.package.id)?;
         let stdin = child.stdin.take().ok_or_else(broken_pipes)?;
         let stdout = child.stdout.take().ok_or_else(broken_pipes)?;
         let (frame_tx, frame_rx) = mpsc::channel(64);
@@ -299,6 +318,7 @@ impl Supervisor {
             package_id,
             shared,
             sandbox,
+            confinement,
             contract,
             disabled_features: init.disabled_features,
             commands,
@@ -561,6 +581,7 @@ pub struct LoadedPlugin {
     package_id: String,
     shared: Arc<Mutex<Shared>>,
     sandbox: Sandbox,
+    confinement: ConfinementReport,
     contract: PluginContract,
     disabled_features: Vec<String>,
     commands: Vec<RegisteredCommand>,
@@ -580,6 +601,16 @@ impl LoadedPlugin {
     #[must_use]
     pub fn sandbox(&self) -> &Sandbox {
         &self.sandbox
+    }
+
+    /// What the instance's confinement actually is, control by control (v0.4.1 §16.5).
+    ///
+    /// Every `required` row reads `applied`, because a spawn for which that did not hold never
+    /// produced a `LoadedPlugin` (§2.3). A best-effort row that reads `failed` is the diagnostic
+    /// §16.4 requires such a failure to remain visible in.
+    #[must_use]
+    pub const fn confinement(&self) -> &ConfinementReport {
+        &self.confinement
     }
 
     /// The most memory the instance has been observed to have allocated, in bytes
@@ -1062,14 +1093,16 @@ impl Actor {
             Some(libc::SIGXCPU) => KuangError::new(
                 KuangErrorCode::RuntimeTimeout,
                 "the plugin instance exhausted its CPU limit and was stopped",
-            ),
+            )
+            .with_metadata("resource_class", json!("cpu")),
             Some(libc::SIGXFSZ) => KuangError::new(
                 KuangErrorCode::RuntimeTrap,
                 format!(
                     "the plugin instance tried to write beyond its file-size limit of {} bytes",
                     self.sandbox.file_size
                 ),
-            ),
+            )
+            .with_metadata("resource_class", json!("file_size")),
             _ if at_ceiling => KuangError::new(
                 KuangErrorCode::RuntimeMemoryLimit,
                 format!(
@@ -1077,6 +1110,10 @@ impl Actor {
                     self.sandbox.memory_max
                 ),
             )
+            // v0.4.1 §18.3: the error identifies the enforced resource class rather than
+            // reporting "plugin exited", so a caller can tell a limit from a defect without
+            // reading the sentence.
+            .with_metadata("resource_class", json!("memory"))
             .with_help(
                 "`runtime.memory_max` in the package's manifest declares the ceiling; the host \
                  caps it and never raises it",

@@ -11,20 +11,13 @@ use std::sync::Arc;
 use bytes::Bytes;
 use jiff::tz::TimeZone;
 use ono_render::{Layout, Presentation, Renderer, Theme, View};
-use ono_value::{
-    ByteSize, FieldDef, FieldType, MapValue, Provenance, RecordValue, Schema, SchemaId, Value,
-};
+use ono_value::{ByteSize, FieldDef, FieldType, Provenance, RecordValue, Schema, SchemaId, Value};
+
+mod support;
+use support::{map, strip};
 
 fn renderer() -> Renderer {
     Renderer::in_zone(TimeZone::UTC)
-}
-
-fn map(pairs: &[(&str, Value)]) -> Value {
-    let mut map = MapValue::new();
-    for (key, value) in pairs {
-        map.insert((*key).into(), value.clone());
-    }
-    Value::Map(Arc::new(map))
 }
 
 fn record() -> Value {
@@ -203,22 +196,4 @@ fn should_render_one_tree_per_value_in_the_tree_view() {
         2,
         "got {lines:#?}"
     );
-}
-
-/// Removes every ANSI escape sequence, so a painted line can be compared with a plain one.
-fn strip(line: &str) -> String {
-    let mut out = String::new();
-    let mut chars = line.chars();
-    while let Some(character) = chars.next() {
-        if character == '\u{1b}' {
-            for escaped in chars.by_ref() {
-                if escaped == 'm' {
-                    break;
-                }
-            }
-        } else {
-            out.push(character);
-        }
-    }
-    out
 }

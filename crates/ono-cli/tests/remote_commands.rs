@@ -27,26 +27,13 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use ono_testkit::ono;
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::{Shell, scratch};
 use serde_yaml_ng::Value;
 
 mod support;
-use support::{last_line, text};
+use support::{last_line, ono_at_home, text};
 
 const LINK: &str = "link host testbox --transport local";
-
-/// Runs with the scratch directory as the home and config directory, so the host sources the
-/// shell consults are the test's own and never the developer machine's.
-fn ono_at_home(home: &Scratch, script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .env("HOME", home.path().to_string_lossy().into_owned())
-        .env(
-            "XDG_CONFIG_HOME",
-            home.path().to_string_lossy().into_owned(),
-        )
-        .args(["-c", script])
-        .run()
-}
 
 /// The last non-empty line of stdout: what `to json` wrote for the final statement. Earlier
 /// statements (`link host` prints its summary line) are allowed to write before it.

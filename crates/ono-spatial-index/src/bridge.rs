@@ -949,6 +949,14 @@ fn aliases_from(object_type: SpatialType, record: &RecordValue) -> Vec<String> {
         SpatialType::Process => {
             if let Some(Value::List(command)) = record.get("command")
                 && let Some(program) = command.first().and_then(|value| text(Some(value)))
+                // `argv[0]` is memory the process owns, and a process may write anything into
+                // it: OpenSSH puts `sshd-session: william@pts/1` there, PostgreSQL puts
+                // `postgres: writer process`. That is a status line rather than a path, and its
+                // last slash-separated segment is not a program name — `pts/1` gave an ssh
+                // session the alias `1`, beside pid 1, so `enter process/1` named two places and
+                // refused on any host with a login. A path a kernel executed carries no
+                // whitespace; anything that does is a line the process wrote about itself.
+                && !program.chars().any(char::is_whitespace)
             {
                 aliases.push(base_name(&program));
             }

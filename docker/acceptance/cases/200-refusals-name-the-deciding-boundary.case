@@ -1,0 +1,113 @@
+# v0.4.1 §54.1 and §54.2, through the real binary as an unprivileged user.
+#
+# §54.1 gives four example refusals and asks one thing of all of them: "A refusal should tell the
+# user which boundary made the decision." §54.2 says where the answer has to be:
+#
+#   "Important refusal explanations MUST appear in normal structured errors. Users must not need
+#    `RUST_LOG=debug` to understand why a security policy denied them."
+#
+# Four phases delivered these four families and each proved its own. This case is the one that
+# reads all four as a user reads them, in one run, with nothing switched on: no `RUST_LOG`, no
+# `--verbose`, no diagnostic flag. Every sentence asserted below is on the stream an ordinary
+# invocation writes to.
+#
+# `docs/spec/hardening/refusals.yaml` is the census these four are rows of, and
+# `cargo xtask spec-check` holds the tree to it — a hardening error nobody says a boundary for
+# fails the gate. Decisions: ADR-0537.
+case: every hardening refusal names the boundary that decided it, with nothing switched on
+timeout: 240
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+  # Stated rather than assumed: nothing below depends on a log level, and the assertions hold
+  # with logging at its quietest.
+  export RUST_LOG=error
+
+  echo "== 54.1 example three: the finite-input requirement names the stage and the upstream =="
+  printf 'one\n' > "$HOME/source.log"
+  ono -c "try { tail file $HOME/source.log --lines 1 --follow | sort name } catch e { \$e | select code name message | to json }"
+
+  echo "== 54.1 example four: the history notice names which budget, and its figure =="
+  # Twice, with a different ceiling each time. A notice that read the same whichever of the four
+  # retention budgets stopped it would leave the reader four settings and no way to tell which.
+  ono -c 'set config limits.history_bytes_per_result = 512
+          get process | select pid' 2>&1 >/dev/null | head -1
+  ono -c 'set config limits.history_items_per_result = 1
+          get process | select pid' 2>&1 >/dev/null | head -1
+
+  echo "== 21.4: the budget refusal names the stage, the ceiling and the setting =="
+  # Uncaught, because the setting a user would raise is in the refusal's help line and catching
+  # the error is what a script does — §54.2 is about the person reading the terminal.
+  ono -c 'set config limits.materialize_items = 1
+          get process | sort pid | count' 2>&1 | head -3
+
+  echo "== 54.1 example two: the confinement refusal names the control that failed =="
+  export ONO_PLUGIN_PATH="$HOME/plugins"
+  export XDG_STATE_HOME="$HOME/state"
+  mkdir -p "$HOME/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$HOME/plugins/dev.example.echo/runtime/echo"
+  cat > "$HOME/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  MANIFEST
+  ( ulimit -n 64 && ulimit -H -n 64 && \
+    ono -c 'try { load plugin dev.example.echo } catch e { $e | select code message | to json }' ) 2>&1
+
+  echo "== 54.1 example one: the remote refusal names the peer and says it was authenticated =="
+  # The reachable half. §10.1 filters the offer before a command is bound, so an ungranted action
+  # over a link is refused at binding rather than at dispatch — the `remote.capability_denied`
+  # sentence needs the forged request §10.2 refuses, which no shell sends and which
+  # `crates/ono-protocol/tests/authorization.rs::should_say_which_policy_refused_an_authenticated_client`
+  # proves instead. What a user actually meets is this: a client whose key was proved and whose
+  # fingerprint is not in the agent's store.
+  ono --agent --listen 127.0.0.1:7740 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/agent.log" && break; sleep 0.2; done
+  HOSTKEY=$(sed -n 's/.*host key //p' "$HOME/agent.log" | head -1)
+  ono -c "add host-key 127.0.0.1 --fingerprint $HOSTKEY | select status | to json" > /dev/null
+
+  ono -c 'try { link host 127.0.0.1:7740 --transport tcp } catch e { $e | select code name message | to json }'
+  kill "$AGENT" 2>/dev/null || true
+
+  echo "== nothing above needed a debug log =="
+  echo "RUST_LOG=$RUST_LOG"
+exit: 0
+stdout-contains: "code":"Ono-Sendai-E0801"
+stdout-contains: "name":"stream.unbounded_operation"
+stdout-contains: requires finite input
+stdout-contains: the upstream is declared unbounded
+stdout-contains: result history kept
+stdout-contains: 512 bytes (512 B) history budget (`limits.history_bytes_per_result`)
+stdout-contains: history budget (`limits.history_items_per_result`)
+stdout-contains: the command's own output was complete
+stdout-contains: Ono-Sendai-E1101 resource.item_limit
+stdout-contains: limits.materialize_items
+stdout-contains: "code":"Ono-Sendai-K11802"
+stdout-contains: could not be installed
+stdout-contains: rlimit_open_files
+stdout-contains: "code":"Ono-Sendai-E1202"
+stdout-contains: "name":"remote.unauthorized"
+stdout-contains: is authenticated and is not authorized on this host
+stdout-contains: RUST_LOG=error
+stdout-not-contains: panicked

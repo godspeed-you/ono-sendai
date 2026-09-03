@@ -29,24 +29,39 @@
 //! certificate is used for what it demonstrably is: a public key the peer proved it holds. The
 //! whole certificate is the [`HostKey`], so re-issuing one is a deliberate re-pin.
 //!
+//! # Both ends do it, and the listening side is not exempt
+//!
+//! Until v0.4.1 only the connecting side asked the question. The listener presented a
+//! certificate, asked for none, and everything downstream — the Ono `Hello`, the provider
+//! inventory, capabilities, actions — was reached by whoever dialled the port; the `Identity` the
+//! peer sent was a string it chose about itself, which v0.4.1 §2.1 forbids from satisfying the
+//! word *authenticated*. §7.1 makes the transport symmetric: "both endpoints MUST present a
+//! certificate and prove possession of the corresponding private key during TLS 1.3
+//! negotiation", and §13.1 fixes when — "mutual TLS MUST complete before an Ono `Hello` frame is
+//! accepted". So [`TlsListener::bind`] requires a client certificate, [`TlsListener::accept`]
+//! reports it as the peer key, and [`connect`] takes the identity it will present rather than
+//! having a way not to present one.
+//!
 //! # What a deployment does
 //!
-//! The listening side keeps a [`HostIdentity`] in a file it owns; the connecting side pins its
-//! fingerprint in the trust store. Nothing is trusted on the strength of being reachable.
+//! Each side keeps a [`PeerIdentity`] in a file it owns and pins the other's fingerprint.
+//! Nothing is trusted on the strength of being reachable.
 
 use std::io;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
 use ono_core::ErrorCode;
-use ono_protocol::{Fingerprint, HostKey, Transport};
+use ono_protocol::{HostKey, Transport};
 use ono_value::ErrorValue;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
+
+use crate::identity::{ALGORITHM, PeerIdentity};
 
 /// The port an Ono agent listens on when nobody says otherwise.
 ///
@@ -54,149 +69,26 @@ use tokio::net::{TcpListener, TcpStream};
 /// an address takes a port with it.
 pub const DEFAULT_PORT: u16 = 7734;
 
+/// Where an agent binds when `--listen` names no address (v0.4.1 §11.1, §11.2).
+///
+/// The loopback interface on [`DEFAULT_PORT`]. §11.2 leaves the address to the implementation and
+/// §11.3 forbids reading anything into it: this is the narrowest exposure that is still a
+/// listening agent, not a statement that a peer on this machine is trusted. Every client is
+/// authenticated and authorized here exactly as one dialling from another continent would be.
+pub const DEFAULT_LISTEN_ADDRESS: &str = "127.0.0.1:7734";
+
 /// The application the two ends agree they are speaking, negotiated in the TLS handshake.
 ///
 /// A peer that speaks something else is refused before a frame crosses, rather than confusing
 /// the link protocol's own version negotiation with a different protocol entirely.
-const ALPN: &[u8] = b"ono/1";
-
-/// The algorithm name the trust store records for a key proved through TLS.
 ///
-/// The material is the peer's end-entity certificate, so the name says so: what was pinned is a
-/// certificate, and a re-issued certificate is a new key to Ono even when the key inside it is
-/// the same one. That is the strict reading, and the one a person can check by hand.
-const ALGORITHM: &str = "tls-x509";
-
-/// A listening agent's own identity: the certificate it presents and the key it proves it holds.
-#[derive(Debug)]
-pub struct HostIdentity {
-    certificate: CertificateDer<'static>,
-    key: PrivateKeyDer<'static>,
-}
-
-impl HostIdentity {
-    /// The identity recorded in `path`, generating and writing one when the file is not there.
-    ///
-    /// The file holds both PEM blocks and is written with owner-only permissions, because it
-    /// contains the private key that *is* this host's identity to everyone who pinned it.
-    ///
-    /// # Errors
-    ///
-    /// `io.permission_denied` when the file cannot be read or written, and `parse.syntax` when it
-    /// is not the two PEM blocks this format defines.
-    pub fn open_or_create(path: &Path) -> Result<Self, ErrorValue> {
-        match std::fs::read_to_string(path) {
-            Ok(pem) => Self::from_pem(&pem, path),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let pem = generate_pem()?;
-                write_private(path, &pem)?;
-                Self::from_pem(&pem, path)
-            }
-            Err(error) => Err(io_error(path, &error)),
-        }
-    }
-
-    /// An identity that lives only as long as this process.
-    ///
-    /// # Errors
-    ///
-    /// `io.permission_denied` when a key cannot be generated.
-    pub fn generate() -> Result<Self, ErrorValue> {
-        let pem = generate_pem()?;
-        Self::from_pem(&pem, Path::new("<generated>"))
-    }
-
-    fn from_pem(pem: &str, path: &Path) -> Result<Self, ErrorValue> {
-        let malformed = |detail: &str| {
-            ErrorValue::new(
-                ErrorCode::ParseSyntax,
-                format!("{}: {detail}", path.display()),
-            )
-            .with_help(
-                "a host identity is one CERTIFICATE block and one PRIVATE KEY block; remove the \
-                 file to have a new identity generated, which every peer that pinned this host \
-                 will then refuse until it is re-pinned",
-            )
-        };
-        let mut reader = io::BufReader::new(pem.as_bytes());
-        let certificate = rustls_pemfile::certs(&mut reader)
-            .next()
-            .transpose()
-            .map_err(|error| malformed(&format!("the certificate is unreadable: {error}")))?
-            .ok_or_else(|| malformed("no CERTIFICATE block"))?;
-        let mut reader = io::BufReader::new(pem.as_bytes());
-        let key = rustls_pemfile::private_key(&mut reader)
-            .map_err(|error| malformed(&format!("the private key is unreadable: {error}")))?
-            .ok_or_else(|| malformed("no PRIVATE KEY block"))?;
-        Ok(Self { certificate, key })
-    }
-
-    /// The key a peer will see this host prove it holds.
-    #[must_use]
-    pub fn host_key(&self) -> HostKey {
-        HostKey::new(ALGORITHM, self.certificate.as_ref().to_vec())
-    }
-
-    /// The fingerprint a person pins this host by.
-    #[must_use]
-    pub fn fingerprint(&self) -> Fingerprint {
-        self.host_key().fingerprint()
-    }
-}
-
-/// A self-signed certificate and its key, as two PEM blocks.
-fn generate_pem() -> Result<String, ErrorValue> {
-    // The name in the certificate is not what identifies the host — the pinned key is (see the
-    // module documentation) — so it is a fixed, obviously non-resolvable name rather than
-    // something that looks like a claim about DNS.
-    let generated =
-        rcgen::generate_simple_self_signed(vec!["ono.invalid".to_owned()]).map_err(|error| {
-            ErrorValue::new(
-                ErrorCode::IoPermissionDenied,
-                format!("this host's identity could not be generated: {error}"),
-            )
-        })?;
-    Ok(format!(
-        "{}{}",
-        generated.cert.pem(),
-        generated.key_pair.serialize_pem()
-    ))
-}
-
-/// Writes `contents` to `path` so that only its owner can read it.
-fn write_private(path: &Path, contents: &str) -> Result<(), ErrorValue> {
-    use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).map_err(|error| io_error(parent, &error))?;
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|error| io_error(path, &error))?;
-    file.write_all(contents.as_bytes())
-        .map_err(|error| io_error(path, &error))?;
-    file.sync_all().map_err(|error| io_error(path, &error))
-}
-
-fn io_error(path: &Path, error: &io::Error) -> ErrorValue {
-    let code = match error.kind() {
-        io::ErrorKind::NotFound => ErrorCode::IoNotFound,
-        _ => ErrorCode::IoPermissionDenied,
-    };
-    ErrorValue::new(
-        code,
-        format!(
-            "the host identity at {} is not usable: {error}",
-            path.display()
-        ),
-    )
-}
+/// `ono/2` since v0.4.1, and the number is the whole point: §13.4 asks the transport to "advance
+/// from the existing `ono/1` ALPN token to a token that unambiguously represents the
+/// mutual-authentication contract". `ono/1` named a link where one end proved who it was. This
+/// one names a link where both do, and the name is settled inside the TLS handshake, before the
+/// link protocol's own version negotiation can be reached (§13.2). Only this token is offered and
+/// only this token is accepted; a peer that speaks the older one meets §13.3 (ADR-0439).
+const ALPN: &[u8] = b"ono/2";
 
 /// The cryptography this transport uses, chosen once and by name.
 ///
@@ -268,11 +160,148 @@ impl rustls::client::danger::ServerCertVerifier for PinIsTheAnchor {
     }
 }
 
+/// The verifier that makes the *client's* proof the whole of the check (v0.4.1 §7.1, §2.1).
+///
+/// The mirror image of [`PinIsTheAnchor`], and mirror-image reasoning: there is no authority to
+/// build a path to and no name to check, so what a listening agent demands of a peer is the one
+/// thing that cannot be faked — a `CertificateVerify` signature over this handshake's transcript,
+/// made with the key inside the certificate the peer just sent. rustls performs it and refuses
+/// the handshake when it does not hold, which is why nothing here has to.
+///
+/// What this verifier deliberately does *not* do is decide whether the client is an *allowed*
+/// client. §9.1 is explicit that "a valid client certificate proves only that the connecting
+/// process holds a private key", and the `authorized_clients` store that decides the rest is
+/// phase H2's. §56.1 puts the boundary in the same place: `ono-remote` carries authenticated
+/// identity and "no authorization policy semantics".
+#[derive(Debug)]
+struct ProofIsTheWholeCheck {
+    provider: Arc<rustls::crypto::CryptoProvider>,
+    /// No hints: there are no certificate authorities, so there is nothing to hint at, and RFC
+    /// 8446 reads an empty list as "send whatever certificate you have".
+    hints: Vec<rustls::DistinguishedName>,
+}
+
+impl rustls::server::danger::ClientCertVerifier for ProofIsTheWholeCheck {
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+
+    /// v0.4.1 §7.4: the canonical agent has no mode in which this is false.
+    fn client_auth_mandatory(&self) -> bool {
+        true
+    }
+
+    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
+        &self.hints
+    }
+
+    fn verify_client_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
+    ) -> Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
+        // rustls hands these bytes over unparsed and asks the implementer to handle invalid data.
+        // Bytes that are not a certificate carry no public key, so no proof of possession can
+        // exist for them and the handshake is over here rather than at the signature.
+        rustls::server::ParsedCertificate::try_from(end_entity)?;
+        Ok(rustls::server::danger::ClientCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// The client's certificate, and a record of whether the server ever asked for it.
+///
+/// rustls calls [`resolve`](rustls::client::ResolvesClientCert::resolve) exactly when the server
+/// sends a `CertificateRequest`, so this flag is the one observation available to a client about
+/// whether the far side intends to authenticate it at all. v0.4.1 §13.3 requires the client to
+/// fail when it meets a server that does not support mutual client authentication, and without
+/// this the client would complete a handshake, send an Ono `Hello` and be answered by an agent
+/// that never learned who it was talking to (ADR-0439).
+#[derive(Debug)]
+struct PresentsThisIdentity {
+    certified: Arc<rustls::sign::CertifiedKey>,
+    asked: Arc<AtomicBool>,
+}
+
+impl rustls::client::ResolvesClientCert for PresentsThisIdentity {
+    fn resolve(
+        &self,
+        _root_hint_subjects: &[&[u8]],
+        _schemes: &[rustls::SignatureScheme],
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        self.asked.store(true, Ordering::SeqCst);
+        Some(Arc::clone(&self.certified))
+    }
+
+    fn has_certs(&self) -> bool {
+        true
+    }
+}
+
+/// The certificate the completed handshake proved its peer holds, as a [`HostKey`].
+///
+/// `None` only where a handshake completed with no peer certificate at all, which neither end of
+/// this transport permits any more; the trust decision above refuses that case by policy rather
+/// than trusting this function to be unreachable.
+fn proved_key(certificates: Option<&[CertificateDer<'static>]>) -> Option<HostKey> {
+    certificates
+        .and_then(<[CertificateDer<'_>]>::first)
+        .map(|certificate| HostKey::new(ALGORITHM, certificate.as_ref().to_vec()))
+}
+
 /// A link transport over TLS 1.3, and the key the peer proved it holds.
 #[derive(Debug)]
 pub struct TlsTransport<S> {
     stream: S,
     peer_key: Option<HostKey>,
+    peer_address: Option<SocketAddr>,
+}
+
+impl<S> TlsTransport<S> {
+    /// Where the peer connected from, for the `source_address` an audit event carries
+    /// (v0.4.1 §14.2).
+    ///
+    /// Reported by the socket, not claimed by the peer — and still not an identity: §65.2
+    /// forbids granting anything on the strength of a source address. It is there so an
+    /// operator reading an audit trail can correlate, and for nothing else.
+    #[must_use]
+    pub const fn peer_address(&self) -> Option<SocketAddr> {
+        self.peer_address
+    }
 }
 
 impl<S: AsyncRead + AsyncWrite + Send + Unpin + 'static + std::fmt::Debug> Transport
@@ -311,11 +340,15 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for TlsTransport<S> {
     }
 }
 
-/// Connects to `address` and completes the TLS handshake.
+/// Connects to `address`, presenting `identity`, and completes the mutual TLS handshake.
 ///
 /// The returned transport reports the peer's certificate as its host key, which is what the trust
 /// store then decides about (spec §21.5). `address` is `host` or `host:port`; without a port,
 /// [`DEFAULT_PORT`].
+///
+/// `identity` is not optional and there is no sibling that omits it. v0.4.1 §13.3 forbids
+/// retrying without a client certificate, and the cheapest way to keep a rule like that is to
+/// leave no expressible way to break it (ADR-0439).
 ///
 /// # Errors
 ///
@@ -323,8 +356,18 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for TlsTransport<S> {
 /// the TLS handshake not completed.
 pub async fn connect(
     address: &str,
+    identity: &PeerIdentity,
 ) -> Result<TlsTransport<tokio_rustls::client::TlsStream<TcpStream>>, ErrorValue> {
     let (host, port) = split_address(address);
+    let (certificate, key) = identity.material();
+    let certified = rustls::sign::CertifiedKey::from_der(vec![certificate], key, &provider())
+        .map_err(|error| {
+            ErrorValue::new(
+                ErrorCode::IoPermissionDenied,
+                format!("this peer identity cannot be presented: {error}"),
+            )
+        })?;
+    let asked = Arc::new(AtomicBool::new(false));
     let mut config = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(|error| unreachable_error(address, &format!("TLS 1.3 is unavailable: {error}")))?
@@ -332,7 +375,10 @@ pub async fn connect(
         .with_custom_certificate_verifier(Arc::new(PinIsTheAnchor {
             provider: provider(),
         }))
-        .with_no_client_auth();
+        .with_client_cert_resolver(Arc::new(PresentsThisIdentity {
+            certified: Arc::new(certified),
+            asked: Arc::clone(&asked),
+        }));
     config.alpn_protocols = vec![ALPN.to_vec()];
 
     let stream = TcpStream::connect((host.as_str(), port))
@@ -345,17 +391,24 @@ pub async fn connect(
     let stream = tokio_rustls::TlsConnector::from(Arc::new(config))
         .connect(name, stream)
         .await
-        .map_err(|error| {
-            unreachable_error(address, &format!("the TLS handshake failed: {error}"))
-        })?;
+        .map_err(|error| handshake_error(address, &error))?;
 
-    let peer_key = stream
-        .get_ref()
-        .1
-        .peer_certificates()
-        .and_then(<[CertificateDer<'_>]>::first)
-        .map(|certificate| HostKey::new(ALGORITHM, certificate.as_ref().to_vec()));
-    Ok(TlsTransport { stream, peer_key })
+    if !asked.load(Ordering::SeqCst) {
+        // §13.3: the far side completed a handshake without ever asking who we are, so nothing
+        // it does with this link can be authorized to this identity. There is no second attempt
+        // to make — the only thing a retry could drop is the certificate — so this is the end.
+        return Err(unauthenticated_peer(
+            address,
+            "it completed the handshake without asking for a client certificate",
+        ));
+    }
+    let peer_key = proved_key(stream.get_ref().1.peer_certificates());
+    let peer_address = stream.get_ref().0.peer_addr().ok();
+    Ok(TlsTransport {
+        stream,
+        peer_key,
+        peer_address,
+    })
 }
 
 /// An agent's listening socket: one TLS 1.3 endpoint presenting this host's identity.
@@ -379,19 +432,23 @@ impl TlsListener {
     ///
     /// `remote.unreachable` (E0601) when the address cannot be bound, and
     /// `io.permission_denied` when the identity is not one TLS can present.
-    pub async fn bind(address: &str, identity: &HostIdentity) -> Result<Self, ErrorValue> {
+    pub async fn bind(address: &str, identity: &PeerIdentity) -> Result<Self, ErrorValue> {
         let (host, port) = split_address(address);
+        let (certificate, key) = identity.material();
         let mut config = rustls::ServerConfig::builder_with_provider(provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .map_err(|error| {
                 unreachable_error(address, &format!("TLS 1.3 is unavailable: {error}"))
             })?
-            .with_no_client_auth()
-            .with_single_cert(vec![identity.certificate.clone()], identity.key.clone_key())
+            .with_client_cert_verifier(Arc::new(ProofIsTheWholeCheck {
+                provider: provider(),
+                hints: Vec::new(),
+            }))
+            .with_single_cert(vec![certificate], key)
             .map_err(|error| {
                 ErrorValue::new(
                     ErrorCode::IoPermissionDenied,
-                    format!("this host's identity cannot be presented: {error}"),
+                    format!("this peer identity cannot be presented: {error}"),
                 )
             })?;
         config.alpn_protocols = vec![ALPN.to_vec()];
@@ -427,21 +484,51 @@ impl TlsListener {
         &self,
     ) -> Result<TlsTransport<tokio_rustls::server::TlsStream<TcpStream>>, ErrorValue> {
         let (stream, from) = self
-            .listener
-            .accept()
+            .accept_tcp()
             .await
             .map_err(|error| unreachable_error("a peer", &error.to_string()))?;
+        self.handshake(stream, &from.to_string()).await
+    }
+
+    /// Waits for one peer's TCP connection, without spending anything on it yet.
+    ///
+    /// Separate from [`handshake`](Self::handshake) because the two are bounded differently:
+    /// v0.4.1 §12.2 gives the handshake a deadline and a ceiling of its own, and a listener that
+    /// could only do both at once would have to hold the accept loop for the length of every
+    /// peer's negotiation — which is the accept-path exhaustion §12.2 exists to prevent.
+    ///
+    /// # Errors
+    ///
+    /// The operating system's own error. §12.6 distinguishes an error about one peer from the
+    /// listening socket becoming unusable, and that distinction lives in the `io::ErrorKind`
+    /// rather than in a message, so this reports the error unwrapped.
+    pub async fn accept_tcp(&self) -> io::Result<(TcpStream, SocketAddr)> {
+        self.listener.accept().await
+    }
+
+    /// Completes the mutual TLS handshake with a peer this listener accepted.
+    ///
+    /// # Errors
+    ///
+    /// `remote.unreachable` (E0601) when the handshake fails — a peer speaking something other
+    /// than this protocol, or one that cannot prove it holds the key it presented.
+    pub async fn handshake(
+        &self,
+        stream: TcpStream,
+        from: &str,
+    ) -> Result<TlsTransport<tokio_rustls::server::TlsStream<TcpStream>>, ErrorValue> {
+        let peer_address = stream.peer_addr().ok();
         let stream = self.acceptor.accept(stream).await.map_err(|error| {
-            unreachable_error(
-                &from.to_string(),
-                &format!("the TLS handshake failed: {error}"),
-            )
+            unreachable_error(from, &format!("the TLS handshake failed: {error}"))
         })?;
-        // The listening side authenticates nobody: a client presents no certificate, and who it
-        // is comes from the link protocol's own identity (spec §21.2), not from the transport.
+        // The handshake completed, so the client presented a certificate and signed this
+        // handshake's transcript with the key inside it (v0.4.1 §7.1). That is what the peer key
+        // is: something this process verified, not something the peer said about itself.
+        let peer_key = proved_key(stream.get_ref().1.peer_certificates());
         Ok(TlsTransport {
             stream,
-            peer_key: None,
+            peer_key,
+            peer_address,
         })
     }
 }
@@ -466,6 +553,50 @@ pub fn split_address(address: &str) -> (String, u16) {
         }
         _ => (address.to_owned(), DEFAULT_PORT),
     }
+}
+
+/// The refusal for a peer that will not or cannot prove it holds a key (v0.4.1 §13.3, §4.2).
+///
+/// Never retryable, and deliberately carrying no way forward: the only thing a second attempt
+/// could change is whether a certificate is offered, and dropping it is exactly what §13.3
+/// forbids.
+fn unauthenticated_peer(address: &str, detail: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::RemotePeerUnauthenticated,
+        format!("{address} did not authenticate this link: {detail}"),
+    )
+    .with_retryable(false)
+    .with_help(
+        "a direct link is mutually authenticated from v0.4.1 on, and never falls back to an \
+         unauthenticated one (§7.1, §13.3). The far side is most likely an older agent: upgrade \
+         it, or reach it over `--transport ssh`, where OpenSSH authenticates the host instead.",
+    )
+}
+
+/// A failed TLS handshake, as the reason it failed rather than as a connection problem.
+///
+/// The one distinction that matters to a person is between "nothing is listening the way I
+/// expected" and "the far side speaks an older protocol than this one" — §4.2 asks for the second
+/// to arrive as a stable authentication-specific error, and a peer that answers with
+/// `no_application_protocol` to an offer of `ono/2` is exactly that peer.
+fn handshake_error(address: &str, error: &io::Error) -> ErrorValue {
+    let alpn_refused = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+        .is_some_and(|error| {
+            matches!(
+                error,
+                rustls::Error::AlertReceived(rustls::AlertDescription::NoApplicationProtocol)
+                    | rustls::Error::NoApplicationProtocol
+            )
+        });
+    if alpn_refused {
+        return unauthenticated_peer(
+            address,
+            "it does not speak `ono/2`, the protocol in which both ends prove who they are",
+        );
+    }
+    unreachable_error(address, &format!("the TLS handshake failed: {error}"))
 }
 
 fn unreachable_error(address: &str, detail: &str) -> ErrorValue {

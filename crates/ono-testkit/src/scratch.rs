@@ -87,3 +87,53 @@ impl Drop for Scratch {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
+
+/// Writes an executable script and answers where it is.
+///
+/// Two suites had written this by hand and both were bitten by the same race (issue #27, issue
+/// #7): see [`while_text_file_busy`](crate::while_text_file_busy) for what it is.
+///
+/// # Panics
+///
+/// Panics if the script cannot be written or made executable.
+pub fn executable_script(directory: &std::path::Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = directory.join(name);
+    std::fs::write(&path, body).expect("the script must be writable");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+        .expect("the script must be made executable");
+    path
+}
+
+/// Runs `attempt` again while it answers that the file it is running is busy.
+///
+/// `cargo test` runs a crate's tests in threads of one process. A thread that `fork`s between
+/// another thread's `open` and `close` of a file inherits the write descriptor, and until that
+/// child `exec`s, `execve` on the file answers `ETXTBSY` — *text file busy*. A test that writes a
+/// script and runs it therefore fails, at exit 126, for something no part of the shell did: issue
+/// #27 saw it once under a `cargo test --workspace` with a container build beside it, and issue
+/// #7 is the same race one crate over, where the shim the shell was told to run could not be
+/// exec'd.
+///
+/// The retry is bounded and it is not a blanket one. `busy` is asked whether *this* answer is the
+/// machine reporting a busy file — the diagnostic says so in as many words — so every other
+/// failure is returned on the first attempt, unretried. A file that stays busy for
+/// one second is a finding and is answered as one.
+pub fn while_text_file_busy<T>(busy: impl Fn(&T) -> bool, mut attempt: impl FnMut() -> T) -> T {
+    let deadline = std::time::Instant::now() + BUSY_PATIENCE;
+    loop {
+        let outcome = attempt();
+        if !busy(&outcome) || std::time::Instant::now() >= deadline {
+            return outcome;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// How long a file may stay busy before the answer stands.
+///
+/// The window is the distance between a `fork` and the `exec` that follows it, which is
+/// microseconds. A second is four orders of magnitude of headroom and still fails fast enough to
+/// read.
+const BUSY_PATIENCE: std::time::Duration = std::time::Duration::from_secs(1);

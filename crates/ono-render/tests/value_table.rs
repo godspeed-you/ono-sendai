@@ -12,9 +12,11 @@ use std::sync::Arc;
 use jiff::tz::TimeZone;
 use ono_render::{Cell, Layout, Presentation, Renderer, Theme, View};
 use ono_value::{
-    ByteSize, FieldDef, FieldType, MapValue, Percent, Provenance, RecordValue, Schema, SchemaId,
-    Value,
+    ByteSize, FieldDef, FieldType, Percent, Provenance, RecordValue, Schema, SchemaId, Value,
 };
+
+mod support;
+use support::{map, strip};
 
 fn schema(default_view: bool) -> Arc<Schema> {
     let mut builder = Schema::builder(SchemaId::new("ono.demo", 1), "Demo")
@@ -59,14 +61,6 @@ fn process(schema: &Arc<Schema>, pid: i128, name: &str, memory: Option<u128>) ->
 
 fn renderer() -> Renderer {
     Renderer::in_zone(TimeZone::UTC)
-}
-
-fn map(pairs: &[(&str, Value)]) -> Value {
-    let mut map = MapValue::new();
-    for (key, value) in pairs {
-        map.insert((*key).into(), value.clone());
-    }
-    Value::Map(Arc::new(map))
 }
 
 #[test]
@@ -279,20 +273,96 @@ fn should_render_the_list_view_as_one_labelled_block_per_record() {
     );
 }
 
-/// Removes every ANSI escape sequence, so a painted line can be compared with a plain one.
-fn strip(line: &str) -> String {
-    let mut out = String::new();
-    let mut chars = line.chars();
-    while let Some(character) = chars.next() {
-        if character == '\u{1b}' {
-            for escaped in chars.by_ref() {
-                if escaped == 'm' {
-                    break;
-                }
-            }
-        } else {
-            out.push(character);
-        }
-    }
-    out
+// --- a marker where a person reads without colour (issue #12, ADR-0332, ADR-0558) -------------
+
+/// `ono.action-result/1` as `docs/spec/schemas/action-result.v1.yaml` declares the part that is
+/// read by eye: what was acted on, what was asked, and how it went.
+fn action_result_schema() -> Arc<Schema> {
+    Arc::new(
+        Schema::builder(SchemaId::new("ono.action-result", 1), "ActionResult")
+            .field(FieldDef::new("target", FieldType::Any).required())
+            .field(FieldDef::new("operation", FieldType::String).required())
+            .field(
+                FieldDef::new(
+                    "status",
+                    FieldType::enumeration(&["success", "skipped", "failed"]),
+                )
+                .required(),
+            )
+            .field(FieldDef::new("changed", FieldType::Bool).required())
+            .identity(["target", "operation"])
+            .default_view(["target", "operation", "status", "changed"])
+            .build()
+            .unwrap(),
+    )
+}
+
+fn action_result(status: &str, changed: bool) -> Value {
+    RecordValue::builder(
+        action_result_schema(),
+        Provenance::local("demo", SchemaId::new("ono.action-result", 1)),
+    )
+    .set("target", Value::string("nginx.service"))
+    .unwrap()
+    .set("operation", Value::string("ono.service.restart"))
+    .unwrap()
+    .set("status", Value::string(status))
+    .unwrap()
+    .set("changed", Value::Bool(changed))
+    .unwrap()
+    .build()
+    .into_value()
+}
+
+#[test]
+fn should_mark_a_failed_result_apart_from_a_successful_one_at_a_terminal_without_colour() {
+    // Spec §44: "No functionality may depend on color alone." A reader at a `NO_COLOR` terminal
+    // gets the theme's marker for the token instead of its hue.
+    let table = renderer().table(&[
+        action_result("failed", false),
+        action_result("success", true),
+    ]);
+    let lines = Layout::new(100).render_styled(&table, &Theme::default(), Presentation::Plain);
+
+    assert!(
+        lines[1].contains("!! failed"),
+        "a failed result is `ui.danger`, whose marker is `!!`: {:?}",
+        lines[1]
+    );
+    assert!(
+        lines[2].contains("ok success"),
+        "a successful result is `ui.success`, whose marker is `ok`: {:?}",
+        lines[2]
+    );
+}
+
+#[test]
+fn should_keep_the_columns_aligned_when_a_marker_widens_a_cell() {
+    // The marker is part of what the cell says, so the layout has to have measured it. A width
+    // computed from the unmarked text would push every column after it out by three cells.
+    let table = renderer().table(&[
+        action_result("failed", false),
+        action_result("success", true),
+    ]);
+    let lines = Layout::new(100).render_styled(&table, &Theme::default(), Presentation::Plain);
+    let changed_at = |line: &str| line.rfind("false").or_else(|| line.rfind("true"));
+
+    assert_eq!(
+        changed_at(&lines[1]),
+        changed_at(&lines[2]),
+        "the column after the marked one still starts at one column: {:#?}",
+        lines
+    );
+}
+
+#[test]
+fn should_leave_a_pipe_exactly_as_it_was_when_a_theme_carries_markers() {
+    // ADR-0332's rule, kept where it is worth keeping: the bytes of a machine destination do not
+    // depend on which theme is configured.
+    let table = renderer().table(&[action_result("failed", false)]);
+    let piped = Layout::new(100).render_styled(&table, &Theme::default(), Presentation::Pipe);
+    let plain = Layout::new(100).render(&table);
+
+    assert_eq!(piped, plain, "a pipe is painted by no theme at all");
+    assert!(!piped[1].contains("!!"), "got {:?}", piped[1]);
 }

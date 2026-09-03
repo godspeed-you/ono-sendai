@@ -30,6 +30,7 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
@@ -654,10 +655,14 @@ fn should_restore_the_shell_screen_when_the_full_screen_map_closes() {
         "§23.3/§52.1: `map` opens a full-screen view on an interactive terminal; saw:\n{}",
         plain(&after(session.seen(), "\r\nMP0\r\n"))
     );
-    let drawn = plain(&after(session.seen(), ALTERNATE_SCREEN_ON));
+    // The screen is taken before the projection exists (v0.4.1 §33.1, issue #20), so the frame
+    // with the exits in it is the second thing painted rather than the first.
     assert!(
-        domains_missing(&drawn).len() < DOMAINS.len(),
-        "§23.1: the map draws the current place and its canonical exits; saw:\n{drawn}"
+        session.wait_until(BUDGET, |seen| {
+            domains_missing(&plain(&after(seen, ALTERNATE_SCREEN_ON))).len() < DOMAINS.len()
+        }),
+        "§23.1: the map draws the current place and its canonical exits; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
     );
 
     session.keys(ESCAPE);
@@ -874,12 +879,42 @@ fn should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_o
         plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
     );
 
+    // The frame before the resize is a frame at thirty rows, which is what makes the assertion
+    // after it mean something.
+    let painted = after(session.seen(), ALTERNATE_SCREEN_ON);
+    let before = rows_addressed(&painted);
+    assert!(
+        before.contains(&30),
+        "the map fills the terminal it was given, so the frame before the resize reaches row 30; \
+         it addressed {before:?}"
+    );
+
     let mark = session.seen().len();
     session.resize(WindowSize::new(20, 60));
+    // §43.4 asks that a resize preserve the place, and the only way to see that a resize happened
+    // at all is the geometry of the frame it caused. Waiting for "new output naming the place"
+    // was satisfied by the repaint the earlier `Down` was still producing at thirty rows, so this
+    // test passed on runs whose whole key history was `Down`, `Esc`, with no resize in it (#6).
+    // A frame that addresses row 20 and no row above it is a frame at the new row count, and
+    // nothing an earlier repaint produced can be one.
     assert!(
-        session.wait_until(BUDGET, |seen| seen.len() > mark
-            && plain(&seen[mark..]).to_lowercase().contains("compute")),
-        "§43.4/§39.3: the map redraws at the new size and still shows the open place; saw:\n{}",
+        session.wait_until(BUDGET, |seen| {
+            if seen.len() <= mark {
+                return false;
+            }
+            frames(&seen[mark..]).into_iter().any(|frame| {
+                let rows = rows_addressed(frame);
+                rows.contains(&20)
+                    && rows.iter().all(|row| *row <= 20)
+                    && plain(frame).to_lowercase().contains("compute")
+            })
+        }),
+        "§43.4/§39.3: the map redraws at the new twenty-row size and still shows the open place. \
+         The frames it painted addressed rows {:?}; saw:\n{}",
+        frames(&session.seen()[mark.min(session.seen().len())..])
+            .into_iter()
+            .map(rows_addressed)
+            .collect::<Vec<_>>(),
         plain(&session.seen()[mark.min(session.seen().len())..])
     );
 
@@ -1045,4 +1080,226 @@ fn should_repaint_a_focus_move_far_inside_the_frame_budget_when_the_map_is_open(
         frames.len(),
         frames.last().copied().unwrap_or_default()
     );
+}
+
+// --- a projection in flight does not take the terminal with it (v0.4.1 §33.1, §35.2; issue #20)
+
+/// How long the terminal may stay blank after `map` before the view has failed to open.
+///
+/// This one *is* a discriminator rather than a liveness bound, and the margin is measured:
+/// projecting COMPUTE on a Profile M host costs 1.84 s in a debug build, so a shell that opened
+/// the screen only after the projection could not reach this in any run. It is deliberately far
+/// below that figure and far above the few milliseconds the paint itself costs.
+const FIRST_FRAME: Duration = Duration::from_millis(700);
+
+#[test]
+fn should_answer_focus_movement_while_a_projection_is_still_running() {
+    // Issue #20: "a full-screen map of COMPUTE is unresponsive while one projection is in
+    // flight". v0.4 §34 requires the shell to "remain interactive and progressively update rather
+    // than block unnecessarily", and v0.4.1 §33.1 makes time to first useful result a first-class
+    // target — so the screen has to exist before the picture does, and it has to be truthful
+    // about the picture not being there yet (§35.2, §2.17).
+    //
+    // The host is held at Profile M for the whole test, so the projection is the expensive thing
+    // the issue is about rather than whatever the machine happened to be running (§32.1).
+    let _population = ono_testkit::ProcessPopulation::of(ono_testkit::PROFILE_M);
+    let (home, work) = workspace();
+    let mut session = Session::start(WindowSize::new(30, 100), home.path(), &work);
+    assert!(
+        session.wait_for("> ", STARTUP),
+        "the shell must reach a prompt; saw:\n{}",
+        plain(session.seen())
+    );
+    session.line("enter compute");
+    session.prompt("IF0");
+    session.line("map");
+
+    assert!(
+        session.wait_for_after("\r\nIF0\r\n", ALTERNATE_SCREEN_ON, FIRST_FRAME),
+        "§33.1: the full-screen view takes the terminal before it has a projection to draw, so \
+         the user is never looking at a blank screen while COMPUTE is being observed; saw:\n{}",
+        plain(&after(session.seen(), "\r\nIF0\r\n"))
+    );
+    assert!(
+        session.wait_for_after(ALTERNATE_SCREEN_ON, "projecting", FIRST_FRAME),
+        "§35.2: a first frame that does not hold the detail must say so rather than look like an \
+         empty place; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+
+    // A key pressed while the projection is still running is answered rather than swallowed
+    // (ADR-0424), so the view acts on it once the picture lands.
+    session.keys(DOWN);
+    session.keys(DOWN);
+    assert!(
+        session.wait_for_after(ALTERNATE_SCREEN_ON, "COMPUTE", BUDGET),
+        "the projection lands and the view draws the place; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+    assert!(
+        session.repaint_after(UP, Duration::from_secs(5)).is_some(),
+        "§23.4: focus movement repaints the view once the projection is in; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+
+    session.keys(ESCAPE);
+    assert!(
+        session.wait_for_after(ALTERNATE_SCREEN_ON, ALTERNATE_SCREEN_OFF, BUDGET),
+        "the view closes again; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+    session.line("exit");
+}
+
+#[test]
+fn should_close_the_full_screen_map_promptly_while_a_projection_is_in_flight() {
+    // §35.5's rule for the live map, and ADR-0424's for the view: the one key whose whole purpose
+    // is to get out must work while the view is busy. Before the screen was taken ahead of the
+    // projection there was nothing to press it into — the terminal was still cooked and no key
+    // was read at all until COMPUTE had been observed.
+    //
+    // The whole of `map` to the screen coming back is bounded below the 1.84 s the projection
+    // itself costs at Profile M in a debug build, so a close that waited for the projection
+    // cannot pass.
+    let _population = ono_testkit::ProcessPopulation::of(ono_testkit::PROFILE_M);
+    let (home, work) = workspace();
+    let mut session = Session::start(WindowSize::new(30, 100), home.path(), &work);
+    assert!(
+        session.wait_for("> ", STARTUP),
+        "the shell must reach a prompt; saw:\n{}",
+        plain(session.seen())
+    );
+    session.line("enter compute");
+    session.prompt("CL0");
+
+    let opened = Instant::now();
+    session.line("map");
+    assert!(
+        session.wait_for_after("\r\nCL0\r\n", ALTERNATE_SCREEN_ON, FIRST_FRAME),
+        "the view takes the terminal before the projection is done; saw:\n{}",
+        plain(&after(session.seen(), "\r\nCL0\r\n"))
+    );
+    session.keys(ESCAPE);
+    assert!(
+        session.wait_for_after(ALTERNATE_SCREEN_ON, ALTERNATE_SCREEN_OFF, FIRST_FRAME),
+        "§34, ADR-0424: leaving must not wait for the projection to finish; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+    let left = opened.elapsed();
+    assert!(
+        left < Duration::from_millis(1_500),
+        "opening and leaving the view took {left:?}, which is the cost of the projection it was \
+         supposed not to wait for"
+    );
+
+    // And the shell is still there, in the place it was in.
+    let answered = session.prompt("CL1");
+    assert!(
+        session.wait_for("CL1", BUDGET),
+        "the shell survives the view it just left; saw:\n{answered}\n{}",
+        plain(session.seen())
+    );
+    session.line("exit");
+}
+
+#[test]
+fn should_paint_no_frame_at_a_new_row_count_when_the_terminal_is_not_resized() {
+    // The other half of #6, and the reason the test above is worth its complication: without the
+    // resize, the same key sequence paints frames at the size the terminal has had all along.
+    // This is the run whose whole key history is `Down`, `Esc` — the one that satisfied the old
+    // assertion — and here it is red by construction, so a resize that stops arriving turns the
+    // test above red instead of leaving it silently green (§65.10).
+    let (home, work) = workspace();
+    let mut session = Session::start(WindowSize::new(30, 100), home.path(), &work);
+    assert!(session.wait_for("> ", STARTUP));
+
+    session.line("enter compute");
+    let _ = session.prompt("NR0");
+    session.line("map");
+    assert!(
+        session.wait_for_after("\r\nNR0\r\n", ALTERNATE_SCREEN_ON, BUDGET),
+        "§52.1: `map` opens a full-screen view; saw:\n{}",
+        plain(&after(session.seen(), "\r\nNR0\r\n"))
+    );
+
+    let mark = session.seen().len();
+    session.keys(DOWN);
+    // Waited for the way the resized half waits: for a frame with the geometry the assertion is
+    // about, and not for the first sign that a frame started. A repaint reaches the terminal a
+    // row at a time, and the label naming the place is written before the rows beneath it — so
+    // reading the buffer as soon as "compute" appears reads a frame that is still being written,
+    // and on a machine slow enough to split the write it had reached row 18 and no further.
+    // BUDGET is the watchdog on a repaint that never comes (ADR-0517); nothing here waits on a
+    // duration it asserts.
+    assert!(
+        session.wait_until(BUDGET, |seen| {
+            if seen.len() <= mark {
+                return false;
+            }
+            frames(&seen[mark..]).into_iter().any(|frame| {
+                rows_addressed(frame).iter().any(|row| *row > 20)
+                    && plain(frame).to_lowercase().contains("compute")
+            })
+        }),
+        "§43.4: a repaint with no resize behind it is a frame at the terminal's own thirty rows, \
+         and would be indistinguishable from a resized one if the assertion only asked for new \
+         output naming the place. The frames it painted addressed rows {:?}; saw:\n{}",
+        frames(&session.seen()[mark.min(session.seen().len())..])
+            .into_iter()
+            .map(rows_addressed)
+            .collect::<Vec<_>>(),
+        plain(&session.seen()[mark.min(session.seen().len())..])
+    );
+
+    session.keys(ESCAPE);
+    assert!(
+        session.wait_for_after(ALTERNATE_SCREEN_ON, ALTERNATE_SCREEN_OFF, BUDGET),
+        "the view closes; saw:\n{}",
+        plain(&after(session.seen(), ALTERNATE_SCREEN_ON))
+    );
+    session.line("exit");
+}
+
+/// The frames a passage of output holds, split where each one starts.
+///
+/// The map repaints by homing the cursor and addressing every row in turn, so `ESC [ 1 ; 1 H`
+/// is where one frame ends and the next begins. Reading a window of output as one frame would
+/// merge the repaint that was still in flight with the one the resize caused, which is exactly
+/// the confusion #6 is about.
+fn frames(text: &str) -> Vec<&str> {
+    const HOME: &str = "\u{1b}[1;1H";
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(HOME) {
+        let body = &rest[at + HOME.len()..];
+        let end = body.find(HOME).unwrap_or(body.len());
+        found.push(&body[..end]);
+        rest = &body[end..];
+    }
+    found
+}
+
+/// The terminal rows a passage of output positioned the cursor to.
+///
+/// The map paints a frame by addressing each row in turn — `ESC [ <row> ; 1 H` — so the set of
+/// rows a frame touched is its height, read off the wire. That is the one observation a resize
+/// produces and nothing else can: a repaint at the old size addresses the old rows.
+fn rows_addressed(text: &str) -> BTreeSet<usize> {
+    let mut found = BTreeSet::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('\u{1b}') {
+        rest = &rest[at + 1..];
+        let Some(body) = rest.strip_prefix('[') else {
+            continue;
+        };
+        let Some(end) = body.find('H') else {
+            continue;
+        };
+        if let Some((row, _)) = body[..end].split_once(';')
+            && let Ok(row) = row.parse::<usize>()
+        {
+            found.insert(row);
+        }
+    }
+    found
 }

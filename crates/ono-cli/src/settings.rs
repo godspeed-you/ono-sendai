@@ -119,6 +119,27 @@ impl DefaultValue {
     }
 }
 
+/// The inclusive range a numeric setting's value must lie in (v0.4.1 §55.2).
+///
+/// Both bounds are in the setting's base units — bytes for a `ByteSize`, milliseconds for a
+/// duration — as Appendix A requires: "Limits MUST be expressed internally in integer base units
+/// and rendered in human-readable units separately."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Range {
+    /// The smallest permitted value.
+    pub min: i128,
+    /// The largest permitted value.
+    pub max: i128,
+}
+
+impl Range {
+    /// Whether `magnitude` lies inside the range.
+    #[must_use]
+    pub const fn admits(self, magnitude: i128) -> bool {
+        magnitude >= self.min && magnitude <= self.max
+    }
+}
+
 /// One declared setting.
 #[derive(Debug, Clone, Copy)]
 pub struct SettingSpec {
@@ -129,6 +150,13 @@ pub struct SettingSpec {
     /// One line for `help` and completion.
     pub description: &'static str,
     default: DefaultValue,
+    /// The permitted range for a numeric setting, where one is declared (v0.4.1 §55.2).
+    ///
+    /// `None` means the setting is not range-checked, which is the state every key predating
+    /// v0.4.1 §55 is in. A `limits.*` key always declares one: §55.2 makes the check mandatory
+    /// there, and its binding sentence is that a security-sensitive limit must not silently
+    /// become unlimited because a value failed to parse.
+    pub range: Option<Range>,
 }
 
 impl SettingSpec {
@@ -156,42 +184,49 @@ pub const CATALOGUE: &[SettingSpec] = &[
         ty: SettingType::String,
         description: "How the prompt shows the working directory (spec §30). Recorded; no prompt style reads it yet.",
         default: DefaultValue::Str("smart"),
+        range: None,
     },
     SettingSpec {
         key: "prompt.vcs",
         ty: SettingType::Bool,
         description: "Whether the prompt carries the source-control segment of spec §4.2 — `git:<branch>`, read from the checkout's own files (ADR-0250).",
         default: DefaultValue::Bool(true),
+        range: None,
     },
     SettingSpec {
         key: "theme.name",
         ty: SettingType::String,
         description: "Which theme paints the semantic tokens of spec §44: a theme this build ships (`ono`, `neon`), or the name of a `themes/<name>.toml` beside the configuration (spec §30, ADR-0332).",
         default: DefaultValue::Str("ono"),
+        range: None,
     },
     SettingSpec {
         key: "render.table.max_rows",
         ty: SettingType::Int,
         description: "How many rows a rendered table shows before a visible `... N more` line (spec §13.3); 0 shows every row.",
         default: DefaultValue::Int(1000),
+        range: None,
     },
     SettingSpec {
         key: "history.result_cache",
         ty: SettingType::ByteSize,
-        description: "How much memory retained results may occupy (spec §20.2, §30). Recorded; retention is counted in results today.",
+        description: "How much memory retained results may occupy (spec §20.2, §30). Superseded by `limits.history_bytes_total`, which v0.4.1 §55.1 names and the shell reads; kept declared so an existing configuration file still parses (v0.4.1 §4.5).",
         default: DefaultValue::Bytes(64 * 1024 * 1024),
+        range: None,
     },
     SettingSpec {
         key: "safety.confirm.remote_destructive",
         ty: SettingType::Bool,
         description: "Whether a destructive command inside a link frame asks first (spec §17.4, §30). Recorded; confirmation is not interactive yet.",
         default: DefaultValue::Bool(true),
+        range: None,
     },
     SettingSpec {
         key: "safety.confirm.bulk_threshold",
         ty: SettingType::Int,
         description: "How many targets a mutation may touch before it asks first (spec §17.4, §30). Recorded; confirmation is not interactive yet.",
         default: DefaultValue::Int(100),
+        range: None,
     },
     // --- the spatial interface, spec v0.4 §47 ------------------------------------------------
     // §47 calls these eleven required and spells out each default. "Disabling `spatial.enabled`
@@ -201,30 +236,35 @@ pub const CATALOGUE: &[SettingSpec] = &[
         ty: SettingType::Bool,
         description: "Whether the spatial interface is active (spec v0.4 §47). Disabling it leaves the typed shell and every ordinary command working.",
         default: DefaultValue::Bool(true),
+        range: None,
     },
     SettingSpec {
         key: "spatial.startup_horizon",
         ty: SettingType::Bool,
         description: "Whether an interactive session opens with the compact spatial horizon (spec v0.4 §5, §53).",
         default: DefaultValue::Bool(true),
+        range: None,
     },
     SettingSpec {
         key: "spatial.follow_cwd",
         ty: SettingType::String,
         description: "How `cd` and the current place stay related (spec v0.4 §30.3). `storage-only`: a directory change moves the storage place and nothing else.",
         default: DefaultValue::Str("storage-only"),
+        range: None,
     },
     SettingSpec {
         key: "spatial.map.mode",
         ty: SettingType::String,
         description: "How `map` renders: `auto`, `text` or `fullscreen` (spec v0.4 §23, §47).",
         default: DefaultValue::Str("auto"),
+        range: None,
     },
     SettingSpec {
         key: "spatial.map.live",
         ty: SettingType::Bool,
         description: "Whether a map subscribes to change by default (spec v0.4 §25.1). Motion always means real change, never decoration.",
         default: DefaultValue::Bool(false),
+        range: None,
     },
     // §23.3's last line: "Key bindings MUST be configurable. Semantic actions are normative;
     // exact single-key choices MAY be remapped." §47 lists no key for it, so this is the one the
@@ -234,54 +274,63 @@ pub const CATALOGUE: &[SettingSpec] = &[
         ty: SettingType::String,
         description: "Key bindings for the full-screen map, as `<action>=<key>` entries separated by commas — `close=q, enter=Enter` (spec v0.4 §23.3). Empty leaves §23.3's table in force.",
         default: DefaultValue::Str(""),
+        range: None,
     },
     SettingSpec {
         key: "spatial.map.node_budget",
         ty: SettingType::Int,
         description: "How many nodes a map may draw before it clusters, and above which it refuses with `spatial.map_too_large` (spec v0.4 §8.2, §34.2).",
         default: DefaultValue::Int(100),
+        range: None,
     },
     SettingSpec {
         key: "spatial.look.change_window",
         ty: SettingType::String,
         description: "How far back `look`'s change section and the change landmarks reach (spec v0.4 §24.3, §26).",
         default: DefaultValue::Str("5m"),
+        range: None,
     },
     SettingSpec {
         key: "spatial.tombstone.lifetime",
         ty: SettingType::String,
         description: "How long a place that went away stays reachable as a tombstone (spec v0.4 §10.3). \"Short-lived\" is the contract: long enough that `back` onto a process that has just exited arrives, short enough that no place returns from the dead mid-investigation.",
         default: DefaultValue::Str("1m"),
+        range: None,
     },
     SettingSpec {
         key: "spatial.live.interval",
         ty: SettingType::String,
         description: "How often a live view re-reads a source that does not announce its own changes (spec v0.4 §25.1, §25.3). Polling is explicit, never invisible.",
         default: DefaultValue::Str("500ms"),
+        range: None,
     },
     SettingSpec {
         key: "spatial.landmarks.enabled",
         ty: SettingType::Bool,
         description: "Whether the landmark engine runs at all (spec v0.4 §26).",
         default: DefaultValue::Bool(true),
+        range: None,
     },
     SettingSpec {
         key: "spatial.reduced_motion",
         ty: SettingType::Bool,
         description: "Suppresses animation in live views (spec v0.4 §25.2, §39.4). What is shown is unchanged; only the movement between frames is.",
         default: DefaultValue::Bool(false),
+        range: None,
     },
     SettingSpec {
         key: "spatial.remote_search",
         ty: SettingType::String,
         description: "Whether discovery reaches across links (spec v0.4 §9.3, §35.4). `explicit`: never until asked, and `jump` opens no connection because a name resembles a known place.",
         default: DefaultValue::Str("explicit"),
+        range: None,
     },
     SettingSpec {
         key: "spatial.trail.persist",
         ty: SettingType::Bool,
         description: "Whether the navigation trail survives a restart (spec v0.4 §46.1). Off by default for privacy and stale identity; pins persist regardless.",
         default: DefaultValue::Bool(false),
+        range: None,
     },
     // §26.3: "Thresholds MUST be inspectable and configurable." `docs/spec/spatial/landmarks.yaml`
     // names the setting behind each threshold; these are those settings, and `spec-check` holds
@@ -291,30 +340,152 @@ pub const CATALOGUE: &[SettingSpec] = &[
         ty: SettingType::Int,
         description: "The CPU percentage at or above which an object is a `high_cpu` landmark (spec v0.4 §26.3).",
         default: DefaultValue::Int(80),
+        range: None,
     },
     SettingSpec {
         key: "spatial.landmarks.high_memory",
         ty: SettingType::Int,
         description: "The share of the host or cgroup memory budget, in percent, that makes a `high_memory` landmark (spec v0.4 §26.3).",
         default: DefaultValue::Int(25),
+        range: None,
     },
     SettingSpec {
         key: "spatial.landmarks.restart_loop",
         ty: SettingType::Int,
         description: "Restarts within the change window that make a `restarting` landmark rather than a `recently_changed` one (spec v0.4 §26.3).",
         default: DefaultValue::Int(3),
+        range: None,
     },
     SettingSpec {
         key: "spatial.landmarks.connection_spike",
         ty: SettingType::Int,
         description: "New connections within the change window that make a `connection_spike` landmark (spec v0.4 §26.3).",
         default: DefaultValue::Int(100),
+        range: None,
     },
     SettingSpec {
         key: "spatial.landmarks.storage_pressure",
         ty: SettingType::Int,
         description: "The used share of a filesystem, in percent, that makes a `storage_pressure` landmark (spec v0.4 §26.3).",
         default: DefaultValue::Int(90),
+        range: None,
+    },
+    // --- the hardening limits of v0.4.1 §55.1 and Appendix A (ADR-0456) ----------------------
+    // Every one of these is declared with a range, because §55.2 makes the check mandatory here
+    // and its binding sentence is that a security-sensitive agent limit must never silently
+    // become unlimited because a value failed to parse. `docs/spec/hardening/limits.yaml` holds
+    // the same thirteen rows, and `resource_limits.rs` compares the two in both directions.
+    SettingSpec {
+        key: "limits.materialize_items",
+        ty: SettingType::Int,
+        description: "How many values one global operation may hold at once (v0.4.1 §22.2, Appendix A). Zero permits none; it is not unlimited.",
+        default: DefaultValue::Int(100_000),
+        range: Some(Range {
+            min: 0,
+            max: 1000000000,
+        }),
+    },
+    SettingSpec {
+        key: "limits.materialize_bytes",
+        ty: SettingType::ByteSize,
+        description: "How many bytes one global operation may hold at once, counted with the estimator of v0.4.1 §21.2 (§22.2, Appendix A). Both ceilings apply; the first reached wins.",
+        default: DefaultValue::Bytes(134_217_728),
+        range: Some(Range {
+            min: 0,
+            max: 1099511627776,
+        }),
+    },
+    SettingSpec {
+        key: "limits.command_capture_bytes",
+        ty: SettingType::ByteSize,
+        description: "How many bytes every capture inside one shell command may retain together (v0.4.1 §23.4, Appendix A) — a ceiling across nested captures, not an allowance each may spend in full.",
+        default: DefaultValue::Bytes(268_435_456),
+        range: Some(Range {
+            min: 0,
+            max: 1099511627776,
+        }),
+    },
+    SettingSpec {
+        key: "limits.history_results",
+        ty: SettingType::Int,
+        description: "How many recent pipeline results `@-1` … `@-N` can reach (v0.4.1 §24.1, Appendix A). Supersedes the count of spec §20.2.",
+        default: DefaultValue::Int(16),
+        range: Some(Range { min: 0, max: 4096 }),
+    },
+    SettingSpec {
+        key: "limits.history_items_per_result",
+        ty: SettingType::Int,
+        description: "How many values of one result are retained for reuse (v0.4.1 §24.1, Appendix A). Retention only: the emitted output is never truncated to fit.",
+        default: DefaultValue::Int(10_000),
+        range: Some(Range {
+            min: 0,
+            max: 100000000,
+        }),
+    },
+    SettingSpec {
+        key: "limits.history_bytes_per_result",
+        ty: SettingType::ByteSize,
+        description: "How many bytes of one result are retained (v0.4.1 §24.1, Appendix A). A single value larger than this is not retained, and still flows through the pipeline.",
+        default: DefaultValue::Bytes(16_777_216),
+        range: Some(Range {
+            min: 0,
+            max: 68719476736,
+        }),
+    },
+    SettingSpec {
+        key: "limits.history_bytes_total",
+        ty: SettingType::ByteSize,
+        description: "How many bytes the whole result history may hold before oldest-first eviction (v0.4.1 §24.1, §24.2, Appendix A). Supersedes `history.result_cache`, which nothing reads.",
+        default: DefaultValue::Bytes(67_108_864),
+        range: Some(Range {
+            min: 0,
+            max: 274877906944,
+        }),
+    },
+    SettingSpec {
+        key: "limits.completion_soft_ms",
+        ty: SettingType::Int,
+        description: "When completion stops waiting for a provider and answers with what it has, in milliseconds (v0.4.1 §36.2, Appendix A).",
+        default: DefaultValue::Int(50),
+        range: Some(Range { min: 1, max: 60000 }),
+    },
+    SettingSpec {
+        key: "limits.completion_hard_ms",
+        ty: SettingType::Int,
+        description: "When completion stops asking further providers, whatever it has found, in milliseconds (v0.4.1 §36.2, Appendix A).",
+        default: DefaultValue::Int(150),
+        range: Some(Range { min: 1, max: 60000 }),
+    },
+    SettingSpec {
+        key: "limits.remote_connections",
+        ty: SettingType::Int,
+        description: "Concurrent authenticated connections one listening agent accepts (v0.4.1 §12.1, Appendix A). Declared and validated; enforcement is phase H3's.",
+        default: DefaultValue::Int(32),
+        range: Some(Range { min: 1, max: 65536 }),
+    },
+    SettingSpec {
+        key: "limits.remote_pending_handshakes",
+        ty: SettingType::Int,
+        description: "Connections that may be mid-negotiation at once (v0.4.1 §12.2, Appendix A). Declared and validated; enforcement is phase H3's.",
+        default: DefaultValue::Int(16),
+        range: Some(Range { min: 1, max: 65536 }),
+    },
+    SettingSpec {
+        key: "limits.remote_connections_per_client",
+        ty: SettingType::Int,
+        description: "Concurrent connections one authenticated fingerprint may hold (v0.4.1 §12.3, Appendix A). Declared and validated; enforcement is phase H3's.",
+        default: DefaultValue::Int(4),
+        range: Some(Range { min: 1, max: 65536 }),
+    },
+    SettingSpec {
+        key: "limits.remote_handshake_timeout_ms",
+        ty: SettingType::Int,
+        description: "How long TLS and protocol negotiation may take, in milliseconds (v0.4.1 §12.2, Appendix A). Declared and validated; enforcement is phase H3's.",
+        default: DefaultValue::Int(10_000),
+        range: Some(Range {
+            min: 100,
+            max: 600000,
+        }),
     },
 ];
 
@@ -500,6 +671,14 @@ impl Settings {
                 }
             }
         };
+        // v0.4.1 §55.2: numeric limits are range-checked here rather than at each read site, so
+        // one check covers the file, the environment and `set config` at the prompt. Nothing is
+        // stored when it fails, which is what keeps the earlier layer in force.
+        if let Some(range) = setting.range
+            && !magnitude_of(&value).is_some_and(|number| range.admits(number))
+        {
+            return Err(out_of_range(setting, range, &value));
+        }
         let stack = self.layers.entry(setting.key).or_default();
         let changed = stack.last().is_none_or(|current| current.value != value);
         // A layer sets a key once; a later assignment at the same layer replaces the earlier one
@@ -604,6 +783,45 @@ pub enum Given {
     Word(String),
     /// An evaluated value.
     Value(Value),
+}
+
+/// The number a numeric setting's value carries, in its base unit.
+fn magnitude_of(value: &Value) -> Option<i128> {
+    match value {
+        Value::Int(number) => Some(*number),
+        Value::ByteSize(size) => i128::try_from(size.bytes()).ok(),
+        _ => None,
+    }
+}
+
+/// The refusal a limit outside its declared range carries (v0.4.1 §55.2).
+///
+/// It names the key, what was given and the range it is outside, because a diagnostic that says
+/// only "invalid" leaves the user to guess which end they were on. The earlier layer's value
+/// stays in force, which is the existing config-layer rule (ADR-0010) and is what keeps §55.2's
+/// binding sentence true: a limit that failed to parse never becomes unlimited, it stays what it
+/// was.
+fn out_of_range(setting: &SettingSpec, range: Range, value: &Value) -> ErrorValue {
+    let Range { min, max } = range;
+    ErrorValue::new(
+        ErrorCode::TypeMismatch,
+        format!(
+            "`{}` accepts {min} to {max} {}, and {value} is outside that",
+            setting.key,
+            match setting.ty {
+                SettingType::ByteSize => "bytes",
+                _ => "inclusive",
+            }
+        ),
+    )
+    .with_help(format!(
+        "`{}` keeps its current value; v0.4.1 §55.2 range-checks every limit, and a limit that \
+         fails the check never becomes unlimited",
+        setting.key
+    ))
+    .with_metadata("setting", Value::string(setting.key))
+    .with_metadata("min", Value::Int(min))
+    .with_metadata("max", Value::Int(max))
 }
 
 fn mismatch(setting: &SettingSpec, what: &str) -> ErrorValue {

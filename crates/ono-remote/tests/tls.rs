@@ -17,34 +17,17 @@
 
 mod common;
 
-use std::sync::Arc;
-
-use common::fixture::{FixtureObserved, fixture_registry, fixture_schemas};
-use common::within;
+use common::fixture::fixture_schemas;
+use common::{listening, within};
 use ono_core::ErrorCode;
 use ono_protocol::{ClientConfig, Identity, Transport, TrustPolicy, TrustStore};
 use ono_provider_api::Query;
-use ono_remote::{AgentConfig, HostIdentity, RemoteLink, TlsListener, serve_registry, tls_connect};
+use ono_remote::{PeerIdentity, RemoteLink, tls_connect};
 
-/// An agent listening on a loopback port the system chooses, serving the fixture registry.
-async fn listening(identity: HostIdentity) -> String {
-    let listener = TlsListener::bind("127.0.0.1:0", &identity)
-        .await
-        .expect("a loopback listener binds");
-    let address = listener
-        .local_addr()
-        .expect("the system reports the port it chose")
-        .to_string();
-    tokio::spawn(async move {
-        while let Ok(transport) = listener.accept().await {
-            let registry = fixture_registry(Arc::new(FixtureObserved::default()));
-            let config = AgentConfig::new(registry).with_identity(Identity::new("remote-user"));
-            tokio::spawn(async move {
-                let _ = serve_registry(transport, config).await;
-            });
-        }
-    });
-    address
+/// The identity a connecting client presents (v0.4.1 §7.1). Every suite here dials with one,
+/// because there is no way to dial without one.
+fn client_identity() -> PeerIdentity {
+    PeerIdentity::generate().expect("a client identity is generated")
 }
 
 fn config(store: TrustStore, policy: TrustPolicy) -> ClientConfig {
@@ -57,11 +40,11 @@ fn config(store: TrustStore, policy: TrustPolicy) -> ClientConfig {
 
 #[tokio::test]
 async fn should_report_the_key_the_peer_proved_it_holds() {
-    let identity = HostIdentity::generate().expect("a host identity is generated");
-    let expected = identity.host_key();
+    let identity = PeerIdentity::generate().expect("a host identity is generated");
+    let expected = identity.peer_key();
     let address = listening(identity).await;
 
-    let transport = within(tls_connect(&address))
+    let transport = within(tls_connect(&address, &client_identity()))
         .await
         .expect("the loopback listener answers");
 
@@ -75,12 +58,12 @@ async fn should_report_the_key_the_peer_proved_it_holds() {
 
 #[tokio::test]
 async fn should_pin_a_host_on_first_contact_and_then_refuse_a_changed_key() {
-    let first = HostIdentity::generate().expect("a host identity is generated");
+    let first = PeerIdentity::generate().expect("a host identity is generated");
     let pinned = first.fingerprint();
     let address = listening(first).await;
     let store = TrustStore::in_memory();
 
-    let transport = within(tls_connect(&address))
+    let transport = within(tls_connect(&address, &client_identity()))
         .await
         .expect("the host answers");
     let link = within(RemoteLink::connect(
@@ -97,9 +80,9 @@ async fn should_pin_a_host_on_first_contact_and_then_refuse_a_changed_key() {
     );
 
     // The same host name, a different machine answering for it: the case E0603 exists for.
-    let impostor = HostIdentity::generate().expect("a second identity is generated");
+    let impostor = PeerIdentity::generate().expect("a second identity is generated");
     let elsewhere = listening(impostor).await;
-    let transport = within(tls_connect(&elsewhere))
+    let transport = within(tls_connect(&elsewhere, &client_identity()))
         .await
         .expect("the impostor answers");
     let refusal = within(RemoteLink::connect(
@@ -122,10 +105,10 @@ async fn should_pin_a_host_on_first_contact_and_then_refuse_a_changed_key() {
 
 #[tokio::test]
 async fn should_refuse_an_unknown_host_when_only_pinned_hosts_are_accepted() {
-    let identity = HostIdentity::generate().expect("a host identity is generated");
+    let identity = PeerIdentity::generate().expect("a host identity is generated");
     let address = listening(identity).await;
 
-    let transport = within(tls_connect(&address))
+    let transport = within(tls_connect(&address, &client_identity()))
         .await
         .expect("the host answers");
     let refusal = within(RemoteLink::connect(
@@ -149,15 +132,15 @@ async fn should_refuse_an_unknown_host_when_only_pinned_hosts_are_accepted() {
 
 #[tokio::test]
 async fn should_carry_the_link_protocol_over_the_authenticated_transport() {
-    let identity = HostIdentity::generate().expect("a host identity is generated");
-    let key = identity.host_key();
+    let identity = PeerIdentity::generate().expect("a host identity is generated");
+    let key = identity.peer_key();
     let address = listening(identity).await;
 
     let store = TrustStore::in_memory();
     store
         .pin("testbox", &key)
         .expect("the key is pinned by hand");
-    let transport = within(tls_connect(&address))
+    let transport = within(tls_connect(&address, &client_identity()))
         .await
         .expect("the host answers");
     let link = within(RemoteLink::connect(
@@ -191,8 +174,8 @@ async fn should_keep_one_identity_across_restarts() {
     let path = directory.join("host_key.pem");
     let _ = std::fs::remove_dir_all(&directory);
 
-    let first = HostIdentity::open_or_create(&path).expect("an identity is generated and written");
-    let again = HostIdentity::open_or_create(&path).expect("the written identity is read back");
+    let first = PeerIdentity::open_or_create(&path).expect("an identity is generated and written");
+    let again = PeerIdentity::open_or_create(&path).expect("the written identity is read back");
 
     assert_eq!(
         first.fingerprint(),

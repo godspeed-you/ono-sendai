@@ -49,7 +49,7 @@ use std::net::TcpListener;
 use std::process::{Child, Stdio};
 use std::time::Duration;
 
-use ono_testkit::Shell;
+use ono_testkit::{Shell, SkipReason};
 use serde_yaml_ng::Value;
 
 /// The six canonical domains of §7 and §53, as they appear at zoom level L1 (§8.1).
@@ -495,24 +495,63 @@ fn should_return_the_same_node_identities_when_the_terminal_width_changes() {
     // §6.9: "`map --json` returns `SpatialMap` and MUST not depend on terminal rendering", and
     // §43.2: "map coordinates never affect semantic identity". A width is a rendering decision:
     // it may not change which objects the structured map calls out, nor what they are called.
+    //
+    // `COLUMNS` is read from the process environment, so two widths are two runs — and two runs
+    // see two different systems, which `maps_at` above exists to avoid wherever one run will do.
+    // The default map is relevance-ranked and cut at the §34.2 node budget, so a process that
+    // started between the two can take the last place from one that ended. Agreement therefore
+    // settles the question on its own; only a disagreement needs a third read, at the first
+    // width, to say which of the two things caused it (ADR-0552).
     let script = "map --json";
-    let narrow = ono_in(script, &[("COLUMNS", "40")]);
-    let wide = ono_in(script, &[("COLUMNS", "200")]);
-
-    let narrow = document(&narrow, script);
-    let wide = document(&wide, script);
-    assert_eq!(
-        ids(nodes(&narrow)),
-        ids(nodes(&wide)),
-        "spec §6.9: the structured map is independent of terminal rendering, so 40 and 200 \
-         columns name the same nodes"
-    );
-    assert_eq!(
-        text(&narrow, "center", "§22"),
-        text(&wide, "center", "§22"),
-        "spec §43.2: the current place is identity, not layout"
+    let mut moved = String::new();
+    for _ in 0..STILL_ENOUGH_ATTEMPTS {
+        let narrow = document(&ono_in(script, &[("COLUMNS", "40")]), script);
+        let wide = document(&ono_in(script, &[("COLUMNS", "200")]), script);
+        if ids(nodes(&narrow)) == ids(nodes(&wide)) {
+            assert_eq!(
+                text(&narrow, "center", "§22"),
+                text(&wide, "center", "§22"),
+                "spec §43.2: the current place is identity, not layout"
+            );
+            return;
+        }
+        // The two disagree. Either the width changed the answer — which is the defect this test
+        // is about — or the host changed under it. Reading the first width again brackets the
+        // wide read: two identical reads at 40 columns around it mean nothing moved, and the
+        // width is what is left.
+        let control = document(&ono_in(script, &[("COLUMNS", "40")]), script);
+        assert_ne!(
+            ids(nodes(&narrow)),
+            ids(nodes(&control)),
+            "spec §6.9: the structured map is independent of terminal rendering, so 40 and 200 \
+             columns name the same nodes. Two reads at 40 columns, taken before and after the \
+             200-column one, named the same nodes as each other, so the host held still and the \
+             width is what changed the answer: 200 columns named {:?}",
+            ids(nodes(&wide))
+        );
+        moved = format!(
+            "two reads at 40 columns named different nodes: {:?} then {:?}",
+            ids(nodes(&narrow)),
+            ids(nodes(&control))
+        );
+    }
+    ono_testkit::skipped(
+        SkipReason::FixtureNotApplicable,
+        &format!(
+            "the host's object population changed under every one of {STILL_ENOUGH_ATTEMPTS} \
+             attempts, so a difference between two widths cannot be attributed to the width: \
+             {moved}"
+        ),
     );
 }
+
+/// How many times the width comparison may ask the host to hold still before it gives up.
+///
+/// Only a disagreement costs an attempt, and a disagreement is either the defect — which fails
+/// on the first attempt — or the host moving, which cannot answer the question the test asks.
+/// Three, because this is a fixture precondition of the same kind as a free port, and not a
+/// retry around an assertion: the assertion is never retried after it fails.
+const STILL_ENOUGH_ATTEMPTS: usize = 3;
 
 // ---------------------------------------------------------------------------------------------
 // §53, §34.2 — the default map is bounded, never the whole graph
@@ -634,16 +673,28 @@ fn should_only_remove_edges_when_a_relation_filter_narrows_the_map() {
     let (complete, filtered) = (both[0].clone(), both[1].clone());
 
     let known = ids(edges(&complete));
+    // Every place the unfiltered map had seen, so an edge to something that did not exist yet can
+    // be told apart from an edge the filter invented. This test binary runs two dozen tests in
+    // parallel and each of them spawns a shell, so *its own children* churn between two
+    // observations — the same hazard the comment above records for the processes collection,
+    // arriving through the place the test chose to avoid it (§43.2, ADR-0183).
+    let existing = ids(nodes(&complete));
     for edge in edges(&filtered) {
         assert_eq!(
             text(edge, "relation", "§22"),
             relation,
             "spec §6.9: `--relations` keeps only the requested relations, got {edge:?}"
         );
+        let ends_existed = ["source", "target"]
+            .into_iter()
+            .all(|end| existing.contains(&text(edge, end, "§22")));
+        if !ends_existed {
+            continue;
+        }
         assert!(
             known.contains(&text(edge, "id", "§22")),
-            "spec §43.2: filtering cannot create unknown edges; {edge:?} is absent from the \
-             unfiltered map"
+            "spec §43.2: filtering cannot create unknown edges; {edge:?} joins two places the \
+             unfiltered map already drew and is absent from it"
         );
     }
     assert_edges_resolve(&filtered, "the relation-filtered map");
@@ -756,10 +807,13 @@ fn should_report_how_many_objects_a_cluster_stands_for_when_the_view_budget_is_e
     if processes <= TEXT_MAP_NODE_BUDGET as u64 {
         // Clustering is only required once the visible count exceeds the budget; a host smaller
         // than that has nothing to cluster, and asserting anyway would test the host, not Ono.
-        eprintln!(
-            "skipped: {processes} processes ({} of them this test's own) stay inside the \
-             {TEXT_MAP_NODE_BUDGET}-node view budget, so §8.2 does not require clustering here",
-            children.0.len()
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            &format!(
+                "{processes} processes ({} of them this test's own) stay inside the \
+                 {TEXT_MAP_NODE_BUDGET}-node view budget, so §8.2 does not require clustering here",
+                children.0.len()
+            ),
         );
         return;
     }
@@ -815,7 +869,10 @@ fn should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expande
             "spec §8.2: a processes collection larger than the {TEXT_MAP_NODE_BUDGET}-node view \
              budget is clustered, got {collapsed:?}"
         );
-        ono_testkit::skipped("the host is smaller than the view budget, so nothing is clustered");
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            "the host is smaller than the view budget, so nothing is clustered",
+        );
         return;
     };
     let cluster_id = text(&cluster, "id", "§22");
@@ -1217,6 +1274,11 @@ fn should_not_invent_a_change_section_when_no_snapshot_or_event_source_exists() 
 
     let changed = &place["changed"];
     if changed.is_null() {
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            "a one-shot script has no earlier snapshot, so this run reports no change section \
+             at all and there is none to read",
+        );
         return;
     }
     let state = changed["state"].as_str().unwrap_or_default();

@@ -1,0 +1,46 @@
+# Issue #23: ADR-0419 made a cell read the declaration of the field it came from, so `get process`
+# prints `CPU 2.1%` where `ono.process/1` declares `unit: percent`. `select` built its projection
+# schema before it had seen a record, typed every projected field `any` and carried no unit, so
+# `get process | select cpu` still printed all seventeen digits of the float. ADR-0555 derives the
+# projection schema from the source schema. A projection of a field is that field.
+case: a projected field is rendered the way the field it came from is rendered
+timeout: 60
+env: NO_COLOR=1
+run: |
+  echo "== the whole record =="
+  ono --no-config -c 'get process 1'
+
+  echo "== the projection =="
+  ono --no-config -c 'get process 1 | select cpu' > /tmp/projected.txt
+  cat /tmp/projected.txt
+  cell=$(tail -1 /tmp/projected.txt | tr -d ' ')
+  case "$cell" in
+    *.*%) echo "projected-cell-is-a-percentage" ;;
+    *) echo "WRONG the projected cell is $cell" ;;
+  esac
+
+  echo "== and the serialisation still carries the number =="
+  ono --no-config -c 'get process 1 | select cpu | to json' > /tmp/projected.json
+  cat /tmp/projected.json
+  grep -q '"cpu":' /tmp/projected.json && echo "json-keeps-the-field"
+  grep -q '%' /tmp/projected.json && echo "WRONG a serialisation carries a rendering"
+
+  echo "== a projected reference is still a reference =="
+  # `user` is declared `ref<ono.user/1>`, and ADR-0419 renders a reference as what a person calls
+  # that account. Which account owns pid 1 is the container's business, so what is asserted is
+  # that a name arrived rather than the diagnostic form a reference used to render as.
+  ono --no-config -c 'get process 1 | select user' > /tmp/user.txt
+  cat /tmp/user.txt
+  named=$(tail -1 /tmp/user.txt | tr -d ' ')
+  if [ -n "$named" ] && ! printf '%s' "$named" | grep -q 'ono.user'; then
+    echo "a-projected-reference-names-the-object"
+  else
+    echo "WRONG a projected reference rendered as $named"
+  fi
+  echo done=ok
+exit: 0
+stdout-contains: projected-cell-is-a-percentage
+stdout-contains: json-keeps-the-field
+stdout-contains: a-projected-reference-names-the-object
+stdout-contains: done=ok
+stdout-not-contains: WRONG

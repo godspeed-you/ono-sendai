@@ -431,3 +431,88 @@ commands:
     phase: H
     examples:
       - remove host-key prod-db
+
+  # --- the authorization store (v0.4.1 §9.7; ADR-0466, ADR-0468) -----------------------------
+  #
+  # The mirror of `host-key` from the other side of the link. A pinned host key is which machines
+  # this shell will *link to*; an authorized client key is which clients this machine will
+  # *serve*. §9.1 is why the second exists: a certificate proves who connected, never that the
+  # operator wants them here. `add` grants observation and nothing else (§9.4), `set --allow`
+  # names exact capability ids (§9.5), and `remove` revokes.
+
+  - id: ono.client-key.get
+    verb: get
+    target: client-key
+    summary: List the client keys this machine authorizes, and what each may do.
+    stability: experimental
+    argument_mode: words
+    input: "null"
+    output: stream<ono.client-key/1>
+    provider_capability: host.list
+    selectors:
+      - {name: fingerprint, type: string, doc: "Show the grant for one client key."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - get client-key
+
+  - id: ono.client-key.add
+    verb: add
+    target: client-key
+    summary: Authorize a client key to observe this machine, and nothing else.
+    stability: experimental
+    argument_mode: words
+    input: "null"
+    output: ono.action-result/1
+    provider_capability: host.trust
+    selectors:
+      - {name: fingerprint, type: string, doc: "The full `sha256:` fingerprint of the client's key."}
+    options:
+      - {name: label, type: string, doc: "A name for the client, for your own reading and the audit trail."}
+    privilege: none
+    streaming: false
+    phase: H
+    examples:
+      - add client-key sha256:1f0c --label deploy
+
+  - id: ono.client-key.set
+    verb: set
+    target: client-key
+    summary: Change what an authorized client key may do, by exact capability id.
+    stability: experimental
+    argument_mode: words
+    input: "null | stream<ono.client-key/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: host.trust
+    selectors:
+      - {name: fingerprint, type: string, doc: "The client key to change."}
+    options:
+      - {name: allow, type: string, doc: "Replace the action allowlist with these exact capability ids, comma-separated and quoted where there is more than one. Not a pattern and never `*`."}
+      - {name: observe, type: bool, doc: "Whether the client may run queries and subscriptions."}
+      - {name: label, type: string, doc: "Rename the client."}
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - set client-key sha256:1f0c --allow service.manage
+      - set client-key sha256:1f0c --observe false
+
+  - id: ono.client-key.remove
+    verb: remove
+    target: client-key
+    summary: Revoke a client key, so its next connection is refused.
+    stability: experimental
+    argument_mode: words
+    input: "null | stream<ono.client-key/1>"
+    output: stream<ono.action-result/1>
+    provider_capability: host.trust
+    selectors:
+      - {name: fingerprint, type: string, doc: "The client key to revoke."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - remove client-key sha256:1f0c

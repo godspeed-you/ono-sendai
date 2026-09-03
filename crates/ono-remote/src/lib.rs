@@ -13,6 +13,11 @@
 //!   negotiated remote target as an ordinary
 //!   [`Provider`](ono_provider_api::Provider) whose records arrive re-tagged with the host
 //!   they came from (spec §25.2), so `get process` against a linked machine works unchanged.
+//! - **The listening agent** ([`ListeningAgent`], [`ConnectionRegistry`]): the accept loop an
+//!   exposed agent runs, under v0.4.1 §12's ceilings — a global connection limit, a separate
+//!   pending-handshake semaphore with a deadline, a per-fingerprint limit, one task per
+//!   connection so that no peer's failure is anybody else's, and the live-connection registry
+//!   that lets a revoked client's session be closed rather than merely refused next time.
 //! - **The transports** ([`StdioTransport`], [`SubprocessTransport`], [`ssh_command`]): the
 //!   byte pipes of spec §21.4's picture. The SSH fallback is a subprocess transport whose
 //!   command happens to be `ssh <host> ono --agent`; only [`ssh_command`] knows that spelling,
@@ -27,7 +32,10 @@
 
 mod agent;
 mod agentless;
+mod audit;
 mod client;
+mod identity;
+mod listener;
 mod retag;
 mod tls;
 mod transport;
@@ -37,9 +45,13 @@ pub use agentless::{
     AGENTLESS_PROVIDER, AgentlessLink, AgentlessProvider, FarSide, LocalFarSide, SshFarSide,
     far_side_lacks_agent,
 };
+pub use audit::StderrAudit;
 pub use client::{RemoteLink, RemoteProvider};
+pub use identity::PeerIdentity;
+pub use listener::{ConnectionRegistry, ListeningAgent};
 pub use retag::retag_value;
 pub use tls::{
-    DEFAULT_PORT, HostIdentity, TlsListener, TlsTransport, connect as tls_connect, split_address,
+    DEFAULT_LISTEN_ADDRESS, DEFAULT_PORT, TlsListener, TlsTransport, connect as tls_connect,
+    split_address,
 };
 pub use transport::{ChildProcess, SshTarget, StdioTransport, SubprocessTransport, ssh_command};

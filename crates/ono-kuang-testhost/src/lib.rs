@@ -18,14 +18,16 @@
 use std::path::PathBuf;
 
 use ono_kuang_protocol::{Capability, KuangError, Manifest};
-use ono_kuang_supervisor::{HostClock, HostLimits, LoadConfig, LoadedPlugin, Policy, Supervisor};
+use ono_kuang_supervisor::{
+    ConfinementPlatform, HostClock, HostLimits, LoadConfig, LoadedPlugin, NativePlatform, Policy,
+    Supervisor,
+};
 use serde_json::{Map as JsonMap, Value as Json};
 
 /// The fixed instant every test-host clock reads (spec §31.73's virtual time).
 pub const VIRTUAL_NOW: &str = "2026-08-26T12:00:00Z";
 
 /// A deterministic host for one plugin binary.
-#[derive(Debug)]
 pub struct TestHost {
     program: PathBuf,
     args: Vec<String>,
@@ -33,6 +35,21 @@ pub struct TestHost {
     policy: Policy,
     limits: HostLimits,
     platform: Option<String>,
+    confinement: std::sync::Arc<dyn ConfinementPlatform>,
+}
+
+impl std::fmt::Debug for TestHost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `dyn ConfinementPlatform` is not `Debug`, and a test host is read for its program and
+        // its policy.
+        f.debug_struct("TestHost")
+            .field("program", &self.program)
+            .field("args", &self.args)
+            .field("policy", &self.policy)
+            .field("limits", &self.limits)
+            .field("platform", &self.platform)
+            .finish_non_exhaustive()
+    }
 }
 
 impl TestHost {
@@ -46,7 +63,19 @@ impl TestHost {
             policy: Policy::deny_all(),
             limits: HostLimits::default(),
             platform: None,
+            confinement: NativePlatform::shared(),
         }
+    }
+
+    /// Overrides what installs the process-level confinement controls of v0.4.1 §16.1.
+    ///
+    /// §59.7 requires an acceptance scenario in which `PR_SET_NO_NEW_PRIVS` fails and the plugin
+    /// never runs, and no arrangement outside the process can make that call fail. This is the
+    /// injectable platform layer that scenario asks for, at the boundary a host actually uses.
+    #[must_use]
+    pub fn confinement(mut self, platform: std::sync::Arc<dyn ConfinementPlatform>) -> Self {
+        self.confinement = platform;
+        self
     }
 
     /// Arguments for the plugin binary (a fixture binary may take a misbehaviour mode).
@@ -105,6 +134,7 @@ impl TestHost {
         config.policy = self.policy;
         config.limits = self.limits;
         config.clock = HostClock::Fixed(VIRTUAL_NOW.to_owned());
+        config.confinement = self.confinement;
         if let Some(platform) = self.platform {
             config.platform = platform;
         }

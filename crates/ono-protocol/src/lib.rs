@@ -38,10 +38,10 @@
 //! # Driving a link
 //!
 //! ```no_run
-//! use ono_protocol::{ClientConfig, Link, PlainTransport, RemoteMessage, RemoteQuery};
+//! use ono_protocol::{ClientConfig, Link, UnauthenticatedTransport, RemoteMessage, RemoteQuery};
 //!
 //! # async fn example(stream: tokio::io::DuplexStream) -> Result<(), ono_value::ErrorValue> {
-//! let link = Link::connect(PlainTransport::new(stream), ClientConfig::new("db.example.com")).await?;
+//! let link = Link::connect(UnauthenticatedTransport::new(stream), ClientConfig::new("db.example.com")).await?;
 //! let mut processes = link.query(&RemoteQuery::target("process").limit(10))?;
 //! while let Some(message) = processes.recv().await {
 //!     if let RemoteMessage::Value(value) = message {
@@ -54,6 +54,8 @@
 
 #![forbid(unsafe_code)]
 
+mod audit;
+mod authorization;
 mod connection;
 mod error;
 mod frame;
@@ -66,6 +68,11 @@ mod trust;
 
 pub mod transport;
 
+pub use audit::{Audit, AuditEvent, AuditKind, AuditSink, NoAudit};
+pub use authorization::{
+    ActionGrant, AuthorizationContext, AuthorizedClient, AuthorizedClients, PeerAuthorization,
+    refusal_guidance, unauthenticated_refusal, write_store,
+};
 pub use error::ProtocolError;
 pub use frame::{FRAME_HEADER_LEN, FRAME_VERSION, Frame, FrameKind, decode, encode};
 pub use handshake::{
@@ -73,10 +80,13 @@ pub use handshake::{
     ProviderDescriptor, Reject,
 };
 pub use limits::{
-    DEFAULT_CREDIT, Limits, MAX_CREDIT, MAX_FRAME_PAYLOAD, MAX_STREAMS, MAX_VALUE_DEPTH,
+    DEFAULT_CREDIT, HANDSHAKE_TIMEOUT, Limits, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_CLIENT,
+    MAX_CREDIT, MAX_FRAME_PAYLOAD, MAX_PENDING_HANDSHAKES, MAX_STREAMS, MAX_VALUE_DEPTH,
 };
 pub use link::{ClientConfig, Link, RemoteMessage, RemoteStream};
 pub use message::{ActRequest, AdaptRequest, Message, RemoteQuery, decode_message, encode_message};
-pub use service::{RemoteService, ServerConfig, StreamResponder, serve};
-pub use transport::{PlainTransport, Transport};
+pub use service::{
+    RemoteService, ServerAuthorization, ServerConfig, StreamResponder, refuse, serve,
+};
+pub use transport::{Transport, UnauthenticatedTransport};
 pub use trust::{Fingerprint, HostKey, TrustDecision, TrustEntry, TrustPolicy, TrustStore};

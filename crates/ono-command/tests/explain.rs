@@ -340,3 +340,147 @@ fn should_render_the_demand_of_every_external_stage_with_its_reason() {
         "the structured plan carries the demand too, got {value:?}"
     );
 }
+
+// --- v0.4.1 §22.4: `explain` shows what will be materialized (issue #69) ----------------------
+
+#[test]
+fn should_mark_every_materializing_stage_in_the_plan() {
+    // §22.4: "`explain` MUST expose materialization when it affects execution semantics. […]
+    // This is a product feature of honesty, not merely debug output."
+    //
+    // Appendix E's three global classes are what materializes; the streaming classes are what
+    // does not, and a plan that marked everything would say nothing.
+    let plan = plan_of(
+        "get process | where cpu > 1 | sort memory desc | take 10 | group user",
+        None,
+    );
+    let marked: Vec<(&str, bool)> = plan
+        .stages()
+        .iter()
+        .map(|stage| (stage.source(), stage.materializes()))
+        .collect();
+
+    assert_eq!(
+        marked,
+        vec![
+            ("get process", false),
+            ("where cpu > 1", false),
+            ("sort memory desc", true),
+            ("take 10", false),
+            ("group user", true),
+        ],
+        "§22.4: exactly the stages that hold their input are marked"
+    );
+
+    let rendered = plan.render();
+    assert!(
+        rendered.contains("global materialization"),
+        "§22.4: the rendered plan names the execution mode: {rendered}"
+    );
+    assert!(
+        !rendered
+            .lines()
+            .filter(|line| line.contains("execution"))
+            .count()
+            .eq(&0),
+        "the plan carries an execution line at all: {rendered}"
+    );
+}
+
+#[test]
+fn should_name_the_finiteness_requirement_and_the_budget_of_each_materializing_stage() {
+    // §22.4's own example output:
+    //
+    //   sort memory desc
+    //     execution: global materialization
+    //     requires: finite input
+    //     budget: 100000 values / 128 MiB
+    let plan = plan_of("get process | sort memory desc", None);
+    let sort = plan
+        .stages()
+        .iter()
+        .find(|stage| stage.source().starts_with("sort"))
+        .expect("the plan carries the sort stage");
+
+    assert_eq!(sort.execution_mode(), "global materialization");
+    assert!(
+        sort.requires_finite_input(),
+        "§22.3: a global reorder refuses a declared-unbounded upstream"
+    );
+    assert_eq!(sort.budget(), Some((100_000, 134_217_728)));
+
+    let rendered = plan.render();
+    for expected in [
+        "execution",
+        "global materialization",
+        "requires",
+        "finite input",
+        "budget",
+        "100000 values",
+        "128 MiB",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "§22.4's plan shows {expected:?}: {rendered}"
+        );
+    }
+
+    // A streaming stage says none of it: a plan that claimed a budget for `where` would be the
+    // opposite of the honesty §22.4 is asking for.
+    let filter = plan_of("get process | where cpu > 1", None);
+    let predicate = filter
+        .stages()
+        .iter()
+        .find(|stage| stage.source().starts_with("where"))
+        .expect("the plan carries the where stage");
+    assert_eq!(predicate.execution_mode(), "streaming");
+    assert!(!predicate.requires_finite_input());
+    assert_eq!(predicate.budget(), None);
+    assert!(
+        !filter.render().contains("finite input"),
+        "a streaming stage claims no finiteness requirement: {}",
+        filter.render()
+    );
+}
+
+#[test]
+fn should_carry_the_materialization_of_every_stage_into_the_structured_plan() {
+    // §22.4 is a product feature, so it is in the value `explain` yields and not only in what it
+    // prints: a script asking "what will this hold" reads fields, not a rendering (§53.2).
+    let plan = plan_of("get process | sort memory desc", None);
+    let value = plan.to_value();
+    let map = value.as_map().expect("a plan is a map of fields");
+    let stages = map
+        .get("stages")
+        .and_then(|stages| stages.as_list().ok())
+        .expect("a plan carries its stages as a list");
+    let sort = stages
+        .iter()
+        .filter_map(|stage| stage.as_map().ok())
+        .find(|stage| {
+            stage
+                .get("source")
+                .and_then(|source| source.as_str().ok())
+                .is_some_and(|source| source.starts_with("sort"))
+        })
+        .expect("the plan carries the sort stage");
+
+    assert_eq!(
+        sort.get("execution").and_then(|mode| mode.as_str().ok()),
+        Some("global materialization")
+    );
+    assert_eq!(
+        sort.get("requires").and_then(|need| need.as_str().ok()),
+        Some("finite input")
+    );
+    assert_eq!(
+        sort.get("budget_items")
+            .and_then(|items| items.as_int().ok()),
+        Some(100_000)
+    );
+    assert_eq!(
+        sort.get("budget_bytes")
+            .and_then(|bytes| bytes.as_int().ok()),
+        Some(134_217_728)
+    );
+}

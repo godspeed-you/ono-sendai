@@ -13,7 +13,8 @@
 //!
 //! Every test asserts what the user sees through `| to json` or on stdout — never which stage
 //! honoured the option (AGENTS.md §11). Each one pins an option the shell honours or a
-//! selector that resolves; none depends on a fixture.
+//! selector that resolves, against sockets and files the test itself created rather than
+//! against whatever the host happens to be running.
 //!
 //! Not covered here: `get route --table/--family` and `format table --max-rows`, which were
 //! already honoured when this suite was written, so a test for them would have proved nothing
@@ -28,7 +29,7 @@
 use std::net::TcpListener;
 use std::time::Duration;
 
-use ono_testkit::{Scratch, Shell, scratch};
+use ono_testkit::{Scratch, Shell, SkipReason, scratch};
 use serde_yaml_ng::Value;
 
 mod support;
@@ -113,6 +114,37 @@ fn listener() -> (TcpListener, u16) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback listener on a free port");
     let port = listener.local_addr().expect("a bound address").port();
     (listener, port)
+}
+
+/// An established loopback connection the test owns, so `trace connection --remote 127.0.0.1`
+/// has something to answer that this test put there.
+///
+/// All three sockets are returned and the caller holds them: the listener, the dialling end and
+/// the accepted end. Dropping any of them ends the connection the assertions are about.
+fn connection() -> (TcpListener, std::net::TcpStream, std::net::TcpStream) {
+    let (listener, port) = listener();
+    let dialled = std::net::TcpStream::connect(("127.0.0.1", port))
+        .expect("a loopback connection to a listener this test just bound");
+    let (accepted, _) = listener
+        .accept()
+        .expect("the listener accepts its own dialler");
+    (listener, dialled, accepted)
+}
+
+/// The node a graph is rooted at — the object `trace` resolved before it walked anything.
+///
+/// `graph.v1` names it: "the object the trace started from". The nodes it reaches are the
+/// relationships, which is what a trace is for; the subject is the root and nothing else.
+fn root_of<'a>(graph: &'a Value, script: &str) -> &'a Value {
+    let root = &graph["root"];
+    graph["nodes"]
+        .as_sequence()
+        .unwrap_or_else(|| panic!("graph.v1: `nodes` is a list, got {graph:?}"))
+        .iter()
+        .find(|node| node["id"] == *root)
+        .unwrap_or_else(|| {
+            panic!("graph.v1: `{script}` roots the graph at one of its own nodes, got {graph:?}")
+        })
 }
 
 // --- get process --user / --tree ------------------------------------------------------------
@@ -373,11 +405,37 @@ fn should_trace_the_socket_on_the_requested_port_when_port_is_given() {
 
 #[test]
 fn should_trace_nothing_else_when_no_connection_has_the_requested_remote() {
-    // 192.0.2.1 is TEST-NET-1 (RFC 5737): never routed, so this machine holds no connection to
-    // it. The contract restricts the trace to the peer asked for; a graph rooted at some other
-    // connection is the one answer that is wrong. Either an empty graph or a structured
-    // not-found is acceptable; every node that does come back must have that peer.
-    let run = ono("trace connection --remote 192.0.2.1 | to json");
+    // network.yaml / spec §22.3: `--remote` names the peer the trace is about, and the subject
+    // of a graph is its root — "the object the trace started from" (graph.v1). What the walk
+    // reaches from there is relationships, and reaching a process's other sockets is the whole
+    // point of a trace, so the assertion is about the root and never about every node.
+    //
+    // The fixture owns an established loopback connection, which makes both halves say
+    // something: the peer that exists is one this test created, and the peer that does not is
+    // TEST-NET-1 (RFC 5737), which is never routed. Without the fixture the negative half passed
+    // on any host whose socket table happened to be empty of the address, which is a fact about
+    // the host and not about the filter (AGENTS.md §11).
+    let (_listener, _dialled, _accepted) = connection();
+
+    // The peer that exists: the filter finds it, and the graph is rooted at it.
+    let present = "trace connection --remote 127.0.0.1 | to json";
+    let found = ono(present);
+    found.assert_success();
+    for graph in rows(&found) {
+        assert_eq!(
+            root_of(&graph, present)["value"]["remote"]["address"].as_str(),
+            Some("127.0.0.1"),
+            "network.yaml / spec §22.3: `--remote 127.0.0.1` traces a connection with that peer, \
+             and the fixture is holding one open; the graph is rooted at {:?}",
+            graph["root"]
+        );
+    }
+
+    // The peer that does not: either a structured not-found, or a graph rooted at a connection
+    // with that peer. A graph rooted at some other connection is the one answer that is wrong,
+    // and it is the answer an ignored `--remote` gives.
+    let absent = "trace connection --remote 192.0.2.1 | to json";
+    let run = ono(absent);
     if !run.status().is_success() {
         assert!(
             run.stderr().contains("Ono-Sendai-E0102") || run.stderr().contains("Ono-Sendai-E0301"),
@@ -388,19 +446,13 @@ fn should_trace_nothing_else_when_no_connection_has_the_requested_remote() {
         return;
     }
     for graph in rows(&run) {
-        let nodes = graph["nodes"]
-            .as_sequence()
-            .unwrap_or_else(|| panic!("graph.v1: `nodes` is a list, got {graph:?}"));
-        let strangers: Vec<&Value> = nodes
-            .iter()
-            .filter(|node| node["kind"].as_str() == Some("ono.socket/1"))
-            .filter(|node| node["value"]["remote"]["address"].as_str() != Some("192.0.2.1"))
-            .collect();
-        assert!(
-            strangers.is_empty(),
+        assert_eq!(
+            root_of(&graph, absent)["value"]["remote"]["address"].as_str(),
+            Some("192.0.2.1"),
             "network.yaml / spec §22.3: `trace connection --remote 192.0.2.1` traces only the \
-             connections with that peer; no such connection exists, yet the graph traces \
-             {strangers:?}"
+             connections with that peer, and this machine holds none; the graph is rooted at \
+             {:?}",
+            graph["root"]
         );
     }
 }
@@ -529,6 +581,11 @@ fn should_leave_out_the_processes_the_named_user_does_not_own() {
     if me == "root" {
         // Running as root there may be no other user's process to leave out, and inventing one
         // would need privileges the suite must not assume.
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "running as root, where there may be no other user's process for the filter to leave \
+             out",
+        );
         return;
     }
     let strangers = count(r#"get process | where user.name != "root" | count | to json"#);
@@ -635,4 +692,80 @@ fn should_trace_the_connection_that_does_have_the_requested_remote() {
 
     drop(accepted);
     drop(client);
+}
+
+// --- an option written as an expression is an option (issue #24, ADR-0420, ADR-0556) ----------
+//
+// A words-mode command's option may be written as a word or as an expression: the language
+// spells a list `["get"]` and an arithmetic argument `(1 + 1)`, and ADR-0009 keeps an expression
+// unevaluated until something knows what it means. A command that reads `option()` without
+// evaluating first sees nothing and takes the absence for "not written", so the reader asks a
+// narrower question and gets a wider answer with nothing said about it. ADR-0420 closed that in
+// `trace`; these three close the sites it recorded and left.
+
+/// How many values a script answered with.
+fn counted(script: &str) -> i64 {
+    let run = Shell::new().args(["-c", script]).run();
+    run.assert_success();
+    let counted: Value = serde_yaml_ng::from_str(run.stdout()).unwrap_or(Value::Null);
+    counted
+        .as_sequence()
+        .and_then(|items| items.first())
+        .and_then(serde_yaml_ng::Value::as_i64)
+        .unwrap_or_else(|| panic!("a count answers with one number, got {:?}", run.stdout()))
+}
+
+#[test]
+fn should_filter_get_command_by_a_verb_written_as_an_expression() {
+    let written_as_a_word = counted("get command --verb get | count | to json");
+    let computed = counted("get command --verb (\"ge\" + \"t\") | count | to json");
+    let unfiltered = counted("get command | count | to json");
+
+    assert!(
+        written_as_a_word < unfiltered,
+        "the premise: `--verb get` restricts the registry"
+    );
+    assert_eq!(
+        computed, written_as_a_word,
+        "`--verb (\"ge\" + \"t\")` is the same question as `--verb get`, written as the \
+         expression the language lets an argument be"
+    );
+}
+
+#[test]
+fn should_restrict_a_table_to_columns_written_as_a_list() {
+    let run = Shell::new()
+        .args([
+            "-c",
+            "get process | take 2 | format table --columns [\"pid\"]",
+        ])
+        .env("NO_COLOR", "1")
+        .run();
+    run.assert_success();
+    let header = run.stdout().lines().next().unwrap_or_default().to_owned();
+
+    assert_eq!(
+        header.split_whitespace().collect::<Vec<_>>(),
+        ["PID"],
+        "`--columns [\"pid\"]` names one column, so the table shows one: {:?}",
+        run.stdout()
+    );
+}
+
+#[test]
+fn should_honour_a_near_limit_written_as_an_expression() {
+    let unlimited = counted("near | count | to json");
+    assert!(
+        unlimited > 2,
+        "the premise: a place on a running Linux host has more than two neighbours, and this \
+         one answered with {unlimited}"
+    );
+    let written_as_a_word = counted("near --limit 2 | count | to json");
+    let written_as_an_expression = counted("near --limit (1 + 1) | count | to json");
+
+    assert_eq!(written_as_a_word, 2, "the premise: `--limit 2` limits");
+    assert_eq!(
+        written_as_an_expression, written_as_a_word,
+        "`--limit (1 + 1)` is a limit of two, and an option written as an expression is an option"
+    );
 }

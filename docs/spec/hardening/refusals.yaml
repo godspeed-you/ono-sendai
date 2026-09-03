@@ -1,0 +1,192 @@
+# Which boundary decided each hardening refusal, as data (v0.4.1 §54.1, §54.2, §6.2, §53.2).
+#
+# §54.1 asks for one thing: "A refusal should tell the user which boundary made the decision."
+# §54.2 says where the answer has to be: "Important refusal explanations MUST appear in normal
+# structured errors. Users must not need `RUST_LOG=debug` to understand why a security policy
+# denied them."
+#
+# Four phases each delivered one family of these refusals, and each proved its own. What none of
+# them could prove is the property that spans them — that *every* hardening refusal names its
+# boundary, in the message a user reads and in metadata a script can match on (§53.2). This file
+# is that census, and `cargo xtask spec-check` holds the tree to it.
+#
+# Fields
+#
+#   error        the dotted error name, as `docs/spec/errors.yaml` or `docs/spec/kuang/errors.v1.yaml`
+#                declares it. The code is not repeated: the registries own the mapping.
+#   boundary     the §6.1 boundary that decided, as `docs/spec/hardening/security_boundaries.yaml`
+#                declares it. `cargo xtask spec-check` resolves the name there, so a boundary
+#                that is renamed is renamed in both files or the gate is red (ADR-0546).
+#   decided_by   the crate that constructs the refusal — §6.2's "one owning crate/module
+#                responsible for enforcing the primary guarantee".
+#   explains     the metadata keys the refusal carries, which is the machine-readable half of
+#                "which boundary decided" (§53.2: no string matching for policy). The gate checks
+#                each key is attached somewhere in `decided_by`'s own sources, so a row cannot
+#                claim a field nobody sets.
+#   says         a fragment the rendered message contains, which is the human half. §54.2 is about
+#                the ordinary error, and metadata is not rendered by the default path.
+#   example      §54.1's own sentence, for the four refusals the specification writes out.
+#   raised       false for a code that is declared and not yet constructed anywhere. Stated rather
+#                than omitted: a declared code nobody raises is a contract with no behaviour behind
+#                it, and leaving it out of this file would hide that.
+#
+# `covers` is the scope, so the census cannot be narrowed by deleting a row. Every error the
+# registries declare whose code matches one of these prefixes, or is named outright, needs a row.
+# The blocks are the ones v0.4.1 added — §21.4's budgets, §9/§10.4's authorization, §12's listening
+# ceilings, §16.3's confinement — plus §22.3's finiteness refusal, which §54.1 uses as its third
+# example. Decisions: ADR-0537.
+
+version: 1
+
+covers:
+  prefixes:
+    - Ono-Sendai-E11    # §21.4 resource budgets
+    - Ono-Sendai-E12    # §9, §10.4 server-side client authorization
+    - Ono-Sendai-E15    # §12 listening-agent resource limits
+    - Ono-Sendai-K118   # §16.3 native process confinement
+  codes:
+    - Ono-Sendai-E0801  # §22.3, and §54.1's third example
+
+refusals:
+  # --- §21.4, the materialization budget ------------------------------------------------------
+  - error: resource.item_limit
+    boundary: pipeline.materialization
+    decided_by: ono-value
+    explains: [stage, ceiling, limit, consumed, setting]
+    says: "budget after"
+    doc: >-
+      The stage that enforced the ceiling, the ceiling as configured and the consumption that
+      crossed it, all in the sentence. §21.4 keeps the retained values out of it: a resource error
+      that prints what it was holding is a second resource problem.
+  - error: resource.byte_limit
+    boundary: pipeline.materialization
+    decided_by: ono-value
+    explains: [stage, ceiling, limit, consumed, setting]
+    says: "budget after"
+    doc: >-
+      The byte half of the same budget. The figure is rendered in base units with the human
+      reading beside it, as Appendix A requires and §54.1's own example does.
+  - error: resource.materialization_limit
+    boundary: pipeline.materialization
+    decided_by: ono-pipeline
+    raised: false
+    explains: []
+    doc: >-
+      Declared by §21.4 for the case where the stage requires finite input or its budget admits
+      nothing at all, and not constructed anywhere: the finite-input refusal is
+      `stream.unbounded_operation` and the two budget ceilings are the rows above. Recorded here
+      as unraised so the gap is visible rather than inferred.
+
+  # --- §22.3, the finiteness requirement — §54.1's third example ------------------------------
+  - error: stream.unbounded_operation
+    boundary: pipeline.materialization
+    decided_by: ono-pipeline
+    explains: [stage, requires, upstream]
+    says: "requires finite input"
+    example: "sort requires finite input; upstream is declared unbounded"
+    doc: >-
+      Refused before a value is consumed (§22.3), naming the stage that requires the finite input
+      and what the upstream declared itself to be.
+
+  # --- §9, §10.4, server-side client authorization — §54.1's first example --------------------
+  - error: remote.unauthenticated
+    boundary: remote.tcp.authorization
+    decided_by: ono-protocol
+    explains: [denied_because]
+    says: "no key"
+    doc: >-
+      §2.2: authorization cannot begin without an authenticated identity. The refusal says the
+      transport authenticated nobody rather than reporting an empty policy.
+  - error: remote.unauthorized
+    boundary: remote.tcp.authorization
+    decided_by: ono-protocol
+    explains: [peer_fingerprint, store_present]
+    says: "is authenticated and is not authorized"
+    doc: >-
+      The fingerprint is in the sentence because it is what the operator types into
+      `add client-key` to fix the refusal, and §53.3 permits public identity material in full.
+      `store_present` distinguishes "you are not on the list" from "there is no list".
+  - error: remote.capability_denied
+    boundary: remote.tcp.authorization
+    decided_by: ono-protocol
+    explains: [peer_fingerprint, requested_capability, denied_because, connection_id]
+    says: "is authenticated but not authorized"
+    example: "remote client sha256:... is authenticated but not authorized for service.restart"
+    doc: >-
+      §10.4 requires the denial to distinguish observe-off from an absent action capability,
+      because they are fixed by different commands. Both readings say the client was
+      authenticated, which is the sentence §54.1 asks for.
+  - error: remote.authorization_store_invalid
+    boundary: remote.tcp.authorization
+    decided_by: ono-protocol
+    explains: [denied_because, store_path]
+    says: "authorization"
+    doc: >-
+      §9.2, §59.5: a malformed store is never read as an empty one. The refusal names the file and
+      the line, so the boundary that decided is a place on disk rather than a mood.
+
+  # --- §12, the listening ceilings ------------------------------------------------------------
+  - error: remote.connection_limit
+    boundary: remote.tcp.transport
+    decided_by: ono-remote
+    explains: [ceiling, limit]
+    says: "connections"
+    doc: >-
+      §12.1 and §12.3 are two different ceilings with two different settings, and the message says
+      which of them was reached and the figure it was set to.
+  - error: remote.handshake_timeout
+    boundary: remote.tcp.transport
+    decided_by: ono-remote
+    explains: [timeout_ms]
+    says: "handshake"
+    doc: >-
+      §12.2: a peer that opens a connection and says nothing holds a pre-negotiation slot for
+      free. The refusal names the deadline, so a slow link is told apart from a refused one.
+
+  # --- §16.3, native process confinement — §54.1's second example -----------------------------
+  - error: plugin.confinement_failed
+    boundary: kuang.native.spawn
+    decided_by: ono-kuang-supervisor
+    explains: [control, execution_tier, result, platform_detail]
+    says: "could not be installed"
+    example: "plugin foo did not start: mandatory control no_new_privs could not be installed"
+    doc: >-
+      §2.3: a safety control Ono says it applies before an operation must prevent that operation
+      when it cannot be applied. The refusal names the control, the tier it belonged to and the
+      operating system's own reason.
+  - error: plugin.resource_limit_failed
+    boundary: kuang.native.spawn
+    decided_by: ono-kuang-supervisor
+    explains: [control, execution_tier, result, platform_detail]
+    says: "could not be installed"
+    doc: >-
+      §59.8: a `setrlimit` refusal is usually a hard ceiling below the requested soft one, which
+      is a question about the shell's own limits rather than about the package — so the value that
+      was refused is named.
+  - error: plugin.no_new_privs_failed
+    boundary: kuang.native.spawn
+    decided_by: ono-kuang-supervisor
+    explains: [control, execution_tier, result, platform_detail]
+    says: "could not be installed"
+    doc: >-
+      §59.7: on a kernel that does not implement the option there is no confined way to run a
+      native package, and the refusal says that rather than starting the package anyway.
+
+  # --- §24.2, the retained history — §54.1's fourth example -----------------------------------
+  #
+  # Not an error, and deliberately so: §21.3 gives a caller two lawful responses to a reached
+  # budget, and history takes the eviction branch because it is a cache (§24.2). It is listed here
+  # because §54.1's fourth example is this notice, and because a census of "which boundary
+  # decided" that omitted the one refusal a user meets most often would be a census with a hole in
+  # it. `error: null` is what makes it visible rather than absent.
+  - error: null
+    notice: result_history_truncated
+    boundary: pipeline.materialization
+    decided_by: ono-history
+    explains: []
+    says: "result history kept"
+    example: "result history kept 10,000 of 84,212 values because the 16 MiB history budget was reached"
+    doc: >-
+      Four ceilings can stop a retention, fixed by four settings, so the notice names the one that
+      did and the figure it was set to. §24.2 rule 1 is the other half of the sentence: the
+      command's own output was never shortened.

@@ -6,7 +6,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use xtask::{bindings, conformance, contracts, narrative, reference, scan};
+use xtask::{
+    architecture, baseline, bindings, conformance, contracts, metrics as repo_metrics, narrative,
+    perf, provenance, reference, reproducibility, scan, supply_chain, terminology, verification,
+};
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -17,6 +20,15 @@ fn main() -> ExitCode {
         Some("acceptance") => run_script("acceptance.sh", &rest),
         Some("spec-check") => spec_check(),
         Some("state-check") => state_check(),
+        Some("skip-check") => skip_check(&rest),
+        Some("terminology") => terminology(&rest),
+        Some("metrics") => metrics(&rest),
+        Some("build-manifest") => build_manifest(&rest),
+        Some("compare-builds") => compare_builds(&rest),
+        Some("checksums") => checksums(&rest),
+        Some("provenance") => provenance_task(&rest),
+        Some("perf") => perf(&rest),
+        Some("baseline") => frozen_baseline(&rest),
         Some("docs") => generate_docs(),
         Some("conformance") => generate_conformance(),
         Some("release-check") => run_script("release-check.sh", &rest),
@@ -32,6 +44,37 @@ fn main() -> ExitCode {
     }
 }
 
+/// The frozen v0.4.1 baseline of spec section 57 phase H0 (ADR-0548).
+///
+/// Reads the sources rather than a second list of the same facts: the counts from `metrics`, the
+/// benchmarks from the regression baseline H7 wrote, the release inputs from the manifest
+/// generator H10 wrote.
+fn frozen_baseline(args: &[String]) -> ExitCode {
+    let root = repo_root();
+    if args.iter().any(|argument| argument == "--write") {
+        return match baseline::write(&root) {
+            Ok(path) => {
+                println!("baseline: wrote {path}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("baseline: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    match baseline::capture(&root) {
+        Ok(text) => {
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("baseline: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn usage() {
     eprintln!("usage: cargo xtask <task>");
     eprintln!();
@@ -39,6 +82,36 @@ fn usage() {
     eprintln!("  gate           format, lint, test, contract check, docs (AGENTS.md section 10)");
     eprintln!("  spec-check     contract drift between docs/spec and the implementation");
     eprintln!("  state-check    the claims docs/ACCEPTANCE.md makes about docs/STATE.md");
+    eprintln!(
+        "  skip-check     a test log's SKIPPED markers against the declared expectation \
+(spec section 38.3) <log>"
+    );
+    eprintln!("  build-manifest write the release input manifest of Appendix H [--output <path>]");
+    eprintln!(
+        "  compare-builds two directories of build artifacts, byte for byte \
+(spec section 46.5) <first> <second>"
+    );
+    eprintln!(
+        "  checksums      write SHA256SUMS over a release directory, or check it \
+(spec section 47.2) [--dir <path>] [--verify] [--tested <path>]"
+    );
+    eprintln!(
+        "  provenance     write build provenance over a release directory, or check it \
+(spec section 47.4) [--dir <path>] [--inputs <path>] [--verify]"
+    );
+    eprintln!(
+        "  perf           run the performance benchmarks of spec section 37.1 \
+[--profile S|M|L] [--iterations N] [--compare <path>] [--write-baseline]"
+    );
+    eprintln!(
+        "  terminology    the documentation terminology contract of section 19.1 over this \
+repository, and over a Wiki checkout when one is named [--wiki <path>]"
+    );
+    eprintln!(
+        "  metrics        the generated repository metrics of section 50 [--write] to update the \
+README block"
+    );
+    eprintln!("  baseline       the frozen v0.4.1 baseline of spec section 57 phase H0 [--write]");
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!(
         "  conformance    regenerate the provider conformance suite from docs/spec (spec section 35.3)"
@@ -68,6 +141,435 @@ fn run_script(name: &str, args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Writes the release input manifest of Appendix H (spec section 43.2, ADR-0451).
+///
+/// The release workflow runs this before it publishes anything, so the file states what the
+/// build was given rather than what the artifacts turned out to be.
+fn build_manifest(args: &[String]) -> ExitCode {
+    let mut output = None;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--output" => match rest.next() {
+                Some(path) => output = Some(PathBuf::from(path)),
+                None => {
+                    eprintln!("build-manifest: --output needs a path");
+                    return ExitCode::FAILURE;
+                }
+            },
+            other => match other.strip_prefix("--output=") {
+                Some(path) => output = Some(PathBuf::from(path)),
+                None => {
+                    eprintln!("build-manifest: unknown argument `{other}`");
+                    return ExitCode::FAILURE;
+                }
+            },
+        }
+    }
+    match provenance::write(&repo_root(), output.as_deref()) {
+        Ok(path) => {
+            println!("build-manifest: wrote {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("build-manifest: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Writes or verifies the checksum manifest of a release directory (spec section 47.2, ADR-0528).
+///
+/// `--verify` is the half `sha256sum -c` cannot do: it also fails when an artifact is present and
+/// unlisted, which is how an asset reaches a release unattested.
+fn checksums(args: &[String]) -> ExitCode {
+    let mut directory = PathBuf::from("dist");
+    let mut tested: Option<PathBuf> = None;
+    let mut verify = false;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--dir" => match rest.next() {
+                Some(path) => directory = PathBuf::from(path),
+                None => return usage_error("checksums: --dir needs a path"),
+            },
+            "--tested" => match rest.next() {
+                Some(path) => tested = Some(PathBuf::from(path)),
+                None => return usage_error("checksums: --tested needs a path"),
+            },
+            "--verify" => verify = true,
+            other => match other.strip_prefix("--dir=") {
+                Some(path) => directory = PathBuf::from(path),
+                None => match other.strip_prefix("--tested=") {
+                    Some(path) => tested = Some(PathBuf::from(path)),
+                    None => return usage_error(&format!("checksums: unknown argument `{other}`")),
+                },
+            },
+        }
+    }
+
+    if verify {
+        let mut problems = provenance::check_checksums(&directory);
+        if let Some(records) = &tested {
+            problems.extend(provenance::check_tested_bytes(&directory, records));
+        }
+        if problems.is_empty() {
+            println!(
+                "checksums: {}/{} covers every artifact beside it{}",
+                directory.display(),
+                provenance::CHECKSUM_MANIFEST,
+                if tested.is_some() {
+                    ", and every package is the one validation installed"
+                } else {
+                    ""
+                }
+            );
+            return ExitCode::SUCCESS;
+        }
+        for problem in &problems {
+            eprintln!("checksums: {} — {}", problem.location, problem.detail);
+        }
+        return ExitCode::FAILURE;
+    }
+
+    match provenance::write_checksums(&directory) {
+        Ok(path) => {
+            println!("checksums: wrote {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("checksums: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Writes or verifies the build provenance of a release directory (spec section 47.4, ADR-0530).
+fn provenance_task(args: &[String]) -> ExitCode {
+    let mut directory = PathBuf::from("dist");
+    let mut inputs: Option<PathBuf> = None;
+    let mut verify = false;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--dir" => match rest.next() {
+                Some(path) => directory = PathBuf::from(path),
+                None => return usage_error("provenance: --dir needs a path"),
+            },
+            "--inputs" => match rest.next() {
+                Some(path) => inputs = Some(PathBuf::from(path)),
+                None => return usage_error("provenance: --inputs needs a path"),
+            },
+            "--verify" => verify = true,
+            other => match other.strip_prefix("--dir=") {
+                Some(path) => directory = PathBuf::from(path),
+                None => match other.strip_prefix("--inputs=") {
+                    Some(path) => inputs = Some(PathBuf::from(path)),
+                    None => return usage_error(&format!("provenance: unknown argument `{other}`")),
+                },
+            },
+        }
+    }
+
+    if verify {
+        let problems = provenance::check_provenance(&directory);
+        if problems.is_empty() {
+            println!(
+                "provenance: {}/{} binds every published artifact",
+                directory.display(),
+                provenance::PROVENANCE
+            );
+            return ExitCode::SUCCESS;
+        }
+        for problem in &problems {
+            eprintln!("provenance: {} — {}", problem.location, problem.detail);
+        }
+        return ExitCode::FAILURE;
+    }
+
+    match provenance::write_provenance(&directory, inputs.as_deref()) {
+        Ok(path) => {
+            println!("provenance: wrote {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("provenance: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Compares two directories of build artifacts (spec section 46.5, ADR-0527).
+///
+/// The two directories come from `scripts/rebuild-check.sh`, which builds every artifact twice.
+/// This half only reads bytes, so it can also be pointed at a published release and a local
+/// rebuild of the same tag.
+fn compare_builds(args: &[String]) -> ExitCode {
+    let [first, second] = args else {
+        eprintln!("compare-builds: needs exactly two directories");
+        return ExitCode::FAILURE;
+    };
+    let (first, second) = (PathBuf::from(first), PathBuf::from(second));
+    match reproducibility::compare(&first, &second) {
+        Err(error) => {
+            eprintln!("compare-builds: {error}");
+            ExitCode::FAILURE
+        }
+        Ok(differences) if differences.is_empty() => {
+            match reproducibility::inventory(&first) {
+                Ok(inventory) => {
+                    for (name, digest) in &inventory {
+                        println!("compare-builds: {digest}  {name}");
+                    }
+                }
+                Err(error) => {
+                    eprintln!("compare-builds: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+            println!(
+                "compare-builds: {} and {} are byte-for-byte identical",
+                first.display(),
+                second.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Ok(differences) => {
+            for difference in &differences {
+                eprintln!(
+                    "compare-builds: {} — {}",
+                    difference.artifact, difference.detail
+                );
+            }
+            eprintln!(
+                "compare-builds: {} artifact(s) differ between two builds of one commit; a \
+                 release built from these inputs is not reproducible (spec section 46.1, 46.5)",
+                differences.len()
+            );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Runs the performance benchmarks of v0.4.1 §37.1 and reports their §32.3 records.
+///
+/// > The repository SHOULD expose performance fixtures through `xtask` … Exact syntax MAY differ,
+/// > but benchmark execution must be discoverable and reproducible.
+///
+/// Reproducible means three things here: the host is put at a declared cardinality before a
+/// benchmark runs (§32.2, ADR-0488), the figure names the environment it was measured on (§37.2),
+/// and it names how many iterations produced it (§37.4). A run against a debug binary may be
+/// inspected and may not be written into the baseline — §37.2's environment includes the release
+/// build flags, so a debug figure is a figure about a different build.
+fn perf(args: &[String]) -> ExitCode {
+    let mut profile: Option<String> = None;
+    let mut iterations = perf::MIN_ITERATIONS;
+    let mut compare: Option<PathBuf> = None;
+    let mut write = false;
+    let mut sample_completion = false;
+
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--profile" => match rest.next() {
+                Some(name) => profile = Some(name.to_uppercase()),
+                None => return usage_error("perf: --profile needs a name (S, M or L)"),
+            },
+            "--iterations" => match rest.next().and_then(|count| count.parse::<u32>().ok()) {
+                Some(count) if count > 0 => iterations = count,
+                _ => return usage_error("perf: --iterations needs a positive number"),
+            },
+            "--compare" => match rest.next() {
+                Some(path) => compare = Some(PathBuf::from(path)),
+                None => return usage_error("perf: --compare needs a path"),
+            },
+            "--write-baseline" => write = true,
+            // One cold completion, printed for the parent that spawned this process. §36.2's
+            // budget is about the *first* completion, and a completer caches what it read, so a
+            // second sample in the same process would be a different measurement (§37.3).
+            "--sample-completion" => sample_completion = true,
+            other => return usage_error(&format!("perf: unknown argument `{other}`")),
+        }
+    }
+
+    if sample_completion {
+        let (milliseconds, offered) = perf::sample_completion();
+        println!("{milliseconds} {offered}");
+        return ExitCode::SUCCESS;
+    }
+
+    let root = repo_root();
+    let environment = match perf::reference_environment(&root) {
+        Ok(environment) => environment,
+        Err(error) => {
+            eprintln!("perf: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (binary, build) = match built_binary(&root) {
+        Some(found) => found,
+        None => {
+            eprintln!("perf: no `ono` binary is built; run `cargo build --release` first");
+            return ExitCode::FAILURE;
+        }
+    };
+    if write && build != "release" {
+        eprintln!(
+            "perf: --write-baseline needs a release build. v0.4.1 §37.2 names the release build \
+             flags as part of the reference environment, so a debug figure is a figure about a \
+             different build"
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let commit = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&root)
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|text| text.trim().to_owned())
+        .unwrap_or_default();
+
+    let runner = perf::Runner::new(binary, environment.id.clone(), commit)
+        .iterations(iterations)
+        .build(&build);
+
+    println!(
+        "perf: {} build on `{}`, {iterations} iterations (v0.4.1 section 37.4 wants at least {})",
+        build,
+        environment.id,
+        perf::MIN_ITERATIONS
+    );
+
+    let wanted: Vec<&perf::Benchmark> = perf::BENCHMARKS
+        .iter()
+        .filter(|benchmark| {
+            profile
+                .as_deref()
+                .is_none_or(|name| benchmark.profile == name)
+        })
+        .collect();
+    if wanted.is_empty() {
+        eprintln!("perf: no declared benchmark runs at Profile {profile:?}");
+        return ExitCode::FAILURE;
+    }
+
+    let mut measurements = Vec::new();
+    for benchmark in wanted {
+        // The host is held at the declared cardinality for the whole of the benchmark, and the
+        // population is dropped — killed and reaped — before the next one starts.
+        let Some(declaration) = ono_testkit::declared_profiles()
+            .into_iter()
+            .find(|declaration| declaration.id == benchmark.profile)
+        else {
+            eprintln!("perf: no profile is declared as `{}`", benchmark.profile);
+            return ExitCode::FAILURE;
+        };
+        let at = declaration.profile();
+        // Each axis is built where its declaration says it can be: Profile L's ten thousand
+        // processes are the container's and its hundred thousand sockets are not (ADR-0488).
+        let processes = (declaration.built_by != ono_testkit::BuiltBy::Container)
+            .then(|| ono_testkit::ProcessPopulation::of(at));
+        let sockets = (declaration.sockets_built_by != ono_testkit::BuiltBy::Container)
+            .then(|| ono_testkit::SocketPopulation::of(at));
+        let measured = runner.run(benchmark);
+        drop(sockets);
+        drop(processes);
+
+        println!(
+            "  {:<28} {:<3} {:<9} first {:>9.3} ms  p95 {:>9.3} ms  complete {:>9.3} ms",
+            measured.benchmark,
+            measured.profile,
+            measured.temperature.as_str(),
+            measured.metric("time_to_first_ms").unwrap_or_default(),
+            measured.p95_ms,
+            measured.metric("time_to_complete_ms").unwrap_or_default(),
+        );
+        measurements.push(measured);
+    }
+
+    // §36.2's completion budget, measured by calling the completer rather than by timing a
+    // thousand registry lookups beside it (issue #21, ADR-0498). One cold sample per process, so
+    // the samples are re-runs of this executable rather than iterations in it.
+    let measured = runner.run_completion();
+    println!(
+        "  {:<28} {:<3} {:<9} first {:>9.3} ms  p95 {:>9.3} ms  candidates {}",
+        measured.benchmark,
+        measured.profile,
+        measured.temperature.as_str(),
+        measured.metric("time_to_first_ms").unwrap_or_default(),
+        measured.p95_ms,
+        measured.values,
+    );
+    measurements.push(measured);
+
+    let mut failed = false;
+    if let Some(path) = compare {
+        match std::fs::read_to_string(&path)
+            .map_err(|error| error.to_string())
+            .and_then(|text| {
+                perf::Baseline::parse(&text).map_err(|problems| {
+                    problems
+                        .into_iter()
+                        .map(|problem| problem.detail)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+            }) {
+            Ok(baseline) => {
+                for measured in &measurements {
+                    match baseline.compare(measured, perf::Tolerance::Absolute) {
+                        perf::Comparison::Held => {}
+                        other => {
+                            println!("perf: {} — {other:?}", measured.benchmark);
+                            if matches!(other, perf::Comparison::Regressed(_)) {
+                                failed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("perf: cannot compare against {}: {error}", path.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    if write {
+        let path = root.join(perf::BASELINE);
+        if let Err(error) = perf::write_baseline(&path, environment.id, &measurements) {
+            eprintln!("perf: {error}");
+            return ExitCode::FAILURE;
+        }
+        println!("perf: wrote {}", path.display());
+    }
+
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// The built `ono` binary this run should measure, preferring the release one.
+fn built_binary(root: &Path) -> Option<(PathBuf, String)> {
+    for build in ["release", "debug"] {
+        let candidate = root.join("target").join(build).join("ono");
+        if candidate.is_file() {
+            return Some((candidate, build.to_owned()));
+        }
+    }
+    None
+}
+
+/// A usage mistake, reported the way the other tasks report theirs.
+fn usage_error(message: &str) -> ExitCode {
+    eprintln!("{message}");
+    ExitCode::FAILURE
 }
 
 /// Regenerates `docs/reference/` from the machine-readable contracts (spec section 36.2).
@@ -129,6 +631,30 @@ fn spec_check() -> ExitCode {
             .into_iter()
             .chain(scan::check_acceptance_case_references(&root))
             .chain(scan::check_silent_skips(&root))
+            .chain(scan::check_unannounced_skips(&root))
+            .chain(scan::check_expected_skips(&root))
+            .chain(scan::check_duplicate_helpers(&root))
+            .chain(scan::check_pty_resize_assertions(&root))
+            .chain(scan::check_confinement_syscalls(&root))
+            .chain(scan::check_evaluator_captures(&root))
+            .chain(scan::check_bounded_channels(&root))
+            .chain(scan::check_authentication_flags(&root))
+            .chain(terminology::check_documents(&root))
+            .chain(terminology::check_decisions(&root))
+            .chain(architecture::check(&root))
+            .map(|problem| format!("{} — {}", problem.location, problem.detail)),
+    );
+
+    problems.extend(
+        supply_chain::check_action_pins(&root)
+            .into_iter()
+            .chain(supply_chain::check_image_digests(&root))
+            .chain(supply_chain::check_workflow_permissions(&root))
+            .chain(supply_chain::check_dependency_policy(&root))
+            .chain(supply_chain::check_dependency_justifications(&root))
+            .chain(supply_chain::check_tool_versions(&root))
+            .chain(supply_chain::check_locked_builds(&root))
+            .chain(provenance::check_manifest_is_emitted(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 
@@ -136,6 +662,11 @@ fn spec_check() -> ExitCode {
         narrative::check(&root)
             .into_iter()
             .chain(narrative::check_readme_examples(&root))
+            .chain(verification::check_sequence())
+            .chain(check_release_verification_documents(&root))
+            .chain(reference::check_migration_guide(&root))
+            .chain(baseline::check(&root))
+            .chain(repo_metrics::check_readme(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 
@@ -191,6 +722,148 @@ fn state_check() -> ExitCode {
     ExitCode::FAILURE
 }
 
+/// The skip-verification step of v0.4.1 §38.3.
+///
+/// §38.3 makes the gate bidirectional: *"A test that becomes skipped when it was expected to run
+/// MUST fail the CI gate or an explicit skip-verification step."* This is that step. It reads a
+/// test run's output and compares the `SKIPPED` markers in it against
+/// `docs/spec/hardening/expected_test_skips.yaml`, in both directions — an undeclared skip fails,
+/// and a declared skip that did not happen fails too.
+///
+/// It is a separate task rather than part of `spec-check` because it needs an observation: the
+/// gate's static half already refuses a skip the registry does not declare, and only a run can
+/// say which of them actually happened.
+fn skip_check(arguments: &[String]) -> ExitCode {
+    let Some(log_path) = arguments.first() else {
+        return usage_error(
+            "skip-check: name the file holding a test run's output, as in \
+             `cargo test --workspace --all-features 2>&1 | tee test.log`",
+        );
+    };
+    let root = repo_root();
+    let expected = match scan::ExpectedSkips::read(&root) {
+        Ok(expected) => expected,
+        Err(message) => {
+            eprintln!("skip-check: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let log = match std::fs::read_to_string(log_path) {
+        Ok(log) => log,
+        Err(error) => {
+            eprintln!("skip-check: cannot read {log_path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let problems = scan::verify_observed_skips(&expected, &log);
+    if problems.is_empty() {
+        println!(
+            "skip-check: ok — {} declared skip(s) observed, none undeclared",
+            expected.canonical_ci.len()
+        );
+        return ExitCode::SUCCESS;
+    }
+    for problem in &problems {
+        eprintln!("skip-check: {} — {}", problem.location, problem.detail);
+    }
+    ExitCode::FAILURE
+}
+
+/// The documentation terminology contract of v0.4.1 §19.1, run on demand.
+///
+/// `spec-check` already holds every surface a gate run can reach — the repository's user-facing
+/// documents, every rendered `help` page, every generated reference page and the accepted decision
+/// records. **The Wiki is a separate git repository**, so no gate run can reach it: this task takes
+/// the checkout as an argument, which is the only honest way to check it (ADR-0536).
+fn terminology(arguments: &[String]) -> ExitCode {
+    let root = repo_root();
+    let mut wiki: Option<PathBuf> = None;
+    let mut rest = arguments.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--wiki" => match rest.next() {
+                Some(path) => wiki = Some(PathBuf::from(path)),
+                None => return usage_error("terminology: --wiki needs the path of a checkout"),
+            },
+            other => match other.strip_prefix("--wiki=") {
+                Some(path) => wiki = Some(PathBuf::from(path)),
+                None => return usage_error(&format!("terminology: unknown argument `{other}`")),
+            },
+        }
+    }
+
+    let mut problems = terminology::check_documents(&root);
+    problems.extend(terminology::check_decisions(&root));
+    match wiki.as_deref() {
+        Some(checkout) => {
+            problems.extend(terminology::check_wiki(checkout));
+            problems.extend(terminology::check_wiki_remote_trust(checkout));
+            let install = checkout.join("Install.md");
+            match std::fs::read_to_string(&install) {
+                Ok(text) => problems.extend(verification::check_document("Install.md", &text)),
+                Err(error) => eprintln!(
+                    "terminology: Install.md cannot be read from the named Wiki checkout: {error}"
+                ),
+            }
+        }
+        None => println!(
+            "terminology: no --wiki given, so the Wiki is unchecked. It is a separate git \
+             repository and the gate cannot reach it (v0.4.1 section 19.1, ADR-0536)"
+        ),
+    }
+
+    if problems.is_empty() {
+        println!(
+            "terminology: ok — {} term(s) of section 19.1 held across every surface checked",
+            terminology::terms().len()
+        );
+        return ExitCode::SUCCESS;
+    }
+    for problem in &problems {
+        eprintln!("terminology: {} — {}", problem.location, problem.detail);
+    }
+    ExitCode::FAILURE
+}
+
+/// The generated repository metrics of v0.4.1 §50.
+///
+/// §50.2 asks `xtask` to compute the volatile counts, and §50.3 lets the README keep them as long
+/// as the gate fails when they disagree — which `spec-check` does. This task prints them, and
+/// `--write` puts them back into the README's generated block.
+fn metrics(arguments: &[String]) -> ExitCode {
+    let root = repo_root();
+    let write = match arguments.first().map(String::as_str) {
+        None => false,
+        Some("--write") => true,
+        Some(other) => return usage_error(&format!("metrics: unknown argument `{other}`")),
+    };
+    print!("{}", repo_metrics::measure(&root).render());
+    if !write {
+        return ExitCode::SUCCESS;
+    }
+    match repo_metrics::write_readme(&root) {
+        Ok(true) => println!("metrics: README.md updated"),
+        Ok(false) => println!("metrics: README.md already agrees"),
+        Err(error) => {
+            eprintln!("metrics: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// The documents that carry v0.4.1 §47.5's verification sequence, held against the registry.
+///
+/// The generated page is compared by `reference::check_committed` like every other generated
+/// page; this is the hand-written copy. The Wiki's is `cargo xtask terminology --wiki <path>`'s,
+/// for the reason ADR-0536 records.
+fn check_release_verification_documents(root: &Path) -> Vec<scan::Problem> {
+    match std::fs::read_to_string(root.join("README.md")) {
+        Ok(text) => verification::check_document("README.md", &text),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Every "generated from" claim in `docs/ACCEPTANCE.md` names something that is generated.
 ///
 /// The checklist is the definition of done; a box describing machinery nobody built is a claim
@@ -231,6 +904,13 @@ fn check_command_bindings() -> Vec<String> {
         .collect()
 }
 
+/// The regression baseline of v0.4.1 §32.4 is a set of complete §32.3 results.
+///
+/// §32.3: *"A single total runtime number is insufficient for streaming operations."* A baseline
+/// holding a record that dropped one of the six metrics is a baseline a later run cannot be
+/// compared against on that metric, and nothing would say so — the comparison would simply skip
+/// it and report "held". So the file is parsed on every gate run, and a record that is not a
+/// benchmark result turns the gate red where it was written rather than where it is read.
 /// Verifies that the immutable narrative specification has not been modified.
 ///
 /// The specification is read-only for every agent (AGENTS.md section 5.1): ambiguities are

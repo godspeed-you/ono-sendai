@@ -1,0 +1,49 @@
+# ClientKey. v0.4.1 §9.1: "a valid client certificate proves only that the connecting process
+# holds a private key. It does not prove that the agent operator wants to expose system data or
+# actions to that key." The `authorized_clients` store of §9.2 is the operator's answer, and this
+# is one line of it as an object, so a person can read, grant, narrow and revoke a client's access
+# with the ordinary verbs (§9.7).
+#
+# The mirror of `ono.host-key/1`. That record is which machines *this* shell will link to; this
+# one is which clients *this* machine will serve. Both are the shell's own bookkeeping rather than
+# something a provider found, so both are answered by `ono.shell` (ADR-0090).
+id: ono.client-key/1
+name: ClientKey
+summary: One client key this machine authorizes, and what it is authorized to do.
+identity: [fingerprint]
+fields:
+  fingerprint:
+    type: string
+    required: true
+    doc: >-
+      The full SHA-256 fingerprint of the client's key, `sha256:` and 64 hex digits. Never
+      truncated: a shortened fingerprint is one an impersonator can search for a collision
+      against. §53.3 makes a fingerprint public identity material that MAY be shown in full.
+  label:
+    type: string
+    nullable: true
+    doc: >-
+      What the operator called this client, for their own reading and for the audit trail. Null
+      when they named it nothing; a label is a convenience and never part of the decision.
+  observe:
+    type: bool
+    required: true
+    doc: >-
+      Whether the client may run queries and subscriptions — the default grant of §9.4, which
+      `add client-key` gives and nothing else. False means listed and permitted nothing.
+  actions:
+    type: list<string>
+    required: true
+    doc: >-
+      The exact provider capability ids the client may act with (§9.5). Empty for an
+      observe-only client, which is what adding one produces. Every entry is one capability from
+      docs/spec/capabilities.yaml; there is no wildcard, no prefix and no risk class, so a
+      capability introduced in a later version stays denied until someone grants it by name.
+  path:
+    type: path
+    nullable: true
+    doc: >-
+      The `authorized_clients` file the grant is recorded in (§9.2); null when the session has
+      no configuration directory and therefore keeps no store.
+default_view:
+  columns: [fingerprint, label, observe, actions]

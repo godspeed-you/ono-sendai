@@ -1,0 +1,75 @@
+# v0.4.1 §60.6 and §67.6, through the real binary as an unprivileged user.
+#
+# §24.2's first rule is the one this case exists to hold: "the live pipeline result is never
+# truncated merely to fit history". So the interesting assertion is a *difference* between two
+# numbers in one run — what the pipeline emitted, and what `@-1` can reach afterwards — and the
+# sentence between them, which §24.3 requires to say which of the two was shortened:
+#
+#   "It MUST NOT present the retained subset as though it were the complete original output."
+#
+# §21.3 permits two responses to a budget being reached, and history takes the other one from
+# every other budget in the shell: it evicts, and it never fails the user's command. That is why
+# every `ono` below exits zero even when nothing at all could be retained.
+#
+# Decisions: ADR-0452, ADR-0453, ADR-0456, ADR-0458.
+case: history truncates itself, says so, and leaves the command's own output whole
+timeout: 120
+env: NO_COLOR=1
+run: |
+  # The case builds the collection it retains. `get process | take 20` assumed twenty processes,
+  # and the container is an unprivileged user with two or three — so `[20]` was a fact about the
+  # developer's machine. Twenty files the case creates itself are twenty values everywhere.
+  pop="$HOME/case-191-pop"
+  rm -rf "$pop" && mkdir -p "$pop"
+  i=1; while [ "$i" -le 20 ]; do printf 'x%.0s' $(seq 1 200) > "$pop/f$i"; i=$((i + 1)); done
+
+  echo "== 60.6: the pipeline emits everything; only the retained copy is short =="
+  ono -c "set config limits.history_items_per_result = 3
+          get file $pop/* | select name | count | to json"
+  ono -c "set config limits.history_items_per_result = 3
+          get file $pop/* | select name
+          @-1 | count | to json" 2>/dev/null | tail -1
+
+  echo "== 24.3, 54.1: and the shell says which side it shortened =="
+  ono -c "set config limits.history_items_per_result = 3
+          get file $pop/* | select name" 2>&1 >/dev/null | head -1
+
+  echo "== 24.1: the byte ceiling truncates retention too, and never the output =="
+  ono -c "set config limits.history_bytes_per_result = 512
+          get file $pop/* | select name | count | to json"
+  ono -c "set config limits.history_bytes_per_result = 512
+          get file $pop/* | select name" 2>&1 >/dev/null | head -1
+
+  echo "== 24.2: oldest-first eviction, and a command that still succeeds =="
+  ono -c "set config limits.history_results = 2
+          get file $pop/* | take 1 | select name
+          get file $pop/* | take 2 | select name
+          get file $pop/* | take 3 | select name
+          @-1 | count | to json" 2>/dev/null | tail -1
+  ono -c "set config limits.history_results = 2
+          get file $pop/* | take 1 | select name
+          get file $pop/* | take 2 | select name
+          get file $pop/* | take 3 | select name
+          try { @-3 | count } catch e { \$e | select name | to json }" 2>/dev/null | tail -1
+
+  echo "== 21.3, 24.2: history evicting is never a resource error at the user =="
+  ono -c "set config limits.history_bytes_total = 1
+          set config limits.history_bytes_per_result = 1
+          get file $pop/* | take 5 | select name | count | to json"
+  echo "exit-$?"
+
+  echo "== and at the Appendix A defaults nothing is truncated at all =="
+  ono -c "get file $pop/* | take 5 | select name
+          @-1 | count | to json" 2>/dev/null | tail -1
+  ono -c "get file $pop/* | take 5 | select name" 2>&1 >/dev/null | grep -c 'result history kept' || true
+exit: 0
+stdout-contains: [20]
+stdout-contains: [3]
+stdout-contains: result history kept 3 of 20 values
+stdout-contains: the command's own output was complete
+stdout-contains: [{"name":"resolve.target_not_found"}]
+stdout-contains: exit-0
+stdout-contains: [5]
+stdout-not-contains: Ono-Sendai-E1101
+stdout-not-contains: Ono-Sendai-E1102
+stdout-not-contains: panicked

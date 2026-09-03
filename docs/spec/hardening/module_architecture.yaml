@@ -1,0 +1,218 @@
+# The module decomposition of v0.4.1 §29.2, §30.2 and §31.2, and the crate layering of §56, as data.
+#
+# Phase H9 cut three files into modules and changed nothing a test could see — which is exactly
+# what §65.12 demands and exactly what makes the result hard to keep. A decomposition nobody
+# checks reassembles itself: a responsibility slides into whichever file was open, and the next
+# reader finds the same thousand-line function under a different name. §66.6 is the release
+# criterion this file serves, and it asks for navigability, which is a property of the layout
+# rather than of the behaviour.
+#
+# So the rule is stated in both directions. A responsibility the specification names must have a
+# module, and a module must be a responsibility somebody named — the second half is what stops the
+# list from growing a home for whatever did not fit.
+#
+# The `module` values are paths relative to the crate's `src/`. `optional: true` marks a module
+# this repository chose to add beyond the specification's list, with its reason; the gate accepts
+# it and demands the reason.
+
+parser:
+  crate: ono-parser
+  root: src/parser
+  spec: "§29.2"
+  responsibilities:
+    - responsibility: parser state and token access
+      module: state.rs
+    - responsibility: statement parsing
+      module: statements.rs
+    - responsibility: expression parsing and precedence
+      module: expressions.rs
+    - responsibility: pipelines, stages, redirections and words-mode arguments
+      module: pipelines.rs
+    - responsibility: blocks, functions and control constructs
+      module: blocks.rs
+    - responsibility: recovery and incomplete input
+      module: recovery.rs
+    - responsibility: diagnostic construction
+      module: diagnostics.rs
+    - responsibility: numbers and units, lists, records, strings
+      module: literals.rs
+      optional: true
+      reason: >-
+        §29.2 does not name a literal module. Leaving them inside the expression module would have
+        made it the largest file in the crate again, which is the condition §29.1 exists against.
+
+evaluator:
+  crate: ono-cli
+  root: src/eval
+  spec: "§30.2"
+  responsibilities:
+    - responsibility: statement evaluation
+      module: statement.rs
+    - responsibility: expression evaluation
+      module: expression.rs
+    - responsibility: pipeline orchestration
+      module: pipeline.rs
+    - responsibility: block execution
+      module: block.rs
+    - responsibility: function invocation
+      module: function.rs
+    - responsibility: control flow
+      module: control.rs
+    - responsibility: native execution
+      module: native
+    - responsibility: budget-aware materialization
+      module: materialize.rs
+
+native_execution:
+  crate: ono-cli
+  root: src/eval/native
+  spec: "§30.2, ADR-0480, ADR-0507"
+  responsibilities:
+    - responsibility: segment assembly
+      module: segment.rs
+    - responsibility: stage binding
+      module: bind.rs
+    - responsibility: foreground execution
+      module: foreground.rs
+    - responsibility: driving a segment and draining it
+      module: drive.rs
+    - responsibility: reporting failures and delivering the result
+      module: result.rs
+    - responsibility: external commands
+      module: external.rs
+    - responsibility: remote segments
+      module: remote.rs
+
+session:
+  crate: ono-cli
+  file: src/session.rs
+  spec: "§31.2"
+  state_groups:
+    - group: EnvironmentState
+      owns: the working directory and the environment, moved together with the kernel's
+    - group: ScopeState
+      owns: lexical scopes and their lifetimes
+    - group: ExecutionState
+      owns: capture allowances, charged before a capture is pushed
+    - group: NavigationState
+      owns: the spatial trail and the current place
+    - group: ResultHistoryState
+      owns: the retained results and the four ceilings that bound them
+    - group: JobState
+      owns: background jobs and their reaping
+    - group: ProviderState
+      owns: the provider registry and what it contributes
+    - group: PresentationState
+      owns: rendering, themes and settings
+
+# §56.3's composition root. `ono-cli` is where everything is wired together, which makes it the
+# easiest place to put something that belongs a layer down: a module moved up to shrink a file
+# leaves no failing test behind, and §30.4 forbids exactly that. The gate cannot recognise "domain
+# logic" by reading it, so this list is a proxy and is named as one — every top-level module of the
+# composition root is declared here, and an undeclared one fails. Adding a module to `ono-cli`
+# becomes a decision somebody writes down rather than a file that appears.
+#
+# The second rule is not a proxy: a module here may not be named for a domain a lower crate owns.
+# A `parser.rs`, a `pipeline.rs` or a `protocol.rs` in the composition root is the inversion §30.4
+# describes, whatever it contains.
+
+composition_root:
+  crate: ono-cli
+  root: src
+  spec: "§56.3, §30.4"
+  modules:
+    - builtin.rs
+    - complete.rs
+    - config.rs
+    - context.rs
+    - context_jobs.rs
+    - eval
+    - expand.rs
+    - hosts.rs
+    - invocation.rs
+    - kuang_host.rs
+    - kuang_trust.rs
+    - lib.rs
+    - limits.rs
+    - live.rs
+    - main.rs
+    - meta.rs
+    - piped.rs
+    - plugin_registry.rs
+    - plugins.rs
+    - providers.rs
+    - remote.rs
+    - repl.rs
+    - report.rs
+    - resolve.rs
+    - session.rs
+    - session_provider.rs
+    - settings.rs
+    - sink.rs
+    - spatial
+    - theme.rs
+    - trust.rs
+    - view.rs
+
+  # A module of the composition root may share a lower crate's domain name only with a reason,
+  # because the rule that forbids it is the one rule here that is not a proxy. The reason has to
+  # say what the module holds instead of that domain.
+  named_for_a_lower_crate:
+    - module: remote.rs
+      crate: ono-remote
+      reason: >-
+        It holds the user commands of §56.3 — `link host`, and the four `client-key` verbs — and
+        no transport, no trust decision and no authorization policy. Those live in `ono-remote`
+        and `ono-protocol`, which is where §56.1 and §56.2 put them.
+
+# §56's crate layering, assigned by role and verified against the graph rather than asserted over
+# it. An edge may go to a crate in its own layer or in any layer below; nothing may point upwards.
+# Depth alone would make this vacuous — the graph is acyclic, so every edge already goes "down" by
+# construction — so the layers are roles, and the rule bites when a crate reaches for something
+# that belongs to a layer above it.
+layering:
+  spec: "§56"
+  rule: >-
+    A crate may depend on a crate in its own layer or in any layer below it, and on nothing above.
+    `ono-cli` is the composition root and nothing may depend on it, which is §30.4's "no
+    architecture inversion" expressed as a graph.
+  layers:
+    - layer: foundation
+      of: values, errors, parsing and the test harness — no knowledge of what a system is
+      crates: [ono-core, ono-value, ono-testkit, ono-parser, ono-process]
+    - layer: runtime
+      of: streams, history, rendering and the adapter contract
+      crates:
+        - ono-pipeline
+        - ono-history
+        - ono-render
+        - ono-adapter
+        - ono-kuang-protocol
+        - ono-spatial-render
+    - layer: capability
+      of: what the shell can observe and act on, and the boundaries around it
+      crates:
+        - ono-provider-api
+        - ono-editor
+        - ono-kuang-supervisor
+        - ono-graph
+        - ono-protocol
+        - ono-spatial-core
+        - ono-spatial-index
+        - ono-spatial-query
+        - ono-spatial-events
+    - layer: surface
+      of: the concrete providers, the command contract and the remote link
+      crates:
+        - ono-command
+        - ono-remote
+        - ono-kuang-sdk
+        - ono-kuang-testhost
+        - ono-provider-linux
+        - ono-provider-net
+        - ono-provider-netlink
+        - ono-provider-systemd
+        - ono-provider-container
+    - layer: composition
+      of: the binary that wires the rest together
+      crates: [ono-cli]

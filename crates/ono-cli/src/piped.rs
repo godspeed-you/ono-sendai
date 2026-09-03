@@ -83,21 +83,27 @@ pub fn run(
                 .map_or(list.span.end(), |stage| stage.span.end()),
         ),
     };
-    let targets = crate::native::run_collecting(session, &prefix, source)?;
+    let targets = crate::eval::native::run_collecting(session, &prefix, source)?;
 
     match piped {
         Piped::Link => unreachable!("refused above"),
         Piped::Remote(request) => {
             let values = crate::remote::answer_piped(session, stage, request, &targets)?;
             let failed = values.iter().any(is_failed_row);
-            let status = crate::native::run_seeded_from(session, list, source, index + 1, values)?;
+            let status =
+                crate::eval::native::run_seeded_from(session, list, source, index + 1, values)?;
             Ok(if failed { ExitStatus::FAILURE } else { status })
         }
         Piped::Plugin(request) => {
             let words = stage_words(session, stage, source)?;
             let produced = crate::plugins::run_piped(session, request, &words, &targets)?;
-            let status =
-                crate::native::run_seeded_from(session, list, source, index + 1, produced.values)?;
+            let status = crate::eval::native::run_seeded_from(
+                session,
+                list,
+                source,
+                index + 1,
+                produced.values,
+            )?;
             if let Some(failure) = produced.failure {
                 crate::report::Reporter::new(ono_render::Presentation::choose(
                     std::io::IsTerminal::is_terminal(&std::io::stderr()),
@@ -114,7 +120,7 @@ pub fn run(
             if index + 1 < list.stages.len() {
                 // `load plugin` prints its summary and produces no records in this build; the
                 // stages after it see an empty stream rather than nothing at all.
-                return crate::native::run_seeded_from(
+                return crate::eval::native::run_seeded_from(
                     session,
                     list,
                     source,

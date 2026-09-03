@@ -65,7 +65,12 @@ impl CommandImpl for Look {
 
     fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
-            let arguments = ctx.arguments();
+            // A words-mode command that reads values resolves its arguments first: `--type
+            // ["process"]`, `--limit (1 + 1)` and `--changed (1h)` are expressions until
+            // something evaluates them, and an option nobody evaluated reads as an option nobody
+            // wrote (ADR-0219, ADR-0556).
+            let arguments = ctx.arguments().evaluated(ctx.scope())?;
+            let arguments = &arguments;
             let all = arguments.flag("all");
             let json = arguments.flag("json");
             let now = Timestamp::now();
@@ -485,6 +490,35 @@ pub async fn observe_adapted(values: &[ono_value::Value]) {
     session.absorb(&records, now);
 }
 
+/// Whether `group` is an exit the request actually asked about (ADR-0557).
+///
+/// A relation names one exit and the query layer has already kept only the groups it names, so
+/// every group left is one that was asked for. `--type` is different: it filters *members*, so a
+/// place's other exits are still in the answer with nothing in them, and treating any of them as
+/// the refusal would answer `near --type connection` with "the `service` of this place could not
+/// be read". A group is asked about by type when the type it leads to is the type that was
+/// asked for, which the relation registry says: the far end of the edge at this end of it.
+fn asked_about(
+    group: &ono_spatial_core::NeighborhoodGroup,
+    wanted: Option<ono_spatial_core::SpatialType>,
+) -> bool {
+    let Some(wanted) = wanted else {
+        return true;
+    };
+    let Some(relation) = group.relation() else {
+        // A group the geography built rather than a relation — a directory's `children` — says
+        // nothing about the type behind it, and a refusal has to be about something.
+        return false;
+    };
+    let spec = relation.spec();
+    let leads_to = if group.label() == spec.canonical_group {
+        spec.target
+    } else {
+        spec.source
+    };
+    leads_to.is_a(wanted)
+}
+
 /// The refusal for an exit that was named and cannot be read (§35.2, §40, ADR-0275).
 ///
 /// `None` where the group is genuinely empty or was answered: those are answers, not refusals.
@@ -562,15 +596,29 @@ impl CommandImpl for Near {
 
     fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
-            let arguments = ctx.arguments();
+            // A words-mode command that reads values resolves its arguments first: `--type
+            // ["process"]`, `--limit (1 + 1)` and `--changed (1h)` are expressions until
+            // something evaluates them, and an option nobody evaluated reads as an option nobody
+            // wrote (ADR-0219, ADR-0556).
+            let arguments = ctx.arguments().evaluated(ctx.scope())?;
+            let arguments = &arguments;
             let mut request = NeighborhoodRequest::new().all(arguments.flag("all"));
             let named_relation = arguments.selector("relation").and_then(text_of);
             if let Some(relation) = named_relation.clone() {
                 request = request.along(relation);
             }
-            if let Some(value) = arguments.option("type") {
-                request = request.of_type(crate::spatial::spatial_type(value)?);
-            }
+            let named_type = match arguments.option("type") {
+                Some(value) => {
+                    let wanted = crate::spatial::spatial_type(value)?;
+                    request = request.of_type(wanted);
+                    Some(wanted)
+                }
+                None => None,
+            };
+            // Whether this `near` asked about one exit rather than about the whole horizon.
+            // Both spellings narrow, so both owe the caller the §42.4 answer for a group that
+            // was named and could not be read.
+            let narrowed = named_relation.is_some() || named_type.is_some();
             let limit = match arguments.option("limit") {
                 Some(Value::Int(limit)) => usize::try_from(*limit).ok(),
                 _ => None,
@@ -598,10 +646,19 @@ impl CommandImpl for Near {
             // empty one. `near sockets` on a process whose descriptors are unreadable answered
             // with an empty stream and status 0, which is the false-empty rendering §42.4
             // forbids — `look` has always said `permission denied` in the same situation.
-            if named_relation.is_some()
-                && let Some(group) = neighborhood.groups().first()
-                && group.members().is_empty()
-                && let Some(refusal) = withheld_exit(group)
+            // `--type X` is the second spelling of "answer about this one exit", and the guard
+            // was written for the first only, so a refused group answered through `--type` fell
+            // back through to the empty stream §42.4 forbids (issue #26, ADR-0557).
+            if narrowed
+                && neighborhood
+                    .groups()
+                    .iter()
+                    .all(|group| group.members().is_empty())
+                && let Some(refusal) = neighborhood
+                    .groups()
+                    .iter()
+                    .filter(|group| asked_about(group, named_type))
+                    .find_map(withheld_exit)
             {
                 return Err(refusal);
             }
@@ -873,10 +930,27 @@ pub async fn resolved_place(
             &|target| !providers.for_target(target).is_empty(),
             &|_, _| true,
         );
-        let targets: std::collections::BTreeSet<&'static str> =
-            plan.asked().iter().copied().collect();
-        view::observe_targets(providers, session, &targets, now).await;
-        resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
+        // v0.4.1 §36.1: "A selector miss MUST not be substantially more expensive than a hit
+        // solely because the system scans an unnecessarily complete global candidate set." The
+        // set is asked cheapest first and the sweep stops as soon as the selector resolves, so it
+        // is complete only where completeness is what the answer needed. §34.2's classes are the
+        // order (ADR-0494, ADR-0497).
+        for class in ono_spatial_core::AcquisitionCost::ALL {
+            let targets: std::collections::BTreeSet<&'static str> = plan
+                .asked()
+                .iter()
+                .copied()
+                .filter(|target| ono_spatial_query::acquisition_of_target(target) == Some(*class))
+                .collect();
+            if targets.is_empty() {
+                continue;
+            }
+            view::observe_targets(providers, session, &targets, now).await;
+            resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
+            if !matches!(resolution, ono_spatial_query::Resolution::NotFound) {
+                break;
+            }
+        }
     }
     // §27.2: "Interactive ambiguity opens a picker." §29.3: a script never sees one, so the same
     // resolution turns into `spatial.ambiguous_selector` wherever there is nobody to ask.
@@ -1040,7 +1114,12 @@ impl CommandImpl for Follow {
 
     fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
         Box::pin(async move {
-            let arguments = ctx.arguments();
+            // A words-mode command that reads values resolves its arguments first: `--type
+            // ["process"]`, `--limit (1 + 1)` and `--changed (1h)` are expressions until
+            // something evaluates them, and an option nobody evaluated reads as an option nobody
+            // wrote (ADR-0219, ADR-0556).
+            let arguments = ctx.arguments().evaluated(ctx.scope())?;
+            let arguments = &arguments;
             let relation = arguments
                 .selector("relation")
                 .and_then(text_of)
@@ -1129,8 +1208,15 @@ impl CommandImpl for Follow {
 
             // Reading the edges is reading the providers (§2.16): a relation nobody asked about
             // yet is not a relation that is not there.
-            let interest =
-                crate::spatial::relations::Interest::here().along(Some(relation.clone()));
+            //
+            // v0.4.1 §34.3: "If a relationship is described as 'available on request', there MUST
+            // actually be a request path." Naming the relation *is* the request for anything an
+            // orientation query merely declined to spend the budget on; `--resolve` is the
+            // request for the rest — a relation whose class is `expensive` or `external`, which a
+            // named `follow` still will not pay for by itself (§34.2, ADR-0495).
+            let interest = crate::spatial::relations::Interest::here()
+                .along(Some(relation.clone()))
+                .complete(arguments.flag("resolve"));
             crate::spatial::relations::observe(
                 ctx.providers(),
                 &mut session,
@@ -1171,7 +1257,22 @@ impl CommandImpl for Follow {
                         ),
                     ));
                 }
-                PermissionState::Unsupported | PermissionState::Unknown => {
+                // §35.2 keeps these apart and §34.3 makes the difference actionable: `unknown`
+                // is "nobody has paid for it yet", and a refusal that says so without saying how
+                // to pay is the state §34.3 forbids.
+                PermissionState::Unknown => {
+                    return Err(ErrorValue::new(
+                        ErrorCode::SpatialUnsupported,
+                        format!(
+                            "the `{relation}` of this place has not been read: {}",
+                            group.detail().unwrap_or("nothing has asked for it")
+                        ),
+                    )
+                    .with_help(
+                        "`follow <relation> --resolve` pays for it (v0.4.1 §34.3). It is                          classified expensive or external, so an orientation `look` leaves it                          discoverable and unloaded (§34.2).",
+                    ));
+                }
+                PermissionState::Unsupported => {
                     return Err(ErrorValue::new(
                         ErrorCode::SpatialUnsupported,
                         format!(

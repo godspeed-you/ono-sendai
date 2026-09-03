@@ -738,3 +738,766 @@ fn copy_kuang_contracts(repo: &Scratch) {
         repo.write(format!("docs/spec/kuang/{name}"), &text);
     }
 }
+
+/// Copies the hardening registries into a fixture, so a test can break one row of them.
+fn copy_hardening_contracts(repo: &Scratch) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("docs/spec/hardening");
+    for entry in std::fs::read_dir(&root).expect("the hardening contracts") {
+        let path = entry.expect("a directory entry").path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let text = std::fs::read_to_string(&path).expect("a contract");
+        repo.write(format!("docs/spec/hardening/{name}"), &text);
+    }
+}
+
+#[test]
+fn should_match_the_confinement_control_table_against_the_runtime_that_serves_it() {
+    // v0.4.1 §16.4 asks for *one* central table, and §52.2 for one source of truth behind the
+    // runtime, the report and the documentation. Two copies that agree today are one copy that
+    // will not, so the gate compares them on every run.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let found = xtask::contracts::check_hardening_contracts(root);
+    assert!(
+        found.is_empty(),
+        "the confinement control table and the runtime disagree:\n{}",
+        found
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_reject_an_unknown_control_id_in_a_kuang_tier_definition() {
+    // v0.4.1 §52.3, verbatim: "Unknown capability IDs in an authorization fixture or unknown
+    // control IDs in a KUANG tier definition MUST fail the gate." A tier row naming a control
+    // nothing installs is a confinement claim with no code behind it.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let path = repo
+        .path()
+        .join("docs/spec/hardening/kuang_confinement_controls.yaml");
+    let text = std::fs::read_to_string(&path).expect("the control table");
+    let text = text.replace(
+        "      - {control: no_new_privs, requirement: mandatory, failure: spawn_fails}",
+        "      - {control: no_new_privleges, requirement: mandatory, failure: spawn_fails}",
+    );
+    repo.write("docs/spec/hardening/kuang_confinement_controls.yaml", &text);
+    let found = xtask::contracts::check_hardening_contracts(repo.path());
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.detail.contains("no_new_privleges")),
+        "a tier naming a control the supervisor cannot install is reported, got {found:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_tier_row_whose_requirement_disagrees_with_the_supervisor() {
+    // The drift that matters most: the table says a control is mandatory, the code treats it as
+    // best-effort, and §2.3's guarantee quietly becomes a preference.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let path = repo
+        .path()
+        .join("docs/spec/hardening/kuang_confinement_controls.yaml");
+    let text = std::fs::read_to_string(&path).expect("the control table");
+    let text = text.replace(
+        "      - {control: no_new_privs, requirement: mandatory, failure: spawn_fails}",
+        "      - {control: no_new_privs, requirement: best_effort, failure: recorded}",
+    );
+    repo.write("docs/spec/hardening/kuang_confinement_controls.yaml", &text);
+    let found = xtask::contracts::check_hardening_contracts(repo.path());
+    assert!(
+        found
+            .iter()
+            .any(|problem| problem.detail.contains("no_new_privs")),
+        "a requirement the runtime does not honour is reported, got {found:?}"
+    );
+}
+
+// --- v0.4.1 Appendix E: every pipeline operation has stated execution semantics (issue #68) ----
+
+/// The repository's own registries, as `spec-check` reads them.
+fn repository() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+}
+
+#[test]
+fn should_place_every_pipeline_operation_in_the_streaming_classification_matrix() {
+    // Appendix E: "If a command cannot be placed in this matrix, its execution semantics are
+    // underspecified and MUST be resolved before release." The matrix is
+    // `docs/spec/hardening/streaming_classification.yaml`; this asserts that it really covers
+    // every command that consumes a stream, and that each one's contract says the same thing.
+    let document = std::fs::read_to_string(
+        repository().join("docs/spec/hardening/streaming_classification.yaml"),
+    )
+    .expect("v0.4.1 Appendix E's matrix is a machine-readable contract");
+    let matrix: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&document).expect("the matrix is YAML");
+
+    let classes: Vec<String> = matrix["classes"]
+        .as_sequence()
+        .expect("the matrix declares its classes")
+        .iter()
+        .filter_map(|class| class["id"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(
+        classes.len(),
+        8,
+        "Appendix E has eight rows and the matrix declares {}: {classes:?}",
+        classes.len()
+    );
+
+    // Every command whose declared input is a stream is placed, with its two properties agreeing
+    // between the registry, its contract and `ono_command::ExecutionClass`.
+    let problems = xtask::contracts::check_hardening_contracts(repository());
+    assert!(
+        problems.is_empty(),
+        "the hardening registries do not agree with the implementation:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    // And the classification really reaches the shell: `sort` requires finite input and may
+    // materialize, `where` does neither, which is what §22.3 and §22.4 act on.
+    let registry = ono_command::CommandRegistry::embedded().expect("the embedded registry loads");
+    let sort = registry
+        .get("ono.data.sort")
+        .expect("`sort` is a stable command");
+    assert!(sort.requires_finite_input() && sort.materializes());
+    let filter = registry
+        .get("ono.data.where")
+        .expect("`where` is a stable command");
+    assert!(!filter.requires_finite_input() && !filter.materializes());
+}
+
+#[test]
+fn should_reject_a_stream_consuming_command_the_matrix_does_not_place() {
+    let repo = consistent();
+    repo.write(
+        "docs/spec/hardening/streaming_classification.yaml",
+        "version: 1\nclasses: []\noperations: []\n",
+    );
+    repo.write(
+        "docs/spec/commands/data.yaml",
+        "version: 1\nfamily: data\ncommands:\n  - id: ono.data.invent\n    verb: invent\n    target: null\n    summary: Invent.\n    stability: stable\n    argument_mode: words\n    input: \"stream<any>\"\n    output: \"stream<any>\"\n    provider_capability: null\n    privilege: none\n    streaming: false\n    phase: B\n    examples: [\"invent\"]\n",
+    );
+    let problems = xtask::contracts::check_hardening_contracts(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("ono.data.invent")
+                && problem.detail.contains("does not place it")),
+        "Appendix E requires every stream-consuming command to be placeable: {problems:?}"
+    );
+}
+
+#[test]
+fn should_reject_a_limit_whose_default_lies_outside_its_own_range() {
+    let repo = consistent();
+    repo.write(
+        "docs/spec/hardening/limits.yaml",
+        "version: 1\nlimits:\n  - key: limits.materialize_items\n    type: int\n    default: 5\n    min: 10\n    max: 20\n    unit: values\n    enforced_by: ono-pipeline\n",
+    );
+    let problems = xtask::contracts::check_hardening_contracts(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("outside its own permitted range")),
+        "v0.4.1 §55.2: a default a user cannot restore is not a default: {problems:?}"
+    );
+}
+
+// --- §54.1: a refusal says which boundary decided (issue #119, ADR-0537) -------------------------
+
+#[test]
+fn should_find_a_deciding_boundary_on_every_declared_hardening_error() {
+    // The property no single phase could prove: every hardening refusal names its boundary, in
+    // the message a user reads (§54.2) and in metadata a script can match on (§53.2). The
+    // registry is the census and this is the tree it is held against.
+    let problems = xtask::contracts::check_refusals(repository());
+    assert!(
+        problems.is_empty(),
+        "v0.4.1 §54.1: a hardening refusal does not say which boundary decided it:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_hardening_error_that_no_refusal_row_covers() {
+    // `covers` is the scope, so the census cannot be narrowed by deleting a row: an error code
+    // inside one of the declared blocks with nothing said about it is the gap this exists for.
+    let repo = consistent();
+    repo.write(
+        "docs/spec/hardening/refusals.yaml",
+        "version: 1\ncovers:\n  prefixes: [Ono-Sendai-E11]\n  codes: []\nrefusals: []\n",
+    );
+    repo.write(
+        "docs/spec/errors.yaml",
+        "version: 1\nerrors:\n  - code: Ono-Sendai-E1101\n    name: resource.item_limit\n    kind: resource\n    summary: A ceiling was reached.\n    help: Narrow the input.\n",
+    );
+    let problems = xtask::contracts::check_refusals(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("resource.item_limit")
+                && problem.detail.contains("which boundary decided")),
+        "an uncovered hardening error is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_refusal_that_claims_a_field_nobody_attaches() {
+    // §53.2 forbids string matching for policy, which only works if the field is really there. A
+    // row naming a metadata key the owning crate never sets is a contract with nothing behind it.
+    let repo = consistent();
+    repo.write(
+        "docs/spec/hardening/refusals.yaml",
+        "version: 1\ncovers:\n  prefixes: []\n  codes: []\nrefusals:\n  - error: resource.item_limit\n    boundary: pipeline.materialization\n    decided_by: ono-value\n    explains: [invented_key]\n    says: budget after\n",
+    );
+    repo.write(
+        "docs/spec/errors.yaml",
+        "version: 1\nerrors:\n  - code: Ono-Sendai-E1101\n    name: resource.item_limit\n    kind: resource\n    summary: A ceiling was reached.\n    help: Narrow the input.\n",
+    );
+    repo.write(
+        "crates/ono-value/src/budget.rs",
+        "fn refuse() { error.with_metadata(\"stage\", stage) }\n",
+    );
+    let problems = xtask::contracts::check_refusals(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("invented_key")),
+        "a claimed field nobody sets is reported: {problems:?}"
+    );
+}
+
+// --- §6: the security boundary inventory and its owners (issue #118, ADR-0546) ------------------
+
+/// The §6.1 table, typed from the specification rather than read from the registry.
+///
+/// Reading the twelve rows out of the file under test would make the test agree with whatever the
+/// file said, which is the failure mode §6.1 exists to prevent: an inventory is only evidence if
+/// something independent knows what it must contain.
+const REQUIRED_BOUNDARIES: [(&str, &str, &str); 12] = [
+    (
+        "remote.tcp.transport",
+        "network",
+        "TLS 1.3 + mutual peer proof",
+    ),
+    (
+        "remote.tcp.authorization",
+        "authenticated peer",
+        "explicit server policy",
+    ),
+    (
+        "remote.ssh.transport",
+        "ssh channel",
+        "external SSH authentication",
+    ),
+    ("protocol.frame", "peer bytes", "size/depth/version limits"),
+    (
+        "provider.query",
+        "authorized request",
+        "provider capability contract",
+    ),
+    (
+        "provider.act",
+        "authorized request",
+        "capability + risk/elevation checks",
+    ),
+    (
+        "kuang.native.spawn",
+        "package process",
+        "manifest + fail-closed confinement",
+    ),
+    (
+        "kuang.protocol",
+        "plugin bytes",
+        "frame/credit/schema limits",
+    ),
+    (
+        "external.adapter",
+        "process output",
+        "adapter decoder and schema validation",
+    ),
+    (
+        "pipeline.materialization",
+        "value stream",
+        "count + byte budget",
+    ),
+    (
+        "release.build",
+        "CI inputs",
+        "immutable refs + locked dependencies",
+    ),
+    (
+        "release.publish",
+        "artifacts",
+        "checksum + signature + provenance",
+    ),
+];
+
+#[test]
+fn should_name_an_owning_crate_and_a_security_test_for_every_declared_boundary() {
+    // v0.4.1 §6.1: "The repository MUST contain a machine-readable or generated boundary
+    // inventory". §6.2 gives each boundary "one owning crate/module responsible for enforcing the
+    // primary guarantee", and §20 accepts a control "only when there is an automated negative test
+    // proving the forbidden behavior is refused". The inventory is where all three meet.
+    let inventory =
+        std::fs::read_to_string(repository().join("docs/spec/hardening/security_boundaries.yaml"))
+            .expect("v0.4.1 §6.1's boundary inventory is a machine-readable contract");
+    for (id, trust, enforcement) in REQUIRED_BOUNDARIES {
+        assert!(
+            inventory.contains(id),
+            "v0.4.1 §6.1 requires the boundary `{id}` to be in the inventory"
+        );
+        assert!(
+            inventory.contains(enforcement),
+            "v0.4.1 §6.1 requires `{id}` to state `{enforcement}` as its required enforcement"
+        );
+        assert!(
+            inventory.contains(trust),
+            "v0.4.1 §6.1 requires `{id}` to state `{trust}` as its input trust"
+        );
+    }
+
+    let problems = xtask::contracts::check_security_boundaries(repository());
+    assert!(
+        problems.is_empty(),
+        "the boundary inventory does not hold against the tree:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_boundary_the_specification_requires_and_the_inventory_omits() {
+    // An inventory that can be narrowed by deleting a row records only what somebody remembered.
+    // §6.1's twelve are the floor, so a missing one is a gate failure rather than a shorter file.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text =
+        std::fs::read_to_string(repository().join("docs/spec/hardening/security_boundaries.yaml"))
+            .expect("the inventory");
+    let truncated = text
+        .split_once("  - id: release.publish")
+        .expect("the inventory declares `release.publish`")
+        .0
+        .to_owned();
+    repo.write("docs/spec/hardening/security_boundaries.yaml", &truncated);
+    let problems = xtask::contracts::check_security_boundaries(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("release.publish")),
+        "v0.4.1 §6.1 names twelve boundaries at minimum: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_boundary_whose_named_security_test_does_not_exist() {
+    // §20: "A security control is accepted only when there is an automated negative test proving
+    // the forbidden behavior is refused." A row naming a test nobody wrote is the inventory
+    // claiming that acceptance without it.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text =
+        std::fs::read_to_string(repository().join("docs/spec/hardening/security_boundaries.yaml"))
+            .expect("the inventory");
+    let text = text.replace(
+        "crates/ono-protocol/tests/framing.rs::should_refuse_a_frame_claiming_more_than_the_limit_before_allocating",
+        "crates/ono-protocol/tests/framing.rs::should_refuse_a_frame_nobody_ever_wrote_a_test_for",
+    );
+    repo.write("docs/spec/hardening/security_boundaries.yaml", &text);
+    let problems = xtask::contracts::check_security_boundaries(repo.path());
+    assert!(
+        problems.iter().any(|problem| problem
+            .detail
+            .contains("should_refuse_a_frame_nobody_ever_wrote_a_test_for")),
+        "a boundary whose negative test does not exist is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_find_the_authorization_check_on_every_declared_dispatch_path() {
+    // v0.4.1 §10.2: "Every provider/adapter/action dispatch path MUST also validate that the
+    // operation is permitted by the established peer authorization context." H2 proved it by
+    // driving the four paths (ADR-0472) and could not prove the *set*, because §6.1's inventory
+    // did not exist. This is the check that the set is complete: every method the served trait
+    // exposes is a declared dispatch path, and every declared dispatch path asks.
+    let problems = xtask::contracts::check_dispatch_paths(repository());
+    assert!(
+        problems.is_empty(),
+        "v0.4.1 §10.2: a dispatch path reaches a provider without asking the authorization \
+         context:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_dispatch_path_that_reaches_a_provider_without_asking_the_authorization_context()
+{
+    // The negative half: a handler that takes the context and never asks it is exactly §65.3's
+    // failure, and it looks correct at a glance because the parameter is right there.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "docs/spec/hardening/security_boundaries.yaml",
+        "version: 1\nboundaries:\n  - id: provider.query\n    input_trust: authorized request\n    required_enforcement: provider capability contract\n    owner: ono-protocol\n    module: crates/ono-protocol/src/service.rs\n    spec: \"v0.4.1 §6.1\"\n    doc: A query.\n    negative_tests: []\n    dispatch_paths:\n      - method: query\n        path: crates/ono-protocol/src/service.rs\n        entry: \"async fn query\"\n        guard: require_observe\n",
+    );
+    repo.write(
+        "crates/ono-protocol/src/service.rs",
+        "pub trait RemoteService {\n    async fn query(&self, peer: &PeerAuthorization) -> Result<(), ErrorValue> {\n        self.registry.snapshot()\n    }\n}\n",
+    );
+    let problems = xtask::contracts::check_dispatch_paths(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("require_observe")),
+        "a dispatch path that never asks is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_dispatch_path_the_inventory_does_not_declare() {
+    // The completeness direction, which is the one a future author trips over: a new method on
+    // the served trait is a new dispatch path, and §10.2 applies to it the moment it exists.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "docs/spec/hardening/security_boundaries.yaml",
+        "version: 1\nboundaries:\n  - id: provider.query\n    input_trust: authorized request\n    required_enforcement: provider capability contract\n    owner: ono-protocol\n    module: crates/ono-protocol/src/service.rs\n    spec: \"v0.4.1 §6.1\"\n    doc: A query.\n    negative_tests: []\n    dispatch_paths:\n      - method: query\n        path: crates/ono-protocol/src/service.rs\n        entry: \"async fn query\"\n        guard: require_observe\n",
+    );
+    repo.write(
+        "crates/ono-protocol/src/service.rs",
+        "pub trait RemoteService {\n    async fn query(&self, peer: &PeerAuthorization) -> Result<(), ErrorValue> {\n        peer.require_observe(\"get\")?;\n        Ok(())\n    }\n    async fn demolish(&self, peer: &PeerAuthorization) -> Result<(), ErrorValue> {\n        Ok(())\n    }\n}\n",
+    );
+    let problems = xtask::contracts::check_dispatch_paths(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("demolish")),
+        "a served method no boundary declares is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_refusal_whose_boundary_is_not_in_the_inventory() {
+    // §54.1's census names a boundary per refusal and §6.1 owns the vocabulary. Before the
+    // inventory existed the check could only verify the shape of the name; now it is a join.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/refusals.yaml"))
+        .expect("the refusal census");
+    let text = text.replace(
+        "boundary: pipeline.materialization",
+        "boundary: pipeline.invented",
+    );
+    repo.write("docs/spec/hardening/refusals.yaml", &text);
+    let problems = xtask::contracts::check_hardening_contracts(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("pipeline.invented")),
+        "a refusal naming a boundary the inventory does not declare is reported: {problems:?}"
+    );
+}
+
+// --- §52: every machine-readable hardening contract is validated by the gate (issue #117) -------
+
+/// The seven contract domains v0.4.1 §52.1 names, typed from the specification.
+const REQUIRED_DOMAINS: [&str; 7] = [
+    "security_boundaries",
+    "remote_limits",
+    "materialization_limits",
+    "kuang_confinement_controls",
+    "performance_profiles",
+    "expected_test_skips",
+    "release_inputs",
+];
+
+#[test]
+fn should_validate_every_machine_readable_hardening_contract_in_the_gate() {
+    // v0.4.1 §52.3: "`scripts/gate.sh` MUST validate every machine-readable contract for schema
+    // correctness and cross-reference integrity." *Every* is the word this checks. §52.1 named
+    // seven domains; fifteen registries arrived as the phases needed them, and until now each was
+    // validated by whichever crate happened to consume it — which leaves a registry nobody
+    // consumes validated by nobody.
+    let index = std::fs::read_to_string(repository().join("docs/spec/hardening/registries.yaml"))
+        .expect("the registry index is itself a machine-readable contract");
+    for domain in REQUIRED_DOMAINS {
+        assert!(
+            index.contains(domain),
+            "v0.4.1 §52.1 names the contract domain `{domain}`, and the index says nothing about \
+             where it lives"
+        );
+    }
+
+    let problems = xtask::contracts::check_registry_inventory(repository());
+    assert!(
+        problems.is_empty(),
+        "a hardening contract is not validated by the gate:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_hardening_registry_no_gate_check_validates() {
+    // The failure §52.3 is written against, and the one this repository actually had: a registry
+    // lands with the phase that needs it, the crate that consumes it checks its own corner, and
+    // nothing holds the file as a whole. A new file with no row in the index is that state.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "docs/spec/hardening/invented_ceilings.yaml",
+        "version: 1\nceilings: []\n",
+    );
+    let problems = xtask::contracts::check_registry_inventory(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("invented_ceilings.yaml")),
+        "a registry the index does not name is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_registry_index_naming_a_gate_check_that_does_not_exist() {
+    // An index is only evidence if `validated_by` is resolved. A row naming a function nobody
+    // wrote reads exactly like a row naming one that runs.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/registries.yaml"))
+        .expect("the registry index");
+    let text = text.replace(
+        "xtask/src/contracts.rs::check_refusals",
+        "xtask/src/contracts.rs::check_refusals_nobody_wrote",
+    );
+    repo.write("docs/spec/hardening/registries.yaml", &text);
+    let problems = xtask::contracts::check_registry_inventory(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("check_refusals_nobody_wrote")),
+        "a validator that does not exist is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_hold_every_hardening_limit_against_the_value_the_shell_uses() {
+    // §52.2: "A number such as `max_connections = 32` MUST not be independently typed into five
+    // files if one contract can generate the others." `remote_limits.yaml` is the shape that
+    // obeys it — one row per ceiling, pointing at the `limits.yaml` key that holds its number —
+    // and until now nothing in the gate resolved those pointers.
+    let problems = xtask::contracts::check_remote_limits(repository());
+    assert!(
+        problems.is_empty(),
+        "a remote ceiling does not resolve against the catalogue that holds its number:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_remote_ceiling_whose_limit_key_names_nothing() {
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/remote_limits.yaml"))
+        .expect("the ceilings");
+    let text = text.replace(
+        "limit_key: limits.remote_connections\n",
+        "limit_key: limits.remote_connexions\n",
+    );
+    repo.write("docs/spec/hardening/remote_limits.yaml", &text);
+    let problems = xtask::contracts::check_remote_limits(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("limits.remote_connexions")),
+        "a `limit_key` that names nothing is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_remote_ceiling_that_types_its_number_instead_of_pointing_at_it() {
+    // The whole point of the file: §52.2's five copies start with the second one. A row that
+    // states a value has stopped being a pointer.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/remote_limits.yaml"))
+        .expect("the ceilings");
+    let text = text.replace(
+        "    field: max_connections\n",
+        "    field: max_connections\n    default: 32\n",
+    );
+    repo.write("docs/spec/hardening/remote_limits.yaml", &text);
+    let problems = xtask::contracts::check_remote_limits(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("default")),
+        "a ceiling that types a number is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_reject_an_unknown_capability_id_in_an_authorization_fixture() {
+    // v0.4.1 §52.3, verbatim: "Unknown capability IDs in an authorization fixture or unknown
+    // control IDs in a KUANG tier definition MUST fail the gate." `ActionGrant` refuses a
+    // malformed id at construction, so `*` and `process.` cannot be stored; a *well-formed* id
+    // naming nothing is denied at dispatch and, until this check, cost the gate nothing.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    repo.write(
+        "crates/ono-cli/tests/authorized_clients.rs",
+        "fn store() {\n    write(\"sha256:9ab4 observe=true actions=process.invented label=deploy\\n\");\n}\n",
+    );
+    let problems = xtask::contracts::check_authorization_fixtures(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("process.invented")),
+        "a fixture granting a capability nothing declares is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_find_every_capability_this_repositorys_authorization_fixtures_grant() {
+    // The repository's own side of the same check: every capability id a fixture stores is one
+    // `docs/spec/capabilities.yaml` declares, or one the index records as deliberately invalid
+    // with the test whose subject is the refusal.
+    let problems = xtask::contracts::check_authorization_fixtures(repository());
+    assert!(
+        problems.is_empty(),
+        "an authorization fixture grants something the capability registry does not declare:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_deliberately_invalid_fixture_id_the_registry_actually_declares() {
+    // The exemption cannot become a hiding place: an id listed as deliberately invalid must
+    // really be invalid, or a typo for a real capability could be waved through by adding it to
+    // the list.
+    let repo = consistent();
+    copy_hardening_contracts(&repo);
+    let text = std::fs::read_to_string(repository().join("docs/spec/hardening/registries.yaml"))
+        .expect("the registry index");
+    let text = text.replace("    - id: \"process.*\"", "    - id: \"process.list\"");
+    repo.write("docs/spec/hardening/registries.yaml", &text);
+    let problems = xtask::contracts::check_authorization_fixtures(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("process.list")),
+        "an exemption for an id the registry declares is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_reject_two_providers_of_one_target_that_do_not_say_which_of_them_a_record_names() {
+    // ADR-0559: `ono.package/1` is identified by `provider + name` because a machine can carry
+    // more than one package database. Two providers of that target that declare no
+    // `identity_token` leave the registry nothing to route an action by, and the first available
+    // one would act on a record the other made.
+    let repo = scratch();
+    repo.write(
+        "docs/spec/schemas/package.v1.yaml",
+        "id: ono.package/1\nname: Package\nsummary: A package.\nidentity: [provider, name]\nfields:\n  provider:\n    type: string\n    required: true\n    doc: The database that answered.\n  name:\n    type: string\n    required: true\n    doc: The package name.\n",
+    );
+    repo.write(
+        "docs/spec/providers/packages.yaml",
+        "providers:\n  - id: linux.packages\n    targets: [package]\n    schemas: [ono.package/1]\n  - id: linux.packages.rpm\n    targets: [package]\n    schemas: [ono.package/1]\n",
+    );
+
+    let problems = xtask::contracts::check_identity_tokens(repo.path());
+    assert_eq!(
+        problems.len(),
+        2,
+        "each of the two providers is asked for its token: {problems:?}"
+    );
+    assert!(
+        problems
+            .iter()
+            .all(|problem| problem.detail.contains("identity_token")),
+        "the refusal names what is missing: {problems:?}"
+    );
+}
+
+#[test]
+fn should_reject_two_providers_of_one_target_that_claim_the_same_identity_token() {
+    let repo = scratch();
+    repo.write(
+        "docs/spec/schemas/package.v1.yaml",
+        "id: ono.package/1\nname: Package\nsummary: A package.\nidentity: [provider, name]\nfields:\n  provider:\n    type: string\n    required: true\n    doc: The database that answered.\n  name:\n    type: string\n    required: true\n    doc: The package name.\n",
+    );
+    repo.write(
+        "docs/spec/providers/packages.yaml",
+        "providers:\n  - id: linux.packages\n    targets: [package]\n    identity_token: dpkg\n    schemas: [ono.package/1]\n  - id: linux.packages.rpm\n    targets: [package]\n    identity_token: dpkg\n    schemas: [ono.package/1]\n",
+    );
+
+    let problems = xtask::contracts::check_identity_tokens(repo.path());
+    assert!(
+        problems.iter().any(|problem| problem
+            .detail
+            .contains("both declare the identity token `dpkg`")),
+        "a token two providers share says nothing about which of them made a record: {problems:?}"
+    );
+}
+
+#[test]
+fn should_accept_one_provider_of_a_target_that_declares_no_identity_token() {
+    // `ono.service/1` identifies by `provider` too, and systemd alone answers `service`. There
+    // the field is a note on the record rather than a choice between answerers.
+    let repo = scratch();
+    repo.write(
+        "docs/spec/schemas/service.v1.yaml",
+        "id: ono.service/1\nname: Service\nsummary: A service.\nidentity: [provider, name]\nfields:\n  provider:\n    type: string\n    required: true\n    doc: The manager that answered.\n  name:\n    type: string\n    required: true\n    doc: The unit name.\n",
+    );
+    repo.write(
+        "docs/spec/providers/systemd.yaml",
+        "providers:\n  - id: systemd\n    targets: [service]\n    schemas: [ono.service/1]\n",
+    );
+
+    assert_eq!(
+        xtask::contracts::check_identity_tokens(repo.path()).len(),
+        0
+    );
+}

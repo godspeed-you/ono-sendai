@@ -1,0 +1,165 @@
+# The documentation terminology contract of v0.4.1 §19, as data.
+#
+# §19.1 fixes eight terms and requires them to "be used consistently in README, Wiki, `help`,
+# generated reference and architecture documentation". §19.2 asks that the security terms be
+# generated from the registries "rather than duplicated in prose". So the eight definitions live
+# here once: `docs/reference/terminology.md` is rendered from this file, and the documentation
+# gate reads the same rows.
+#
+# §51.1 states the purpose of the gate, and it is not a word ban:
+#
+#   "The goal is not to ban these words. The goal is to ensure they refer to a defined contract."
+#
+# Hence two fields per term rather than a blocklist:
+#
+#   meaning         §19.1's definition, verbatim. This is what the generated page prints and what
+#                   every other document is expected to mean by the word.
+#   overstates      phrases that use the term to claim a boundary this build does not enforce.
+#                   Every one of them is a wording §65 names as a forbidden failure mode — this
+#                   registry does not invent prohibitions, it makes §65's list checkable.
+#   qualified_by    the wordings that state the boundary and so make the claim defined. A term
+#                   whose overstatements are false under every wording carries none, and the
+#                   remedy there is to say something else.
+#
+# A term with no `overstates` list is not unpoliced: it is a term §65 names no wording failure
+# for, so the contract it must refer to is the `meaning` below and the generated page that prints
+# it. Adding a phrase here is a deliberate act with a reviewer attached rather than a silent
+# paraphrase. Decisions: ADR-0447, ADR-0465, ADR-0536.
+#
+# Matching is on whitespace-normalised, lowercased text with word boundaries, so a phrase is
+# found however the document wrapped it and `Ono limits` is not read as `no limit`.
+
+version: 1
+
+terms:
+  - term: authenticated
+    meaning: cryptographic peer proof was verified
+    spec: "v0.4.1 §19.1, §2.1, §65.1"
+    doc: >-
+      A peer is authenticated when this process verified a cryptographic proof it holds a key.
+      Encryption is not that proof: §65.1 names "TLS means authenticated" a failure mode, and
+      §2.1 requires the word to mean the proof was checked. Over an SSH-carried link OpenSSH did
+      the authenticating and Ono did not see the key, which is why `Link.authenticated` is false
+      there rather than borrowed (§4.3).
+    overstates:
+      - "encrypted so authenticated"
+      - "encrypted and therefore authenticated"
+      - "encryption authenticates"
+      - "tls means authenticated"
+      - "tls alone authenticates"
+      - "authenticated because the connection is encrypted"
+    qualified_by: []
+
+  - term: authorized
+    meaning: authenticated principal is permitted by policy
+    spec: "v0.4.1 §19.1, §2.2, §9.1, §65.2, §65.3"
+    doc: >-
+      Authorization is a decision the server's own policy makes about an already authenticated
+      principal. §9.1: holding a private key proves who you are, never that the operator wants
+      you here. Two ways of getting this wrong have their own headings — §65.2, where the client's
+      self-reported identity decides, and §65.3, where the capability negotiation is treated as
+      the authorization boundary instead of a filtered view of one (§10.2).
+    overstates:
+      - "authorized by the identity it reports"
+      - "authorized by the user it reports"
+      - "authorized by its runtime user"
+      - "authenticated so authorized"
+      - "authentication is sufficient"
+      - "negotiation decides what a client may do"
+      - "authorization is decided during negotiation"
+    qualified_by: []
+
+  - term: pinned
+    meaning: fingerprint matches a recorded trust decision
+    spec: "v0.4.1 §19.1, §7.3, §8.5"
+    doc: >-
+      A key is pinned when it matches a trust decision somebody recorded. Pinning says the far
+      side is the same far side as last time; it does not say the operator granted it anything,
+      which is `authorized`.
+
+  - term: confined
+    meaning: process-level restrictions were successfully installed
+    spec: "v0.4.1 §19.1, §15.1, §16.1"
+    doc: >-
+      Confinement is what Ono installs in the child before it execs — resource ceilings,
+      no-new-privileges, its own session, a sanitized environment, a private working directory —
+      and "successfully installed" is the whole of the word: §16.2 makes a control that could not
+      be installed fatal, so a confined process is one where every mandatory control took effect.
+      Confinement is not isolation; §15.1 keeps the two apart deliberately.
+
+  - term: isolated
+    meaning: kernel policy prevents direct access outside a defined boundary
+    spec: "v0.4.1 §19.1, §15.1, §15.2, §15.3, §65.5"
+    doc: >-
+      Isolation is the kernel refusing, not the host declining. The native KUANG/11 tier does not
+      have it: a plugin is a process of the Ono user and reaches whatever that account reaches.
+      §15.3 forbids reading a manifest capability declaration as isolation — it governs what the
+      plugin may ask Ono for, not what the plugin may do for itself.
+    overstates:
+      - "fully isolated"
+      - "completely isolated"
+      - "isolated by the capability model"
+      - "isolated by its manifest"
+      - "isolated by the kuang/11 capability model"
+      - "cannot reach them directly"
+      - "never reaches them directly"
+    qualified_by:
+      - "not a complete filesystem or network sandbox"
+      - "does not isolate it from the filesystem or the network"
+      - "not isolated by this execution tier"
+      - "no filesystem or network isolation"
+
+  - term: sandboxed
+    meaning: MAY be used only when the specific isolation boundary is stated
+    spec: "v0.4.1 §19.1, §17.3, §65.5"
+    doc: >-
+      §17.3: until kernel isolation exists, no native tier may be described simply as "sandboxed"
+      without an immediate qualifier explaining the boundary. §65.5 names the bare claim a
+      forbidden failure mode. The word is therefore allowed exactly where the sentence says which
+      boundary is meant — which is what the qualifiers below are.
+    overstates:
+      - "sandboxed execution"
+      - "sandboxed native"
+      - "is sandboxed"
+      - "are sandboxed"
+      - "runs sandboxed"
+      - "run sandboxed"
+      - "sandboxes the plugin"
+      - "sandboxes plugins"
+    qualified_by:
+      - "not a complete filesystem or network sandbox"
+      - "does not isolate it from the filesystem or the network"
+      - "not isolated by this execution tier"
+      - "no filesystem or network isolation"
+
+  - term: bounded
+    meaning: a hard enforceable limit exists for the relevant resource
+    spec: "v0.4.1 §19.1, §2.4, §21, §65.6"
+    doc: >-
+      Bounded means a limit exists, is enforced, and is bounded in the dimension that matters.
+      §65.6: permitting N values while each may carry an arbitrarily large payload is not a bound
+      on memory, so a retained or materialized collection is bounded only where a byte budget
+      exists beside the count. Appendix A holds the defaults and
+      `docs/spec/hardening/limits.yaml` is where they are written down once.
+
+  - term: streaming
+    meaning: >-
+      output may progress before complete upstream exhaustion unless semantics require global
+      state
+    spec: "v0.4.1 §19.1, §2.5, §25.2, §65.7"
+    doc: >-
+      Streaming is a statement about when the first value can leave, not a promise that nothing is
+      ever held. §65.7 names collecting the input in the background and emitting it afterwards a
+      forbidden failure mode, and Appendix E is where each operation's class is written down: a
+      stage that requires finite input or may materialize says so there rather than in prose.
+    overstates:
+      - "streams everything"
+      - "never buffers"
+      - "always streams"
+      - "fully streaming"
+      - "nothing is ever materialized"
+      - "streaming so nothing is held"
+    qualified_by:
+      - "requires finite input"
+      - "may materialize"
+      - "global operations materialize"

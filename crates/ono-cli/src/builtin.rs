@@ -342,7 +342,7 @@ fn help(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         return Ok(ExitStatus::SUCCESS);
     }
 
-    let registry = match crate::native::registry() {
+    let registry = match crate::eval::native::registry() {
         Ok(registry) => registry,
         Err(error) => return Err(Flow::Failed(error)),
     };
@@ -428,7 +428,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         )));
     };
 
-    let registry = crate::native::registry().map_err(Flow::Failed)?;
+    let registry = crate::eval::native::registry().map_err(Flow::Failed)?;
     // The last stage's consumer is whatever the shell's stdout is, and a plan that assumed a
     // terminal would promise interactive rendering to a script (spec v0.3 §1.4).
     let stdout = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
@@ -456,6 +456,7 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
     // Everything a frame contributes has an explicit spelling, and `explain` is where it is
     // written (spec §14.5, ADR-0023, ADR-0225).
     let frames = session.context();
+    let limits = crate::limits::materialization(session.settings());
     let (providers, adapters) = session.registries();
     let adapters = remote_host.is_none().then_some(adapters);
     let plan = ono_command::plan_with(
@@ -468,6 +469,9 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             adapters,
             executables: Some(&executables),
             context: &frames,
+            // v0.4.1 §22.4: the plan shows the budget the pipeline would really run under, so a
+            // user who narrowed `limits.materialize_bytes` sees their own figure.
+            limits,
         },
     );
     // The plan quotes the source it was given and the paths it resolved, both of which are
@@ -561,11 +565,11 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
             if ono_command::is_raw(stage) {
                 continue;
             }
-            let Some(argv) = crate::native::literal_argv(stage) else {
+            let Some(argv) = crate::eval::native::literal_argv(stage) else {
                 continue;
             };
             let agentless = session.link(&host).is_some_and(|link| link.agentless);
-            let state = crate::native::remote_decision(session, &argv, demand).map_or_else(
+            let state = crate::eval::native::remote_decision(session, &argv, demand).map_or_else(
                 || {
                     if agentless {
                         "raw (this link is agentless: there is no agent over there to negotiate \
@@ -599,9 +603,19 @@ fn explain(session: &mut Session, arguments: &[OsString]) -> Eval<ExitStatus> {
         // A user function is step 2 of the order (ADR-0011, ADR-0070): it wins over the
         // registry and over PATH, and the report says so instead of describing what it shadows.
         if let Some(function) = session.function(name) {
+            // v0.4.1 §26.2: where a call cannot be continued as a stage of the pipeline it stands
+            // in, "that limitation MUST be explicit in `explain`" — so it is stated here rather
+            // than left for a user to meet as a refusal over an unbounded source (ADR-0481).
+            let continues = crate::eval::native::continuable_body(&function.declaration.body)
+                .is_some_and(|body| crate::eval::native::continuable_list(session, body));
+            let continuation = if continues {
+                "its body streams into the stages after the call"
+            } else {
+                "its result is collected before the stages after the call run, so its input must be finite"
+            };
+            let declared = function.declaration.span;
             print_safely(&format!(
-                "  `{name}` is a user function declared at {} — step 2 of the resolution order",
-                function.declaration.span
+                "  `{name}` is a user function declared at {declared} — step 2 of the resolution order; {continuation} (v0.4.1 §26.2)"
             ));
             continue;
         }

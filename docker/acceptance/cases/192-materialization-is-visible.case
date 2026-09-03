@@ -1,0 +1,75 @@
+# v0.4.1 §22.4 and §54.3, through the real binary as an unprivileged user.
+#
+# §22.4 is unusually explicit about what kind of feature this is:
+#
+#   "`explain` MUST expose materialization when it affects execution semantics. […] This is a
+#    product feature of honesty, not merely debug output."
+#
+# So the plan says which stages will hold their input, which of them require finite input, and
+# what budget they will run under — and says none of it beside a stage that materializes nothing,
+# because a budget shown where none applies is the opposite of honesty. §54.3 is the other half:
+# the effective limits are readable at runtime, as objects, and they are the figures the shell
+# will actually enforce rather than a second copy of them (§52.2).
+#
+# Nothing here runs a pipeline. §15.3 makes `explain` inspect without executing, and the figures
+# below are read from the same catalogue `set config` writes into.
+#
+# §53.2 asks for the same answer as a *field* rather than as a rendered line, and that half is not
+# asserted here: the shell's `explain` builtin consumes the whole line, so `explain … | to json`
+# explains the `to json` stage instead of serialising the plan. The structured form is pinned by
+# `crates/ono-command/tests/explain.rs::should_carry_the_materialization_of_every_stage_into_the_structured_plan`,
+# against `ExecutionPlan::to_value`, which is what `ono.meta.explain` yields.
+#
+# Decisions: ADR-0455, ADR-0456, ADR-0460, ADR-0461.
+case: the plan says what it will hold, and the limits in force are readable
+timeout: 120
+env: NO_COLOR=1
+run: |
+  echo "== 22.4: the plan's three lines, under the stage that materializes =="
+  ono -c 'explain get process | sort memory desc' | grep -E 'execution|requires|budget'
+
+  echo "== and nothing of the kind under a stage that streams =="
+  ono -c 'explain get process | where cpu > 1' | grep -cE 'requires|budget' || true
+  ono -c 'explain get process | where cpu > 1' | grep -E 'execution'
+
+  echo "== the budget shown is the one the pipeline would run under (55.1) =="
+  ono -c 'set config limits.materialize_bytes = 4MiB
+          explain get process | sort memory desc' | grep -E 'budget'
+
+  echo "== 54.3: the effective limits are readable as objects =="
+  ono -c 'inspect limits limits.materialize_items | select key value layer min max | to json'
+  ono -c 'inspect limits limits.materialize_bytes | select key value | to json'
+  ono -c 'inspect limits limits.command_capture_bytes | select key value | to json'
+  ono -c 'inspect limits limits.history_bytes_total | select key value | to json'
+  ono -c 'inspect limits | count | to json'
+
+  echo "== and they follow the layer that set them (ADR-0010) =="
+  ONO_LIMITS_MATERIALIZE_ITEMS=500 ono -c 'inspect limits limits.materialize_items | select value layer | to json'
+  ono -c 'set config limits.materialize_items = 250
+          inspect limits limits.materialize_items | select value layer | to json'
+
+  echo "== 55.2: a value outside its range is refused and the limit keeps its figure =="
+  ono -c 'set config limits.materialize_items = -1' 2>&1 | head -1
+  ono -c 'try { set config limits.materialize_items = -1 } catch e { echo caught }
+          inspect limits limits.materialize_items | select value layer | to json'
+
+  echo "== 53.3: a limits diagnostic carries no key material =="
+  ono -c 'inspect limits | to json' | grep -c 'sha256:' || true
+
+  echo "== 15.3: explaining runs nothing =="
+  ono -c 'explain get process | sort memory desc' | grep -c '^PIPELINE'
+exit: 0
+stdout-contains: execution    global materialization
+stdout-contains: requires     finite input
+stdout-contains: budget       100000 values / 128 MiB
+stdout-contains: execution    streaming
+stdout-contains: budget       100000 values / 4 MiB
+stdout-contains: [{"key":"limits.materialize_items","value":100000,"layer":"default","min":0,"max":1000000000}]
+stdout-contains: [{"key":"limits.materialize_bytes","value":134217728}]
+stdout-contains: [{"key":"limits.command_capture_bytes","value":268435456}]
+stdout-contains: [{"key":"limits.history_bytes_total","value":67108864}]
+stdout-contains: [13]
+stdout-contains: [{"value":500,"layer":"environment"}]
+stdout-contains: [{"value":250,"layer":"invocation"}]
+stdout-contains: Ono-Sendai-E0201 type.mismatch `limits.materialize_items` accepts 0 to 1000000000
+stdout-not-contains: panicked

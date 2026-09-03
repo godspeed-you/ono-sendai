@@ -6,10 +6,12 @@
 //!
 //! - [`Span`] — byte ranges into a source line, carried by every diagnostic (spec §16.3);
 //! - [`ErrorCode`] and [`ErrorKind`] — the stable error taxonomy of spec §43 and §16.1;
-//! - [`ExitStatus`] — the exit-status contract of ADR-0008.
+//! - [`ExitStatus`] — the exit-status contract of ADR-0008;
+//! - [`diagnostic!`] — a line of commentary on standard error that cannot kill the writer.
 
 #![forbid(unsafe_code)]
 
+mod diagnostic;
 mod error;
 mod exit;
 mod span;

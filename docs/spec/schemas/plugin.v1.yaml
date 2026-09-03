@@ -52,8 +52,20 @@ fields:
     required: true
     values: [core-built-in, trusted-native, isolated-component, remote-service]
     doc: >-
-      What the code can do even if it is not trusted — the tiers of spec §31.10. A package
-      cannot declare `core-built-in`.
+      What kind of thing the artifact is — the tiers of spec §31.10, as the manifest declares
+      them. A package cannot declare `core-built-in`. It is not a statement about what is
+      installed around the artifact; `execution_tier` is.
+  execution_tier:
+    type: enum
+    required: true
+    values: [native-confined, native-isolated, wasm, remote-service, declarative, core-built-in]
+    doc: >-
+      The named tier a loaded instance of this package runs in (v0.4.1 §17.2), and the name that
+      reaches audit, diagnostics and documentation. A name rather than a boolean: v0.4.1 §17.3
+      forbids describing a tier as "sandboxed" without stating the boundary, and
+      `native-confined` states it — capability mediation and process confinement, no kernel
+      isolation of the filesystem or the network. `inspect plugin` shows the controls that name
+      stands for.
   roles:
     type: list<string>
     required: true

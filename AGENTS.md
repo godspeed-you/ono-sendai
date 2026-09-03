@@ -459,6 +459,14 @@ cargo run -p xtask -- spec-check          # contract ↔ implementation drift (s
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
 
+One target of the test step is selected rather than always run. `xtask/tests/packaging.rs` is 76
+seconds of a 264-second warm run and exercises none of the Rust the workspace ships — it drives
+`cargo deb` and `cargo generate-rpm` over a stand-in binary — so the gate runs it when the
+increment touched one of its inputs, and always in CI, where `ci.yml` builds and installs the real
+packages anyway. Unselected tests are reported as `filtered out` in `target/gate-test.log`; they
+announce no skip, and §38's expected-skip register is untouched. `ONO_PACKAGING=always` runs them
+regardless, `ONO_PACKAGING=never` never does. The inputs and the reasoning are in ADR-0563.
+
 **And, for any increment that adds or changes a user-visible capability, the container:**
 
 ```bash

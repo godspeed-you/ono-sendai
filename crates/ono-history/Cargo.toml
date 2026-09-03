@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 ono-core.workspace = true
+ono-value.workspace = true
 jiff.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
@@ -17,6 +18,7 @@ regex.workspace = true
 
 [dev-dependencies]
 ono-testkit.workspace = true
+ono-value.workspace = true
 
 [lints]
 workspace = true

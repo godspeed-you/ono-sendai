@@ -27,6 +27,7 @@ use ono_core::ErrorCode;
 use ono_pipeline::Collected;
 use ono_provider_api::{Action, ActionOutcome, ObjectId, Provider, Query, Selector};
 use ono_provider_systemd::{PROVIDER_ID, SystemdProvider, service_schema};
+use ono_testkit::{SkipReason, require, skipped};
 use ono_value::{ActionStatus, ByteSize, FieldAccess, RecordValue, SchemaId, Value};
 
 /// No test may hang; every await in this file runs under this budget.
@@ -708,7 +709,13 @@ async fn should_agree_with_the_running_service_manager_when_one_is_present() {
     let provider = tokio::time::timeout(BUDGET, SystemdProvider::connect())
         .await
         .expect("probing the system bus must not hang");
-    if !provider.availability().is_available() {
+    if require(
+        provider.availability().is_available(),
+        SkipReason::ExternalToolUnavailable,
+        "no systemd service manager answers on this host's system bus",
+    )
+    .unmet()
+    {
         return;
     }
 
@@ -770,6 +777,10 @@ async fn should_agree_with_the_running_service_manager_when_one_is_present() {
         .map(|record| text(record, "name"))
         .find(|name| name.ends_with(".service"))
     else {
+        skipped(
+            SkipReason::FixtureNotApplicable,
+            "this host runs no active `.service` unit to read properties from",
+        );
         return;
     };
     let bare = service.trim_end_matches(".service").to_owned();

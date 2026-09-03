@@ -28,8 +28,8 @@
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
-use ono_testkit::Shell;
 use ono_testkit::ono_within;
+use ono_testkit::{Shell, SkipReason};
 use serde_yaml_ng::Value;
 
 mod support;
@@ -80,7 +80,10 @@ fn unprivileged() -> bool {
         .and_then(|rest| rest.split_whitespace().next())
         .expect("the Uid line of /proc/self/status");
     if uid == "0" {
-        ono_testkit::skipped("the network write paths must not be exercised as root");
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "the network write paths must not be exercised as root",
+        );
         return false;
     }
     true

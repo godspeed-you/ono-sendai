@@ -233,7 +233,7 @@ fn should_survive_a_connection_fed_arbitrary_bytes_instead_of_frames() {
             });
 
             let outcome = common::within(ono_protocol::Link::connect(
-                ono_protocol::PlainTransport::new(near),
+                ono_protocol::UnauthenticatedTransport::new(near),
                 common::client_config("noisy"),
             ))
             .await;

@@ -36,10 +36,48 @@ pub(crate) fn provenance(schema: &Schema) -> Provenance {
 /// Returns [`ono_core::ErrorCode::TypeUnknownField`] when two projected fields would share a
 /// name — two columns called `name` is a question with no answer.
 pub(crate) fn selection_schema(names: &[Arc<str>]) -> Result<Arc<Schema>, ErrorValue> {
+    projection_schema(names.iter().map(|name| (Arc::clone(name), None)))
+}
+
+/// The same, with the declaration each projected field was read from where there is one.
+///
+/// A projection of a field is still that field: `cpu` projected out of `ono.process/1` is the
+/// float carrying `unit: percent` the contract declares, and a renderer reads that declaration
+/// to print `2.1%` (ADR-0419, ADR-0555). Where a projected field has no single source field —
+/// a computed expression, a nested path, a source that is not a record — the declaration is the
+/// `any` this module's header describes, because spec §35.3 forbids asserting a type the value
+/// may not have.
+///
+/// Nullability is not copied. A projection reads a value that may be absent from the value it
+/// read and may be the error of a failed read, so every projected field is nullable whatever
+/// its source said.
+///
+/// # Errors
+///
+/// Returns [`ono_core::ErrorCode::TypeUnknownField`] when two projected fields would share a
+/// name.
+pub(crate) fn projection_schema(
+    fields: impl IntoIterator<Item = (Arc<str>, Option<FieldDef>)>,
+) -> Result<Arc<Schema>, ErrorValue> {
     let mut builder = Schema::builder(SchemaId::new("ono.selection", 1), "Selection")
         .doc("The record shape a `select` projection produces.");
-    for name in names {
-        builder = builder.field(FieldDef::new(name, FieldType::Any).nullable());
+    let mut names: Vec<Arc<str>> = Vec::new();
+    for (name, source) in fields {
+        let mut field = FieldDef::new(
+            &name,
+            source
+                .as_ref()
+                .map_or(FieldType::Any, |source| source.ty().clone()),
+        )
+        .nullable();
+        if let Some(unit) = source.as_ref().and_then(FieldDef::unit) {
+            field = field.with_unit(unit);
+        }
+        if let Some(doc) = source.as_ref().and_then(FieldDef::doc) {
+            field = field.with_doc(doc);
+        }
+        builder = builder.field(field);
+        names.push(name);
     }
     builder
         .default_view(names.iter().map(|name| &**name))

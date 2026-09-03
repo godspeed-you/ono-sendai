@@ -24,15 +24,11 @@ use std::time::Duration;
 use ono_testkit::ono_within;
 use serde_yaml_ng::Value;
 
+mod support;
+use support::{items, json};
+
 fn ono(script: &str) -> ono_testkit::Run {
     ono_within(script, Duration::from_secs(30))
-}
-
-/// Parses one line of `to json` output. JSON is YAML, so the workspace's YAML parser reads it.
-fn json(text: &str) -> Value {
-    serde_yaml_ng::from_str(text).unwrap_or_else(|error| {
-        panic!("`to json` emits a JSON document (spec §33.5): {error}\n{text}")
-    })
 }
 
 /// The last non-empty stdout line as a JSON document — a script's final `| to json`.
@@ -43,15 +39,6 @@ fn last_json(run: &ono_testkit::Run) -> Value {
         .rfind(|line| !line.trim().is_empty())
         .unwrap_or_else(|| panic!("a `to json` document on stdout, got {:?}", run.output()));
     json(line)
-}
-
-fn items(value: &Value) -> &[Value] {
-    value
-        .as_sequence()
-        .unwrap_or_else(|| {
-            panic!("`to json` emits an array of the stream's values (spec §33.5), got {value:?}")
-        })
-        .as_slice()
 }
 
 /// The uid this test runs as, from the kernel rather than an environment variable.

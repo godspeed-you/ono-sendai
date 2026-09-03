@@ -18,6 +18,11 @@ providers:
       Packages, from dpkg and apt. A listing that is not in the declared machine format is a
       provider defect (E0403), never a source of invented records.
     targets: [package]
+    # `ono.package/1` identifies by `provider + name`, and this is the value these records give
+    # for `provider`: the database that answered, not this entry's id. A machine can carry both
+    # databases, and an action on a record is performed by the provider the record names rather
+    # than by whichever answers first (ADR-0559).
+    identity_token: dpkg
     capabilities: [package.list, package.search, package.manage]
     schemas: [ono.package/1]
     conformance:
@@ -30,6 +35,7 @@ providers:
       their provider on both Red Hat and SUSE, because that is the one database both families
       keep.
     targets: [package]
+    identity_token: rpm
     capabilities: [package.list, package.search, package.manage]
     schemas: [ono.package/1]
     conformance:

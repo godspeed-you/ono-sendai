@@ -1,0 +1,1 @@
+{"version": 2, "agent": "ono 0.4.0", "identity": {"user": "operator"}, "providers": [{"id": "linux.procfs", "targets": ["process"], "capabilities": [{"id": "process.list", "risk": "read"}]}], "schemas": ["ono.process/1"]}

@@ -142,6 +142,12 @@ pub fn stream(
             let mut previous: Option<MapSnapshot> = None;
             let mut removed: Vec<SpatialId> = Vec::new();
             let mut opened = false;
+            // Since when the caller has seen nothing, and when it was last told so. Both belong
+            // outside the loop: a system that produces events which change no picture is exactly
+            // as silent to the caller as one that produces no events at all, and it is the caller
+            // v0.4.1 §33.3 is about.
+            let mut silent_since = std::time::Instant::now();
+            let mut told_at = silent_since;
 
             loop {
                 // The opening projection is made before any event is read, so the first value is
@@ -193,6 +199,8 @@ pub fn stream(
                             if sink.send(value).await.is_err() {
                                 return;
                             }
+                            silent_since = std::time::Instant::now();
+                            told_at = silent_since;
                         }
                         Err(error) => {
                             let _ = sink.fail(error).await;
@@ -202,11 +210,29 @@ pub fn stream(
                 }
 
                 // Wait for the machine to do something. Nothing is emitted while nothing happens,
-                // which is §25.2 and §2.12 in one line.
-                if sink.is_cancelled()
-                    || !wait_for_change(&mut watches, &mut merge, &mut removed).await
-                {
+                // which is §25.2 and §2.12 in one line — and a wait nobody is told about is what
+                // v0.4.1 §33.3 forbids, so a long one says so on the diagnostic stream.
+                if sink.is_cancelled() {
                     return;
+                }
+                loop {
+                    let deadline = tokio::time::Instant::from_std(told_at + STILL_AFTER);
+                    let waited = tokio::time::timeout_at(
+                        deadline,
+                        wait_for_change(&mut watches, &mut merge, &mut removed),
+                    )
+                    .await;
+                    match waited {
+                        Ok(true) => break,
+                        Ok(false) => return,
+                        Err(_) => {
+                            if sink.is_cancelled() {
+                                return;
+                            }
+                            report_stillness(watches.len(), silent_since.elapsed());
+                            told_at = std::time::Instant::now();
+                        }
+                    }
                 }
             }
         },
@@ -240,6 +266,46 @@ async fn wait_for_change(
         .is_ok_and(|moved| moved)
     {}
     true
+}
+
+/// How long a live map watches in silence before it says that it is watching (v0.4.1 §33.3).
+///
+/// Two rules meet here and only one thing satisfies both. v0.4 §25.2 forbids emitting a frame
+/// when the picture has not moved — *"a live map that keeps emitting events while the topology is
+/// unchanged is showing activity the machine is not having"*, which is what
+/// `docker/acceptance/cases/098-spatial-live-map.case` asserts by requiring `take 5` to be unable
+/// to collect five events from a still system. v0.4.1 §33.3 forbids the other extreme:
+///
+/// > A supported interactive operation MUST NOT spend 30 seconds producing neither output nor
+/// > progress on the reference Profile M/L fixtures.
+///
+/// So the answer is neither a frame nor silence: it is **progress**, on the stream progress
+/// belongs on. §65.9 words the requirement exactly — *"an interactive command performing long
+/// expensive work must produce results, progress or a bounded refusal; a silent blank terminal is
+/// not acceptable behavior"*.
+///
+/// Ten seconds is a third of §33.3's budget: comfortably after the six-second quiet window case
+/// `098` proves a still system produces nothing in, and comfortably before the thirty seconds at
+/// which the shell would be in breach. Decisions: ADR-0492.
+const STILL_AFTER: Duration = Duration::from_secs(10);
+
+/// Says that the live map is watching and that nothing it draws has changed.
+///
+/// A note rather than a value: `take 3` does not consume it, `to json` does not collect it, and a
+/// script reading the values sees exactly the frames it would have seen. It is the same channel
+/// and the same shape every other note in this shell uses (spec §16.2).
+fn report_stillness(sources: usize, waited: Duration) {
+    crate::report::Reporter::new(ono_render::Presentation::choose(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        &[],
+    ))
+    .note(&format!(
+        "the live map has watched {sources} source{} for {} seconds and nothing it draws has \
+         changed; a value is emitted when the picture moves, not on a timer (spec v0.4 §25.2, \
+         v0.4.1 §33.3)",
+        if sources == 1 { "" } else { "s" },
+        waited.as_secs()
+    ));
 }
 
 /// How long a live view waits for the rest of a moment's events before it redraws.

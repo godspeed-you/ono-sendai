@@ -203,9 +203,10 @@ fn implementation_of(
         _ => {
             let target = contract.target()?;
             let capability = contract.provider_capability()?;
-            // `command` and `config` are answered above and by the evaluator; a generic producer
-            // over them would ask a provider that does not and should not exist.
-            if matches!(target, "command" | "config" | "context") {
+            // `command`, `config` and `limits` are answered above and by the evaluator; a generic
+            // producer over them would ask a provider that does not and should not exist. The
+            // limits in particular are the shell's own catalogue (v0.4.1 §12.4, ADR-0456).
+            if matches!(target, "command" | "config" | "context" | "limits") {
                 return None;
             }
             match contract.verb() {

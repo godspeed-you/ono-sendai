@@ -1,0 +1,248 @@
+# KUANG/11 confinement controls, as data.
+#
+# Source: v0.4.1 §16.1 (the controls the default native tier must attempt), §16.2 (every one of
+# their return values is checked), §16.3 (a mandatory failure prevents the exec), §16.4 (each
+# control is declared `mandatory` or `best_effort` in *one* central table), §16.5 (the report a
+# spawn carries), §17.2 (the execution tiers a name has to be able to express), §17.3 (no tier is
+# called a sandbox without its boundary), §52.1 (`kuang_confinement_controls` is one of the seven
+# machine-readable hardening registries), §52.3 (an unknown control id in a tier definition fails
+# the gate), and Appendix D, whose eleven rows are the source of truth for `requirement` and
+# `failure`. Decisions: ADR-0442, ADR-0448.
+#
+# Authority: this file is the table §16.4 asks for. `ono_kuang_protocol::confinement` carries the
+# same control ids, requirements and failure behaviours as Rust, and `cargo xtask spec-check`
+# compares the two in both directions — a control the runtime knows and this file omits is a
+# problem, and so is a control this file declares and the runtime has never heard of. That is the
+# §52.3 check: a fabricated control id in a tier below turns the gate red.
+#
+# The rule the whole file exists to serve, v0.4.1 §2.3, verbatim:
+#
+#   "If Ono claims that a safety control is applied before an operation, failure to apply that
+#    control MUST prevent the operation from starting."
+#
+# So a control is only `mandatory` here when the supervisor really does refuse the spawn on its
+# failure, and a control the tier does not install is `not_provided` rather than absent. Appendix
+# D's closing sentence — "The UI/documentation MUST never infer the last four rows from the first
+# rows" — is why filesystem isolation, network isolation, seccomp and Landlock appear as rows
+# with `not_provided` instead of being left out: a reader of this table can see that they were
+# considered and are not there.
+
+version: 1
+
+# ---------------------------------------------------------------------------------------------
+# Requirement vocabulary — §16.4. Every row of every tier carries exactly one of these.
+# ---------------------------------------------------------------------------------------------
+requirements:
+  - id: mandatory
+    doc: >-
+      The tier claims this control, so §2.3 applies: if it cannot be installed the operation it
+      protects does not start. For a pre-exec control that means the plugin never execs.
+  - id: best_effort
+    doc: >-
+      The tier attempts the control and continues without it. §16.4 still requires the failure to
+      be observable, so it appears in the confinement report as `failed` with the platform's own
+      reason, and a spawn that carries such a row is still a successful spawn.
+  - id: not_provided
+    doc: >-
+      The tier does not install this control at all. Present as a row rather than absent, so that
+      no reader infers the boundary from the controls that *are* here (Appendix D).
+
+# ---------------------------------------------------------------------------------------------
+# Failure vocabulary — Appendix D's `Failure` column.
+# ---------------------------------------------------------------------------------------------
+failures:
+  - id: spawn_fails
+    doc: The spawn is abandoned before `exec`; the caller gets a structured error naming the control.
+  - id: quarantine
+    doc: The instance is already running, so it is killed and quarantined (§18.2).
+  - id: refuse_brokered_operation
+    doc: The host call the plugin made is refused; the instance keeps running (§18.2 does not apply).
+  - id: recorded
+    doc: Nothing is refused. The failure is written into the confinement report and the audit trail.
+  - id: none
+    doc: The control is not installed, so it has no failure mode.
+
+# ---------------------------------------------------------------------------------------------
+# The controls — §16.1 and Appendix D. `id` is what a tier definition below references, what the
+# confinement report names, and what the `plugin.*_failed` errors of §16.3 carry.
+# ---------------------------------------------------------------------------------------------
+controls:
+  - id: capability_broker
+    doc: >-
+      Every host call the instance makes is resolved against its grants before it is served
+      (Appendix D row 1). This is capability *mediation* in §15.1's vocabulary, and it is the
+      only one of the three concepts the native tier provides completely.
+    spec: "Appendix D"
+  - id: protocol_limits
+    doc: >-
+      Frame size, depth and credit ceilings on everything the instance sends (Appendix D row 2).
+      A violation is a protocol violation, not a confinement failure, so its failure behaviour is
+      `quarantine` rather than `spawn_fails`.
+    spec: "Appendix D, §18.2"
+  - id: fd_hygiene
+    doc: >-
+      The child inherits no descriptor the host did not hand it. §16.1's "close-on-exec / fd
+      inheritance hygiene": an inherited descriptor is authority the manifest never declared.
+    spec: "§16.1, Appendix D"
+  - id: protocol_stdio
+    doc: >-
+      stdin and stdout are the protocol pipes and stderr is closed, so the instance speaks to the
+      host and to nothing else. §16.1's "controlled stdin/stdout/stderr protocol descriptors".
+    spec: "§16.1"
+  - id: session_separation
+    doc: >-
+      `setsid`: the instance leads its own session, so it cannot signal the shell's process group
+      and the terminal's signals do not reach it.
+    spec: "§16.1, §16.4, Appendix D"
+  - id: no_new_privs
+    doc: >-
+      `PR_SET_NO_NEW_PRIVS`: a setuid or file-capability binary the instance execs gains it
+      nothing it was not already given.
+    spec: "§16.1, §16.4, Appendix D"
+  - id: rlimit_data
+    doc: >-
+      `RLIMIT_DATA` at the negotiated `memory_max`. This is the ceiling the tier configures for
+      allocated memory, and the one `inspect plugin` reports against.
+    spec: "§16.1, §16.4"
+  - id: rlimit_address_space
+    doc: >-
+      `RLIMIT_AS`. §16.4 makes it mandatory *when configured by tier*; the native tier configures
+      `rlimit_data` instead, because `RLIMIT_AS` bounds reserved address space rather than
+      allocated memory and would refuse a threaded program that allocated nothing (ADR-0283).
+    spec: "§16.4"
+  - id: rlimit_cpu
+    doc: >-
+      `RLIMIT_CPU`. Mandatory when configured; the native tier expresses CPU as the scheduling
+      class of `scheduling_priority` rather than as a wall of CPU-seconds, because §31.67's
+      budget is a priority statement and a hard CPU ceiling would kill a long analysis the user
+      asked for.
+    spec: "§16.4"
+  - id: rlimit_open_files
+    doc: "`RLIMIT_NOFILE`: the instance cannot exhaust the shell's descriptor table."
+    spec: "§16.1, §16.4"
+  - id: rlimit_processes
+    doc: >-
+      `RLIMIT_NPROC`. Mandatory when configured; the native tier does not configure it, because
+      `RLIMIT_NPROC` counts every process the real user owns and would refuse a fork over
+      processes the package never created. Bounding what one package spawns needs a delegated
+      cgroup `pids.max` the shell does not have as an unprivileged user (ADR-0283).
+    spec: "§16.4"
+  - id: rlimit_file_size
+    doc: "`RLIMIT_FSIZE`: no single file the instance writes can fill the disk unnoticed."
+    spec: "§16.1"
+  - id: rlimit_core
+    doc: >-
+      `RLIMIT_CORE` at zero: the instance's address space is never written to a file the operator
+      did not ask for.
+    spec: "§16.1, §31.20"
+  - id: scheduling_priority
+    doc: >-
+      `setpriority` at the nice level the declared `cpu_budget` becomes. §16.4 makes this
+      `best_effort` unless policy explicitly requires it: a refused renice costs responsiveness,
+      not containment, and refusing the spawn over it would be a denial of service in the name of
+      a scheduling preference.
+    spec: "§16.4, §31.67"
+  - id: environment_sanitization
+    doc: >-
+      The instance's environment is built from nothing, with `PATH`, `HOME`, `LC_ALL` and `TZ`
+      set by the host. The shell's variables carry tokens, paths and session identity, and are
+      not a side channel.
+    spec: "§16.1, Appendix D, §31.80"
+  - id: working_directory
+    doc: >-
+      The instance starts in its own private directory under the host's state root, never in the
+      user's current directory.
+    spec: "§16.1, §31.31"
+  - id: process_lifetime
+    doc: >-
+      The supervisor owns the child: it is killed when the handle is dropped, so no instance
+      outlives the shell that started it.
+    spec: "§16.1"
+  - id: filesystem_isolation
+    doc: >-
+      Kernel policy preventing direct filesystem access outside an allowlist — §15.1's third
+      concept. The native tier does not provide it: a native plugin can open any file its Unix
+      account can. `filesystem.*` capabilities are brokered, and a plugin that does not ask the
+      host is not stopped by a broker.
+    spec: "§15.1, §17.1, Appendix D"
+  - id: network_isolation
+    doc: >-
+      Kernel policy preventing direct network access outside an allowlist. Not provided by the
+      native tier, for the same reason as `filesystem_isolation`.
+    spec: "§15.1, §17.1, Appendix D"
+  - id: seccomp_allowlist
+    doc: >-
+      A seccomp syscall allowlist. §17.1 does not require it for v0.4.1; it belongs to a future
+      `native-isolated` tier.
+    spec: "§17.1, Appendix D"
+  - id: landlock_allowlist
+    doc: >-
+      A Landlock path allowlist. §17.1 does not require it for v0.4.1; it belongs to a future
+      `native-isolated` tier.
+    spec: "§17.1, Appendix D"
+
+# ---------------------------------------------------------------------------------------------
+# The execution tiers — §17.2. A tier is a *name* that says which controls are in force, so that
+# stronger isolation can arrive later without a boolean having to mean two different things
+# (§17.3, ADR-0448). Every `control` below must be an id from `controls`; an unknown one fails
+# the gate (§52.3).
+# ---------------------------------------------------------------------------------------------
+tiers:
+  - id: native-confined
+    available: true
+    manifest_kind: native-process
+    summary: >-
+      A process of the Ono user, under capability mediation and process confinement, with no
+      kernel isolation of the filesystem or the network.
+    boundary: >-
+      A native KUANG/11 plugin executes as a process of the Ono user. Ono limits its brokered
+      capabilities and applies process confinement, but native execution in v0.4.1 is not a
+      complete filesystem or network sandbox. Install native plugins only from sources you are
+      willing to run as your user account.
+    controls:
+      - {control: capability_broker, requirement: mandatory, failure: refuse_brokered_operation}
+      - {control: protocol_limits, requirement: mandatory, failure: quarantine}
+      - {control: fd_hygiene, requirement: mandatory, failure: spawn_fails}
+      - {control: protocol_stdio, requirement: mandatory, failure: spawn_fails}
+      - {control: session_separation, requirement: mandatory, failure: spawn_fails}
+      - {control: no_new_privs, requirement: mandatory, failure: spawn_fails}
+      - {control: rlimit_data, requirement: mandatory, failure: spawn_fails}
+      - {control: rlimit_address_space, requirement: not_provided, failure: none}
+      - {control: rlimit_cpu, requirement: not_provided, failure: none}
+      - {control: rlimit_open_files, requirement: mandatory, failure: spawn_fails}
+      - {control: rlimit_processes, requirement: not_provided, failure: none}
+      - {control: rlimit_file_size, requirement: mandatory, failure: spawn_fails}
+      - {control: rlimit_core, requirement: mandatory, failure: spawn_fails}
+      - {control: scheduling_priority, requirement: best_effort, failure: recorded}
+      - {control: environment_sanitization, requirement: mandatory, failure: spawn_fails}
+      - {control: working_directory, requirement: mandatory, failure: spawn_fails}
+      - {control: process_lifetime, requirement: mandatory, failure: spawn_fails}
+      - {control: filesystem_isolation, requirement: not_provided, failure: none}
+      - {control: network_isolation, requirement: not_provided, failure: none}
+      - {control: seccomp_allowlist, requirement: not_provided, failure: none}
+      - {control: landlock_allowlist, requirement: not_provided, failure: none}
+
+  - id: native-isolated
+    available: false
+    manifest_kind: null
+    summary: >-
+      The stronger native tier of §17.2: everything `native-confined` installs, plus kernel policy
+      over the filesystem and the network.
+    boundary: >-
+      Not implemented in v0.4.1. §17.1 does not require Landlock, seccomp, user namespaces or
+      network namespaces, and §17.3 forbids describing an isolation boundary the implementation
+      does not have — so this tier exists here as a name the model can already express and
+      nowhere else. Nothing selects it, and `available: false` is what stops it being offered.
+    controls: []
+
+  - id: wasm
+    available: false
+    manifest_kind: wasm-component
+    summary: >-
+      The capability-limited component tier of spec §31.10, where confinement is a property of
+      the runtime rather than of a process.
+    boundary: >-
+      Not implemented in this build. Issue #3 carries the wasm-component tier; until it exists,
+      declaring `runtime.kind: wasm-component` is refused at load rather than silently served by
+      the native path.
+    controls: []

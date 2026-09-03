@@ -39,12 +39,23 @@
 //! forbids presenting a scope as a security boundary when it is not one.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use ono_kuang_protocol::CpuBudget;
+use ono_kuang_protocol::{
+    Control, CpuBudget, ExecutionTier, KuangError, KuangErrorCode, Requirement,
+};
+
+use crate::platform::{ConfinementPlan, ConfinementPlatform, PLATFORM_CONTROLS};
+use crate::report::{self, ConfinementReport, ControlResult};
 
 /// The confinement one instance was started under, as it was actually applied (spec §31.10).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sandbox {
+    /// The named execution tier this instance runs in (v0.4.1 §17.2).
+    ///
+    /// A name rather than a boolean, so that "which controls are in force" has an answer that
+    /// stronger isolation can extend without changing what the old answer meant (§17.3).
+    pub tier: ExecutionTier,
     /// The ceiling on allocated memory in bytes: `RLIMIT_DATA`.
     pub memory_max: u64,
     /// The scheduling class the package declared.
@@ -110,6 +121,7 @@ pub fn native_process(
     working_directory: PathBuf,
 ) -> Sandbox {
     Sandbox {
+        tier: ExecutionTier::NativeConfined,
         memory_max,
         cpu_class,
         nice: nice_of(cpu_class),
@@ -137,20 +149,126 @@ pub fn native_process(
 /// it not.
 const ENVIRONMENT: &[&str] = &["PATH", "HOME", "LC_ALL", "TZ"];
 
-/// Applies `sandbox` to `command`, so the artifact starts inside it.
+/// Spawns `command` under `sandbox`, or fails before a single plugin instruction runs.
 ///
-/// The working directory is created if it does not exist; a package that cannot be given its own
-/// directory keeps the one it was configured with, and the load then fails on `spawn` with the
-/// operating system's own reason rather than silently starting somewhere else.
-pub fn apply(command: &mut tokio::process::Command, sandbox: &Sandbox) {
-    let _ = std::fs::create_dir_all(&sandbox.working_directory);
-    command.current_dir(&sandbox.working_directory);
+/// This is the boundary v0.4.1 §2.3 talks about: *"If Ono claims that a safety control is applied
+/// before an operation, failure to apply that control MUST prevent the operation from starting."*
+/// Every control the tier calls mandatory is installed and its result checked (§16.2); a
+/// mandatory refusal abandons the spawn and returns the structured error of §16.3 naming the
+/// control (§67.3); a best-effort refusal is recorded and the spawn proceeds (§16.4). The
+/// [`ConfinementReport`] that comes back with the child is §16.5's, and it comes back only when
+/// every required control reads `applied`.
+///
+/// The working directory is created if it does not exist. A package that cannot be given its own
+/// directory is not started somewhere else — `working_directory` is mandatory, so the load fails
+/// with the operating system's own reason.
+///
+/// `package` is what the error calls the thing that did not start: the package id where the
+/// caller has one.
+///
+/// # Errors
+///
+/// `plugin.confinement_failed`, `plugin.resource_limit_failed` or `plugin.no_new_privs_failed`
+/// when a mandatory control could not be installed, and `load.runtime_unavailable` when the
+/// artifact itself could not be executed.
+pub fn spawn(
+    command: &mut tokio::process::Command,
+    sandbox: &Sandbox,
+    platform: &Arc<dyn ConfinementPlatform>,
+    package: &str,
+) -> Result<(tokio::process::Child, ConfinementReport), KuangError> {
+    let outcomes = Arc::new(report::Outcomes::map().map_err(|error| {
+        KuangError::new(
+            KuangErrorCode::PluginConfinementFailed,
+            format!(
+                "{package} was not started because the supervisor could not open the channel a \
+                 confined child reports its controls through: {error}"
+            ),
+        )
+    })?);
+    let parent = apply(command, sandbox);
+
+    // A control the parent installs — the private directory, the sanitized environment, the
+    // protocol descriptors — is decided before the fork, so its failure costs no child at all.
+    let before = report::parent_only(sandbox.tier, &parent);
+    if let Some(refusal) = before.refusal(package) {
+        return Err(refusal);
+    }
+
+    apply_limits(command, sandbox, platform, &outcomes);
+
+    match command.spawn() {
+        Ok(child) => {
+            let report = report::build(sandbox.tier, &outcomes, &parent);
+            if let Some(refusal) = report.refusal(package) {
+                // Unreachable while `install_controls` returns `Err` on a mandatory refusal, and
+                // deliberately not an assertion: §16.5's invariant is that a *successful* spawn
+                // implies every required control applied, so the honest thing to do with a child
+                // that contradicts it is to not have one.
+                drop(child);
+                return Err(refusal);
+            }
+            Ok((child, report))
+        }
+        Err(error) => {
+            let report = report::build(sandbox.tier, &outcomes, &parent);
+            Err(report.refusal(package).unwrap_or_else(|| {
+                KuangError::new(
+                    KuangErrorCode::LoadRuntimeUnavailable,
+                    format!("cannot start `{package}`: {error}"),
+                )
+            }))
+        }
+    }
+}
+
+/// The controls the parent installs on `command` before the fork, and what became of each.
+///
+/// These are §16.1's controls that are not syscalls in the child: the working directory the
+/// instance is given, the environment it did not choose, the descriptors it speaks the protocol
+/// over, and the supervisor's ownership of its lifetime. Two more — the capability broker and the
+/// protocol ceilings — are not installed at a moment at all: they hold for the instance's whole
+/// life, because every host call goes through the broker and every frame through the limits, so
+/// they are recorded as applied by construction.
+fn apply(
+    command: &mut tokio::process::Command,
+    sandbox: &Sandbox,
+) -> Vec<(Control, ControlResult, Option<String>)> {
+    let mut parent = Vec::new();
+    match std::fs::create_dir_all(&sandbox.working_directory) {
+        Ok(()) => {
+            command.current_dir(&sandbox.working_directory);
+            parent.push((Control::WorkingDirectory, ControlResult::Applied, None));
+        }
+        Err(error) => parent.push((
+            Control::WorkingDirectory,
+            ControlResult::Failed,
+            Some(error.to_string()),
+        )),
+    }
     command.env_clear();
     command.env("PATH", "/usr/local/bin:/usr/bin:/bin");
     command.env("HOME", &sandbox.working_directory);
     command.env("LC_ALL", "C");
     command.env("TZ", "UTC");
-    apply_limits(command, sandbox);
+    parent.push((
+        Control::EnvironmentSanitization,
+        ControlResult::Applied,
+        None,
+    ));
+
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    parent.push((Control::ProtocolStdio, ControlResult::Applied, None));
+
+    command.kill_on_drop(true);
+    parent.push((Control::ProcessLifetime, ControlResult::Applied, None));
+
+    parent.push((Control::CapabilityBroker, ControlResult::Applied, None));
+    parent.push((Control::ProtocolLimits, ControlResult::Applied, None));
+    parent
 }
 
 #[cfg(unix)]
@@ -159,55 +277,76 @@ pub fn apply(command: &mut tokio::process::Command, sandbox: &Sandbox) {
     reason = "spec §31.15's ceilings can only be set between fork and exec, and the standard \
               library offers exactly one way to run code there (ADR-0283)"
 )]
-fn apply_limits(command: &mut tokio::process::Command, sandbox: &Sandbox) {
-    let memory_max = sandbox.memory_max;
-    let open_files = sandbox.open_files;
-    let file_size = sandbox.file_size;
-    let nice = sandbox.nice;
+fn apply_limits(
+    command: &mut tokio::process::Command,
+    sandbox: &Sandbox,
+    platform: &Arc<dyn ConfinementPlatform>,
+    outcomes: &Arc<report::Outcomes>,
+) {
+    let plan = ConfinementPlan {
+        memory_max: sandbox.memory_max,
+        open_files: sandbox.open_files,
+        file_size: sandbox.file_size,
+        nice: sandbox.nice,
+    };
+    let tier = sandbox.tier;
+    let platform = Arc::clone(platform);
+    let outcomes = Arc::clone(outcomes);
 
     // SAFETY: `pre_exec` runs in the forked child, between `fork` and `execve`, where only
-    // async-signal-safe operations are allowed: no allocation, no locks, no reentrant libc. Every
-    // call in this closure is a direct syscall wrapper — `setrlimit`, `setpriority`, `setsid`,
-    // `prctl` — each of which is async-signal-safe, and the values they read were computed before
-    // the fork. Nothing here allocates or takes a lock, so the closure is safe in the one
-    // environment it ever runs in.
+    // async-signal-safe operations are allowed: no allocation, no locks, no reentrant libc.
+    // `install_controls` calls direct syscall wrappers with values computed before the fork,
+    // records each outcome with one relaxed atomic store into a page mapped before the fork, and
+    // builds its errors with `io::Error::last_os_error`, which allocates nothing. Nothing here
+    // allocates or takes a lock, so the closure is safe in the one environment it ever runs in
+    // (ADR-0443).
     unsafe {
-        command.pre_exec(move || {
-            set_limit(libc::RLIMIT_DATA, memory_max);
-            set_limit(libc::RLIMIT_NOFILE, open_files);
-            set_limit(libc::RLIMIT_FSIZE, file_size);
-            // A core dump of a package's address space would write the shell's secrets, if it
-            // ever held any, to a file the operator did not ask for (spec §31.20).
-            set_limit(libc::RLIMIT_CORE, 0);
-            if nice != 0 {
-                libc::setpriority(libc::PRIO_PROCESS, 0, nice);
-            }
-            // Its own session: the package cannot signal the shell's process group, and the
-            // terminal's signals do not reach it (spec §31.34 — failure degrades the plugin).
-            libc::setsid();
-            // A setuid program the package execs gains it nothing (spec §31.80).
-            libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
-            Ok(())
-        });
+        command.pre_exec(move || install_controls(tier, platform.as_ref(), &plan, &outcomes));
     }
 }
 
+/// Installs every control the platform owns, in order, and stops at the first mandatory refusal.
+///
+/// Runs in the forked child. Returning `Err` is what prevents the `exec`: the standard library
+/// abandons the spawn and reports the failure to the parent, so no plugin instruction ever runs
+/// (§16.3). The shared page carries *which* control it was, because an errno cannot say (§16.5).
 #[cfg(unix)]
-#[allow(
-    unsafe_code,
-    reason = "the resource-limit syscall has no safe wrapper in the standard library (ADR-0283)"
-)]
-fn set_limit(resource: u32, value: u64) {
-    // SAFETY: `rlimit` is a plain repr(C) struct written entirely before the call, and the
-    // pointer is to a local that outlives it. `setrlimit` is async-signal-safe, which is what
-    // makes it legal in the `pre_exec` child.
-    unsafe {
-        let limit = libc::rlimit {
-            rlim_cur: value,
-            rlim_max: value,
-        };
-        libc::setrlimit(resource, &raw const limit);
+fn install_controls(
+    tier: ExecutionTier,
+    platform: &dyn ConfinementPlatform,
+    plan: &ConfinementPlan,
+    outcomes: &report::Outcomes,
+) -> std::io::Result<()> {
+    for &control in PLATFORM_CONTROLS {
+        let requirement = tier.requirement(control);
+        if requirement == Requirement::NotProvided {
+            outcomes.record(control, ControlResult::Skipped, 0);
+            continue;
+        }
+        match platform.install(control, plan) {
+            Ok(()) => outcomes.record(control, ControlResult::Applied, 0),
+            Err(error) => {
+                // A control this platform does not implement was not refused — it was never
+                // there. §2.6 makes the difference matter: `skipped` says nothing is in force,
+                // where `failed` would imply a kernel that said no. Either way it is not
+                // `applied`, so a mandatory one still abandons the spawn below.
+                let (result, errno) = match error.kind() {
+                    std::io::ErrorKind::Unsupported => (ControlResult::Skipped, 0),
+                    _ => (
+                        ControlResult::Failed,
+                        error.raw_os_error().unwrap_or(libc::EINVAL),
+                    ),
+                };
+                outcomes.record(control, result, errno);
+                // v0.4.1 §2.3, §16.3, Appendix D: for a mandatory control the Failure column
+                // reads `spawn fails`, and this is where it does.
+                if requirement.is_mandatory() {
+                    return Err(error);
+                }
+            }
+        }
     }
+    Ok(())
 }
 
 /// Where an instance runs and keeps what is its own (spec §31.31).

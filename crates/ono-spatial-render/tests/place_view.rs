@@ -12,15 +12,10 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_value::{FieldDef, FieldType, Provenance, RecordValue, Schema, SchemaId, Value};
+use ono_value::{FieldType, Provenance, RecordValue, SchemaId, Value};
 
-fn schema(id: &str, fields: &[(&str, FieldType)]) -> std::sync::Arc<Schema> {
-    let mut builder = Schema::builder(SchemaId::new(id, 1), id);
-    for (name, kind) in fields {
-        builder = builder.field(FieldDef::new(name, kind.clone()));
-    }
-    std::sync::Arc::new(builder.build().expect("a well-formed schema"))
-}
+mod support;
+use support::schema;
 
 /// The root place as `look` finds it on an ordinary host: six exits, and a neighbourhood whose
 /// budget hid a great many of the places behind them.

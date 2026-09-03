@@ -51,6 +51,22 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     /// The targets this provider answers about.
     fn targets(&self) -> &[&str];
 
+    /// The token this provider writes into the `provider` field of the records it makes.
+    ///
+    /// A schema whose identity begins with `provider` — `ono.package/1`, `ono.service/1` — says
+    /// which of several answering systems an object belongs to, and the value it says is not the
+    /// provider's id: both Red Hat and SUSE keep the one `rpm` database, and one provider serves
+    /// both. So the token is the provider's to state, and routing an action to the provider a
+    /// record names is the registry's to do (ADR-0559).
+    ///
+    /// `None` — the default — for a provider whose targets no second provider claims. Where two
+    /// providers claim one target and its schema identifies by `provider`, each of them must
+    /// answer, and with a different token; `cargo xtask spec-check` holds that over the
+    /// declarations in `docs/spec/providers/`.
+    fn identity_token(&self) -> Option<&str> {
+        None
+    }
+
     /// The schemas it produces.
     fn schemas(&self) -> Vec<Arc<Schema>>;
 

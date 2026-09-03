@@ -12,15 +12,10 @@
 )]
 
 use ono_spatial_render::{Charset, map_lines};
-use ono_value::{FieldDef, FieldType, MapValue, Provenance, RecordValue, Schema, SchemaId, Value};
+use ono_value::{FieldType, MapValue, Provenance, RecordValue, SchemaId, Value};
 
-fn schema(id: &str, fields: &[(&str, FieldType)]) -> std::sync::Arc<Schema> {
-    let mut builder = Schema::builder(SchemaId::new(id, 1), id);
-    for (name, kind) in fields {
-        builder = builder.field(FieldDef::new(name, kind.clone()));
-    }
-    std::sync::Arc::new(builder.build().expect("a well-formed schema"))
-}
+mod support;
+use support::schema;
 
 /// A map centred on a process whose neighbours are reached by relationship only: two of them
 /// share a display name, as four `containerd-shim` processes do on a real host.

@@ -59,9 +59,7 @@ pub fn run(session: &mut Session, name: &str, values: Vec<Value>) -> Eval<ExitSt
             sink
         };
         sink.write(&values);
-        let total = values.len();
-        let dropped = session.retain_result(values);
-        crate::report::retention_notice(dropped, total);
+        crate::report::retention_notice(session.retain(&values));
         return Ok(ExitStatus::SUCCESS);
     }
 
@@ -77,9 +75,7 @@ pub fn run(session: &mut Session, name: &str, values: Vec<Value>) -> Eval<ExitSt
     if let Some(value) = selected {
         session.select(value);
     }
-    let total = values.len();
-    let dropped = session.retain_result(values);
-    crate::report::retention_notice(dropped, total);
+    crate::report::retention_notice(session.retain(&values));
     Ok(ExitStatus::SUCCESS)
 }
 
@@ -87,7 +83,7 @@ pub fn run(session: &mut Session, name: &str, values: Vec<Value>) -> Eval<ExitSt
 fn browse(values: &[Value], tree: bool) -> std::io::Result<Option<Value>> {
     let theme = Theme::default();
     let renderer = Renderer::new();
-    let (width, height) = crate::native::live_geometry();
+    let (width, height) = crate::eval::native::live_geometry();
     let page = height.saturating_sub(6).max(4);
     let layout = Layout::new(width);
 

@@ -9,8 +9,16 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Least privilege (spec §43.3): the default for every job is read, and `contents: write` is
+# granted below to `publish` alone — the one job that attaches anything to the release.
 permissions:
-  contents: write
+  contents: read
+
+# Tag uniqueness (spec §43.5): one publication per tag, and a second run for the same tag waits
+# rather than racing the first to attach a conflicting artifact.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,37 +37,190 @@ jobs:
             arch: aarch64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch, 2026-08-05
         with:
           toolchain: "1.94"
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
-          tool: cargo-deb,cargo-generate-rpm,cross
+          # Exact versions, from Cargo.toml's [workspace.metadata.release-tools]: the packaging
+          # tool decides what the artifact is, so it is an input to the release and not a
+          # detail of the day it ran (spec §44.2, ADR-0450).
+          tool: cargo-deb@3.7.0,cargo-generate-rpm@0.21.0,cross@0.2.5
       - name: build the packages
         run: scripts/package.sh
       - name: install and run them in fresh containers
         run: scripts/package-check.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: packages-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
+      # §48.4: what this job installed, by digest. `publish` compares it against the bytes it is
+      # about to attach, so a rebuild between the two is a failure rather than an invisible
+      # substitution (ADR-0532).
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tested-${{ matrix.arch }}
+          path: target/package-check.sha256
+          if-no-files-found: error
+
+  rebuild:
+    # §46.5 wants two builds "in fresh clean environments", and the freshest clean environment
+    # this repository can reach is a second runner: a different machine, a different container
+    # daemon, a different temporary filesystem, the same commit. It builds the same artifacts
+    # with the same script and never installs them — the proving is `package`'s job, and these
+    # bytes exist only to be compared (ADR-0527).
+    name: rebuild (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch, 2026-08-05
+        with:
+          toolchain: "1.94"
+      - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        with:
+          tool: cargo-deb@3.7.0,cargo-generate-rpm@0.21.0,cross@0.2.5
+      - name: build the packages a second time
+        run: scripts/package.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rebuild-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  reproducibility:
+    # §46.6: each architecture satisfies reproducibility on its own, so the comparison is per
+    # architecture and one green x86_64 proves nothing about aarch64.
+    name: reproducibility (${{ matrix.arch }})
+    needs: [package, rebuild]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch, 2026-08-05
+        with:
+          toolchain: "1.94"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: packages-${{ matrix.arch }}
+          path: first
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rebuild-${{ matrix.arch }}
+          path: second
+      - name: compare the two builds byte for byte
+        run: scripts/rebuild-check.sh --compare first second
+
+  inputs:
+    # Appendix H: the release states what it was made of, before it makes anything. The manifest
+    # is written by a repository-owned task from the same files the gate's pin scanners read, so
+    # it cannot claim a pin the gate never approved (spec §43.2, ADR-0451).
+    name: release input manifest
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # `git describe` needs the tag, and the manifest records the tag it is releasing.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch, 2026-08-05
+        with:
+          toolchain: "1.94"
+      - name: write the build input manifest
+        run: cargo run --locked --quiet --package xtask -- build-manifest
+      - name: show what the release was given
+        run: cat dist/build-inputs.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-inputs
+          path: dist/build-inputs.json
+          if-no-files-found: error
 
   publish:
     name: attach to the release
-    needs: package
+    needs: [package, inputs, reproducibility]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    permissions:
+      # `contents: write` attaches the assets; `id-token: write` is what keyless signing needs
+      # and is the whole of the signing secret — a token this run can prove, rather than a key
+      # somebody has to keep (spec §43.3, §47.3, ADR-0529). Both live on this job alone, and a
+      # fork cannot start this workflow: it triggers on a tag push (spec §43.4).
+      contents: write
+      id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: packages-*
           path: dist
           merge-multiple: true
-      - name: list what is being published
-        run: ls -l dist
-      - uses: softprops/action-gh-release@v2
+      # Published beside the packages: the answer to "what did we trust to produce these bytes"
+      # is only useful to someone who has the bytes (Appendix H).
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          files: dist/*
-          generate_release_notes: true
+          name: build-inputs
+          path: dist
+      # Not into dist/: this is the record of what was proven, not one of the bytes being
+      # published (§48.4, ADR-0531). One subdirectory per architecture, because each record is
+      # written by the native runner that installed its own packages and they share a file name.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: tested-*
+          path: tested
+      # §47.1-§47.2: one manifest over every downloadable artifact of the release, written after
+      # both architectures and the input manifest are in one directory, because "every artifact
+      # in the release" is only knowable there (ADR-0528).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: repository
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch, 2026-08-05
+        with:
+          toolchain: "1.94"
+      - name: write and check the checksum manifest
+        working-directory: repository
+        run: |
+          cargo run --locked --quiet --package xtask -- checksums --dir ../dist
+          cargo run --locked --quiet --package xtask -- checksums --dir ../dist --verify \
+            --tested ../tested
+      # §47.4: the provenance is generated by the trusted workflow, from the Appendix H input
+      # manifest and this run's own identity — never from anything the build produced. It binds
+      # every published artifact and the checksum manifest itself (ADR-0530).
+      - name: write and check the build provenance
+        working-directory: repository
+        run: |
+          cargo run --locked --quiet --package xtask -- provenance --dir ../dist
+          cargo run --locked --quiet --package xtask -- provenance --dir ../dist --verify
+          cat ../dist/build-provenance.json
+      # §47.3: keyless. cosign is pinned by the installer action's commit and by the cosign
+      # version it fetches, because a signing tool is an input to the release (spec §44.2).
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v3.1.3"
+      - name: sign the checksum manifest and check the signature
+        run: repository/scripts/sign-release.sh --dir dist
+      # §62.5: each artifact digest present in checksum and provenance output *before*
+      # publication. The publishing script checks this again before it drafts anything, because a
+      # script a maintainer can run must not assume its caller checked — here it is a step of the
+      # pipeline, so the order §49.1 draws is visible in the workflow and not only inside a file.
+      - name: verify the release the way a reader will
+        run: repository/scripts/verify-release.sh --dir dist
+      - name: list what is being published
+        run: ls -l dist && cat dist/SHA256SUMS
+      # §49.4: verify, draft, upload, check the asset inventory by digest, and only then make the
+      # release visible. A first-party script rather than an action, because the order is the
+      # guarantee and §43.2 asks that critical release logic be readable here (ADR-0532).
+      - name: publish the already-tested bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: repository/scripts/publish-release.sh --tag "${GITHUB_REF#refs/tags/}" --dir dist

@@ -1,0 +1,71 @@
+# The dependency policy of spec §45, enforced by `cargo deny` from `scripts/gate.sh` and from
+# `.github/workflows/audit.yml` (ADR-0449).
+#
+# Four questions, and this file answers all four rather than leaving any of them to a default:
+# is anything here known to be vulnerable, is every licence one this project may ship, is the
+# graph free of the duplicates and the crates we refuse, and did every crate come from a source
+# we approved. `xtask spec-check` refuses a version of this file that stops answering one of
+# them, and refuses a waived advisory that has no expiry date.
+
+# --- advisories (spec §45.1) --------------------------------------------------------------------
+
+[advisories]
+# A yanked release is a release its author withdrew. Building on one is building on something
+# nobody stands behind any more.
+yanked = "deny"
+unmaintained = "workspace"
+# Every waiver needs a reason that says why the vulnerable path is unreachable and names the day
+# the waiver dies, and `xtask spec-check` enforces both — including the date, which turns a red
+# gate on when it passes:
+#
+#   ignore = [{ id = "RUSTSEC-0000-0000", reason = "why the path is unreachable, expires 2026-12-31" }]
+#
+# Spec §45.1 allows a known vulnerability past the gate only with a note saying why the
+# vulnerable path is unreachable and a date by which it goes away. An open-ended waiver is how a
+# known vulnerability becomes a permanent one.
+ignore = [
+    # Archived, not vulnerable. `rustls-pemfile` was retired in August 2025 in favour of the same
+    # code inside `rustls-pki-types`, and `ono-remote` uses it for one thing: reading the local
+    # certificate and key files of the host's own identity (ADR-0353), which are files the user
+    # already owns. No exploitable path is claimed by the advisory and none is reachable from the
+    # network. The date is the deadline, not a preference: the migration to
+    # `rustls_pki_types::pem::PemObject` belongs to the owner of `crates/ono-remote`, and this
+    # waiver expires whether or not it has happened (spec §45.1, ADR-0449).
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile is archived rather than vulnerable; ono-remote reads only local identity files with it, and the migration to rustls-pki-types is tracked for crates/ono-remote (ADR-0449), expires 2027-03-01" },
+]
+
+# --- licences (spec §45.2) ----------------------------------------------------------------------
+
+[licenses]
+# Everything this project ships is MIT (see LICENSE), and every dependency must be compatible
+# with distributing a binary under it. The list is deliberately short: an addition is a decision
+# about what this project may be redistributed as, so it belongs in a diff somebody reads.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "ISC",          # the `ring` half of `Apache-2.0 AND ISC`
+    "BSD-3-Clause",
+    "Unicode-3.0",  # the character tables of `icu_*`, as `(MIT OR Apache-2.0) AND Unicode-3.0`
+]
+confidence-threshold = 0.93
+
+# --- bans (spec §45.2) --------------------------------------------------------------------------
+
+[bans]
+# Two versions of one crate is ordinary in a large graph and is not by itself a defect; it is
+# worth seeing, because it is how a fixed vulnerability keeps a second life in an old copy.
+multiple-versions = "warn"
+wildcards = "deny"
+# A dependency substituted for another one silently is the shape a supply-chain attack takes.
+deny = []
+
+# --- sources (spec §45.2, §45.3) ----------------------------------------------------------------
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Nothing here comes from git. A git dependency needs an immutable `rev` and an entry in
+# `[workspace.metadata.supply-chain.git]` of the workspace manifest before the gate accepts it
+# (spec §45.3).
+allow-git = []

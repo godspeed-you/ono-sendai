@@ -25,7 +25,9 @@
 
 mod adapters;
 mod negotiate;
+mod platform;
 mod policy;
+mod report;
 mod sandbox;
 mod state;
 mod supervisor;
@@ -33,9 +35,14 @@ mod trail;
 
 pub use adapters::{AdapterPackageError, declared_executables, validate_package};
 pub use negotiate::{HostLimits, negotiate};
+pub use platform::{
+    ConfinementPlan, ConfinementPlatform, NativePlatform, PLATFORM_CONTROLS,
+    is_installed_by_the_platform,
+};
 pub use policy::{DenialSource, Evaluation, Grant, Policy, ScopeUse, denial_error};
+pub use report::{ConfinementEntry, ConfinementReport, ControlResult};
 pub use sandbox::{
-    Confinement, Sandbox, allocated_bytes, cpu_nanoseconds, native_process, nice_of,
+    Confinement, Sandbox, allocated_bytes, cpu_nanoseconds, native_process, nice_of, spawn,
     working_directory,
 };
 pub use state::StateStore;

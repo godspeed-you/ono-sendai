@@ -636,6 +636,10 @@ pub(crate) fn manager_failure(program: &Path, answer: &Answer) -> ErrorValue {
 
 #[async_trait::async_trait]
 impl Provider for PackageProvider {
+    fn identity_token(&self) -> Option<&str> {
+        Some(DPKG)
+    }
+
     fn id(&self) -> &str {
         PACKAGE_PROVIDER_ID
     }

@@ -247,3 +247,37 @@ errors:
       Effective authority is the intersection of local and remote policy (spec §31.40). A local
       grant never becomes a remote grant on its own; change the policy on the host that owns the
       objects.
+
+  # --- plugin: confinement could not be installed, v0.4.1 §16.3, §18.1 -------------------------
+  #
+  # A family §31.79 does not have, added by v0.4.1 §16.3, which names all three codes verbatim.
+  # It is a family of its own rather than three more `load.*` codes because §18.1 makes it a
+  # *launch* failure with a consequence the load family does not carry: the instance never
+  # started, so it MUST NOT be quarantined, and there is nothing to inspect afterwards. 801 is
+  # the next free block after §31.79's `701 remote` (ADR-0444).
+  - code: Ono-Sendai-K11801
+    name: plugin.confinement_failed
+    kind: safety
+    summary: A mandatory confinement control could not be installed, so the plugin was not started.
+    help: >-
+      The metadata names the control and carries the operating system's own reason. v0.4.1 §2.3
+      is why nothing ran: a safety control Ono says it applies before an operation must prevent
+      that operation when it cannot be applied. The package is not quarantined — it never
+      started, so there is nothing to hold (§18.1).
+  - code: Ono-Sendai-K11802
+    name: plugin.resource_limit_failed
+    kind: safety
+    summary: A mandatory resource limit could not be installed, so the plugin was not started.
+    help: >-
+      The metadata names which limit and the value that was refused. A `setrlimit` refusal is
+      usually a hard ceiling below the requested soft one, which is a configuration question
+      about the shell's own limits rather than about the package (§59.8).
+  - code: Ono-Sendai-K11803
+    name: plugin.no_new_privs_failed
+    kind: safety
+    summary: "`PR_SET_NO_NEW_PRIVS` could not be installed, so the plugin was not started."
+    help: >-
+      Without it a setuid or file-capability binary the package execs could gain authority the
+      package was never granted, which is the one thing process confinement is for. On a kernel
+      that does not implement the option there is no confined way to run a native package
+      (§59.7).

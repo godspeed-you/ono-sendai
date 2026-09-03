@@ -62,6 +62,8 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
     let schemas = load_directory(&spec.join("schemas"))?;
     let commands = load_directory(&spec.join("commands"))?;
     let packs = load_packs(&spec.join("adapters").join("first-party"))?;
+    let streaming = load(&spec.join("hardening").join("streaming_classification.yaml"))?;
+    let boundaries = load(&spec.join("hardening").join("security_boundaries.yaml"))?;
 
     let mut pages = vec![
         Page {
@@ -91,6 +93,26 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
         Page {
             path: "docs/reference/capabilities.md".to_owned(),
             contents: capabilities_page(capabilities.as_ref()),
+        },
+        Page {
+            path: "docs/reference/streaming.md".to_owned(),
+            contents: streaming_page(streaming.as_ref()),
+        },
+        Page {
+            path: "docs/reference/terminology.md".to_owned(),
+            contents: terminology_page(),
+        },
+        Page {
+            path: "docs/reference/remote-trust.md".to_owned(),
+            contents: remote_trust_page(),
+        },
+        Page {
+            path: "docs/reference/security-boundaries.md".to_owned(),
+            contents: security_boundaries_page(boundaries.as_ref()),
+        },
+        Page {
+            path: "docs/reference/release-verification.md".to_owned(),
+            contents: release_verification_page(),
         },
     ];
     if !packs.is_empty() {
@@ -182,6 +204,20 @@ fn index_page() -> String {
          | [Schemas](schemas.md) | `docs/spec/schemas/*.v1.yaml` — the object contracts of spec §28 |\n\
          | [Adapters](adapters/README.md) | `docs/spec/adapters/first-party/*.yaml` — what each \
          external tool adapts, at which versions, through which invocations (spec v0.3 §1.66) |\n\
+         | [Streaming](streaming.md) | `docs/spec/hardening/streaming_classification.yaml` — what \
+         each pipeline operation may do to a stream, and what the order of events means (v0.4.1 \
+         Appendix E, §27) |\n\
+         | [Terminology](terminology.md) | `docs/spec/hardening/terminology.yaml` — the eight \
+         security terms of v0.4.1 §19.1 and what each one promises |\n\
+         | [Remote trust](remote-trust.md) | `docs/spec/hardening/remote_trust.yaml` — the six \
+         things a remote link keeps apart, and what each one does not establish (v0.4.1 §51.3) |\n\
+         | [Security boundaries](security-boundaries.md) | \
+         `docs/spec/hardening/security_boundaries.yaml` — where untrusted input enters, what has \
+         to hold before it goes on, which crate owns it and the test that proves the refusal \
+         (v0.4.1 §6.1, §6.2, §20) |\n\
+         | [Release verification](release-verification.md) | \
+         `docs/spec/hardening/release_verification.yaml` — how to check a release's checksums, \
+         signature and provenance before installing it (v0.4.1 §47.5, §67.7) |\n\
          | [Errors](errors.md) | `docs/spec/errors.yaml` — the stable taxonomy of spec §43 |\n\
          | [Capabilities](capabilities.md) | `docs/spec/capabilities.yaml` — provider and KUANG/11 \
          capabilities |\n\
@@ -380,6 +416,18 @@ fn schemas_page(files: &BTreeMap<String, Yaml>) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        let fallback = string_sequence(document, "identity_fallback");
+        if !fallback.is_empty() {
+            let _ = writeln!(
+                page,
+                "\nWhen that identity is incomplete, it is joined by: {}",
+                fallback
+                    .iter()
+                    .map(|field| format!("`{field}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
         let columns = document
             .get("default_view")
             .map(|view| string_sequence(view, "columns"))
@@ -412,6 +460,341 @@ fn schemas_page(files: &BTreeMap<String, Yaml>) -> String {
                 string_at(definition, "unit").unwrap_or_else(|| "—".to_owned()),
                 string_at(definition, "doc").unwrap_or_default()
             );
+        }
+    }
+    page
+}
+
+fn streaming_page(document: Option<&Yaml>) -> String {
+    let mut page = header(
+        "Streaming and event ordering",
+        "What each pipeline operation may do to a stream, and what a consumer may conclude from \
+         the order it observed events in. The classes are v0.4.1 Appendix E; the ordering \
+         contract is v0.4.1 §27. Both are rendered from \
+         `docs/spec/hardening/streaming_classification.yaml`, which is also what `explain` reads \
+         and what the gate compares the command contracts against.",
+    );
+    let Some(document) = document else {
+        page.push_str("\nNo streaming classification is declared.\n");
+        return page;
+    };
+
+    page.push_str("\n## Classes\n\n| Class | Appendix E | Requires finite input | May materialize |\n|---|---|---|---|\n");
+    for class in sequence(document, "classes") {
+        let flag = |key: &str| {
+            if class.get(key).and_then(Yaml::as_bool).unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            }
+        };
+        page.push_str(&format!(
+            "| `{}` | {} | {} | {} |\n",
+            string_at(class, "id").unwrap_or_default(),
+            cell(&string_at(class, "appendix_e").unwrap_or_default()),
+            flag("requires_finite_input"),
+            flag("may_materialize"),
+        ));
+    }
+    for class in sequence(document, "classes") {
+        if let Some(doc) = string_at(class, "doc") {
+            page.push_str(&format!(
+                "\n**`{}`** — {}\n",
+                string_at(class, "id").unwrap_or_default(),
+                doc.trim()
+            ));
+        }
+    }
+
+    page.push_str("\n## Where each operation sits\n\n| Command | Class |\n|---|---|\n");
+    for operation in sequence(document, "operations") {
+        page.push_str(&format!(
+            "| `{}` | `{}` |\n",
+            string_at(operation, "command").unwrap_or_default(),
+            string_at(operation, "class").unwrap_or_default(),
+        ));
+    }
+
+    let Some(ordering) = document.get("ordering") else {
+        return page;
+    };
+    page.push_str("\n## Event ordering\n");
+    for (heading, key) in [
+        ("Within one channel", "per_channel"),
+        ("Between the two kinds", "cross_kind"),
+        ("Causality", "causality"),
+        ("When a total order is part of the answer", "total_order"),
+    ] {
+        if let Some(text) = string_at(ordering, key) {
+            page.push_str(&format!("\n**{heading}.** {}\n", text.trim()));
+        }
+    }
+    if !sequence(ordering, "channels").is_empty() {
+        page.push_str("\n| Channel | Carries | Ordered within itself |\n|---|---|---|\n");
+        for channel in sequence(ordering, "channels") {
+            page.push_str(&format!(
+                "| `{}` | {} | {} |\n",
+                string_at(channel, "id").unwrap_or_default(),
+                cell(&string_at(channel, "carries").unwrap_or_default()),
+                if channel
+                    .get("ordered_within_itself")
+                    .and_then(Yaml::as_bool)
+                    .unwrap_or(false)
+                {
+                    "yes"
+                } else {
+                    "no"
+                },
+            ));
+        }
+        for channel in sequence(ordering, "channels") {
+            if let Some(doc) = string_at(channel, "doc") {
+                page.push_str(&format!(
+                    "\n**`{}`** — {}\n",
+                    string_at(channel, "id").unwrap_or_default(),
+                    doc.trim()
+                ));
+            }
+        }
+    }
+    page
+}
+
+/// v0.4.1 §19.1's eight terms, rendered from the registry that also drives the gate.
+///
+/// §19.2: *"Where command contracts or capability tables already generate reference
+/// documentation, the security terms SHOULD be generated from the same registries rather than
+/// duplicated in prose."* So this page is the one place a reader is shown the definitions, and
+/// `xtask::terminology` reads the same rows before it judges a document — a paraphrase cannot
+/// drift from the rule because there is no paraphrase.
+fn terminology_page() -> String {
+    let mut page = header(
+        "Security terminology",
+        "Eight words with fixed meanings (v0.4.1 \u{a7}19.1). They mean this in the README, in the \
+         Wiki, in `help`, on these pages and in the architecture documentation, and nowhere in \
+         the product do they mean anything else. \u{a7}51.1 states the purpose: the goal is not to ban \
+         these words, it is to ensure they refer to a defined contract \u{2014} so the contract is \
+         `docs/spec/hardening/terminology.yaml`, this page is rendered from it, and \
+         `cargo xtask spec-check` holds every document the repository can reach to the same rows.",
+    );
+    page.push_str("\n| Term | Meaning |\n|---|---|\n");
+    for term in crate::terminology::terms() {
+        page.push_str(&format!("| `{}` | {} |\n", term.term, cell(&term.meaning)));
+    }
+    for term in crate::terminology::terms() {
+        page.push_str(&format!(
+            "\n## `{}`\n\n> {}\n\n{}\n\nFixed by {}.\n",
+            term.term,
+            term.meaning,
+            term.doc.trim(),
+            term.spec
+        ));
+        if !term.overstates.is_empty() {
+            page.push_str(
+                "\nWordings the documentation gate refuses, because they claim a boundary this \
+                 build does not enforce:\n\n",
+            );
+            for phrase in &term.overstates {
+                page.push_str(&format!("- `{phrase}`\n"));
+            }
+            if term.qualified_by.is_empty() {
+                page.push_str(
+                    "\nNo qualifier makes these true; the remedy is to state the boundary that \
+                     does exist.\n",
+                );
+            } else {
+                page.push_str(
+                    "\nThe wording to use instead, in the sentence itself \u{2014} a disclaimer \
+                     elsewhere in the same document does not make the claim above true \
+                     (\u{a7}17.3 asks for a qualifier that is *immediate*):\n\n",
+                );
+                for phrase in &term.qualified_by {
+                    page.push_str(&format!("- {phrase}\n"));
+                }
+            }
+        }
+    }
+    page
+}
+
+/// v0.4.1 §51.3's six remote trust concepts, rendered from the registry.
+///
+/// §51.3 requires remote-link documentation to distinguish them, and the reason each one is on
+/// the list is that it is easy to mistake for one of the others. So the page is a table of what
+/// each establishes beside what it does not, which is the shape a conflation cannot survive.
+fn remote_trust_page() -> String {
+    let mut page = header(
+        "Remote trust",
+        "Six things a remote link keeps apart (v0.4.1 \u{a7}51.3). Each says what a reader may \
+         conclude when it is in place and \u{2014} the column that does the work \u{2014} what a reader may \
+         not. \u{a7}7.3 is why: the transport identity and the runtime identity are different fields, \
+         one is a cryptographic credential and the other is a self-report, and \u{a7}65.1 and \u{a7}65.2 \
+         are the two ways confusing them goes wrong. Rendered from \
+         `docs/spec/hardening/remote_trust.yaml`, which the documentation gate reads as well.",
+    );
+    let Some(concepts) = crate::terminology::remote_trust() else {
+        page.push_str("\nNo remote trust model is declared.\n");
+        return page;
+    };
+
+    page.push_str("\n| Concept | Establishes | Does not establish |\n|---|---|---|\n");
+    for concept in &concepts {
+        page.push_str(&format!(
+            "| **{}** | {} | {} |\n",
+            cell(&concept.name),
+            cell(concept.establishes.trim()),
+            cell(concept.does_not.trim()),
+        ));
+    }
+    for concept in &concepts {
+        page.push_str(&format!(
+            "\n## {}\n\n{}\n\n**It does not establish.** {}\n",
+            concept.name,
+            concept.establishes.trim(),
+            concept.does_not.trim(),
+        ));
+        if !concept.commands.is_empty() {
+            page.push_str(&format!(
+                "\nOperated by {}.\n",
+                concept
+                    .commands
+                    .iter()
+                    .map(|command| format!("`{command}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        page.push_str(&format!(
+            "\nBoundary: {}. Fixed by {}.\n",
+            concept.boundary.as_deref().map_or_else(
+                || "none \u{2014} this is metadata, not a boundary".to_owned(),
+                |id| format!("`{id}`")
+            ),
+            concept.spec
+        ));
+    }
+    page
+}
+
+/// v0.4.1 §6.1's boundary inventory, rendered from the registry that also drives the gate.
+///
+/// §6.1: *"This inventory MUST be derivable into documentation and MUST be referenced by security
+/// tests."* Both halves are here — the table is derived, and the last column is the proof, so a
+/// reader asking "what stops that" is one click from the test that answers.
+fn security_boundaries_page(document: Option<&Yaml>) -> String {
+    let mut page = header(
+        "Security boundaries",
+        "Where untrusted input enters Ono-Sendai, what must hold before it goes further, the one \
+         crate responsible for making it hold, and the automated negative test that proves the \
+         forbidden thing is refused (v0.4.1 §6.1, §6.2, §20). Derived from \
+         `docs/spec/hardening/security_boundaries.yaml`, which the contract gate reads as well: \
+         a boundary whose owner changes cannot leave this page saying otherwise.",
+    );
+    let Some(document) = document else {
+        page.push_str("\nNo boundary inventory is declared.\n");
+        return page;
+    };
+
+    page.push_str(
+        "\n| Boundary | Input trust | Required enforcement | Owner |\n|---|---|---|---|\n",
+    );
+    for boundary in sequence(document, "boundaries") {
+        let id = string_at(boundary, "id").unwrap_or_default();
+        let trust = string_at(boundary, "input_trust").unwrap_or_default();
+        let enforcement = string_at(boundary, "required_enforcement").unwrap_or_default();
+        let owner = string_at(boundary, "owner").unwrap_or_default();
+        page.push_str(&format!(
+            "| `{id}` | {} | {} | `{owner}` |\n",
+            cell(&trust),
+            cell(&enforcement)
+        ));
+    }
+
+    for boundary in sequence(document, "boundaries") {
+        let id = string_at(boundary, "id").unwrap_or_default();
+        let owner = string_at(boundary, "owner").unwrap_or_default();
+        let module = string_at(boundary, "module").unwrap_or_default();
+        page.push_str(&format!("\n## `{id}`\n\n"));
+        if let Some(doc) = string_at(boundary, "doc") {
+            page.push_str(&format!("{}\n\n", doc.trim()));
+        }
+        page.push_str(&format!(
+            "Owned by `{owner}`, enforced in `{module}`. Specified by {}.\n",
+            string_at(boundary, "spec").unwrap_or_default()
+        ));
+        let tests = string_sequence(boundary, "negative_tests");
+        if !tests.is_empty() {
+            page.push_str("\nRefusal proved by:\n\n");
+            for test in tests {
+                page.push_str(&format!("- `{test}`\n"));
+            }
+        }
+    }
+    page
+}
+
+/// The release verification sequence of v0.4.1 §47.5, rendered from the registry.
+///
+/// §47.5 wants the sequence in the installation documentation and short enough to paste. This is
+/// the copy the gate compares the README and the Wiki against, so three documents cannot drift
+/// into three different sets of commands.
+fn release_verification_page() -> String {
+    let mut page = header(
+        "Verifying a release",
+        "Every release publishes the digest of every artifact, a signature over that manifest and \
+         signed build provenance (v0.4.1 \u{a7}47.1). This is how to check them before installing \
+         anything. Rendered from `docs/spec/hardening/release_verification.yaml`, which the README \
+         and the Wiki's Install page carry the same commands from.",
+    );
+    let Some(sequence) = crate::verification::sequence() else {
+        page.push_str("\nNo verification sequence is declared.\n");
+        return page;
+    };
+
+    page.push_str("\n## What a release publishes\n\n| File | Contents |\n|---|---|\n");
+    for file in &sequence.files {
+        page.push_str(&format!(
+            "| `{}` | {} ({}) |\n",
+            file.name,
+            cell(file.contents.trim()),
+            file.spec
+        ));
+    }
+
+    page.push_str(&format!(
+        "\n## The sequence\n\n**The order is the security property.** The signature over the \
+         manifest is verified first and the artifacts are checked against the manifest second. \
+         Reversed, the sequence proves only that the download was not corrupted in transit: a \
+         manifest an attacker wrote agrees perfectly with the artifacts that attacker also wrote. \
+         A signature is expected to name `{}`, the workflow `{}` and the issuer `{}`, and one \
+         that verifies against anything else is a valid signature by somebody else.\n",
+        sequence.repository, sequence.workflow, sequence.issuer
+    ));
+
+    for (index, step) in sequence.steps.iter().enumerate() {
+        page.push_str(&format!(
+            "\n### {}. `{}`\n\n```bash\n{}\n```\n\n**Proves.** {}\n\n**If it fails.** {}\n",
+            index + 1,
+            step.id,
+            step.command.trim_end(),
+            step.proves.trim(),
+            step.on_failure.trim(),
+        ));
+        if !step.requires.is_empty() {
+            page.push_str(&format!(
+                "\nNeeds {}.\n",
+                step.requires
+                    .iter()
+                    .map(|tool| format!("`{tool}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !step.executable {
+            page.push_str(&format!(
+                "\n*Not run by this repository's own tests: {}.*\n",
+                step.executable_because.trim()
+            ));
         }
     }
     page
@@ -835,5 +1218,168 @@ fn backticked(passage: &str) -> Vec<&str> {
         .skip(1)
         .step_by(2)
         .filter(|token| token.contains('/') && !token.contains(' '))
+        .collect()
+}
+
+// --- v0.4.1 §63: the migration guide prints commands that exist (issue #116, ADR-0543) ----------
+
+/// Where the migration guide lives.
+pub const MIGRATION_GUIDE: &str = "docs/MIGRATION.md";
+
+/// Resolves every command `docs/MIGRATION.md` prints against the contracts (v0.4.1 §63, §66.8).
+///
+/// §66.8 makes "remote client authorization migration is documented" a release criterion, and
+/// §63.2 prints the sequence an operator runs. A migration guide is the one document nobody reads
+/// until they are already stuck, which is exactly when a renamed flag or a retired capability id
+/// is most expensive: the reader has an agent refusing connections and a command that does not
+/// exist.
+///
+/// So every `ono` invocation in a fenced block is resolved. A command spelling has to be one the
+/// registry answers to; a capability id named in a grant has to be one the registry declares; a
+/// flag has to be one the binary's own usage text lists. Nothing here checks that the *sequence*
+/// works — that is `crates/ono-cli/tests/client_keys.rs` and case `182`.
+#[must_use]
+pub fn check_migration_guide(root: &Path) -> Vec<Problem> {
+    let Ok(text) = std::fs::read_to_string(root.join(MIGRATION_GUIDE)) else {
+        return vec![Problem {
+            location: MIGRATION_GUIDE.to_owned(),
+            detail: "does not exist. v0.4.1 §63 has five migrations and §66.8 makes the remote \
+                     client authorization one a release criterion."
+                .to_owned(),
+        }];
+    };
+    let Ok(registry) = ono_command::CommandRegistry::load() else {
+        return vec![Problem {
+            location: MIGRATION_GUIDE.to_owned(),
+            detail: "cannot be resolved: the command registry does not load".to_owned(),
+        }];
+    };
+    let usage = ono_cli::usage_text();
+
+    let mut problems = Vec::new();
+    let mut invocations = 0usize;
+    for invocation in ono_invocations(&text) {
+        invocations += 1;
+        let problem = |detail: String| Problem {
+            location: MIGRATION_GUIDE.to_owned(),
+            detail,
+        };
+        match &invocation {
+            Invocation::Flag(flag) => {
+                if !usage.contains(flag.as_str()) {
+                    problems.push(problem(format!(
+                        "prints `ono {flag}`, and the binary's own usage text does not list that \
+                         flag. A migration guide is read by somebody who is already stuck."
+                    )));
+                }
+            }
+            Invocation::Script(script) => {
+                let parsed = ono_parser::parse(script);
+                if parsed.has_errors() || !parsed.is_complete() {
+                    problems.push(problem(format!(
+                        "prints `ono -c '{script}'`, which does not parse"
+                    )));
+                    continue;
+                }
+                for (verb, target) in spellings(script) {
+                    if registry.find(&verb, Some(&target)).is_none()
+                        && registry.find(&verb, None).is_none()
+                    {
+                        problems.push(problem(format!(
+                            "prints `{verb} {target}`, which the command registry does not answer \
+                             to. Either the guide is stale or the command was renamed without it."
+                        )));
+                    }
+                }
+                for capability in granted_capabilities(script) {
+                    if registry.capability(&capability).is_none() {
+                        problems.push(problem(format!(
+                            "grants `{capability}`, which `docs/spec/capabilities.yaml` does not \
+                             declare. v0.4.1 §9.5: grants name exact capability ids, so a guide \
+                             that prints a retired one teaches an operator a command that fails."
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    if invocations == 0 {
+        problems.push(Problem {
+            location: MIGRATION_GUIDE.to_owned(),
+            detail: "prints no `ono` invocation at all. v0.4.1 §63.2 is a sequence of commands, \
+                     and a migration described without them is one nobody can follow."
+                .to_owned(),
+        });
+    }
+    problems
+}
+
+/// One `ono` invocation a document prints.
+enum Invocation {
+    /// A command-line flag, as in `ono --print-peer-key`.
+    Flag(String),
+    /// The script `ono -c` was given.
+    Script(String),
+}
+
+/// Every `ono` invocation inside a fenced block of `markdown`.
+fn ono_invocations(markdown: &str) -> Vec<Invocation> {
+    let mut invocations = Vec::new();
+    let mut fenced = false;
+    for line in markdown.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if !fenced {
+            continue;
+        }
+        let Some(rest) = line.trim().strip_prefix("ono ") else {
+            continue;
+        };
+        if let Some(script) = rest.strip_prefix("-c ") {
+            let script = script.trim().trim_matches('\'').trim_matches('"');
+            invocations.push(Invocation::Script(script.to_owned()));
+            continue;
+        }
+        for word in rest.split_whitespace() {
+            if word.starts_with("--") {
+                invocations.push(Invocation::Flag(word.to_owned()));
+            }
+        }
+    }
+    invocations
+}
+
+/// The `verb target` spellings a script names, one per statement.
+///
+/// A textual reading of the first two words of each statement, which is how the registry is
+/// addressed and how every example in this repository writes one. A word beginning with `-` or
+/// `$` is an argument rather than a target, and a statement that has only a verb is resolved as
+/// one.
+fn spellings(script: &str) -> Vec<(String, String)> {
+    script
+        .split(['\n', ';'])
+        .filter_map(|statement| {
+            let mut words = statement.split_whitespace();
+            let verb = words.next()?.to_owned();
+            let target = words
+                .next()
+                .filter(|word| !word.starts_with('-') && !word.starts_with('$'))
+                .unwrap_or_default()
+                .to_owned();
+            Some((verb, target))
+        })
+        .collect()
+}
+
+/// The capability ids a script grants with `--allow`.
+fn granted_capabilities(script: &str) -> Vec<String> {
+    let words: Vec<&str> = script.split_whitespace().collect();
+    words
+        .windows(2)
+        .filter(|pair| pair[0] == "--allow")
+        .map(|pair| pair[1].to_owned())
         .collect()
 }

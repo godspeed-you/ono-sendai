@@ -10,7 +10,7 @@
 //! remote host runs exactly as fast as the local consumer drains it, because it cannot put a
 //! value on the wire without room having been granted for it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use ono_core::ErrorCode;
@@ -19,14 +19,33 @@ use ono_provider_api::{ActionOutcome, ObjectEvent};
 use ono_value::{ErrorValue, SchemaRegistry, Value};
 use tokio::sync::Semaphore;
 
+use crate::audit::{Audit, AuditEvent, AuditKind, NoAudit};
+use crate::authorization::{AuthorizationContext, AuthorizedClients, PeerAuthorization};
 use crate::connection::{FrameReader, FrameSink, spawn_writer};
 use crate::error::unreachable;
-use crate::handshake::{Identity, Offer, ProviderDescriptor, negotiate};
+use crate::handshake::{CapabilityDescriptor, Identity, Offer, ProviderDescriptor, negotiate};
 use crate::message::{ActRequest, AdaptRequest, RemoteQuery};
 use crate::{
-    Frame, FrameKind, Limits, Message, PROTOCOL_VERSION, ProtocolError, Transport, decode_message,
-    encode_message,
+    Frame, FrameKind, Limits, Message, PROTOCOL_VERSION, ProtocolError, Reject, Transport,
+    decode_message, encode_message,
 };
+
+/// Who decides which clients an agent serves (v0.4.1 §9.2, §4.3).
+///
+/// Two variants and no third, because there are exactly two ways a peer arrives: through a
+/// carrier that already decided who may run the agent, or through a socket this process opened
+/// itself. There is no "authorize everyone" store — the fail-open default §9.2 forbids has no
+/// spelling here.
+#[derive(Debug, Clone, Default)]
+pub enum ServerAuthorization {
+    /// The carrier authorized the peer before the agent ran: `ssh <host> ono --agent`, where
+    /// OpenSSH decided who may execute the command and `peer_key` is truthfully `None` (§4.3).
+    #[default]
+    CarriedByTransport,
+    /// The operator's `authorized_clients` store decides, and an unlisted client is refused
+    /// before provider negotiation (§9.4, §59.1). This is what `--agent --listen` uses.
+    Store(Arc<AuthorizedClients>),
+}
 
 /// What an agent offers, and what it enforces on the caller.
 ///
@@ -47,6 +66,10 @@ pub struct ServerConfig {
     schemas: Arc<SchemaRegistry>,
     limits: Limits,
     pty: bool,
+    authorization: ServerAuthorization,
+    action_capabilities: BTreeMap<(String, String), String>,
+    audit: Audit,
+    source_address: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -60,6 +83,10 @@ impl Default for ServerConfig {
             schemas: Arc::new(ono_value::builtin_schemas().clone()),
             limits: Limits::default(),
             pty: false,
+            authorization: ServerAuthorization::CarriedByTransport,
+            action_capabilities: BTreeMap::new(),
+            audit: Arc::new(NoAudit),
+            source_address: None,
         }
     }
 }
@@ -128,6 +155,58 @@ impl ServerConfig {
         self
     }
 
+    /// Who decides which clients this agent serves (v0.4.1 §9).
+    ///
+    /// The default is [`ServerAuthorization::CarriedByTransport`], which is the truth for the
+    /// stdio agent §4.3 keeps: it is reached through a carrier that authenticated and authorized
+    /// the caller, and it can see no peer key of its own. A listening agent passes a store, and
+    /// then §2.2's order holds — proof, trust, policy, negotiation, dispatch.
+    #[must_use]
+    pub fn with_authorization(mut self, authorization: ServerAuthorization) -> Self {
+        self.authorization = authorization;
+        self
+    }
+
+    /// Declares which capability an action on `target` spelled `operation` needs.
+    ///
+    /// The serving side resolves this itself, from its own command contracts, and never from
+    /// anything the caller put in the request: a capability id a peer supplied would authorize
+    /// the peer against its own claim. An action whose capability is not declared here is denied
+    /// under a policy, because Appendix C denies an unknown capability id always.
+    #[must_use]
+    pub fn with_action_capability(
+        mut self,
+        target: impl Into<String>,
+        operation: impl Into<String>,
+        capability: impl Into<String>,
+    ) -> Self {
+        self.action_capabilities
+            .insert((target.into(), operation.into()), capability.into());
+        self
+    }
+
+    /// The capability an `Act` on this target with this operation needs, where one is declared.
+    #[must_use]
+    pub fn action_capability(&self, target: &str, operation: &str) -> Option<&str> {
+        self.action_capabilities
+            .get(&(target.to_owned(), operation.to_owned()))
+            .map(String::as_str)
+    }
+
+    /// Where this connection's audit events go (v0.4.1 §14.1).
+    #[must_use]
+    pub fn with_audit(mut self, audit: Audit) -> Self {
+        self.audit = audit;
+        self
+    }
+
+    /// Where this connection came from, for the `source_address` field of §14.2.
+    #[must_use]
+    pub fn with_source_address(mut self, address: impl Into<String>) -> Self {
+        self.source_address = Some(address.into());
+        self
+    }
+
     /// Declares that the agent can supply a pseudo-terminal for an interactive session.
     #[must_use]
     pub const fn with_pty(mut self, pty: bool) -> Self {
@@ -141,17 +220,71 @@ impl ServerConfig {
         &self.providers
     }
 
-    fn offer(&self) -> Offer {
+    /// The offer this agent negotiates with, already intersected with the peer's authorization.
+    ///
+    /// §10.1: "the `Offer` used to negotiate a direct link MUST first be intersected with the
+    /// authenticated client's authorization", so an unauthorized capability is *absent* from the
+    /// accepted contract rather than advertised and refused later. The inventory is itself
+    /// information, and a client that can read the whole capability list of a machine it may only
+    /// observe has learned something the policy withheld.
+    ///
+    /// Filtering the offer is not the enforcement — §10.2 and §65.3 are emphatic that it cannot
+    /// be — it is the half that stops the offer from being a disclosure.
+    pub(crate) fn offer_for(&self, peer: &PeerAuthorization) -> Offer {
+        let providers = self.providers_for(peer);
+        let offered: std::collections::BTreeSet<&str> = providers
+            .iter()
+            .flat_map(|provider| provider.capabilities())
+            .map(CapabilityDescriptor::id)
+            .collect();
+        let capabilities = match peer {
+            PeerAuthorization::CarriedByTransport => self.capabilities.clone(),
+            // A bare capability name in the agent-wide list carries no risk to judge it by, so it
+            // survives only when a provider that survived the filter still declares it. An id no
+            // surviving provider names is dropped: fail conservative, as Appendix C's last row
+            // asks.
+            PeerAuthorization::Policy(_) => self
+                .capabilities
+                .iter()
+                .filter(|id| offered.contains(id.as_str()))
+                .cloned()
+                .collect(),
+        };
         Offer {
             versions: self.versions.clone(),
-            providers: self.providers.clone(),
+            providers,
             schemas: self.schemas.ids().map(ToString::to_string).collect(),
-            capabilities: self.capabilities.clone(),
+            capabilities,
             compression: self.compression.clone(),
             identity: self.identity.clone(),
             pty: self.pty,
             limits: self.limits.clone(),
         }
+    }
+
+    fn providers_for(&self, peer: &PeerAuthorization) -> Vec<ProviderDescriptor> {
+        let PeerAuthorization::Policy(_) = peer else {
+            return self.providers.clone();
+        };
+        self.providers
+            .iter()
+            .filter_map(|provider| {
+                let declared = provider.capabilities().len();
+                let kept: Vec<CapabilityDescriptor> = provider
+                    .capabilities()
+                    .iter()
+                    .filter(|capability| permits(peer, capability))
+                    .cloned()
+                    .collect();
+                // A provider that declared capabilities and kept none is withheld whole: leaving
+                // its targets in the offer would advertise a machine's shape to a client that may
+                // not ask about it. A provider that declared none withholds nothing either way.
+                if declared > 0 && kept.is_empty() {
+                    return None;
+                }
+                Some(provider.clone().with_exact_capabilities(kept))
+            })
+            .collect()
     }
 }
 
@@ -171,6 +304,7 @@ pub trait RemoteService: Send + Sync + 'static {
     /// still arrive (spec §16.5).
     async fn query(
         &self,
+        peer: &PeerAuthorization,
         query: RemoteQuery,
         responder: &StreamResponder,
     ) -> Result<(), ErrorValue>;
@@ -183,10 +317,11 @@ pub trait RemoteService: Send + Sync + 'static {
     /// than quietly answering nothing (spec §18.2).
     async fn subscribe(
         &self,
+        peer: &PeerAuthorization,
         query: RemoteQuery,
         responder: &StreamResponder,
     ) -> Result<(), ErrorValue> {
-        let _ = (query, responder);
+        let _ = (peer, query, responder);
         Err(ErrorValue::new(
             ErrorCode::ProviderUnsupported,
             "this agent answers queries only; it cannot watch for changes",
@@ -199,8 +334,12 @@ pub trait RemoteService: Send + Sync + 'static {
     ///
     /// Returns a structured error only when the action could not be attempted at all; an action
     /// that was attempted and failed is an [`ActionOutcome`], not an error.
-    async fn act(&self, request: ActRequest) -> Result<ActionOutcome, ErrorValue> {
-        let _ = request;
+    async fn act(
+        &self,
+        peer: &PeerAuthorization,
+        request: ActRequest,
+    ) -> Result<ActionOutcome, ErrorValue> {
+        let _ = (peer, request);
         Err(ErrorValue::new(
             ErrorCode::ProviderUnsupported,
             "this agent answers queries only; it does not change anything",
@@ -213,10 +352,11 @@ pub trait RemoteService: Send + Sync + 'static {
     /// The default refuses: an agent without adapters says so rather than running anything.
     async fn adapt(
         &self,
+        peer: &PeerAuthorization,
         request: AdaptRequest,
         responder: &StreamResponder,
     ) -> Result<(), ErrorValue> {
-        let _ = (request, responder);
+        let _ = (peer, request, responder);
         Err(ErrorValue::new(
             ErrorCode::ProviderUnsupported,
             "this agent does not adapt external commands",
@@ -352,6 +492,42 @@ fn with_streams<T>(
     body(&mut guard)
 }
 
+/// Refuses a connection that completed the cryptographic handshake, saying why (§54.1, §12.1).
+///
+/// The peer has an authenticated channel, so it can be told which boundary decided rather than
+/// meeting a socket that closes for no stated reason. It is told that and nothing else: no
+/// provider, no schema, no capability, no target, which is §59.1's rule for a refusal made before
+/// negotiation.
+///
+/// The caller's opening `Hello` is read and discarded first. A refusal written into a connection
+/// whose other direction is still full would race the peer's own write into a reset, and the
+/// reason for the refusal would be the thing that got lost.
+///
+/// # Errors
+///
+/// `remote.protocol_mismatch` when the refusal cannot be encoded, which is a defect on this side.
+pub async fn refuse<T: Transport>(
+    transport: T,
+    refusal: &ErrorValue,
+    limits: &Limits,
+) -> Result<(), ErrorValue> {
+    let (reader, writer) = tokio::io::split(transport);
+    let mut reader = FrameReader::new(reader, limits.clone());
+    let frames = spawn_writer(writer, limits.clone());
+    let _ = tokio::time::timeout(limits.handshake_timeout(), reader.next()).await;
+    let reject = Reject::new(refusal.code(), refusal.message().to_owned());
+    let payload = encode_message(&Message::Reject(reject), limits).map_err(ErrorValue::from)?;
+    let _ = frames.send(Frame::new(FrameKind::Reject, 0, payload));
+    frames.hangup();
+    // Waiting for the peer to go is what makes the refusal observable rather than a race with
+    // the socket closing under it.
+    let _ = tokio::time::timeout(limits.handshake_timeout(), async {
+        while matches!(reader.next().await, Ok(Some(_))) {}
+    })
+    .await;
+    Ok(())
+}
+
 /// Answers one link with `service` until the caller disconnects.
 ///
 /// The handshake happens first (spec §21.2); a caller that shares no protocol version is refused
@@ -369,13 +545,28 @@ where
 {
     let limits = config.limits.clone();
     let schemas = Arc::clone(&config.schemas);
+    // Read before the stream is split: the peer key is what the transport verified, and it is the
+    // only identity §2.2 lets a policy be resolved from.
+    let peer_key = transport.peer_key().cloned();
     let (reader, writer) = tokio::io::split(transport);
     let mut reader = FrameReader::new(reader, limits.clone());
     let frames = spawn_writer(writer, limits.clone());
 
-    let opening = reader
-        .next()
-        .await?
+    // §12.2: TLS and *Ono protocol negotiation* together have a deadline. TLS is bounded by the
+    // listener that accepted the socket; this is the other half — a peer that completed the
+    // cryptographic handshake and then says nothing must not hold the connection open for ever.
+    let opening = tokio::time::timeout(limits.handshake_timeout(), reader.next())
+        .await
+        .map_err(|_| {
+            ErrorValue::new(
+                ErrorCode::RemoteHandshakeTimeout,
+                format!(
+                    "the caller did not say hello within {} seconds",
+                    limits.handshake_timeout().as_secs_f64()
+                ),
+            )
+            .with_retryable(true)
+        })??
         .ok_or_else(|| unreachable("the caller closed the link before saying hello"))?;
     let Message::Hello(hello) =
         decode_message(opening.kind(), opening.payload(), &schemas, &limits)
@@ -387,15 +578,62 @@ where
         }));
     };
 
-    let accept = match negotiate(&hello, &config.offer()) {
-        Ok(accept) => accept,
-        Err(reject) => {
+    let audit = Arc::clone(&config.audit);
+    let address = config.source_address.clone();
+    let fingerprint = peer_key.as_ref().map(crate::HostKey::fingerprint);
+    let record = |event: AuditEvent| {
+        let mut event = event.with_source_address(address.as_deref());
+        if let Some(fingerprint) = fingerprint {
+            event = event.with_peer(fingerprint);
+        }
+        audit.record(&event);
+    };
+
+    let authorization = match resolve(&config.authorization, peer_key.as_ref()) {
+        Ok(authorization) => authorization,
+        Err(refusal) => {
+            // §59.1: the refusal happens after the cryptographic handshake and *before* provider
+            // negotiation, and it discloses nothing beyond the rejection itself — no provider,
+            // no schema, no capability, no target.
+            let kind = if refusal.code() == ErrorCode::RemoteUnauthenticated {
+                AuditKind::ClientVerificationFailed
+            } else {
+                AuditKind::UnknownClientRefused
+            };
+            record(AuditEvent::new(kind, "unaccepted", "denied").with_error_code(refusal.code()));
+            let reject = Reject::new(refusal.code(), refusal.message().to_owned());
             let payload =
                 encode_message(&Message::Reject(reject), &limits).map_err(ErrorValue::from)?;
             let _ = frames.send(Frame::new(FrameKind::Reject, 0, payload));
             return Ok(());
         }
     };
+    let connection_id = authorization.context().map_or_else(
+        || "carried".to_owned(),
+        |context| context.connection_id().to_owned(),
+    );
+    let label = authorization
+        .context()
+        .and_then(AuthorizationContext::client_label)
+        .map(ToOwned::to_owned);
+    let event = |kind: AuditKind, result: &'static str| {
+        AuditEvent::new(kind, connection_id.clone(), result).with_label(label.as_deref())
+    };
+
+    let accept = match negotiate(&hello, &config.offer_for(&authorization)) {
+        Ok(accept) => accept,
+        Err(reject) => {
+            record(
+                event(AuditKind::ProtocolMismatch, "denied")
+                    .with_error_code(ErrorCode::RemoteProtocolMismatch),
+            );
+            let payload =
+                encode_message(&Message::Reject(reject), &limits).map_err(ErrorValue::from)?;
+            let _ = frames.send(Frame::new(FrameKind::Reject, 0, payload));
+            return Ok(());
+        }
+    };
+    record(event(AuditKind::ConnectionAccepted, "allowed").with_protocol_version(accept.version()));
     let window = accept.credit_window();
     let payload = encode_message(&Message::Accept(accept), &limits).map_err(ErrorValue::from)?;
     frames
@@ -407,6 +645,7 @@ where
 
     loop {
         let Some(frame) = reader.next().await? else {
+            record(event(AuditKind::ClientDisconnected, "ended"));
             return Ok(());
         };
         let id = frame.stream();
@@ -414,28 +653,123 @@ where
             .map_err(ErrorValue::from)?;
         match message {
             Message::StartQuery(query) => {
-                start(&streams, &frames, &limits, id, window, |responder| {
-                    let service = Arc::clone(&service);
-                    async move { service.query(query, &responder).await.err() }
-                });
-            }
-            Message::StartSubscribe(query) => {
-                start(&streams, &frames, &limits, id, window, |responder| {
-                    let service = Arc::clone(&service);
-                    async move { service.subscribe(query, &responder).await.err() }
-                });
-            }
-            Message::StartAdapt(request) => {
-                start(&streams, &frames, &limits, id, window, |responder| {
-                    let service = Arc::clone(&service);
-                    async move { service.adapt(request, &responder).await.err() }
-                });
-            }
-            Message::Act(request) => {
+                // §10.2: the offer was already filtered, and that is not the enforcement. This
+                // check runs on the dispatch path, from the connection's own context, whatever
+                // the negotiation happened to contain — §65.3 names hiding a capability in
+                // `Accept` and executing a forged request for it as a failure mode.
+                let refusal = authorization
+                    .require_observe(&format!("get {}", query.target_name()))
+                    .err();
+                if let Some(refusal) = &refusal {
+                    record(
+                        event(AuditKind::AuthorizationDenied, "denied")
+                            .with_requested_capability(format!("get {}", query.target_name()))
+                            .with_error_code(refusal.code()),
+                    );
+                }
+                let authorization = authorization.clone();
                 start(&streams, &frames, &limits, id, window, |responder| {
                     let service = Arc::clone(&service);
                     async move {
-                        match service.act(request).await {
+                        if let Some(refusal) = refusal {
+                            return Some(refusal);
+                        }
+                        service.query(&authorization, query, &responder).await.err()
+                    }
+                });
+            }
+            Message::StartSubscribe(query) => {
+                let refusal = authorization
+                    .require_observe(&format!("watch {}", query.target_name()))
+                    .err();
+                if let Some(refusal) = &refusal {
+                    record(
+                        event(AuditKind::AuthorizationDenied, "denied")
+                            .with_requested_capability(format!("watch {}", query.target_name()))
+                            .with_error_code(refusal.code()),
+                    );
+                }
+                let authorization = authorization.clone();
+                start(&streams, &frames, &limits, id, window, |responder| {
+                    let service = Arc::clone(&service);
+                    async move {
+                        if let Some(refusal) = refusal {
+                            return Some(refusal);
+                        }
+                        service
+                            .subscribe(&authorization, query, &responder)
+                            .await
+                            .err()
+                    }
+                });
+            }
+            Message::StartAdapt(request) => {
+                // Adapting runs a program of the caller's choosing on this host. No entry in
+                // `docs/spec/capabilities.yaml` names it, so no grant can name it either, and a
+                // policy-governed connection is refused: §9.4's observe-only default does not
+                // include running things, and Appendix C denies what it cannot name.
+                let refusal = match &authorization {
+                    PeerAuthorization::CarriedByTransport => None,
+                    PeerAuthorization::Policy(_) => authorization
+                        .require_action(None, &format!("adapt {}", request.argv().join(" ")))
+                        .err(),
+                };
+                if let Some(refusal) = &refusal {
+                    record(
+                        event(AuditKind::AuthorizationDenied, "denied")
+                            .with_requested_capability("adapt")
+                            .with_error_code(refusal.code()),
+                    );
+                }
+                let authorization = authorization.clone();
+                start(&streams, &frames, &limits, id, window, |responder| {
+                    let service = Arc::clone(&service);
+                    async move {
+                        if let Some(refusal) = refusal {
+                            return Some(refusal);
+                        }
+                        service
+                            .adapt(&authorization, request, &responder)
+                            .await
+                            .err()
+                    }
+                });
+            }
+            Message::Act(request) => {
+                // The capability is resolved from this agent's own contracts, never from the
+                // request: a peer that could name the capability it needs would be authorizing
+                // itself (§65.2). An action this agent cannot name is denied (Appendix C).
+                let refusal = match &authorization {
+                    PeerAuthorization::CarriedByTransport => None,
+                    PeerAuthorization::Policy(_) => authorization
+                        .require_action(
+                            config.action_capability(request.target_name(), request.operation()),
+                            &format!("{} {}", request.operation(), request.target_name()),
+                        )
+                        .err(),
+                };
+                // §14.1's last bullet: the request and its result, for every authorized action.
+                let needed = config
+                    .action_capability(request.target_name(), request.operation())
+                    .map_or_else(
+                        || format!("{} {}", request.operation(), request.target_name()),
+                        ToOwned::to_owned,
+                    );
+                record(match &refusal {
+                    Some(refusal) => event(AuditKind::AuthorizationDenied, "denied")
+                        .with_requested_capability(needed.clone())
+                        .with_error_code(refusal.code()),
+                    None => event(AuditKind::ActionRequested, "allowed")
+                        .with_requested_capability(needed.clone()),
+                });
+                let authorization = authorization.clone();
+                start(&streams, &frames, &limits, id, window, |responder| {
+                    let service = Arc::clone(&service);
+                    async move {
+                        if let Some(refusal) = refusal {
+                            return Some(refusal);
+                        }
+                        match service.act(&authorization, request).await {
                             Ok(outcome) => {
                                 let _ = responder.send_outcome(outcome).await;
                                 None
@@ -528,4 +862,39 @@ fn start<F, Fut>(
         responder.finish();
         with_streams(&streams, |open| open.remove(&responder.id));
     });
+}
+
+/// Whether one declared capability is inside what this peer may use (§9.4, §9.6).
+///
+/// Two rules, and the second is the one that stops a risk class from being a back door: a
+/// capability that needs elevation requires an exact grant even when its risk reads as a plain
+/// read, because §9.6 says elevation and destructiveness "MUST require exact explicit grant even
+/// if a future policy profile otherwise allows mutations".
+fn permits(peer: &PeerAuthorization, capability: &CapabilityDescriptor) -> bool {
+    use ono_provider_api::Risk;
+    let observation = matches!(capability.risk(), Risk::Read | Risk::Observe);
+    if observation && !capability.needs_elevation() {
+        return peer.allows_observe();
+    }
+    peer.allows_action(capability.id())
+}
+
+/// Decides what this connection may do, once, from what the transport proved (§2.2, §10.3).
+///
+/// # Errors
+///
+/// `remote.unauthenticated` when the transport authenticated nobody and a store was configured,
+/// and `remote.unauthorized` when the authenticated client is not listed.
+fn resolve(
+    authorization: &ServerAuthorization,
+    peer_key: Option<&crate::HostKey>,
+) -> Result<PeerAuthorization, ErrorValue> {
+    let ServerAuthorization::Store(store) = authorization else {
+        return Ok(PeerAuthorization::CarriedByTransport);
+    };
+    let Some(key) = peer_key else {
+        return Err(crate::authorization::unauthenticated_refusal());
+    };
+    let context: AuthorizationContext = store.authorize(key.fingerprint())?;
+    Ok(PeerAuthorization::Policy(Arc::new(context)))
 }

@@ -17,6 +17,7 @@ use std::env;
 use std::time::{Duration, Instant};
 
 use ono_process::{Command, Executor, ForegroundOutcome, JobState, PtySession, Signal, WindowSize};
+use ono_testkit::SkipReason;
 use support::{DEADLINE, poll_until, within};
 
 /// Environment variable naming the role the re-run should play.
@@ -175,6 +176,11 @@ fn should_work_the_same_way_when_there_is_no_terminal_at_all() {
 #[test]
 fn acts_as_the_shell_when_a_role_is_requested() {
     let Ok(role) = env::var(ROLE) else {
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            "this is the re-exec entry point the tests above drive; without a role in the \
+             environment there is nothing for it to act as",
+        );
         return;
     };
     let code = match role.as_str() {
@@ -285,4 +291,44 @@ fn background_ttin() -> i32 {
     let _ = executor.signal_job(id, Signal::CONT);
     let _ = executor.wait_job(id, Some(Duration::from_secs(20)));
     0
+}
+
+#[test]
+fn should_kill_and_reap_the_terminal_session_when_the_session_is_dropped() {
+    // A sweep on 2026-09-02 killed 331 leaked `journalctl --follow` stubs on the development
+    // machine, the oldest five days old, every one of them a grandchild of a `PtySession` a test
+    // had dropped without waiting. `PtySession` owns a session leader on its own terminal, so
+    // dropping it without reaping orphans the whole session — and a suite that leaves processes
+    // behind is not reporting its own execution truthfully, whatever its exit code says
+    // (v0.4.1 §2.4, §39.3).
+    let mut executor = Executor::detached();
+    let command = Command::new("/bin/sh").args(["-c", "sleep 300 & sleep 300"]);
+    let session = executor
+        .run_pty(&command, WindowSize::new(24, 80))
+        .expect("a pseudo-terminal must be available");
+    let leader = session.pid();
+    assert!(alive(leader), "the session leader is running");
+
+    drop(session);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && alive(leader) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !alive(leader),
+        "dropping the session must kill and reap it, and pid {leader} is still there"
+    );
+}
+
+/// Whether a pid names a process that is neither gone nor a zombie this test left behind.
+fn alive(pid: u32) -> bool {
+    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return false;
+    };
+    // The state is the field just past the comm field's closing parenthesis. `Z` is a child
+    // somebody killed and nobody waited for, which is the other half of the same defect.
+    stat.rsplit_once(')')
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .is_some_and(|state| state != "Z")
 }

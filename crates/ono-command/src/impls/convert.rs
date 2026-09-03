@@ -57,7 +57,11 @@ impl CommandImpl for ConversionCommand {
 
     fn invoke(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
         let spelling = ctx.contract().spelling();
-        let arguments = ctx.arguments();
+        // A words-mode command that reads values resolves its arguments first: `--columns
+        // ["pid"]` and `--max-rows (10 * 2)` are expressions until something evaluates them, and
+        // an option nobody evaluated reads as an option nobody wrote (ADR-0219, ADR-0556).
+        let arguments = ctx.arguments().evaluated(ctx.scope())?;
+        let arguments = &arguments;
         let selector = match self.direction {
             Direction::Render => "renderer",
             _ => "format",

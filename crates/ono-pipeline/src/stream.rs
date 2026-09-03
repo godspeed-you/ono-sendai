@@ -1,10 +1,36 @@
 //! The stream a native pipeline moves values along (spec §11.1, §11.2, §16.5, ADR-0013).
+//!
+//! # What the order of events means (v0.4.1 §27)
+//!
+//! **Within one channel the order is total.** Values arrive in the order they were produced and
+//! partial failures arrive in the order they were reported, however many stages they pass through
+//! (§27.1). A stage reorders its own channel only where its contract says so — `sort` does.
+//!
+//! **Between the two channels nothing is promised.** [`StreamEvent`] does not promise a total
+//! temporal ordering between independently produced value and partial-error channels unless a
+//! producer explicitly serializes them through one event source (§27.2). The two are separate
+//! `mpsc` channels, merged at the consumer by whichever has something ready, so a failure
+//! observed after a value did not necessarily happen after it.
+//!
+//! **Causality cannot be read off that order.** Consumers MUST NOT infer causality from the
+//! relative observation order of a value and an asynchronously reported partial error: "the error
+//! concerns the value I just read" is not something this stream says, and a consumer that acts on
+//! it is reading the scheduler (§27.2).
+//!
+//! **A producer that needs a total order takes one path.** Where the sequence is part of the
+//! answer — "the error occurred between A and B" — the producer sends every event through
+//! [`StreamSink::send_in_sequence`], which places all of them on the value channel in the order
+//! it chose (§27.3).
+//!
+//! The same rule is data in `docs/spec/hardening/streaming_classification.yaml`, and
+//! `docs/reference/streaming.md` is rendered from it, so the page a user reads and the paragraph
+//! above do not drift apart (ADR-0483).
 
 use std::fmt;
 use std::future::Future;
 
 use ono_core::ErrorCode;
-use ono_value::{ErrorValue, Value};
+use ono_value::{Budget, ErrorValue, MaterializationLimits, Value};
 use tokio::sync::mpsc;
 
 use crate::{CancelToken, Diagnostics, InputRequirement, Transform, Window};
@@ -29,6 +55,7 @@ pub struct PipelineConfig {
     capacity: usize,
     cancel: CancelToken,
     diagnostics: Diagnostics,
+    limits: MaterializationLimits,
 }
 
 impl Default for PipelineConfig {
@@ -37,6 +64,7 @@ impl Default for PipelineConfig {
             capacity: DEFAULT_CAPACITY,
             cancel: CancelToken::new(),
             diagnostics: Diagnostics::new(),
+            limits: MaterializationLimits::default(),
         }
     }
 }
@@ -70,6 +98,13 @@ impl PipelineConfig {
         self
     }
 
+    /// Sets what every materializing stage in this pipeline may collect (§22.2, §55.1).
+    #[must_use]
+    pub const fn with_materialization_limits(mut self, limits: MaterializationLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
     /// How many values a channel buffers.
     #[must_use]
     pub const fn capacity(&self) -> usize {
@@ -86,6 +121,12 @@ impl PipelineConfig {
     #[must_use]
     pub const fn diagnostics(&self) -> &Diagnostics {
         &self.diagnostics
+    }
+
+    /// What every materializing stage in this pipeline may collect (§22.2).
+    #[must_use]
+    pub const fn materialization_limits(&self) -> MaterializationLimits {
+        self.limits
     }
 }
 
@@ -178,6 +219,30 @@ impl StreamSink {
         }
     }
 
+    /// Sends one event on the value channel, so a producer that must place a failure *between*
+    /// two values has a sequence-bearing path to do it on.
+    ///
+    /// v0.4.1 §27.3: a provider or operation whose semantic contract has to express "the error
+    /// occurred between value A and value B" emits an ordered event stream through one path
+    /// rather than relying on the scheduler between two channels. This is that path: every event
+    /// goes to the value channel, one send at a time, and a failure travels as the error value it
+    /// is — so the order the producer chose is the order the consumer observes, every run.
+    ///
+    /// The cost is deliberate and is the reason this is not the default. A consumer of such a
+    /// stream reads its failures out of the values, so [`Collected::errors`] is empty and
+    /// [`ValueStream::saw_failure`] stays false; a producer takes this path only when its own
+    /// contract says the order is part of the answer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SinkClosed`] when the consumer has gone away or the pipeline was cancelled.
+    pub async fn send_in_sequence(&self, event: StreamEvent) -> Result<(), SinkClosed> {
+        match event {
+            StreamEvent::Value(value) => self.send(value).await,
+            StreamEvent::Failure(error) => self.send(error.into_value()).await,
+        }
+    }
+
     /// Whether the pipeline has been cancelled.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
@@ -219,6 +284,19 @@ pub struct Collected {
 }
 
 impl Collected {
+    /// What an operation collected, for a collector that is not [`ValueStream::collect`].
+    pub(crate) const fn new(
+        values: Vec<Value>,
+        errors: Vec<ErrorValue>,
+        diagnostics: Diagnostics,
+    ) -> Self {
+        Self {
+            values,
+            errors,
+            diagnostics,
+        }
+    }
+
     /// The values, in the order they arrived.
     #[must_use]
     pub fn values(&self) -> &[Value] {
@@ -282,6 +360,7 @@ pub struct ValueStream {
     boundedness: Boundedness,
     cancel: CancelToken,
     diagnostics: Diagnostics,
+    limits: MaterializationLimits,
 }
 
 impl ValueStream {
@@ -325,6 +404,31 @@ impl ValueStream {
     #[must_use]
     pub const fn boundedness(&self) -> Boundedness {
         self.boundedness
+    }
+
+    /// Sets what a materializing stage below this stream may collect (§22.2, §55.1).
+    ///
+    /// Every stage built from this one inherits the figures, so the evaluator states them once
+    /// where a pipeline is assembled rather than at each producer.
+    #[must_use]
+    pub const fn with_materialization_limits(mut self, limits: MaterializationLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// A fresh budget for a stage of this pipeline that must materialize (§22.1, §22.2).
+    ///
+    /// Every blocking transform takes one of these before it starts buffering, so the byte bound
+    /// of §2.4 sits in the primitive rather than in each caller (§6.2).
+    #[must_use]
+    pub fn budget_for(&self, stage: &str) -> Budget {
+        self.limits.budget_for(stage)
+    }
+
+    /// What a materializing stage of this pipeline may collect (§22.2).
+    #[must_use]
+    pub const fn materialization_limits(&self) -> MaterializationLimits {
+        self.limits
     }
 
     /// The pipeline's cancellation scope, which a consumer may trip itself.
@@ -437,7 +541,8 @@ impl ValueStream {
         let config = PipelineConfig::new()
             .with_capacity(self.capacity)
             .with_cancel_token(self.cancel.clone())
-            .with_diagnostics(self.diagnostics.clone());
+            .with_diagnostics(self.diagnostics.clone())
+            .with_materialization_limits(self.limits);
         let (stream, sink) = Self::channel(&config, boundedness);
         tokio::spawn(async move { body(self, sink).await });
         stream
@@ -500,6 +605,7 @@ impl ValueStream {
             boundedness,
             cancel: config.cancel_token().clone(),
             diagnostics: config.diagnostics().clone(),
+            limits: config.materialization_limits(),
         };
         (stream, sink)
     }
@@ -533,13 +639,19 @@ pub(crate) fn cancelled_error() -> ErrorValue {
 
 /// The error a blocking transform reports over a stream that never ends (spec §11.1, §43).
 pub(crate) fn unbounded_error(transform: &str) -> ErrorValue {
+    // v0.4.1 §54.1 fixes the shape a refusal is read in: name the operation, name the requirement
+    // it could not meet, and say what the upstream declared itself to be. §22.3 makes this answer
+    // arrive before a value is drawn, so the sentence is true of a stream nobody has touched.
     ErrorValue::new(
         ErrorCode::StreamUnboundedOperation,
-        format!("`{transform}` needs input that ends, and this stream may not end"),
+        format!("`{transform}` requires finite input; the upstream is declared unbounded"),
     )
     .with_retryable(false)
     .with_help(format!(
         "bound the stream first, for example `| take 100 | {transform} …`, or give `{transform}` \
          an explicit window"
     ))
+    .with_metadata("stage", Value::string(transform))
+    .with_metadata("requires", Value::string("finite input"))
+    .with_metadata("upstream", Value::string("unbounded"))
 }

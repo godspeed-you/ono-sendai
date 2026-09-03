@@ -8,14 +8,8 @@
     reason = "a test states its preconditions the way a #[test] body does (AGENTS.md section 16)"
 )]
 
-use std::path::PathBuf;
-
-fn fixtures_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/spec/adapters/fixtures")
-        .canonicalize()
-        .expect("the fixtures directory exists")
-}
+mod support;
+use support::fixtures_root;
 
 #[test]
 fn should_decode_every_first_party_fixture_to_what_its_sidecar_promises() {

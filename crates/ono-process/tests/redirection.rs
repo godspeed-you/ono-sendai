@@ -12,6 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use ono_core::ErrorCode;
 use ono_process::{Command, Executor, Fd, ForegroundOutcome, Output, PipelineOutcome, Redirect};
+use ono_testkit::SkipReason;
 use support::{DEADLINE, sh, text, within};
 
 fn run(command: Command) -> PipelineOutcome {
@@ -200,6 +201,10 @@ fn should_report_permission_denied_when_the_target_cannot_be_opened() {
     fs::set_permissions(&target, fs::Permissions::from_mode(0o000)).expect("lock the file");
     if fs::OpenOptions::new().write(true).open(&target).is_ok() {
         // A privileged user bypasses the permission bits, so there is nothing to observe.
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "this user bypasses the permission bits, so an unopenable target cannot be made",
+        );
         return;
     }
 

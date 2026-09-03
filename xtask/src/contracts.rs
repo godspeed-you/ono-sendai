@@ -95,7 +95,9 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     problems.extend(check_spatial_registry(root));
     problems.extend(check_spatial_implementation(root));
     problems.extend(check_provider_claims(root));
+    problems.extend(check_identity_tokens(root));
     problems.extend(check_kuang_contracts(root));
+    problems.extend(check_hardening_contracts(root));
 
     problems.sort_by(|a, b| (&a.location, &a.detail).cmp(&(&b.location, &b.detail)));
     problems
@@ -457,6 +459,17 @@ fn collect_schemas(
                     location: location.clone(),
                     detail: format!(
                         "`{id}` is identified by `{column}`, which is not one of its fields"
+                    ),
+                });
+            }
+        }
+        for column in string_sequence(document, "identity_fallback") {
+            if !fields.contains(&column) {
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "`{id}` falls back to `{column}` to identify what its declared identity \
+                         cannot, and `{column}` is not one of its fields"
                     ),
                 });
             }
@@ -1800,6 +1813,110 @@ pub fn check_provider_claims(root: &Path) -> Vec<Problem> {
     problems
 }
 
+/// Checks that a target two providers claim says which of them a record belongs to (ADR-0559).
+///
+/// `ono.package/1` is identified by `provider + name` precisely because "a machine can carry more
+/// than one package database and a name alone does not say which one answered". Where two
+/// providers claim one target whose schema identifies by `provider`, an action on a record has to
+/// reach the provider the record names, and the registry can only do that if each of them
+/// declares the token its records give — and if no two of them declare the same one.
+///
+/// A target one provider claims needs no token: the field is a note on the record rather than a
+/// choice between answerers, and `ono.service/1` is that case.
+#[must_use]
+pub fn check_identity_tokens(root: &Path) -> Vec<Problem> {
+    let providers = root.join("docs").join("spec").join("providers");
+    if !providers.is_dir() {
+        return Vec::new();
+    }
+    let identified: BTreeSet<String> = schema_identity_by_provider(root);
+    let mut claims: BTreeMap<String, Vec<(String, String, Option<String>)>> = BTreeMap::new();
+    for path in yaml_files(&providers) {
+        let location = relative(root, &path);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        for provider in sequence(&document, "providers") {
+            let id = string_at(provider, "id").unwrap_or_default();
+            let token = string_at(provider, "identity_token");
+            let by_provider = string_sequence(provider, "schemas")
+                .iter()
+                .any(|schema| identified.contains(schema));
+            if !by_provider {
+                continue;
+            }
+            for target in string_sequence(provider, "targets") {
+                claims.entry(target).or_default().push((
+                    id.clone(),
+                    location.clone(),
+                    token.clone(),
+                ));
+            }
+        }
+    }
+
+    let mut problems = Vec::new();
+    for (target, entries) in claims {
+        if entries.len() < 2 {
+            continue;
+        }
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
+        for (id, location, token) in &entries {
+            let Some(token) = token else {
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "`{id}` is one of {} providers of `{target}`, whose schema identifies an \
+                         object by `provider`, and it declares no `identity_token`. Without one \
+                         the registry cannot send an action to the provider a record names, and \
+                         the first available one would act on it (ADR-0559)",
+                        entries.len()
+                    ),
+                });
+                continue;
+            };
+            if let Some(other) = seen.insert(token.clone(), id.clone()) {
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "`{id}` and `{other}` both claim `{target}` and both declare the identity \
+                         token `{token}`, so a record naming it says nothing about which of them \
+                         made it (ADR-0559)"
+                    ),
+                });
+            }
+        }
+    }
+    problems
+}
+
+/// The ids of the schemas whose identity begins with, or contains, a `provider` field.
+fn schema_identity_by_provider(root: &Path) -> BTreeSet<String> {
+    let schemas = root.join("docs").join("spec").join("schemas");
+    let mut identified = BTreeSet::new();
+    for path in yaml_files(&schemas) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        let Some(id) = string_at(&document, "id") else {
+            continue;
+        };
+        if string_sequence(&document, "identity")
+            .iter()
+            .any(|field| field == "provider")
+        {
+            identified.insert(id);
+        }
+    }
+    identified
+}
+
 /// The spatial types, as a reader-friendly list.
 fn names(types: &BTreeSet<ono_spatial_core::SpatialType>) -> String {
     types
@@ -2442,4 +2559,1466 @@ fn manifest_section_fields(section: &str) -> Option<BTreeSet<String>> {
         .map(str::to_owned)
         .collect();
     (!fields.is_empty()).then_some(fields)
+}
+
+/// Holds `docs/spec/hardening/` against the runtime that serves it (v0.4.1 §52.2, §52.3).
+///
+/// §52.1 asks for the hardening policy data as machine-readable registries rather than prose-only
+/// constants, and §52.2 for one source of truth behind the runtime defaults, the generated
+/// documentation and the tests. A registry nothing is compared against is a second copy that
+/// agrees today; this is the comparison.
+///
+/// Today the directory holds one registry, `kuang_confinement_controls.yaml`. The other six of
+/// §52.1 arrive with the phases that need them, and a missing registry is not an error
+/// (AGENTS.md §14).
+#[must_use]
+pub fn check_hardening_contracts(root: &Path) -> Vec<Problem> {
+    let directory = root.join("docs").join("spec").join("hardening");
+    if !directory.is_dir() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    let read = |name: &str| -> Option<(String, Yaml)> {
+        let path = directory.join(name);
+        let text = std::fs::read_to_string(&path).ok()?;
+        // The generic sweep already reports a file that is not valid YAML, with the parse error.
+        let document = serde_yaml_ng::from_str::<Yaml>(&text).ok()?;
+        Some((relative(root, &path), document))
+    };
+
+    if let Some((location, document)) = read("kuang_confinement_controls.yaml") {
+        problems.extend(check_confinement_controls(&location, &document));
+    }
+    if let Some((location, document)) = read("streaming_classification.yaml") {
+        problems.extend(check_streaming_classification(root, &location, &document));
+    }
+    if let Some((location, document)) = read("limits.yaml") {
+        problems.extend(check_limits_registry(&location, &document));
+    }
+    if let Some((location, document)) = read("cost_classes.yaml") {
+        problems.extend(check_cost_classes(&location, &document));
+    }
+    if let Some((location, document)) = read("remote_trust.yaml") {
+        problems.extend(check_remote_trust_boundaries(root, &location, &document));
+    }
+    problems.extend(check_security_boundaries(root));
+    problems.extend(check_dispatch_paths(root));
+    problems.extend(check_refusals(root));
+    problems.extend(check_registry_inventory(root));
+    problems.extend(check_remote_limits(root));
+    problems.extend(check_authorization_fixtures(root));
+    problems.extend(crate::perf::check_registries(root));
+    problems
+}
+
+/// Holds the `boundary` each of v0.4.1 §51.3's six remote trust concepts carries against §6.1.
+///
+/// The registry was written before the inventory existed and said so in its header: *"§6.1's
+/// inventory is owed by its own issue; this is the join key."* This is the join.
+fn check_remote_trust_boundaries(root: &Path, location: &str, document: &Yaml) -> Vec<Problem> {
+    let declared = declared_boundaries(root);
+    if declared.is_empty() {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    for row in sequence(document, "concepts") {
+        // `boundary: null` is how a concept says it is metadata rather than a boundary.
+        let Some(boundary) = string_at(row, "boundary").filter(|value| value != "null") else {
+            continue;
+        };
+        if !declared.contains(&boundary) {
+            let id = string_at(row, "concept").unwrap_or_else(|| "a concept".to_owned());
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "`{id}` belongs to the boundary `{boundary}`, which \
+                     `docs/spec/hardening/security_boundaries.yaml` does not declare (v0.4.1 §6.1)"
+                ),
+            });
+        }
+    }
+    problems
+}
+
+/// v0.4.1 §34.2's four acquisition classes against the implementation that reports them.
+///
+/// §34.2: *"The class MUST be machine-readable."* A registry that drifted from the enum would be
+/// machine-readable and wrong, which is worse than a comment — §34.3's request path and §33.3's
+/// refusal both key off the class, so a caller acting on the registry would be acting on a name
+/// the shell does not use.
+fn check_cost_classes(location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_spatial_core::{AcquisitionCost, CostClass};
+
+    let mut problems = Vec::new();
+    let problem = |detail: String| Problem {
+        location: location.to_owned(),
+        detail,
+    };
+
+    let mut declared = BTreeSet::new();
+    for entry in sequence(document, "classes") {
+        let Some(id) = string_at(entry, "id") else {
+            problems.push(problem("a cost class row names no `id`".to_owned()));
+            continue;
+        };
+        declared.insert(id.clone());
+        let Some(class) = AcquisitionCost::from_name(&id) else {
+            problems.push(problem(format!(
+                "`{id}` is declared as an acquisition cost class and \
+                 `ono_spatial_core::AcquisitionCost` has no such variant (v0.4.1 §34.2)"
+            )));
+            continue;
+        };
+        let weight = entry.get("weight").and_then(Yaml::as_u64);
+        if weight != Some(class.weight()) {
+            problems.push(problem(format!(
+                "`{id}` has weight {weight:?} in the registry and {} in the implementation; \
+                 v0.4.1 §34.1 makes the class an input to the estimate, so one number decides it",
+                class.weight()
+            )));
+        }
+    }
+    for class in AcquisitionCost::ALL {
+        if !declared.contains(class.as_str()) {
+            problems.push(problem(format!(
+                "`{}` is an acquisition cost class the implementation reports and the registry \
+                 does not declare (v0.4.1 §34.2)",
+                class.as_str()
+            )));
+        }
+    }
+
+    let mut mapped = BTreeSet::new();
+    for entry in sequence(document, "planner_classes") {
+        let (Some(id), Some(reports)) = (string_at(entry, "id"), string_at(entry, "reports"))
+        else {
+            problems.push(problem(
+                "a planner class row names no `id` or no `reports`".to_owned(),
+            ));
+            continue;
+        };
+        mapped.insert(id.clone());
+        let Some(planner) = CostClass::from_name(&id) else {
+            problems.push(problem(format!(
+                "`{id}` is declared as a planner cost class and `ono_spatial_core::CostClass` has \
+                 no such variant"
+            )));
+            continue;
+        };
+        if planner.acquisition().as_str() != reports {
+            problems.push(problem(format!(
+                "`{id}` is declared as reporting `{reports}` and the implementation reports \
+                 `{}` (v0.4.1 §34.2)",
+                planner.acquisition().as_str()
+            )));
+        }
+    }
+    for planner in CostClass::ALL {
+        if !mapped.contains(planner.as_str()) {
+            problems.push(problem(format!(
+                "`{}` is a planner cost class the registry does not map onto one of v0.4.1 \
+                 §34.2's four",
+                planner.as_str()
+            )));
+        }
+    }
+
+    let budget = document
+        .get("interactive_budget")
+        .and_then(|row| row.get("units"))
+        .and_then(Yaml::as_u64);
+    if budget != Some(ono_spatial_query::INTERACTIVE_BUDGET) {
+        problems.push(problem(format!(
+            "the interactive budget is {budget:?} in the registry and {} in the implementation; \
+             v0.4.1 §33.3's refusal is measured against one number",
+            ono_spatial_query::INTERACTIVE_BUDGET
+        )));
+    }
+    problems
+}
+
+/// v0.4.1 Appendix E's matrix against the command registry and `ono_command::ExecutionClass`.
+///
+/// Appendix E closes with the sentence this check exists to enforce: *"If a command cannot be
+/// placed in this matrix, its execution semantics are underspecified and MUST be resolved before
+/// release."* So a stream-consuming command that names no class is a problem, a class the
+/// implementation does not know is a problem, and a class whose two properties disagree between
+/// the registry and the implementation is a problem.
+fn check_streaming_classification(root: &Path, location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_command::ExecutionClass;
+
+    let mut problems = Vec::new();
+    let problem = |detail: String| Problem {
+        location: location.to_owned(),
+        detail,
+    };
+
+    let mut declared = BTreeSet::new();
+    for entry in sequence(document, "classes") {
+        let Some(id) = string_at(entry, "id") else {
+            continue;
+        };
+        declared.insert(id.clone());
+        let Some(class) = ExecutionClass::from_id(&id) else {
+            problems.push(problem(format!(
+                "`{id}` is declared as an execution class and `ono_command::ExecutionClass` has \
+                 no such variant, so no command can be placed in it (v0.4.1 Appendix E, §52.3)"
+            )));
+            continue;
+        };
+        for (field, implemented) in [
+            ("requires_finite_input", class.requires_finite_input()),
+            ("may_materialize", class.may_materialize()),
+        ] {
+            let registered = entry.get(field).and_then(Yaml::as_bool);
+            if registered != Some(implemented) {
+                problems.push(problem(format!(
+                    "`{id}` has {field} {registered:?} in the registry and {implemented} in the \
+                     implementation; Appendix E fixes one answer per class"
+                )));
+            }
+        }
+    }
+    for class in ExecutionClass::ALL {
+        if !declared.contains(class.id()) {
+            problems.push(problem(format!(
+                "`{}` is an execution class the implementation knows and the registry does not \
+                 declare (v0.4.1 Appendix E)",
+                class.id()
+            )));
+        }
+    }
+
+    let mut placed: BTreeMap<String, String> = BTreeMap::new();
+    for entry in sequence(document, "operations") {
+        let (Some(command), Some(class)) = (string_at(entry, "command"), string_at(entry, "class"))
+        else {
+            problems.push(problem(
+                "an operation row names no command or no class".to_owned(),
+            ));
+            continue;
+        };
+        if !declared.contains(&class) {
+            problems.push(problem(format!(
+                "`{command}` is placed in `{class}`, which is not one of the eight classes of \
+                 v0.4.1 Appendix E"
+            )));
+        }
+        placed.insert(command, class);
+    }
+
+    // Every command that consumes a stream is a pipeline operation, and Appendix E requires every
+    // one of them to be placeable. The contracts are the list, so the list cannot go stale.
+    let commands = root.join("docs").join("spec").join("commands");
+    let Ok(entries) = std::fs::read_dir(&commands) else {
+        return problems;
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "yaml")
+        })
+        .collect();
+    paths.sort();
+    for path in paths {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        for command in sequence(&document, "commands") {
+            let Some(id) = string_at(command, "id") else {
+                continue;
+            };
+            let consumes_stream = string_at(command, "input")
+                .is_some_and(|input| input.starts_with("stream<") || input.starts_with("stream "));
+            let stated = string_at(command, "execution");
+            match (consumes_stream, placed.get(&id), stated.as_ref()) {
+                (true, None, _) => problems.push(problem(format!(
+                    "`{id}` consumes a stream and this matrix does not place it; v0.4.1 \
+                     Appendix E: \"If a command cannot be placed in this matrix, its execution \
+                     semantics are underspecified and MUST be resolved before release\""
+                ))),
+                (_, Some(class), Some(contract)) if class != contract => {
+                    problems.push(problem(format!(
+                        "`{id}` is `{class}` in this matrix and `{contract}` in its contract"
+                    )));
+                }
+                (_, Some(class), None) => problems.push(problem(format!(
+                    "`{id}` is placed in `{class}` here and its contract declares no \
+                     `execution:`, so nothing the shell runs reads the classification"
+                ))),
+                _ => {}
+            }
+        }
+    }
+    problems
+}
+
+/// v0.4.1 §55.1 and Appendix A's limits against the shell's own settings catalogue.
+///
+/// §52.2: *"A number such as `max_connections = 32` MUST not be independently typed into five
+/// files if one contract can generate the others."* The bidirectional comparison against
+/// `ono_cli::settings::CATALOGUE` is a test rather than a gate check, because `xtask` does not
+/// depend on `ono-cli`; what the gate checks here is that the registry is internally coherent, so
+/// the test has something well-formed to compare against.
+fn check_limits_registry(location: &str, document: &Yaml) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let problem = |detail: String| Problem {
+        location: location.to_owned(),
+        detail,
+    };
+    let mut seen = BTreeSet::new();
+    for entry in sequence(document, "limits") {
+        let Some(key) = string_at(entry, "key") else {
+            problems.push(problem("a limit row names no key".to_owned()));
+            continue;
+        };
+        if !key.starts_with("limits.") {
+            problems.push(problem(format!(
+                "`{key}` is declared as a runtime limit and v0.4.1 §55.1 spells every one of them \
+                 `limits.<name>`"
+            )));
+        }
+        if !seen.insert(key.clone()) {
+            problems.push(problem(format!("`{key}` is declared twice")));
+        }
+        let number = |field: &str| entry.get(field).and_then(Yaml::as_u64);
+        let (Some(default), Some(min), Some(max)) =
+            (number("default"), number("min"), number("max"))
+        else {
+            problems.push(problem(format!(
+                "`{key}` does not carry a default, a minimum and a maximum as whole numbers; \
+                 v0.4.1 §55.2 range-checks every limit and Appendix A expresses each in integer \
+                 base units"
+            )));
+            continue;
+        };
+        if min > max {
+            problems.push(problem(format!("`{key}` has a minimum above its maximum")));
+        }
+        if default < min || default > max {
+            problems.push(problem(format!(
+                "`{key}` defaults to {default}, outside its own permitted range {min}..={max}; a \
+                 default a user cannot restore is not a default"
+            )));
+        }
+        if string_at(entry, "enforced_by").is_none() {
+            problems.push(problem(format!(
+                "`{key}` does not say what enforces it. `pending` is an answer; silence lets a \
+                 reader infer an effect the key does not have (v0.4.1 §52.3)"
+            )));
+        }
+    }
+    problems
+}
+
+/// v0.4.1 §16.4's central table against `ono_kuang_protocol::confinement`.
+fn check_confinement_controls(location: &str, document: &Yaml) -> Vec<Problem> {
+    use ono_kuang_protocol::{Control, ExecutionTier, Requirement};
+
+    let mut problems = Vec::new();
+    let problem = |detail: String| Problem {
+        location: location.to_owned(),
+        detail,
+    };
+
+    let mut declared = BTreeSet::new();
+    for entry in sequence(document, "controls") {
+        let Some(id) = string_at(entry, "id") else {
+            continue;
+        };
+        declared.insert(id.clone());
+        if Control::from_id(&id).is_none() {
+            problems.push(problem(format!(
+                "`{id}` is declared as a confinement control and \
+                 `ono_kuang_protocol::Control` has no such variant, so nothing installs it and \
+                 nothing can report on it (v0.4.1 §16.4, §52.3)"
+            )));
+        }
+    }
+    for control in Control::ALL {
+        if !declared.contains(control.id()) {
+            problems.push(problem(format!(
+                "the supervisor knows the control `{}` and this table declares it nowhere, so its \
+                 requirement is a constant in the code rather than a row an operator can read \
+                 (v0.4.1 §16.4, §52.2)",
+                control.id()
+            )));
+        }
+    }
+
+    let mut tiers_declared = BTreeSet::new();
+    for tier_entry in sequence(document, "tiers") {
+        let Some(id) = string_at(tier_entry, "id") else {
+            continue;
+        };
+        tiers_declared.insert(id.clone());
+        let Some(tier) = ExecutionTier::from_id(&id) else {
+            problems.push(problem(format!(
+                "`{id}` is declared as an execution tier and `ono_kuang_protocol::ExecutionTier` \
+                 has no such variant (v0.4.1 §17.2)"
+            )));
+            continue;
+        };
+        if let Some(available) = tier_entry.get("available").and_then(Yaml::as_bool)
+            && available != tier.is_available()
+        {
+            problems.push(problem(format!(
+                "the tier `{id}` is declared `available: {available}` and the runtime reports \
+                 `{}`. §17.3 forbids offering a tier whose isolation the implementation does not \
+                 install",
+                tier.is_available()
+            )));
+        }
+        let mut rows = BTreeSet::new();
+        for row in sequence(tier_entry, "controls") {
+            let Some(control_id) = string_at(row, "control") else {
+                continue;
+            };
+            let Some(control) = Control::from_id(&control_id) else {
+                problems.push(problem(format!(
+                    "the tier `{id}` names the control `{control_id}`, which is not a control \
+                     this build can install. v0.4.1 §52.3: an unknown control id in a KUANG tier \
+                     definition fails the gate"
+                )));
+                continue;
+            };
+            rows.insert(control_id.clone());
+            if let Some(requirement) = string_at(row, "requirement") {
+                let served = tier.requirement(control);
+                if requirement != served.as_str() {
+                    problems.push(problem(format!(
+                        "the tier `{id}` declares `{control_id}` as `{requirement}` and the \
+                         supervisor treats it as `{served}`. A control the table calls mandatory \
+                         is one v0.4.1 §2.3 says the spawn must not survive"
+                    )));
+                }
+                if Requirement::Mandatory.as_str() != requirement
+                    && Requirement::BestEffort.as_str() != requirement
+                    && Requirement::NotProvided.as_str() != requirement
+                {
+                    problems.push(problem(format!(
+                        "the tier `{id}` declares `{control_id}` as `{requirement}`, which is not \
+                         one of v0.4.1 §16.4's words"
+                    )));
+                }
+            }
+            if let Some(failure) = string_at(row, "failure") {
+                let served = tier.failure(control);
+                if failure != served.as_str() {
+                    problems.push(problem(format!(
+                        "Appendix D's Failure column for `{control_id}` in `{id}` reads \
+                         `{failure}` and the supervisor would do `{served}` instead"
+                    )));
+                }
+            }
+        }
+        // A tier that declares any control declares all of them: a control omitted from a tier
+        // that has a table is a requirement nobody wrote down, which is what §16.4 forbids.
+        if !rows.is_empty() {
+            for control in Control::ALL {
+                if !rows.contains(control.id()) {
+                    problems.push(problem(format!(
+                        "the tier `{id}` says nothing about the control `{}`, so its requirement \
+                         in that tier is unwritten (v0.4.1 §16.4)",
+                        control.id()
+                    )));
+                }
+            }
+        }
+    }
+    for tier in ExecutionTier::ALL {
+        if !tiers_declared.contains(tier.id()) {
+            problems.push(problem(format!(
+                "the runtime names the execution tier `{}` and this table declares it nowhere \
+                 (v0.4.1 §17.2)",
+                tier.id()
+            )));
+        }
+    }
+    problems
+}
+
+// --- v0.4.1 §54.1: a refusal says which boundary decided ----------------------------------------
+
+/// Holds `docs/spec/hardening/refusals.yaml` against the errors registries and the crates.
+///
+/// §54.1 asks that "a refusal should tell the user which boundary made the decision", and §54.2
+/// says where: *"Important refusal explanations MUST appear in normal structured errors. Users
+/// must not need `RUST_LOG=debug` to understand why a security policy denied them."*
+///
+/// Four phases each delivered one family of these refusals and each proved its own. The property
+/// that spans them is a census, and this is the check that the census is complete and true:
+///
+/// - every error inside the blocks `covers` declares has a row, so the census cannot be narrowed
+///   by deleting one;
+/// - every row names an error the registries declare, or is a notice rather than an error;
+/// - `decided_by` names a crate that exists, which is §6.2's owning module;
+/// - every key in `explains` is attached somewhere in that crate's own sources, so a row cannot
+///   claim a field nobody sets — §53.2 forbids string matching for policy, which only works if
+///   the field is really there.
+///
+/// The rendered `says` fragment is asserted where the refusal is constructed rather than here: a
+/// gate cannot read a `format!` and know what it produces, and the tests §4.8.12 names run the
+/// shell and read the sentence.
+#[must_use]
+pub fn check_refusals(root: &Path) -> Vec<Problem> {
+    let path = root
+        .join("docs")
+        .join("spec")
+        .join("hardening")
+        .join("refusals.yaml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        // A missing registry is not an error before the phase that writes it (AGENTS.md §14).
+        return Vec::new();
+    };
+    let location = relative(root, &path);
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        // The generic sweep already reports a file that is not valid YAML, with the parse error.
+        return Vec::new();
+    };
+    let problem = |detail: String| Problem {
+        location: location.clone(),
+        detail,
+    };
+
+    let declared = declared_error_names(root);
+    let boundaries = declared_boundaries(root);
+    let mut covered: BTreeSet<String> = BTreeSet::new();
+    let mut problems = Vec::new();
+
+    for row in sequence(&document, "refusals") {
+        // `error: null` is how a row says it describes a notice rather than an error, so the
+        // absent value and the explicit null have to read the same.
+        let error = row.get("error").and_then(Yaml::as_str).map(str::to_owned);
+        let subject = error
+            .clone()
+            .or_else(|| string_at(row, "notice").map(|notice| format!("the `{notice}` notice")))
+            .unwrap_or_else(|| "a row with neither `error` nor `notice`".to_owned());
+
+        if let Some(name) = &error {
+            covered.insert(name.clone());
+            if !declared.contains_key(name) {
+                problems.push(problem(format!(
+                    "names `{name}`, which neither `docs/spec/errors.yaml` nor \
+                     `docs/spec/kuang/errors.v1.yaml` declares"
+                )));
+            }
+        }
+
+        let Some(boundary) = string_at(row, "boundary") else {
+            problems.push(problem(format!(
+                "{subject} names no `boundary`, so it does not say which boundary decided \
+                 (v0.4.1 §54.1)"
+            )));
+            continue;
+        };
+        if !boundaries.is_empty() && !boundaries.contains(&boundary) {
+            problems.push(problem(format!(
+                "{subject} names the boundary `{boundary}`, which \
+                 `docs/spec/hardening/security_boundaries.yaml` does not declare (v0.4.1 §6.1)"
+            )));
+        }
+
+        let Some(owner) = string_at(row, "decided_by") else {
+            problems.push(problem(format!(
+                "{subject} names no `decided_by`; v0.4.1 §6.2 gives every boundary one owning \
+                 crate responsible for enforcing it"
+            )));
+            continue;
+        };
+        let sources = root.join("crates").join(&owner).join("src");
+        if !sources.is_dir() {
+            problems.push(problem(format!(
+                "{subject} is decided by `{owner}`, and `crates/{owner}/src` does not exist"
+            )));
+            continue;
+        }
+        let attached = attached_metadata_keys(&sources);
+        for key in string_sequence(row, "explains") {
+            if !attached.contains(&key) {
+                problems.push(problem(format!(
+                    "{subject} claims to carry `{key}`, and nothing in `crates/{owner}/src` \
+                     attaches it. v0.4.1 §53.2 forbids matching on the message text, so a field a \
+                     script is told to read has to exist"
+                )));
+            }
+        }
+    }
+
+    for (name, code) in &declared {
+        if covered.contains(name) || !is_covered(&document, code) {
+            continue;
+        }
+        problems.push(problem(format!(
+            "`{name}` ({code}) is a hardening refusal this registry covers and says nothing \
+             about, so nothing states which boundary decided it (v0.4.1 §54.1)"
+        )));
+    }
+    problems
+}
+
+/// Whether `code` falls inside the scope `covers` declares.
+fn is_covered(document: &Yaml, code: &str) -> bool {
+    let Some(covers) = document.get("covers") else {
+        return false;
+    };
+    string_sequence(covers, "prefixes")
+        .iter()
+        .any(|prefix| code.starts_with(prefix))
+        || string_sequence(covers, "codes")
+            .iter()
+            .any(|named| named == code)
+}
+
+/// Every error the two registries declare, as `name -> code`.
+fn declared_error_names(root: &Path) -> BTreeMap<String, String> {
+    let spec = root.join("docs").join("spec");
+    let mut declared = BTreeMap::new();
+    for path in [
+        spec.join("errors.yaml"),
+        spec.join("kuang").join("errors.v1.yaml"),
+    ] {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        for entry in sequence(&document, "errors") {
+            if let (Some(name), Some(code)) = (string_at(entry, "name"), string_at(entry, "code")) {
+                declared.insert(name, code);
+            }
+        }
+    }
+    declared
+}
+
+/// The metadata keys attached anywhere under `sources`.
+///
+/// A textual reading of `with_metadata("key", …)`, which is what both error types spell it as.
+/// Crude on purpose: the question is whether a claimed field exists at all, and a row naming a
+/// key no crate ever sets is the failure worth catching.
+fn attached_metadata_keys(sources: &Path) -> BTreeSet<String> {
+    let mut text = String::new();
+    collect_rust_sources(sources, &mut text);
+    let mut keys = BTreeSet::new();
+    for (index, _) in text.match_indices("with_metadata(") {
+        let trimmed = text[index + "with_metadata(".len()..].trim_start();
+        let Some(quoted) = trimmed.strip_prefix('"') else {
+            continue;
+        };
+        if let Some(end) = quoted.find('"') {
+            keys.insert(quoted[..end].to_owned());
+        }
+    }
+    keys
+}
+
+// --- v0.4.1 §6: the security boundary map (issue #118, ADR-0546) --------------------------------
+
+/// §6.1's table, as this repository holds it: id, input trust, required enforcement.
+///
+/// Typed from the specification rather than read from the registry, for the same reason the
+/// registry exists at all: an inventory nothing independent knows the shape of records what
+/// somebody remembered. §6.1 says *"at minimum"*, so a thirteenth boundary is welcome and a
+/// missing one of these twelve is a gate failure.
+const REQUIRED_BOUNDARIES: [(&str, &str, &str); 12] = [
+    (
+        "remote.tcp.transport",
+        "network",
+        "TLS 1.3 + mutual peer proof",
+    ),
+    (
+        "remote.tcp.authorization",
+        "authenticated peer",
+        "explicit server policy",
+    ),
+    (
+        "remote.ssh.transport",
+        "ssh channel",
+        "external SSH authentication",
+    ),
+    ("protocol.frame", "peer bytes", "size/depth/version limits"),
+    (
+        "provider.query",
+        "authorized request",
+        "provider capability contract",
+    ),
+    (
+        "provider.act",
+        "authorized request",
+        "capability + risk/elevation checks",
+    ),
+    (
+        "kuang.native.spawn",
+        "package process",
+        "manifest + fail-closed confinement",
+    ),
+    (
+        "kuang.protocol",
+        "plugin bytes",
+        "frame/credit/schema limits",
+    ),
+    (
+        "external.adapter",
+        "process output",
+        "adapter decoder and schema validation",
+    ),
+    (
+        "pipeline.materialization",
+        "value stream",
+        "count + byte budget",
+    ),
+    (
+        "release.build",
+        "CI inputs",
+        "immutable refs + locked dependencies",
+    ),
+    (
+        "release.publish",
+        "artifacts",
+        "checksum + signature + provenance",
+    ),
+];
+
+/// Reads `docs/spec/hardening/security_boundaries.yaml`, or `None` before it exists.
+fn boundary_inventory(root: &Path) -> Option<(String, Yaml)> {
+    let path = root
+        .join("docs")
+        .join("spec")
+        .join("hardening")
+        .join("security_boundaries.yaml");
+    let text = std::fs::read_to_string(&path).ok()?;
+    // The generic sweep already reports a file that is not valid YAML, with the parse error.
+    let document = serde_yaml_ng::from_str::<Yaml>(&text).ok()?;
+    Some((relative(root, &path), document))
+}
+
+/// Every boundary id the inventory declares.
+#[must_use]
+pub fn declared_boundaries(root: &Path) -> BTreeSet<String> {
+    boundary_inventory(root).map_or_else(BTreeSet::new, |(_, document)| {
+        sequence(&document, "boundaries")
+            .into_iter()
+            .filter_map(|row| string_at(row, "id"))
+            .collect()
+    })
+}
+
+/// Holds v0.4.1 §6.1's boundary inventory against the tree that implements it.
+///
+/// §6.1 requires the inventory to exist, to name twelve boundaries at minimum with their input
+/// trust and required enforcement, to be derivable into documentation, and to be *"referenced by
+/// security tests"*. §6.2 requires one owning crate per boundary. §20 says what referencing a
+/// security test has to mean: *"A security control is accepted only when there is an automated
+/// negative test proving the forbidden behavior is refused."*
+///
+/// So the check is four questions per row, and the fourth is the one that makes the file
+/// evidence rather than a table: does the named test exist, and does it run? A boundary whose
+/// proof is `#[ignore]`d has no proof (§65.10).
+#[must_use]
+pub fn check_security_boundaries(root: &Path) -> Vec<Problem> {
+    let Some((location, document)) = boundary_inventory(root) else {
+        // A missing registry is not an error before the phase that writes it (AGENTS.md §14).
+        return Vec::new();
+    };
+    let problem = |detail: String| Problem {
+        location: location.clone(),
+        detail,
+    };
+    let mut problems = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+
+    for row in sequence(&document, "boundaries") {
+        let Some(id) = string_at(row, "id") else {
+            problems.push(problem("a boundary row declares no `id`".to_owned()));
+            continue;
+        };
+        seen.insert(id.clone());
+
+        if let Some((_, trust, enforcement)) = REQUIRED_BOUNDARIES
+            .iter()
+            .find(|(required, _, _)| *required == id)
+        {
+            for (field, required) in [
+                ("input_trust", *trust),
+                ("required_enforcement", *enforcement),
+            ] {
+                let stated = string_at(row, field).unwrap_or_default();
+                if stated != required {
+                    problems.push(problem(format!(
+                        "`{id}` states `{field}: {stated}`, and v0.4.1 §6.1 says `{required}`. \
+                         The inventory is the machine-readable form of that table, so it carries \
+                         the specification's words and says its own in `doc`"
+                    )));
+                }
+            }
+        }
+
+        for field in ["input_trust", "required_enforcement", "doc", "spec"] {
+            if string_at(row, field).unwrap_or_default().trim().is_empty() {
+                problems.push(problem(format!("`{id}` states no `{field}`")));
+            }
+        }
+
+        let Some(owner) = string_at(row, "owner") else {
+            problems.push(problem(format!(
+                "`{id}` names no `owner`; v0.4.1 §6.2 gives every boundary one owning crate \
+                 responsible for enforcing the primary guarantee"
+            )));
+            continue;
+        };
+        let owner_root = if owner == "xtask" {
+            root.join("xtask")
+        } else {
+            root.join("crates").join(&owner)
+        };
+        if owner_root.join("src").is_dir() {
+            match string_at(row, "module") {
+                None => problems.push(problem(format!(
+                    "`{id}` names no `module`, so §6.2's owning module is a crate name and not a \
+                     place"
+                ))),
+                Some(module) => {
+                    if !root.join(&module).exists() {
+                        problems.push(problem(format!(
+                            "`{id}` is enforced in `{module}`, which does not exist"
+                        )));
+                    } else if !root.join(&module).starts_with(&owner_root) {
+                        problems.push(problem(format!(
+                            "`{id}` is owned by `{owner}` and enforced in `{module}`, which is \
+                             outside it. v0.4.1 §6.2 gives the guarantee one home"
+                        )));
+                    }
+                }
+            }
+        } else {
+            problems.push(problem(format!(
+                "`{id}` is owned by `{owner}`, and there is no such crate"
+            )));
+        }
+
+        let tests = string_sequence(row, "negative_tests");
+        if tests.is_empty() {
+            problems.push(problem(format!(
+                "`{id}` names no negative test. v0.4.1 §20: a security control is accepted only \
+                 when there is an automated negative test proving the forbidden behavior is \
+                 refused"
+            )));
+        }
+        for test in tests {
+            problems.extend(check_named_test(root, &location, &id, &test));
+        }
+    }
+
+    for (id, _, _) in REQUIRED_BOUNDARIES {
+        if !seen.contains(id) {
+            problems.push(problem(format!(
+                "declares no `{id}`, which v0.4.1 §6.1 requires the inventory to name"
+            )));
+        }
+    }
+    problems
+}
+
+/// One `path::name` a boundary offers as its proof, resolved against the tree.
+fn check_named_test(root: &Path, location: &str, id: &str, test: &str) -> Vec<Problem> {
+    let problem = |detail: String| {
+        vec![Problem {
+            location: location.to_owned(),
+            detail,
+        }]
+    };
+    let Some((file, name)) = test.split_once("::") else {
+        return problem(format!(
+            "`{id}` names the proof `{test}`, which is not a `path::name`"
+        ));
+    };
+    let Ok(source) = std::fs::read_to_string(root.join(file)) else {
+        return problem(format!(
+            "`{id}` names the proof `{test}`, and `{file}` does not exist"
+        ));
+    };
+    let Some(at) = source.find(&format!("fn {name}(")) else {
+        return problem(format!(
+            "`{id}` names the proof `{test}`, and `{file}` declares no such test"
+        ));
+    };
+    let ignored = source[..at]
+        .lines()
+        .rev()
+        .take_while(|line| {
+            let line = line.trim_start();
+            line.starts_with('#') || line.starts_with("//") || line.is_empty()
+        })
+        .any(|line| line.trim_start().starts_with("#[ignore"));
+    if ignored {
+        return problem(format!(
+            "`{id}` names the proof `{test}`, which is `#[ignore]`d and so proves nothing \
+             (v0.4.1 §20, §65.10)"
+        ));
+    }
+    Vec::new()
+}
+
+/// The authorization guard on every dispatch path v0.4.1 §10.2 governs.
+///
+/// §10.2: *"Every provider/adapter/action dispatch path MUST also validate that the operation is
+/// permitted by the established peer authorization context."* H2 proved the four paths that
+/// existed by driving them (ADR-0472) and could not prove the *set*, because the boundary
+/// inventory did not exist to enumerate it. This is that check, and it runs both ways:
+///
+/// - every dispatch path the inventory declares really calls its guard, inside the handler
+///   rather than somewhere else in the file;
+/// - every method the served `RemoteService` trait exposes is declared as a dispatch path, at
+///   every file the inventory names as a dispatch site.
+///
+/// The second direction is the one a future author meets: a new method on the trait is a new
+/// dispatch path the moment it compiles, and this makes the gate say so.
+#[must_use]
+pub fn check_dispatch_paths(root: &Path) -> Vec<Problem> {
+    let Some((location, document)) = boundary_inventory(root) else {
+        return Vec::new();
+    };
+    let problem = |detail: String| Problem {
+        location: location.clone(),
+        detail,
+    };
+    let mut problems = Vec::new();
+    let mut declared: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut sites: BTreeSet<String> = BTreeSet::new();
+
+    for boundary in sequence(&document, "boundaries") {
+        let id = string_at(boundary, "id").unwrap_or_else(|| "a boundary".to_owned());
+        for row in sequence(boundary, "dispatch_paths") {
+            let (Some(method), Some(path), Some(entry), Some(guard)) = (
+                string_at(row, "method"),
+                string_at(row, "path"),
+                string_at(row, "entry"),
+                string_at(row, "guard"),
+            ) else {
+                problems.push(problem(format!(
+                    "`{id}` declares a dispatch path without all of `method`, `path`, `entry` \
+                     and `guard`"
+                )));
+                continue;
+            };
+            declared.insert((path.clone(), method.clone()));
+            sites.insert(path.clone());
+
+            let Ok(source) = std::fs::read_to_string(root.join(&path)) else {
+                problems.push(problem(format!(
+                    "`{id}` dispatches `{method}` in `{path}`, which does not exist"
+                )));
+                continue;
+            };
+            let Some(body) = handler_body(&source, &entry) else {
+                problems.push(problem(format!(
+                    "`{id}` dispatches `{method}` at `{entry}` in `{path}`, and nothing there \
+                     opens with that"
+                )));
+                continue;
+            };
+            if !body.contains(&format!("{guard}(")) {
+                problems.push(problem(format!(
+                    "`{id}` dispatches `{method}` at `{entry}` in `{path}` without calling \
+                     `{guard}`. v0.4.1 §10.2: every dispatch path validates the operation \
+                     against the established peer authorization context, and §65.3 names \
+                     negotiation-only authorization as a failure mode"
+                )));
+            }
+        }
+    }
+
+    let service = root
+        .join("crates")
+        .join("ono-protocol")
+        .join("src")
+        .join("service.rs");
+    let Ok(source) = std::fs::read_to_string(&service) else {
+        return problems;
+    };
+    for method in served_methods(&source) {
+        for site in &sites {
+            if !declared.contains(&(site.clone(), method.clone())) {
+                problems.push(problem(format!(
+                    "`RemoteService::{method}` is a dispatch path the server exposes, and no \
+                     boundary declares it in `{site}`. v0.4.1 §10.2 governs it the moment it \
+                     exists, so the inventory names it or the gate is red"
+                )));
+            }
+        }
+    }
+    problems
+}
+
+/// The text of the block `entry` opens, from its first `{` to the brace that closes it.
+fn handler_body<'a>(source: &'a str, entry: &str) -> Option<&'a str> {
+    let at = source.find(entry)?;
+    let open = at + source[at..].find('{')?;
+    let mut depth = 0usize;
+    for (offset, character) in source[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&source[open..=open + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Every method declared on the `RemoteService` trait.
+///
+/// A textual reading, which is what the rest of this module does and is enough for the question
+/// asked: the trait is one block in one file, and a method added to it is a name that appears
+/// where these are read from.
+fn served_methods(source: &str) -> Vec<String> {
+    let Some(body) = handler_body(source, "pub trait RemoteService") else {
+        return Vec::new();
+    };
+    let mut methods = Vec::new();
+    for (index, _) in body.match_indices("async fn ") {
+        let rest = &body[index + "async fn ".len()..];
+        if let Some(end) = rest.find(['(', '<', ' ']) {
+            methods.push(rest[..end].to_owned());
+        }
+    }
+    methods
+}
+
+// --- v0.4.1 §52: the machine-readable hardening contracts (issue #117, ADR-0547) ----------------
+
+/// The seven contract domains of v0.4.1 §52.1, typed from the specification.
+const REQUIRED_DOMAINS: [&str; 7] = [
+    "security_boundaries",
+    "remote_limits",
+    "materialization_limits",
+    "kuang_confinement_controls",
+    "performance_profiles",
+    "expected_test_skips",
+    "release_inputs",
+];
+
+/// Holds `docs/spec/hardening/registries.yaml` against the directory it indexes.
+///
+/// §52.3: *"`scripts/gate.sh` MUST validate every machine-readable contract for schema
+/// correctness and cross-reference integrity."* The word doing the work is **every**. §52.1 named
+/// seven domains; fifteen registries arrived as the phases needed them, and each was validated by
+/// whichever crate happened to consume it — so a registry nothing consumes was validated by
+/// nothing, which is the state `remote_limits.yaml` was in.
+///
+/// The index is what makes *every* checkable: a file in the directory with no row is a contract
+/// nobody claimed, and a row whose `validated_by` names no function is a claim nobody honoured.
+#[must_use]
+pub fn check_registry_inventory(root: &Path) -> Vec<Problem> {
+    let directory = root.join("docs").join("spec").join("hardening");
+    if !directory.is_dir() {
+        return Vec::new();
+    }
+    let location = "docs/spec/hardening/registries.yaml".to_owned();
+    let problem = |detail: String| Problem {
+        location: location.clone(),
+        detail,
+    };
+    let Ok(text) = std::fs::read_to_string(directory.join("registries.yaml")) else {
+        return vec![problem(
+            "does not exist; v0.4.1 §52.3 asks the gate to validate every machine-readable \
+             contract, and the index is what says which they are"
+                .to_owned(),
+        )];
+    };
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        // The generic sweep already reports a file that is not valid YAML, with the parse error.
+        return Vec::new();
+    };
+
+    let mut problems = Vec::new();
+    let mut indexed: BTreeSet<String> = BTreeSet::new();
+
+    for row in sequence(&document, "registries") {
+        let Some(file) = string_at(row, "file") else {
+            problems.push(problem("a registry row names no `file`".to_owned()));
+            continue;
+        };
+        indexed.insert(file.clone());
+        if !directory.join(&file).is_file() {
+            problems.push(problem(format!(
+                "names `{file}`, and `docs/spec/hardening/{file}` does not exist"
+            )));
+        }
+        for field in ["doc", "spec"] {
+            if string_at(row, field).unwrap_or_default().trim().is_empty() {
+                problems.push(problem(format!("`{file}` states no `{field}`")));
+            }
+        }
+        let validators = string_sequence(row, "validated_by");
+        if validators.is_empty() {
+            problems.push(problem(format!(
+                "`{file}` names no `validated_by`, so nothing in the gate holds it (v0.4.1 §52.3)"
+            )));
+        }
+        for validator in validators {
+            let Some((path, function)) = validator.split_once("::") else {
+                problems.push(problem(format!(
+                    "`{file}` is validated by `{validator}`, which is not a `path::function`"
+                )));
+                continue;
+            };
+            if !path.starts_with("xtask/") {
+                problems.push(problem(format!(
+                    "`{file}` is validated by `{validator}`, which is outside `xtask/`. v0.4.1 \
+                     §52.3 puts the validation in the gate; a crate that happens to consume the \
+                     registry belongs in `consumed_by`"
+                )));
+                continue;
+            }
+            match std::fs::read_to_string(root.join(path)) {
+                Err(_) => problems.push(problem(format!(
+                    "`{file}` is validated by `{validator}`, and `{path}` does not exist"
+                ))),
+                Ok(source) => {
+                    if !source.contains(&format!("fn {function}(")) {
+                        problems.push(problem(format!(
+                            "`{file}` is validated by `{validator}`, and `{path}` declares no \
+                             `{function}`"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut declared_domains: BTreeSet<String> = BTreeSet::new();
+    for row in sequence(&document, "domains") {
+        let Some(domain) = string_at(row, "domain") else {
+            problems.push(problem("a domain row names no `domain`".to_owned()));
+            continue;
+        };
+        declared_domains.insert(domain.clone());
+        match string_at(row, "file").filter(|file| file != "null") {
+            Some(file) => {
+                if !indexed.contains(&file) {
+                    problems.push(problem(format!(
+                        "§52.1's domain `{domain}` lives in `{file}`, which no registry row names"
+                    )));
+                }
+            }
+            None => {
+                if string_at(row, "generated")
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+                {
+                    problems.push(problem(format!(
+                        "§52.1's domain `{domain}` names neither a `file` in this directory nor \
+                         a `generated` artifact, so nothing says where it lives"
+                    )));
+                }
+            }
+        }
+    }
+    for domain in REQUIRED_DOMAINS {
+        if !declared_domains.contains(domain) {
+            problems.push(problem(format!(
+                "says nothing about §52.1's contract domain `{domain}`"
+            )));
+        }
+    }
+
+    for entry in std::fs::read_dir(&directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !(name.ends_with(".yaml") || name.ends_with(".json")) || indexed.contains(name) {
+            continue;
+        }
+        problems.push(problem(format!(
+            "says nothing about `{name}`, which is a machine-readable contract in this directory. \
+             v0.4.1 §52.3 asks the gate to validate every one of them, so a registry arrives with \
+             its validator or it does not arrive"
+        )));
+    }
+    problems
+}
+
+/// Resolves `docs/spec/hardening/remote_limits.yaml` against everything it points at.
+///
+/// The registry holds no numbers deliberately — §52.2's *"a number such as `max_connections = 32`
+/// MUST not be independently typed into five files"* — so each row is a set of pointers: at the
+/// `limits.yaml` key that holds the figure, at the accessor the runtime answers with, at the
+/// stable error a refused peer receives and at the audit class the decision is recorded under.
+/// A pointer nothing follows is worse than a copy, because it reads as a cross-reference.
+#[must_use]
+pub fn check_remote_limits(root: &Path) -> Vec<Problem> {
+    let directory = root.join("docs").join("spec").join("hardening");
+    let Ok(text) = std::fs::read_to_string(directory.join("remote_limits.yaml")) else {
+        // A missing registry is not an error before the phase that writes it (AGENTS.md §14).
+        return Vec::new();
+    };
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        return Vec::new();
+    };
+    let location = "docs/spec/hardening/remote_limits.yaml".to_owned();
+    let problem = |detail: String| Problem {
+        location: location.clone(),
+        detail,
+    };
+
+    let keys: BTreeSet<String> = std::fs::read_to_string(directory.join("limits.yaml"))
+        .ok()
+        .and_then(|text| serde_yaml_ng::from_str::<Yaml>(&text).ok())
+        .map(|catalogue| {
+            sequence(&catalogue, "limits")
+                .into_iter()
+                .filter_map(|row| string_at(row, "key"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let errors = declared_error_names(root);
+    let protocol = {
+        let mut text = String::new();
+        collect_rust_sources(
+            &root.join("crates").join("ono-protocol").join("src"),
+            &mut text,
+        );
+        text
+    };
+
+    let mut problems = Vec::new();
+    for row in sequence(&document, "ceilings") {
+        let id = string_at(row, "id").unwrap_or_else(|| "a ceiling".to_owned());
+
+        // §52.2 in one assertion: this file points, it does not state.
+        if let Some(mapping) = row.as_mapping() {
+            for (key, value) in mapping {
+                if value.is_number() {
+                    let field = key.as_str().unwrap_or("a field");
+                    problems.push(problem(format!(
+                        "`{id}` states `{field}` as a number. This registry holds no figures: \
+                         v0.4.1 §52.2 puts every one of them in \
+                         `docs/spec/hardening/limits.yaml`, once, and this file points at the key"
+                    )));
+                }
+            }
+        }
+
+        match string_at(row, "limit_key") {
+            None => problems.push(problem(format!(
+                "`{id}` names no `limit_key`, so nothing says which figure it bounds"
+            ))),
+            Some(key) => {
+                if !keys.is_empty() && !keys.contains(&key) {
+                    problems.push(problem(format!(
+                        "`{id}` points at `{key}`, which \
+                         `docs/spec/hardening/limits.yaml` does not declare (v0.4.1 §52.2, §52.3)"
+                    )));
+                }
+            }
+        }
+
+        match string_at(row, "field") {
+            None => problems.push(problem(format!(
+                "`{id}` names no `field`, so nothing says what answers its effective value"
+            ))),
+            Some(field) => {
+                if !protocol.is_empty() && !protocol.contains(&format!("fn {field}(")) {
+                    problems.push(problem(format!(
+                        "`{id}` is answered by `Limits::{field}`, and `crates/ono-protocol/src` \
+                         has no such accessor"
+                    )));
+                }
+            }
+        }
+
+        // `refusal: null` is how a row says the peer is dropped before a frame can carry one.
+        if let Some(refusal) = string_at(row, "refusal").filter(|value| value != "null")
+            && !errors.contains_key(&refusal)
+        {
+            problems.push(problem(format!(
+                "`{id}` refuses with `{refusal}`, which `docs/spec/errors.yaml` does not \
+                 declare (v0.4.1 §53.1)"
+            )));
+        }
+
+        match string_at(row, "audit") {
+            None => problems.push(problem(format!(
+                "`{id}` names no `audit` class, and v0.4.1 §14.1 records every connection decision"
+            ))),
+            Some(audit) => {
+                if !protocol.is_empty() && !protocol.contains(&format!("\"{audit}\"")) {
+                    problems.push(problem(format!(
+                        "`{id}` is recorded as `{audit}`, and no audit class in \
+                         `crates/ono-protocol/src` is spelled that way"
+                    )));
+                }
+            }
+        }
+
+        if let Some(owner) = string_at(row, "enforced_by")
+            && !root.join("crates").join(&owner).join("src").is_dir()
+        {
+            problems.push(problem(format!(
+                "`{id}` is enforced by `{owner}`, and there is no such crate"
+            )));
+        }
+    }
+    problems
+}
+
+/// v0.4.1 §52.3's first named failure: an unknown capability id in an authorization fixture.
+///
+/// §52.3: *"Unknown capability IDs in an authorization fixture or unknown control IDs in a KUANG
+/// tier definition MUST fail the gate."* The second half has been checked since H4. The first had
+/// no checker, and the reason it was easy to leave is that it looks covered: `ActionGrant` refuses
+/// a malformed id at construction, so `*` and `process.` cannot be stored, and an id naming
+/// nothing is denied at dispatch. Both are runtime behaviour. A fixture that grants
+/// `process.invented` is a *test* asserting against a capability the product does not have, and
+/// the day the id was a typo for a real one nobody would be told.
+///
+/// The fixture format is §9.3's store line, so the scan is for `actions=` — the way an
+/// authorization fixture is written, in a test, in a doc comment and in an acceptance case alike.
+#[must_use]
+pub fn check_authorization_fixtures(root: &Path) -> Vec<Problem> {
+    let capabilities: BTreeSet<String> =
+        std::fs::read_to_string(root.join("docs").join("spec").join("capabilities.yaml"))
+            .ok()
+            .and_then(|text| serde_yaml_ng::from_str::<Yaml>(&text).ok())
+            .map(|document| {
+                sequence(&document, "provider_capabilities")
+                    .into_iter()
+                    .filter_map(|row| string_at(row, "id"))
+                    .collect()
+            })
+            .unwrap_or_default();
+    if capabilities.is_empty() {
+        return Vec::new();
+    }
+
+    let mut problems = Vec::new();
+    let exempt = deliberately_invalid_ids(root, &capabilities, &mut problems);
+
+    let mut sources: Vec<(String, String)> = Vec::new();
+    for directory in [root.join("crates"), root.join("docker").join("acceptance")] {
+        collect_fixture_sources(root, &directory, &mut sources);
+    }
+    for (location, text) in sources {
+        for grant in text.match_indices("actions=") {
+            let rest = &text[grant.0 + "actions=".len()..];
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || ".,_-*".contains(c)))
+                .unwrap_or(rest.len());
+            for id in rest[..end].split(',').filter(|id| !id.is_empty()) {
+                if capabilities.contains(id) || exempt.contains(id) {
+                    continue;
+                }
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "an authorization fixture grants `{id}`, which \
+                         `docs/spec/capabilities.yaml` does not declare. v0.4.1 §52.3: an unknown \
+                         capability id in an authorization fixture fails the gate. If the \
+                         fixture's subject *is* the refusal, say so in \
+                         `docs/spec/hardening/registries.yaml`"
+                    ),
+                });
+            }
+        }
+    }
+    problems
+}
+
+/// The ids a fixture may name although nothing declares them, and the reason each is allowed.
+///
+/// The exemption cannot become a hiding place, so an entry must really be undeclared: adding a
+/// typo for a real capability to the list would otherwise wave the typo through.
+fn deliberately_invalid_ids(
+    root: &Path,
+    capabilities: &BTreeSet<String>,
+    problems: &mut Vec<Problem>,
+) -> BTreeSet<String> {
+    let location = "docs/spec/hardening/registries.yaml";
+    let Ok(text) = std::fs::read_to_string(
+        root.join("docs")
+            .join("spec")
+            .join("hardening")
+            .join("registries.yaml"),
+    ) else {
+        return BTreeSet::new();
+    };
+    let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+        return BTreeSet::new();
+    };
+    let Some(fixtures) = document.get("authorization_fixtures") else {
+        return BTreeSet::new();
+    };
+
+    let mut exempt = BTreeSet::new();
+    for row in sequence(fixtures, "deliberately_invalid") {
+        let Some(id) = string_at(row, "id") else {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: "a `deliberately_invalid` row names no `id`".to_owned(),
+            });
+            continue;
+        };
+        if capabilities.contains(&id) {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!(
+                    "exempts `{id}` from the authorization fixture check, and \
+                     `docs/spec/capabilities.yaml` declares it. An exemption is for an id the \
+                     product does not have; one that resolves would let a typo through"
+                ),
+            });
+            continue;
+        }
+        if string_at(row, "reason")
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            problems.push(Problem {
+                location: location.to_owned(),
+                detail: format!("exempts `{id}` and gives no `reason`"),
+            });
+        }
+        exempt.insert(id);
+    }
+    exempt
+}
+
+/// Every file an authorization fixture can be written in, with its repository-relative path.
+fn collect_fixture_sources(root: &Path, directory: &Path, into: &mut Vec<(String, String)>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_fixture_sources(root, &path, into);
+            continue;
+        }
+        let extension = path.extension().and_then(|value| value.to_str());
+        if !matches!(extension, Some("rs" | "case")) {
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            into.push((relative(root, &path), text));
+        }
+    }
 }

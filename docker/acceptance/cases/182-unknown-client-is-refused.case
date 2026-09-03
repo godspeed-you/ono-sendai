@@ -1,0 +1,57 @@
+# v0.4.1 §59.1 and §59.2, at the product. Phase H1 made the listening agent demand a client
+# certificate; ADR-0437 wrote down what it left open — "a listening agent today authenticates
+# every client and authorizes all of them". This is the case that must go from "the unknown
+# client reads the provider inventory" to "the unknown client is refused".
+#
+# Two clients, two identities, one agent. A is authorized to observe (§9.4's default grant, which
+# `add client-key` gives and nothing else); B is authenticated exactly as well and authorized not
+# at all. No network is needed — the container runs with networking disabled and this is loopback.
+case: an agent serves the client an operator authorized and refuses the one nobody did
+timeout: 180
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+  B=$(mktemp -d)
+  export B
+
+  echo "== two clients, each with a key of its own =="
+  A=$(ono --print-peer-key)
+  UNKNOWN=$(ONO_CONFIG_DIR=$B ono --print-peer-key)
+  test "$A" != "$UNKNOWN" && echo "two distinct client identities"
+
+  ono --agent --listen 127.0.0.1:7735 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/agent.log" && break; sleep 0.2; done
+  HOSTKEY=$(sed -n 's/.*host key //p' "$HOME/agent.log" | head -1)
+  ono -c "add host-key 127.0.0.1 --fingerprint $HOSTKEY | select status | to json"
+  ONO_CONFIG_DIR=$B ono -c "add host-key 127.0.0.1 --fingerprint $HOSTKEY | select status | to json"
+
+  echo "== the agent authorizes nobody until an operator says so =="
+  ono -c 'try { link host 127.0.0.1:7735 --transport tcp } catch e { $e | select code name retryable | to json }'
+  ono -c 'get link | to json'
+
+  echo "== adding a client grants observation and nothing else =="
+  ono -c "add client-key $A --label observer | select status changed | to json"
+  ono -c 'get client-key | select label observe actions | to json'
+
+  echo "== and now A reads =="
+  ono -c 'link host 127.0.0.1:7735 --transport tcp; enter link 127.0.0.1:7735; get process | count | to json' | tail -1
+
+  echo "== B is authenticated and still refused, and learns nothing about the machine =="
+  ONO_CONFIG_DIR=$B ono -c 'try { link host 127.0.0.1:7735 --transport tcp } catch e { $e | to json }'
+
+  echo "== the store is a file a person can read =="
+  cat "$HOME/ono/authorized_clients"
+  kill "$AGENT" 2>/dev/null || true
+exit: 0
+stdout-contains: two distinct client identities
+stdout-contains: "code":"Ono-Sendai-E1202"
+stdout-contains: "name":"remote.unauthorized"
+stdout-contains: [{"label":"observer","observe":true,"actions":[]}]
+stdout-contains: observe=true
+stdout-not-contains: "retryable":true
+stdout-not-contains: linux.procfs
+stdout-not-contains: process.list
+stdout-not-contains: panicked

@@ -205,6 +205,30 @@ commands:
       - set config history.result_cache = 64MiB
       - set config safety.confirm.bulk_threshold = 100
 
+  # --- runtime limits, v0.4.1 §54.3 ---------------------------------------------------------
+  - id: ono.limits.inspect
+    verb: inspect
+    target: limits
+    summary: Show the effective non-secret runtime resource limits and the range each may take.
+    stability: stable                     # v0.4.1 §54.3 names `inspect limits` as the surface
+    argument_mode: words
+    input: "null"
+    output: stream<ono.limit/1>
+    provider_capability: config.read
+    note: >-
+      The figures come from the same catalogue the shell enforces, so a test and a user read one
+      thing (v0.4.1 §12.4, §52.2). Nothing here is a secret: a limit is a ceiling, and §53.3
+      keeps fingerprints and keys out of diagnostics by keeping them out of the values.
+    selectors:
+      - {name: key, type: string, doc: "Show one limit, or a dotted prefix such as `limits.history`."}
+    options: []
+    privilege: none
+    streaming: true
+    phase: A
+    examples:
+      - inspect limits
+      - inspect limits limits.materialize_bytes
+
   # --- context stack, spec §14.1 ------------------------------------------------------------
   - id: ono.context.leave
     verb: leave

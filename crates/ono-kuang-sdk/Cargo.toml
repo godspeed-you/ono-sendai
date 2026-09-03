@@ -15,6 +15,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+libc.workspace = true
 ono-kuang-supervisor.workspace = true
 ono-kuang-testhost.workspace = true
 tempfile.workspace = true

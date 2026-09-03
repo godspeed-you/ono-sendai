@@ -58,9 +58,14 @@ impl Transform for Group {
                 }
             };
 
+            let mut budget = input.budget_for("group");
             let mut order: Vec<KeyRepr> = Vec::new();
             let mut buckets: HashMap<KeyRepr, (Value, Vec<Value>)> = HashMap::new();
             while let Some(value) = input.next_value(&sink).await {
+                if let Err(exceeded) = budget.charge(&value) {
+                    let _ = sink.fail(exceeded.into_error()).await;
+                    return;
+                }
                 match self.key.key(&value) {
                     Ok(key) => {
                         let repr = KeyRepr::of(&key);
