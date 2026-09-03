@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use xtask::{
-    architecture, bindings, conformance, contracts, metrics as repo_metrics, narrative, perf,
-    provenance, reference, reproducibility, scan, supply_chain, terminology, verification,
+    architecture, baseline, bindings, conformance, contracts, metrics as repo_metrics, narrative,
+    perf, provenance, reference, reproducibility, scan, supply_chain, terminology, verification,
 };
 
 fn main() -> ExitCode {
@@ -28,6 +28,7 @@ fn main() -> ExitCode {
         Some("checksums") => checksums(&rest),
         Some("provenance") => provenance_task(&rest),
         Some("perf") => perf(&rest),
+        Some("baseline") => frozen_baseline(&rest),
         Some("docs") => generate_docs(),
         Some("conformance") => generate_conformance(),
         Some("release-check") => run_script("release-check.sh", &rest),
@@ -38,6 +39,37 @@ fn main() -> ExitCode {
         }
         None => {
             usage();
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The frozen v0.4.1 baseline of spec section 57 phase H0 (ADR-0548).
+///
+/// Reads the sources rather than a second list of the same facts: the counts from `metrics`, the
+/// benchmarks from the regression baseline H7 wrote, the release inputs from the manifest
+/// generator H10 wrote.
+fn frozen_baseline(args: &[String]) -> ExitCode {
+    let root = repo_root();
+    if args.iter().any(|argument| argument == "--write") {
+        return match baseline::write(&root) {
+            Ok(path) => {
+                println!("baseline: wrote {path}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("baseline: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    match baseline::capture(&root) {
+        Ok(text) => {
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("baseline: {error}");
             ExitCode::FAILURE
         }
     }
@@ -79,6 +111,7 @@ repository, and over a Wiki checkout when one is named [--wiki <path>]"
         "  metrics        the generated repository metrics of section 50 [--write] to update the \
 README block"
     );
+    eprintln!("  baseline       the frozen v0.4.1 baseline of spec section 57 phase H0 [--write]");
     eprintln!("  docs           regenerate docs/reference/ from the contracts (spec section 36.2)");
     eprintln!(
         "  conformance    regenerate the provider conformance suite from docs/spec (spec section 35.3)"
@@ -632,6 +665,7 @@ fn spec_check() -> ExitCode {
             .chain(verification::check_sequence())
             .chain(check_release_verification_documents(&root))
             .chain(reference::check_migration_guide(&root))
+            .chain(baseline::check(&root))
             .chain(repo_metrics::check_readme(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );

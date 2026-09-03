@@ -440,3 +440,181 @@ fn should_measure_the_completion_budget_directly_rather_than_through_a_proxy() {
         baseline.environment
     );
 }
+
+// --- §57 H0: the frozen v0.4.1 baseline (issue #30, ADR-0548) ----------------------------------
+
+/// The tranche snapshot of `docs/baselines/v0.4.1.json`.
+fn frozen_baseline() -> serde_json::Value {
+    let text = std::fs::read_to_string(repository_root().join("docs/baselines/v0.4.1.json"))
+        .expect("v0.4.1 §57 H0's frozen baseline is a file in the repository");
+    serde_json::from_str(&text).expect("the frozen baseline is JSON")
+}
+
+#[test]
+fn should_read_the_frozen_v041_baseline_and_find_every_metric_it_declares() {
+    // §57 H0 asks for a baseline "a machine-readable baseline file in the repository that H7 and
+    // H11 both consume rather than re-derive". H7 wrote the regression baseline and H11 the
+    // release input manifest, so this file binds the two and states what neither holds; what it
+    // must not do is restate their figures (§52.2). This is the check that every figure it names
+    // still resolves where the figure lives, with all six of §32.3's metrics present.
+    let snapshot = frozen_baseline();
+    assert_eq!(
+        snapshot["schema"].as_str(),
+        Some("ono.baseline.v1"),
+        "the snapshot names its own shape"
+    );
+    let named = snapshot["performance"]["measurements"]
+        .as_array()
+        .expect("the snapshot names the benchmarks it froze");
+    assert!(
+        !named.is_empty(),
+        "a baseline naming no benchmark is not a baseline"
+    );
+
+    let problems = xtask::baseline::check(&repository_root());
+    assert!(
+        problems.is_empty(),
+        "the frozen baseline does not resolve against what it froze:\n{}",
+        problems
+            .iter()
+            .map(|p| format!("  {} — {}", p.location, p.detail))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_report_a_frozen_baseline_naming_a_benchmark_nobody_measured() {
+    // A snapshot is only evidence while its references resolve. A benchmark it names that the
+    // regression baseline does not hold is a figure nobody can look up.
+    let scratch = ono_testkit::scratch();
+    let root = repository_root();
+    for file in [
+        "docs/spec/hardening/performance_baseline.json",
+        "docs/spec/hardening/performance_environment.yaml",
+    ] {
+        scratch.write(
+            file,
+            std::fs::read_to_string(root.join(file)).expect("a performance registry"),
+        );
+    }
+    let mut snapshot = frozen_baseline();
+    snapshot["performance"]["measurements"]
+        .as_array_mut()
+        .expect("the measurements")
+        .push(serde_json::json!({
+            "benchmark": "spatial.imaginary",
+            "profile": "S",
+            "temperature": "cold"
+        }));
+    scratch.write(
+        "docs/baselines/v0.4.1.json",
+        serde_json::to_string_pretty(&snapshot).expect("the snapshot serialises"),
+    );
+    let problems = xtask::baseline::check(scratch.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("spatial.imaginary")),
+        "a benchmark the regression baseline does not hold is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_frozen_baseline_that_leaves_a_measured_benchmark_out() {
+    // The other direction: a snapshot that names three of five benchmarks is a snapshot of
+    // whatever somebody remembered, which is the failure §32.4's baseline exists against.
+    let scratch = ono_testkit::scratch();
+    let root = repository_root();
+    for file in [
+        "docs/spec/hardening/performance_baseline.json",
+        "docs/spec/hardening/performance_environment.yaml",
+    ] {
+        scratch.write(
+            file,
+            std::fs::read_to_string(root.join(file)).expect("a performance registry"),
+        );
+    }
+    let mut snapshot = frozen_baseline();
+    snapshot["performance"]["measurements"]
+        .as_array_mut()
+        .expect("the measurements")
+        .truncate(1);
+    scratch.write(
+        "docs/baselines/v0.4.1.json",
+        serde_json::to_string_pretty(&snapshot).expect("the snapshot serialises"),
+    );
+    let problems = xtask::baseline::check(scratch.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("says nothing about")),
+        "a measured benchmark the snapshot omits is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_report_a_frozen_baseline_that_leaves_an_absent_artifact_hash_unexplained() {
+    // v0.4.1 §2.6 and spec §35.3: unknown stays unknown, never fabricated and never merely
+    // absent. No v0.4.1 release has been published, so the artifact hashes §57 H0 asks for do
+    // not exist — and a null that says nothing is a question nobody asked.
+    let scratch = ono_testkit::scratch();
+    let root = repository_root();
+    for file in [
+        "docs/spec/hardening/performance_baseline.json",
+        "docs/spec/hardening/performance_environment.yaml",
+    ] {
+        scratch.write(
+            file,
+            std::fs::read_to_string(root.join(file)).expect("a performance registry"),
+        );
+    }
+    let mut snapshot = frozen_baseline();
+    snapshot["artifacts"]["reason"] = serde_json::Value::Null;
+    scratch.write(
+        "docs/baselines/v0.4.1.json",
+        serde_json::to_string_pretty(&snapshot).expect("the snapshot serialises"),
+    );
+    let problems = xtask::baseline::check(scratch.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("reason")),
+        "an unexplained absence is reported: {problems:?}"
+    );
+}
+
+#[test]
+fn should_capture_the_frozen_baseline_from_the_sources_rather_than_from_a_second_list() {
+    // #30's exit test is a file "that H7 and H11 both consume rather than re-derive", and
+    // ADR-0451 asked for the same thing from the other side: "its baseline should be a captured
+    // manifest rather than a second, hand-written list of the same facts". So the snapshot is
+    // written by a command that reads the sources, and running it twice at one commit produces
+    // one answer.
+    let root = repository_root();
+    let first = xtask::baseline::capture(&root).expect("the snapshot can be captured");
+    let second = xtask::baseline::capture(&root).expect("the snapshot can be captured twice");
+    assert_eq!(
+        first, second,
+        "a capture of one commit is one answer, or the file churns for no reason"
+    );
+
+    let captured: serde_json::Value = serde_json::from_str(&first).expect("the capture is JSON");
+    let manifest = xtask::provenance::build_inputs(&root);
+    assert_eq!(
+        captured["release_inputs"]["at_capture"]["schema"], manifest["schema"],
+        "Appendix H's manifest is captured from the generator, not retyped"
+    );
+    let measured = Baseline::parse(
+        &std::fs::read_to_string(baseline_path()).expect("the regression baseline"),
+    )
+    .expect("the regression baseline parses");
+    assert_eq!(
+        captured["performance"]["measurements"]
+            .as_array()
+            .expect("the captured measurements")
+            .len(),
+        measured.measurements.len(),
+        "every figure H7 measured is named, and none is invented"
+    );
+}

@@ -1174,13 +1174,25 @@ Four conventions this subsection relies on:
       `crates/ono-spatial-query/tests/profiles.rs::should_answer_or_refuse_within_the_interactive_budget_on_the_profile_l_fixture`.
       The box is ticked when all four run un-ignored and green, and `docs/STATE.md` records that
       each was red first (#31).
-- [ ] **P2 · The frozen baseline exists and is readable by the gate.** `docs/baselines/v0.4.1.json`
-      records the tranche's starting point — test counts by outcome, the six §32.3 metrics for
-      every benchmark of §37.1, and the release artifact hashes and workflow inputs of Appendix H —
-      so a later regression has something to be a regression against (§32.4) —
-      `xtask/tests/perf.rs::should_read_the_frozen_v041_baseline_and_find_every_metric_it_declares`
-      and `::should_compare_a_benchmark_result_against_the_baseline_for_its_reference_environment`
-      (#30).
+- [x] **P2 · The frozen baseline exists and is readable by the gate.** `docs/baselines/v0.4.1.json`
+      is the tranche snapshot, written by `cargo xtask baseline --write` and validated by
+      `spec-check` on every gate run — the repository counts of §50 as history, every benchmark
+      `docs/spec/hardening/performance_baseline.json` holds with all six §32.3 metrics resolved,
+      Appendix H's workflow inputs captured from `cargo xtask build-manifest`, and the release
+      artifact hashes recorded as **null with a reason**, because no `v*` tag has been published
+      and §2.6 keeps an unknown unknown —
+      `xtask/tests/perf.rs::should_read_the_frozen_v041_baseline_and_find_every_metric_it_declares`,
+      `::should_report_a_frozen_baseline_naming_a_benchmark_nobody_measured`,
+      `::should_report_a_frozen_baseline_that_leaves_a_measured_benchmark_out`,
+      `::should_report_a_frozen_baseline_that_leaves_an_absent_artifact_hash_unexplained`,
+      `::should_capture_the_frozen_baseline_from_the_sources_rather_than_from_a_second_list` and
+      `::should_compare_a_benchmark_result_against_the_baseline_for_its_reference_environment`
+      (#30; ADR-0548). **It snapshots the finished tranche rather than its starting point.** H0's
+      last issue was worked after H1–H12, so the *before* it was written to freeze no longer
+      exists, and measuring today's tree to produce yesterday's figures is the fabrication §2.6
+      forbids. The regression baseline §32.4 asks for is H7's file and this one restates none of
+      it (§52.2): it binds the two machine-readable artifacts H7 and H11 already wrote, adds the
+      counts neither keeps, and says in words what has not happened yet.
 - [x] **P2 · The hardening policy data lives in machine-readable registries.** The seven contract
       domains of §52.1 — `security_boundaries`, `remote_limits`, `materialization_limits`,
       `kuang_confinement_controls`, `performance_profiles`, `expected_test_skips`, `release_inputs`
