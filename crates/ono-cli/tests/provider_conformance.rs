@@ -55,6 +55,7 @@ async fn should_advertise_exactly_what_container_engine_declares() {
             harness::CapabilityClaim { id: "container.manage", risk: "mutate", elevation: "conditional" },
         ],
         schemas: &["ono.container/1", "ono.image/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -138,6 +139,7 @@ async fn should_advertise_exactly_what_linux_netlink_serving_interface_declares(
             harness::CapabilityClaim { id: "interface.set", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.interface/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -189,6 +191,7 @@ async fn should_advertise_exactly_what_linux_netlink_serving_route_declares() {
             harness::CapabilityClaim { id: "route.set", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.route/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -241,6 +244,7 @@ async fn should_advertise_exactly_what_linux_netlink_serving_neighbor_declares()
             harness::CapabilityClaim { id: "neighbor.list", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.neighbor/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -292,6 +296,7 @@ async fn should_advertise_exactly_what_linux_sock_diag_declares() {
             harness::CapabilityClaim { id: "socket.close", risk: "destructive", elevation: "required" },
         ],
         schemas: &["ono.socket/1", "ono.endpoint/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -376,6 +381,7 @@ async fn should_advertise_exactly_what_linux_packages_declares() {
             harness::CapabilityClaim { id: "package.manage", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.package/1"],
+        identity_token: Some("dpkg"),
     }).await;
 }
 
@@ -425,6 +431,7 @@ async fn should_advertise_exactly_what_linux_packages_rpm_declares() {
             harness::CapabilityClaim { id: "package.manage", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.package/1"],
+        identity_token: Some("rpm"),
     }).await;
 }
 
@@ -475,6 +482,7 @@ async fn should_advertise_exactly_what_linux_procfs_declares() {
             harness::CapabilityClaim { id: "process.set", risk: "mutate", elevation: "conditional" },
         ],
         schemas: &["ono.process/1", "ono.process-detail/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -594,6 +602,7 @@ async fn should_advertise_exactly_what_linux_fs_declares() {
             harness::CapabilityClaim { id: "dir.list", risk: "read", elevation: "conditional" },
         ],
         schemas: &["ono.file/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -665,6 +674,7 @@ async fn should_advertise_exactly_what_linux_nss_declares() {
             harness::CapabilityClaim { id: "group.manage", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.user/1", "ono.group/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -744,6 +754,7 @@ async fn should_advertise_exactly_what_ono_session_declares() {
             harness::CapabilityClaim { id: "env.read", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.env-var/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -805,6 +816,7 @@ async fn should_advertise_exactly_what_ono_shell_declares() {
             harness::CapabilityClaim { id: "finding.list", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1336,6 +1348,7 @@ async fn should_advertise_exactly_what_linux_mountinfo_declares() {
             harness::CapabilityClaim { id: "mount.manage", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.mount/1", "ono.filesystem/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1424,6 +1437,7 @@ async fn should_advertise_exactly_what_linux_sysfs_declares() {
             harness::CapabilityClaim { id: "device.list", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.device/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1473,6 +1487,7 @@ async fn should_advertise_exactly_what_linux_resolver_declares() {
             harness::CapabilityClaim { id: "dns.resolve", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.dns-record/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1518,6 +1533,7 @@ async fn should_advertise_exactly_what_ono_probe_declares() {
             harness::CapabilityClaim { id: "port.probe", risk: "observe", elevation: "none" },
         ],
         schemas: &["ono.probe-result/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1571,6 +1587,7 @@ async fn should_advertise_exactly_what_systemd_declares() {
             harness::CapabilityClaim { id: "service.manage", risk: "mutate", elevation: "required" },
         ],
         schemas: &["ono.service/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1623,6 +1640,7 @@ async fn should_advertise_exactly_what_systemd_journal_declares() {
             harness::CapabilityClaim { id: "log.read", risk: "read", elevation: "conditional" },
         ],
         schemas: &["ono.journal-event/1", "ono.log-record/1"],
+        identity_token: None,
     }).await;
 }
 
@@ -1714,6 +1732,7 @@ async fn should_advertise_exactly_what_systemd_logind_declares() {
             harness::CapabilityClaim { id: "session.list", risk: "read", elevation: "none" },
         ],
         schemas: &["ono.session/1"],
+        identity_token: None,
     }).await;
 }
 

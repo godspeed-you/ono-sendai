@@ -989,3 +989,74 @@ fn should_report_a_refusal_that_claims_a_field_nobody_attaches() {
         "a claimed field nobody sets is reported: {problems:?}"
     );
 }
+
+#[test]
+fn should_reject_two_providers_of_one_target_that_do_not_say_which_of_them_a_record_names() {
+    // ADR-0559: `ono.package/1` is identified by `provider + name` because a machine can carry
+    // more than one package database. Two providers of that target that declare no
+    // `identity_token` leave the registry nothing to route an action by, and the first available
+    // one would act on a record the other made.
+    let repo = scratch();
+    repo.write(
+        "docs/spec/schemas/package.v1.yaml",
+        "id: ono.package/1\nname: Package\nsummary: A package.\nidentity: [provider, name]\nfields:\n  provider:\n    type: string\n    required: true\n    doc: The database that answered.\n  name:\n    type: string\n    required: true\n    doc: The package name.\n",
+    );
+    repo.write(
+        "docs/spec/providers/packages.yaml",
+        "providers:\n  - id: linux.packages\n    targets: [package]\n    schemas: [ono.package/1]\n  - id: linux.packages.rpm\n    targets: [package]\n    schemas: [ono.package/1]\n",
+    );
+
+    let problems = xtask::contracts::check_identity_tokens(repo.path());
+    assert_eq!(
+        problems.len(),
+        2,
+        "each of the two providers is asked for its token: {problems:?}"
+    );
+    assert!(
+        problems
+            .iter()
+            .all(|problem| problem.detail.contains("identity_token")),
+        "the refusal names what is missing: {problems:?}"
+    );
+}
+
+#[test]
+fn should_reject_two_providers_of_one_target_that_claim_the_same_identity_token() {
+    let repo = scratch();
+    repo.write(
+        "docs/spec/schemas/package.v1.yaml",
+        "id: ono.package/1\nname: Package\nsummary: A package.\nidentity: [provider, name]\nfields:\n  provider:\n    type: string\n    required: true\n    doc: The database that answered.\n  name:\n    type: string\n    required: true\n    doc: The package name.\n",
+    );
+    repo.write(
+        "docs/spec/providers/packages.yaml",
+        "providers:\n  - id: linux.packages\n    targets: [package]\n    identity_token: dpkg\n    schemas: [ono.package/1]\n  - id: linux.packages.rpm\n    targets: [package]\n    identity_token: dpkg\n    schemas: [ono.package/1]\n",
+    );
+
+    let problems = xtask::contracts::check_identity_tokens(repo.path());
+    assert!(
+        problems.iter().any(|problem| problem
+            .detail
+            .contains("both declare the identity token `dpkg`")),
+        "a token two providers share says nothing about which of them made a record: {problems:?}"
+    );
+}
+
+#[test]
+fn should_accept_one_provider_of_a_target_that_declares_no_identity_token() {
+    // `ono.service/1` identifies by `provider` too, and systemd alone answers `service`. There
+    // the field is a note on the record rather than a choice between answerers.
+    let repo = scratch();
+    repo.write(
+        "docs/spec/schemas/service.v1.yaml",
+        "id: ono.service/1\nname: Service\nsummary: A service.\nidentity: [provider, name]\nfields:\n  provider:\n    type: string\n    required: true\n    doc: The manager that answered.\n  name:\n    type: string\n    required: true\n    doc: The unit name.\n",
+    );
+    repo.write(
+        "docs/spec/providers/systemd.yaml",
+        "providers:\n  - id: systemd\n    targets: [service]\n    schemas: [ono.service/1]\n",
+    );
+
+    assert_eq!(
+        xtask::contracts::check_identity_tokens(repo.path()).len(),
+        0
+    );
+}

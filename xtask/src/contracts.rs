@@ -95,6 +95,7 @@ pub fn check_contracts(root: &Path) -> Vec<Problem> {
     problems.extend(check_spatial_registry(root));
     problems.extend(check_spatial_implementation(root));
     problems.extend(check_provider_claims(root));
+    problems.extend(check_identity_tokens(root));
     problems.extend(check_kuang_contracts(root));
     problems.extend(check_hardening_contracts(root));
 
@@ -1810,6 +1811,110 @@ pub fn check_provider_claims(root: &Path) -> Vec<Problem> {
         }
     }
     problems
+}
+
+/// Checks that a target two providers claim says which of them a record belongs to (ADR-0559).
+///
+/// `ono.package/1` is identified by `provider + name` precisely because "a machine can carry more
+/// than one package database and a name alone does not say which one answered". Where two
+/// providers claim one target whose schema identifies by `provider`, an action on a record has to
+/// reach the provider the record names, and the registry can only do that if each of them
+/// declares the token its records give — and if no two of them declare the same one.
+///
+/// A target one provider claims needs no token: the field is a note on the record rather than a
+/// choice between answerers, and `ono.service/1` is that case.
+#[must_use]
+pub fn check_identity_tokens(root: &Path) -> Vec<Problem> {
+    let providers = root.join("docs").join("spec").join("providers");
+    if !providers.is_dir() {
+        return Vec::new();
+    }
+    let identified: BTreeSet<String> = schema_identity_by_provider(root);
+    let mut claims: BTreeMap<String, Vec<(String, String, Option<String>)>> = BTreeMap::new();
+    for path in yaml_files(&providers) {
+        let location = relative(root, &path);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        for provider in sequence(&document, "providers") {
+            let id = string_at(provider, "id").unwrap_or_default();
+            let token = string_at(provider, "identity_token");
+            let by_provider = string_sequence(provider, "schemas")
+                .iter()
+                .any(|schema| identified.contains(schema));
+            if !by_provider {
+                continue;
+            }
+            for target in string_sequence(provider, "targets") {
+                claims.entry(target).or_default().push((
+                    id.clone(),
+                    location.clone(),
+                    token.clone(),
+                ));
+            }
+        }
+    }
+
+    let mut problems = Vec::new();
+    for (target, entries) in claims {
+        if entries.len() < 2 {
+            continue;
+        }
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
+        for (id, location, token) in &entries {
+            let Some(token) = token else {
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "`{id}` is one of {} providers of `{target}`, whose schema identifies an \
+                         object by `provider`, and it declares no `identity_token`. Without one \
+                         the registry cannot send an action to the provider a record names, and \
+                         the first available one would act on it (ADR-0559)",
+                        entries.len()
+                    ),
+                });
+                continue;
+            };
+            if let Some(other) = seen.insert(token.clone(), id.clone()) {
+                problems.push(Problem {
+                    location: location.clone(),
+                    detail: format!(
+                        "`{id}` and `{other}` both claim `{target}` and both declare the identity \
+                         token `{token}`, so a record naming it says nothing about which of them \
+                         made it (ADR-0559)"
+                    ),
+                });
+            }
+        }
+    }
+    problems
+}
+
+/// The ids of the schemas whose identity begins with, or contains, a `provider` field.
+fn schema_identity_by_provider(root: &Path) -> BTreeSet<String> {
+    let schemas = root.join("docs").join("spec").join("schemas");
+    let mut identified = BTreeSet::new();
+    for path in yaml_files(&schemas) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(document) = serde_yaml_ng::from_str::<Yaml>(&text) else {
+            continue;
+        };
+        let Some(id) = string_at(&document, "id") else {
+            continue;
+        };
+        if string_sequence(&document, "identity")
+            .iter()
+            .any(|field| field == "provider")
+        {
+            identified.insert(id);
+        }
+    }
+    identified
 }
 
 /// The spatial types, as a reader-friendly list.

@@ -52,6 +52,9 @@ pub struct Surface {
     pub capabilities: &'static [CapabilityClaim],
     /// The schemas it emits.
     pub schemas: &'static [&'static str],
+    /// The token its records give for a `provider` identity field, when its target is one two
+    /// providers can claim (ADR-0559).
+    pub identity_token: Option<&'static str>,
 }
 
 /// One field, as `docs/spec/schemas/*.v1.yaml` fixes it.
@@ -225,6 +228,14 @@ pub async fn assert_surface(surface: &Surface) {
         advertised, declared,
         "`{}` must advertise the capabilities its declaration promises, at the risk and \
          elevation docs/spec/capabilities.yaml fixes",
+        surface.provider
+    );
+
+    assert_eq!(
+        provider.identity_token(),
+        surface.identity_token,
+        "`{}` must answer for the identity token its declaration names, or an action on a record \
+         it made would be performed by whichever provider registered first (ADR-0559)",
         surface.provider
     );
 

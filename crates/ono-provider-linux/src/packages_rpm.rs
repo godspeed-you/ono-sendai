@@ -624,6 +624,10 @@ impl Provider for RpmPackageProvider {
         RPM_PROVIDER_ID
     }
 
+    fn identity_token(&self) -> Option<&str> {
+        Some(RPM)
+    }
+
     fn targets(&self) -> &[&str] {
         &["package"]
     }
