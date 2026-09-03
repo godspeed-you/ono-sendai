@@ -1238,3 +1238,39 @@ fn should_answer_an_empty_stream_for_an_exit_that_exists_and_holds_nothing() {
         run.output()
     );
 }
+
+#[test]
+fn should_refuse_a_withheld_group_when_it_was_asked_for_by_type_rather_than_by_relation() {
+    // §42.4 and §35.2: a group this user may not read is not an empty one. ADR-0271 turned the
+    // false empty into a structured refusal for `near <relation>`, and the guard was written
+    // `if named_relation.is_some()`, so `near --type socket` — the other spelling of the same
+    // question — still fell through to an empty stream at status 0 (issue #26, ADR-0557).
+    let by_relation = ono("enter process 1; near sockets");
+    if by_relation.status().is_success() {
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "this run may read pid 1's descriptors, so no group of that place is withheld",
+        );
+        return;
+    }
+    assert!(
+        by_relation.stderr().contains("Ono-Sendai-E1008"),
+        "the premise: the `sockets` exit of pid 1 is refused to this user, got {:?}",
+        by_relation.stderr()
+    );
+
+    let by_type = ono("enter process 1; near --type socket");
+
+    assert!(
+        !by_type.status().is_success(),
+        "a refused group answered through `--type` is a refusal, not an empty stream at status \
+         0: stdout {:?}, stderr {:?}",
+        by_type.stdout(),
+        by_type.stderr()
+    );
+    assert!(
+        by_type.stderr().contains("Ono-Sendai-E1008"),
+        "the two spellings of one question give one answer, got {:?}",
+        by_type.stderr()
+    );
+}

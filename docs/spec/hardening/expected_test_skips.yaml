@@ -150,6 +150,9 @@ declared:
   - id: "crates/ono-cli/tests/spatial_map.rs::should_yield_exactly_the_members_and_keep_the_place_when_a_cluster_is_expanded"
     category: fixture_not_applicable
     prerequisite: "the host has more processes than the text map's view budget"
+  - id: "crates/ono-cli/tests/spatial_navigation.rs::should_refuse_a_withheld_group_when_it_was_asked_for_by_type_rather_than_by_relation"
+    category: missing_privilege
+    prerequisite: "the run is unprivileged, so the refusal the test observes can be provoked"
   - id: "crates/ono-cli/tests/spatial_navigation.rs::should_run_the_native_spatial_find_and_keep_the_external_find_reachable_when_both_exist"
     category: external_tool_unavailable
     prerequisite: "the external `find` and `look` programs are installed beside the shell's own"

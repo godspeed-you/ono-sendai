@@ -578,9 +578,14 @@ impl CommandImpl for Near {
             if let Some(relation) = named_relation.clone() {
                 request = request.along(relation);
             }
+            let named_type = arguments.option("type").is_some();
             if let Some(value) = arguments.option("type") {
                 request = request.of_type(crate::spatial::spatial_type(value)?);
             }
+            // Whether this `near` asked about one exit rather than about the whole horizon.
+            // Both spellings narrow, so both owe the caller the §42.4 answer for a group that
+            // was named and could not be read.
+            let narrowed = named_relation.is_some() || named_type;
             let limit = match arguments.option("limit") {
                 Some(Value::Int(limit)) => usize::try_from(*limit).ok(),
                 _ => None,
@@ -608,10 +613,15 @@ impl CommandImpl for Near {
             // empty one. `near sockets` on a process whose descriptors are unreadable answered
             // with an empty stream and status 0, which is the false-empty rendering §42.4
             // forbids — `look` has always said `permission denied` in the same situation.
-            if named_relation.is_some()
-                && let Some(group) = neighborhood.groups().first()
-                && group.members().is_empty()
-                && let Some(refusal) = withheld_exit(group)
+            // `--type X` is the second spelling of "answer about this one exit", and the guard
+            // was written for the first only, so a refused group answered through `--type` fell
+            // back through to the empty stream §42.4 forbids (issue #26, ADR-0557).
+            if narrowed
+                && neighborhood
+                    .groups()
+                    .iter()
+                    .all(|group| group.members().is_empty())
+                && let Some(refusal) = neighborhood.groups().iter().find_map(withheld_exit)
             {
                 return Err(refusal);
             }

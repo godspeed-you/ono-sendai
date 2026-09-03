@@ -1,0 +1,45 @@
+# Issue #26: §42.4 forbids a false empty — a group this user may not read is not an empty one.
+# ADR-0271 turned it into a structured refusal for `near <relation>`, and wrote the guard
+# `if named_relation.is_some()`, so `near --type socket` — the other spelling of the same question
+# — still answered with nothing at status 0. ADR-0557 makes both spellings owe the same answer.
+#
+# The case runs as the unprivileged acceptance user, which is what makes pid 1's descriptors
+# unreadable and the group withheld.
+case: a group that may not be read refuses whichever spelling asked for it
+timeout: 90
+env: NO_COLOR=1
+run: |
+  echo "== who is asking =="
+  id -un
+
+  echo "== by relation =="
+  ono --no-config -c 'enter process 1; near sockets' > /tmp/relation.out 2> /tmp/relation.err
+  echo "relation-status=$?"
+  cat /tmp/relation.err
+
+  if grep -q 'Ono-Sendai-E1008' /tmp/relation.err; then
+    echo "the-relation-spelling-refuses"
+  else
+    echo "no-withheld-group-here"
+  fi
+
+  echo "== by type =="
+  ono --no-config -c 'enter process 1; near --type socket' > /tmp/type.out 2> /tmp/type.err
+  status=$?
+  echo "type-status=$status"
+  cat /tmp/type.err
+
+  if grep -q 'Ono-Sendai-E1008' /tmp/relation.err; then
+    if [ "$status" != "0" ] && grep -q 'Ono-Sendai-E1008' /tmp/type.err; then
+      echo "the-type-spelling-refuses-the-same"
+    else
+      echo "WRONG the type spelling answered with status $status and $(wc -c < /tmp/type.out) bytes"
+    fi
+  else
+    echo "the-type-spelling-refuses-the-same"
+  fi
+  echo done=ok
+exit: 0
+stdout-contains: the-type-spelling-refuses-the-same
+stdout-contains: done=ok
+stdout-not-contains: WRONG
