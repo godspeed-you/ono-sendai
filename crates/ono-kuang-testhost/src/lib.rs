@@ -37,6 +37,7 @@ pub struct TestHost {
     platform: Option<String>,
     confinement: std::sync::Arc<dyn ConfinementPlatform>,
     models: Option<std::sync::Arc<dyn ono_model_broker::ModelBroker>>,
+    context: Option<std::sync::Arc<dyn ono_kuang_supervisor::ContextSource>>,
 }
 
 impl std::fmt::Debug for TestHost {
@@ -66,6 +67,7 @@ impl TestHost {
             platform: None,
             confinement: NativePlatform::shared(),
             models: None,
+            context: None,
         }
     }
 
@@ -77,6 +79,16 @@ impl TestHost {
     #[must_use]
     pub fn confinement(mut self, platform: std::sync::Arc<dyn ConfinementPlatform>) -> Self {
         self.confinement = platform;
+        self
+    }
+
+    /// What `context.get` answers with. Without one, the fixed context of spec §31.73.
+    #[must_use]
+    pub fn context(
+        mut self,
+        source: std::sync::Arc<dyn ono_kuang_supervisor::ContextSource>,
+    ) -> Self {
+        self.context = Some(source);
         self
     }
 
@@ -147,6 +159,9 @@ impl TestHost {
         config.confinement = self.confinement;
         if let Some(models) = self.models {
             config.models = models;
+        }
+        if let Some(context) = self.context {
+            config.context = context;
         }
         if let Some(platform) = self.platform {
             config.platform = platform;

@@ -361,11 +361,11 @@ canonical CI environment expects to.
 ```text
 crates=31
 workspace_members=33
-tests=3442
+tests=3449
 tests_that_can_skip=75
 expected_ci_skips=3
-acceptance_cases=139
-adrs=387
+acceptance_cases=140
+adrs=388
 command_contract_files=13
 commands=195
 ```

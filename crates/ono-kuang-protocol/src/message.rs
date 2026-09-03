@@ -55,6 +55,16 @@ pub mod method {
     pub const CLOCK_NOW: &str = "clock.now";
     /// Plugin → host: read file bytes under the granted `paths` scope.
     pub const FILESYSTEM_READ: &str = "filesystem.read";
+    /// Plugin → host: pull values from a stream the host produces (spec §31.15's credit).
+    pub const STREAMS_NEXT: &str = "streams.next";
+    /// Plugin → host: cancel a stream in either direction.
+    pub const STREAMS_CANCEL: &str = "streams.cancel";
+    /// Plugin → host: the context stack, and nothing beyond it (spec §31.12).
+    pub const CONTEXT_GET: &str = "context.get";
+    /// Plugin → host: one registered schema (spec §31.12, §31.64).
+    pub const SCHEMAS_GET: &str = "schemas.get";
+    /// Plugin → host: the registered schemas, as a stream (spec §31.12, §31.64).
+    pub const SCHEMAS_LIST: &str = "schemas.list";
     /// Plugin → host: the model providers this package may use (spec §31.43).
     pub const MODELS_LIST: &str = "models.list";
     /// Plugin → host: operator-approved inference through the model broker (spec §31.43).
@@ -652,4 +662,50 @@ mod tests {
         assert!(result.is_none());
         assert_eq!(error.expect("error").name, "capability.denied");
     }
+}
+
+/// Parameters of [`method::STREAMS_NEXT`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NextParams {
+    /// The stream to read.
+    pub handle: u64,
+    /// How many values the plugin is ready for: the credit. The host sends no more than this.
+    pub max: u64,
+    /// How long to wait for the first value. Absent uses the invocation's deadline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<serde_json::Value>,
+}
+
+/// Parameters of [`method::STREAMS_CANCEL`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamHandleParams {
+    /// Any stream in either direction.
+    pub handle: u64,
+}
+
+/// The answer to [`method::STREAMS_NEXT`]: `complete` with no error is a normal end.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NextResult {
+    /// The values, at most `max` of them, in order.
+    pub values: Vec<serde_json::Value>,
+    /// Whether the stream has nothing more to give.
+    pub complete: bool,
+    /// The terminal failure, when the stream ended in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<WireError>,
+}
+
+/// Parameters of [`method::SCHEMAS_GET`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SchemaGetParams {
+    /// A schema id, e.g. `ono.process/1`.
+    pub id: String,
+}
+
+/// Parameters of [`method::SCHEMAS_LIST`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SchemaListParams {
+    /// Restrict to ids under a namespace. Absent lists every registered schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
 }

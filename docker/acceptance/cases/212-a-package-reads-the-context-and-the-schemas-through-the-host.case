@@ -1,0 +1,62 @@
+# Issue #3 (c), ADR-0567: two of spec §31.12's host API domains, `context` and `schemas`, and the
+# host stream every list-shaped domain stands on. A package granted `context.read` is told where
+# the session stands and nothing beyond it; one granted `schema.read` pulls the registered
+# schemas two at a time with `streams.next`; without the grant, deny by default.
+case: a package reads the context and the schemas through the host
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - context.read
+      - schema.read
+  network:
+    outbound: none
+  MANIFEST
+  cd /tmp
+
+  echo "== the context stack, and nothing beyond it (§31.12) =="
+  ono -c 'grant capability context.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:context | to json'
+  ono -c 'grant capability context.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:context | to json' | grep -q 'cwd' && echo "context-has-cwd"
+  ono -c 'grant capability context.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:context | to json' | grep -q '/tmp' && echo "context-says-where"
+  ono -c 'grant capability context.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:context | to json' | grep -q 'HOME=' || echo "context-carries-no-environment"
+
+  echo "== the schemas, pulled as a stream (§31.15, §31.64) =="
+  ono -c 'grant capability schema.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:schemas --prefix ono.proc | to json'
+  ono -c 'grant capability schema.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:schemas --prefix ono.proc | to json' | grep -q '"ono.process/1"' && echo "schemas-streamed"
+  ono -c 'grant capability schema.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:schema --id ono.service/1 | to json' | grep -q '"name"' && echo "schema-described"
+
+  echo "== deny by default (§31.19) =="
+  ono -c 'load plugin dev.example.echo; echo:context' 2>&1 | grep -q 'Ono-Sendai-K11301' && echo "context-denied-without-grant"
+exit: 0
+stdout-contains: context-has-cwd
+stdout-contains: context-says-where
+stdout-contains: context-carries-no-environment
+stdout-contains: schemas-streamed
+stdout-contains: schema-described
+stdout-contains: context-denied-without-grant

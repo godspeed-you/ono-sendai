@@ -10,10 +10,11 @@ use ono_kuang_protocol::{
     CommandContribution, DemandParams, EmitParams, EmitResult, Enforcement, Envelope,
     FilesystemReadParams, FilesystemReadResult, FrameError, FrameLimits, HOST_API, Hello,
     InitParams, InitResult, InvokeParams, InvokeResult, InvokeStatus, KuangError, KuangErrorCode,
-    Lease, Lifecycle, Manifest, OverflowPolicy, PACKAGE_FORMAT, PluginContract, PluginState,
-    ProbeResult, QueryParams, RequestOnceParams, ShutdownParams, ShutdownReason, StateGetResult,
-    StateKeyParams, StateSetParams, TargetContribution, VersionRange, WireError, decode_payload,
-    method,
+    Lease, Lifecycle, Manifest, NextParams, NextResult, OverflowPolicy, PACKAGE_FORMAT,
+    PluginContract, PluginState, ProbeResult, QueryParams, RequestOnceParams, SchemaGetParams,
+    SchemaListParams, ShutdownParams, ShutdownReason, StateGetResult, StateKeyParams,
+    StateSetParams, StreamHandleParams, TargetContribution, VersionRange, WireError,
+    decode_payload, method,
 };
 use ono_value::{SchemaRegistry, Value, from_json, to_json};
 use serde_json::{Map as JsonMap, Value as Json, json};
@@ -95,6 +96,9 @@ pub struct LoadConfig {
     /// The model broker `models.list` and `models.infer` reach (spec §31.43, ADR-0566). The
     /// default answers for a host with no catalogue: nothing configured, nothing answers.
     pub models: Arc<dyn ono_model_broker::ModelBroker>,
+    /// What `context.get` answers with (spec §31.12, ADR-0567). The shell publishes its
+    /// session's context; the default is the fixed context of the test host.
+    pub context: Arc<dyn crate::context::ContextSource>,
 }
 
 impl std::fmt::Debug for LoadConfig {
@@ -129,6 +133,7 @@ impl LoadConfig {
             private_dir: None,
             confinement: NativePlatform::shared(),
             models: Arc::new(ono_model_broker::NoModels),
+            context: Arc::new(crate::context::FixedContext::test_host()),
         }
     }
 }
@@ -192,6 +197,7 @@ impl Supervisor {
             private_dir,
             confinement,
             models,
+            context,
         } = config;
         manifest.check_host(HOST_API, &platform)?;
         // Negotiation before code: a denied required capability means nothing is spawned.
@@ -302,6 +308,8 @@ impl Supervisor {
             policy,
             clock,
             models,
+            context,
+            inbound: HashMap::new(),
             disclosed_remote: false,
             contract: contract.clone(),
             state: StateStore::new(contract.limits.state_quota),
@@ -913,6 +921,50 @@ struct OutStream {
     expected: Expected,
 }
 
+/// A stream the host produced and the plugin pulls with `streams.next` (ADR-0567).
+struct Inbound {
+    values: std::collections::VecDeque<Json>,
+    complete: bool,
+    error: Option<WireError>,
+}
+
+/// A schema as `schemas.get` and `schemas.list` describe it: fields, types, units, nullability,
+/// identity, default view, and where it came from (spec §31.64).
+fn schema_record(schema: &ono_value::Schema, package_id: &str) -> Json {
+    let id = schema.id().to_string();
+    let origin = if id.starts_with("ono.") {
+        "core"
+    } else if id.starts_with(package_id) {
+        "package"
+    } else {
+        "provider"
+    };
+    let fields: Vec<Json> = schema
+        .fields()
+        .iter()
+        .map(|field| {
+            json!({
+                "name": field.name(),
+                "type": field.ty().to_string(),
+                "required": field.is_required(),
+                "nullable": field.is_nullable(),
+                "unit": field.unit().map(|unit| unit.to_string()),
+                "doc": field.doc(),
+            })
+        })
+        .collect();
+    json!({
+        "id": id,
+        "name": schema.name(),
+        "doc": schema.doc(),
+        "identity": schema.identity().iter().map(|name| name.to_string()).collect::<Vec<_>>(),
+        "identity_fallback": schema.identity_fallback().iter().map(|name| name.to_string()).collect::<Vec<_>>(),
+        "fields": fields,
+        "default_view": schema.default_view().iter().map(|name| name.to_string()).collect::<Vec<_>>(),
+        "origin": origin,
+    })
+}
+
 enum Expected {
     Schema(ono_value::SchemaId),
     Type(ono_value::FieldType),
@@ -930,6 +982,11 @@ struct Actor {
     clock: HostClock,
     /// What `models.*` reach (ADR-0566).
     models: Arc<dyn ono_model_broker::ModelBroker>,
+    /// What `context.get` answers with (ADR-0567).
+    context: Arc<dyn crate::context::ContextSource>,
+    /// The streams the host produces and the plugin pulls with `streams.next`, by handle
+    /// (spec §31.15, ADR-0567).
+    inbound: HashMap<u64, Inbound>,
     /// Whether the data-boundary plan of spec §31.82 has been disclosed for a remote provider.
     disclosed_remote: bool,
     contract: PluginContract,
@@ -1611,6 +1668,11 @@ impl Actor {
             method::STATE_DELETE => self.host_state_delete(seq, params).await,
             method::CLOCK_NOW => self.host_clock_now(seq).await,
             method::FILESYSTEM_READ => self.host_filesystem_read(seq, params).await,
+            method::STREAMS_NEXT => self.host_streams_next(seq, params).await,
+            method::STREAMS_CANCEL => self.host_streams_cancel(seq, params).await,
+            method::CONTEXT_GET => self.host_context_get(seq).await,
+            method::SCHEMAS_GET => self.host_schemas_get(seq, params).await,
+            method::SCHEMAS_LIST => self.host_schemas_list(seq, params).await,
             method::MODELS_LIST => self.host_models_list(seq).await,
             method::MODELS_INFER => self.host_models_infer(seq, params).await,
             unknown => Err(protocol_violation(format!(
@@ -2015,6 +2077,162 @@ impl Actor {
             }
             Err(error) => self.reply_err(seq, error.into()).await,
         }
+        Ok(())
+    }
+
+    /// Opens a stream the plugin pulls with `streams.next`, holding `values` already produced.
+    fn open_inbound(&mut self, values: Vec<Json>) -> u64 {
+        let handle = self.next_handle;
+        self.next_handle += 1;
+        self.inbound.insert(
+            handle,
+            Inbound {
+                values: values.into(),
+                complete: true,
+                error: None,
+            },
+        );
+        handle
+    }
+
+    /// `streams.next`: at most `max` values of a host stream — the credit of spec §31.15,
+    /// pulled rather than pushed, so the plugin decides how much it is ready for.
+    async fn host_streams_next(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let next: NextParams = Self::parse_params(params)?;
+        let Some(stream) = self.inbound.get_mut(&next.handle) else {
+            return Err(protocol_violation(format!(
+                "`streams.next` on handle {}, which the host never opened",
+                next.handle
+            )));
+        };
+        let max = usize::try_from(next.max).unwrap_or(usize::MAX);
+        let mut values = Vec::with_capacity(max.min(stream.values.len()));
+        while values.len() < max {
+            let Some(value) = stream.values.pop_front() else {
+                break;
+            };
+            values.push(value);
+        }
+        let complete = stream.complete && stream.values.is_empty();
+        let error = if complete { stream.error.take() } else { None };
+        if complete {
+            self.inbound.remove(&next.handle);
+        }
+        let answer = NextResult {
+            values,
+            complete,
+            error,
+        };
+        self.reply_ok(seq, serde_json::to_value(answer).unwrap_or(Json::Null))
+            .await;
+        Ok(())
+    }
+
+    /// `streams.cancel`: a stream in either direction is over, and the host stops feeding or
+    /// accepting it.
+    async fn host_streams_cancel(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let cancel: StreamHandleParams = Self::parse_params(params)?;
+        if self.inbound.remove(&cancel.handle).is_none() {
+            match self.streams.get_mut(&cancel.handle) {
+                Some(stream) => stream.cancelled = true,
+                None => {
+                    return Err(protocol_violation(format!(
+                        "`streams.cancel` on handle {}, which is not open",
+                        cancel.handle
+                    )));
+                }
+            }
+        }
+        self.reply_ok(seq, Json::Null).await;
+        Ok(())
+    }
+
+    /// `context.get`: the context stack the shell published, and nothing beyond it.
+    async fn host_context_get(&mut self, seq: u64) -> Result<(), KuangError> {
+        match self.broker_check(
+            ono_kuang_protocol::Capability::ContextRead,
+            "context.get",
+            &[],
+            None,
+        ) {
+            Ok(_) => {
+                let context = self.context.context();
+                self.reply_ok(seq, context).await;
+            }
+            Err(error) => self.reply_err(seq, error.into()).await,
+        }
+        Ok(())
+    }
+
+    /// `schemas.get`: one registered schema — core, this package's, or a provider's — as a
+    /// record of its fields, identity and default view (spec §31.64).
+    async fn host_schemas_get(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let get: SchemaGetParams = Self::parse_params(params)?;
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::SchemaRead,
+            "schemas.get",
+            &[],
+            Some(Json::String(get.id.clone())),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let found = get
+            .id
+            .parse::<ono_value::SchemaId>()
+            .ok()
+            .and_then(|id| self.schemas.get(&id));
+        match found {
+            Some(schema) => {
+                let record = schema_record(&schema, &self.package_id);
+                self.reply_ok(seq, record).await;
+            }
+            None => {
+                self.reply_err(
+                    seq,
+                    WireError::from_core(
+                        ono_core::ErrorCode::ResolveTargetNotFound,
+                        format!("no schema `{}` is registered", get.id),
+                    ),
+                )
+                .await;
+            }
+        }
+        Ok(())
+    }
+
+    /// `schemas.list`: every registered schema under a prefix, as a stream the plugin pulls.
+    async fn host_schemas_list(&mut self, seq: u64, params: Json) -> Result<(), KuangError> {
+        let list: SchemaListParams = Self::parse_params(params)?;
+        if let Err(error) = self.broker_check(
+            ono_kuang_protocol::Capability::SchemaRead,
+            "schemas.list",
+            &[],
+            list.prefix.clone().map(Json::String),
+        ) {
+            self.reply_err(seq, error.into()).await;
+            return Ok(());
+        }
+        let mut ids: Vec<String> = self
+            .schemas
+            .ids()
+            .map(ToString::to_string)
+            .filter(|id| {
+                list.prefix
+                    .as_ref()
+                    .is_none_or(|prefix| id.starts_with(prefix))
+            })
+            .collect();
+        ids.sort();
+        let package_id = self.package_id.clone();
+        let records: Vec<Json> = ids
+            .iter()
+            .filter_map(|id| id.parse::<ono_value::SchemaId>().ok())
+            .filter_map(|id| self.schemas.get(&id))
+            .map(|schema| schema_record(&schema, &package_id))
+            .collect();
+        let handle = self.open_inbound(records);
+        self.reply_ok(seq, json!({"handle": handle})).await;
         Ok(())
     }
 

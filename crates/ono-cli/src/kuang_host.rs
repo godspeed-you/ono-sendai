@@ -65,6 +65,25 @@ impl Default for Management {
     }
 }
 
+/// The session's published context, as a source the loader hands a package (ADR-0567).
+pub struct SharedContext(pub Arc<std::sync::Mutex<crate::session_provider::SessionTables>>);
+
+impl std::fmt::Debug for SharedContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SharedContext")
+    }
+}
+
+impl ono_kuang_supervisor::ContextSource for SharedContext {
+    fn context(&self) -> serde_json::Value {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .context
+            .clone()
+    }
+}
+
 /// One runtime instance this session loaded (spec §31.10).
 #[derive(Debug)]
 pub struct Instance {

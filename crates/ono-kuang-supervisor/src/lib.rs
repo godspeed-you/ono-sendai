@@ -24,6 +24,7 @@
 //! shell's integration step.
 
 mod adapters;
+mod context;
 mod negotiate;
 mod platform;
 mod policy;
@@ -34,6 +35,7 @@ mod supervisor;
 mod trail;
 
 pub use adapters::{AdapterPackageError, declared_executables, validate_package};
+pub use context::{ContextSource, FixedContext};
 pub use negotiate::{HostLimits, negotiate};
 pub use platform::{
     ConfinementPlan, ConfinementPlatform, NativePlatform, PLATFORM_CONTROLS,

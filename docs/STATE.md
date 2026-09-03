@@ -285,6 +285,19 @@ One entry per phase, newest first. The reasoning is kept because each entry reco
 issue that ordered the work did not know.
 
 
+- **#3, first increment (2026-09-03): host streams, `context`, `schemas`.** ADR-0567. The
+  supervisor keeps the streams it opens for a plugin by handle; `streams.next {handle, max}`
+  pulls at most `max` values and says whether the stream is complete, `streams.cancel` drops it,
+  and a handle the host never opened quarantines the package. `context.get` answers from a
+  source the shell publishes before every pipeline — cwd, the innermost object frame, the link
+  host, the host name, interactive and redirected, nothing beyond — and the test host hands a
+  fixed one. `schemas.get` and `schemas.list` describe a schema's fields, identity, default
+  view and origin (core, package, provider), the list as a stream. The example package gained
+  `context`, `schemas` and `schema`. Proven by four conformance cases, three runs through the
+  binary (`crates/ono-cli/tests/host_domains.rs`) and acceptance case 212. Nine domains were
+  missing; `context` and `schemas` are in, `models` came with #5; `objects`, `relations`,
+  `history`, `process`, `secrets`, `network` and `views` and the wasm tier remain, and the issue
+  stays open until they are.
 - **#5 closed (2026-09-03).** `ono-model-broker` exists (ADR-0566). The crate is the catalogue
   (`<config>/kuang/models.yaml`, beside `policy.yaml`), the data-class policy of §31.44 with the
   three named policies defaulting their lists, the `ono-model/1` wire

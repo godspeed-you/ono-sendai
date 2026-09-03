@@ -796,6 +796,47 @@ impl Session {
             // pipeline keeps a session that is killed from losing everything before it.
             host.persist_audit();
         });
+        let context = self.context_for_packages();
+        self.jobs
+            .tables
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .publish_context(context);
+    }
+
+    /// The context stack as a package may see it through `context.get` (spec §31.12,
+    /// ADR-0567): where the session stands, what it entered, which link it is on, whether a
+    /// person is at the terminal — and nothing beyond it. No environment, no history.
+    fn context_for_packages(&self) -> serde_json::Value {
+        use std::io::IsTerminal;
+        let object = self
+            .navigation
+            .frames
+            .iter()
+            .rev()
+            .find(|frame| matches!(frame.frame.kind(), ono_command::FrameKind::Object))
+            .map(|frame| {
+                serde_json::json!({
+                    "target": frame.frame.target(),
+                    "identity": ono_value::to_json(frame.frame.identity()),
+                })
+            });
+        let link = self.link_host();
+        let host = link.clone().unwrap_or_else(|| {
+            std::fs::read_to_string("/proc/sys/kernel/hostname")
+                .map(|name| name.trim().to_owned())
+                .ok()
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "local".to_owned())
+        });
+        serde_json::json!({
+            "cwd": self.cwd().display().to_string(),
+            "object": object,
+            "link": link,
+            "host": host,
+            "interactive": self.execution.interactive,
+            "redirected": !std::io::stdout().is_terminal(),
+        })
     }
 
     /// Keeps a loaded KUANG/11 package on the session (spec §31.10), answering the instance it

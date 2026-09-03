@@ -79,6 +79,8 @@ capabilities:
     - state.persist
     - process.signal
     - model.infer: {providers: ["*"]}
+    - context.read
+    - schema.read
 network:
   outbound: none
 "#
@@ -107,6 +109,8 @@ fn fully_granted(host: TestHost) -> TestHost {
         .grant(Capability::StatePersist)
         .grant(Capability::ProcessSignal)
         .grant(Capability::ModelInfer)
+        .grant(Capability::ContextRead)
+        .grant(Capability::SchemaRead)
 }
 
 fn values_of(events: &[StreamEvent]) -> Vec<Value> {
@@ -988,6 +992,144 @@ async fn should_answer_provider_unavailable_when_no_model_is_configured() {
         result.error.expect("structured").name,
         "model.provider_unavailable"
     );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- context and schemas, pulled through host streams (spec §31.12, §31.15, §31.64; ADR-0567) --
+
+#[tokio::test]
+async fn should_answer_the_context_the_host_published_and_nothing_beyond_it() {
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .grant(Capability::ContextRead)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke("dev.example.echo.command.context", args(&[]))
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    let Some(Value::String(text)) = values_of(&events).into_iter().next() else {
+        panic!("the context is one string");
+    };
+    let context: Json = serde_json::from_str(&text).expect("JSON");
+    assert_eq!(
+        context["cwd"],
+        json!("/"),
+        "the test host's fixed context (spec §31.73)"
+    );
+    assert_eq!(context["host"], json!("test-host"));
+    assert_eq!(context["interactive"], json!(false));
+    assert!(
+        context.get("environment").is_none() && context.get("history").is_none(),
+        "the context stack, and nothing beyond it: {context}"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_stream_the_registered_schemas_under_a_prefix_as_the_plugin_pulls_them() {
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .grant(Capability::SchemaRead)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.schemas",
+            args(&[("prefix", json!("ono.proc"))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    let ids: Vec<String> = values_of(&events)
+        .into_iter()
+        .filter_map(|value| match value {
+            Value::String(text) => Some(text.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        ids.contains(&"ono.process/1".to_owned())
+            && ids.contains(&"ono.process-detail/1".to_owned()),
+        "the core schemas under the prefix, pulled two at a time; got {ids:?}"
+    );
+    assert!(
+        ids.iter().all(|id| id.starts_with("ono.proc")),
+        "nothing outside the prefix; got {ids:?}"
+    );
+    let audit = plugin.audit();
+    assert!(
+        audit
+            .iter()
+            .any(|event| event.action == "schemas.list" && event.result == AuditResult::Success),
+        "the read is audited under schema.read"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_describe_one_schema_with_its_fields_and_origin() {
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .grant(Capability::SchemaRead)
+        .load()
+        .await
+        .expect("loads");
+    let invocation = plugin
+        .invoke(
+            "dev.example.echo.command.schema",
+            args(&[("id", json!("ono.process/1"))]),
+        )
+        .await
+        .expect("starts");
+    let (events, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    let fields = values_of(&events);
+    assert!(
+        fields.contains(&Value::String("pid".into())),
+        "the process schema's fields, by name; got {fields:?}"
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_the_context_and_the_schemas_to_a_package_without_the_grant() {
+    let plugin = TestHost::new(PLUGIN, &manifest())
+        .load()
+        .await
+        .expect("loads degraded");
+    for command in ["context", "schemas", "schema"] {
+        // The command declares the capability it costs, so the refusal comes before it starts.
+        let refused = match plugin
+            .invoke(&format!("dev.example.echo.command.{command}"), args(&[]))
+            .await
+        {
+            Err(error) => error.name,
+            Ok(invocation) => {
+                let (_, result) = invocation.collect().await;
+                assert_eq!(
+                    result.status,
+                    InvokeStatus::Failed,
+                    "{command} without its grant"
+                );
+                result.error.expect("structured").name
+            }
+        };
+        assert_eq!(
+            refused, "capability.denied",
+            "{command}: deny by default (spec §31.19)"
+        );
+    }
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;

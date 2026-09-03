@@ -159,6 +159,24 @@ fn honest() -> Plugin {
             &["clock.read"],
         ))
         .contribute_command(command(
+            "context",
+            "Report the context stack the host published.",
+            "stream<string>",
+            &["context.read"],
+        ))
+        .contribute_command(command(
+            "schemas",
+            "List the registered schema ids under a prefix, pulled two at a time.",
+            "stream<string>",
+            &["schema.read"],
+        ))
+        .contribute_command(command(
+            "schema",
+            "Report one registered schema's field names.",
+            "stream<string>",
+            &["schema.read"],
+        ))
+        .contribute_command(command(
             "models",
             "List the model providers this package may use, through the broker.",
             "stream<string>",
@@ -327,6 +345,75 @@ fn honest() -> Plugin {
             match ctx.clock_now() {
                 Ok(now) => {
                     let _ = ctx.emit(&Value::String(now.into()));
+                    Outcome::Completed
+                }
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.context"), |ctx| {
+            match ctx.host_call(method::CONTEXT_GET, json!({})) {
+                Ok(context) => {
+                    let _ = ctx.emit(&Value::String(context.to_string().into()));
+                    Outcome::Completed
+                }
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.schemas"), |ctx| {
+            let prefix = ctx
+                .arguments()
+                .get("prefix")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            let handle = match ctx.host_call(method::SCHEMAS_LIST, json!({"prefix": prefix})) {
+                Ok(opened) => opened.get("handle").and_then(serde_json::Value::as_u64),
+                Err(error) => return Outcome::Failed(error),
+            };
+            let Some(handle) = handle else {
+                let _ = ctx.emit(&Value::String("no handle".into()));
+                return Outcome::Completed;
+            };
+            // Two at a time, on purpose: the credit of spec §31.15 is the plugin's to give.
+            loop {
+                match ctx.host_call(method::STREAMS_NEXT, json!({"handle": handle, "max": 2})) {
+                    Ok(answer) => {
+                        for schema in answer
+                            .get("values")
+                            .and_then(serde_json::Value::as_array)
+                            .into_iter()
+                            .flatten()
+                        {
+                            if let Some(id) = schema.get("id").and_then(serde_json::Value::as_str) {
+                                let _ = ctx.emit(&Value::String(id.into()));
+                            }
+                        }
+                        if answer.get("complete").and_then(serde_json::Value::as_bool) == Some(true) {
+                            return Outcome::Completed;
+                        }
+                    }
+                    Err(error) => return Outcome::Failed(error),
+                }
+            }
+        })
+        .command(&format!("{PACKAGE}.command.schema"), |ctx| {
+            let id = ctx
+                .arguments()
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("ono.process/1")
+                .to_owned();
+            match ctx.host_call(method::SCHEMAS_GET, json!({"id": id})) {
+                Ok(schema) => {
+                    for field in schema
+                        .get("fields")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        if let Some(name) = field.get("name").and_then(serde_json::Value::as_str) {
+                            let _ = ctx.emit(&Value::String(name.into()));
+                        }
+                    }
                     Outcome::Completed
                 }
                 Err(error) => Outcome::Failed(error),

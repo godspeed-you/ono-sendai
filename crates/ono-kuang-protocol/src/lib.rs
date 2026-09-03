@@ -60,9 +60,11 @@ pub use message::{
     AuditLogParams, CancelParams, CancelReason, CheckAnswer, CheckParams, ClockNowResult,
     CloseParams, CommandContribution, CommandDocument, ContributionSet, DemandParams, EmitParams,
     EmitResult, Envelope, FilesystemReadParams, FilesystemReadResult, HealthState, Hello,
-    InitParams, InitResult, InvokeParams, InvokeResult, InvokeStatus, ProbeResult, QueryParams,
-    RequestOnceParams, SchemaContribution, SchemaFieldContribution, ShutdownParams, ShutdownReason,
-    StateGetResult, StateKeyParams, StateSetParams, TargetContribution, method, parse_type_name,
+    InitParams, InitResult, InvokeParams, InvokeResult, InvokeStatus, NextParams, NextResult,
+    ProbeResult, QueryParams, RequestOnceParams, SchemaContribution, SchemaFieldContribution,
+    SchemaGetParams, SchemaListParams, ShutdownParams, ShutdownReason, StateGetResult,
+    StateKeyParams, StateSetParams, StreamHandleParams, TargetContribution, method,
+    parse_type_name,
 };
 pub use signature::{
     FileDigest, PackageSignature, PublicKey, SIGNATURE_ALGORITHM, SIGNATURE_FILE, SIGNATURE_FORMAT,

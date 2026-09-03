@@ -295,6 +295,10 @@ pub fn load_plugin_with(
     config.private_dir = session.with_kuang(|host| host.private_dir(id));
     // What `models.list` and `models.infer` reach: the operator's catalogue (ADR-0566).
     config.models = session.with_kuang(|host| host.model_broker());
+    // What `context.get` answers with: the session's published context (ADR-0567).
+    config.context = std::sync::Arc::new(crate::kuang_host::SharedContext(std::sync::Arc::clone(
+        session.tables(),
+    )));
     let (runtime, _) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
             ErrorCode::IoPermissionDenied,

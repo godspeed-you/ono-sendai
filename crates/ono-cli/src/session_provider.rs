@@ -120,12 +120,21 @@ pub struct SessionTables {
     links: Vec<LinkRow>,
     /// The KUANG/11 host: where packages are, and which of them run (ADR-0107).
     pub kuang: crate::kuang_host::Host,
+    /// The context stack as `context.get` answers it to a package (spec §31.12, ADR-0567):
+    /// published by the session before every pipeline, so a plugin sees where the session
+    /// stands and nothing beyond it.
+    pub context: serde_json::Value,
 }
 
 impl SessionTables {
     /// Replaces the job table with what is true now.
     pub fn publish_jobs(&mut self, jobs: Vec<JobRow>) {
         self.jobs = jobs;
+    }
+
+    /// Replaces the context a package is told (ADR-0567).
+    pub fn publish_context(&mut self, context: serde_json::Value) {
+        self.context = context;
     }
 
     /// Replaces the link table with what is true now.
