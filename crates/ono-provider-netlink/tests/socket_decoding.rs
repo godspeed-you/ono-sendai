@@ -242,3 +242,71 @@ fn should_carry_provenance_naming_the_netlink_family() {
         .to_owned();
     assert!(unix_source.contains("AF_UNIX"), "got `{unix_source}`");
 }
+
+/// Two `TIME_WAIT` connections from one local port to two different peers. The kernel has already
+/// released the socket, so `idiag_inode` is zero for both — this is what a live snapshot looks
+/// like, and three of sixteen connections in one carried it.
+fn two_time_wait_connections() -> Vec<u8> {
+    concat(&[
+        message(
+            20,
+            &inet_diag_msg(
+                2,
+                6,
+                &sockid((&[10, 0, 0, 2], 51_000), (&[10, 0, 0, 1], 443), 21),
+                0,
+                0,
+                1_000,
+                0,
+            ),
+        ),
+        message(
+            20,
+            &inet_diag_msg(
+                2,
+                6,
+                &sockid((&[10, 0, 0, 2], 51_000), (&[10, 0, 0, 9], 443), 22),
+                0,
+                0,
+                1_000,
+                0,
+            ),
+        ),
+    ])
+}
+
+#[test]
+fn should_identify_a_time_wait_connection_by_its_endpoints_when_it_has_no_inode() {
+    let decoded = decode_inet_sockets(&two_time_wait_connections(), SocketProtocol::Tcp, None);
+    assert!(decoded.errors().is_empty(), "{:?}", decoded.errors());
+    let sockets = decoded.records();
+    assert_eq!(sockets.len(), 2);
+    assert_eq!(
+        sockets[0].get("inode"),
+        Some(&Value::Null),
+        "spec §35.3: the kernel released the inode, and null says so rather than zero"
+    );
+
+    let first = ono_provider_api::ObjectId::of(&sockets[0])
+        .expect("a connection the kernel is still reporting is an object");
+    let second = ono_provider_api::ObjectId::of(&sockets[1])
+        .expect("a connection the kernel is still reporting is an object");
+    assert_ne!(
+        first, second,
+        "two connections from one local port to two different peers are two objects"
+    );
+}
+
+#[test]
+fn should_give_a_time_wait_connection_the_same_identity_on_a_second_observation() {
+    let first = decode_inet_sockets(&two_time_wait_connections(), SocketProtocol::Tcp, None);
+    let second = decode_inet_sockets(&two_time_wait_connections(), SocketProtocol::Tcp, None);
+
+    let earlier = ono_provider_api::ObjectId::of(&first.records()[0]).expect("an object");
+    let later = ono_provider_api::ObjectId::of(&second.records()[0]).expect("an object");
+
+    assert_eq!(
+        earlier, later,
+        "spec v0.4 §42.1: repeated observations of one live object resolve to one id"
+    );
+}

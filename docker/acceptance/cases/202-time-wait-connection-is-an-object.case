@@ -1,0 +1,60 @@
+# Issue #10: `ono.socket/1` identified a socket by its inode alone, and a `TIME_WAIT` connection
+# has none — the kernel has already released it. Three of sixteen connections in one live snapshot
+# carried a wholly null identity, so the shell could say nothing about which connection each of
+# them was. ADR-0554 gives the schema the fallback ADR-0553 introduced: the tuple every network
+# stack names a connection by joins the identity for exactly the sockets the inode cannot
+# identify.
+#
+# The `TIME_WAIT` is made rather than waited for: an agent listens on loopback, a shell opens a
+# connection to it and closes it, and the active closer sits in `TIME_WAIT` for as long as the
+# kernel keeps it. Case 188 uses the same two mechanisms.
+case: a time-wait connection is an object the shell can name
+timeout: 120
+env: NO_COLOR=1
+run: |
+  ono --agent --listen 127.0.0.1:7742 > "$HOME/agent-202.log" 2>&1 &
+  agent=$!
+  for _ in $(seq 50); do
+    if ono --no-config -c 'get connection | where state == "listen" | to json' | grep -q '7742'; then break; fi
+    sleep 0.2
+  done
+
+  # Open a connection and close it from this side: the active closer is what enters TIME_WAIT.
+  exec 3<>/dev/tcp/127.0.0.1/7742
+  exec 3<&-
+  exec 3>&-
+
+  found=no
+  for _ in $(seq 50); do
+    waiting=$(ono --no-config -c 'get connection | where state == "time-wait" | count | to json' | tr -d '[] ')
+    if [ "$waiting" != "0" ]; then found=yes; break; fi
+    sleep 0.2
+  done
+  echo "time-wait-present=$found"
+
+  ono --no-config -c 'get connection | where state == "time-wait" | take 1 | inspect | to json' > /tmp/tw.json
+  grep -q '"name":"inode","type":"int","access":"unknown"' /tmp/tw.json && echo "inode-is-unknown-not-zero"
+  grep -q '"identity":{"inode":null,"protocol":' /tmp/tw.json && echo "identity-falls-back-to-the-tuple"
+  grep -q '"identity":{"inode":null,"protocol":"tcp","local":{' /tmp/tw.json && echo "identity-names-the-local-endpoint"
+  grep -q '"remote":{"address"' /tmp/tw.json && echo "identity-names-the-remote-endpoint"
+
+  echo "== and a socket the kernel did give an inode is still identified by it alone =="
+  ono --no-config -c 'get connection | where inode != null | take 1 | inspect | to json' > /tmp/live.json
+  if grep -q '"identity":{"inode":[0-9]' /tmp/live.json; then
+    echo "a-live-socket-is-identified-by-its-inode"
+  else
+    echo "WRONG a live socket lost its inode identity"
+  fi
+
+  kill "$agent" 2>/dev/null || true
+  wait "$agent" 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: time-wait-present=yes
+stdout-contains: inode-is-unknown-not-zero
+stdout-contains: identity-falls-back-to-the-tuple
+stdout-contains: identity-names-the-local-endpoint
+stdout-contains: identity-names-the-remote-endpoint
+stdout-contains: a-live-socket-is-identified-by-its-inode
+stdout-contains: done=ok
+stdout-not-contains: WRONG

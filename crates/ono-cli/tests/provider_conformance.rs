@@ -303,7 +303,7 @@ async fn should_shape_ono_socket_1_the_way_linux_sock_diag_declares_it() {
         targets: &["socket", "connection"],
         schema: "ono.socket/1",
         identity: &["inode"],
-        identity_fallback: &[],
+        identity_fallback: &["protocol", "local", "remote"],
         default_view: &["protocol", "local", "remote", "state", "process"],
         fields: &[
             harness::FieldContract { name: "protocol", ty: "enum<tcp|udp|unix|raw|sctp|dccp|packet|unknown>", required: true, nullable: false, unit: None },

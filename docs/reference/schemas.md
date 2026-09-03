@@ -1612,6 +1612,8 @@ A socket with its endpoints, owner and state.
 
 Identity: `inode`
 
+When that identity is incomplete, it is joined by: `protocol`, `local`, `remote`
+
 Default view: `protocol`, `local`, `remote`, `state`, `process`
 
 | field | type | unit | presence | meaning |

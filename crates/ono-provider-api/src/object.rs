@@ -130,10 +130,9 @@ impl fmt::Display for ObjectId {
             if index > 0 {
                 f.write_str(", ")?;
             }
-            match ono_value::canonical_text(value) {
-                Ok(text) => f.write_str(&text)?,
-                Err(_) => f.write_str("?")?,
-            }
+            let mut rendered = String::new();
+            write_identity_value(&mut rendered, value);
+            f.write_str(&rendered)?;
         }
         f.write_str("]")
     }
@@ -146,14 +145,68 @@ fn identity_key(values: &[Value]) -> String {
         // The separator cannot appear in a rendered scalar, so two different identities cannot
         // render to the same key by splitting differently.
         key.push('\u{1f}');
-        match ono_value::canonical_text(value) {
-            Ok(text) => key.push_str(&text),
-            // A value with no text form is still distinguishable by its type and its debug form,
-            // which is enough for an identity nobody can render.
-            Err(_) => key.push_str(&format!("{value:?}")),
-        }
+        write_identity_value(&mut key, value);
     }
     key
+}
+
+/// Writes `value` in the one form two observations of it are guaranteed to agree on.
+///
+/// A scalar has a canonical text and that is the whole answer. A composite does not, and an
+/// identity may legitimately be made of one: `ono.socket/1` falls back to its two endpoints when
+/// the kernel has released the inode (ADR-0553, ADR-0554), and an endpoint is a record. Rendering
+/// it structurally is what makes that identity stable — the `Debug` form it used to fall back to
+/// carries the record's provenance, so the same socket seen twice would have produced two
+/// different keys and spec v0.4 §42.1 asks for exactly the opposite.
+///
+/// Field names are written beside the values, and a map's entries are sorted, so two records that
+/// agree on their values agree on their key however they were assembled.
+fn write_identity_value(out: &mut String, value: &Value) {
+    match value {
+        Value::List(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_identity_value(out, item);
+            }
+            out.push(']');
+        }
+        Value::Map(map) => {
+            let mut entries: Vec<(&str, &Value)> = map.iter().collect();
+            entries.sort_by_key(|(name, _)| *name);
+            out.push('{');
+            for (index, (name, item)) in entries.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(name);
+                out.push('=');
+                write_identity_value(out, item);
+            }
+            out.push('}');
+        }
+        Value::Record(record) => {
+            out.push_str(&record.schema_id().to_string());
+            out.push('{');
+            for (index, field) in record.schema().fields().iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(field.name());
+                out.push('=');
+                write_identity_value(out, record.get(field.name()).unwrap_or(&Value::Null));
+            }
+            out.push('}');
+        }
+        scalar => match ono_value::canonical_text(scalar) {
+            Ok(text) => out.push_str(&text),
+            // Every remaining variant has a canonical text; this arm cannot be reached, and
+            // fabricating an identity would be worse than saying nothing about it.
+            Err(_) => out.push('?'),
+        },
+    }
 }
 
 /// An object's identity together with enough of it to show a person which one it is.
