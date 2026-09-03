@@ -44,7 +44,7 @@ step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
 compare() {
   step "comparing $1 with $2"
-  if cargo run --quiet --package xtask -- compare-builds "$1" "$2"; then
+  if cargo run --locked --quiet --package xtask -- compare-builds "$1" "$2"; then
     printf '\033[1;32mrebuild-check: green — two builds of this commit are byte-for-byte identical\033[0m\n'
     return 0
   fi
