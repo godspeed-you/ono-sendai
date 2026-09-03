@@ -119,6 +119,56 @@ functions and aliases, and cannot run commands at startup.
 → Packaging details, uninstalling, `chsh` caveats and building your own packages:
 [**Install**](https://github.com/godspeed-you/ono-sendai/wiki/Install) in the Wiki.
 
+## Verifying a release
+
+Every release publishes `SHA256SUMS`, a signature over it, the certificate that signature was made
+with, and signed build provenance. Check them before you install anything:
+
+```bash
+VERSION=0.4.1; ARCH=amd64
+BASE=https://github.com/godspeed-you/ono-sendai/releases/download/v$VERSION
+curl -fLO $BASE/ono_${VERSION}_${ARCH}.deb
+curl -fLO $BASE/SHA256SUMS
+curl -fLO $BASE/SHA256SUMS.sig
+curl -fLO $BASE/SHA256SUMS.pem
+```
+
+```bash
+cosign verify-blob \
+  --certificate SHA256SUMS.pem \
+  --signature SHA256SUMS.sig \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v' \
+  SHA256SUMS
+```
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+```bash
+cosign verify-blob-attestation \
+  --type slsaprovenance \
+  --bundle build-provenance.intoto.jsonl \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/godspeed-you/ono-sendai/\.github/workflows/release\.yml@refs/tags/v' \
+  ono_${VERSION}_${ARCH}.deb
+```
+
+```bash
+sudo apt install ./ono_${VERSION}_${ARCH}.deb
+```
+
+**The order is the point.** The signature over the manifest is verified first, and the artifacts
+are checked against the manifest second. Reversed, the sequence proves only that the download was
+not corrupted in transit — a manifest an attacker wrote agrees perfectly with the artifacts that
+attacker also wrote. `cosign` is the one thing you install: the signing is keyless and OIDC-backed,
+so there is no long-lived private key anywhere and no account with anyone to verify a download.
+
+→ What each step proves and what to do when one fails:
+[`docs/reference/release-verification.md`](docs/reference/release-verification.md) ·
+[**Install**](https://github.com/godspeed-you/ono-sendai/wiki/Install) in the Wiki.
+
 ## Quick start
 
 ```bash

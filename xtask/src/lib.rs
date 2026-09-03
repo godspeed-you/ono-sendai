@@ -16,3 +16,4 @@ pub mod reference;
 pub mod scan;
 pub mod supply_chain;
 pub mod terminology;
+pub mod verification;

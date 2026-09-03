@@ -105,6 +105,10 @@ pub fn generate(root: &Path) -> Result<Vec<Page>, GenerateError> {
             path: "docs/reference/remote-trust.md".to_owned(),
             contents: remote_trust_page(),
         },
+        Page {
+            path: "docs/reference/release-verification.md".to_owned(),
+            contents: release_verification_page(),
+        },
     ];
     if !packs.is_empty() {
         pages.push(Page {
@@ -202,6 +206,9 @@ fn index_page() -> String {
          security terms of v0.4.1 §19.1 and what each one promises |\n\
          | [Remote trust](remote-trust.md) | `docs/spec/hardening/remote_trust.yaml` — the six \
          things a remote link keeps apart, and what each one does not establish (v0.4.1 §51.3) |\n\
+         | [Release verification](release-verification.md) | \
+         `docs/spec/hardening/release_verification.yaml` — how to check a release's checksums, \
+         signature and provenance before installing it (v0.4.1 §47.5, §67.7) |\n\
          | [Errors](errors.md) | `docs/spec/errors.yaml` — the stable taxonomy of spec §43 |\n\
          | [Capabilities](capabilities.md) | `docs/spec/capabilities.yaml` — provider and KUANG/11 \
          capabilities |\n\
@@ -640,6 +647,73 @@ fn remote_trust_page() -> String {
             ),
             concept.spec
         ));
+    }
+    page
+}
+
+/// The release verification sequence of v0.4.1 §47.5, rendered from the registry.
+///
+/// §47.5 wants the sequence in the installation documentation and short enough to paste. This is
+/// the copy the gate compares the README and the Wiki against, so three documents cannot drift
+/// into three different sets of commands.
+fn release_verification_page() -> String {
+    let mut page = header(
+        "Verifying a release",
+        "Every release publishes the digest of every artifact, a signature over that manifest and \
+         signed build provenance (v0.4.1 \u{a7}47.1). This is how to check them before installing \
+         anything. Rendered from `docs/spec/hardening/release_verification.yaml`, which the README \
+         and the Wiki's Install page carry the same commands from.",
+    );
+    let Some(sequence) = crate::verification::sequence() else {
+        page.push_str("\nNo verification sequence is declared.\n");
+        return page;
+    };
+
+    page.push_str("\n## What a release publishes\n\n| File | Contents |\n|---|---|\n");
+    for file in &sequence.files {
+        page.push_str(&format!(
+            "| `{}` | {} ({}) |\n",
+            file.name,
+            cell(file.contents.trim()),
+            file.spec
+        ));
+    }
+
+    page.push_str(&format!(
+        "\n## The sequence\n\n**The order is the security property.** The signature over the \
+         manifest is verified first and the artifacts are checked against the manifest second. \
+         Reversed, the sequence proves only that the download was not corrupted in transit: a \
+         manifest an attacker wrote agrees perfectly with the artifacts that attacker also wrote. \
+         A signature is expected to name `{}`, the workflow `{}` and the issuer `{}`, and one \
+         that verifies against anything else is a valid signature by somebody else.\n",
+        sequence.repository, sequence.workflow, sequence.issuer
+    ));
+
+    for (index, step) in sequence.steps.iter().enumerate() {
+        page.push_str(&format!(
+            "\n### {}. `{}`\n\n```bash\n{}\n```\n\n**Proves.** {}\n\n**If it fails.** {}\n",
+            index + 1,
+            step.id,
+            step.command.trim_end(),
+            step.proves.trim(),
+            step.on_failure.trim(),
+        ));
+        if !step.requires.is_empty() {
+            page.push_str(&format!(
+                "\nNeeds {}.\n",
+                step.requires
+                    .iter()
+                    .map(|tool| format!("`{tool}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !step.executable {
+            page.push_str(&format!(
+                "\n*Not run by this repository's own tests: {}.*\n",
+                step.executable_because.trim()
+            ));
+        }
     }
     page
 }

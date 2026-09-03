@@ -2004,10 +2004,18 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       (#112, §19.1, §19.2, §51.1).
 - [ ] **P2 · Verification instructions exist and work.** The install documentation shows a short
       copyable sequence that verifies `SHA256SUMS` and its signature before installation, needs no
-      proprietary service, and is executed rather than merely printed —
-      `xtask/tests/provenance.rs::should_execute_the_documented_verification_sequence_against_a_release_fixture`,
-      `::should_fail_the_documented_verification_sequence_on_a_tampered_artifact`, case `199`
-      (#115, §47.5, §67.7).
+      proprietary service, and is executed rather than merely printed. Written, checked and half
+      executed: `docs/spec/hardening/release_verification.yaml` holds the five steps once, the
+      README, the Wiki's Install page and `docs/reference/release-verification.md` are compared
+      against it, and the checksum step is run against a release fixture and against a tampered one
+      — `xtask/tests/release_verification.rs::should_execute_the_documented_verification_sequence_against_a_release_fixture`,
+      `::should_fail_the_documented_verification_sequence_on_a_tampered_artifact`,
+      `::should_leave_the_other_artifacts_verifiable_when_one_is_missing`,
+      `::should_declare_a_sequence_that_fits_in_a_document_and_needs_no_proprietary_service`,
+      `::should_print_the_same_commands_in_the_readme_and_the_generated_reference` (#115, §47.5,
+      §67.7; ADR-0542). **The box stays open** because the two `cosign` steps have nothing to run
+      against: no release publishes a signature or provenance yet, which is #107 and #108, and the
+      exact invocation is ADR-0542's decision rather than the specification's.
 - [ ] **P2 · The migration path is written down.** §63's five migrations — existing users, existing
       direct listening-agent users, an existing host identity, existing KUANG plugins, existing test
       infrastructure — are documented with the commands an operator runs, and the commands are

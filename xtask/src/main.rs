@@ -8,7 +8,7 @@ use std::process::{Command, ExitCode};
 
 use xtask::{
     bindings, conformance, contracts, narrative, perf, provenance, reference, scan, supply_chain,
-    terminology,
+    terminology, verification,
 };
 
 fn main() -> ExitCode {
@@ -435,6 +435,8 @@ fn spec_check() -> ExitCode {
         narrative::check(&root)
             .into_iter()
             .chain(narrative::check_readme_examples(&root))
+            .chain(verification::check_sequence())
+            .chain(check_release_verification_documents(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 
@@ -567,6 +569,13 @@ fn terminology(arguments: &[String]) -> ExitCode {
         Some(checkout) => {
             problems.extend(terminology::check_wiki(checkout));
             problems.extend(terminology::check_wiki_remote_trust(checkout));
+            let install = checkout.join("Install.md");
+            match std::fs::read_to_string(&install) {
+                Ok(text) => problems.extend(verification::check_document("Install.md", &text)),
+                Err(error) => eprintln!(
+                    "terminology: Install.md cannot be read from the named Wiki checkout: {error}"
+                ),
+            }
         }
         None => println!(
             "terminology: no --wiki given, so the Wiki is unchecked. It is a separate git \
@@ -585,6 +594,18 @@ fn terminology(arguments: &[String]) -> ExitCode {
         eprintln!("terminology: {} — {}", problem.location, problem.detail);
     }
     ExitCode::FAILURE
+}
+
+/// The documents that carry v0.4.1 §47.5's verification sequence, held against the registry.
+///
+/// The generated page is compared by `reference::check_committed` like every other generated
+/// page; this is the hand-written copy. The Wiki's is `cargo xtask terminology --wiki <path>`'s,
+/// for the reason ADR-0536 records.
+fn check_release_verification_documents(root: &Path) -> Vec<scan::Problem> {
+    match std::fs::read_to_string(root.join("README.md")) {
+        Ok(text) => verification::check_document("README.md", &text),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Every "generated from" claim in `docs/ACCEPTANCE.md` names something that is generated.
