@@ -1995,13 +1995,19 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `crates/ono-kuang-supervisor/tests/confinement.rs::should_name_the_control_that_could_not_be_installed_in_the_structured_error`,
       `xtask/tests/contracts.rs::should_find_a_deciding_boundary_on_every_declared_hardening_error`,
       case `200` (#119, §54.1, §54.2).
-- [x] **P2 · The security terminology contract holds across every document.** README, Wiki, `help`
-      and the generated reference use the §19.1 canonical terms, a document that overstates a
-      boundary fails the gate, and the generated pages carry the terms rather than a hand-written
-      paraphrase — `xtask/tests/terminology.rs::should_report_a_document_that_overstates_a_security_boundary`,
+- [x] **P2 · The security terminology contract holds across every document.** The §19.1 terms are
+      defined once in `docs/spec/hardening/terminology.yaml`, rendered into
+      `docs/reference/terminology.md` rather than paraphrased (§19.2), and every surface a gate run
+      can reach is held to them: README, PHILOSOPHY, CONTRIBUTING, SECURITY, every page `help`
+      renders, every generated reference page and the accepted decision records —
+      `xtask/tests/terminology.rs::should_report_a_document_that_overstates_a_security_boundary`,
       `::should_report_this_repositorys_documents_as_using_the_canonical_terms`,
+      `::should_define_every_canonical_term_of_the_specification`,
       `xtask/tests/reference.rs::should_render_the_security_terms_into_the_generated_reference`
-      (#112, §19.1, §19.2, §51.1).
+      (#112, §19.1, §19.2, §51.1; ADR-0536). **The Wiki is a separate git repository and no gate run
+      reaches it**: `cargo xtask terminology --wiki <path>` applies the identical rules to a named
+      checkout — `::should_check_a_wiki_checkout_when_one_is_given` — and running it stays a manual
+      step until the release workflow clones the Wiki.
 - [ ] **P2 · Verification instructions exist and work.** The install documentation shows a short
       copyable sequence that verifies `SHA256SUMS` and its signature before installation, needs no
       proprietary service, and is executed rather than merely printed. Written, checked and half
@@ -2063,9 +2069,11 @@ the tree disagree, so no box in this subsubsection is ticked by someone having r
       `#[ignore]`d test, every *Deferred* entry names an ADR saying why it does not block the
       release, and the release notes name the same tranche state — the bar §4.5, §4.6.5 and §4.7.2
       already set, checked by `cargo xtask state-check` on every `scripts/release-check.sh` run
-      (ADR-0402, `xtask/tests/scan.rs`), extended by
-      `xtask/tests/scan.rs::should_report_release_notes_that_disagree_with_the_checklist` (§66.8's
-      fifth bullet).
+      (ADR-0402, `xtask/tests/scan.rs`). **The extension this box names,
+      `xtask/tests/scan.rs::should_report_release_notes_that_disagree_with_the_checklist`, does not
+      exist**, and neither does a `docs/releases/v0.4.1.md` for it to read — §66.8's fifth bullet is
+      owed by whichever increment writes the release notes, and this box cannot be ticked before
+      then. Found on 2026-09-03 while closing §4.8.12's seven documentation boxes.
 
 #### 4.8.13 The fourteen acceptance families (§40.3) and the scenarios they carry
 

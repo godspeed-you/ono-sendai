@@ -88,7 +88,7 @@ Wordings the documentation gate refuses, because they claim a boundary this buil
 - `cannot reach them directly`
 - `never reaches them directly`
 
-A claim is qualified where the document also says:
+The wording to use instead, in the sentence itself — a disclaimer elsewhere in the same document does not make the claim above true (§17.3 asks for a qualifier that is *immediate*):
 
 - not a complete filesystem or network sandbox
 - does not isolate it from the filesystem or the network
@@ -114,7 +114,7 @@ Wordings the documentation gate refuses, because they claim a boundary this buil
 - `sandboxes the plugin`
 - `sandboxes plugins`
 
-A claim is qualified where the document also says:
+The wording to use instead, in the sentence itself — a disclaimer elsewhere in the same document does not make the claim above true (§17.3 asks for a qualifier that is *immediate*):
 
 - not a complete filesystem or network sandbox
 - does not isolate it from the filesystem or the network
@@ -146,7 +146,7 @@ Wordings the documentation gate refuses, because they claim a boundary this buil
 - `nothing is ever materialized`
 - `streaming so nothing is held`
 
-A claim is qualified where the document also says:
+The wording to use instead, in the sentence itself — a disclaimer elsewhere in the same document does not make the claim above true (§17.3 asks for a qualifier that is *immediate*):
 
 - requires finite input
 - may materialize

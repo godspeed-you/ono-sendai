@@ -582,7 +582,11 @@ fn terminology_page() -> String {
                      does exist.\n",
                 );
             } else {
-                page.push_str("\nA claim is qualified where the document also says:\n\n");
+                page.push_str(
+                    "\nThe wording to use instead, in the sentence itself \u{2014} a disclaimer \
+                     elsewhere in the same document does not make the claim above true \
+                     (\u{a7}17.3 asks for a qualifier that is *immediate*):\n\n",
+                );
                 for phrase in &term.qualified_by {
                     page.push_str(&format!("- {phrase}\n"));
                 }
