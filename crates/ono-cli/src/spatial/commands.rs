@@ -490,6 +490,35 @@ pub async fn observe_adapted(values: &[ono_value::Value]) {
     session.absorb(&records, now);
 }
 
+/// Whether `group` is an exit the request actually asked about (ADR-0557).
+///
+/// A relation names one exit and the query layer has already kept only the groups it names, so
+/// every group left is one that was asked for. `--type` is different: it filters *members*, so a
+/// place's other exits are still in the answer with nothing in them, and treating any of them as
+/// the refusal would answer `near --type connection` with "the `service` of this place could not
+/// be read". A group is asked about by type when the type it leads to is the type that was
+/// asked for, which the relation registry says: the far end of the edge at this end of it.
+fn asked_about(
+    group: &ono_spatial_core::NeighborhoodGroup,
+    wanted: Option<ono_spatial_core::SpatialType>,
+) -> bool {
+    let Some(wanted) = wanted else {
+        return true;
+    };
+    let Some(relation) = group.relation() else {
+        // A group the geography built rather than a relation — a directory's `children` — says
+        // nothing about the type behind it, and a refusal has to be about something.
+        return false;
+    };
+    let spec = relation.spec();
+    let leads_to = if group.label() == spec.canonical_group {
+        spec.target
+    } else {
+        spec.source
+    };
+    leads_to.is_a(wanted)
+}
+
 /// The refusal for an exit that was named and cannot be read (§35.2, §40, ADR-0275).
 ///
 /// `None` where the group is genuinely empty or was answered: those are answers, not refusals.
@@ -578,14 +607,18 @@ impl CommandImpl for Near {
             if let Some(relation) = named_relation.clone() {
                 request = request.along(relation);
             }
-            let named_type = arguments.option("type").is_some();
-            if let Some(value) = arguments.option("type") {
-                request = request.of_type(crate::spatial::spatial_type(value)?);
-            }
+            let named_type = match arguments.option("type") {
+                Some(value) => {
+                    let wanted = crate::spatial::spatial_type(value)?;
+                    request = request.of_type(wanted);
+                    Some(wanted)
+                }
+                None => None,
+            };
             // Whether this `near` asked about one exit rather than about the whole horizon.
             // Both spellings narrow, so both owe the caller the §42.4 answer for a group that
             // was named and could not be read.
-            let narrowed = named_relation.is_some() || named_type;
+            let narrowed = named_relation.is_some() || named_type.is_some();
             let limit = match arguments.option("limit") {
                 Some(Value::Int(limit)) => usize::try_from(*limit).ok(),
                 _ => None,
@@ -621,7 +654,11 @@ impl CommandImpl for Near {
                     .groups()
                     .iter()
                     .all(|group| group.members().is_empty())
-                && let Some(refusal) = neighborhood.groups().iter().find_map(withheld_exit)
+                && let Some(refusal) = neighborhood
+                    .groups()
+                    .iter()
+                    .filter(|group| asked_about(group, named_type))
+                    .find_map(withheld_exit)
             {
                 return Err(refusal);
             }

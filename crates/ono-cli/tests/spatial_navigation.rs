@@ -1274,3 +1274,36 @@ fn should_refuse_a_withheld_group_when_it_was_asked_for_by_type_rather_than_by_r
         by_type.stderr()
     );
 }
+
+#[test]
+fn should_answer_an_empty_stream_when_the_type_asked_for_is_not_what_a_refused_exit_leads_to() {
+    // The other half of the same rule. `--type` filters *members*, so a place's other exits are
+    // still in the answer with nothing in them, and a refusal taken from any of them would
+    // answer `near --type mount` with "the `files` of this place could not be read" — a refusal
+    // about a question nobody asked (ADR-0557). A group is asked about by type when the type it
+    // leads to is the type that was asked for.
+    let denied = ono("enter process 1; near files");
+    if denied.status().is_success() {
+        ono_testkit::skipped(
+            SkipReason::MissingPrivilege,
+            "this run may read pid 1's descriptors, so no exit of that place is refused",
+        );
+        return;
+    }
+
+    let run = ono("enter process 1; near --type mount | count | to json");
+
+    assert!(
+        run.status().is_success(),
+        "pid 1 has no mount exit, and that is an answer rather than a refusal about its files: \
+         stdout {:?}, stderr {:?}",
+        run.stdout(),
+        run.stderr()
+    );
+    assert_eq!(
+        run.stdout().lines().rfind(|line| line.starts_with('[')),
+        Some("[0]"),
+        "got {:?}",
+        run.output()
+    );
+}

@@ -24,14 +24,20 @@ refuses, `enter process 1; near --type socket` prints nothing and exits 0.
 `narrowed = named_relation.is_some() || --type was written`, and when it narrowed and every group
 in the answer is empty, the first group that is withheld supplies the refusal.
 
-Two details follow from `--type` being able to keep more than one group where a relation keeps
-at most one:
+Three details follow from `--type` narrowing differently from a relation:
 
 - the emptiness test is over *every* group in the narrowed answer, not over the first one. One
   group with members is an answer, and an answer is not a refusal;
-- the refusal is the first withheld group's, which is the one ADR-0271 already produced for the
-  relation spelling — `withheld_exit` is unchanged and still the only place that decides what a
-  withheld group says.
+- the refusal comes only from a group the request **asked about**. A relation names one exit and
+  the query layer keeps only the groups it names, so every group left was asked for. `--type`
+  filters *members*, so the place's other exits are still in the answer with nothing in them, and
+  a refusal taken from any of them answers a question nobody asked: acceptance case `094` caught
+  exactly that, `near --type connection` on a listening socket replying "the `service` of this
+  place could not be read". A group is asked about by type when the type it leads to is the type
+  that was asked for, which `relations.yaml` says — the far end of the edge at this end of it. A
+  group the geography built rather than a relation, a directory's `children`, names no type and
+  is never the refusal;
+- `withheld_exit` is unchanged and still the only place that decides what a withheld group says.
 
 A `near` that did not narrow is untouched: the whole horizon of a place legitimately contains
 groups that are withheld beside groups that answer, and refusing the whole command because one
@@ -48,6 +54,10 @@ per-group state, and it already does.
   agree rather than asserting a property of the host.
 - `near --type X` where the place genuinely holds nothing of that type still answers an empty
   stream at status 0. That is an answer, and §2.17 keeps it apart from a refusal.
+  `crates/ono-cli/tests/spatial_navigation.rs::
+  should_answer_an_empty_stream_when_the_type_asked_for_is_not_what_a_refused_exit_leads_to`
+  holds it from the other side: a place with a refused `files` exit answers `near --type mount`
+  with nothing, not with a refusal about its files.
 - The unknown-exit branch below it is still relation-only, and correctly: `--type` names a type
   from a closed vocabulary that `spatial_type` already refuses when it is not one, so there is no
   "this place has no such type" list to offer.
