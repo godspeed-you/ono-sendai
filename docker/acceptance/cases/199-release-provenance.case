@@ -42,6 +42,21 @@ run: |
   ONO_XTASK=/usr/local/bin/ono-release-tool \
     ono-verify-release --dir "$release" --without-signature
 
+  echo "--- the published bytes are the tested bytes"
+  tested="$(mktemp -d)"
+  ( cd "$release" && sha256sum ono-0.4.1-linux-x86_64 ) > "$tested/package-check.sha256"
+  ono-release-tool checksums --dir "$release" --verify --tested "$tested"
+  echo "--- an artifact rebuilt after the tests is refused"
+  cp "$release/ono-0.4.1-linux-x86_64" /tmp/attested
+  printf 'the same name, built again after the tests' > "$release/ono-0.4.1-linux-x86_64"
+  ono-release-tool checksums --dir "$release" >/dev/null
+  if ono-release-tool checksums --dir "$release" --verify --tested "$tested"; then
+    echo "UNTESTED REBUILD ACCEPTED"; exit 1
+  fi
+  echo "untested rebuild refused"
+  cp /tmp/attested "$release/ono-0.4.1-linux-x86_64"
+  ono-release-tool checksums --dir "$release" >/dev/null
+
   echo "--- a tampered artifact is refused"
   printf 'not the binary that was attested' > "$release/ono-0.4.1-linux-x86_64"
   if ONO_XTASK=/usr/local/bin/ono-release-tool \
@@ -81,6 +96,10 @@ stdout-contains: "build_timestamp": "2026-09-02T08:35:12Z"
 # is published.
 stdout-contains: binds every published artifact
 stdout-contains: verify-release: green
+# §48.4, §62.6: the artifact that was tested is the artifact that ships, asserted by hash rather
+# than by the pipeline being shaped in a way that ought to make it true.
+stdout-contains: every package is the one validation installed
+stdout-contains: untested rebuild refused
 # §2.3: each of the three failures is a refusal that names itself.
 stdout-contains: tampered release refused
 stdout-contains: unattested release refused
@@ -88,4 +107,5 @@ stdout-contains: unsigned release refused
 stdout-not-contains: TAMPERED RELEASE ACCEPTED
 stdout-not-contains: UNATTESTED RELEASE ACCEPTED
 stdout-not-contains: UNSIGNED RELEASE ACCEPTED
+stdout-not-contains: UNTESTED REBUILD ACCEPTED
 stdout-not-contains: panicked

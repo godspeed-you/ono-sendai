@@ -59,7 +59,7 @@ fn usage() {
     );
     eprintln!(
         "  checksums      write SHA256SUMS over a release directory, or check it \
-(spec section 47.2) [--dir <path>] [--verify]"
+(spec section 47.2) [--dir <path>] [--verify] [--tested <path>]"
     );
     eprintln!(
         "  provenance     write build provenance over a release directory, or check it \
@@ -143,6 +143,7 @@ fn build_manifest(args: &[String]) -> ExitCode {
 /// unlisted, which is how an asset reaches a release unattested.
 fn checksums(args: &[String]) -> ExitCode {
     let mut directory = PathBuf::from("dist");
+    let mut tested: Option<PathBuf> = None;
     let mut verify = false;
     let mut rest = args.iter();
     while let Some(argument) = rest.next() {
@@ -151,21 +152,36 @@ fn checksums(args: &[String]) -> ExitCode {
                 Some(path) => directory = PathBuf::from(path),
                 None => return usage_error("checksums: --dir needs a path"),
             },
+            "--tested" => match rest.next() {
+                Some(path) => tested = Some(PathBuf::from(path)),
+                None => return usage_error("checksums: --tested needs a path"),
+            },
             "--verify" => verify = true,
             other => match other.strip_prefix("--dir=") {
                 Some(path) => directory = PathBuf::from(path),
-                None => return usage_error(&format!("checksums: unknown argument `{other}`")),
+                None => match other.strip_prefix("--tested=") {
+                    Some(path) => tested = Some(PathBuf::from(path)),
+                    None => return usage_error(&format!("checksums: unknown argument `{other}`")),
+                },
             },
         }
     }
 
     if verify {
-        let problems = provenance::check_checksums(&directory);
+        let mut problems = provenance::check_checksums(&directory);
+        if let Some(records) = &tested {
+            problems.extend(provenance::check_tested_bytes(&directory, records));
+        }
         if problems.is_empty() {
             println!(
-                "checksums: {}/{} covers every artifact beside it",
+                "checksums: {}/{} covers every artifact beside it{}",
                 directory.display(),
-                provenance::CHECKSUM_MANIFEST
+                provenance::CHECKSUM_MANIFEST,
+                if tested.is_some() {
+                    ", and every package is the one validation installed"
+                } else {
+                    ""
+                }
             );
             return ExitCode::SUCCESS;
         }

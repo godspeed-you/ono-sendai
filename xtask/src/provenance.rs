@@ -747,3 +747,124 @@ pub fn check_provenance(directory: &Path) -> Vec<Problem> {
     }
     problems
 }
+
+// --- the tested bytes are the published bytes (spec §48.4, §62.6, ADR-0532) ---------------------
+
+/// Checks a release directory against what package validation actually installed.
+///
+/// `scripts/package-check.sh` writes the SHA-256 of every package it installed into
+/// `target/package-check.sha256`, and the release workflow carries that record from the job that
+/// tested to the job that publishes. §48.4 asks that those be the same bytes; §62.6 asks that the
+/// answer come from a hash rather than from the pipeline being shaped in a way that ought to make
+/// it true.
+///
+/// `records` is a directory of such files — one per architecture, because each is written by the
+/// native runner that installed its own packages.
+#[must_use]
+pub fn check_tested_bytes(directory: &Path, records: &Path) -> Vec<Problem> {
+    let location = records.display().to_string();
+    let mut tested: Vec<(String, String)> = Vec::new();
+    let entries = match std::fs::read_dir(records) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return vec![Problem {
+                location,
+                detail: format!(
+                    "cannot be read: {error}. Package validation records what it installed, and \
+                     publication compares against it (spec §48.4)"
+                ),
+            }];
+        }
+    };
+    // One record per architecture, each written by the native runner that installed its own
+    // packages — so they share a file name and arrive in a subdirectory apiece. The walk is one
+    // level deep because that is the shape, and a deeper tree would be somebody else's directory.
+    let mut files: Vec<PathBuf> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(
+                std::fs::read_dir(&path)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|nested| nested.path())
+                    .filter(|nested| nested.is_file()),
+            );
+        } else {
+            files.push(path);
+        }
+    }
+    for file in files {
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        for line in text.lines() {
+            let mut fields = line.split_whitespace();
+            if let (Some(digest), Some(name)) = (fields.next(), fields.next()) {
+                tested.push((digest.to_owned(), name.to_owned()));
+            }
+        }
+    }
+    if tested.is_empty() {
+        return vec![Problem {
+            location,
+            detail: "holds no record of what package validation installed, so nothing \
+                     distinguishes a promotion from a rebuild (spec §48.4, §62.6)"
+                .to_owned(),
+        }];
+    }
+
+    let published = match downloadable(directory) {
+        Ok(published) => published,
+        Err(error) => {
+            return vec![Problem {
+                location,
+                detail: error,
+            }];
+        }
+    };
+    let mut problems = Vec::new();
+    // Every artifact validation recorded must be here, at the digest it was recorded with. This
+    // is the direction §48.4 is about: the same name at different bytes is a rebuild.
+    for (installed, name) in &tested {
+        match published.iter().find(|(published, _)| published == name) {
+            None => problems.push(Problem {
+                location: directory.join(name).display().to_string(),
+                detail: "was installed by package validation and is not in the release. \
+                         Something was proven and then dropped (spec §48.4)"
+                    .to_owned(),
+            }),
+            Some((_, bytes)) => {
+                let digest = crate::reproducibility::digest(bytes);
+                if &digest != installed {
+                    problems.push(Problem {
+                        location: directory.join(name).display().to_string(),
+                        detail: format!(
+                            "hashes to {digest} and package validation installed {installed}. \
+                             This is a rebuild of the tested artifact rather than the tested \
+                             artifact, and §48.4 forbids publishing it"
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    // And nothing that package validation exists to install may reach the release without it.
+    for (name, _) in &published {
+        if is_package(name) && !tested.iter().any(|(_, tested)| tested == name) {
+            problems.push(Problem {
+                location: directory.join(name).display().to_string(),
+                detail: "is about to be published and no package validation ever installed it. \
+                         The bytes that were tested are the bytes that ship (spec §48.4)"
+                    .to_owned(),
+            });
+        }
+    }
+    problems
+}
+
+/// Whether a published asset is one of the packages `scripts/package-check.sh` installs.
+fn is_package(name: &str) -> bool {
+    name.ends_with(".deb") || name.ends_with(".rpm")
+}

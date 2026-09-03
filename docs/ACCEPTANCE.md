@@ -1984,14 +1984,14 @@ mutable inputs.
       `xtask/tests/packaging.rs::should_run_every_new_package_check_the_specification_lists`,
       `::should_run_package_validation_on_the_oldest_supported_baseline_as_well_as_a_current_one`
       (#109, §48.1–§48.3, ADR-0531).
-- [ ] **P2 · The tested bytes are the published bytes.** The artifact package validation installed
+- [x] **P2 · The tested bytes are the published bytes.** The artifact package validation installed
       hashes identically to the asset later uploaded, the workflow builds once and promotes after
       proof, a public release needs no undocumented local step, final publication reruns the
       complete check on the final tag, and a failed step leaves no partially populated release —
       `xtask/tests/packaging.rs::should_publish_the_same_bytes_package_validation_installed`,
       `xtask/tests/supply_chain.rs::should_promote_an_already_tested_artifact_rather_than_rebuilding_it`,
-      `::should_publish_the_release_only_after_the_asset_inventory_verifies`, case `199` (#110,
-      §48.4, §49.1–§49.4).
+      `::should_publish_the_release_only_after_the_asset_inventory_verifies`, case
+      `199-release-provenance` (#110, §48.4, §49.1–§49.4, ADR-0532).
 
 #### 4.8.12 Documentation (H12 — §66.8, §19, §50, §51, §54, §63)
 

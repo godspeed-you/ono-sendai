@@ -14,6 +14,9 @@
 use std::path::Path;
 
 use ono_testkit::{Scratch, scratch};
+
+mod support;
+use support::{read, workflow_job};
 use xtask::supply_chain::{
     check_action_pins, check_dependency_justifications, check_dependency_policy,
     check_image_digests, check_locked_builds, check_tool_versions, check_workflow_permissions,
@@ -1084,4 +1087,110 @@ fn walk(directory: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     found
+}
+
+// --- build once, promote after proof (spec §49, ADR-0532) ---------------------------------------
+
+#[test]
+fn should_promote_an_already_tested_artifact_rather_than_rebuilding_it() {
+    // §49.1's pipeline ends with "publish the already-tested bytes", and §48.4 spells out what
+    // that forbids: the workflow MUST NOT rebuild packages after tests and then upload the
+    // untested rebuild. The publishing job is therefore not allowed to build anything.
+    let workflow = read(".github/workflows/release.yml");
+    let publish = workflow_job(&workflow, "publish");
+
+    for builder in [
+        "scripts/package.sh",
+        "cargo build",
+        "cargo deb",
+        "cargo generate-rpm",
+        "cross build",
+    ] {
+        assert!(
+            !publish.contains(builder),
+            "the publishing job runs `{builder}`, so what it attaches is a rebuild rather than \
+             the artifact package validation installed (spec §48.4, §49.1):\n{publish}"
+        );
+    }
+    assert!(
+        publish.contains("download-artifact"),
+        "the publishing job does not take its artifacts from the job that proved them:\n{publish}"
+    );
+    let package = workflow_job(&workflow, "package");
+    assert!(
+        package.contains("scripts/package.sh") && package.contains("scripts/package-check.sh"),
+        "the job that produces the artifacts is not the job that proves them, so `build once` is \
+         not what the pipeline does (spec §49.1):\n{package}"
+    );
+
+    // §49.2: no hidden local step. Everything the release does is a script in this repository or
+    // a pinned action, started by a tag push — nothing waits for a maintainer to run something.
+    assert!(
+        workflow.contains("tags:"),
+        "the release is not started by a tag push, so something outside the repository starts it \
+         (spec §49.2):\n{workflow}"
+    );
+    for step in ["run: scripts/", "run: repository/scripts/", "uses:"] {
+        assert!(
+            workflow.contains(step),
+            "the release workflow has no `{step}` steps at all, which cannot be right"
+        );
+    }
+
+    // §49.3: a final tag reruns the complete check even when an earlier release candidate
+    // passed, so no step that proves anything may be skipped for some tags and not others.
+    for proof in ["package-check.sh", "rebuild-check.sh", "verify-release.sh"] {
+        let line = workflow
+            .lines()
+            .find(|line| line.contains(proof))
+            .unwrap_or_else(|| panic!("the release workflow runs `{proof}`"));
+        assert!(
+            !line.contains("if:") && !line.contains("prerelease"),
+            "`{proof}` runs conditionally, so a final publication can inherit a release \
+             candidate's result instead of rerunning the check (spec §49.3): {line}"
+        );
+    }
+}
+
+#[test]
+fn should_publish_the_release_only_after_the_asset_inventory_verifies() {
+    // §49.4: "A failed publishing step SHOULD avoid leaving a partially populated final GitHub
+    // release that appears complete. The workflow MAY create a draft release, upload everything,
+    // verify asset inventory and only then publish it." Four steps whose order is the whole
+    // point — a release that is visible before its inventory is checked is the failure this
+    // guards against.
+    let script = read("scripts/publish-release.sh");
+    let at = |needle: &str| -> usize {
+        script.find(needle).unwrap_or_else(|| {
+            panic!("`scripts/publish-release.sh` never does `{needle}`:\n{script}")
+        })
+    };
+    let verified = at("verify-release.sh");
+    let drafted = at("--draft");
+    let uploaded = at("release upload");
+    let inventory = at("asset inventory");
+    let published = at("--draft=false");
+    assert!(
+        verified < drafted && drafted < uploaded && uploaded < inventory && inventory < published,
+        "publication does not verify, then draft, then upload, then check the inventory, then \
+         publish. Out of that order a failure leaves a release that looks complete (spec \
+         §49.4):\n{script}"
+    );
+
+    // The inventory check is a comparison against the digests, not a count of files: an asset
+    // uploaded truncated has the right name and the wrong bytes.
+    assert!(
+        script.contains("sha256sum") || script.contains("SHA256SUMS"),
+        "the asset inventory is not checked by digest, so a truncated upload passes it (spec \
+         §49.4, §62.6):\n{script}"
+    );
+
+    // And the workflow publishes through it rather than attaching assets directly.
+    let workflow = read(".github/workflows/release.yml");
+    let publish = workflow_job(&workflow, "publish");
+    assert!(
+        publish.contains("publish-release.sh"),
+        "the publishing job attaches assets without the draft-upload-verify-publish sequence \
+         (spec §49.4):\n{publish}"
+    );
 }

@@ -1033,3 +1033,130 @@ fn should_run_package_validation_on_the_oldest_supported_baseline_as_well_as_a_c
          {build}"
     );
 }
+
+// --- the tested bytes are the published bytes (spec §48.4, §62.6, ADR-0532) ---------------------
+
+#[test]
+fn should_publish_the_same_bytes_package_validation_installed() {
+    // §48.4: "The artifact tested by package validation MUST be the same bytes later uploaded to
+    // the release." §62.6 says how to know: by hash, rather than by the workflow being shaped in
+    // a way that ought to make it true.
+    let scratch = scratch();
+    let release = scratch.path().join("dist");
+    let tested = scratch.path().join("tested");
+    std::fs::create_dir_all(&release).expect("a release directory");
+    // The layout the release workflow downloads into: one subdirectory per architecture,
+    // because each record is written by a different runner and they share a file name.
+    std::fs::create_dir_all(tested.join("tested-x86_64"))
+        .expect("a directory of validation records");
+    for (name, bytes) in [
+        ("ono_0.4.1_amd64.deb", "the amd64 package"),
+        ("ono-0.4.1-1.x86_64.rpm", "the x86_64 rpm"),
+    ] {
+        std::fs::write(release.join(name), bytes).expect("an artifact");
+    }
+    let record = |directory: &Path| -> String {
+        ["ono_0.4.1_amd64.deb", "ono-0.4.1-1.x86_64.rpm"]
+            .iter()
+            .map(|name| {
+                let bytes = std::fs::read(directory.join(name)).expect("the artifact");
+                format!("{}  {name}\n", sha256_of(&bytes))
+            })
+            .collect()
+    };
+    std::fs::write(
+        tested.join("tested-x86_64/package-check.sha256"),
+        record(&release),
+    )
+    .expect("what package validation installed");
+
+    let checksums = |extra: &[&str]| -> (bool, String) {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+        command
+            .arg("checksums")
+            .arg("--dir")
+            .arg(&release)
+            .args(extra)
+            .current_dir(repo());
+        let output = command
+            .output()
+            .expect("xtask must be runnable in the gate");
+        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+        (output.status.success(), text)
+    };
+
+    let (written, report) = checksums(&[]);
+    assert!(written, "`xtask checksums` failed:\n{report}");
+    let (verified, report) = checksums(&[
+        "--verify",
+        "--tested",
+        tested.to_str().expect("a UTF-8 path"),
+    ]);
+    assert!(
+        verified,
+        "a release whose packages are the ones validation installed did not \
+         verify:\n{report}"
+    );
+
+    // A rebuild of the same commit: the same name, the same version, different bytes. §48.4
+    // forbids exactly this, and the manifest agreeing with the new bytes is what makes it
+    // invisible to every other check.
+    std::fs::write(
+        release.join("ono_0.4.1_amd64.deb"),
+        "the amd64 package, built again after the tests",
+    )
+    .expect("the rebuild");
+    let (written, report) = checksums(&[]);
+    assert!(written, "`xtask checksums` failed:\n{report}");
+    let (verified, report) = checksums(&[
+        "--verify",
+        "--tested",
+        tested.to_str().expect("a UTF-8 path"),
+    ]);
+    assert!(
+        !verified,
+        "a package rebuilt after validation was published as though it had been tested \
+         (spec §48.4):\n{report}"
+    );
+    assert!(
+        report.contains("ono_0.4.1_amd64.deb"),
+        "the refusal does not name the artifact that is not the tested one:\n{report}"
+    );
+
+    // And an artifact nothing validated at all.
+    std::fs::write(release.join("ono_0.4.1_amd64.deb"), "the amd64 package")
+        .expect("the tested bytes restored");
+    std::fs::write(
+        release.join("ono_0.4.1_arm64.deb"),
+        "an untested arm64 package",
+    )
+    .expect("an untested artifact");
+    let (written, _) = checksums(&[]);
+    assert!(written);
+    let (verified, report) = checksums(&[
+        "--verify",
+        "--tested",
+        tested.to_str().expect("a UTF-8 path"),
+    ]);
+    assert!(
+        !verified && report.contains("ono_0.4.1_arm64.deb"),
+        "a package no validation ever installed was published:\n{report}"
+    );
+
+    // The record travels from the job that tested to the job that publishes, or the comparison
+    // is between a file and itself.
+    let workflow = support::read(".github/workflows/release.yml");
+    let package = workflow_job(&workflow, "package");
+    assert!(
+        package.contains("package-check.sha256"),
+        "the job that installs the packages does not hand on what it installed, so nothing later \
+         can tell a promotion from a rebuild (spec §48.4):\n{package}"
+    );
+    let publish = workflow_job(&workflow, "publish");
+    assert!(
+        publish.contains("--tested"),
+        "the publishing job does not compare what it is about to publish with what was tested \
+         (spec §62.6):\n{publish}"
+    );
+}

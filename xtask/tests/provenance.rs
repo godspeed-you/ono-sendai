@@ -802,7 +802,7 @@ fn should_verify_every_artifact_digest_against_the_checksum_manifest_and_the_pro
         .find("verify-release.sh")
         .expect("the publishing job verifies what it is about to publish (spec §62.5)");
     let published = publish
-        .find("action-gh-release")
+        .find("publish-release.sh")
         .expect("the publishing job attaches the assets");
     assert!(
         attested < verified && verified < published,
