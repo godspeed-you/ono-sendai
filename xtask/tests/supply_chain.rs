@@ -16,7 +16,7 @@ use std::path::Path;
 use ono_testkit::{Scratch, scratch};
 
 mod support;
-use support::{read, workflow_job};
+use support::{read, report, workflow_job};
 use xtask::supply_chain::{
     check_action_pins, check_dependency_justifications, check_dependency_policy,
     check_image_digests, check_locked_builds, check_tool_versions, check_workflow_permissions,
@@ -36,14 +36,6 @@ fn this_repository() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root")
-}
-
-fn report(problems: &[xtask::scan::Problem]) -> String {
-    problems
-        .iter()
-        .map(|problem| format!("  {} — {}", problem.location, problem.detail))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// A workflow that satisfies every rule but the one under test.

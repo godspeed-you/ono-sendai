@@ -1836,21 +1836,21 @@ a pass. ADR-0428 already made every skip announce itself; this phase makes an un
 §66.6's four bullets. §65.12 governs the whole subsubsection: a refactor and a semantic redesign
 never travel together, so every box here is closed with the test suite unchanged (AGENTS.md §11).
 
-- [ ] **P2 · The parser is navigable by responsibility.** The seven responsibilities of §29.2 —
+- [x] **P2 · The parser is navigable by responsibility.** The seven responsibilities of §29.2 —
       state and token access, statements, expressions and precedence, pipelines and commands, blocks
       and control constructs, recovery and incomplete input, diagnostic construction — are separately
       navigable modules, and the recursive-descent strategy, recovery behaviour, depth guard and AST
       contracts are unchanged — `xtask/tests/architecture.rs::should_find_every_parser_responsibility_in_its_own_module`,
       with `crates/ono-parser/tests/` green and unedited across the change and the fuzz seeds of
       Appendix I.1 replayed (#95, §29.1–§29.4).
-- [ ] **P2 · The evaluator is navigable by responsibility.** Statement, expression, pipeline, block,
+- [x] **P2 · The evaluator is navigable by responsibility.** Statement, expression, pipeline, block,
       function, control, native execution and materialization are separate modules, `materialize`
       owns the budget-aware collection helpers so no caller recreates them, `Flow` stays an explicit
       representation, and no domain logic moved up into `ono-cli` to reduce a file's size —
       `xtask/tests/architecture.rs::should_find_every_evaluator_responsibility_in_its_own_module`,
       `::should_find_no_domain_logic_moved_up_into_the_composition_root`, with the control-flow,
       cancellation and job suites of Appendix I.2 green and unedited (#96, §30.1–§30.4).
-- [ ] **P2 · Session state has owners.** The eight state groups of §31.2 exist, result-history
+- [x] **P2 · Session state has owners.** The eight state groups of §31.2 exist, result-history
       budget enforcement lives in the history group rather than at evaluator call sites, and none of
       the five behaviours Appendix I.3 protects changed — config precedence, environment mutation,
       job reaping, navigation trail semantics, result-history identifiers —
@@ -1860,7 +1860,7 @@ never travel together, so every box here is closed with the test suite unchanged
       truthful truncation are proved there, against `ono_history::ResultHistory`, which is what
       the history state group owns; `history.rs` beside it is the command-line history and holds
       no result budget at all (#97, §31.1–§31.4).
-- [ ] **P2 · No cross-crate dependency inversion was introduced.** The crate graph after the
+- [x] **P2 · No cross-crate dependency inversion was introduced.** The crate graph after the
       refactor holds the boundaries §56 states, and a new edge that inverts one fails the gate —
       `xtask/tests/architecture.rs::should_hold_the_crate_graph_against_the_declared_layering`,
       `::should_report_a_new_dependency_edge_that_inverts_a_declared_boundary` (§66.6's fourth

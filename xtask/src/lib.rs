@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod architecture;
 pub mod bindings;
 pub mod conformance;
 pub mod contracts;

@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use xtask::{
-    bindings, conformance, contracts, narrative, perf, provenance, reference, reproducibility,
-    scan, supply_chain, terminology,
+    architecture, bindings, conformance, contracts, narrative, perf, provenance, reference,
+    reproducibility, scan, supply_chain, terminology,
 };
 
 fn main() -> ExitCode {
@@ -598,6 +598,7 @@ fn spec_check() -> ExitCode {
             .chain(scan::check_authentication_flags(&root))
             .chain(terminology::check_documents(&root))
             .chain(terminology::check_decisions(&root))
+            .chain(architecture::check(&root))
             .map(|problem| format!("{} — {}", problem.location, problem.detail)),
     );
 

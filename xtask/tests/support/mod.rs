@@ -37,3 +37,16 @@ pub fn workflow_job(workflow: &str, name: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+/// Every problem a scan reported, as one message a failing assertion can print.
+///
+/// Two suites wanted this and wrote it twice, and `check_duplicate_helpers` said so — which is the
+/// rule of v0.4.1 §39.1 working on the commit that introduced the copy (ADR-0515). One definition,
+/// called from both.
+pub fn report(problems: &[xtask::scan::Problem]) -> String {
+    problems
+        .iter()
+        .map(|problem| format!("  {} — {}", problem.location, problem.detail))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
