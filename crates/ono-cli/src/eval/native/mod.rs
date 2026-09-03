@@ -132,6 +132,21 @@ pub fn check(
         // check is an optimisation of the failure path, not a second gate.
         return Ok(());
     };
+    // A pipeline of external programs alone has no contract to check against, so it is not
+    // planned: planning asks for the providers, and building those starts the runtime and
+    // connects to the service manager — most of what `ono -c 'echo ready'` cost (spec §34).
+    let has_native_stage = std::iter::once(&pipeline.head)
+        .chain(pipeline.tail.iter().map(|chained| &chained.list))
+        .flat_map(|list| list.stages.iter())
+        .any(|stage| {
+            stage
+                .head
+                .name()
+                .is_some_and(|head| registry.resolve(head, &stage.arguments).is_ok())
+        });
+    if !has_native_stage {
+        return Ok(());
+    }
     let schemas: Vec<_> = ono_value::builtin_schemas().schemas().cloned().collect();
     // A program an adapter gives a schema is a producer like any other (spec v0.3 §1.61,
     // ADR-0067): the plan says which stages those are, so the check reaches the stages after

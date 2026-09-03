@@ -361,7 +361,7 @@ canonical CI environment expects to.
 ```text
 crates=31
 workspace_members=33
-tests=3471
+tests=3473
 tests_that_can_skip=79
 expected_ci_skips=3
 acceptance_cases=143
